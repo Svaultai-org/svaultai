@@ -1,5 +1,5 @@
 name: vault_ai_frontend
-description: Vault AI front-end (Email OTP → PIN → Video → Chat)
+description: Vault AI front-end (vault_name + PIN → Vault → Chat)
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -9,15 +9,73 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # UX1.5 - Flutter intl + ARB localization. Bundles 7 locales:
+  # en, ar, fr, es, ja, ko, zh. Used by lib/l10n/*.arb.
+  flutter_localizations:
+    sdk: flutter
+  intl: any
+
+  # Web-only — gives us PathUrlStrategy so Stripe redirects to
+  # /storage?checkout=success route cleanly instead of needing
+  # /#/storage?... The package is a transitive dep of flutter for
+  # web targets, but Dart analyzer requires an explicit entry.
+  flutter_web_plugins:
+    sdk: flutter
+
+  # State management
   provider: ^6.1.5
+
+  # Local storage
   shared_preferences: ^2.3.2
+
+  # UI icons
   cupertino_icons: ^1.0.6
+
+  # External links (optional, safe to keep)
   url_launcher: ^6.3.2
-  descope: ^0.9.9
+
+  # Auth and crypto utilities — vault_name + PIN model uses convert /
+  # pointycastle / crypto for PIN-derived AES-GCM material; the
+  # session token is a plain HMAC-signed string carried via the
+  # http package's Authorization header.
+  convert: ^3.1.2
+  pointycastle: ^3.7.4
+  flutter_secure_storage: ^9.0.0
+  crypto: ^3.0.6
+
+  # ✅ REQUIRED FOR BACKEND CHAT
+  http: ^1.2.1
+
+  # ✅ REQUIRED FOR FILE & IMAGE PICKING
+  file_picker: ^8.0.0
+  cryptography: ^2.9.0
+
+  # Voice input (Phase 9.4) — browser-native STT on web, on-device on mobile.
+  # No audio leaves the device.
+  speech_to_text: ^7.0.0
+
+  # Audio recording (Phase 9.5B). On web, recording stays in browser
+  # memory (MediaRecorder Blob URL). On mobile later, the package writes
+  # to a temporary app-private file — we must explicitly delete that file
+  # after reading the bytes. This phase is web-only.
+  record: ^6.0.0
+
+  # 2026-06-29 — Receive-only QR for Crypto Vault Lite. Pure Dart, no
+  # native code, no network. Renders the saved crypto wallet address
+  # as a QR matrix the user can scan to receive funds.
+  #
+  # Receive-only: the QR encodes only the raw address (e.g. "bc1q..."),
+  # NEVER a transaction request, NEVER an amount. The app does not
+  # sign, broadcast, generate wallets, or move funds.
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
+  # UX1.5 - enables `flutter gen-l10n` generation from lib/l10n/*.arb.
+  generate: true

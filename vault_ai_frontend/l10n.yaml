@@ -1,0 +1,17 @@
+# UX1.5 - Flutter intl / ARB code generation.
+#
+# `flutter gen-l10n` reads lib/l10n/app_*.arb and generates
+# AppLocalizations classes consumed via:
+#   AppLocalizations.of(context)!.<key>
+#
+# All seven locales (en, ar, fr, es, ja, ko, zh) are supported.
+
+# `synthetic-package: true` was removed in recent Flutter versions, so
+# we emit the generated code directly under lib/l10n/ and import it
+# from there.
+arb-dir:                 lib/l10n
+template-arb-file:       app_en.arb
+output-dir:              lib/l10n
+output-localization-file: app_localizations.dart
+output-class:            AppLocalizations
+nullable-getter:         false

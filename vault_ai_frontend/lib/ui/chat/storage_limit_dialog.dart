@@ -1,0 +1,134 @@
+
+
+import 'package:flutter/material.dart';
+
+import '../../l10n/app_localizations.dart';
+import '../primitives.dart';
+import '../tokens.dart';
+
+
+enum StorageLimitDialogChoice { upgrade, cancel }
+
+class NotEnoughStorageDialog extends StatelessWidget {
+  
+  
+  final int plannedBytes;
+
+  
+  final int availableBytes;
+
+  
+  final String? folderName;
+
+  const NotEnoughStorageDialog({
+    super.key,
+    required this.plannedBytes,
+    required this.availableBytes,
+    this.folderName,
+  });
+
+  
+  static Future<StorageLimitDialogChoice> show(
+    BuildContext context, {
+    required int plannedBytes,
+    required int availableBytes,
+    String? folderName,
+  }) async {
+    final picked = await showDialog<StorageLimitDialogChoice>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => NotEnoughStorageDialog(
+        plannedBytes: plannedBytes,
+        availableBytes: availableBytes,
+        folderName: folderName,
+      ),
+    );
+    return picked ?? StorageLimitDialogChoice.cancel;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final headline = (folderName != null && folderName!.isNotEmpty)
+        ? 'Not enough storage for $folderName'
+        : 'Not enough storage for this folder.';
+
+    return Dialog(
+      backgroundColor: VaultColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(VaultRadius.lg),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Padding(
+          padding: const EdgeInsets.all(VaultSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const IconBadge(
+                    icon: Icons.cloud_off_outlined,
+                    color: VaultColors.severityWarn,
+                    size: 40,
+                  ),
+                  const SizedBox(width: VaultSpacing.md),
+                  Expanded(
+                    child: Text(
+                      headline,
+                      style: VaultText.subtitle,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: VaultSpacing.lg),
+              Text(
+                'This import needs ${formatStorageBytes(plannedBytes)}, '
+                'but you only have ${formatStorageBytes(availableBytes)} '
+                'available.',
+                style: VaultText.body,
+              ),
+              const SizedBox(height: VaultSpacing.lg),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(
+                      StorageLimitDialogChoice.cancel,
+                    ),
+                    child: Text(AppLocalizations.of(context).commonCancel),
+                  ),
+                  const SizedBox(width: VaultSpacing.sm),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(
+                      StorageLimitDialogChoice.upgrade,
+                    ),
+                    child: Text(
+                      AppLocalizations.of(context).chatCardUpgradeStorage,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+String formatStorageBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var size = bytes.toDouble();
+  var i = 0;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  final s = (size >= 10 || i == 0)
+      ? size.toStringAsFixed(0)
+      : size.toStringAsFixed(1);
+  return '$s ${units[i]}';
+}

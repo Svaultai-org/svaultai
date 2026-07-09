@@ -4,3 +4,51 @@ python-dotenv
 openai
 pydantic
 python-multipart
+cryptography
+slowapi
+psycopg2-binary
+PyPDF2
+python-docx
+openpyxl
+alembic
+sqlalchemy
+stripe>=7.0
+# Slice 2B — image OCR. Optional at runtime; the OCR module
+# detects pytesseract + Pillow at import and falls back to a
+# clean "OCR engine unavailable" error if either is missing.
+# Production deploys should install BOTH the Python packages
+# below AND the system-level tesseract binary
+# (apt: tesseract-ocr; brew: tesseract).
+pytesseract
+Pillow
+
+# 2026-06-27 — Slice: pdf_page_vision. ``vault_pdf_page_vision``
+# uses fitz/pymupdf to render scanned-PDF pages as PNG bytes in
+# memory so the vision sub-call in ``find_in_vault`` can read
+# ID documents that have no extracted_text. Soft dependency at
+# the call site — the module degrades to "unavailable" when the
+# import fails, so the chat path never crashes on a missing
+# wheel.
+pymupdf
+
+# 2026-06-28 — Slice: image_formats. iPhone HEIC/HEIF uploads need
+# ``pillow-heif`` to decode for the vision endpoint and for
+# thumbnail generation. Soft dependency at the call site:
+# ``vault_image_formats.register_optional_decoders`` no-ops when
+# the wheel is missing, the file is still RECOGNISED as an image
+# (so it surfaces in candidate lists), and the normaliser returns
+# ``None`` with closed-set telemetry so the search skips that file
+# safely instead of crashing.
+pillow-heif
+
+# Note: ``reportlab`` is test-only (used to build PDF fixtures for
+# the E2E read-route test). It lives in requirements-dev.txt so the
+# production image doesn't carry it.
+
+
+# 2026-07-08 — Production Redis-backed rate limiter. Required for
+# multi-instance deploys so rate-limit counters are shared across
+# replicas. Import is lazy — a single-instance dev deploy without
+# VAULTAI_RATE_LIMIT_REDIS_URL uses the in-memory backend and
+# never touches the redis client.
+redis>=5.0.0

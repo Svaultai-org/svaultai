@@ -1,9 +1,3 @@
-# Flutter/Dart
-.dart_tool/
-.build/
-build/
-.flutter-plugins
-.flutter-plugins-dependencies
 .metadata
 
 # IDE
@@ -39,16 +33,14 @@ yarn-error.log
 # Secrets
 .env
 .env.*
+!.env.example
+!.env.production.example
+!**/.env.example
+!**/.env.production.example
 *.key
 *.pem
 
-# OS junk
-.DS_Store
-Thumbs.db
 
-# Editors
-.vscode/
-.idea/
 
 # Build
 dist/
@@ -57,3 +49,8 @@ build/
 
 # Logs
 *.log
+
+# Local DB artefacts
+*.db
+*.sqlite
+*.sqlite3

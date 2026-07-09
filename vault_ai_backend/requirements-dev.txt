@@ -1,0 +1,33 @@
+# Backend test / dev dependencies.
+#
+# Install:
+#   python -m pip install -r requirements.txt -r requirements-dev.txt
+#
+# Run the backend test suite:
+#   python -m pytest -q
+#
+# Run a subset (e.g. just the Phase 2 planner + classifier):
+#   python -m pytest test_vault_answer_planner.py \
+#                    test_vault_followup_classifier.py -q
+#
+# DB-bound end-to-end tests require an opt-in test database (NEVER
+# the application's DATABASE_URL). Set:
+#   export VAULTAI_TEST_DATABASE_URL=postgres://…/vaultai_test
+# E2E tests skip cleanly when VAULTAI_TEST_DATABASE_URL is unset.
+
+# -r the runtime deps so a single command installs both.
+-r requirements.txt
+
+# Test runner.
+pytest>=7.0
+pytest-subtests>=0.10
+
+# FastAPI TestClient lives in `starlette`, but Starlette's TestClient
+# requires `httpx` (FastAPI 0.110+ enforces this). Pin to avoid the
+# "RuntimeError: The starlette.testclient module requires httpx"
+# error on a fresh dev venv.
+httpx>=0.27
+
+# PDF fixture builder for the E2E read-route loop. Test-only; the
+# production read path uses PyPDF2 (already in requirements.txt).
+reportlab>=4.0

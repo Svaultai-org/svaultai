@@ -1,0 +1,255 @@
+
+
+import 'package:flutter/material.dart';
+import '../../l10n/app_localizations.dart';
+import '../motion.dart';
+import '../tokens.dart';
+import '../vault_chat_cards.dart' as vcr_ui;
+import 'chat_bubble.dart';
+import 'chat_models.dart';
+import 'crypto_wallet_action_card.dart';
+import 'typing_pulse.dart';
+
+class ChatMessageList extends StatefulWidget {
+  final List<ChatMessage> messages;
+  final bool thinking;
+  final bool streaming;
+  final bool isMobile;
+  final EdgeInsets padding;
+  final ScrollController? scrollController;
+  
+  
+  final String? vaultName;
+  final void Function(ChatMessage msg)? onOpenVaultFile;
+  
+  
+  final void Function(String fileId)? onShowRelated;
+  
+  
+  final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
+  final void Function(ChatMessage msg, String action, Map<String, dynamic>? data)?
+      onCardAction;
+  
+  
+  final Future<Map<String, dynamic>?> Function(String jobId)?
+      onDeepAnswerPoll;
+  
+  
+  final void Function(Map<String, dynamic> snapshot)? onDeepAnswerReady;
+  
+  
+  final void Function(ChatMessage credentialMsg)? onScanRemaining;
+
+  
+  final bool Function({
+    required String intent,
+    required String normalizedQuery,
+  })? isDeepScanActive;
+
+  
+  final void Function(String itemId, String title, String itemType)?
+      onSecureItemView;
+  final void Function(String itemId, String title, String itemType)?
+      onSecureItemReveal;
+  final void Function(String username)? onSecureItemCopyUsername;
+  final void Function(String value)? onSecureItemCopyValue;
+  final void Function(String title, String itemType)? onSecureItemEdit;
+  final void Function(String title, String itemType)? onSecureItemDelete;
+  
+
+  final CryptoWalletActionCallback? onCryptoWalletAction;
+
+
+
+  final VoidCallback? onOpenVault;
+  final void Function(String asset)? onOpenAssetDetail;
+  final VoidCallback? onOpenSendFlow;
+  final VoidCallback? onOpenSecurityPage;
+  final VoidCallback? onOpenBillingPage;
+  final VoidCallback? onOpenStoragePage;
+  final void Function(String category, String? id)? onOpenVaultItem;
+  final void Function(String query)? onSearchVault;
+
+
+  final vcr_ui.CryptoBalanceFetcher? onFetchCryptoBalance;
+  final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
+  final vcr_ui.CryptoChatLiveCache? cryptoCache;
+
+  const ChatMessageList({
+    super.key,
+    required this.messages,
+    required this.thinking,
+    required this.streaming,
+    required this.isMobile,
+    this.padding = const EdgeInsets.symmetric(
+      horizontal: VaultSpacing.md,
+      vertical: VaultSpacing.md,
+    ),
+    this.scrollController,
+    this.vaultName,
+    this.onOpenVaultFile,
+    this.onShowRelated,
+    this.onLoadRelated,
+    this.onCardAction,
+    this.onDeepAnswerPoll,
+    this.onDeepAnswerReady,
+    this.onScanRemaining,
+    this.isDeepScanActive,
+    this.onSecureItemView,
+    this.onSecureItemReveal,
+    this.onSecureItemCopyUsername,
+    this.onSecureItemCopyValue,
+    this.onSecureItemEdit,
+    this.onSecureItemDelete,
+    this.onCryptoWalletAction,
+    this.onOpenVault,
+    this.onOpenAssetDetail,
+    this.onOpenSendFlow,
+    this.onOpenSecurityPage,
+    this.onOpenBillingPage,
+    this.onOpenStoragePage,
+    this.onOpenVaultItem,
+    this.onSearchVault,
+    this.onFetchCryptoBalance,
+    this.onFetchCryptoActivity,
+    this.cryptoCache,
+  });
+
+  @override
+  State<ChatMessageList> createState() => _ChatMessageListState();
+}
+
+class _ChatMessageListState extends State<ChatMessageList> {
+  static const double _autoFollowThresholdPx = 96;
+
+  late final ScrollController _scroll;
+  bool _ownsScroll = false;
+
+  
+  final Set<int> _animated = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll = widget.scrollController ?? ScrollController();
+    _ownsScroll = widget.scrollController == null;
+  }
+
+  @override
+  void dispose() {
+    if (_ownsScroll) _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatMessageList old) {
+    super.didUpdateWidget(old);
+    
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoScroll());
+  }
+
+  void _maybeAutoScroll() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+    if (distanceFromBottom < _autoFollowThresholdPx) {
+      _scroll.animateTo(
+        pos.maxScrollExtent,
+        duration: VaultMotion.standard,
+        curve: VaultMotion.curveStandard,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final msgs = widget.messages;
+    final itemCount = msgs.length + (widget.thinking ? 1 : 0);
+
+    return ListView.builder(
+      controller: _scroll,
+      padding: widget.padding,
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        
+        
+        if (widget.thinking && index == msgs.length) {
+          final l = AppLocalizations.of(context);
+          final name = widget.vaultName?.trim();
+          final label = (name != null && name.isNotEmpty)
+              ? l.chatThinkingWithName(name)
+              : l.chatThinking;
+          return FadeSlideIn(
+            child: TypingPulse(label: label),
+          );
+        }
+
+        final msg = msgs[index];
+        final prev = index > 0 ? msgs[index - 1] : null;
+        final next = index < msgs.length - 1 ? msgs[index + 1] : null;
+
+        
+        final isFirst = prev == null ||
+            prev.role != msg.role ||
+            msg.createdAt.difference(prev.createdAt).inSeconds > 60;
+        final isLast = next == null ||
+            next.role != msg.role ||
+            next.createdAt.difference(msg.createdAt).inSeconds > 60;
+
+        
+        final isStreamingTail = widget.streaming &&
+            msg.isAssistant &&
+            index == msgs.length - 1;
+
+        
+        final firstSeen = !_animated.contains(index);
+        if (firstSeen) _animated.add(index);
+
+        final bubble = ChatBubble(
+          msg: msg,
+          isMobile: widget.isMobile,
+          isFirstInGroup: isFirst,
+          isLastInGroup: isLast,
+          isStreaming: isStreamingTail,
+          onOpenVaultFile: widget.onOpenVaultFile,
+          onShowRelated: widget.onShowRelated,
+          onLoadRelated: widget.onLoadRelated,
+          onCardAction: widget.onCardAction,
+          onDeepAnswerPoll: widget.onDeepAnswerPoll,
+          onDeepAnswerReady: widget.onDeepAnswerReady,
+          onScanRemaining: widget.onScanRemaining,
+          isDeepScanActive: widget.isDeepScanActive,
+          onSecureItemView: widget.onSecureItemView,
+          onSecureItemReveal: widget.onSecureItemReveal,
+          onSecureItemCopyUsername: widget.onSecureItemCopyUsername,
+          onSecureItemCopyValue: widget.onSecureItemCopyValue,
+          onSecureItemEdit: widget.onSecureItemEdit,
+          onSecureItemDelete: widget.onSecureItemDelete,
+          onCryptoWalletAction: widget.onCryptoWalletAction,
+          onOpenVault:        widget.onOpenVault,
+          onOpenAssetDetail:  widget.onOpenAssetDetail,
+          onOpenSendFlow:     widget.onOpenSendFlow,
+          onOpenSecurityPage: widget.onOpenSecurityPage,
+          onOpenBillingPage:  widget.onOpenBillingPage,
+          onOpenStoragePage:  widget.onOpenStoragePage,
+          onOpenVaultItem:    widget.onOpenVaultItem,
+          onSearchVault:      widget.onSearchVault,
+          onFetchCryptoBalance:  widget.onFetchCryptoBalance,
+          onFetchCryptoActivity: widget.onFetchCryptoActivity,
+          cryptoCache:           widget.cryptoCache,
+        );
+
+        
+        return RepaintBoundary(
+          child: FadeSlideIn(
+            animate: firstSeen,
+            duration: VaultMotion.emphasized,
+            offset: 10,
+            child: bubble,
+          ),
+        );
+      },
+    );
+  }
+}
