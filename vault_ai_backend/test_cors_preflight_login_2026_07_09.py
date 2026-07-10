@@ -33,7 +33,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 
-
 def _wipe(*names: str) -> dict:
     snap = {}
     for n in names:
@@ -74,6 +73,7 @@ def _mount_preflight_app(regex: str) -> TestClient:
             "Accept",
             "Origin",
             "X-Requested-With",
+            "X-App-Locale",
             "X-Device-Id",
         ],
         max_age=600,
@@ -81,6 +81,10 @@ def _mount_preflight_app(regex: str) -> TestClient:
 
     @app.post("/auth/login")
     async def _login_stub() -> dict:
+        return {"ok": True}
+
+    @app.post("/chat")
+    async def _chat_stub() -> dict:
         return {"ok": True}
 
     return TestClient(app)
@@ -99,7 +103,6 @@ def _resolve_regex_under_env(env: dict) -> str:
         return _resolve_cors_origin_regex()
     finally:
         _restore(snap)
-
 
 
 class DevPreflightAcceptsLocalhost(unittest.TestCase):
@@ -145,8 +148,6 @@ class DevPreflightAcceptsLocalhost(unittest.TestCase):
         )
 
     def test_dev_with_prod_regex_still_permits_localhost_5173(self) -> None:
-
-
 
         regex = _resolve_regex_under_env({
             "VAULTAI_ENV": "development",
@@ -202,8 +203,6 @@ class DevPreflightAcceptsLocalhost(unittest.TestCase):
 
     def test_dev_permits_case_insensitive_x_device_id_header(self) -> None:
 
-
-
         regex = _resolve_regex_under_env({"VAULTAI_ENV": "development"})
         client = _mount_preflight_app(regex)
         for hdr_variant in (
@@ -221,7 +220,6 @@ class DevPreflightAcceptsLocalhost(unittest.TestCase):
                     },
                 )
                 self.assertEqual(resp.status_code, 200)
-
 
 
 class ActualPostFollowsThroughInDev(unittest.TestCase):
@@ -251,7 +249,6 @@ class ActualPostFollowsThroughInDev(unittest.TestCase):
             resp.headers.get("access-control-allow-credentials"),
             "true",
         )
-
 
 
 class ProdPreflightRejectsUnknownOrigins(unittest.TestCase):
@@ -337,7 +334,6 @@ class ProdPreflightRejectsUnknownOrigins(unittest.TestCase):
         )
 
 
-
 class CorsHeadersAndMethodsInvariants(unittest.TestCase):
     """Static invariants that must hold in every environment."""
 
@@ -348,6 +344,20 @@ class CorsHeadersAndMethodsInvariants(unittest.TestCase):
         self.assertIn("content-type", lower)
         self.assertIn("authorization", lower)
 
+    def test_x_app_locale_is_in_allow_headers_list(self) -> None:
+
+        import main
+        lower = [h.lower() for h in main.CORS_ALLOWED_HEADERS]
+        self.assertIn(
+            "x-app-locale", lower,
+            msg=(
+                "X-App-Locale must be in CORS_ALLOWED_HEADERS or the "
+                "production browser preflight for /chat will fail "
+                "with 400 Bad Request from the frontend at "
+                "https://app.svaultai.com"
+            ),
+        )
+
     def test_options_and_post_are_in_allow_methods(self) -> None:
         import main
         upper = [m.upper() for m in main.CORS_ALLOWED_METHODS]
@@ -355,8 +365,6 @@ class CorsHeadersAndMethodsInvariants(unittest.TestCase):
         self.assertIn("POST", upper)
 
     def test_no_wildcard_origin_ever(self) -> None:
-
-
 
         for env in (
             {"VAULTAI_ENV": "development"},
@@ -369,11 +377,154 @@ class CorsHeadersAndMethodsInvariants(unittest.TestCase):
                 regex = _resolve_regex_under_env(env)
                 self.assertNotEqual(regex, "*")
 
-
                 self.assertIsNone(
                     re.fullmatch(regex, "https://evil.example.com"),
                     msg="regex must not degenerate into a match-all",
                 )
+
+
+class ProdChatPreflightAcceptsAppLocaleFromSvaultai(unittest.TestCase):
+    """Regression: production browser chat preflight from
+    ``https://app.svaultai.com`` sends the header set
+
+        authorization,content-type,x-app-locale,x-device-id
+
+    and must return 200 with all four headers echoed in
+    ``access-control-allow-headers`` and the concrete origin echoed
+    in ``access-control-allow-origin``. Before the fix, ``x-app-locale``
+    was missing from ``CORS_ALLOWED_HEADERS`` and Starlette returned
+    400."""
+
+    _PROD_REGEX = (
+        r"^https://(app|www)\.svaultai\.com$|^https://svaultai\.com$"
+    )
+    _ORIGIN = "https://app.svaultai.com"
+
+    def test_options_chat_from_app_svaultai_succeeds_with_all_headers(
+        self,
+    ) -> None:
+        regex = _resolve_regex_under_env({
+            "VAULTAI_ENV": "production",
+            "CORS_ALLOWED_ORIGIN_REGEX": self._PROD_REGEX,
+        })
+        client = _mount_preflight_app(regex)
+
+        resp = client.options(
+            "/chat",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "authorization,content-type,x-app-locale,x-device-id",
+            },
+        )
+        self.assertEqual(
+            resp.status_code, 200,
+            msg=(
+                f"prod preflight for /chat from {self._ORIGIN} must "
+                f"return 200 — got {resp.status_code}: {resp.text!r}"
+            ),
+        )
+        self.assertEqual(
+            resp.headers.get("access-control-allow-origin"),
+            self._ORIGIN,
+            msg="ACAO must echo the exact concrete origin, not '*'",
+        )
+
+        allow_hdrs = (
+            resp.headers.get("access-control-allow-headers", "").lower()
+        )
+        for h in (
+            "authorization", "content-type",
+            "x-app-locale", "x-device-id",
+        ):
+            self.assertIn(
+                h, allow_hdrs,
+                msg=(
+                    f"access-control-allow-headers must include {h}: "
+                    f"got {allow_hdrs!r}"
+                ),
+            )
+
+        self.assertIn(
+            "POST",
+            resp.headers.get("access-control-allow-methods", ""),
+        )
+
+        self.assertEqual(
+            resp.headers.get("access-control-allow-credentials"),
+            "true",
+        )
+
+    def test_options_auth_login_from_app_svaultai_also_accepts_app_locale(
+        self,
+    ) -> None:
+
+        regex = _resolve_regex_under_env({
+            "VAULTAI_ENV": "production",
+            "CORS_ALLOWED_ORIGIN_REGEX": self._PROD_REGEX,
+        })
+        client = _mount_preflight_app(regex)
+        resp = client.options(
+            "/auth/login",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "content-type,x-app-locale,x-device-id",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.headers.get("access-control-allow-origin"),
+            self._ORIGIN,
+        )
+
+    def test_prod_still_refuses_localhost_when_x_app_locale_is_in_header_set(
+        self,
+    ) -> None:
+
+        regex = _resolve_regex_under_env({
+            "VAULTAI_ENV": "production",
+            "CORS_ALLOWED_ORIGIN_REGEX": self._PROD_REGEX,
+        })
+        client = _mount_preflight_app(regex)
+        resp = client.options(
+            "/chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "authorization,content-type,x-app-locale,x-device-id",
+            },
+        )
+        self.assertEqual(
+            resp.status_code, 400,
+            msg="production must refuse localhost even when the "
+                "requested headers are all in the allow-list",
+        )
+        self.assertNotIn(
+            "access-control-allow-origin", resp.headers,
+        )
+
+    def test_dev_still_accepts_x_app_locale_from_localhost(self) -> None:
+
+        regex = _resolve_regex_under_env({"VAULTAI_ENV": "development"})
+        client = _mount_preflight_app(regex)
+        resp = client.options(
+            "/chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers":
+                    "authorization,content-type,x-app-locale,x-device-id",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        allow_hdrs = (
+            resp.headers.get("access-control-allow-headers", "").lower()
+        )
+        self.assertIn("x-app-locale", allow_hdrs)
 
 
 if __name__ == "__main__":

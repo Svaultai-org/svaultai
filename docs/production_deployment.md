@@ -353,8 +353,9 @@ STRIPE_PORTAL_RETURN_URL=https://app.svaultai.com/storage
 - [ ] No `.env` committed. Verify with `git ls-files | grep '\.env$'`
       — empty is required.
 - [ ] No `.venv` committed. Verify with `git ls-files | grep '\.venv'`.
-- [ ] No `.claude/` committed. Verify with
-      `git ls-files | grep '\.claude'`.
+- [ ] No local editor / tooling cache directories committed.
+      Verify with `git ls-files | grep -E '^\.[a-z][a-zA-Z]*/'`
+      returns empty.
 - [ ] No real API keys in the repo. `git grep -nE 'sk_live_[A-Za-z0-9]{16,}'`
       must return only obvious test placeholders.
 - [ ] No real Stripe webhook secrets. `git grep -nE 'whsec_[A-Za-z0-9]{16,}'`
