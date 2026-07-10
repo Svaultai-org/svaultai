@@ -25,6 +25,7 @@ import 'services/upload_queue.dart';
 import 'services/content_hash.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
+import 'services/vault_chat_stream_parser.dart' as vcs_parser;
 import 'ui/chat/duplicate_dialog.dart';
 import 'ui/chat/storage_limit_dialog.dart';
 import 'services/folder_picker.dart';
@@ -7617,12 +7618,49 @@ await _loadVaultLogins();
   }
 
   _Msg? _tryParseAssistantStructuredMessage(String text) {
+
+
+
+
+
+
+
+
+
+
+
+    if (kDebugMode) {
+      debugPrint(
+        '[chat_bubble_parse] enter '
+        'buffer_len=${text.length} '
+        'first_char=${text.isEmpty ? "(empty)" : text[0]} '
+        'last_char=${text.isEmpty ? "(empty)"
+                                  : text[text.length - 1]}',
+      );
+    }
+    final maybeCard = vcs_parser.parseVaultChatCardMessage(text);
+    if (maybeCard != null) {
+      return maybeCard;
+    }
+
+
+
+
     final trimmed = text.trim();
     if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
 
     try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is! Map<String, dynamic>) return null;
+      final decodedRaw = jsonDecode(trimmed);
+      if (decodedRaw is! Map) return null;
+
+
+
+      final Map<String, dynamic> decoded =
+          decodedRaw is Map<String, dynamic>
+              ? decodedRaw
+              : decodedRaw.map<String, dynamic>(
+                  (k, v) => MapEntry(k.toString(), v),
+                );
       final type = decoded['type']?.toString();
       if (type == 'vault_file' || type == 'vault_image') {
         
