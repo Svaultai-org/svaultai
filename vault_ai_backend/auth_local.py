@@ -252,6 +252,21 @@ def revoke_all_sessions_for_vault(vault_id: str) -> int:
         )
         affected = cur.rowcount
         conn.commit()
+
+
+
+        try:
+            from vault_chat_active_entity import clear_active_entity
+            clear_active_entity(vault_id)
+        except Exception:
+
+            pass
+        try:
+            from vault_active_context import clear_active_context
+            clear_active_context(vault_id)
+        except Exception:
+            pass
+
         return int(affected)
     except Exception:
         conn.rollback()

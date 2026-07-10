@@ -11618,6 +11618,108 @@ async def chat_endpoint(
             _cfp = None
 
         _fast_envelope: dict | None = None
+
+
+
+
+
+
+
+
+
+
+
+        try:
+            from vault_chat_pronoun_followup import detect_pronoun_followup
+            from vault_chat_active_entity import (
+                get_active_entity,
+                entity_matches_action,
+                ENTITY_LOGIN,
+                ENTITY_FILE,
+                ENTITY_GENERATED_LOGIN_DRAFT,
+            )
+            _pronoun_hit = detect_pronoun_followup(decrypted_message)
+            if _pronoun_hit is not None:
+                _verb = _pronoun_hit["verb"]
+                _session_id_for_ctx = str(
+                    (principal or {}).get("token_id") or "",
+                ) or None
+                _active = get_active_entity(
+                    vault_id,
+                    session_id=_session_id_for_ctx,
+                )
+                print(
+                    "[CHAT-DEBUG] pronoun_followup_check "
+                    f"vault={(vault_id or '')[:8]}... "
+                    f"verb={_verb!r} "
+                    f"active={(_active or {}).get('entity_type')!r}",
+                    flush=True,
+                )
+                if _active and entity_matches_action(_active, _verb):
+                    _etype = _active.get("entity_type")
+                    _eq = _active.get("query")
+
+
+                    if (
+                        _etype == ENTITY_LOGIN
+                        and _verb in ("show", "open", "view")
+                        and isinstance(_eq, str) and _eq.strip()
+                    ):
+                        try:
+                            from vault_chat_router import (
+                                build_vault_chat_envelope as _fp_build_envelope_lf,
+                            )
+                            _followup_envelope = _fp_build_envelope_lf(
+                                f"find my {_eq} login",
+                            )
+                            if isinstance(_followup_envelope, dict):
+                                try:
+                                    from vault_chat_card_data import (
+                                        populate_vault_chat_card_data,
+                                    )
+                                    _followup_envelope = populate_vault_chat_card_data(
+                                        _followup_envelope,
+                                        vault_id=vault_id,
+                                        key=key,
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "[CHAT-DEBUG] followup_populate_failed",
+                                    )
+                                try:
+                                    if isinstance(_followup_envelope, dict):
+                                        _followup_envelope["locale"] = _reply_language
+                                except Exception:
+                                    pass
+                                return encrypted_reply(
+                                    json.dumps(_followup_envelope),
+                                )
+                        except Exception:
+                            logger.exception(
+                                "[CHAT-DEBUG] active_entity_dispatch_failed "
+                                "type=login vault=%s",
+                                (vault_id or "")[:8] + "...",
+                            )
+
+
+
+
+                    elif (
+                        _etype == ENTITY_GENERATED_LOGIN_DRAFT
+                        and _verb == "save"
+                    ):
+                        print(
+                            "[CHAT-DEBUG] pronoun_followup_deferred_to_pending "
+                            f"vault={(vault_id or '')[:8]}...",
+                            flush=True,
+                        )
+        except Exception:
+            logger.exception(
+                "[CHAT-DEBUG] pronoun_followup_check_failed "
+                "vault=%s",
+                (vault_id or "")[:8] + "...",
+            )
+
         if _cfp is not None:
             try:
                 _cfp.emit_span(
@@ -11766,6 +11868,46 @@ async def chat_endpoint(
                     _fast_envelope["locale"] = _reply_language
             except Exception:
                 pass
+
+
+
+
+
+
+
+
+
+            try:
+                _fp_intent_str = str(_fast_envelope.get("intent") or "")
+                _fp_card = _fast_envelope.get("card") or {}
+                _fp_query = _fp_card.get("query") if isinstance(_fp_card, dict) else None
+                _fp_session_id = str((principal or {}).get("token_id") or "") or None
+                if _fp_intent_str == "vault_login_search" and \
+                   isinstance(_fp_query, str) and _fp_query.strip():
+                    from vault_chat_active_entity import (
+                        set_active_entity,
+                        ENTITY_LOGIN,
+                        ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
+                        ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                    )
+                    set_active_entity(
+                        vault_id,
+                        entity_type=ENTITY_LOGIN,
+                        entity_ref={"query": _fp_query.strip()},
+                        display_label=_fp_query.strip(),
+                        query=_fp_query.strip(),
+                        allowed_actions=(
+                            ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
+                            ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                        ),
+                        session_id=_fp_session_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] set_active_entity failed "
+                    "vault=%s", (vault_id or "")[:8] + "...",
+                )
+
             _cfp.emit_span(
                 _cfp.SPAN_RESPONSE_READY,
                 vault_id=vault_id,
@@ -12199,6 +12341,41 @@ async def chat_endpoint(
                     str(_vcr_envelope.get("schema") or ""),
                     len(decrypted_message or ""),
                 )
+
+
+
+
+                try:
+                    _vcr_intent_str = str(_vcr_envelope.get("intent") or "")
+                    _vcr_q = _vcr_card.get("query") if isinstance(_vcr_card, dict) else None
+                    _vcr_session_id = str((principal or {}).get("token_id") or "") or None
+                    if _vcr_intent_str == "vault_login_search" and \
+                       isinstance(_vcr_q, str) and _vcr_q.strip():
+                        from vault_chat_active_entity import (
+                            set_active_entity,
+                            ENTITY_LOGIN,
+                            ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
+                            ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                        )
+                        set_active_entity(
+                            vault_id,
+                            entity_type=ENTITY_LOGIN,
+                            entity_ref={"query": _vcr_q.strip()},
+                            display_label=_vcr_q.strip(),
+                            query=_vcr_q.strip(),
+                            allowed_actions=(
+                                ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
+                                ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                            ),
+                            session_id=_vcr_session_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "[CHAT-DEBUG] set_active_entity "
+                        "(slow path) failed vault=%s",
+                        (vault_id or "")[:8] + "...",
+                    )
+
                 return encrypted_reply(json.dumps(_vcr_envelope))
 
         try:
@@ -12816,6 +12993,39 @@ async def chat_endpoint(
                 or chosen.get("file_name")
                 or "file"
             )
+
+
+            try:
+                from vault_chat_active_entity import (
+                    set_active_entity,
+                    ENTITY_FILE,
+                    ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
+                    ACTION_RENAME, ACTION_DELETE,
+                )
+                _file_session_id = str(
+                    (principal or {}).get("token_id") or "",
+                ) or None
+                set_active_entity(
+                    vault_id,
+                    entity_type=ENTITY_FILE,
+                    entity_ref={
+                        "file_id": str(chosen.get("file_id") or ""),
+                        "content_type": str(chosen.get("mime_type") or ""),
+                        "relative_path": str(chosen.get("relative_path") or ""),
+                    },
+                    display_label=asset_name,
+                    query=asset_name,
+                    allowed_actions=(
+                        ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
+                        ACTION_RENAME, ACTION_DELETE,
+                    ),
+                    session_id=_file_session_id,
+                )
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] set_active_entity file failed",
+                )
+
             reply = _build_structured_asset_reply(asset, asset_name)
             return encrypted_reply(reply)
         if followup.get("action") == "disambiguate":

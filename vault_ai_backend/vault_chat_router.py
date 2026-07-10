@@ -322,18 +322,35 @@ _SECURE_ITEM_SEARCH_PATTERNS = tuple(
 
 _LOGIN_LIST_PATTERNS = tuple(
     re.compile(p, re.IGNORECASE) for p in (
-        r"\bshow\s+(?:my\s+)?(?:saved\s+)?logins?\b",
-        r"\blist\s+(?:my\s+)?logins?\b",
-        r"\bmy\s+passwords?\b",
+        r"\bshow\s+(?:me\s+)?(?:my\s+)?(?:saved\s+)?logins?\b",
+        r"\blist\s+(?:my\s+)?(?:saved\s+)?logins?\b",
+        r"\ball\s+(?:of\s+)?my\s+(?:saved\s+)?logins?\b",
+        r"\bmy\s+(?:saved\s+)?passwords?\b",
     )
 )
 
 
 _LOGIN_SEARCH_PATTERNS = tuple(
     re.compile(p, re.IGNORECASE) for p in (
-        r"\bfind\s+(?:my\s+)?\S+\s+login\b",
+        r"\bfind\s+(?:my\s+)?\S+(?:\s+\S+){0,6}?\s+login\b",
         r"\bsearch\s+logins?\s+for\b",
         r"\blogin\s+for\s+\S+\b",
+
+
+
+
+
+
+
+        r"\bshow\s+(?:me\s+)?(?:my\s+)?[\w'\-\.]+"
+        r"(?:\s+[\w'\-\.]+){0,6}?\s+"
+        r"(?:login|logins|password|passwords|credential|credentials|"
+        r"account|bank|card|password\s+manager)\b",
+
+
+
+        r"\bopen\s+(?:my\s+)?\S+(?:\s+\S+){0,4}?\s+login\b",
+        r"\bpull\s+up\s+(?:my\s+)?\S+(?:\s+\S+){0,4}?\s+login\b",
     )
 )
 
@@ -847,6 +864,20 @@ def classify_and_build_vault_intent(
                 view="duplicates",
             ),
         )
+
+
+
+
+    if _matches_any(text, _LOGIN_LIST_PATTERNS):
+        return _wrap_intent(
+            INTENT_LOGIN_LIST,
+            _build_card(
+                CARD_LOGIN,
+                liveFetchRequired=True,
+                maskedByDefault=True,
+                view="list",
+            ),
+        )
     if _matches_any(text, _LOGIN_SEARCH_PATTERNS):
         return _wrap_intent(
             INTENT_LOGIN_SEARCH,
@@ -856,16 +887,6 @@ def classify_and_build_vault_intent(
                 maskedByDefault=True,
                 view="search",
                 query=_extract_search_query(text),
-            ),
-        )
-    if _matches_any(text, _LOGIN_LIST_PATTERNS):
-        return _wrap_intent(
-            INTENT_LOGIN_LIST,
-            _build_card(
-                CARD_LOGIN,
-                liveFetchRequired=True,
-                maskedByDefault=True,
-                view="list",
             ),
         )
 
@@ -1034,7 +1055,57 @@ _SEARCH_QUERY_EXTRACT_FOR_RE = re.compile(
 )
 
 
+
+
+
+_LOGIN_SERVICE_EXTRACT_REGEXES: tuple[re.Pattern[str], ...] = (
+
+    re.compile(
+        r"\b(?:show|pull\s+up|open|view)\s+(?:me\s+)?(?:my\s+)?"
+        r"(?P<q>[\w'\-\.]+(?:\s+[\w'\-\.]+){0,6}?)\s+"
+        r"(?:login|logins|password|passwords|credential|credentials|"
+        r"account|bank|card|password\s+manager)\b",
+        re.IGNORECASE,
+    ),
+
+
+    re.compile(
+        r"\bfind\s+(?:my\s+)?(?P<q>[\w'\-\.]+(?:\s+[\w'\-\.]+){0,6}?)"
+        r"\s+login\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+_LOGIN_QUERY_STOPWORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "my", "me", "your", "our", "please", "saved",
+    "credit", "union", "bank", "account",
+})
+
+
 def _extract_search_query(text: str) -> str | None:
+
+    for pat in _LOGIN_SERVICE_EXTRACT_REGEXES:
+        m = pat.search(text)
+        if not m:
+            continue
+        q = m.group("q").strip()
+        q = re.sub(r"[\.\?!,]+$", "", q).strip()
+
+
+
+
+        tokens = [t for t in q.split() if t.strip()]
+        if not tokens:
+            continue
+        if all(t.lower() in _LOGIN_QUERY_STOPWORDS for t in tokens):
+
+            continue
+        if len(q) < 2:
+            continue
+        return q[:80]
+
+
     m = _SEARCH_QUERY_EXTRACT_FOR_RE.search(text)
     if not m:
         return None
