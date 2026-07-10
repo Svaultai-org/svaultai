@@ -3,6 +3,13 @@ uvicorn
 python-dotenv
 openai
 pydantic
+# Pydantic EmailStr (used by billing_routes' ContactSalesRequest) is
+# an opt-in feature that requires this wheel. Missing it makes the
+# billing router module fail to import at startup with:
+#   ImportError: email-validator is not installed, run
+#   `pip install pydantic[email]`
+# Production must carry it.
+email-validator>=2.2.0
 python-multipart
 cryptography
 slowapi

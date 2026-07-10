@@ -571,6 +571,7 @@ CORS_ALLOWED_HEADERS = [
     "Accept",
     "Origin",
     "X-Requested-With",
+    "X-App-Locale",
     "X-Device-Id",
 ]
 
