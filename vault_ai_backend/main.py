@@ -1889,8 +1889,24 @@ def decide_pending_file_intent_override(
 
     if llm_intent == "name_file":
         return "name_file", False, "llm_already_name_file"
+
+
+
+
+
+
+
+
+
+    if looks_like_name and not explicit_other_intent:
+        return "name_file", True, None
+
+
+
     if llm_intent not in chat_bucket:
         return llm_intent or "", False, "llm_explicit_other_intent"
+
+
     if explicit_other_intent:
         lower_msg = (message or "").lower()
         if any(k in lower_msg for k in LOGIN_INTENT_KEYWORDS):
@@ -1900,9 +1916,9 @@ def decide_pending_file_intent_override(
             False,
             "explicit_different_intent",
         )
-    if not looks_like_name:
-        return llm_intent or "", False, "message_not_bare_name"
-    return "name_file", True, None
+
+
+    return llm_intent or "", False, "message_not_bare_name"
 
 
 _ACCOMPANYING_TEXT_NAMING_PATTERNS = [
@@ -6080,11 +6096,12 @@ def get_pending_named_file(vault_id: str) -> Optional[dict]:
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-                                                                       
-                                                                       
+
+
         cursor.execute(
             """
-            SELECT id, file_name, content_type, created_at
+            SELECT id, file_name, content_type, created_at,
+                   needs_naming, upload_status
             FROM uploaded_files
             WHERE vault_id = %s
               AND needs_naming = TRUE
@@ -6094,7 +6111,45 @@ def get_pending_named_file(vault_id: str) -> Optional[dict]:
             """,
             (vault_id,),
         )
-        return cursor.fetchone()
+        row = cursor.fetchone()
+        try:
+            if row is None:
+
+
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)::INT AS uploads,
+                           SUM(CASE WHEN needs_naming = TRUE THEN 1 ELSE 0 END)::INT AS pending_naming,
+                           SUM(CASE WHEN upload_status <> 'complete' THEN 1 ELSE 0 END)::INT AS in_flight
+                    FROM uploaded_files
+                    WHERE vault_id = %s
+                    """,
+                    (vault_id,),
+                )
+                stats = cursor.fetchone() or {}
+                print(
+                    "[CHAT-DEBUG] pending_file_lookup vault="
+                    f"{(vault_id or '')[:8]}... row=None "
+                    f"uploads={stats.get('uploads')} "
+                    f"pending_naming={stats.get('pending_naming')} "
+                    f"in_flight={stats.get('in_flight')}",
+                    flush=True,
+                )
+            else:
+                print(
+                    "[CHAT-DEBUG] pending_file_lookup vault="
+                    f"{(vault_id or '')[:8]}... row_id="
+                    f"{row.get('id')!r} needs_naming="
+                    f"{row.get('needs_naming')} upload_status="
+                    f"{row.get('upload_status')!r}",
+                    flush=True,
+                )
+        except Exception:
+            logger.exception(
+                "[CHAT-DEBUG] pending_file_lookup diagnostic failed",
+            )
+        return row
     finally:
         conn.close()
 
@@ -12134,11 +12189,14 @@ async def chat_endpoint(
                 logger.info(
                     "[CHAT-TRACE] vault_chat_router vault=%s "
                     "intent=%s card_type=%s data_available=%s "
-                    "msg_len=%d",
+                    "envelope_type=%s envelope_schema=%s "
+                    "msg_len=%d streaming=false",
                     (vault_id or "")[:8] + "...",
                     str(_vcr_envelope.get("intent") or ""),
                     str((_vcr_card or {}).get("cardType") or ""),
                     bool(_vcr_data.get("available")),
+                    str(_vcr_envelope.get("type") or ""),
+                    str(_vcr_envelope.get("schema") or ""),
                     len(decrypted_message or ""),
                 )
                 return encrypted_reply(json.dumps(_vcr_envelope))
@@ -13607,12 +13665,16 @@ async def chat_endpoint(
                                                                     
             return encrypted_reply(result)
 
-                                                                         
-        pending_file = get_pending_named_file(vault_id)
+
+        pending_file = (
+            pending_file_for_intent
+            if pending_file_for_intent is not None
+            else get_pending_named_file(vault_id)
+        )
 
         if intent == "name_file" and pending_file:
-                                                                       
-                                                                     
+
+
             raw_candidate = asset_name or decrypted_message
             stripped_candidate = _strip_naming_command(raw_candidate)
             clean_name = _normalize_asset_name(stripped_candidate)
@@ -13630,8 +13692,8 @@ async def chat_endpoint(
                     saved_name=clean_name,
                     key=key,
                 )
-                                                                     
-                                                 
+
+
                 ct = (pending_file.get("content_type") or "").lower()
                 if ct.startswith("audio/"):
                     asset_noun = "recording"
@@ -13645,6 +13707,14 @@ async def chat_endpoint(
                     f"Saved this {asset_noun} as "
                     f"{_title_case_asset(result['saved_name'])}."
                 )
+        elif pending_file is not None and intent != "name_file":
+            print(
+                "[CHAT-DEBUG] pending_file_MISSED intent="
+                f"{intent!r} file_id="
+                f"{pending_file.get('id')!r} raw_message_len="
+                f"{len(decrypted_message or '')}",
+                flush=True,
+            )
 
                                                                      
         if intent in ("summarize_vault", "list_files"):

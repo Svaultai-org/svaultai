@@ -697,10 +697,10 @@ def _fetch_search_rows(vault_id: str) -> list[dict]:
             FROM uploaded_files u
             LEFT JOIN vault_file_understanding v
                 ON v.vault_id = u.vault_id
-               AND v.file_id  = u.id::text
+               AND v.file_id::text = u.id
             LEFT JOIN vault_file_embeddings e
                 ON e.vault_id = u.vault_id
-               AND e.file_id  = u.id::text
+               AND e.file_id::text = u.id
             WHERE u.vault_id = %s
               AND u.upload_status = 'complete'
             ORDER BY u.created_at DESC

@@ -28,12 +28,21 @@ class CleanupSafetySourceGuardTests(unittest.TestCase):
 
     def test_vault_cleanup_subquery_is_vault_scoped(self):
         src = inspect.getsource(rg.cleanup_stale_relationships_for_vault)
-                                                           
-                                                               
+
+
         self.assertIn("f.vault_id = %s", src)
-                                 
-        self.assertIn("f.id::text = r.file_a_id", src)
-        self.assertIn("f.id::text = r.file_b_id", src)
+
+
+
+
+
+
+        self.assertIn("f.id = r.file_a_id::text", src)
+        self.assertIn("f.id = r.file_b_id::text", src)
+
+
+        self.assertNotIn("f.id::text = r.file_a_id", src)
+        self.assertNotIn("f.id::text = r.file_b_id", src)
 
     def test_per_file_cleanup_never_decrypts(self):
         code = self._code_only(rg.cleanup_relationships_for_file)

@@ -378,6 +378,20 @@ _GENERATED_LOGIN_CREATE_PATTERNS = tuple(
         r"\bcreate\s+(?:a\s+)?generated\s+login\b",
         r"\bgenerate\s+(?:a\s+)?(?:new\s+)?(?:strong\s+)?password\b",
         r"\bmake\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?login\b",
+
+
+
+
+
+        r"\bgenerate\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?login\s+for\s+\S+\b",
+
+
+
+        r"\bcreate\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?login\s+for\s+\S+\b",
+
+
+
+        r"\bmake\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?login\s+for\s+\S+\b",
     )
 )
 

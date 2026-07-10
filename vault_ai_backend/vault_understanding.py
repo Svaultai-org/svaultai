@@ -623,7 +623,7 @@ def mark_stale_understandings_for_changed_text(
             SET    status     = 'stale',
                    updated_at = %s
             FROM   uploaded_files AS u
-            WHERE  u.id::text = v.file_id
+            WHERE  u.id = v.file_id::text
               AND  u.vault_id = v.vault_id
               AND  v.vault_id = %s
               AND  v.status IN ('pending', 'ready', 'stale')
@@ -733,7 +733,7 @@ def mark_stale_embeddings_for_changed_text(
             SET    status     = 'stale',
                    updated_at = %s
             FROM   uploaded_files AS u
-            WHERE  u.id::text = e.file_id
+            WHERE  u.id = e.file_id::text
               AND  u.vault_id = e.vault_id
               AND  e.vault_id = %s
               AND  e.status IN ('pending', 'ready', 'stale')
@@ -820,7 +820,7 @@ def backfill_archive_signals(vault_id: str) -> dict:
             FROM uploaded_files u
             LEFT JOIN vault_file_understanding v
               ON v.vault_id = u.vault_id
-             AND v.file_id  = u.id::text
+             AND v.file_id::text = u.id
             WHERE u.vault_id = %s
               AND u.upload_status = 'complete'
               AND (

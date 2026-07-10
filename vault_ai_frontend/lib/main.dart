@@ -8124,15 +8124,53 @@ await _loadVaultLogins();
           payload: payload,
         );
       }
-      
-      
+
+
       final fallbackMessage = decoded['message']?.toString();
       if (type != null &&
           fallbackMessage != null &&
           fallbackMessage.isNotEmpty) {
         return _Msg('assistant', fallbackMessage);
       }
+
+
+
+
+      if (type != null && type.isNotEmpty) {
+        if (kDebugMode) {
+          print(
+            '[structured_message_parse] recognised envelope type '
+            '"$type" but no matching renderer or fallback message. '
+            'Displaying safe fallback so user never sees raw JSON.',
+          );
+        }
+        return _Msg(
+          'assistant',
+          'I received a response but I can\'t render it here yet. '
+          'Please make sure the app is up to date.',
+        );
+      }
     } catch (_) {}
+
+
+
+
+    if (trimmed.length > 20 &&
+        (trimmed.contains('"schema"') ||
+         trimmed.contains('"cardType"') ||
+         trimmed.contains('"type"'))) {
+      if (kDebugMode) {
+        print(
+          '[structured_message_parse] JSON-shaped payload with no '
+          'recognised type; showing safe fallback.',
+        );
+      }
+      return _Msg(
+        'assistant',
+        'I received a response but I can\'t display it. '
+        'Please try again.',
+      );
+    }
 
     return null;
   }

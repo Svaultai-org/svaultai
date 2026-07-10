@@ -799,9 +799,9 @@ def load_file_facts_for_vault(vault_id: str) -> list[dict]:
                 e.embedding_vector::text  AS embedding_vector_text
             FROM uploaded_files u
             LEFT JOIN vault_file_understanding v
-              ON v.vault_id = u.vault_id AND v.file_id = u.id::text
+              ON v.vault_id = u.vault_id AND v.file_id::text = u.id
             LEFT JOIN vault_file_embeddings e
-              ON e.vault_id = u.vault_id AND e.file_id = u.id::text
+              ON e.vault_id = u.vault_id AND e.file_id::text = u.id
              AND e.status = 'ready'
             WHERE u.vault_id = %s
               AND u.upload_status = 'complete'
@@ -904,13 +904,13 @@ def cleanup_stale_relationships_for_vault(
               AND (
                 NOT EXISTS (
                     SELECT 1 FROM uploaded_files AS f
-                    WHERE f.id::text = r.file_a_id
+                    WHERE f.id = r.file_a_id::text
                       AND f.vault_id = %s
                 )
                 OR
                 NOT EXISTS (
                     SELECT 1 FROM uploaded_files AS f
-                    WHERE f.id::text = r.file_b_id
+                    WHERE f.id = r.file_b_id::text
                       AND f.vault_id = %s
                 )
               )
