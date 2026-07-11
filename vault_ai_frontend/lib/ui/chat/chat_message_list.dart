@@ -21,6 +21,22 @@ class ChatMessageList extends StatefulWidget {
   
   final String? vaultName;
   final void Function(ChatMessage msg)? onOpenVaultFile;
+
+  /// Real download callback — distinct from onOpenVaultFile.
+  final void Function(ChatMessage msg)? onDownloadVaultFile;
+
+  /// Per-file in-flight tracking, provided by main.dart from AppState.
+  /// Cards render a spinner + disable buttons based on membership.
+  final Set<String> viewInFlightFileIds;
+  final Set<String> downloadInFlightFileIds;
+
+  /// Callback that re-issues the "show more" chat prompt so the
+  /// backend re-emits the next paginated slice of the file list.
+  final VoidCallback? onShowMoreFiles;
+
+  /// True while a Show more request is in flight, so file-list cards
+  /// disable their button + render a spinner.
+  final bool isShowMoreFilesInFlight;
   
   
   final void Function(String fileId)? onShowRelated;
@@ -92,6 +108,11 @@ class ChatMessageList extends StatefulWidget {
     this.scrollController,
     this.vaultName,
     this.onOpenVaultFile,
+    this.onDownloadVaultFile,
+    this.viewInFlightFileIds = const <String>{},
+    this.downloadInFlightFileIds = const <String>{},
+    this.onShowMoreFiles,
+    this.isShowMoreFilesInFlight = false,
     this.onShowRelated,
     this.onLoadRelated,
     this.onCardAction,
@@ -219,6 +240,11 @@ class _ChatMessageListState extends State<ChatMessageList> {
           isLastInGroup: isLast,
           isStreaming: isStreamingTail,
           onOpenVaultFile: widget.onOpenVaultFile,
+          onDownloadVaultFile: widget.onDownloadVaultFile,
+          viewInFlightFileIds: widget.viewInFlightFileIds,
+          downloadInFlightFileIds: widget.downloadInFlightFileIds,
+          onShowMoreFiles: widget.onShowMoreFiles,
+          isShowMoreFilesInFlight: widget.isShowMoreFilesInFlight,
           onShowRelated: widget.onShowRelated,
           onLoadRelated: widget.onLoadRelated,
           onCardAction: widget.onCardAction,

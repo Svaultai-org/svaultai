@@ -240,8 +240,12 @@ void main() {
       expect(find.textContaining('a***@example.com'),
           findsOneWidget);
 
-
-      expect(find.text('•••••••••'), findsAtLeastNWidgets(1));
+      // Rows now render as tappable selectors (chevron_right)
+      // rather than static masked-dot rows — see 2026-07-12
+      // login-list UX redesign. Masking is still preserved on the
+      // username field above.
+      expect(find.byIcon(Icons.chevron_right),
+          findsAtLeastNWidgets(2));
     });
 
     testWidgets('login card empty state',

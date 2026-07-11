@@ -404,14 +404,19 @@ void main() {
       expect(find.textContaining('"schema"'), findsNothing);
     });
 
-    testWidgets('multi-match login list renders', (tester) async {
+    testWidgets('multi-match login list renders as a tappable '
+        'selector — rows carry a chevron affordance, not a password '
+        'dot cluster (2026-07-12 product decision)',
+        (tester) async {
       await _pumpVaultChatCardEnvelope(
         tester, _PROD_ENVELOPE_LOGIN_MULTI,
       );
       expect(find.byKey(const Key(kVcrCardKeyLogin)), findsOneWidget);
-
-
-      expect(find.textContaining('•••••••••'), findsWidgets);
+      // Each row is a real selector (has chevron_right), NOT a static
+      // masked-dot row that hints at a password without letting the
+      // user drill in. Selecting a row re-issues a targeted search
+      // that resolves to the full editable login detail card.
+      expect(find.byIcon(Icons.chevron_right), findsWidgets);
     });
 
     testWidgets('generated-login card renders', (tester) async {

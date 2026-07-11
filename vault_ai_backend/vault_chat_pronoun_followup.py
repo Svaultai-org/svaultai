@@ -99,6 +99,25 @@ _VERB_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("save", r"^\s*save\s+that\s+one\s*[.!?]*\s*$"),
 
 
+        ("download", r"^\s*download\s+it\s*[.!?]*\s*$"),
+        ("download", r"^\s*download\s+that\s*[.!?]*\s*$"),
+        ("download", r"^\s*download\s+that\s+one\s*[.!?]*\s*$"),
+        ("download", r"^\s*download\s+the\s+file\s*[.!?]*\s*$"),
+
+
+        # Pagination follow-up for file/collection cards. "show more"
+        # after a file-list card resurfaces the same list card with
+        # the next page slice. See dispatcher in main.py.
+        ("more", r"^\s*show\s+more\s*[.!?]*\s*$"),
+        ("more", r"^\s*more\s*[.!?]*\s*$"),
+        ("more", r"^\s*next\s*[.!?]*\s*$"),
+        ("more", r"^\s*next\s+page\s*[.!?]*\s*$"),
+        ("more", r"^\s*keep\s+going\s*[.!?]*\s*$"),
+        ("more", r"^\s*load\s+more\s*[.!?]*\s*$"),
+        ("more", r"^\s*more\s+files?\s*[.!?]*\s*$"),
+        ("more", r"^\s*show\s+more\s+files?\s*[.!?]*\s*$"),
+
+
         ("upgrade", r"^\s*upgrade\s+it\s*[.!?]*\s*$"),
         ("upgrade", r"^\s*upgrade\s+that\s*[.!?]*\s*$"),
         ("upgrade", r"^\s*upgrade\s+now\s*[.!?]*\s*$"),

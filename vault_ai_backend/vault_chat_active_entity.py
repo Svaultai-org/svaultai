@@ -105,6 +105,7 @@ logger = logging.getLogger(__name__)
 
 ENTITY_LOGIN:                 str = "login"
 ENTITY_FILE:                  str = "file"
+ENTITY_FILE_LIST:             str = "file_list"
 ENTITY_SECURE_ITEM:           str = "secure_item"
 ENTITY_ID_DOCUMENT:           str = "id_document"
 ENTITY_NOTE:                  str = "note"
@@ -120,6 +121,7 @@ ENTITY_CRYPTO_WALLET:         str = "crypto_wallet"
 ENTITY_TYPES: frozenset[str] = frozenset({
     ENTITY_LOGIN,
     ENTITY_FILE,
+    ENTITY_FILE_LIST,
     ENTITY_SECURE_ITEM,
     ENTITY_ID_DOCUMENT,
     ENTITY_NOTE,
@@ -133,15 +135,17 @@ ENTITY_TYPES: frozenset[str] = frozenset({
 
 
 
-ACTION_SHOW:    str = "show"
-ACTION_OPEN:    str = "open"
-ACTION_VIEW:    str = "view"
-ACTION_RENAME:  str = "rename"
-ACTION_DELETE:  str = "delete"
-ACTION_COPY:    str = "copy"
-ACTION_SAVE:    str = "save"
-ACTION_UPGRADE: str = "upgrade"
-ACTION_EDIT:    str = "edit"
+ACTION_SHOW:     str = "show"
+ACTION_OPEN:     str = "open"
+ACTION_VIEW:     str = "view"
+ACTION_RENAME:   str = "rename"
+ACTION_DELETE:   str = "delete"
+ACTION_COPY:     str = "copy"
+ACTION_SAVE:     str = "save"
+ACTION_UPGRADE:  str = "upgrade"
+ACTION_EDIT:     str = "edit"
+ACTION_DOWNLOAD: str = "download"
+ACTION_MORE:     str = "more"
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset({
     ACTION_SHOW,
@@ -153,6 +157,8 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset({
     ACTION_SAVE,
     ACTION_UPGRADE,
     ACTION_EDIT,
+    ACTION_DOWNLOAD,
+    ACTION_MORE,
 })
 
 
@@ -171,6 +177,11 @@ _ALLOWED_REF_KEYS: frozenset[str] = frozenset({
     "asset_type",
     "content_type",
     "relative_path",
+    # File-list pagination state — an integer offset into the vault's
+    # stably-ordered file list, plus the page size the client sees.
+    "offset",
+    "page_size",
+    "total_count",
 })
 
 
@@ -453,6 +464,7 @@ def _snapshot_for_test() -> dict[str, dict[str, Any]]:
 __all__ = [
     "ENTITY_LOGIN",
     "ENTITY_FILE",
+    "ENTITY_FILE_LIST",
     "ENTITY_SECURE_ITEM",
     "ENTITY_ID_DOCUMENT",
     "ENTITY_NOTE",
@@ -471,6 +483,8 @@ __all__ = [
     "ACTION_SAVE",
     "ACTION_UPGRADE",
     "ACTION_EDIT",
+    "ACTION_DOWNLOAD",
+    "ACTION_MORE",
     "ALLOWED_ACTIONS",
     "DEFAULT_TTL_SECONDS",
     "MAX_LABEL_CHARS",

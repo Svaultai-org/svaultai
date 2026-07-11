@@ -15,8 +15,26 @@ class ChatBubble extends StatelessWidget {
   final bool isLastInGroup;
   final bool isStreaming;
   final void Function(ChatMessage msg)? onOpenVaultFile;
-  
-  
+
+  /// Distinct from onOpenVaultFile — Download must NOT open the media
+  /// viewer, it should trigger a real browser file download and
+  /// preserve the original filename + MIME.
+  final void Function(ChatMessage msg)? onDownloadVaultFile;
+
+  /// File ids currently being fetched for View / Download. The
+  /// cards render a spinner + disable buttons based on membership.
+  final Set<String> viewInFlightFileIds;
+  final Set<String> downloadInFlightFileIds;
+
+  /// Callback used by VaultFileListCard's Show more button. Parent
+  /// re-issues the chat prompt "show more" so the backend re-emits
+  /// the next paginated slice.
+  final VoidCallback? onShowMoreFiles;
+
+  /// True while the "show more" request is in flight.
+  final bool isShowMoreFilesInFlight;
+
+
   final void Function(String fileId)? onShowRelated;
   
   
@@ -86,6 +104,11 @@ class ChatBubble extends StatelessWidget {
     this.isLastInGroup = true,
     this.isStreaming = false,
     this.onOpenVaultFile,
+    this.onDownloadVaultFile,
+    this.viewInFlightFileIds = const <String>{},
+    this.downloadInFlightFileIds = const <String>{},
+    this.onShowMoreFiles,
+    this.isShowMoreFilesInFlight = false,
     this.onShowRelated,
     this.onLoadRelated,
     this.onCardAction,
@@ -124,6 +147,11 @@ class ChatBubble extends StatelessWidget {
         isMobile: isMobile,
         isFirstInGroup: isFirstInGroup,
         onOpenVaultFile: onOpenVaultFile,
+        onDownloadVaultFile: onDownloadVaultFile,
+        viewInFlightFileIds: viewInFlightFileIds,
+        downloadInFlightFileIds: downloadInFlightFileIds,
+        onShowMoreFiles: onShowMoreFiles,
+        isShowMoreFilesInFlight: isShowMoreFilesInFlight,
         onShowRelated: onShowRelated,
         onLoadRelated: onLoadRelated,
         onCardAction: onCardAction,
@@ -313,6 +341,11 @@ class _CardBubble extends StatelessWidget {
   final bool isMobile;
   final bool isFirstInGroup;
   final void Function(ChatMessage msg)? onOpenVaultFile;
+  final void Function(ChatMessage msg)? onDownloadVaultFile;
+  final Set<String> viewInFlightFileIds;
+  final Set<String> downloadInFlightFileIds;
+  final VoidCallback? onShowMoreFiles;
+  final bool isShowMoreFilesInFlight;
   final void Function(String fileId)? onShowRelated;
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
   final void Function(ChatMessage msg, String action, Map<String, dynamic>? data)?
@@ -362,6 +395,11 @@ class _CardBubble extends StatelessWidget {
     required this.isMobile,
     required this.isFirstInGroup,
     this.onOpenVaultFile,
+    this.onDownloadVaultFile,
+    this.viewInFlightFileIds = const <String>{},
+    this.downloadInFlightFileIds = const <String>{},
+    this.onShowMoreFiles,
+    this.isShowMoreFilesInFlight = false,
     this.onShowRelated,
     this.onLoadRelated,
     this.onCardAction,
@@ -397,20 +435,30 @@ class _CardBubble extends StatelessWidget {
     Widget body;
     switch (msg.kind) {
       case ChatMessage.kVaultFile:
-        
-        
         body = VaultFileCard(
           msg: msg,
           onOpen: () => onOpenVaultFile?.call(msg),
+          onDownload: onDownloadVaultFile == null
+              ? null
+              : () => onDownloadVaultFile!(msg),
+          isViewInFlight:
+              viewInFlightFileIds.contains(msg.fileId ?? ''),
+          isDownloadInFlight:
+              downloadInFlightFileIds.contains(msg.fileId ?? ''),
           onShowRelated: onShowRelated,
         );
         break;
       case ChatMessage.kVaultFileList:
-        
-        
         body = VaultFileListCard(
           msg: msg,
           onOpen: (fileMsg) => onOpenVaultFile?.call(fileMsg),
+          onDownload: onDownloadVaultFile == null
+              ? null
+              : (fileMsg) => onDownloadVaultFile!(fileMsg),
+          viewInFlight: viewInFlightFileIds,
+          downloadInFlight: downloadInFlightFileIds,
+          onShowMore: onShowMoreFiles,
+          isShowMoreInFlight: isShowMoreFilesInFlight,
           onLoadRelated: onLoadRelated,
           onShowRelated: onShowRelated,
         );
@@ -439,6 +487,11 @@ class _CardBubble extends StatelessWidget {
         body = VaultInventoryCard(
           msg: msg,
           onOpen: (fileMsg) => onOpenVaultFile?.call(fileMsg),
+          onDownload: onDownloadVaultFile == null
+              ? null
+              : (fileMsg) => onDownloadVaultFile!(fileMsg),
+          viewInFlight: viewInFlightFileIds,
+          downloadInFlight: downloadInFlightFileIds,
           onLoadRelated: onLoadRelated,
           onShowRelated: onShowRelated,
         );
@@ -597,6 +650,18 @@ class _CardBubble extends StatelessWidget {
         if (onCardAction != null) {
           onCardAction!(msg, 'choose_login', {
             'query': title,
+          });
+        }
+      },
+      onLoginSelectById: (id, title) {
+        // Id-aware selection: goes through the same onCardAction
+        // channel but carries the row's stable item id so the
+        // handler can send a selection_hint alongside the natural
+        // prompt.
+        if (onCardAction != null) {
+          onCardAction!(msg, 'select_login_by_id', {
+            'id':    id,
+            'title': title,
           });
         }
       },

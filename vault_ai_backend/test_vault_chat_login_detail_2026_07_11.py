@@ -82,7 +82,19 @@ def _row(id_: str, service: str, username: str, password: str,
 
 
 def _patch_fetch(monkeypatch, rows_by_query):
-    def fake_fetch(vault_id, item_type, limit, *, service_ilike=None):
+    def fake_fetch(
+        vault_id, item_type, limit,
+        *, service_ilike=None, item_id=None,
+    ):
+        # item_id support was added on 2026-07-12 for the id-based
+        # login row selection. This fixture treats item_id lookups
+        # as "return the single row whose id matches, else empty".
+        if item_id:
+            for rs in rows_by_query.values():
+                for r in rs:
+                    if str(r.get("id") or "") == item_id:
+                        return [r]
+            return []
         if service_ilike is None:
             all_rows = []
             for rs in rows_by_query.values():

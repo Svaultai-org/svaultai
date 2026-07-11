@@ -59,6 +59,7 @@ VAULT_CHAT_ROUTER_SCHEMA_V1: str = "vault_chat_router_v1"
 
 INTENT_VAULT_OVERVIEW:              str = "vault_overview"
 INTENT_FILE_SEARCH:                 str = "vault_file_search"
+INTENT_VAULT_FILE_LIST_ALL:         str = "vault_file_list_all"
 INTENT_DOCUMENT_SUMMARY:            str = "vault_document_summary"
 INTENT_SECURE_ITEM_LIST:            str = "vault_secure_item_list"
 INTENT_SECURE_ITEM_SEARCH:          str = "vault_secure_item_search"
@@ -104,6 +105,7 @@ INTENT_UNRECOGNIZED:                str = "vault_unrecognized"
 _ALLOWED_INTENTS: frozenset[str] = frozenset({
     INTENT_VAULT_OVERVIEW,
     INTENT_FILE_SEARCH,
+    INTENT_VAULT_FILE_LIST_ALL,
     INTENT_DOCUMENT_SUMMARY,
     INTENT_SECURE_ITEM_LIST,
     INTENT_SECURE_ITEM_SEARCH,
@@ -287,8 +289,25 @@ _FILE_SEARCH_PATTERNS = tuple(
         r"\bfind\s+(?:my\s+)?(?:file|document|pdf|invoice|tax|"
         r"receipt|contract|paper|paperwork)\b",
         r"\bsearch\s+(?:my\s+)?(?:documents?|files?)\b",
-        r"\bshow\s+(?:my\s+)?files?(?:\s+uploaded)?\b",
         r"\bfiles?\s+uploaded\s+(?:this|last)\s+(?:week|day|month)\b",
+    )
+)
+
+
+# "Show me all my files" / "list all files" — the whole-vault file
+# list. This produces a structured vault_file_list envelope with
+# paginated rows, not the prose dump the older tool-router path
+# emitted. Kept BEFORE _FILE_SEARCH_PATTERNS so "show me all files"
+# doesn't accidentally match a narrower search pattern.
+_FILE_LIST_ALL_PATTERNS = tuple(
+    re.compile(p, re.IGNORECASE) for p in (
+        r"^\s*show\s+(?:me\s+)?all\s+(?:of\s+)?(?:my\s+)?files?\s*[.!?]*\s*$",
+        r"^\s*all\s+(?:of\s+)?my\s+files?\s*[.!?]*\s*$",
+        r"^\s*list\s+all\s+(?:of\s+)?(?:my\s+)?files?\s*[.!?]*\s*$",
+        r"^\s*list\s+(?:my\s+)?files?\s*[.!?]*\s*$",
+        r"^\s*show\s+(?:me\s+)?(?:my\s+)?files?\s*[.!?]*\s*$",
+        r"^\s*what\s+files?\s+do\s+i\s+have\s*[.!?]*\s*$",
+        r"^\s*show\s+(?:me\s+)?everything\s+in\s+(?:my\s+)?vault\s*[.!?]*\s*$",
     )
 )
 
@@ -1041,6 +1060,19 @@ def classify_and_build_vault_intent(
         )
 
 
+    if _matches_any(text, _FILE_LIST_ALL_PATTERNS):
+        # "Show me all my files" — whole-vault list. Envelope is
+        # populated with real rows by main.py so the frontend can
+        # render a structured file-list card. Never fall back to prose.
+        return _wrap_intent(
+            INTENT_VAULT_FILE_LIST_ALL,
+            _build_card(
+                CARD_FILE_RESULT,
+                liveFetchRequired=True,
+                view="list_all",
+            ),
+        )
+
     if _matches_any(text, _FILE_SEARCH_PATTERNS):
         return _wrap_intent(
             INTENT_FILE_SEARCH,
@@ -1242,6 +1274,7 @@ __all__ = [
     "INTENT_LOGIN_LIST", "INTENT_LOGIN_SEARCH",
     "INTENT_LOGIN_DUPLICATES", "INTENT_LOGIN_REVEAL",
     "INTENT_LOGIN_COPY",
+    "INTENT_VAULT_FILE_LIST_ALL",
     "INTENT_GENERATED_LOGIN_LIST",
     "INTENT_GENERATED_LOGIN_CREATE_DRAFT",
     "INTENT_ID_DOCUMENT_LIST", "INTENT_ID_DOCUMENT_SEARCH",

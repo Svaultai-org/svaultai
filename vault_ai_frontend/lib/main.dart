@@ -668,7 +668,87 @@ const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
 class AppState extends ChangeNotifier {
   bool authed = false;
 
-  
+  // Per-file in-flight state. The chat card widgets watch AppState so
+  // they can render a spinner + disable the button while a fetch is
+  // running, and reject a second tap on the same file. Keeping this on
+  // AppState (rather than local widget state) is deliberate — the file
+  // list card is rebuilt whenever the chat message list changes, so
+  // local state would be lost between rebuilds.
+  final Set<String> _viewInFlight = <String>{};
+  final Set<String> _downloadInFlight = <String>{};
+
+  bool isFileViewInFlight(String fileId) =>
+      _viewInFlight.contains(fileId);
+  bool isFileDownloadInFlight(String fileId) =>
+      _downloadInFlight.contains(fileId);
+  bool isFileBusy(String fileId) =>
+      _viewInFlight.contains(fileId) ||
+      _downloadInFlight.contains(fileId);
+
+  /// Read-only snapshots of the current in-flight file ids, so
+  /// widgets can pass them down without exposing mutable state.
+  Set<String> get viewInFlightFileIds =>
+      Set<String>.unmodifiable(_viewInFlight);
+  Set<String> get downloadInFlightFileIds =>
+      Set<String>.unmodifiable(_downloadInFlight);
+
+  /// Returns true if this call registered the lock (i.e. the file was
+  /// not already in-flight). A false return means a concurrent tap won
+  /// — the caller MUST NOT proceed with the fetch.
+  bool beginFileView(String fileId) {
+    if (fileId.isEmpty) return false;
+    if (_viewInFlight.contains(fileId)) return false;
+    _viewInFlight.add(fileId);
+    notifyListeners();
+    return true;
+  }
+
+  void endFileView(String fileId) {
+    if (fileId.isEmpty) return;
+    if (_viewInFlight.remove(fileId)) notifyListeners();
+  }
+
+  bool beginFileDownload(String fileId) {
+    if (fileId.isEmpty) return false;
+    if (_downloadInFlight.contains(fileId)) return false;
+    _downloadInFlight.add(fileId);
+    notifyListeners();
+    return true;
+  }
+
+  void endFileDownload(String fileId) {
+    if (fileId.isEmpty) return;
+    if (_downloadInFlight.remove(fileId)) notifyListeners();
+  }
+
+  void clearAllFileInFlight() {
+    if (_viewInFlight.isEmpty && _downloadInFlight.isEmpty) return;
+    _viewInFlight.clear();
+    _downloadInFlight.clear();
+    notifyListeners();
+  }
+
+  /// True while a Show more request for the file list is in flight.
+  /// Kept as a single boolean because there is only one "current"
+  /// paginated file list per chat session — the backend tracks the
+  /// offset in its active-entity store.
+  bool _showMoreFilesInFlight = false;
+  bool get showMoreFilesInFlight => _showMoreFilesInFlight;
+
+  bool beginShowMoreFiles() {
+    if (_showMoreFilesInFlight) return false;
+    _showMoreFilesInFlight = true;
+    notifyListeners();
+    return true;
+  }
+
+  void endShowMoreFiles() {
+    if (!_showMoreFilesInFlight) return;
+    _showMoreFilesInFlight = false;
+    notifyListeners();
+  }
+
+
   bool _hydrated = false;
   bool get hydrated => _hydrated;
 
@@ -7717,8 +7797,8 @@ await _loadVaultLogins();
                 );
       final type = decoded['type']?.toString();
       if (type == 'vault_file' || type == 'vault_image') {
-        
-        
+
+
         final payload = <String, dynamic>{};
         final relativePath = decoded['relative_path']?.toString();
         if (relativePath != null && relativePath.isNotEmpty) {
@@ -7727,6 +7807,15 @@ await _loadVaultLogins();
         final assetType = decoded['asset_type']?.toString();
         if (assetType != null && assetType.isNotEmpty) {
           payload['asset_type'] = assetType;
+        }
+        // The backend's active-entity follow-up dispatcher can attach
+        // a pending_action (open/view/download) so the frontend
+        // triggers the corresponding UI immediately on receipt — the
+        // user asked "download it" and expects a download to start,
+        // not another card to click through.
+        final pending = decoded['pending_action']?.toString();
+        if (pending != null && pending.isNotEmpty) {
+          payload['pending_action'] = pending;
         }
         return _Msg(
           'assistant',
@@ -8707,8 +8796,18 @@ await _loadVaultLogins();
     }
 
     final app = context.read<AppState>();
+    // Per-file double-tap guard. beginFileView returns false if a
+    // view fetch is already running for this file id — the second
+    // tap becomes a no-op instead of firing another decrypt.
+    if (!app.beginFileView(msg.fileId!)) return;
+    // Remember which file the user just picked so a follow-up
+    // "download it" / "delete it" targets THIS file, not whichever
+    // one shares a filename.
+    _rememberTappedFile(msg.fileId!);
+
     final token = app.sessionToken;
     if (token == null || app.vaultId == null || app.vaultName == null) {
+      app.endFileView(msg.fileId!);
       _showSnack('Session expired.');
       return;
     }
@@ -8853,13 +8952,94 @@ await _loadVaultLogins();
       );
     } catch (e) {
       if (app.handleApiException(e)) return;
-      
-      
+
+
       _showSnack(friendlyVaultFileOpenError(e));
+    } finally {
+      // Always release the per-file lock — including when the fetch
+      // threw before opening a dialog. Otherwise the button stays
+      // stuck in the loading state.
+      app.endFileView(msg.fileId!);
     }
   }
 
-  
+  /// Auto-trigger the backend-supplied pending action on a freshly
+  /// received vault_file card. Only fires once per message — we use
+  /// the payload's own `pending_action` flag which is cleared after
+  /// dispatch so a rebuild does not re-fire the action.
+  void _maybeTriggerPendingFileAction(_Msg msg) {
+    if (msg.kind != 'vault_file') return;
+    final payload = msg.payload;
+    if (payload == null) return;
+    final action = payload['pending_action']?.toString();
+    if (action == null || action.isEmpty) return;
+    // Clear so any subsequent rebuild does not re-dispatch.
+    payload.remove('pending_action');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (action == 'download') {
+        _downloadVaultFileCard(msg);
+      } else if (action == 'open' ||
+          action == 'view' ||
+          action == 'show') {
+        _openVaultFileCard(msg);
+      }
+    });
+  }
+
+  /// Download the file bytes and hand them to the browser as a real
+  /// file save. Distinct from `_openVaultFileCard`: no viewer dialog,
+  /// no `HtmlElementView`, no `Image.memory` — just `_fetchVaultFile`
+  /// then `FileDownloader().downloadBytes(...)` with the original
+  /// filename + MIME preserved. Per-file lock guards against double
+  /// taps.
+  Future<void> _downloadVaultFileCard(_Msg msg) async {
+    if (msg.fileId == null || msg.fileName == null) {
+      _showSnack('Missing file information.');
+      return;
+    }
+    final app = context.read<AppState>();
+    if (!app.beginFileDownload(msg.fileId!)) return;
+    _rememberTappedFile(msg.fileId!);
+    final token = app.sessionToken;
+    if (token == null || app.vaultId == null || app.vaultName == null) {
+      app.endFileDownload(msg.fileId!);
+      _showSnack('Session expired.');
+      return;
+    }
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final fetched = await _fetchVaultFile(
+        client: client,
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+        fileId: msg.fileId!,
+        fallbackFileName: msg.fileName!,
+        fallbackMime: msg.mimeType,
+      );
+      if (!mounted) return;
+      final ok = FileDownloader().downloadBytes(
+        bytes: fetched.bytes,
+        fileName: fetched.fileName.isNotEmpty
+            ? fetched.fileName
+            : msg.fileName!,
+        mimeType: fetched.contentType ?? msg.mimeType,
+      );
+      if (!mounted) return;
+      _showSnack(ok
+          ? 'Download started: ${msg.fileName}'
+          : 'Download failed. Try again.');
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack(friendlyVaultFileOpenError(e));
+    } finally {
+      app.endFileDownload(msg.fileId!);
+    }
+  }
+
+
   Future<void> _showUnsupportedPreviewDialog({
     required String fileName,
     required Uint8List bytes,
@@ -9342,6 +9522,94 @@ await _loadVaultLogins();
     await _send();
   }
 
+  /// Dispatcher for structured card actions surfaced through the
+  /// chat bubble → chat message list plumbing. Actions carry a
+  /// (msg, action, data) tuple. Today we route:
+  ///   * select_login_by_id — the user tapped a specific login row
+  ///     in the list. We display a natural chat prompt AND set
+  ///     `_nextSelectionHint` so the backend gets the row's stable
+  ///     id via /chat body — the id never appears in visible prose.
+  ///   * choose_login — legacy chooser-card path (title only).
+  ///     Retained for backwards compatibility; also sends a natural
+  ///     prompt without a hint.
+  void _handleChatCardAction(
+    _Msg msg,
+    String action,
+    Map<String, dynamic>? data,
+  ) {
+    if (action == 'select_login_by_id') {
+      final id = (data?['id'] as String?)?.trim() ?? '';
+      final title = (data?['title'] as String?)?.trim() ?? '';
+      if (id.isEmpty) return;
+      _nextSelectionHint = {
+        'kind': 'login',
+        'id':   id,
+      };
+      final prompt = title.isEmpty
+          ? 'Show my selected login'
+          : 'Show my $title login';
+      _sendQuickPrompt(prompt);
+      return;
+    }
+    if (action == 'choose_login') {
+      final title = (data?['query'] as String?)?.trim() ?? '';
+      if (title.isEmpty) return;
+      _sendQuickPrompt('Show my $title login');
+      return;
+    }
+    if (action == 'select_file_by_id') {
+      final id = (data?['id'] as String?)?.trim() ?? '';
+      final title = (data?['title'] as String?)?.trim() ?? '';
+      if (id.isEmpty) return;
+      _nextSelectionHint = {
+        'kind': 'file',
+        'id':   id,
+      };
+      final prompt = title.isEmpty
+          ? 'Show my selected file'
+          : 'Show my $title file';
+      _sendQuickPrompt(prompt);
+      return;
+    }
+  }
+
+  /// One-shot selection hint attached to the NEXT chat POST. Cleared
+  /// after send. The hint is a structured field on the /chat body —
+  /// it never appears in the user-visible chat prose.
+  Map<String, String>? _nextSelectionHint;
+
+  /// The last file id the user opened/downloaded via a direct card
+  /// tap (i.e. without a chat prompt in between). Set from
+  /// `_openVaultFileCard` and `_downloadVaultFileCard` so the next
+  /// chat message ("download it", "delete it", "rename it") targets
+  /// the file the user just touched, even for files that share a
+  /// filename. Cleared when consumed as a hint, or when a chat
+  /// response resets the active entity.
+  String? _lastTappedFileId;
+
+  void _rememberTappedFile(String fileId) {
+    if (fileId.isEmpty) return;
+    _lastTappedFileId = fileId;
+    // If no explicit hint is already queued, use the tapped file as
+    // the default. An explicit row tap that already staged a hint
+    // wins (staged hints are always fresher).
+    _nextSelectionHint ??= {'kind': 'file', 'id': fileId};
+  }
+
+  /// Backend re-emits the paginated file-list envelope when the user
+  /// says "show more". This helper acquires the per-session lock,
+  /// emits the prompt, and releases the lock on completion — so
+  /// rapid taps of Show more become a single request.
+  Future<void> _requestMoreFiles() async {
+    final app = context.read<AppState>();
+    if (!app.beginShowMoreFiles()) return;
+    try {
+      await _sendQuickPrompt('show more');
+    } finally {
+      app.endShowMoreFiles();
+    }
+  }
+
   
   void _handleCryptoWalletChatAction(CryptoWalletActionRequest request) {
     
@@ -9649,6 +9917,8 @@ await _loadVaultLogins();
       final encryptedMessage = await _VaultCrypto.encrypt(text);
 
 
+      final _hintForThisSend = _nextSelectionHint;
+      _nextSelectionHint = null;
       final stream = client.chatStream(
         encryptedMessage: encryptedMessage,
         vaultName: vaultName,
@@ -9656,6 +9926,7 @@ await _loadVaultLogins();
         authToken: authToken,
         uploadedFileIds: uploadedFileIds,
         appLocale: context.read<AppState>().chatReplyLanguageCode,
+        selectionHint: _hintForThisSend,
       );
 
       try {
@@ -9724,6 +9995,12 @@ await _loadVaultLogins();
           setState(() {
             msgs[assistantIndex!] = structured;
           });
+          // "download it" / "open it" / "view it" pronoun follow-ups
+          // arrive as a vault_file card with pending_action set. Fire
+          // the corresponding UI action once, on the next frame, so
+          // the user's instruction actually completes without another
+          // tap.
+          _maybeTriggerPendingFileAction(structured);
         }
       }
       
@@ -9991,15 +10268,16 @@ await _loadVaultLogins();
   }
 
   Widget _buildChatView(bool isMobile) {
-    final activeVaultName = context.watch<AppState>().vaultName;
+    final app = context.watch<AppState>();
+    final activeVaultName = app.vaultName;
     return Column(
       children: [
         Expanded(
           child: ChatMessageList(
             messages: msgs,
             thinking: thinking,
-            
-            
+
+
             streaming: sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
             isMobile: isMobile,
             padding: EdgeInsets.symmetric(
@@ -10008,7 +10286,17 @@ await _loadVaultLogins();
             ),
             scrollController: _scrollController,
             vaultName: activeVaultName,
+            // Per-file in-flight state, watched from AppState so the
+            // whole chat rebuilds when any file starts / finishes a
+            // view or download. Individual cards render their own
+            // spinner / disabled buttons based on set membership.
+            viewInFlightFileIds: app.viewInFlightFileIds,
+            downloadInFlightFileIds: app.downloadInFlightFileIds,
             onOpenVaultFile: (msg) => _openVaultFileCard(msg),
+            onDownloadVaultFile: (msg) => _downloadVaultFileCard(msg),
+            onShowMoreFiles: () => _requestMoreFiles(),
+            isShowMoreFilesInFlight: app.showMoreFilesInFlight,
+            onCardAction: _handleChatCardAction,
             onShowRelated: _showRelatedFilesForFile,
             onLoadRelated: _fetchRelatedFilesEnvelope,
             onScanRemaining: _handleScanRemaining,

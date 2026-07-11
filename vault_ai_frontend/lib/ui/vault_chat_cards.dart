@@ -100,6 +100,11 @@ class VaultChatCardView extends StatelessWidget {
 
   final void Function(String query)? onLoginChooseCandidate;
 
+  /// Id-aware selector — receives the row's stable item id + display
+  /// title. Preferred over `onLoginChooseCandidate` because it
+  /// disambiguates rows that share a title.
+  final void Function(String id, String title)? onLoginSelectById;
+
 
   final bool cryptoEntitled;
 
@@ -127,6 +132,7 @@ class VaultChatCardView extends StatelessWidget {
     this.onLoginDelete,
     this.onLoginOpenWebsite,
     this.onLoginChooseCandidate,
+    this.onLoginSelectById,
     this.cryptoEntitled = true,
     this.onOpenCryptoUpgrade,
   });
@@ -173,6 +179,7 @@ class VaultChatCardView extends StatelessWidget {
           onLoginDelete:          onLoginDelete,
           onLoginOpenWebsite:     onLoginOpenWebsite,
           onLoginChooseCandidate: onLoginChooseCandidate,
+          onLoginSelectById: onLoginSelectById,
         );
       case kVcrCardGeneratedLogin:
         return _GeneratedLoginCard(card: c);
@@ -679,12 +686,18 @@ class _LoginCard extends StatelessWidget {
   final void Function(String service, String url)? onLoginOpenWebsite;
   final void Function(String query)?               onLoginChooseCandidate;
 
+  /// Id-aware selector — preferred over `onLoginChooseCandidate` for
+  /// disambiguating rows that share a title. Row taps in the list
+  /// view invoke this with the row's stable item id + display title.
+  final void Function(String id, String title)?   onLoginSelectById;
+
   const _LoginCard({
     required this.card,
     this.onLoginEdit,
     this.onLoginDelete,
     this.onLoginOpenWebsite,
     this.onLoginChooseCandidate,
+    this.onLoginSelectById,
   });
 
   @override
@@ -770,7 +783,20 @@ class _LoginCard extends StatelessWidget {
               style: kWalletBodyStyle,
             ),
           ] else ...[
-            for (final l in logins.take(10)) _LoginRow(row: l),
+            // Each row is a proper tappable selector. Prefer the
+            // id-aware callback so two rows sharing a title still
+            // resolve to distinct detail cards; fall back to the
+            // legacy title-based chooser if the id path isn't wired.
+            for (final l in logins.take(10))
+              _LoginRow(
+                row: l,
+                onSelect: onLoginSelectById != null
+                    ? onLoginSelectById!
+                    : (onLoginChooseCandidate == null
+                        ? null
+                        : (String _id, String title) =>
+                            onLoginChooseCandidate!(title)),
+              ),
             if (logins.length > 10) ...[
               const SizedBox(height: 6),
               Text(
@@ -1273,7 +1299,16 @@ List<Map<String, dynamic>> _asMapList(dynamic raw) {
 
 class _LoginRow extends StatelessWidget {
   final Map<String, dynamic> row;
-  const _LoginRow({required this.row});
+
+  /// Selecting a row must produce the full editable login detail card.
+  /// The parent surface passes this callback with BOTH the row's
+  /// stable item id AND its display title. The id disambiguates two
+  /// logins that share a title ("Gmail" vs "Gmail"); the title is
+  /// used purely for the user-visible chat bubble text — the id is
+  /// carried as a structured selection hint, not embedded in prose.
+  final void Function(String id, String title)? onSelect;
+
+  const _LoginRow({required this.row, this.onSelect});
 
   @override
   Widget build(BuildContext context) {
@@ -1282,68 +1317,95 @@ class _LoginRow extends StatelessWidget {
     final domain = (row['domain'] ?? '').toString();
     final generated = row['generated'] == true;
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 28, height: 28,
-            decoration: BoxDecoration(
-              color: kWalletBgBase,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: kWalletBorder),
-            ),
-            alignment: Alignment.center,
-            child: const Icon(Icons.lock_outline,
-                size: 16, color: kWalletTextMuted),
+    final tapTitle = title.trim();
+    final rowId = (row['id'] ?? '').toString().trim();
+    return Semantics(
+      button: true,
+      label: tapTitle.isNotEmpty ? 'Open login $tapTitle' : 'Open login',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          // Prefer the row id in the widget key when available so
+          // two logins with the same title still get distinct keys.
+          key: Key(
+            rowId.isNotEmpty
+                ? 'login_row_id_$rowId'
+                : 'login_row_' +
+                    (tapTitle.isEmpty
+                        ? 'untitled'
+                        : tapTitle
+                            .toLowerCase()
+                            .replaceAll(RegExp(r'[^a-z0-9]+'), '_')),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          onTap: onSelect == null || rowId.isEmpty
+              ? null
+              : () => onSelect!(rowId, tapTitle),
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                vertical: 8, horizontal: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  title.isEmpty ? 'Untitled' : title,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: kWalletTextPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
+                Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                    color: kWalletBgBase,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: kWalletBorder),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.lock_outline,
+                      size: 18, color: kWalletTextMuted),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title.isEmpty ? 'Untitled' : title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWalletTextPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (usernameMasked.isNotEmpty || domain.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            [
+                              if (usernameMasked.isNotEmpty)
+                                usernameMasked,
+                              if (domain.isNotEmpty) '· $domain',
+                            ].join(' '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: kWalletTextMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                if (usernameMasked.isNotEmpty || domain.isNotEmpty)
-                  Text(
-                    [
-                      if (usernameMasked.isNotEmpty) usernameMasked,
-                      if (domain.isNotEmpty) '· $domain',
-                    ].join(' '),
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: kWalletTextMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                if (generated) ...[
+                  const SizedBox(width: 6),
+                  const Icon(Icons.bolt,
+                      size: 14, color: kWalletTextMuted),
+                ],
+                const SizedBox(width: 6),
+                const Icon(Icons.chevron_right,
+                    size: 20, color: kWalletTextMuted),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            '•••••••••',
-            style: const TextStyle(
-              color: kWalletTextMuted,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.2,
-            ),
-          ),
-          if (generated) ...[
-            const SizedBox(width: 8),
-            const Icon(Icons.bolt,
-                size: 14, color: kWalletTextMuted),
-          ],
-        ],
+        ),
       ),
     );
   }

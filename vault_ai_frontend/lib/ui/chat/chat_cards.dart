@@ -96,14 +96,27 @@ String _sanitizeStaleEmptyStateText({
 class VaultFileCard extends StatelessWidget {
   final ChatMessage msg;
   final VoidCallback? onOpen;
+  final VoidCallback? onDownload;
 
-  
+  /// True while `onOpen` is fetching + decrypting bytes. When true the
+  /// View button shows a spinner + "Opening…" and does NOT re-fire on
+  /// tap. Set by AppState.isFileViewInFlight and threaded down from
+  /// ChatMessageList.
+  final bool isViewInFlight;
+
+  /// True while `onDownload` is fetching + decrypting bytes. When true
+  /// the Download button shows a spinner + "Downloading…".
+  final bool isDownloadInFlight;
+
   final void Function(String fileId)? onShowRelated;
 
   const VaultFileCard({
     super.key,
     required this.msg,
     this.onOpen,
+    this.onDownload,
+    this.isViewInFlight = false,
+    this.isDownloadInFlight = false,
     this.onShowRelated,
   });
 
@@ -210,19 +223,52 @@ class VaultFileCard extends StatelessWidget {
             spacing: VaultSpacing.sm,
             runSpacing: VaultSpacing.sm,
             children: [
+              // Disable BOTH buttons while either action is in flight
+              // for this file — a user should not be able to start a
+              // download mid-view or fire a second view.
               FilledButton.icon(
-                onPressed: onOpen,
-                icon: const Icon(Icons.visibility_outlined, size: 18),
-                label: Text(AppLocalizations.of(context).commonView),
+                key: const Key('vault_file_card_view_btn'),
+                onPressed: (isViewInFlight || isDownloadInFlight)
+                    ? null
+                    : onOpen,
+                icon: isViewInFlight
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Icon(Icons.visibility_outlined, size: 18),
+                label: Text(
+                  isViewInFlight
+                      ? 'Opening…'
+                      : AppLocalizations.of(context).commonView,
+                ),
               ),
               OutlinedButton.icon(
-                onPressed: onOpen,
-                icon: const Icon(Icons.file_download_outlined, size: 18),
-                label: Text(AppLocalizations.of(context).commonDownload),
+                key: const Key('vault_file_card_download_btn'),
+                onPressed: (isViewInFlight || isDownloadInFlight)
+                    ? null
+                    : (onDownload ?? onOpen),
+                icon: isDownloadInFlight
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Icon(Icons.file_download_outlined, size: 18),
+                label: Text(
+                  isDownloadInFlight
+                      ? 'Downloading…'
+                      : AppLocalizations.of(context).commonDownload,
+                ),
               ),
               if (onShowRelated != null && (msg.fileId ?? '').isNotEmpty)
                 OutlinedButton.icon(
-                  onPressed: () => onShowRelated!(msg.fileId!),
+                  onPressed: (isViewInFlight || isDownloadInFlight)
+                      ? null
+                      : () => onShowRelated!(msg.fileId!),
                   icon: const Icon(
                     Icons.account_tree_outlined,
                     size: 18,
@@ -265,27 +311,50 @@ String _formatBytes(int bytes) {
 class VaultFileListCard extends StatefulWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
+  /// Distinct callback for the Download row action. If null the
+  /// Download button is not shown. Kept separate so the row cannot
+  /// silently accept `onOpen` when a caller forgets to wire download.
+  final void Function(ChatMessage fileMsg)? onDownload;
+
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
 
-  
   final void Function(String fileId)? onShowRelated;
 
-  
+  /// Set of file ids currently being fetched for View. Rows check
+  /// membership to render a spinner and reject repeat taps.
+  final Set<String> viewInFlight;
+
+  /// Set of file ids currently being fetched for Download.
+  final Set<String> downloadInFlight;
+
+  /// Callback for the Show more button (real pagination, not a "refine
+  /// your search" text hint). The parent should re-issue the chat
+  /// prompt "show more" — the backend re-emits the same file-list
+  /// envelope sliced at the next offset, so no duplicate rows appear.
+  final VoidCallback? onShowMore;
+
+  /// True while a Show more request is in flight for this card. Used
+  /// to disable the button + render a spinner. Kept per-card so
+  /// multiple stale file-list cards in scroll history do not race.
+  final bool isShowMoreInFlight;
+
   static const int maxRows = 25;
 
-  
   static const double maxListHeight = 380;
 
   const VaultFileListCard({
     super.key,
     required this.msg,
     this.onOpen,
+    this.onDownload,
     this.onLoadRelated,
     this.onShowRelated,
+    this.viewInFlight = const <String>{},
+    this.downloadInFlight = const <String>{},
+    this.onShowMore,
+    this.isShowMoreInFlight = false,
   });
 
   @override
@@ -403,6 +472,16 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
                           onOpen: () => onOpen?.call(
                             VaultFileListCard._toFileMessage(raw, msg),
                           ),
+                          onDownload: widget.onDownload == null
+                              ? null
+                              : () => widget.onDownload!.call(
+                                    VaultFileListCard._toFileMessage(
+                                        raw, msg),
+                                  ),
+                          isViewInFlight:
+                              widget.viewInFlight.contains(fid),
+                          isDownloadInFlight:
+                              widget.downloadInFlight.contains(fid),
                           onShowRelated: canExpand
                               ? () => setState(() {
                                     _expandedFileId =
@@ -428,29 +507,75 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
               ),
             ),
           ],
-          if (moreCount > 0) ...[
+          // Real pagination. When the backend indicates has_more, we
+          // render a tappable Show more button that re-issues the
+          // chat prompt "show more". While the request is in-flight
+          // the button collapses to a spinner and can't fire again.
+          if (_hasMoreForCurrentEnvelope(p) ||
+              (moreCount > 0 && widget.onShowMore == null)) ...[
             const SizedBox(height: VaultSpacing.md),
-            Text(
-              '+$moreCount more results — refine your search to narrow.',
-              style: VaultText.caption,
-            ),
+            if (widget.onShowMore != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  key: const Key('vault_file_list_show_more_btn'),
+                  onPressed: widget.isShowMoreInFlight
+                      ? null
+                      : widget.onShowMore,
+                  icon: widget.isShowMoreInFlight
+                      ? const SizedBox(
+                          width: 14, height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.expand_more, size: 18),
+                  label: Text(
+                    widget.isShowMoreInFlight
+                        ? 'Loading…'
+                        : (moreCount > 0
+                            ? 'Show more ($moreCount remaining)'
+                            : 'Show more'),
+                  ),
+                ),
+              )
+            else
+              Text(
+                '+$moreCount more — say "show more" to see the next page.',
+                style: VaultText.caption,
+              ),
           ],
         ],
       ),
     );
+  }
+
+  /// Prefer the backend's explicit `has_more` flag over deriving it
+  /// from `more_count`. Older envelopes without the flag fall back to
+  /// the caller's `moreCount > 0` check.
+  bool _hasMoreForCurrentEnvelope(Map<String, dynamic> p) {
+    final flag = p['has_more'];
+    if (flag is bool) return flag;
+    final more = p['more_count'];
+    return more is int && more > 0;
   }
 }
 
 class _VaultFileListRow extends StatelessWidget {
   final Map<String, dynamic> file;
   final VoidCallback? onOpen;
+  final VoidCallback? onDownload;
+  final bool isViewInFlight;
+  final bool isDownloadInFlight;
 
-  
   final VoidCallback? onShowRelated;
 
   const _VaultFileListRow({
     required this.file,
     this.onOpen,
+    this.onDownload,
+    this.isViewInFlight = false,
+    this.isDownloadInFlight = false,
     this.onShowRelated,
   });
 
@@ -468,8 +593,11 @@ class _VaultFileListRow extends StatelessWidget {
         ? savedName
         : fileName;
 
+    final busy = isViewInFlight || isDownloadInFlight;
+    final fileId = (file['file_id'] as String?) ?? '';
     return InkWell(
-      onTap: onOpen,
+      key: Key('vault_file_list_row_$fileId'),
+      onTap: busy ? null : onOpen,
       borderRadius: BorderRadius.circular(VaultRadius.md),
       child: Container(
         padding: const EdgeInsets.all(VaultSpacing.md),
@@ -522,44 +650,107 @@ class _VaultFileListRow extends StatelessWidget {
                   ],
                   if (mime.isNotEmpty || size != null) ...[
                     const SizedBox(height: 2),
-                    Text(
-                      [
+                    Builder(builder: (_) {
+                      // Prefer the backend-supplied size_display so
+                      // the row always shows a human-readable size
+                      // even if a client formatter drifts.
+                      final serverSize =
+                          (file['size_display'] as String?)?.trim();
+                      final sizeStr = (serverSize != null &&
+                              serverSize.isNotEmpty)
+                          ? serverSize
+                          : (size != null ? _formatBytes(size) : null);
+                      final uploaded =
+                          (file['uploaded_at'] as String?)?.trim();
+                      final parts = <String>[
                         if (mime.isNotEmpty) mime,
-                        if (size != null) _formatBytes(size),
-                      ].join(' / '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: VaultText.caption,
-                    ),
+                        if (sizeStr != null) sizeStr,
+                        if (uploaded != null && uploaded.isNotEmpty)
+                          'uploaded ${_shortDate(uploaded)}',
+                      ];
+                      if (parts.isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+                      return Text(
+                        parts.join(' / '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: VaultText.caption,
+                      );
+                    }),
                   ],
                 ],
               ),
             ),
             const SizedBox(width: VaultSpacing.sm),
-            IconButton(
-              tooltip: AppLocalizations.of(context).commonView,
-              onPressed: onOpen,
-              icon: const Icon(
-                Icons.open_in_new,
-                size: 18,
-                color: VaultColors.accentBright,
-              ),
-            ),
-            if (onShowRelated != null)
+            // Per-row loading indicator: while the fetch runs the
+            // row's action buttons collapse to a spinner so the user
+            // sees progress AND cannot fire a second fetch.
+            if (busy)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else ...[
               IconButton(
-                tooltip: AppLocalizations.of(context).chatCardShowRelated,
-                onPressed: onShowRelated,
-                visualDensity: VisualDensity.compact,
+                key: Key('vault_file_list_row_view_$fileId'),
+                tooltip: AppLocalizations.of(context).commonView,
+                onPressed: onOpen,
                 icon: const Icon(
-                  Icons.account_tree_outlined,
+                  Icons.open_in_new,
                   size: 18,
                   color: VaultColors.accentBright,
                 ),
               ),
+              if (onDownload != null)
+                IconButton(
+                  key: Key('vault_file_list_row_download_$fileId'),
+                  tooltip:
+                      AppLocalizations.of(context).commonDownload,
+                  onPressed: onDownload,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(
+                    Icons.file_download_outlined,
+                    size: 18,
+                    color: VaultColors.accentBright,
+                  ),
+                ),
+              if (onShowRelated != null)
+                IconButton(
+                  tooltip: AppLocalizations.of(context)
+                      .chatCardShowRelated,
+                  onPressed: onShowRelated,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(
+                    Icons.account_tree_outlined,
+                    size: 18,
+                    color: VaultColors.accentBright,
+                  ),
+                ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  static String _shortDate(String iso) {
+    // Best-effort short-date rendering. Falls back to first 10 chars
+    // (YYYY-MM-DD prefix of an ISO string) if parsing fails — avoids
+    // an exception on partial or non-standard values.
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      const months = [
+        'Jan','Feb','Mar','Apr','May','Jun',
+        'Jul','Aug','Sep','Oct','Nov','Dec',
+      ];
+      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+    } catch (_) {
+      return iso.length >= 10 ? iso.substring(0, 10) : iso;
+    }
   }
 }
 
@@ -1088,28 +1279,29 @@ String _prettyTravelDocType(String code) {
 class VaultInventoryCard extends StatefulWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
+  final void Function(ChatMessage fileMsg)? onDownload;
+  final Set<String> viewInFlight;
+  final Set<String> downloadInFlight;
 
-  
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
 
-  
   final void Function(String fileId)? onShowRelated;
 
-  
+
   static const int maxRecentRows = 10;
 
-  
   static const int maxFolderRows = 8;
 
-  
   static const double maxRecentListHeight = 240;
 
   const VaultInventoryCard({
     super.key,
     required this.msg,
     this.onOpen,
+    this.onDownload,
+    this.viewInFlight = const <String>{},
+    this.downloadInFlight = const <String>{},
     this.onLoadRelated,
     this.onShowRelated,
   });
@@ -1256,6 +1448,16 @@ class _VaultInventoryCardState extends State<VaultInventoryCard> {
                           onOpen: () => onOpen?.call(
                             VaultFileListCard._toFileMessage(raw, msg),
                           ),
+                          onDownload: widget.onDownload == null
+                              ? null
+                              : () => widget.onDownload!.call(
+                                    VaultFileListCard._toFileMessage(
+                                        raw, msg),
+                                  ),
+                          isViewInFlight:
+                              widget.viewInFlight.contains(fid),
+                          isDownloadInFlight:
+                              widget.downloadInFlight.contains(fid),
                           onShowRelated: canExpand
                               ? () => setState(() {
                                     _expandedFileId =

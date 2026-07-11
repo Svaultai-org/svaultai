@@ -1189,6 +1189,7 @@ class VaultAIClient {
     required String authToken,
     List<String>? uploadedFileIds,
     String? appLocale,
+    Map<String, String>? selectionHint,
   }) async* {
     final uri = Uri.parse('$baseUrl/chat');
 
@@ -1226,6 +1227,12 @@ class VaultAIClient {
       'uploaded_file_ids': uploadedFileIds ?? <String>[],
       if (appLocale != null && appLocale.isNotEmpty)
         'app_locale': appLocale,
+      // Structured selection hint from a chat card row tap. The
+      // shape is {"kind":"login"|"file","id":"<uuid>"}. Not rendered
+      // in prose — used by the backend to disambiguate rows that
+      // share a title.
+      if (selectionHint != null && selectionHint.isNotEmpty)
+        'selection_hint': selectionHint,
     });
 
     final response = await request.send();

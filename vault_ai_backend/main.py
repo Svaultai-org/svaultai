@@ -918,6 +918,17 @@ class ChatRequest(BaseModel):
 
     app_locale: Optional[str] = None
 
+    # Selection hint from a chat card tap. When the user taps a
+    # specific row in a login/file list card the frontend sends a
+    # natural-language prompt like "Show my Gmail login" AND this
+    # structured hint identifying the exact row the user picked.
+    # Backend uses the hint to bypass ambiguity when two rows share
+    # the same title (two logins named "Gmail", two files named
+    # "videos", etc.). The id is never rendered in visible prose;
+    # it stays as a structured field only.
+    # Shape: {"kind": "login" | "file", "id": "<uuid>"}
+    selection_hint: Optional[dict] = None
+
 
 class VaultNameCheck(BaseModel):
     vault_name: str
@@ -3587,6 +3598,22 @@ def _format_no_match_reply(
 _FILE_LIST_CARD_CAP = 25
 
 
+def _format_bytes_human(size: int) -> str:
+    """Human file size — matches the frontend formatter so a row
+    always carries a display-ready string in addition to raw bytes.
+    Ranges: <1 KB = "N B", <1 MB = "N.N KB", <1 GB = "N.N MB",
+    otherwise "N.NN GB"."""
+    if size < 0:
+        size = 0
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    if size < 1024 * 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    return f"{size / (1024 * 1024 * 1024):.2f} GB"
+
+
 def _serialize_file_for_list_card(row: dict) -> dict:
 
 
@@ -3596,6 +3623,10 @@ def _serialize_file_for_list_card(row: dict) -> dict:
         "saved_name": row.get("saved_name"),
         "mime_type": row.get("content_type"),
         "asset_type": row.get("asset_type") or "file",
+        # Downloadable is always true for tracked vault files. Kept
+        # explicit so the frontend renders a Download button (distinct
+        # from View) without inferring from mime_type.
+        "downloadable": True,
     }
     rp = row.get("relative_path")
     if rp:
@@ -3603,6 +3634,17 @@ def _serialize_file_for_list_card(row: dict) -> dict:
     size = row.get("file_size")
     if isinstance(size, int):
         out["size_bytes"] = size
+        out["size_display"] = _format_bytes_human(size)
+    # Ship the upload timestamp so the frontend can render a
+    # clean localized "uploaded on …" line.
+    ts = row.get("uploaded_at") or row.get("created_at")
+    if ts is not None:
+        try:
+            out["uploaded_at"] = (
+                ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            )
+        except Exception:
+            pass
     return out
 
 
@@ -4385,25 +4427,68 @@ def _safe_file_object(
     }
 
 
+def _sort_files_for_pagination(rows: list[dict]) -> list[dict]:
+    """Stable order for chat file listings: newest-first, tie-break on
+    id. Guarantees repeated "show me all my files" and subsequent
+    "show more" pages never skip or duplicate a row, even if two
+    files share a created_at timestamp.
+    """
+    def _key(r: dict):
+        ts = r.get("created_at")
+        try:
+            iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts or "")
+        except Exception:
+            iso = ""
+        return (iso, str(r.get("id") or ""))
+
+    return sorted(rows, key=_key, reverse=True)
+
+
 def _build_vault_file_list_envelope(
     rows: list[dict],
     title: str,
     *,
     message: Optional[str] = None,
     requested_name: Optional[str] = None,
+    offset: int = 0,
+    page_size: Optional[int] = None,
 ) -> str:
+    """Build a paginated vault_file_list envelope.
 
+    ``rows`` is the FULL, stably-ordered result set (already ordered
+    by `list_uploaded_files` — newest-first). ``offset`` and
+    ``page_size`` produce a deterministic slice; the envelope carries
+    ``offset``, ``page_size``, ``next_offset`` and ``has_more`` so the
+    frontend can render a real "Show more" button and re-issue a
+    follow-up chat message.
 
-    total = len(rows)
-    capped = rows[:_FILE_LIST_CARD_CAP]
-    files = [_serialize_file_for_list_card(r) for r in capped]
-    more_count = max(0, total - len(capped))
+    Stable ordering is enforced by ``_sort_files_for_pagination`` —
+    the same input list always yields the same page N.
+    """
+    size = int(page_size or _FILE_LIST_CARD_CAP)
+    if size <= 0:
+        size = _FILE_LIST_CARD_CAP
+    start = max(0, int(offset or 0))
+
+    ordered = _sort_files_for_pagination(rows)
+    total = len(ordered)
+    end = min(total, start + size)
+    page_rows = ordered[start:end]
+    files = [_serialize_file_for_list_card(r) for r in page_rows]
+
+    next_offset = end
+    has_more = end < total
+    more_count = max(0, total - end)
 
     payload: dict[str, object] = {
         "type": "vault_file_list",
         "title": title,
-        "count": len(capped),
+        "count": len(page_rows),
         "total_count": total,
+        "offset": start,
+        "page_size": size,
+        "next_offset": next_offset,
+        "has_more": has_more,
         "files": files,
     }
     if message:
@@ -11497,6 +11582,76 @@ async def chat_endpoint(
             _reply_language = "en"
 
 
+        # Selection-hint pin. When the user taps a row on a chat card
+        # the frontend sends {"kind":"login"|"file","id":"<uuid>"} in
+        # the request body — we pin the active entity BEFORE routing
+        # so downstream builders can prefer id over query and never
+        # confuse two rows that share a title.
+        try:
+            _hint = req.selection_hint
+            if isinstance(_hint, dict):
+                _hint_kind = str(_hint.get("kind") or "").strip().lower()
+                _hint_id = str(_hint.get("id") or "").strip()
+                if _hint_kind and _hint_id and len(_hint_id) <= 64:
+                    _hint_session_id = str(
+                        (principal or {}).get("token_id") or "",
+                    ) or None
+                    from vault_chat_active_entity import (
+                        set_active_entity as _hint_set_ae,
+                        ENTITY_LOGIN as _HINT_ENTITY_LOGIN,
+                        ENTITY_FILE as _HINT_ENTITY_FILE,
+                        ACTION_SHOW as _HINT_ACT_SHOW,
+                        ACTION_OPEN as _HINT_ACT_OPEN,
+                        ACTION_VIEW as _HINT_ACT_VIEW,
+                        ACTION_COPY as _HINT_ACT_COPY,
+                        ACTION_RENAME as _HINT_ACT_RENAME,
+                        ACTION_DELETE as _HINT_ACT_DELETE,
+                        ACTION_EDIT as _HINT_ACT_EDIT,
+                        ACTION_DOWNLOAD as _HINT_ACT_DL,
+                    )
+                    if _hint_kind == "login":
+                        _hint_set_ae(
+                            vault_id,
+                            entity_type=_HINT_ENTITY_LOGIN,
+                            entity_ref={"id": _hint_id},
+                            display_label="",
+                            allowed_actions=(
+                                _HINT_ACT_SHOW, _HINT_ACT_OPEN,
+                                _HINT_ACT_VIEW, _HINT_ACT_COPY,
+                                _HINT_ACT_RENAME, _HINT_ACT_DELETE,
+                                _HINT_ACT_EDIT,
+                            ),
+                            session_id=_hint_session_id,
+                        )
+                        print(
+                            "[CHAT-TRACE] selection_hint pinned "
+                            f"kind=login id={_hint_id[:8]}...",
+                            flush=True,
+                        )
+                    elif _hint_kind == "file":
+                        _hint_set_ae(
+                            vault_id,
+                            entity_type=_HINT_ENTITY_FILE,
+                            entity_ref={"file_id": _hint_id},
+                            display_label="",
+                            allowed_actions=(
+                                _HINT_ACT_SHOW, _HINT_ACT_OPEN,
+                                _HINT_ACT_VIEW, _HINT_ACT_DELETE,
+                                _HINT_ACT_DL,
+                            ),
+                            session_id=_hint_session_id,
+                        )
+                        print(
+                            "[CHAT-TRACE] selection_hint pinned "
+                            f"kind=file id={_hint_id[:8]}...",
+                            flush=True,
+                        )
+        except Exception:
+            logger.exception(
+                "[CHAT-DEBUG] selection_hint_pin_failed"
+            )
+
+
         def encrypted_reply(text: str):
             print(
                 f"[CHAT-DEBUG] encrypted_reply_start reply_text_len={len(text or '')}",
@@ -11636,6 +11791,7 @@ async def chat_endpoint(
                 entity_matches_action,
                 ENTITY_LOGIN,
                 ENTITY_FILE,
+                ENTITY_FILE_LIST,
                 ENTITY_GENERATED_LOGIN_DRAFT,
                 ENTITY_CRYPTO_WALLET,
             )
@@ -11724,6 +11880,128 @@ async def chat_endpoint(
 
 
 
+
+                    # File-list pagination follow-up: "show more" /
+                    # "more" / "next" resurfaces the same file list
+                    # card sliced at the next offset. Uses the stored
+                    # active-entity ref (offset + page_size + total)
+                    # so every subsequent page is deterministic and
+                    # cannot skip or duplicate rows.
+                    if (
+                        _etype == ENTITY_FILE_LIST
+                        and _verb == "more"
+                    ):
+                        try:
+                            _ref = _active.get("entity_ref") or {}
+                            _fl_offset = int(_ref.get("offset") or 0)
+                            _fl_page = int(
+                                _ref.get("page_size") or 0,
+                            ) or 25
+                            rows = list_uploaded_files(vault_id)
+                            _new_total = len(rows)
+                            _fl_reply = _build_vault_file_list_envelope(
+                                rows,
+                                f"More files ({_fl_offset + 1}"
+                                f"–{min(_fl_offset + _fl_page, _new_total)}"
+                                f" of {_new_total})",
+                                message="Here are the next files.",
+                                offset=_fl_offset,
+                                page_size=_fl_page,
+                            )
+                            _fl_parsed = json.loads(_fl_reply)
+                            _fl_next = int(
+                                _fl_parsed.get("next_offset") or _fl_offset,
+                            )
+                            _fl_has_more = bool(
+                                _fl_parsed.get("has_more"),
+                            )
+                            try:
+                                from vault_chat_active_entity import (
+                                    set_active_entity as _fl_set_ae,
+                                    ENTITY_FILE_LIST as _FL_ENTITY,
+                                    ACTION_MORE as _FL_ACT_MORE,
+                                )
+                                _fl_set_ae(
+                                    vault_id,
+                                    entity_type=_FL_ENTITY,
+                                    entity_ref={
+                                        "offset":      _fl_next,
+                                        "page_size":   _fl_page,
+                                        "total_count": _new_total,
+                                    },
+                                    display_label="All files",
+                                    allowed_actions=(
+                                        (_FL_ACT_MORE,)
+                                        if _fl_has_more else ()
+                                    ),
+                                    session_id=_session_id_for_ctx,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "[CHAT-DEBUG] file_list_more "
+                                    "set_active_entity failed",
+                                )
+                            print(
+                                "[CHAT-TRACE] file_list_more "
+                                f"vault={(vault_id or '')[:8]}... "
+                                f"offset={_fl_offset} next={_fl_next} "
+                                f"has_more={_fl_has_more}",
+                                flush=True,
+                            )
+                            return encrypted_reply(_fl_reply)
+                        except Exception:
+                            logger.exception(
+                                "[CHAT-DEBUG] file_list_more_dispatch_failed "
+                                "vault=%s",
+                                (vault_id or "")[:8] + "...",
+                            )
+
+                    # File pronoun follow-up:
+                    #   "download it"  -> resurface the ACTIVE FILE as a
+                    #                     structured file card whose data
+                    #                     carries pending_action="download".
+                    #                     Frontend triggers _downloadVaultFileCard.
+                    #   "open it" / "view it" -> same, pending_action="open".
+                    # The backend NEVER hands the browser plaintext bytes
+                    # here; it only re-emits the same safe file card the
+                    # user just saw and tags the pending action.
+                    elif (
+                        _etype == ENTITY_FILE
+                        and _verb in ("download", "open", "view", "show")
+                    ):
+                        try:
+                            _ref = _active.get("entity_ref") or {}
+                            _file_id = str(_ref.get("file_id") or "")
+                            _display = str(
+                                _active.get("display_label") or ""
+                            )
+                            _mime = str(_ref.get("content_type") or "")
+                            _rel = str(_ref.get("relative_path") or "")
+                            if _file_id:
+                                _payload = {
+                                    "type":         "vault_file",
+                                    "message":      "",
+                                    "file_id":      _file_id,
+                                    "file_name":    _display,
+                                    # content_type — matches the frontend
+                                    # parser at main.dart:7797 which reads
+                                    # this key, not mime_type.
+                                    "content_type": _mime or None,
+                                    "relative_path": _rel or None,
+                                    "pending_action": _verb,
+                                }
+                                print(
+                                    "[CHAT-TRACE] file_pronoun_followup "
+                                    f"vault={(vault_id or '')[:8]}... "
+                                    f"verb={_verb} file={_file_id[:8]}...",
+                                    flush=True,
+                                )
+                                return encrypted_reply(json.dumps(_payload))
+                        except Exception:
+                            logger.exception(
+                                "[CHAT-DEBUG] file_followup_dispatch_failed "
+                                "vault=%s", (vault_id or "")[:8] + "...",
+                            )
 
                     elif (
                         _etype == ENTITY_GENERATED_LOGIN_DRAFT
@@ -11895,6 +12173,75 @@ async def chat_endpoint(
             except Exception:
                 _fast_has_active_context = True
 
+
+        # Short-circuit: "show me all my files" — the router tags this
+        # as vault_file_list_all with an empty card. Replace it with a
+        # real structured vault_file_list envelope so the frontend
+        # never has to render prose for a whole-vault listing.
+        # Also record the active file-list entity so a subsequent
+        # "show more" chat follow-up can request page 2 without the
+        # frontend having to re-issue "show me all my files".
+        if (
+            isinstance(_fast_envelope, dict)
+            and str(_fast_envelope.get("intent") or "")
+                == "vault_file_list_all"
+        ):
+            try:
+                rows = list_uploaded_files(vault_id)
+                total = len(rows)
+                title = (
+                    f"All {total} files in your vault"
+                    if total > 0 else "Your vault is empty"
+                )
+                reply = _build_vault_file_list_envelope(
+                    rows,
+                    title,
+                    message="Here are your files.",
+                    offset=0,
+                )
+                try:
+                    _reply_parsed = json.loads(reply)
+                    _next_offset = int(
+                        _reply_parsed.get("next_offset") or 0,
+                    )
+                    _page_size = int(
+                        _reply_parsed.get("page_size") or 0,
+                    )
+                    _has_more = bool(_reply_parsed.get("has_more"))
+                    _fla_session_id = str(
+                        (principal or {}).get("token_id") or "",
+                    ) or None
+                    from vault_chat_active_entity import (
+                        set_active_entity as _fla_set_ae,
+                        ENTITY_FILE_LIST as _FLA_ENTITY,
+                        ACTION_MORE as _FLA_ACT_MORE,
+                    )
+                    _fla_set_ae(
+                        vault_id,
+                        entity_type=_FLA_ENTITY,
+                        entity_ref={
+                            "offset":      _next_offset,
+                            "page_size":   _page_size,
+                            "total_count": total,
+                        },
+                        display_label="All files",
+                        allowed_actions=(
+                            (_FLA_ACT_MORE,) if _has_more else ()
+                        ),
+                        session_id=_fla_session_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHAT-PERF] file_list_all set_active_entity "
+                        "failed vault=%s",
+                        (vault_id or "")[:8] + "...",
+                    )
+                return encrypted_reply(reply)
+            except Exception:
+                logger.exception(
+                    "[CHAT-PERF] file_list_all fast-path failed vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
 
         if (
             _cfp is not None
@@ -13276,7 +13623,7 @@ async def chat_endpoint(
                     set_active_entity,
                     ENTITY_FILE,
                     ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
-                    ACTION_RENAME, ACTION_DELETE,
+                    ACTION_RENAME, ACTION_DELETE, ACTION_DOWNLOAD,
                 )
                 _file_session_id = str(
                     (principal or {}).get("token_id") or "",
@@ -13293,7 +13640,7 @@ async def chat_endpoint(
                     query=asset_name,
                     allowed_actions=(
                         ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
-                        ACTION_RENAME, ACTION_DELETE,
+                        ACTION_RENAME, ACTION_DELETE, ACTION_DOWNLOAD,
                     ),
                     session_id=_file_session_id,
                 )

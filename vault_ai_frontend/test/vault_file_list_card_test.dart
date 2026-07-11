@@ -198,8 +198,9 @@ void main() {
   });
 
   group('VaultFileListCard — +N more', () {
-    testWidgets('renders "+N more results" copy when more_count > 0',
-        (tester) async {
+    testWidgets(
+        'renders "+N more" copy when more_count > 0 and no Show '
+        'more callback is wired (fallback branch)', (tester) async {
       await _pumpList(
         tester,
         msg: _listMsg(
@@ -208,14 +209,17 @@ void main() {
           moreCount: 35,
         ),
       );
-      
-      
+      // 2026-07-12: when the parent wires onShowMore we render a
+      // real Show more button (see pagination_and_stable_id_2026_
+      // 07_12_test.dart). This test's _pumpList does NOT wire it,
+      // so the fallback caption still renders — the phrasing was
+      // updated to point users at the "show more" chat follow-up.
       expect(
-        find.textContaining('+35 more results'),
+        find.textContaining('+35 more'),
         findsOneWidget,
       );
       expect(
-        find.textContaining('refine'),
+        find.textContaining('show more'),
         findsOneWidget,
       );
     });

@@ -410,6 +410,7 @@ def _row_updated_at_iso(row: dict[str, Any]) -> Optional[str]:
 def _fetch_vault_items(
     vault_id: str, item_type: str, limit: int,
     *, service_ilike: Optional[str] = None,
+    item_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
 
     from main import get_db
@@ -419,7 +420,24 @@ def _fetch_vault_items(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        if service_ilike:
+        # Exact-id fetch takes precedence over search. This is how a
+        # login-row tap disambiguates between two logins that share a
+        # title — the frontend sends the row's stable id via
+        # selection_hint, backend pins it to the active entity, and
+        # here we bypass ILIKE entirely.
+        if item_id:
+            cursor.execute(
+                """
+                SELECT id, service, encrypted_data, created_at
+                FROM vault_items
+                WHERE vault_id = %s
+                  AND item_type = %s
+                  AND id = %s
+                LIMIT 1
+                """,
+                (vault_id, item_type, item_id),
+            )
+        elif service_ilike:
             cursor.execute(
                 """
                 SELECT id, service, encrypted_data, created_at
@@ -620,6 +638,7 @@ def build_login_detail_data(
     vault_id: str, key: bytes,
     *, query: Optional[str] = None,
     limit: int = DEFAULT_LIST_LIMIT,
+    item_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Detail/chooser/not_found builder for "show me my X login" requests.
 
@@ -649,7 +668,8 @@ def build_login_detail_data(
             UNAVAIL_VAULT_LOCKED if not key else UNAVAIL_MISSING_DEPENDENCY,
         )
     q = (query or "").strip()
-    if not q:
+    pinned_id = (item_id or "").strip()
+    if not q and not pinned_id:
 
         return build_login_list_data(
             vault_id, key,
@@ -658,7 +678,8 @@ def build_login_detail_data(
     try:
         rows = _fetch_vault_items(
             vault_id, "login", limit,
-            service_ilike=q,
+            service_ilike=q if not pinned_id else None,
+            item_id=pinned_id or None,
         )
         if not rows:
             return {
@@ -1296,11 +1317,31 @@ def populate_vault_chat_card_data(
             INTENT_LOGIN_REVEAL,
             INTENT_LOGIN_COPY,
         ):
-
+            # If a selection-hint pinned this vault's active entity
+            # to a specific login id, prefer id over the ILIKE search
+            # so two logins with the same title are disambiguated by
+            # the row the user actually tapped.
+            _pinned_login_id: Optional[str] = None
+            try:
+                from vault_chat_active_entity import (
+                    get_active_entity, ENTITY_LOGIN,
+                )
+                _ae = get_active_entity(vault_id)
+                if (
+                    _ae is not None
+                    and _ae.get("entity_type") == ENTITY_LOGIN
+                    and isinstance(_ae.get("entity_ref"), dict)
+                ):
+                    _pinned_login_id = str(
+                        _ae["entity_ref"].get("id") or "",
+                    ) or None
+            except Exception:
+                _pinned_login_id = None
             data = build_login_detail_data(
                 vault_id, key or b"",
                 query=str(card.get("query") or "") or None,
                 limit=DEFAULT_LIST_LIMIT,
+                item_id=_pinned_login_id,
             )
         elif intent == INTENT_LOGIN_DUPLICATES:
             data = build_login_duplicates_data(

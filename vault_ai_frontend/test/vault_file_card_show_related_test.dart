@@ -230,14 +230,16 @@ void main() {
         () async {
       final src = await File('lib/ui/chat/chat_bubble.dart').readAsString();
       expect(src, contains('onShowRelated'));
-      
-      
-      final idx = src.indexOf('ChatMessage.kVaultFile');
+
+      // Anchor on the actual switch label and stop at the case
+      // terminator so the window survives new props (onDownload,
+      // isViewInFlight, isDownloadInFlight, viewInFlightFileIds,
+      // downloadInFlightFileIds) being added to the case body.
+      final idx = src.indexOf('ChatMessage.kVaultFile:');
       expect(idx, greaterThanOrEqualTo(0));
-      final body = src.substring(
-        idx,
-        idx + 400 < src.length ? idx + 400 : src.length,
-      );
+      final endIdx = src.indexOf('break;', idx);
+      expect(endIdx, greaterThan(idx));
+      final body = src.substring(idx, endIdx);
       expect(body, contains('onShowRelated:'));
     });
 
