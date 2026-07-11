@@ -41,65 +41,78 @@ class DuplicateUploadDialog extends StatelessWidget {
             : (detail.existingFileName ?? 'this file');
     final existingPath = (detail.existingRelativePath ?? '').trim();
 
+    final screenW = MediaQuery.of(context).size.width;
+    final dialogMax = screenW < 480 + 32 ? screenW - 32 : 480.0;
     return Dialog(
       backgroundColor: VaultColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(VaultRadius.lg),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: Padding(
-          padding: const EdgeInsets.all(VaultSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const IconBadge(
-                    icon: Icons.content_copy_outlined,
-                    color: VaultColors.severityWarn,
-                    size: 40,
-                  ),
-                  const SizedBox(width: VaultSpacing.md),
-                  Expanded(
-                    child: Text(
-                      'This file already exists in your vault.',
-                      style: VaultText.subtitle,
+        constraints: BoxConstraints(maxWidth: dialogMax),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: EdgeInsets.all(
+                screenW < 400 ? VaultSpacing.md : VaultSpacing.lg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const IconBadge(
+                      icon: Icons.content_copy_outlined,
+                      color: VaultColors.severityWarn,
+                      size: 40,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: VaultSpacing.lg),
-              _ExistingFileRow(
-                name: existingName,
-                relativePath: existingPath,
-              ),
-              const SizedBox(height: VaultSpacing.md),
-              Text(
-                'Skip this upload to save space, or keep both copies?',
-                style: VaultText.body,
-              ),
-              const SizedBox(height: VaultSpacing.lg),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(
-                      DuplicateDialogChoice.skip,
+                    const SizedBox(width: VaultSpacing.md),
+                    Expanded(
+                      child: Text(
+                        'This file already exists in your vault.',
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: VaultText.subtitle,
+                      ),
                     ),
-                    child: const Text('Skip'),
+                  ],
+                ),
+                const SizedBox(height: VaultSpacing.lg),
+                _ExistingFileRow(
+                  name: existingName,
+                  relativePath: existingPath,
+                ),
+                const SizedBox(height: VaultSpacing.md),
+                Text(
+                  'Skip this upload to save space, or keep both copies?',
+                  style: VaultText.body,
+                ),
+                const SizedBox(height: VaultSpacing.lg),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: VaultSpacing.sm,
+                    runSpacing: VaultSpacing.sm,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(
+                          DuplicateDialogChoice.skip,
+                        ),
+                        child: const Text('Skip'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.of(context).pop(
+                          DuplicateDialogChoice.keepBoth,
+                        ),
+                        child: Text(
+                            AppLocalizations.of(context).chatCardKeepBoth),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: VaultSpacing.sm),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(
-                      DuplicateDialogChoice.keepBoth,
-                    ),
-                    child: Text(AppLocalizations.of(context).chatCardKeepBoth),
-                  ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -252,68 +265,82 @@ class NameConflictDialog extends StatelessWidget {
     final existingPath = (detail.existingRelativePath ?? '').trim();
     final proposed = (detail.proposedVersionedName ?? '').trim();
 
+    final screenW = MediaQuery.of(context).size.width;
+    final dialogMax = screenW < 480 + 32 ? screenW - 32 : 480.0;
     return Dialog(
       backgroundColor: VaultColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(VaultRadius.lg),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: Padding(
-          padding: const EdgeInsets.all(VaultSpacing.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const IconBadge(
-                    icon: Icons.edit_document,
-                    color: VaultColors.severityInfo,
-                    size: 40,
-                  ),
-                  const SizedBox(width: VaultSpacing.md),
-                  Expanded(
-                    child: Text(
-                      'A file with this name already exists in this '
-                      'folder, but the content is different.',
-                      style: VaultText.subtitle,
+        constraints: BoxConstraints(maxWidth: dialogMax),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: EdgeInsets.all(
+                screenW < 400 ? VaultSpacing.md : VaultSpacing.lg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const IconBadge(
+                      icon: Icons.edit_document,
+                      color: VaultColors.severityInfo,
+                      size: 40,
                     ),
+                    const SizedBox(width: VaultSpacing.md),
+                    Expanded(
+                      child: Text(
+                        'A file with this name already exists in this '
+                        'folder, but the content is different.',
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: VaultText.subtitle,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: VaultSpacing.lg),
+                _ExistingFileRow(
+                  name: existingName,
+                  relativePath: existingPath,
+                ),
+                if (proposed.isNotEmpty) ...[
+                  const SizedBox(height: VaultSpacing.md),
+                  Text(
+                    'Keep both will save the new file as "$proposed".',
+                    style: VaultText.caption,
                   ),
                 ],
-              ),
-              const SizedBox(height: VaultSpacing.lg),
-              _ExistingFileRow(
-                name: existingName,
-                relativePath: existingPath,
-              ),
-              if (proposed.isNotEmpty) ...[
-                const SizedBox(height: VaultSpacing.md),
-                Text(
-                  'Keep both will save the new file as "$proposed".',
-                  style: VaultText.caption,
+                const SizedBox(height: VaultSpacing.lg),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: VaultSpacing.sm,
+                    runSpacing: VaultSpacing.sm,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(
+                          NameConflictDialogChoice.cancel,
+                        ),
+                        child: Text(
+                            AppLocalizations.of(context).commonCancel),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.of(context).pop(
+                          NameConflictDialogChoice.keepBoth,
+                        ),
+                        child: Text(
+                            AppLocalizations.of(context).chatCardKeepBoth),
+                      ),
+                    ],
+                  ),
                 ),
               ],
-              const SizedBox(height: VaultSpacing.lg),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(
-                      NameConflictDialogChoice.cancel,
-                    ),
-                    child: Text(AppLocalizations.of(context).commonCancel),
-                  ),
-                  const SizedBox(width: VaultSpacing.sm),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(
-                      NameConflictDialogChoice.keepBoth,
-                    ),
-                    child: Text(AppLocalizations.of(context).chatCardKeepBoth),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       ),

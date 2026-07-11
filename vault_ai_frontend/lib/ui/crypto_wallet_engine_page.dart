@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/asset_live_store.dart';
+import 'responsive.dart' show vrDisplay;
 import '../services/crypto_wallet_balance_reason.dart';
 import '../services/crypto_wallet_dashboard_reason.dart';
 import '../services/crypto_wallet_features.dart';
@@ -836,7 +837,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
 
                     const SizedBox(height: 16),
                     
-                    _buildPortfolioSummary(),
+                    _buildPortfolioSummary(context),
                     const SizedBox(height: 14),
                     
                     _buildPrimaryActionRow(context),
@@ -963,7 +964,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     );
   }
 
-  Widget _buildPortfolioSummary() {
+  Widget _buildPortfolioSummary(BuildContext context) {
 
 
 
@@ -1079,22 +1080,22 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           ] else ...[
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
-              children: const [
+              children: [
                 Text(
                   '—',
-                  key: Key(
+                  key: const Key(
                     'crypto_wallet_engine_portfolio_total_dash',
                   ),
                   style: TextStyle(
                     color: kWalletTextPrimary,
-                    fontSize: 32,
+                    fontSize: vrDisplay(context),
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.5,
                     height: 1.0,
                   ),
                 ),
-                SizedBox(width: 8),
-                Flexible(
+                const SizedBox(width: 8),
+                const Flexible(
                   child: Padding(
                     padding: EdgeInsets.only(bottom: 4),
                     child: Text(

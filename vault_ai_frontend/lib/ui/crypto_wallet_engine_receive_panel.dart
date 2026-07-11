@@ -257,10 +257,11 @@ class _CryptoWalletEngineReceivePanelState
 
   Widget _buildBody(BuildContext context) {
     if (_loading) {
-      return const Padding(
-        key: Key('eth_receive_panel_loading'),
-        padding: EdgeInsets.all(24),
-        child: Row(
+      return Padding(
+        key: const Key('eth_receive_panel_loading'),
+        padding: EdgeInsets.all(
+            MediaQuery.of(context).size.width < 600 ? 16 : 24),
+        child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(

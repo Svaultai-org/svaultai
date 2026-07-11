@@ -6,6 +6,14 @@ import 'package:flutter/services.dart';
 import '../l10n/app_localizations.dart';
 
 
+/// Responsive dialog content width. Clamps to viewport - 32dp on narrow phones
+/// (so 320dp SE gets 288dp usable) and up to 420dp on wider screens.
+double cryptoLiteDialogContentWidth(BuildContext context) {
+  final w = MediaQuery.of(context).size.width;
+  return (w - 32).clamp(240.0, 420.0);
+}
+
+
 const String kCryptoVaultStrongWarning =
     "This is extremely sensitive. Anyone with this phrase or "
     "key can control the wallet. Store it only if you "
@@ -1964,7 +1972,7 @@ class _AddCryptoWalletDialogState
         key: const Key('crypto_lite_add_wallet_dialog_title'),
       ),
       content: SizedBox(
-        width: 420,
+        width: cryptoLiteDialogContentWidth(context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2330,7 +2338,7 @@ class _AddSensitiveBackupDialogState
         key: Key('crypto_lite_add_sensitive_backup_dialog_title'),
       ),
       content: SizedBox(
-        width: 420,
+        width: cryptoLiteDialogContentWidth(context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2691,7 +2699,7 @@ class _AddCryptoNoteDialogState
         ),
       ),
       content: SizedBox(
-        width: 420,
+        width: cryptoLiteDialogContentWidth(context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -3108,7 +3116,7 @@ class _CryptoWalletDetailDialog extends StatelessWidget {
         key: Key('crypto_wallet_detail_dialog_title'),
       ),
       content: SizedBox(
-        width: 420,
+        width: cryptoLiteDialogContentWidth(context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -3615,7 +3623,7 @@ class _CryptoSensitiveBackupDetailDialogState
         key: Key('crypto_backup_detail_dialog_title'),
       ),
       content: SizedBox(
-        width: 420,
+        width: cryptoLiteDialogContentWidth(context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -4325,7 +4333,7 @@ class _EditBackupMetadataDialogState
         AppLocalizations.of(context).cryptoLiteEditBackupMetadata,
       ),
       content: SizedBox(
-        width: 420,
+        width: cryptoLiteDialogContentWidth(context),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

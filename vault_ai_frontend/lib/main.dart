@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math';
+import 'dart:math' as math;
 
 import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
@@ -44,6 +45,7 @@ import 'file_downloader.dart';
 import 'video_recorder.dart';
 
 import 'ui/theme.dart';
+import 'ui/responsive.dart';
 import 'ui/chat/ask_brain_handoff.dart';
 import 'ui/chat/chat_message_list.dart';
 import 'ui/chat/chat_models.dart';
@@ -2359,13 +2361,25 @@ class _NotificationBell extends StatelessWidget {
     showDialog(
       context: context,
       builder: (dialogCtx) {
+        final screenSize = MediaQuery.of(dialogCtx).size;
+        final dialogWidth = (screenSize.width - 32).clamp(240.0, 420.0);
+        final listMaxHeight = (screenSize.height - 220).clamp(200.0, 480.0);
+        final compact = screenSize.width < 400;
         return AlertDialog(
           backgroundColor: const Color(0xFF2F2F2F),
-          contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+          insetPadding: const EdgeInsets.symmetric(
+              horizontal: 16, vertical: 24),
+          contentPadding: EdgeInsets.fromLTRB(
+              compact ? 14 : 20, 16, compact ? 14 : 20, 8),
           title: Row(
             children: [
-              Text(AppLocalizations.of(dialogCtx).notificationsTitle),
-              const Spacer(),
+              Expanded(
+                child: Text(
+                  AppLocalizations.of(dialogCtx).notificationsTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               Consumer<AppState>(
                 builder: (_, a, __) => TextButton(
                   onPressed: a.unreadNotificationCount == 0
@@ -2373,13 +2387,15 @@ class _NotificationBell extends StatelessWidget {
                       : () => a.markNotificationRead(null),
                   child: Text(
                     AppLocalizations.of(dialogCtx).notificationsMarkAllRead,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
             ],
           ),
           content: SizedBox(
-            width: 420,
+            width: dialogWidth,
             child: Consumer<AppState>(
               builder: (_, a, __) {
                 if (a.notifications.isEmpty) {
@@ -2392,7 +2408,7 @@ class _NotificationBell extends StatelessWidget {
                   );
                 }
                 return ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 480),
+                  constraints: BoxConstraints(maxHeight: listMaxHeight),
                   child: ListView.separated(
                     shrinkWrap: true,
                     itemCount: a.notifications.length,
@@ -4477,28 +4493,35 @@ Future<void> _startSecureItemDeleteConfirmation(
     final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
     int? assistantIndex;
     String buffer = '';
-    final sub = client
-        .chatStream(
-          encryptedMessage: encryptedMessage,
-          vaultName: vaultName,
-          pin: pin,
-          authToken: token,
-          uploadedFileIds: const <String>[],
-          appLocale: context.read<AppState>().chatReplyLanguageCode,
-        )
-        .listen(
-      (encryptedChunk) async {
+
+    final stream = client.chatStream(
+      encryptedMessage: encryptedMessage,
+      vaultName: vaultName,
+      pin: pin,
+      authToken: token,
+      uploadedFileIds: const <String>[],
+      appLocale: context.read<AppState>().chatReplyLanguageCode,
+    );
+
+    try {
+      await for (final encryptedChunk in stream) {
         try {
           final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
           if (!mounted) return;
+          buffer += decryptedChunk;
+
+
+          final structuredNow =
+              _tryParseAssistantStructuredMessage(buffer);
+          final _Msg replacement = structuredNow ??
+              _Msg('assistant', buffer);
           setState(() {
-            buffer += decryptedChunk;
             if (assistantIndex == null) {
-              msgs.add(_Msg('assistant', buffer));
+              msgs.add(replacement);
               assistantIndex = msgs.length - 1;
               thinking = false;
             } else {
-              msgs[assistantIndex!] = _Msg('assistant', buffer);
+              msgs[assistantIndex!] = replacement;
             }
           });
           _scrollToBottom();
@@ -4515,23 +4538,22 @@ Future<void> _startSecureItemDeleteConfirmation(
             }
           });
         }
-      },
-      onError: (err) {
-        if (!mounted) return;
-        setState(() {
-          thinking = false;
-          if (assistantIndex == null) {
-            msgs.add(_Msg('assistant', 'Error: $err'));
-            assistantIndex = msgs.length - 1;
-          } else {
-            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
-          }
-        });
-      },
-    );
-    await sub.asFuture<void>();
-    await sub.cancel();
-    if (assistantIndex != null) {
+      }
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        thinking = false;
+        if (assistantIndex == null) {
+          msgs.add(_Msg('assistant', 'Error: $err'));
+          assistantIndex = msgs.length - 1;
+        } else {
+          msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
+        }
+      });
+    }
+
+
+    if (assistantIndex != null && buffer.isNotEmpty) {
       final structured = _tryParseAssistantStructuredMessage(buffer);
       if (structured != null && mounted) {
         setState(() => msgs[assistantIndex!] = structured);
@@ -5280,72 +5302,79 @@ Widget _buildInheritanceSection(bool isMobile) {
     }
   }
 
+  final _vrInh = VaultResponsive.of(context);
   return SingleChildScrollView(
-    padding: EdgeInsets.all(isMobile ? 12 : 20),
+    padding: EdgeInsets.all(_vrInh.pageHorizontalPadding),
     child: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1000),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            
+
             Container(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(_vrInh.isMobile ? 16 : 24),
               decoration: BoxDecoration(
                 color: const Color(0xFF2F2F2F),
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(_vrInh.isMobile ? 18 : 24),
                 border: Border.all(color: Colors.white10),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(AppLocalizations.of(context).inheritanceTitle,
-                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 8),
-                  const Text(
+                      style: TextStyle(
+                        fontSize: _vrInh.headingXlSize,
+                        fontWeight: FontWeight.w800,
+                      )),
+                  SizedBox(height: _vrInh.isMobile ? 6 : 8),
+                  Text(
                     'Designate who can inherit this vault if you can no longer access '
                     'it, and view vaults you\'re set up to inherit.',
-                    style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 15, height: 1.5),
+                    style: TextStyle(
+                      color: const Color(0xFFB4B4B4),
+                      fontSize: _vrInh.isMobile ? 13 : 15,
+                      height: 1.5,
+                    ),
                   ),
                   if (context.watch<AppState>().availableVaults.length > 1) ...[
-                    const SizedBox(height: 14),
+                    SizedBox(height: _vrInh.isMobile ? 10 : 14),
                     _VaultSwitcher(),
                   ],
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: _vrInh.sectionSpacing),
 
-            
+
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: EdgeInsets.all(_vrInh.cardInsetPadding),
               decoration: BoxDecoration(
                 color: const Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
                 border: Border.all(color: Colors.white10),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'People I\'ve added',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                        ),
-                      ),
+                  ResponsiveActionBar(
+                    heading: const Text(
+                      'People I\'ve added',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                    actions: [
                       OutlinedButton.icon(
+                        key: const Key('inheritance_refresh_button'),
                         onPressed: _loadBeneficiaries,
                         icon: const Icon(Icons.refresh, size: 18),
                         label: Text(
                           AppLocalizations.of(context).commonRefresh,
                         ),
                       ),
-                      const SizedBox(width: 8),
                       FilledButton.icon(
+                        key: const Key('inheritance_add_beneficiary_button'),
                         onPressed: _showAddBeneficiaryDialog,
-                        icon: const Icon(Icons.person_add_alt_1),
+                        icon: const Icon(Icons.person_add_alt_1, size: 18),
                         label: Text(
                           AppLocalizations.of(context)
                               .inheritanceAddBeneficiary,
@@ -5584,7 +5613,8 @@ Widget _buildSettingsSection(bool isMobile) {
         constraints: const BoxConstraints(maxWidth: 1000),
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
           decoration: BoxDecoration(
             color: const Color(0xFF2F2F2F),
             borderRadius: BorderRadius.circular(24),
@@ -5595,7 +5625,9 @@ Widget _buildSettingsSection(bool isMobile) {
             children: [
               Text(
                 l.settingsTitle,
-                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+                style: TextStyle(
+                    fontSize: vrHeadline(context),
+                    fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 10),
               Text(
@@ -8736,17 +8768,30 @@ await _loadVaultLogins();
         if (!mounted) return;
         await showDialog(
           context: context,
-          builder: (_) => AlertDialog(
-            title: Text(msg.fileName!),
-            content: SizedBox(
-              width: 600,
-              height: 400,
-              child: SingleChildScrollView(child: SelectableText(text)),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-            ],
-          ),
+          builder: (dCtx) {
+            final s = MediaQuery.of(dCtx).size;
+            final w = (s.width - 32).clamp(240.0, 600.0);
+            final h = (s.height - 200).clamp(200.0, 500.0);
+            return AlertDialog(
+              insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 24),
+              title: Text(
+                msg.fileName!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              content: SizedBox(
+                width: w,
+                height: h,
+                child: SingleChildScrollView(child: SelectableText(text)),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close')),
+              ],
+            );
+          },
         );
         return;
       }
@@ -9018,20 +9063,32 @@ await _loadVaultLogins();
       if (!mounted) return;
       await showDialog(
         context: context,
-        builder: (_) => AlertDialog(
-          title: Text(fileName),
-          content: SizedBox(
-            width: 480,
-            height: isVideo ? 320 : 80,
-            child: HtmlElementView(viewType: viewType),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+        builder: (dCtx) {
+          final s = MediaQuery.of(dCtx).size;
+          final w = (s.width - 32).clamp(240.0, 480.0);
+          final maxH = (s.height - 200).clamp(120.0, 400.0);
+          final videoH = isVideo ? maxH.clamp(160.0, 320.0) : 80.0;
+          return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 24),
+            title: Text(
+              fileName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
-        ),
+            content: SizedBox(
+              width: w,
+              height: videoH,
+              child: HtmlElementView(viewType: viewType),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
       );
     } finally {
       player.dispose();
@@ -9486,28 +9543,43 @@ await _loadVaultLogins();
 
       final encryptedMessage = await _VaultCrypto.encrypt(text);
 
-      final sub = client
-          .chatStream(
-            encryptedMessage: encryptedMessage,
-            vaultName: vaultName,
-            pin: pin,
-            authToken: authToken,
-            uploadedFileIds: uploadedFileIds,
-            appLocale: context.read<AppState>().chatReplyLanguageCode,
-          )
-          .listen(
-        (encryptedChunk) async {
+
+      final stream = client.chatStream(
+        encryptedMessage: encryptedMessage,
+        vaultName: vaultName,
+        pin: pin,
+        authToken: authToken,
+        uploadedFileIds: uploadedFileIds,
+        appLocale: context.read<AppState>().chatReplyLanguageCode,
+      );
+
+      try {
+        await for (final encryptedChunk in stream) {
           try {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
             if (!mounted) return;
+            buffer += decryptedChunk;
+
+
+
+
+
+
+
+
+
+
+            final structuredNow =
+                _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ??
+                _Msg('assistant', buffer);
             setState(() {
-              buffer += decryptedChunk;
               if (assistantIndex == null) {
-                msgs.add(_Msg('assistant', buffer));
+                msgs.add(replacement);
                 assistantIndex = msgs.length - 1;
                 thinking = false;
               } else {
-                msgs[assistantIndex!] = _Msg('assistant', buffer);
+                msgs[assistantIndex!] = replacement;
               }
             });
             _scrollToBottom();
@@ -9524,25 +9596,24 @@ await _loadVaultLogins();
               }
             });
           }
-        },
-        onError: (err) {
-          if (!mounted) return;
-          setState(() {
-            thinking = false;
-            if (assistantIndex == null) {
-              msgs.add(_Msg('assistant', 'Error: $err'));
-              assistantIndex = msgs.length - 1;
-            } else {
-              msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
-            }
-          });
-        },
-      );
+        }
+      } catch (err) {
+        if (!mounted) return;
+        setState(() {
+          thinking = false;
+          if (assistantIndex == null) {
+            msgs.add(_Msg('assistant', 'Error: $err'));
+            assistantIndex = msgs.length - 1;
+          } else {
+            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
+          }
+        });
+      }
 
-      await sub.asFuture<void>();
-      await sub.cancel();
 
-      if (assistantIndex != null) {
+
+
+      if (assistantIndex != null && buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
         if (structured != null && mounted) {
           setState(() {
@@ -9666,104 +9737,151 @@ await _loadVaultLogins();
   }
 
   Widget _buildComposer(bool isMobile) {
-    return Container(
-      margin: EdgeInsets.fromLTRB(isMobile ? 10 : 16, 10, isMobile ? 10 : 16, 12),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2F2F2F),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: isMobile
-          ? Column(
-              children: [
-                TextField(
-                  controller: input,
-                  enabled: !sending,
-                  decoration: InputDecoration(
-                    hintText: 'Ask about your vault or upload a file...',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  maxLines: 4,
-                  minLines: 1,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _send(),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    _buildAttachmentPlusMenu(),
-                    if (_isRecording || _isVideoRecording)
-                      IconButton(
-                        icon: const Icon(Icons.stop_circle),
-                        color: Colors.redAccent,
-                        tooltip: 'Stop recording',
-                        onPressed: sending
-                            ? null
-                            : (_isVideoRecording
-                                ? _toggleVideoRecording
-                                : _toggleRecording),
-                      ),
-                    IconButton(
-                      icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-                      color: _isListening ? const Color(0xFF10A37F) : null,
-                      tooltip: _isListening ? 'Stop listening' : 'Speak',
-                      onPressed: sending ? null : _toggleListening,
-                    ),
-                    const Spacer(),
-                    FilledButton.icon(
-                      onPressed: sending ? null : _send,
-                      icon: Icon(sending ? Icons.hourglass_top : Icons.send),
-                      label: Text(sending ? 'Sending...' : 'Send'),
-                    ),
-                  ],
-                ),
-              ],
-            )
-          : Row(
-              children: [
-                _buildAttachmentPlusMenu(),
-                if (_isRecording || _isVideoRecording)
-                  IconButton(
-                    icon: const Icon(Icons.stop_circle),
-                    color: Colors.redAccent,
-                    tooltip: 'Stop recording',
-                    onPressed: sending
-                        ? null
-                        : (_isVideoRecording
-                            ? _toggleVideoRecording
-                            : _toggleRecording),
-                  ),
-                IconButton(
-                  icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-                  color: _isListening ? const Color(0xFF10A37F) : null,
-                  tooltip: _isListening ? 'Stop listening' : 'Speak',
-                  onPressed: sending ? null : _toggleListening,
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: input,
-                    enabled: !sending,
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(context).chatComposerHint,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    maxLines: 3,
-                    minLines: 1,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _send(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: sending ? null : _send,
-                  icon: Icon(sending ? Icons.hourglass_top : Icons.send),
-                  label: Text(sending
-                      ? AppLocalizations.of(context).chatSending
-                      : AppLocalizations.of(context).chatSendButton),
-                ),
-              ],
+    final vr = VaultResponsive.of(context);
+
+
+
+
+
+    final canSend = !sending && input.text.trim().isNotEmpty;
+
+    Widget _attachmentIcon() => SizedBox(
+          key: const Key('composer_attachment_button'),
+          width: vr.composerIconButtonSize,
+          height: vr.composerIconButtonSize,
+          child: _buildAttachmentPlusMenu(),
+        );
+
+    Widget _micIcon() => SizedBox(
+          key: const Key('composer_mic_button'),
+          width: vr.composerIconButtonSize,
+          height: vr.composerIconButtonSize,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: vr.isMobile ? 20 : 22,
+            icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+            color: _isListening ? const Color(0xFF10A37F) : null,
+            tooltip: _isListening ? 'Stop listening' : 'Speak',
+            onPressed: sending ? null : _toggleListening,
+          ),
+        );
+
+    Widget _recordingStopIcon() => SizedBox(
+          key: const Key('composer_stop_recording_button'),
+          width: vr.composerIconButtonSize,
+          height: vr.composerIconButtonSize,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: vr.isMobile ? 20 : 22,
+            icon: const Icon(Icons.stop_circle),
+            color: Colors.redAccent,
+            tooltip: 'Stop recording',
+            onPressed: sending
+                ? null
+                : (_isVideoRecording
+                    ? _toggleVideoRecording
+                    : _toggleRecording),
+          ),
+        );
+
+    Widget _sendButton() {
+      final size = vr.composerSendButtonSize;
+      final iconColor = canSend ? Colors.white : Colors.white54;
+      return Semantics(
+        button: true,
+        label: sending
+            ? AppLocalizations.of(context).chatSending
+            : AppLocalizations.of(context).chatSendButton,
+        child: Material(
+
+          key: const Key('composer_send_button'),
+          color: canSend
+              ? const Color(0xFF10A37F)
+              : const Color(0xFF3A3F47),
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: canSend ? _send : null,
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: Icon(
+                sending ? Icons.hourglass_top : Icons.arrow_upward_rounded,
+                size: vr.isMobile ? 18 : 20,
+                color: iconColor,
+              ),
             ),
+          ),
+        ),
+      );
+    }
+
+    final textField = TextField(
+      controller: input,
+      enabled: !sending,
+      decoration: InputDecoration(
+        hintText: isMobile
+            ? 'Ask VaultAI…'
+            : AppLocalizations.of(context).chatComposerHint,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 4,
+          vertical: isMobile ? 8 : 10,
+        ),
+      ),
+
+      minLines: vr.composerMinLines,
+      maxLines: vr.composerMaxLines,
+      textInputAction: TextInputAction.newline,
+      keyboardType: TextInputType.multiline,
+      onChanged: (_) {
+
+        setState(() {});
+      },
+    );
+
+
+
+
+    return SafeArea(
+      top: false,
+      bottom: true,
+      child: Padding(
+
+        padding: EdgeInsets.fromLTRB(
+          isMobile ? 10 : 16,
+          6,
+          isMobile ? 10 : 16,
+          isMobile ? 6 : 12,
+        ),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: vr.composerHorizontalPadding,
+            vertical: vr.composerVerticalPadding,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2F2F2F),
+            borderRadius: BorderRadius.circular(isMobile ? 22 : 20),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _attachmentIcon(),
+              if (_isRecording || _isVideoRecording)
+                _recordingStopIcon(),
+              _micIcon(),
+              const SizedBox(width: 4),
+              Expanded(child: textField),
+              const SizedBox(width: 6),
+              _sendButton(),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -9943,7 +10061,8 @@ await _loadVaultLogins();
             constraints: const BoxConstraints(maxWidth: 1000),
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
               decoration: BoxDecoration(
                 color: const Color(0xFF2F2F2F),
                 borderRadius: BorderRadius.circular(24),
@@ -9954,10 +10073,12 @@ await _loadVaultLogins();
                 children: [
                   Text(
                     AppLocalizations.of(context).filesTitle,
-                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+                    style: TextStyle(
+                        fontSize: vrHeadline(context),
+                        fontWeight: FontWeight.w800),
                   ),
-                  SizedBox(height: 10),
-                  Text(
+                  const SizedBox(height: 10),
+                  const Text(
                     'No files uploaded yet. Upload images, PDFs, spreadsheets, and documents from chat.',
                     style: TextStyle(
                       color: Color(0xFFB4B4B4),
@@ -9983,7 +10104,8 @@ await _loadVaultLogins();
             children: [
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(24),
+                padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
                 decoration: BoxDecoration(
                   color: const Color(0xFF2F2F2F),
                   borderRadius: BorderRadius.circular(24),
@@ -9997,7 +10119,9 @@ await _loadVaultLogins();
                         children: [
                           Text(
                             AppLocalizations.of(context).filesTitle,
-                            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+                            style: TextStyle(
+                                fontSize: vrHeadline(context),
+                                fontWeight: FontWeight.w800),
                           ),
                           const SizedBox(height: 8),
                           const Text(
@@ -10356,22 +10480,36 @@ await _loadVaultLogins();
  Widget _buildSidebar() {
   final app = context.watch<AppState>();
 
-  Widget tile(_DashboardSection section, IconData icon, String label) {
+  Widget tile(
+    _DashboardSection section,
+    IconData icon,
+    String label, {
+    bool compact = false,
+    double verticalPadding = 14,
+  }) {
     final selected = selectedSection == section;
+    final horizontalPad = compact ? 10.0 : 14.0;
+    final iconSize      = compact ? 18.0 : 20.0;
+    final labelFont     = compact ? 13.5 : 14.0;
+    final radius        = compact ? 12.0 : 16.0;
+    final marginBottom  = compact ? 4.0  : 8.0;
 
     return InkWell(
       onTap: () {
         setState(() => selectedSection = section);
         Navigator.of(context).maybePop();
       },
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(radius),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        margin: EdgeInsets.only(bottom: marginBottom),
+        padding: EdgeInsets.symmetric(
+          horizontal: horizontalPad,
+          vertical: verticalPadding,
+        ),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFF10A37F).withValues(alpha: 0.14) : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(radius),
           border: Border.all(
             color: selected ? const Color(0xFF10A37F).withValues(alpha: 0.35) : Colors.white10,
           ),
@@ -10380,15 +10518,20 @@ await _loadVaultLogins();
           children: [
             Icon(
               icon,
-              size: 20,
+              size: iconSize,
               color: selected ? const Color(0xFF10A37F) : const Color(0xFF9CA3AF),
             ),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? Colors.white : const Color(0xFFC7C7C7),
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            SizedBox(width: compact ? 10 : 12),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: selected ? Colors.white : const Color(0xFFC7C7C7),
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: labelFont,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -10397,20 +10540,36 @@ await _loadVaultLogins();
     );
   }
  
+     final _vr = VaultResponsive.of(context);
+     final _drawerHeaderFontSize = _vr.isMobile ? 18.0 : 22.0;
+     final _drawerHeaderPadding  = _vr.drawerHeaderPadding;
+     final _drawerBodyPadding    = _vr.drawerBodyPadding;
+     final _drawerTileVpad       = _vr.isMobile ? 6.0 : 8.0;
      return Drawer(
       backgroundColor: const Color(0xFF212121),
+
+      width: _vr.drawerWidth,
       child: SafeArea(
+
+        bottom: true,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: EdgeInsets.fromLTRB(
+            _drawerBodyPadding,
+            _drawerBodyPadding,
+            _drawerBodyPadding,
+
+            _drawerBodyPadding + math.max(0, _vr.bottomSafeInset),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.all(_drawerHeaderPadding),
                 decoration: BoxDecoration(
                   color: const Color(0xFF2F2F2F),
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(_vr.isMobile ? 14 : 18),
                   border: Border.all(color: Colors.white10),
                 ),
                 child: Column(
@@ -10418,30 +10577,53 @@ await _loadVaultLogins();
                   children: [
                     Text(
                       app.vaultName ?? 'Vault',
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: _drawerHeaderFontSize,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 6),
+                    SizedBox(height: _vr.isMobile ? 2 : 6),
                     Text(
                       app.displayUsername ?? '',
-                      style: const TextStyle(color: Color(0xFFB4B4B4)),
+                      style: TextStyle(
+                        color: const Color(0xFFB4B4B4),
+                        fontSize: _vr.isMobile ? 12 : 13,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 14),
-              tile(_DashboardSection.dashboard,     Icons.dashboard_outlined,      AppLocalizations.of(context).sidebarDashboard),
-              tile(_DashboardSection.chat,          Icons.chat_bubble_outline,     AppLocalizations.of(context).sidebarChat),
-              tile(_DashboardSection.files,         Icons.folder_open_outlined,    AppLocalizations.of(context).sidebarFiles),
-              tile(_DashboardSection.logins,        Icons.lock_outline,            AppLocalizations.of(context).sidebarLogins),
-              
-              
-              tile(_DashboardSection.cryptoVault,   Icons.account_balance_wallet_outlined, AppLocalizations.of(context).sidebarCryptoVault),
-              tile(_DashboardSection.concierge,     Icons.auto_awesome_outlined,   AppLocalizations.of(context).sidebarConcierge),
-              tile(_DashboardSection.expiry,        Icons.event_busy_outlined,     AppLocalizations.of(context).sidebarExpiry),
-              tile(_DashboardSection.memory,        Icons.auto_stories_outlined,   AppLocalizations.of(context).sidebarMemory),
-              tile(_DashboardSection.relationships, Icons.hub_outlined,            AppLocalizations.of(context).sidebarRelationships),
-              tile(_DashboardSection.inheritance,   Icons.diversity_3,             AppLocalizations.of(context).sidebarInheritance),
-              tile(_DashboardSection.settings,      Icons.settings_outlined,       AppLocalizations.of(context).sidebarSettings),
+              SizedBox(height: _vr.isMobile ? 8 : 14),
+
+
+              Expanded(
+                child: ListView(
+                  key: const Key('vault_drawer_menu_list'),
+                  padding: EdgeInsets.only(
+                    bottom: math.max(0, _vr.bottomSafeInset),
+                  ),
+                  children: [
+                    tile(_DashboardSection.dashboard,     Icons.dashboard_outlined,      AppLocalizations.of(context).sidebarDashboard,      compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.chat,          Icons.chat_bubble_outline,     AppLocalizations.of(context).sidebarChat,           compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.files,         Icons.folder_open_outlined,    AppLocalizations.of(context).sidebarFiles,          compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.logins,        Icons.lock_outline,            AppLocalizations.of(context).sidebarLogins,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.cryptoVault,   Icons.account_balance_wallet_outlined, AppLocalizations.of(context).sidebarCryptoVault, compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.concierge,     Icons.auto_awesome_outlined,   AppLocalizations.of(context).sidebarConcierge,      compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.expiry,        Icons.event_busy_outlined,     AppLocalizations.of(context).sidebarExpiry,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.memory,        Icons.auto_stories_outlined,   AppLocalizations.of(context).sidebarMemory,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.relationships, Icons.hub_outlined,            AppLocalizations.of(context).sidebarRelationships,  compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.inheritance,   Icons.diversity_3,             AppLocalizations.of(context).sidebarInheritance,    compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.settings,      Icons.settings_outlined,       AppLocalizations.of(context).sidebarSettings,       compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+
+                    SizedBox(
+                      key: const Key('vault_drawer_menu_tail_sentinel'),
+                      height: 8,
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -10563,8 +10745,9 @@ return LoginsPage(
                 Text(
                   AppLocalizations.of(context).sidebarCryptoVault,
                   key: const Key('crypto_vault_page_heading'),
-                  style: const TextStyle(
-                    fontSize: 28, fontWeight: FontWeight.w800,
+                  style: TextStyle(
+                    fontSize: vrHeadline(context),
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -10683,11 +10866,12 @@ return LoginsPage(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'VaultAI Crypto Wallet',
-                key: Key('crypto_vault_engine_disabled_heading'),
+                key: const Key('crypto_vault_engine_disabled_heading'),
                 style: TextStyle(
-                  fontSize: 28, fontWeight: FontWeight.w800,
+                  fontSize: vrHeadline(context),
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 12),
@@ -10711,7 +10895,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeConcierge,
             textAlign: TextAlign.center,
@@ -10746,7 +10931,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeExpiry,
             textAlign: TextAlign.center,
@@ -10774,7 +10960,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeMemory,
             textAlign: TextAlign.center,
@@ -10801,7 +10988,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: EdgeInsets.all(
+              MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeRelationships,
             textAlign: TextAlign.center,
@@ -11259,8 +11447,8 @@ class _OverviewCard extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   data.value,
-                  style: const TextStyle(
-                    fontSize: 34,
+                  style: TextStyle(
+                    fontSize: vrMetric(context),
                     fontWeight: FontWeight.w800,
                     height: 1,
                     color: Colors.white,

@@ -252,6 +252,15 @@ class SecureItemDetailSheet extends StatelessWidget {
             topRight: Radius.circular(20),
           ),
         ),
+        // Constrain to at most 85% of screen so the sheet always leaves the
+        // user a tap-out area, and scroll internally when content exceeds it.
+        // Prevents overflow on iPhone SE (568x320 landscape / 320x568 with
+        // extra tall content).
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -378,6 +387,8 @@ class SecureItemDetailSheet extends StatelessWidget {
               ],
             ),
           ],
+        ),
+          ),
         ),
       ),
     );

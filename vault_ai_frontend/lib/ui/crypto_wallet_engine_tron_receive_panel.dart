@@ -206,9 +206,10 @@ class _CryptoWalletEngineTronReceivePanelState
 
   Widget _buildBody(BuildContext context) {
     if (_loading) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Row(
+      return Padding(
+        padding: EdgeInsets.all(
+            MediaQuery.of(context).size.width < 600 ? 16 : 24),
+        child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(

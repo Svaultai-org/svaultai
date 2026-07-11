@@ -236,7 +236,7 @@ void main() {
     test('_buildPortfolioSummary iterates the closed set constant, not '
         'a locally-inlined list', () {
       final src = _readLib('ui/crypto_wallet_engine_page.dart');
-      final start = src.indexOf('Widget _buildPortfolioSummary()');
+      final start = src.indexOf('Widget _buildPortfolioSummary(BuildContext context)');
       expect(start, greaterThan(0));
       final end = (start + 2500 < src.length) ? start + 2500 : src.length;
       final scope = src.substring(start, end);

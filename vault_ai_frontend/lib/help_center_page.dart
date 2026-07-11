@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'help_center_content.dart';
 import 'help_center_content_i18n.dart' as faq_i18n;
 import 'l10n/app_localizations.dart';
+import 'ui/responsive.dart';
 
 
 enum HelpCenterMode { public, signedIn }
@@ -184,8 +185,9 @@ class _HelpHeader extends StatelessWidget {
                 Text(
                   l.helpCenterTitle,
                   key: const Key('help_center_heading'),
-                  style: const TextStyle(
-                    fontSize: 28, fontWeight: FontWeight.w800,
+                  style: TextStyle(
+                    fontSize: vrHeadline(context),
+                    fontWeight: FontWeight.w800,
                     color: Colors.white,
                   ),
                 ),

@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'api_client.dart';
 import 'device_id.dart';
 import 'l10n/app_localizations.dart';
+import 'ui/responsive.dart';
 import 'main.dart' show AppState, backendBaseUrl;
 
 
@@ -310,8 +311,8 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
           const SizedBox(height: 12),
           Text(
             '${_formatRemaining(remaining)} remaining',
-            style: const TextStyle(
-              fontSize: 28,
+            style: TextStyle(
+              fontSize: vrMetric(context),
               fontWeight: FontWeight.w800,
             ),
           ),

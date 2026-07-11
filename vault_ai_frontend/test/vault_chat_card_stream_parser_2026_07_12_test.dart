@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/services/vault_chat_router.dart' as vcr;
 import 'package:vault_ai_frontend/services/vault_chat_stream_parser.dart';
+import 'package:vault_ai_frontend/ui/chat/chat_message_list.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
 import 'package:vault_ai_frontend/ui/vault_chat_cards.dart';
 
@@ -534,6 +535,226 @@ void main() {
         ),
         reason: 'main.dart must handle Map<dynamic,dynamic> too',
       );
+    });
+  });
+
+
+
+
+
+
+
+
+
+  group('Race guard: chunk callback must parse before finalizing the '
+        'assistant message', () {
+    String _mainSrc() => _readMainDart();
+
+    test('main.dart uses await for over the chat stream (no .listen '
+        'race between async decrypt and stream done)', () {
+      final src = _mainSrc();
+
+
+      expect(
+        src.contains('await for (final encryptedChunk in stream)'),
+        isTrue,
+        reason: 'production chat handler must consume the chat '
+                'stream with `await for`, not `.listen((chunk) async '
+                '{...})`. The .listen form races: the callback\'s '
+                'decrypt Future runs concurrently with the stream\'s '
+                'done event, so buffer updates from the last chunk '
+                'can arrive AFTER _tryParseAssistantStructuredMessage '
+                'has already run against an empty buffer.',
+      );
+
+
+      expect(
+        src.contains('await sub.asFuture<void>()'),
+        isFalse,
+        reason: 'the racy asFuture pattern must be removed from every '
+                'chat handler that expects a structured card',
+      );
+    });
+
+    test('main.dart parses+replaces INSIDE the chunk loop (belt), '
+        'and again after the loop (suspenders)', () {
+      final src = _mainSrc();
+
+
+
+
+      expect(
+        RegExp(r'final\s+structuredNow\s*=\s*\n\s*_tryParseAssistantStructuredMessage\(buffer\);')
+            .hasMatch(src),
+        isTrue,
+        reason: 'the chunk-level parse must run so a completed JSON '
+                'envelope becomes a card in the SAME setState that '
+                'wrote the buffer — never leaving a raw-JSON text '
+                'message visible to the user',
+      );
+      expect(
+        RegExp(r"final\s+_Msg\s+replacement\s*=\s*structuredNow\s*\?\?\s*\n\s*_Msg\('assistant',\s*buffer\);")
+            .hasMatch(src),
+        isTrue,
+        reason: 'the placeholder committed to msgs[i] must ALREADY '
+                'be the structured card when the JSON is complete',
+      );
+
+      expect(
+        src.contains('if (assistantIndex != null && buffer.isNotEmpty) {'),
+        isTrue,
+        reason: 'the post-loop parse must ALSO run, so any '
+                'edge-case chunking that missed the intra-chunk '
+                'parse is caught before returning',
+      );
+
+
+      final structuredNowMatches =
+          RegExp(r'\bstructuredNow\b').allMatches(src).length;
+      expect(
+        structuredNowMatches, greaterThanOrEqualTo(4),
+        reason:
+            'both chatStream callsites (delete-confirm + main _send) '
+            'must contain the belt: define structuredNow and use it '
+            'in the replacement (≥ 2 * 2 = 4 references)',
+      );
+    });
+
+    test('both chatStream callsites in main.dart are await-for '
+        '(delete-confirm flow + main _send flow)', () {
+      final src = _mainSrc();
+      final awaitForCount = 'await for (final encryptedChunk in stream)'
+          .allMatches(src)
+          .length;
+      expect(
+        awaitForCount, greaterThanOrEqualTo(2),
+        reason: 'BOTH chatStream flows (delete-confirm + _send) must '
+                'use await for; otherwise one of them keeps the race',
+      );
+
+      expect(src.contains('.listen(\n      (encryptedChunk) async {'), isFalse);
+      expect(src.contains('.listen(\n        (encryptedChunk) async {'), isFalse);
+    });
+  });
+
+
+
+
+  group('Streamed vault_login_card assembles into a card BEFORE '
+        'the widget builds — the exact production replay', () {
+
+
+
+
+    Future<List<ChatMessage>> _simulateSendReceive({
+      required List<String> chunks,
+    }) async {
+      final msgs = <ChatMessage>[];
+      int? assistantIndex;
+      var buffer = '';
+
+      for (final chunk in chunks) {
+
+        await Future<void>.delayed(Duration.zero);
+        buffer += chunk;
+
+
+        final structuredNow = parseVaultChatCardMessage(buffer);
+        final ChatMessage replacement = structuredNow ??
+            ChatMessage('assistant', buffer);
+
+        if (assistantIndex == null) {
+          msgs.add(replacement);
+          assistantIndex = msgs.length - 1;
+        } else {
+          msgs[assistantIndex] = replacement;
+        }
+      }
+
+
+      if (assistantIndex != null && buffer.isNotEmpty) {
+        final structured = parseVaultChatCardMessage(buffer);
+        if (structured != null) {
+          msgs[assistantIndex] = structured;
+        }
+      }
+      return msgs;
+    }
+
+    test('single-chunk arrival: state committed for the widget is '
+        'a vault_chat_card, NEVER a text ChatMessage', () async {
+      final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
+      final msgs = await _simulateSendReceive(chunks: [full]);
+
+      expect(msgs, hasLength(1));
+      expect(msgs.first.kind, ChatMessage.kVaultChatCard);
+      expect(msgs.first.isCard, isTrue);
+      expect(msgs.first.payload, isNotNull);
+
+
+      expect(msgs.first.text, '');
+    });
+
+    test('two-chunk arrival: FINAL state is a card (fix eliminates '
+        'the raw-text bubble the user was seeing in production)',
+        () async {
+      final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
+      final half = full.length ~/ 2;
+      final msgs = await _simulateSendReceive(chunks: [
+        full.substring(0, half),
+        full.substring(half),
+      ]);
+
+      expect(msgs, hasLength(1));
+      expect(msgs.first.kind, ChatMessage.kVaultChatCard,
+        reason: 'FINAL msg (after all chunks) must be a card — this '
+                'is exactly the invariant that was broken by the '
+                'race in the old .listen((chunk) async {...}) flow.',
+      );
+      expect(msgs.first.isCard, isTrue);
+    });
+
+    test('three-chunk arrival with tiny final chunk', () async {
+      final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
+      final chunks = [
+        full.substring(0, full.length ~/ 3),
+        full.substring(full.length ~/ 3, 2 * full.length ~/ 3),
+        full.substring(2 * full.length ~/ 3),
+      ];
+      final msgs = await _simulateSendReceive(chunks: chunks);
+      expect(msgs.first.kind, ChatMessage.kVaultChatCard);
+    });
+
+    test('empty message field on the envelope does NOT downgrade '
+        'the card back to text', () async {
+      expect(_PROD_ENVELOPE_LOGIN_SEARCH['message'], '');
+      final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
+      final msgs = await _simulateSendReceive(chunks: [full]);
+      expect(msgs.first.text, '');
+      expect(msgs.first.kind, ChatMessage.kVaultChatCard);
+    });
+
+    test('locale "pt" does not break intra-chunk parse', () async {
+      final env = Map<String, dynamic>.from(_PROD_ENVELOPE_LOGIN_SEARCH);
+      env['locale'] = 'pt';
+      final msgs = await _simulateSendReceive(chunks: [jsonEncode(env)]);
+      expect(msgs.first.kind, ChatMessage.kVaultChatCard);
+    });
+
+
+
+
+    test('adversarial race: if _tryParseAssistant were called BEFORE '
+        'the chunk callback fired, we would leave a raw-text bubble. '
+        'The intra-chunk parse guarantees the assistantIndex slot is '
+        'ALREADY a card when the widget builds.', () async {
+      final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
+      final msgs = await _simulateSendReceive(chunks: [full]);
+
+
+      expect(msgs.first.kind, isNot('text'));
+
+      expect(msgs.first.kind, ChatMessage.kVaultChatCard);
     });
   });
 }

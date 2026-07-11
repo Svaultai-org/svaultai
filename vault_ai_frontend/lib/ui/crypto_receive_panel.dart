@@ -94,6 +94,8 @@ class ReceivePanel extends StatelessWidget {
                     Text(
                       title,
                       key: const Key('crypto_receive_title'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 18,

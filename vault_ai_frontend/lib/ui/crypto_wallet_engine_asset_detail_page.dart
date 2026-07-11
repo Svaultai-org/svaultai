@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../api_client.dart';
 import '../services/asset_live_store.dart';
+import 'responsive.dart' show vrDisplay;
 import '../services/crypto_wallet_dashboard_reason.dart';
 import '../services/evm_networks.dart';
 import 'crypto_wallet_engine_activity_card.dart';
@@ -1212,9 +1213,9 @@ class _CryptoWalletEngineAssetDetailPageState
               key: const Key(
                 'crypto_wallet_engine_asset_detail_balance_value',
               ),
-              style: const TextStyle(
+              style: TextStyle(
                 color: kWalletTextPrimary,
-                fontSize: 30,
+                fontSize: vrDisplay(context),
                 fontWeight: FontWeight.w800,
                 letterSpacing: -0.4,
               ),

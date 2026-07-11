@@ -109,7 +109,7 @@ void main() {
 
 
 
-      final buildIdx = src.indexOf('Widget _buildPortfolioSummary()');
+      final buildIdx = src.indexOf('Widget _buildPortfolioSummary(BuildContext context)');
       expect(buildIdx, greaterThan(0));
       final scope = src.substring(buildIdx, buildIdx + 2500);
       expect(
@@ -136,7 +136,7 @@ void main() {
     test('no synthetic USD total leaks into the polished summary '
         'source', () {
       final src = _readLib('ui/crypto_wallet_engine_page.dart');
-      final buildIdx = src.indexOf('Widget _buildPortfolioSummary()');
+      final buildIdx = src.indexOf('Widget _buildPortfolioSummary(BuildContext context)');
       final scope = src.substring(buildIdx, buildIdx + 3500);
 
       expect(scope.contains(r'$USD'), isFalse);

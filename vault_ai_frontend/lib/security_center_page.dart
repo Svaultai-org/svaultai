@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
+import 'ui/responsive.dart';
 import 'main.dart' show AppState, backendBaseUrl;
 
 
@@ -158,7 +159,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
             child: Text(
               '$score',
               style: TextStyle(
-                fontSize: 32,
+                fontSize: vrMetric(context),
                 fontWeight: FontWeight.w800,
                 color: c,
               ),

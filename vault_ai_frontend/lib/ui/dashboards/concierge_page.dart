@@ -5,6 +5,7 @@ import '../../api_client.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
 import '../primitives.dart';
+import '../responsive.dart';
 import '../tokens.dart';
 import 'dashboard_shell.dart';
 
@@ -476,7 +477,7 @@ class _PostureCard extends StatelessWidget {
                 value,
                 style: VaultText.display.copyWith(
                   color: accent,
-                  fontSize: 32,
+                  fontSize: vrMetric(context),
                   height: 1.0,
                 ),
               ),
@@ -826,14 +827,25 @@ class _TravelTile extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      value,
-                      style: VaultText.subtitle.copyWith(color: tint),
+                    Flexible(
+                      child: Text(
+                        value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: VaultText.subtitle.copyWith(color: tint),
+                      ),
                     ),
                     const SizedBox(width: VaultSpacing.xs + 2),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 1),
-                      child: Text(hint, style: VaultText.caption),
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 1),
+                        child: Text(
+                          hint,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: VaultText.caption,
+                        ),
+                      ),
                     ),
                   ],
                 ),

@@ -218,7 +218,7 @@ void main() {
     test('Vault balance card render source has the three closed-set '
         'branches: hasAvailable, anyLoading, no-wallets fallback', () {
       final src = _readLib('ui/crypto_wallet_engine_page.dart');
-      final start = src.indexOf('Widget _buildPortfolioSummary()');
+      final start = src.indexOf('Widget _buildPortfolioSummary(BuildContext context)');
       expect(start, greaterThan(0));
       final scope = src.substring(start, start + 6500);
 
@@ -274,7 +274,7 @@ void main() {
     test('no synthetic USD total is added in the has-available branch',
         () {
       final src = _readLib('ui/crypto_wallet_engine_page.dart');
-      final start = src.indexOf('Widget _buildPortfolioSummary()');
+      final start = src.indexOf('Widget _buildPortfolioSummary(BuildContext context)');
       final scope = src.substring(start, start + 6500);
 
 

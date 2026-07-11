@@ -52,15 +52,19 @@ class NotEnoughStorageDialog extends StatelessWidget {
         ? 'Not enough storage for $folderName'
         : 'Not enough storage for this folder.';
 
+    final screenW = MediaQuery.of(context).size.width;
+    final dialogMax = screenW < 480 + 32 ? screenW - 32 : 480.0;
     return Dialog(
       backgroundColor: VaultColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(VaultRadius.lg),
       ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
+        constraints: BoxConstraints(maxWidth: dialogMax),
         child: Padding(
-          padding: const EdgeInsets.all(VaultSpacing.lg),
+          padding: EdgeInsets.all(
+              screenW < 400 ? VaultSpacing.md : VaultSpacing.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -76,6 +80,8 @@ class NotEnoughStorageDialog extends StatelessWidget {
                   Expanded(
                     child: Text(
                       headline,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                       style: VaultText.subtitle,
                     ),
                   ),
@@ -89,25 +95,29 @@ class NotEnoughStorageDialog extends StatelessWidget {
                 style: VaultText.body,
               ),
               const SizedBox(height: VaultSpacing.lg),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(
-                      StorageLimitDialogChoice.cancel,
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: VaultSpacing.sm,
+                  runSpacing: VaultSpacing.sm,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(
+                        StorageLimitDialogChoice.cancel,
+                      ),
+                      child: Text(AppLocalizations.of(context).commonCancel),
                     ),
-                    child: Text(AppLocalizations.of(context).commonCancel),
-                  ),
-                  const SizedBox(width: VaultSpacing.sm),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(
-                      StorageLimitDialogChoice.upgrade,
+                    FilledButton(
+                      onPressed: () => Navigator.of(context).pop(
+                        StorageLimitDialogChoice.upgrade,
+                      ),
+                      child: Text(
+                        AppLocalizations.of(context).chatCardUpgradeStorage,
+                      ),
                     ),
-                    child: Text(
-                      AppLocalizations.of(context).chatCardUpgradeStorage,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),

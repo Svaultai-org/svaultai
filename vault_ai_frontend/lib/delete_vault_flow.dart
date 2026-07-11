@@ -99,9 +99,15 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
   Widget build(BuildContext context) {
     const dangerColor = Color(0xFFE0605C);
     final l = AppLocalizations.of(context);
+    final mq = MediaQuery.of(context);
+    // Subtract AlertDialog's own inset (24 on each side by default) so the
+    // content column never exceeds the visible viewport at 320dp.
+    final double contentWidth =
+        (mq.size.width - 48).clamp(240.0, 480.0);
     return AlertDialog(
       key: const Key('delete_vault_dialog'),
       backgroundColor: const Color(0xFF2A2A2A),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Row(
         children: [
           const Icon(Icons.warning_amber_rounded,
@@ -110,13 +116,15 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
           Expanded(
             child: Text(
               l.deleteVaultTitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ),
         ],
       ),
       content: SizedBox(
-        width: 480,
+        width: contentWidth,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'l10n/app_localizations.dart';
+import 'ui/responsive.dart';
 
 
 class VaultLoginItem {
@@ -388,16 +389,17 @@ class _LoginsPageState extends State<LoginsPage> {
       return _Shell(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text(
               kLoginsPageHeading,
-              key: Key('logins_page_heading'),
+              key: const Key('logins_page_heading'),
               style: TextStyle(
-                fontSize: 28, fontWeight: FontWeight.w800,
+                fontSize: vrHeadline(context),
+                fontWeight: FontWeight.w800,
               ),
             ),
-            SizedBox(height: 10),
-            Text(
+            const SizedBox(height: 10),
+            const Text(
               kLoginsPageSubtitle,
               key: Key('logins_page_subtitle'),
               style: TextStyle(
@@ -406,16 +408,16 @@ class _LoginsPageState extends State<LoginsPage> {
                 height: 1.6,
               ),
             ),
-            SizedBox(height: 20),
-            Text(
+            const SizedBox(height: 20),
+            const Text(
               kLoginsEmptyTitle,
               key: Key('logins_page_empty_title'),
               style: TextStyle(
                 fontSize: 18, fontWeight: FontWeight.w700,
               ),
             ),
-            SizedBox(height: 6),
-            Text(
+            const SizedBox(height: 6),
+            const Text(
               kLoginsEmptyBody,
               key: Key('logins_page_empty_body'),
               style: TextStyle(
@@ -872,11 +874,12 @@ class _Header extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   kLoginsPageHeading,
-                  key: Key('logins_page_heading'),
+                  key: const Key('logins_page_heading'),
                   style: TextStyle(
-                    fontSize: 28, fontWeight: FontWeight.w800,
+                    fontSize: vrHeadline(context),
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -909,16 +912,17 @@ class _LoadingState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
+      children: [
         Text(
           kLoginsPageHeading,
-          key: Key('logins_page_heading'),
+          key: const Key('logins_page_heading'),
           style: TextStyle(
-            fontSize: 28, fontWeight: FontWeight.w800,
+            fontSize: vrHeadline(context),
+            fontWeight: FontWeight.w800,
           ),
         ),
-        SizedBox(height: 10),
-        Text(
+        const SizedBox(height: 10),
+        const Text(
           kLoginsPageSubtitle,
           key: Key('logins_page_subtitle'),
           style: TextStyle(
@@ -927,8 +931,8 @@ class _LoadingState extends StatelessWidget {
             height: 1.6,
           ),
         ),
-        SizedBox(height: 28),
-        Row(
+        const SizedBox(height: 28),
+        const Row(
           children: [
             SizedBox(
               width: 22, height: 22,
@@ -983,11 +987,12 @@ class _LoadingErrorEmptyState extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           kLoginsPageHeading,
-          key: Key('logins_page_heading'),
+          key: const Key('logins_page_heading'),
           style: TextStyle(
-            fontSize: 28, fontWeight: FontWeight.w800,
+            fontSize: vrHeadline(context),
+            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 10),
