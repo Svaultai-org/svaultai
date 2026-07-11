@@ -217,19 +217,47 @@ void main() {
       expect(opened, isTrue);
     });
 
-    testWidgets('login card renders with masked pill', (tester) async {
+    testWidgets('login list card renders masked-username rows '
+        'and no misleading "Reveal requires unlock" pill', (tester) async {
+      // Product decision (2026-07-11): the LIST view still masks
+      // usernames on every row (no plaintext leaks into a generic
+      // list). The old "Reveal requires unlock" pill was removed as
+      // misleading — the user is already unlocked; the reveal is
+      // available by asking for a specific login. Detail-view
+      // rendering is covered by
+      // vault_chat_login_detail_card_2026_07_11_test.dart.
       await tester.pumpWidget(_wrap(
         VaultChatCardView(
           response: _parse(
             intent: 'vault_login_list',
-            card: {'cardType': 'vault_login_card'},
+            card: {
+              'cardType': 'vault_login_card',
+              'view': 'list',
+              'data': {
+                'schema': 'vault_login_data_v1',
+                'available': true,
+                'view': 'list',
+                'logins': [
+                  {
+                    'id': 'x', 'title': 'Netflix',
+                    'service': 'Netflix',
+                    'username_masked': 'a***@example.com',
+                    'has_username': true,
+                    'domain': 'netflix.com',
+                  },
+                ],
+                'count': 1,
+              },
+            },
           ),
         ),
       ));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key(kVcrCardKeyLogin)), findsOneWidget);
-      expect(find.text('•••••••••'), findsWidgets);
-      expect(find.textContaining('Reveal requires unlock'), findsOneWidget);
+
+      expect(find.textContaining('a***@example.com'), findsOneWidget);
+
+      expect(find.textContaining('Reveal requires unlock'), findsNothing);
     });
 
     testWidgets('id document card masks by default + shows unlock hint',

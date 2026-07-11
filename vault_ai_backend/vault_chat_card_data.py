@@ -61,7 +61,9 @@ from vault_chat_router import (
     INTENT_ID_DOCUMENT_EXPIRY,
     INTENT_ID_DOCUMENT_LIST,
     INTENT_ID_DOCUMENT_SEARCH,
+    INTENT_LOGIN_COPY,
     INTENT_LOGIN_LIST,
+    INTENT_LOGIN_REVEAL,
     INTENT_LOGIN_SEARCH,
     INTENT_LOGIN_DUPLICATES,
     INTENT_SECURE_ITEM_LIST,
@@ -468,6 +470,234 @@ def _project_login_row(row: dict[str, Any], key: bytes) -> dict[str, Any]:
         "updated_at":      _row_updated_at_iso(row),
         "generated":       bool(plain.get("generated")),
     }
+
+
+LOGIN_VIEW_LIST:      str = "list"
+LOGIN_VIEW_SEARCH:    str = "search"
+LOGIN_VIEW_DUPLICATES:str = "duplicates"
+LOGIN_VIEW_DETAIL:    str = "detail"
+LOGIN_VIEW_CHOOSER:   str = "chooser"
+LOGIN_VIEW_NOT_FOUND: str = "not_found"
+
+
+def _derive_website(fields: dict[str, Any], service: str) -> str:
+    """Best-effort website URL derived from fields/service. Never fabricates.
+
+    Priority: explicit `fields.website` → explicit `fields.url` → derived
+    from `_extract_domain` if we can find one. Returns "" when unknown.
+    """
+    for k in ("website", "url"):
+        raw = fields.get(k)
+        if isinstance(raw, str) and raw.strip():
+            v = raw.strip()
+            if not v.lower().startswith(("http://", "https://")):
+                v = "https://" + v
+            return v
+    dom = _extract_domain(
+        str(fields.get("username") or "").strip(),
+        service,
+    )
+    if dom:
+        return "https://" + dom
+    return ""
+
+
+def _project_login_row_detail(
+    row: dict[str, Any], key: bytes,
+) -> dict[str, Any]:
+    """Decrypt a login row and return a FULL-PLAINTEXT projection.
+
+    This function is called ONLY on the LOGIN detail path, which is only
+    reached when:
+      1. The chat message was classified as INTENT_LOGIN_SEARCH or
+         INTENT_LOGIN_REVEAL with a specific service query.
+      2. The user is authenticated AND the vault key was successfully
+         derived from the current session's cached PIN
+         (`get_verified_vault_key`).
+      3. The `service ILIKE %query%` lookup returned exactly one row.
+
+    The output includes plaintext `username`, `password`, `notes`,
+    `website`. It is emitted through `_sanitize_login_detail_payload`
+    below, NOT through the generic `_strip_forbidden` blacklist — the
+    detail card is the intentional exception to the "no plaintext
+    passwords in card data" invariant. Every other login-data payload
+    (list, search, duplicates, chooser, not_found) continues to go
+    through `_project_login_row` which masks the username and NEVER
+    includes password.
+    """
+    plain = _decrypt_row_json(row.get("encrypted_data"), key)
+    fields = plain.get("fields") if isinstance(plain, dict) else {}
+    if not isinstance(fields, dict):
+        fields = {}
+
+    service = str(row.get("service") or plain.get("service") or "")
+    title = str(plain.get("title") or service or "").strip() or service
+    username = str(fields.get("username") or "").strip()
+    password = str(fields.get("password") or "")
+    notes = ""
+    for k in ("notes", "note"):
+        raw = fields.get(k) or plain.get(k)
+        if isinstance(raw, str) and raw.strip():
+            notes = raw.strip()
+            break
+    domain = _extract_domain(username, service)
+    website = _derive_website(fields, service)
+    return {
+        "id":         str(row.get("id") or ""),
+        "title":      title,
+        "service":    service,
+        "username":   username,
+        "password":   password,
+        "domain":     domain,
+        "website":    website,
+        "notes":      notes,
+        "updated_at": _row_updated_at_iso(row),
+        "generated":  bool(plain.get("generated")),
+    }
+
+
+_ALLOWED_DETAIL_LOGIN_KEYS: frozenset[str] = frozenset({
+    "id", "title", "service", "username", "password",
+    "domain", "website", "notes", "updated_at", "generated",
+})
+
+_ALLOWED_DETAIL_PAYLOAD_KEYS: frozenset[str] = frozenset({
+    "schema", "available", "view", "query", "login", "count",
+
+    "pending_action",
+})
+
+
+def _sanitize_login_detail_payload(
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """Positive whitelist sanitizer for the detail login payload.
+
+    Unlike the generic `_strip_forbidden` (which is a blacklist), this
+    sanitizer accepts ONLY the known-safe keys and their known-safe
+    inner keys. Anything else is dropped. This is the ONLY code path
+    that emits a plaintext password field, so we lock it down with a
+    positive allowlist that must be edited to add any new key.
+    """
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in data.items():
+        if k not in _ALLOWED_DETAIL_PAYLOAD_KEYS:
+            continue
+        if k == "login" and isinstance(v, dict):
+            out[k] = {
+                lk: lv for lk, lv in v.items()
+                if lk in _ALLOWED_DETAIL_LOGIN_KEYS
+            }
+        else:
+            out[k] = v
+    return out
+
+
+def _project_login_chooser_row(
+    row: dict[str, Any], key: bytes,
+) -> dict[str, Any]:
+    """Chooser row: JUST enough to render a "which one?" list."""
+    plain = _decrypt_row_json(row.get("encrypted_data"), key)
+    fields = plain.get("fields") if isinstance(plain, dict) else {}
+    if not isinstance(fields, dict):
+        fields = {}
+    service = str(row.get("service") or plain.get("service") or "")
+    title = str(plain.get("title") or service or "").strip() or service
+    username_raw = str(fields.get("username") or "").strip()
+    return {
+        "id":              str(row.get("id") or ""),
+        "title":           title,
+        "service":         service,
+        "domain":          _extract_domain(username_raw, service),
+        "username_masked": _mask_username(username_raw),
+        "updated_at":      _row_updated_at_iso(row),
+    }
+
+
+def build_login_detail_data(
+    vault_id: str, key: bytes,
+    *, query: Optional[str] = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+) -> dict[str, Any]:
+    """Detail/chooser/not_found builder for "show me my X login" requests.
+
+    Semantics driven by the number of `service ILIKE %query%` matches:
+
+      * exactly 1 match → view="detail", `login` populated with FULL
+        plaintext credential fields (username, password, website,
+        notes). This is the ONE intentional exception to the "no
+        plaintext in card data" invariant, made possible by:
+          - the user being authenticated (session_token verified),
+          - the user having unlocked the vault (get_verified_vault_key
+            was called upstream on `/chat` per-request),
+          - an explicit specific-service ask matching one item.
+
+      * >1 matches → view="chooser", `logins` populated with title +
+        masked username + domain ONLY. No plaintext password. The user
+        picks one and the frontend then submits a follow-up like
+        "show me the aldonaid one" which re-runs this builder and
+        lands on the detail branch.
+
+      * 0 matches → view="not_found" with the requested `query`
+        preserved so the frontend can render "No match for X".
+    """
+    if not vault_id or not key:
+        return _unavailable(
+            VAULT_LOGIN_DATA_SCHEMA,
+            UNAVAIL_VAULT_LOCKED if not key else UNAVAIL_MISSING_DEPENDENCY,
+        )
+    q = (query or "").strip()
+    if not q:
+
+        return build_login_list_data(
+            vault_id, key,
+            view=LOGIN_VIEW_LIST, query=None, limit=limit,
+        )
+    try:
+        rows = _fetch_vault_items(
+            vault_id, "login", limit,
+            service_ilike=q,
+        )
+        if not rows:
+            return {
+                "schema":    VAULT_LOGIN_DATA_SCHEMA,
+                "available": True,
+                "view":      LOGIN_VIEW_NOT_FOUND,
+                "query":     q,
+                "count":     0,
+            }
+        if len(rows) == 1:
+            detail = _project_login_row_detail(rows[0], key)
+            return {
+                "schema":    VAULT_LOGIN_DATA_SCHEMA,
+                "available": True,
+                "view":      LOGIN_VIEW_DETAIL,
+                "query":     q,
+                "login":     detail,
+                "count":     1,
+            }
+
+        chooser_rows = [
+            _project_login_chooser_row(r, key) for r in rows
+        ]
+        return {
+            "schema":    VAULT_LOGIN_DATA_SCHEMA,
+            "available": True,
+            "view":      LOGIN_VIEW_CHOOSER,
+            "query":     q,
+            "logins":    chooser_rows,
+            "count":     len(chooser_rows),
+        }
+    except Exception:
+        logger.exception(
+            "[vault_chat_card_data] build_login_detail_data failed "
+            "vault=%s", (vault_id or "")[:8] + "...",
+        )
+        return _unavailable(
+            VAULT_LOGIN_DATA_SCHEMA, UNAVAIL_INTERNAL_ERROR,
+        )
 
 
 def build_login_list_data(
@@ -1061,10 +1291,14 @@ def populate_vault_chat_card_data(
                 view="list",
                 limit=DEFAULT_LIST_LIMIT,
             )
-        elif intent == INTENT_LOGIN_SEARCH:
-            data = build_login_list_data(
+        elif intent in (
+            INTENT_LOGIN_SEARCH,
+            INTENT_LOGIN_REVEAL,
+            INTENT_LOGIN_COPY,
+        ):
+
+            data = build_login_detail_data(
                 vault_id, key or b"",
-                view="search",
                 query=str(card.get("query") or "") or None,
                 limit=DEFAULT_LIST_LIMIT,
             )
@@ -1129,7 +1363,24 @@ def populate_vault_chat_card_data(
             data = None
 
         if data is not None:
-            card["data"] = _strip_forbidden(data)
+            # The login DETAIL view is the ONE intentional exception to the
+            # "no plaintext passwords in card data" invariant. Product
+            # decision: an authenticated user with an unlocked vault who
+            # explicitly asks for a specific saved login sees the actual
+            # credential values in the card. Any other case still runs
+            # through the blacklist sanitizer.
+            if (
+                intent in (
+                    INTENT_LOGIN_SEARCH,
+                    INTENT_LOGIN_REVEAL,
+                    INTENT_LOGIN_COPY,
+                )
+                and isinstance(data, dict)
+                and data.get("view") == LOGIN_VIEW_DETAIL
+            ):
+                card["data"] = _sanitize_login_detail_payload(data)
+            else:
+                card["data"] = _strip_forbidden(data)
     except Exception:
         logger.exception(
             "[vault_chat_card_data] populate failed intent=%s", intent,

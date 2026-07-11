@@ -1,17 +1,35 @@
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
 import '../services/crypto_chat_live_cache.dart';
 import '../services/vault_chat_router.dart';
 import 'crypto_vault_chat_cards.dart';
 import 'crypto_wallet_engine_design.dart';
-
+import 'responsive.dart';
 
 export 'crypto_vault_chat_cards.dart'
     show CryptoBalanceFetcher, CryptoActivityFetcher;
 export '../services/crypto_chat_live_cache.dart'
     show CryptoChatLiveCache;
+
+
+const String kVcrLoginViewList     = 'list';
+const String kVcrLoginViewSearch   = 'search';
+const String kVcrLoginViewDetail   = 'detail';
+const String kVcrLoginViewChooser  = 'chooser';
+const String kVcrLoginViewNotFound = 'not_found';
+const String kVcrLoginViewDupes    = 'duplicates';
+
+
+const String kVcrLoginActionShow    = 'show';
+const String kVcrLoginActionOpen    = 'open';
+const String kVcrLoginActionView    = 'view';
+const String kVcrLoginActionEdit    = 'edit';
+const String kVcrLoginActionDelete  = 'delete';
+const String kVcrLoginActionCopy    = 'copy';
+const String kVcrLoginActionSave    = 'save';
 
 
 const String kVcrCardKeyOverview          = 'vault_chat_card_overview';
@@ -75,6 +93,13 @@ class VaultChatCardView extends StatelessWidget {
 
   final CryptoChatLiveCache? cryptoCache;
 
+
+  final void Function(String service)?             onLoginEdit;
+  final void Function(String service)?             onLoginDelete;
+  final void Function(String service, String url)? onLoginOpenWebsite;
+
+  final void Function(String query)? onLoginChooseCandidate;
+
   const VaultChatCardView({
     super.key,
     required this.response,
@@ -93,6 +118,10 @@ class VaultChatCardView extends StatelessWidget {
     this.onFetchCryptoBalance,
     this.onFetchCryptoActivity,
     this.cryptoCache,
+    this.onLoginEdit,
+    this.onLoginDelete,
+    this.onLoginOpenWebsite,
+    this.onLoginChooseCandidate,
   });
 
   @override
@@ -129,7 +158,13 @@ class VaultChatCardView extends StatelessWidget {
       case kVcrCardSecureItem:
         return _SecureItemCard(card: c);
       case kVcrCardLogin:
-        return _LoginCard(card: c);
+        return _LoginCard(
+          card: c,
+          onLoginEdit:            onLoginEdit,
+          onLoginDelete:          onLoginDelete,
+          onLoginOpenWebsite:     onLoginOpenWebsite,
+          onLoginChooseCandidate: onLoginChooseCandidate,
+        );
       case kVcrCardGeneratedLogin:
         return _GeneratedLoginCard(card: c);
       case kVcrCardIdDocument:
@@ -630,16 +665,79 @@ class _SecureItemRow extends StatelessWidget {
 
 class _LoginCard extends StatelessWidget {
   final VaultChatCard card;
-  const _LoginCard({required this.card});
+  final void Function(String service)?             onLoginEdit;
+  final void Function(String service)?             onLoginDelete;
+  final void Function(String service, String url)? onLoginOpenWebsite;
+  final void Function(String query)?               onLoginChooseCandidate;
+
+  const _LoginCard({
+    required this.card,
+    this.onLoginEdit,
+    this.onLoginDelete,
+    this.onLoginOpenWebsite,
+    this.onLoginChooseCandidate,
+  });
 
   @override
   Widget build(BuildContext context) {
     final data = card.data;
     final available = data != null && data['available'] == true;
-    final logins = _asMapList(data?['logins']);
     final query = card.query;
-    final view = card.view ?? 'list';
 
+    final view = (data?['view'] as String?) ?? card.view ?? kVcrLoginViewList;
+
+    // detail: full editable credential card (product decision 2026-07-11)
+    if (available && view == kVcrLoginViewDetail) {
+      final loginMap = data['login'];
+      if (loginMap is Map<String, dynamic>) {
+        return _LoginDetailCard(
+          card: card,
+          login: loginMap,
+          pendingAction: (data['pending_action'] as String?)?.trim(),
+          onEdit:         onLoginEdit,
+          onDelete:       onLoginDelete,
+          onOpenWebsite:  onLoginOpenWebsite,
+        );
+      }
+    }
+
+    // chooser: multi-match — user picks which one
+    if (available && view == kVcrLoginViewChooser) {
+      final logins = _asMapList(data['logins']);
+      return _LoginChooserCard(
+        card: card,
+        logins: logins,
+        onChooseCandidate: onLoginChooseCandidate,
+      );
+    }
+
+    // not_found: friendly no-match state
+    if (available && view == kVcrLoginViewNotFound) {
+      return _shell(
+        testKey: kVcrCardKeyLogin,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              query != null && query.isNotEmpty
+                  ? 'No login found for "$query"'
+                  : 'No login found',
+              style: kWalletSectionHeadingStyle,
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'You do not have a saved login that matches this. Try '
+              'another name, or open the Logins page to browse '
+              'everything you have saved.',
+              style: kWalletBodyStyle,
+            ),
+          ],
+        ),
+      );
+    }
+
+
+    final logins = _asMapList(data?['logins']);
     return _shell(
       testKey: kVcrCardKeyLogin,
       child: Column(
@@ -652,9 +750,7 @@ class _LoginCard extends StatelessWidget {
           const SizedBox(height: 6),
           if (!available)
             const Text(
-              'Open the vault to see your saved logins. Passwords '
-              'stay masked as ••••••••• until you reveal them from '
-              'the item view.',
+              'Open the vault to see your saved logins.',
               style: kWalletBodyStyle,
             )
           else if (logins.isEmpty) ...[
@@ -678,18 +774,466 @@ class _LoginCard extends StatelessWidget {
               ),
             ],
           ],
-          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// Full editable saved-login card. Renders when the router LOGIN_SEARCH /
+/// LOGIN_REVEAL / LOGIN_COPY dispatch resolves to a single specific
+/// login and the vault key was verified for the current session.
+///
+/// The plaintext values (`username`, `password`, `website`, `notes`) come
+/// from `card.data.login` — which is the ONLY server payload allowed to
+/// carry a plaintext password (see backend
+/// _sanitize_login_detail_payload). They are used inside this widget
+/// only, never logged, never included in a plain-text chat message,
+/// never sent back to OpenAI, never persisted in chat history.
+class _LoginDetailCard extends StatefulWidget {
+  final VaultChatCard card;
+  final Map<String, dynamic> login;
+  final String? pendingAction;
+  final void Function(String service)?             onEdit;
+  final void Function(String service)?             onDelete;
+  final void Function(String service, String url)? onOpenWebsite;
+
+  const _LoginDetailCard({
+    required this.card,
+    required this.login,
+    this.pendingAction,
+    this.onEdit,
+    this.onDelete,
+    this.onOpenWebsite,
+  });
+
+  @override
+  State<_LoginDetailCard> createState() => _LoginDetailCardState();
+}
+
+
+class _LoginDetailCardState extends State<_LoginDetailCard> {
+  bool _pendingDispatched = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeDispatchPendingAction();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _LoginDetailCard old) {
+    super.didUpdateWidget(old);
+    if (old.pendingAction != widget.pendingAction) {
+      _pendingDispatched = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeDispatchPendingAction();
+      });
+    }
+  }
+
+  void _maybeDispatchPendingAction() {
+    if (_pendingDispatched) return;
+    final action = (widget.pendingAction ?? '').trim();
+    if (action.isEmpty) return;
+    _pendingDispatched = true;
+    final service = (widget.login['service'] ?? '').toString();
+    final website = (widget.login['website'] ?? '').toString();
+    switch (action) {
+      case kVcrLoginActionEdit:
+        if (widget.onEdit != null && service.isNotEmpty) {
+          widget.onEdit!(service);
+        }
+        break;
+      case kVcrLoginActionDelete:
+        if (widget.onDelete != null && service.isNotEmpty) {
+          widget.onDelete!(service);
+        }
+        break;
+      case 'copy_username':
+        _copyUsername();
+        break;
+      case 'copy_password':
+        _copyPassword();
+        break;
+      case kVcrLoginActionCopy:
+
+        _copyPassword();
+        break;
+      case kVcrLoginActionOpen:
+        if (widget.onOpenWebsite != null &&
+            service.isNotEmpty && website.isNotEmpty) {
+          widget.onOpenWebsite!(service, website);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  Future<void> _copyUsername() async {
+    final v = (widget.login['username'] ?? '').toString();
+    if (v.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: v));
+    if (!mounted) return;
+    _snack(context, 'Username copied');
+  }
+
+  Future<void> _copyPassword() async {
+    final v = (widget.login['password'] ?? '').toString();
+    if (v.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: v));
+    if (!mounted) return;
+    _snack(context, 'Password copied');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title    = (widget.login['title'] ?? '').toString();
+    final service  = (widget.login['service'] ?? '').toString();
+    final username = (widget.login['username'] ?? '').toString();
+    final password = (widget.login['password'] ?? '').toString();
+    final domain   = (widget.login['domain'] ?? '').toString();
+    final website  = (widget.login['website'] ?? '').toString();
+    final notes    = (widget.login['notes'] ?? '').toString();
+
+    final vr = VaultResponsive.of(context);
+    final narrow = vr.width < 380;
+
+    return _shell(
+      testKey: 'vault_chat_card_login_detail',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 30, height: 30,
+                decoration: BoxDecoration(
+                  color: kWalletBgBase,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: kWalletBorder),
+                ),
+                alignment: Alignment.center,
+                child: const Icon(Icons.vpn_key_outlined,
+                    size: 18, color: kWalletTextPrimary),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title.isEmpty ? (service.isEmpty ? 'Login' : service)
+                                : title,
+                  key: const Key(
+                    'vault_chat_card_login_detail_title',
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: kWalletSectionHeadingStyle,
+                ),
+              ),
+            ],
+          ),
+          if (domain.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              domain,
+              key: const Key(
+                'vault_chat_card_login_detail_domain',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: kWalletTextMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+
+          if (username.isNotEmpty)
+            _LoginDetailFieldRow(
+              label: 'Username',
+              valueKey: 'vault_chat_card_login_detail_username_value',
+              copyKey:  'vault_chat_card_login_detail_username_copy',
+              value: username,
+              onCopy: _copyUsername,
+              narrow: narrow,
+            ),
+
+          if (password.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _LoginDetailFieldRow(
+              label: 'Password',
+              valueKey: 'vault_chat_card_login_detail_password_value',
+              copyKey:  'vault_chat_card_login_detail_password_copy',
+              value: password,
+              monospace: true,
+              onCopy: _copyPassword,
+              narrow: narrow,
+            ),
+          ],
+
+          if (website.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _LoginDetailFieldRow(
+              label: 'Website',
+              valueKey: 'vault_chat_card_login_detail_website_value',
+              copyKey:  'vault_chat_card_login_detail_website_open',
+              value: website,
+              copyIcon: Icons.open_in_new,
+              onCopy: () {
+                if (widget.onOpenWebsite != null && service.isNotEmpty) {
+                  widget.onOpenWebsite!(service, website);
+                }
+              },
+              narrow: narrow,
+            ),
+          ],
+
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Notes',
+              style: const TextStyle(
+                color: kWalletTextMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              notes,
+              key: const Key('vault_chat_card_login_detail_notes'),
+              style: const TextStyle(
+                color: kWalletTextPrimary, fontSize: 12,
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 14),
+
           Wrap(
             spacing: 6, runSpacing: 6,
             children: [
-              _pillMasked('•••••••••'),
-              _pillMasked('Reveal requires unlock'),
+              OutlinedButton.icon(
+                key: const Key('vault_chat_card_login_detail_edit'),
+                onPressed: (widget.onEdit != null && service.isNotEmpty)
+                    ? () => widget.onEdit!(service)
+                    : null,
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: Text(
+                  'Edit',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  minimumSize: const Size(0, 32),
+                ),
+              ),
+              OutlinedButton.icon(
+                key: const Key('vault_chat_card_login_detail_delete'),
+                onPressed: (widget.onDelete != null && service.isNotEmpty)
+                    ? () => widget.onDelete!(service)
+                    : null,
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: Text(
+                  'Delete',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  minimumSize: const Size(0, 32),
+                  foregroundColor: const Color(0xFFE0605C),
+                ),
+              ),
             ],
           ),
         ],
       ),
     );
   }
+}
+
+
+class _LoginDetailFieldRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final String valueKey;
+  final String copyKey;
+  final bool monospace;
+  final IconData copyIcon;
+  final VoidCallback onCopy;
+  final bool narrow;
+
+  const _LoginDetailFieldRow({
+    required this.label,
+    required this.value,
+    required this.valueKey,
+    required this.copyKey,
+    required this.onCopy,
+    this.monospace = false,
+    this.copyIcon = Icons.copy,
+    this.narrow = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final valueStyle = TextStyle(
+      color: kWalletTextPrimary,
+      fontSize: 13,
+      fontFamily: monospace ? 'monospace' : null,
+    );
+    final labelStyle = const TextStyle(
+      color: kWalletTextMuted,
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.4,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label.toUpperCase(), style: labelStyle),
+        const SizedBox(height: 4),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: SelectableText(
+                value,
+                key: Key(valueKey),
+                maxLines: 3,
+                minLines: 1,
+                style: valueStyle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              key: Key(copyKey),
+              tooltip: MaterialLocalizations.of(context).copyButtonLabel,
+              iconSize: 16,
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints.tightFor(
+                width:  narrow ? 32 : 36,
+                height: narrow ? 32 : 36,
+              ),
+              onPressed: onCopy,
+              icon: Icon(copyIcon),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+
+class _LoginChooserCard extends StatelessWidget {
+  final VaultChatCard card;
+  final List<Map<String, dynamic>> logins;
+  final void Function(String query)? onChooseCandidate;
+
+  const _LoginChooserCard({
+    required this.card,
+    required this.logins,
+    this.onChooseCandidate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final q = card.query ?? '';
+    return _shell(
+      testKey: 'vault_chat_card_login_chooser',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            q.isNotEmpty
+                ? '${logins.length} matches for "$q" — pick one'
+                : 'Pick a login',
+            style: kWalletSectionHeadingStyle,
+          ),
+          const SizedBox(height: 8),
+          for (final row in logins.take(20))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: OutlinedButton(
+                key: Key(
+                  'vault_chat_card_login_chooser_option_'
+                  '${(row['id'] ?? '').toString()}',
+                ),
+                onPressed: onChooseCandidate == null
+                    ? null
+                    : () {
+                        final title = (row['title'] ??
+                                       row['service'] ?? '').toString();
+                        if (title.isNotEmpty) {
+                          onChooseCandidate!(title);
+                        }
+                      },
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  minimumSize: const Size(double.infinity, 40),
+                  alignment: Alignment.centerLeft,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      (row['title'] ?? row['service'] ?? '').toString(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: kWalletTextPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if ((row['username_masked'] ?? '').toString()
+                        .isNotEmpty ||
+                        (row['domain'] ?? '').toString().isNotEmpty)
+                      Text(
+                        [
+                          if ((row['username_masked'] ?? '').toString()
+                              .isNotEmpty)
+                            (row['username_masked'] ?? '').toString(),
+                          if ((row['domain'] ?? '').toString().isNotEmpty)
+                            '· ${(row['domain'] ?? '').toString()}',
+                        ].join(' '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: kWalletTextMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+
+void _snack(BuildContext context, String message) {
+
+  final m = ScaffoldMessenger.maybeOf(context);
+  if (m == null) return;
+  m.showSnackBar(
+    SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+  );
 }
 
 

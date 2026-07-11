@@ -563,6 +563,26 @@ class _CardBubble extends StatelessWidget {
       onFetchCryptoBalance:  onFetchCryptoBalance,
       onFetchCryptoActivity: onFetchCryptoActivity,
       cryptoCache:           cryptoCache,
+
+      onLoginEdit: (service) =>
+          onSecureItemEdit?.call(service, 'login'),
+      onLoginDelete: (service) =>
+          onSecureItemDelete?.call(service, 'login'),
+      onLoginOpenWebsite: (service, url) {
+        if (onCardAction != null) {
+          onCardAction!(msg, 'open_login_website', {
+            'service': service,
+            'url':     url,
+          });
+        }
+      },
+      onLoginChooseCandidate: (title) {
+        if (onCardAction != null) {
+          onCardAction!(msg, 'choose_login', {
+            'query': title,
+          });
+        }
+      },
     );
   }
 

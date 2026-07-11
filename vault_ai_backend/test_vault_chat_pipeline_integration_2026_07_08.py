@@ -109,12 +109,18 @@ class TestMustWorkAcceptance:
 
         assert env["card"].get("maskedByDefault") is True
 
-    def test_find_gmail_login_returns_login_search(self):
+    def test_find_gmail_login_returns_login_detail(self):
+        """Product decision (2026-07-11): LOGIN_SEARCH dispatches to
+        the DETAIL card (view=detail, maskedByDefault=False). List
+        view (`show all my logins`) still masks by default — covered
+        by `test_show_all_my_logins_returns_login_list_view`."""
         env = build_vault_chat_envelope("Find my Gmail login")
         assert env is not None
         assert env["intent"] == "vault_login_search"
         assert env["card"]["cardType"] == "vault_login_card"
-        assert env["card"].get("maskedByDefault") is True
+        assert env["card"].get("view") == "detail"
+
+        assert env["card"].get("maskedByDefault") is False
 
     def test_show_crypto_vault_delegates_to_crypto(self):
         env = build_vault_chat_envelope("Show my Crypto Vault")
@@ -347,33 +353,37 @@ class TestNoSensitiveLeakage:
                 f"envelope card must not carry {k!r} field"
             )
 
-    def test_reveal_returns_confirmation_not_password(self):
+    def test_reveal_router_shell_carries_no_password(self):
+        """Product decision (2026-07-11): LOGIN_REVEAL dispatches to the
+        login DETAIL card (not a confirmation prompt). The router shell
+        must still not carry any plaintext credential — plaintext is
+        added later by populate_vault_chat_card_data through the
+        _sanitize_login_detail_payload allowlist, only after the vault
+        key has been verified for the current session.
+        """
 
         env = build_vault_chat_envelope("Reveal my password")
         assert env is not None
         assert env["intent"] == "vault_login_reveal"
-        assert env["card"]["cardType"] == (
-            "vault_confirmation_required_card"
-        )
+        assert env["card"]["cardType"] == "vault_login_card"
+        assert env["card"].get("view") == "detail"
 
 
-        assert env["card"].get("requiresPinUnlock") is True
-        assert env["card"].get("requiresTrustedDevice") is True
-        assert env["card"].get("requiresExplicitConfirmation") is True
-
+        assert "password" not in env["card"]
+        assert "requiresPinUnlock" not in env["card"]
+        assert "requiresTrustedDevice" not in env["card"]
 
 
         s = _stringify_deep(env["card"])
         assert not re.search(r"\bnetflix_password\b", s)
 
-    def test_copy_returns_confirmation_not_password(self):
+    def test_copy_router_shell_carries_no_password(self):
         env = build_vault_chat_envelope("Copy my Netflix password")
         assert env is not None
         assert env["intent"] == "vault_login_copy"
-        assert env["card"]["cardType"] == (
-            "vault_confirmation_required_card"
-        )
-        assert env["card"].get("requiresPinUnlock") is True
+        assert env["card"]["cardType"] == "vault_login_card"
+        assert env["card"].get("view") == "detail"
+        assert "password" not in env["card"]
 
     def test_id_reveal_returns_confirmation_not_id_number(self):
         env = build_vault_chat_envelope(

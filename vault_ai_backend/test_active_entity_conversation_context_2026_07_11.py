@@ -172,7 +172,9 @@ class LoginFollowupShowMeRendersMaskedCard(unittest.TestCase):
         self.assertEqual(env["intent"], INTENT_LOGIN_SEARCH)
         self.assertEqual(env["type"], "vault_chat_card")
         self.assertEqual(env["schema"], "vault_chat_response_v1")
-        self.assertTrue(env["card"].get("maskedByDefault"))
+
+        self.assertFalse(env["card"].get("maskedByDefault", True))
+        self.assertEqual(env["card"].get("view"), "detail")
         self.assertEqual(
             env["card"].get("query"),
             "American First Credit Union",
@@ -554,18 +556,26 @@ class ActiveEntityNeverStoresSecrets(unittest.TestCase):
 
 
 
-class RevealAndCopyStillRouteToConfirmation(unittest.TestCase):
+class RevealAndCopyRouteToDetailCard(unittest.TestCase):
+    """Product decision (2026-07-11): an authenticated user with an
+    unlocked vault who explicitly asks to reveal or copy a saved login
+    sees the DETAIL card, not a second confirmation prompt. The
+    plaintext credential is populated by
+    populate_vault_chat_card_data via a positive allowlist — never by
+    the router shell — see _sanitize_login_detail_payload."""
 
 
-
-
-    def test_show_me_the_password_hits_reveal_confirmation(self):
+    def test_show_me_the_password_hits_login_detail(self):
         env = build_vault_chat_envelope("show me the password for gmail")
         self.assertEqual(env["intent"], INTENT_LOGIN_REVEAL)
+        self.assertEqual(env["card"]["cardType"], "vault_login_card")
+        self.assertEqual(env["card"].get("view"), "detail")
         self.assertEqual(
-            env["card"]["cardType"],
-            "vault_confirmation_required_card",
+            (env["card"].get("query") or "").lower(), "gmail",
         )
+
+        self.assertNotIn("action", env["card"])
+        self.assertNotIn("requiresPinUnlock", env["card"])
 
     def test_reveal_it_is_not_a_pronoun_followup(self):
         self.assertIsNone(detect_pronoun_followup("reveal it"))
@@ -706,29 +716,38 @@ class ChatHandlerWiringSourceGuards(unittest.TestCase):
         )
 
     def test_login_search_fast_path_writes_login_active_entity(self):
-        idx = self.main_src.find(
-            '_fp_intent_str == "vault_login_search"',
+
+        idx = self.main_src.find('_login_intents = (')
+        self.assertGreater(idx, -1,
+            msg="fast-path must define the tuple of login intents",
         )
-        self.assertGreater(idx, -1)
-        window = self.main_src[idx:idx + 1500]
+        window = self.main_src[idx:idx + 2500]
+        self.assertIn("vault_login_search", window)
+        self.assertIn("vault_login_reveal", window)
+        self.assertIn("vault_login_copy", window)
         self.assertIn("set_active_entity(", window)
         self.assertIn("entity_type=ENTITY_LOGIN", window)
-
-
-        self.assertIn('entity_ref={"query"', window)
 
 
         self.assertIn("session_id=_fp_session_id", window)
 
+
+        self.assertIn("ACTION_EDIT", window)
+
     def test_login_search_slow_path_writes_login_active_entity(self):
-        idx = self.main_src.find(
-            '_vcr_intent_str == "vault_login_search"',
+
+        idx = self.main_src.find('_vcr_login_intents = (')
+        self.assertGreater(idx, -1,
+            msg="slow-path must define the tuple of login intents",
         )
-        self.assertGreater(idx, -1)
-        window = self.main_src[idx:idx + 1500]
+        window = self.main_src[idx:idx + 3500]
+        self.assertIn("vault_login_search", window)
+        self.assertIn("vault_login_reveal", window)
+        self.assertIn("vault_login_copy", window)
         self.assertIn("set_active_entity(", window)
         self.assertIn("entity_type=ENTITY_LOGIN", window)
         self.assertIn("session_id=_vcr_session_id", window)
+        self.assertIn("ACTION_EDIT", window)
 
     def test_file_open_writes_file_active_entity(self):
         idx = self.main_src.find(

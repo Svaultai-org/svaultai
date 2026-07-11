@@ -259,7 +259,19 @@ class VaultChatCard {
 
     Map<String, dynamic>? safeData;
     if (rawData is Map<String, dynamic>) {
-      safeData = _stripForbiddenKeys(rawData);
+      // The login DETAIL view is the intentional exception (product
+      // decision 2026-07-11) where the server payload IS allowed to
+      // carry plaintext credential fields. The backend gates that
+      // path via _sanitize_login_detail_payload; the frontend mirrors
+      // it here by routing detail payloads through the same positive
+      // allowlist instead of the blacklist strip.
+      final isLoginDetail = safeType == kVcrCardLogin &&
+          (rawData['view'] == 'detail');
+      if (isLoginDetail) {
+        safeData = _sanitizeLoginDetail(rawData);
+      } else {
+        safeData = _stripForbiddenKeys(rawData);
+      }
     }
 
     final List<String> relIds = <String>[];
@@ -346,6 +358,40 @@ const Set<String> kVcrForbiddenDataKeys = <String>{
 
   'password_field', 'notes_full', 'card_number_raw',
 };
+
+
+
+const Set<String> _kLoginDetailPayloadKeys = <String>{
+  'schema', 'available', 'view', 'query', 'login', 'count',
+  'pending_action',
+};
+
+const Set<String> _kLoginDetailLoginKeys = <String>{
+  'id', 'title', 'service', 'username', 'password',
+  'domain', 'website', 'notes', 'updated_at', 'generated',
+};
+
+
+Map<String, dynamic> _sanitizeLoginDetail(Map<String, dynamic> raw) {
+  final out = <String, dynamic>{};
+  for (final entry in raw.entries) {
+    if (!_kLoginDetailPayloadKeys.contains(entry.key)) continue;
+    final v = entry.value;
+    if (entry.key == 'login' && v is Map) {
+      final loginMap = v.cast<String, dynamic>();
+      final safeLogin = <String, dynamic>{};
+      for (final le in loginMap.entries) {
+        if (_kLoginDetailLoginKeys.contains(le.key)) {
+          safeLogin[le.key] = le.value;
+        }
+      }
+      out[entry.key] = safeLogin;
+    } else {
+      out[entry.key] = v;
+    }
+  }
+  return out;
+}
 
 
 Map<String, dynamic> _stripForbiddenKeys(Map<String, dynamic> raw) {

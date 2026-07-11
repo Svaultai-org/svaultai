@@ -117,25 +117,40 @@ class IntentClassificationTests(unittest.TestCase):
             self.assertEqual(self._f(m)["intent"], expected, m)
 
 
-    def test_login_reveal_requires_confirmation(self):
+    def test_login_reveal_dispatches_detail_card(self):
+        """Product decision (2026-07-11): an authenticated user with an
+        unlocked vault who explicitly asks to reveal a login sees the
+        detail card immediately — no confirmation prompt, no second PIN
+        gate. The card query is preserved so the card-data populator
+        can resolve the specific login."""
         r = self._f("Reveal the password for Netflix")
         self.assertEqual(r["intent"], "vault_login_reveal")
         card = r["card"]
+        self.assertEqual(card["cardType"], "vault_login_card")
+        self.assertEqual(card.get("view"), "detail")
         self.assertEqual(
-            card["cardType"], "vault_confirmation_required_card",
+            (card.get("query") or "").lower(), "netflix",
         )
-        self.assertEqual(card["action"], "reveal_login_password")
-        self.assertTrue(card["requiresPinUnlock"])
-        self.assertTrue(card["requiresTrustedDevice"])
-        self.assertTrue(card["requiresExplicitConfirmation"])
+        self.assertTrue(card.get("liveFetchRequired"))
+
+        self.assertNotIn("action", card)
+        self.assertNotIn("requiresPinUnlock", card)
+        self.assertNotIn("requiresTrustedDevice", card)
 
 
-    def test_login_copy_requires_confirmation(self):
+    def test_login_copy_dispatches_detail_card(self):
+        """Same rule as reveal — copy dispatches to the detail card and
+        the frontend performs the clipboard write."""
         r = self._f("Copy my Netflix password")
         self.assertEqual(r["intent"], "vault_login_copy")
         card = r["card"]
-        self.assertEqual(card["action"], "copy_login_password")
-        self.assertTrue(card["requiresPinUnlock"])
+        self.assertEqual(card["cardType"], "vault_login_card")
+        self.assertEqual(card.get("view"), "detail")
+        self.assertEqual(
+            (card.get("query") or "").lower(), "netflix",
+        )
+        self.assertNotIn("action", card)
+        self.assertNotIn("requiresPinUnlock", card)
 
 
     def test_generated_login_intents(self):
@@ -489,18 +504,29 @@ class NoFakeDataInvariants(unittest.TestCase):
                 self.assertNotIn(banned, card, m)
 
 
-    def test_confirmation_required_cards_never_carry_the_secret(self):
+    def test_router_card_shell_never_carries_the_secret(self):
+        """Every router card shell — including login detail, chooser,
+        confirmation, and id-document — must be free of any plaintext
+        secret. Since 2026-07-11, LOGIN_REVEAL / LOGIN_COPY dispatch to
+        the login DETAIL card (not a confirmation), and the plaintext
+        password is added only during the card-data population step
+        (populate_vault_chat_card_data) with an explicit positive
+        allowlist — never in the router-emitted shell.
+        """
         from vault_chat_router import classify_and_build_vault_intent
-        for m in [
-            "Reveal the password for Netflix",
-            "Copy my Netflix password",
-            "Show full passport number",
-        ]:
-            card = classify_and_build_vault_intent(m)["card"]
-            self.assertEqual(
-                card["cardType"],
+        cases = [
+
+            ("Reveal the password for Netflix", "vault_login_card"),
+            ("Copy my Netflix password", "vault_login_card"),
+
+            (
+                "Show full passport number",
                 "vault_confirmation_required_card",
-            )
+            ),
+        ]
+        for m, expected_type in cases:
+            card = classify_and_build_vault_intent(m)["card"]
+            self.assertEqual(card["cardType"], expected_type, m)
 
             for banned in (
                 "password", "clearPassword", "revealed",

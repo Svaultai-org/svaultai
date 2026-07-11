@@ -11660,9 +11660,18 @@ async def chat_endpoint(
                     _eq = _active.get("query")
 
 
+                    # All login pronoun follow-ups resolve back to a detail
+                    # card for the same login. The frontend uses
+                    # `pending_action` to decide whether to open edit mode,
+                    # show the delete confirmation, auto-copy a field, or
+                    # open the website.
+                    _login_followup_verbs = (
+                        "show", "open", "view",
+                        "edit", "delete", "copy", "save",
+                    )
                     if (
                         _etype == ENTITY_LOGIN
-                        and _verb in ("show", "open", "view")
+                        and _verb in _login_followup_verbs
                         and isinstance(_eq, str) and _eq.strip()
                     ):
                         try:
@@ -11686,6 +11695,17 @@ async def chat_endpoint(
                                     logger.exception(
                                         "[CHAT-DEBUG] followup_populate_failed",
                                     )
+                                # Annotate the card with a `pending_action`
+                                # the frontend translates into a UI trigger.
+                                # Never plaintext — just a verb tag.
+                                try:
+                                    _card = _followup_envelope.get("card")
+                                    if isinstance(_card, dict):
+                                        _card_data = _card.get("data")
+                                        if isinstance(_card_data, dict):
+                                            _card_data["pending_action"] = _verb
+                                except Exception:
+                                    pass
                                 try:
                                     if isinstance(_followup_envelope, dict):
                                         _followup_envelope["locale"] = _reply_language
@@ -11880,27 +11900,85 @@ async def chat_endpoint(
             try:
                 _fp_intent_str = str(_fast_envelope.get("intent") or "")
                 _fp_card = _fast_envelope.get("card") or {}
-                _fp_query = _fp_card.get("query") if isinstance(_fp_card, dict) else None
-                _fp_session_id = str((principal or {}).get("token_id") or "") or None
-                if _fp_intent_str == "vault_login_search" and \
+                _fp_query = (
+                    _fp_card.get("query")
+                    if isinstance(_fp_card, dict) else None
+                )
+                _fp_session_id = str(
+                    (principal or {}).get("token_id") or ""
+                ) or None
+                _fp_data = (
+                    _fp_card.get("data")
+                    if isinstance(_fp_card, dict) else None
+                )
+                _fp_login_id: str = ""
+                _fp_login_label: str = ""
+                _fp_is_multi: bool = False
+                _fp_candidates: list = []
+                if isinstance(_fp_data, dict):
+                    _view = str(_fp_data.get("view") or "")
+                    if _view == "detail" and isinstance(
+                        _fp_data.get("login"), dict,
+                    ):
+                        _fp_login_id = str(
+                            _fp_data["login"].get("id") or ""
+                        )
+                        _fp_login_label = str(
+                            _fp_data["login"].get("title") or ""
+                        )
+                    elif _view == "chooser" and isinstance(
+                        _fp_data.get("logins"), list,
+                    ):
+                        _fp_is_multi = True
+                        for _row in _fp_data["logins"][:20]:
+                            if not isinstance(_row, dict):
+                                continue
+                            _rid = str(_row.get("id") or "")
+                            _rtitle = str(_row.get("title") or "")
+                            if _rid:
+                                _fp_candidates.append({
+                                    "id": _rid,
+                                })
+                            _ = _rtitle  # kept plaintext-free
+                _login_intents = (
+                    "vault_login_search",
+                    "vault_login_reveal",
+                    "vault_login_copy",
+                )
+                if _fp_intent_str in _login_intents and \
                    isinstance(_fp_query, str) and _fp_query.strip():
                     from vault_chat_active_entity import (
                         set_active_entity,
                         ENTITY_LOGIN,
                         ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
                         ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                        ACTION_EDIT, ACTION_SAVE,
+                    )
+                    _ref: dict = {}
+                    if _fp_login_id:
+
+                        _ref = {"id": _fp_login_id}
+                    else:
+
+                        _ref = {"query": _fp_query.strip()}
+                    _label = (
+                        _fp_login_label
+                        or _fp_query.strip()
                     )
                     set_active_entity(
                         vault_id,
                         entity_type=ENTITY_LOGIN,
-                        entity_ref={"query": _fp_query.strip()},
-                        display_label=_fp_query.strip(),
+                        entity_ref=_ref,
+                        display_label=_label,
                         query=_fp_query.strip(),
                         allowed_actions=(
                             ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
                             ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                            ACTION_EDIT, ACTION_SAVE,
                         ),
                         session_id=_fp_session_id,
+                        is_multi=_fp_is_multi,
+                        candidates=_fp_candidates,
                     )
             except Exception:
                 logger.exception(
@@ -12349,25 +12427,71 @@ async def chat_endpoint(
                     _vcr_intent_str = str(_vcr_envelope.get("intent") or "")
                     _vcr_q = _vcr_card.get("query") if isinstance(_vcr_card, dict) else None
                     _vcr_session_id = str((principal or {}).get("token_id") or "") or None
-                    if _vcr_intent_str == "vault_login_search" and \
+                    _vcr_login_intents = (
+                        "vault_login_search",
+                        "vault_login_reveal",
+                        "vault_login_copy",
+                    )
+                    _vcr_card = _vcr_envelope.get("card") or {}
+                    _vcr_data = (
+                        _vcr_card.get("data")
+                        if isinstance(_vcr_card, dict) else None
+                    )
+                    _vcr_login_id = ""
+                    _vcr_label = ""
+                    _vcr_is_multi = False
+                    _vcr_candidates: list = []
+                    if isinstance(_vcr_data, dict):
+                        _v = str(_vcr_data.get("view") or "")
+                        if _v == "detail" and isinstance(
+                            _vcr_data.get("login"), dict,
+                        ):
+                            _vcr_login_id = str(
+                                _vcr_data["login"].get("id") or ""
+                            )
+                            _vcr_label = str(
+                                _vcr_data["login"].get("title") or ""
+                            )
+                        elif _v == "chooser" and isinstance(
+                            _vcr_data.get("logins"), list,
+                        ):
+                            _vcr_is_multi = True
+                            for _r in _vcr_data["logins"][:20]:
+                                if not isinstance(_r, dict):
+                                    continue
+                                _rid = str(_r.get("id") or "")
+                                if _rid:
+                                    _vcr_candidates.append({"id": _rid})
+                    if _vcr_intent_str in _vcr_login_intents and \
                        isinstance(_vcr_q, str) and _vcr_q.strip():
                         from vault_chat_active_entity import (
                             set_active_entity,
                             ENTITY_LOGIN,
                             ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
                             ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                            ACTION_EDIT, ACTION_SAVE,
+                        )
+                        _vcr_ref = (
+                            {"id": _vcr_login_id}
+                            if _vcr_login_id
+                            else {"query": _vcr_q.strip()}
                         )
                         set_active_entity(
                             vault_id,
                             entity_type=ENTITY_LOGIN,
-                            entity_ref={"query": _vcr_q.strip()},
-                            display_label=_vcr_q.strip(),
+                            entity_ref=_vcr_ref,
+                            display_label=(
+                                _vcr_label or _vcr_q.strip()
+                            ),
                             query=_vcr_q.strip(),
                             allowed_actions=(
                                 ACTION_SHOW, ACTION_OPEN, ACTION_VIEW,
                                 ACTION_COPY, ACTION_RENAME, ACTION_DELETE,
+                                ACTION_EDIT, ACTION_SAVE,
                             ),
                             session_id=_vcr_session_id,
+                            is_multi=_vcr_is_multi,
+                            candidates=_vcr_candidates,
                         )
                 except Exception:
                     logger.exception(

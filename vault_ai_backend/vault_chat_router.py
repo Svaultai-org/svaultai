@@ -369,6 +369,11 @@ _LOGIN_REVEAL_PATTERNS = tuple(
         r"\breveal\s+(?:the\s+|my\s+)?password\b",
         r"\bshow\s+(?:me\s+)?the\s+password\b",
         r"\bwhat\s+is\s+the\s+password\s+for\b",
+
+        r"\breveal\s+(?:the\s+|my\s+)?[\w\-'\.]+"
+        r"(?:\s+[\w\-'\.]+){0,4}\s+password\b",
+
+        r"\b(?:reveal|show)\s+(?:the\s+|my\s+)?password\s+for\b",
     )
 )
 
@@ -833,25 +838,27 @@ def classify_and_build_vault_intent(
 
 
     if _matches_any(text, _LOGIN_REVEAL_PATTERNS):
+
         return _wrap_intent(
             INTENT_LOGIN_REVEAL,
-            _build_confirmation_required(
-                action="reveal_login_password",
-                message=(
-                    "Revealing a password requires trusted device, "
-                    "PIN unlock, and explicit confirmation."
-                ),
+            _build_card(
+                CARD_LOGIN,
+                liveFetchRequired=True,
+                maskedByDefault=False,
+                view="detail",
+                query=_extract_search_query(text),
             ),
         )
     if _matches_any(text, _LOGIN_COPY_PATTERNS):
+
         return _wrap_intent(
             INTENT_LOGIN_COPY,
-            _build_confirmation_required(
-                action="copy_login_password",
-                message=(
-                    "Copying a password requires trusted device, "
-                    "PIN unlock, and explicit confirmation."
-                ),
+            _build_card(
+                CARD_LOGIN,
+                liveFetchRequired=True,
+                maskedByDefault=False,
+                view="detail",
+                query=_extract_search_query(text),
             ),
         )
     if _matches_any(text, _LOGIN_DUPLICATES_PATTERNS):
@@ -879,13 +886,14 @@ def classify_and_build_vault_intent(
             ),
         )
     if _matches_any(text, _LOGIN_SEARCH_PATTERNS):
+
         return _wrap_intent(
             INTENT_LOGIN_SEARCH,
             _build_card(
                 CARD_LOGIN,
                 liveFetchRequired=True,
-                maskedByDefault=True,
-                view="search",
+                maskedByDefault=False,
+                view="detail",
                 query=_extract_search_query(text),
             ),
         )
@@ -1072,6 +1080,29 @@ _LOGIN_SERVICE_EXTRACT_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(
         r"\bfind\s+(?:my\s+)?(?P<q>[\w'\-\.]+(?:\s+[\w'\-\.]+){0,6}?)"
         r"\s+login\b",
+        re.IGNORECASE,
+    ),
+
+    # Reveal / copy phrasings — extract the service name so the
+    # LOGIN_REVEAL / LOGIN_COPY intent lands on the detail card for the
+    # right item. Examples: "Reveal the password for Netflix",
+    # "Copy my Netflix password", "What's my password for Chase".
+    re.compile(
+        r"\b(?:reveal|show|unmask|view|display)\s+(?:the\s+|my\s+)?"
+        r"(?:password|credential|login)\s+for\s+"
+        r"(?P<q>[\w'\-\.]+(?:\s+[\w'\-\.]+){0,6})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:copy|reveal|get|grab)\s+(?:the\s+|my\s+)?"
+        r"(?P<q>[\w'\-\.]+(?:\s+[\w'\-\.]+){0,6}?)\s+"
+        r"(?:password|credential|login)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:what'?s|whats)\s+(?:the\s+|my\s+)?"
+        r"(?:password|credential|login)\s+for\s+"
+        r"(?P<q>[\w'\-\.]+(?:\s+[\w'\-\.]+){0,6})\b",
         re.IGNORECASE,
     ),
 )
