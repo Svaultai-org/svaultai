@@ -75,6 +75,10 @@ class ChatMessageList extends StatefulWidget {
   final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
   final vcr_ui.CryptoChatLiveCache? cryptoCache;
 
+
+  final bool cryptoEntitled;
+  final VoidCallback? onOpenCryptoUpgrade;
+
   const ChatMessageList({
     super.key,
     required this.messages,
@@ -113,6 +117,8 @@ class ChatMessageList extends StatefulWidget {
     this.onFetchCryptoBalance,
     this.onFetchCryptoActivity,
     this.cryptoCache,
+    this.cryptoEntitled = true,
+    this.onOpenCryptoUpgrade,
   });
 
   @override
@@ -238,6 +244,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
           onFetchCryptoBalance:  widget.onFetchCryptoBalance,
           onFetchCryptoActivity: widget.onFetchCryptoActivity,
           cryptoCache:           widget.cryptoCache,
+          cryptoEntitled:        widget.cryptoEntitled,
+          onOpenCryptoUpgrade:   widget.onOpenCryptoUpgrade,
         );
 
         

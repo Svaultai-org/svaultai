@@ -73,6 +73,11 @@ class ChatBubble extends StatelessWidget {
   final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
   final vcr_ui.CryptoChatLiveCache? cryptoCache;
 
+
+  final bool cryptoEntitled;
+
+  final VoidCallback? onOpenCryptoUpgrade;
+
   const ChatBubble({
     super.key,
     required this.msg,
@@ -107,6 +112,8 @@ class ChatBubble extends StatelessWidget {
     this.onFetchCryptoBalance,
     this.onFetchCryptoActivity,
     this.cryptoCache,
+    this.cryptoEntitled = true,
+    this.onOpenCryptoUpgrade,
   });
 
   @override
@@ -137,6 +144,8 @@ class ChatBubble extends StatelessWidget {
         onFetchCryptoBalance:  onFetchCryptoBalance,
         onFetchCryptoActivity: onFetchCryptoActivity,
         cryptoCache:           cryptoCache,
+        cryptoEntitled:        cryptoEntitled,
+        onOpenCryptoUpgrade:   onOpenCryptoUpgrade,
         onSecureItemView: onSecureItemView,
         onSecureItemReveal: onSecureItemReveal,
         onSecureItemCopyUsername: onSecureItemCopyUsername,
@@ -344,6 +353,10 @@ class _CardBubble extends StatelessWidget {
   final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
   final vcr_ui.CryptoChatLiveCache? cryptoCache;
 
+
+  final bool cryptoEntitled;
+  final VoidCallback? onOpenCryptoUpgrade;
+
   const _CardBubble({
     required this.msg,
     required this.isMobile,
@@ -375,6 +388,8 @@ class _CardBubble extends StatelessWidget {
     this.onFetchCryptoBalance,
     this.onFetchCryptoActivity,
     this.cryptoCache,
+    this.cryptoEntitled = true,
+    this.onOpenCryptoUpgrade,
   });
 
   @override
@@ -563,6 +578,8 @@ class _CardBubble extends StatelessWidget {
       onFetchCryptoBalance:  onFetchCryptoBalance,
       onFetchCryptoActivity: onFetchCryptoActivity,
       cryptoCache:           cryptoCache,
+      cryptoEntitled:        cryptoEntitled,
+      onOpenCryptoUpgrade:   onOpenCryptoUpgrade,
 
       onLoginEdit: (service) =>
           onSecureItemEdit?.call(service, 'login'),

@@ -52,6 +52,11 @@ class CryptoVaultChatCardView extends StatelessWidget {
 
   final CryptoChatLiveCache? cache;
 
+
+  final bool cryptoEntitled;
+
+  final VoidCallback? onOpenUpgrade;
+
   const CryptoVaultChatCardView({
     super.key,
     required this.card,
@@ -61,6 +66,8 @@ class CryptoVaultChatCardView extends StatelessWidget {
     this.onFetchBalance,
     this.onFetchActivity,
     this.cache,
+    this.cryptoEntitled = true,
+    this.onOpenUpgrade,
   });
 
   @override
@@ -99,6 +106,8 @@ class CryptoVaultChatCardView extends StatelessWidget {
           onOpenAssetDetail: onOpenAssetDetail,
           onFetchBalance: onFetchBalance,
           cache: cache,
+          cryptoEntitled: cryptoEntitled,
+          onOpenUpgrade: onOpenUpgrade,
         );
       case kCvcCardUnrecognized:
       default:
@@ -1210,9 +1219,15 @@ class _ShowVaultCard extends StatefulWidget {
   final void Function(String asset)? onOpenAssetDetail;
   final CryptoBalanceFetcher? onFetchBalance;
   final CryptoChatLiveCache? cache;
+
+  final bool cryptoEntitled;
+
+  final VoidCallback? onOpenUpgrade;
   const _ShowVaultCard({
     this.card, this.onOpenVault, this.onOpenAssetDetail,
     this.onFetchBalance, this.cache,
+    this.cryptoEntitled = true,
+    this.onOpenUpgrade,
   });
 
   @override
@@ -1398,7 +1413,32 @@ class _ShowVaultCardState extends State<_ShowVaultCard> {
               child: Text(AppLocalizations.of(context).cryptoRetryFailed),
             ),
           ],
-          if (widget.onOpenVault != null) ...[
+          if (_isLocked()) ...[
+
+            const SizedBox(height: 10),
+            Text(
+              'Crypto Vault is not included in your current plan. '
+              'Upgrade to unlock wallet addresses, seed phrases, and '
+              'receive QR codes secured by your PIN.',
+              key: const Key(
+                'crypto_vault_chat_show_vault_upgrade_body',
+              ),
+              style: const TextStyle(
+                color: kWalletTextMuted, fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              key: const Key(
+                'crypto_vault_chat_show_vault_upgrade_btn',
+              ),
+              onPressed: widget.onOpenUpgrade,
+              style: walletGhostButtonStyle(),
+              child: const Text(
+                'Upgrade required',
+              ),
+            ),
+          ] else if (widget.onOpenVault != null) ...[
             const SizedBox(height: 10),
             OutlinedButton(
               key: const Key(
@@ -1421,6 +1461,22 @@ class _ShowVaultCardState extends State<_ShowVaultCard> {
     for (final entry in _liveByAsset.entries) {
       final status = entry.value['balanceStatus'];
       if (status == 'unavailable') return true;
+    }
+    return false;
+  }
+
+
+  /// Belt-and-braces entitlement check. The card is locked when EITHER
+  /// the server payload says so (backend saw `user_tier != upgraded`)
+  /// OR the client-side AppState billing snapshot lacks an active
+  /// storage plan. Either signal alone triggers the upgrade CTA; a
+  /// stale client snapshot cannot override a server "locked" verdict.
+  bool _isLocked() {
+    if (!widget.cryptoEntitled) return true;
+    final data = widget.card?.data;
+    if (data is Map<String, dynamic>) {
+      if (data['locked'] == true) return true;
+      if (data['entitlement'] == 'upgrade_required') return true;
     }
     return false;
   }

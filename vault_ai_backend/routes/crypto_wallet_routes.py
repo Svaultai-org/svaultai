@@ -30,6 +30,7 @@ from crypto_wallet_schemas import (
     engine_disabled_envelope,
     rejects_plaintext_secret,
 )
+from crypto_entitlement import require_crypto_entitlement
 from device_gate import verify_trusted_device
 from vault_config import (
     crypto_wallet_engine_enabled,
@@ -524,7 +525,7 @@ def list_wallet_engine_assets(
 
 @router.get("/crypto/wallet/accounts")
 def list_wallet_engine_accounts(
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -664,7 +665,7 @@ def classify_vault_chat(
 @router.get("/crypto/wallet/xmr/scanner/status")
 def get_xmr_scanner_status(
     platform: Optional[str] = Query(default=None),
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
     from xmr_scanner import (
@@ -807,7 +808,7 @@ def _safe_eq(a: str, b: str) -> bool:
 def create_wallet_account(
     asset: str,
     payload: CreateWalletPayload,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -907,7 +908,7 @@ def create_wallet_account(
 @router.get("/crypto/wallet/{asset}")
 def get_wallet_account(
     asset: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -944,7 +945,7 @@ def get_wallet_account(
 def get_wallet_balance(
     asset: str,
     address: Optional[str] = Query(default=None),
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1050,7 +1051,7 @@ def get_wallet_balance(
 def list_wallet_transactions(
     asset: str,
     limit: int = 20,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1103,7 +1104,7 @@ def list_wallet_transactions(
 @router.get("/crypto/wallet/{asset}/receive")
 def get_wallet_receive(
     asset: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1210,7 +1211,7 @@ def _parse_amount_eth_to_wei(amount_str: str) -> int:
 def create_send_draft(
     asset: str,
     payload: SendDraftPayload,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1420,7 +1421,7 @@ def create_send_draft(
 def broadcast_signed_transaction(
     asset: str,
     payload: SendBroadcastPayload,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1505,7 +1506,7 @@ def broadcast_signed_transaction(
 def get_transaction_status(
     asset: str,
     tx_hash: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1593,7 +1594,7 @@ def get_transaction_status(
 @router.get("/crypto/wallet/{asset}/encrypted-secret")
 def get_encrypted_wallet_secret(
     asset: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1738,7 +1739,7 @@ def _resolve_network_for_route(
 def get_wallet_account_network(
     network: str,
     asset: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
 
 
@@ -1838,7 +1839,7 @@ def get_wallet_account_network(
 def get_wallet_receive_network(
     network: str,
     asset: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()
@@ -1975,7 +1976,7 @@ def get_wallet_balance_network(
     network: str,
     asset: str,
     address: Optional[str] = Query(default=None),
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()
@@ -2129,7 +2130,7 @@ def list_wallet_transactions_network(
     network: str,
     asset: str,
     limit: int = 20,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     if not crypto_wallet_engine_enabled():
         body = _engine_off_response()
@@ -2257,7 +2258,7 @@ def create_wallet_account_network(
     network: str,
     asset: str,
     payload: CreateWalletPayload,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     _refuse_plaintext_keys(payload)
     if not crypto_wallet_engine_enabled():
@@ -2405,7 +2406,7 @@ def create_send_draft_network(
     network: str,
     asset: str,
     payload: SendDraftPayload,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     _refuse_plaintext_keys(payload)
     if not crypto_wallet_engine_enabled():
@@ -2678,7 +2679,7 @@ def broadcast_signed_transaction_network(
     network: str,
     asset: str,
     payload: SendBroadcastPayload,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     _refuse_plaintext_keys(payload)
     if not crypto_wallet_engine_enabled():
@@ -2865,7 +2866,7 @@ def get_transaction_status_network(
     network: str,
     asset: str,
     tx_hash: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()
@@ -2991,7 +2992,7 @@ def _get_mainnet_transaction_status(
 def get_encrypted_wallet_secret_network(
     network: str,
     asset: str,
-    principal=Depends(verify_trusted_device),
+    principal=Depends(require_crypto_entitlement),
 ):
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()

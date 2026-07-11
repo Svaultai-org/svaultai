@@ -100,6 +100,11 @@ class VaultChatCardView extends StatelessWidget {
 
   final void Function(String query)? onLoginChooseCandidate;
 
+
+  final bool cryptoEntitled;
+
+  final VoidCallback? onOpenCryptoUpgrade;
+
   const VaultChatCardView({
     super.key,
     required this.response,
@@ -122,6 +127,8 @@ class VaultChatCardView extends StatelessWidget {
     this.onLoginDelete,
     this.onLoginOpenWebsite,
     this.onLoginChooseCandidate,
+    this.cryptoEntitled = true,
+    this.onOpenCryptoUpgrade,
   });
 
   @override
@@ -134,12 +141,14 @@ class VaultChatCardView extends StatelessWidget {
       if (inner != null) {
         return CryptoVaultChatCardView(
           card: inner,
-          onOpenVault: onOpenVault,
+          onOpenVault: cryptoEntitled ? onOpenVault : null,
           onOpenAssetDetail: onOpenAssetDetail,
           onOpenSendFlow: onOpenSendFlow,
           onFetchBalance:  onFetchCryptoBalance,
           onFetchActivity: onFetchCryptoActivity,
           cache:           cryptoCache,
+          cryptoEntitled:  cryptoEntitled,
+          onOpenUpgrade:   onOpenCryptoUpgrade,
         );
       }
     }

@@ -115,6 +115,25 @@ ALL_ASSETS: tuple[str, ...] = (
 
 
 
+CRYPTO_VAULT_ENTITLED_ANSWER: str = (
+    "Yes — Crypto Vault is included in your current plan. "
+    "Open Crypto Vault, select an asset, tap Receive to see the "
+    "address and QR, or tap Send to enter a recipient and amount."
+)
+
+CRYPTO_VAULT_UPGRADE_REQUIRED_ANSWER: str = (
+    "Crypto Vault is not included in the current plan. Upgrade to "
+    "unlock wallet operations."
+)
+
+CRYPTO_VAULT_INSTRUCTIONS: tuple[str, ...] = (
+    "Open Crypto Vault from the sidebar or the button below.",
+    "Select an asset (ETH, USDT, USDC, SOL, or XMR).",
+    "Tap Receive to see the address and QR code.",
+    "Tap Send to enter a recipient and amount.",
+)
+
+
 _FORBIDDEN_CRYPTO_KEYS: frozenset[str] = frozenset({
 
     "privateKey", "private_key",
@@ -536,6 +555,7 @@ def populate_crypto_delegated_card_data(
     *,
     vault_id: str,
     client_platform: Optional[str] = None,
+    user_tier: Optional[str] = None,
 ) -> dict[str, Any]:
     """Populate the crypto delegated card's inner card with safe live data.
 
@@ -543,6 +563,14 @@ def populate_crypto_delegated_card_data(
     outer envelope with intent=`vault_crypto_delegated`. Its `card`
     field carries `innerIntent` + `innerCard`. This function
     populates `innerCard.data` and mutates the envelope in place.
+
+    When ``user_tier`` is not "upgraded", the show-vault inner card
+    data gains ``locked: True`` and ``entitlement: "upgrade_required"``
+    so the frontend renders the upgrade CTA instead of the enabled
+    "Open Crypto Vault" affordance. This is the SAME plan-entitlement
+    check that gates ``_buildCryptoVaultSection`` on the destination
+    page in the Flutter client — asking the question in chat must not
+    bypass it.
 
     Idempotent. Never raises.
     """
@@ -568,12 +596,29 @@ def populate_crypto_delegated_card_data(
     ):
         return envelope
 
+    _tier = (user_tier or "").strip().lower()
+    _upgraded = _tier == "upgraded"
     try:
         data: Optional[dict[str, Any]] = None
         if inner_intent == _CVC_INTENT_SHOW_VAULT:
             data = build_crypto_overview_data(
                 vault_id, client_platform=client_platform,
             )
+            if isinstance(data, dict):
+                data["locked"] = not _upgraded
+                data["entitlement"] = (
+                    "upgraded" if _upgraded else "upgrade_required"
+                )
+                data["tier"] = _tier or "free"
+
+                # Entitled users get an answer, not just the card.
+                # Non-entitled users get a plain deny + the frontend
+                # renders the upgrade CTA below the card.
+                if _upgraded:
+                    envelope["message"] = CRYPTO_VAULT_ENTITLED_ANSWER
+                    data["instructions"] = list(CRYPTO_VAULT_INSTRUCTIONS)
+                else:
+                    envelope["message"] = CRYPTO_VAULT_UPGRADE_REQUIRED_ANSWER
         elif inner_intent == _CVC_INTENT_BALANCE:
             data = build_crypto_balance_data(
                 vault_id,

@@ -1165,6 +1165,31 @@ VAULT_CHAT_ENVELOPE_TYPE:    str = "vault_chat_card"
 VAULT_CHAT_ENVELOPE_SCHEMA:  str = "vault_chat_response_v1"
 
 
+def build_crypto_delegated_show_vault_envelope() -> dict[str, Any]:
+    """Synthesize a vault_crypto_delegated / crypto_vault_show_vault
+    envelope directly, without needing a natural-language message.
+
+    Used by the chat handler's active-entity follow-up path so that a
+    bare "open it" (or "take me there", "use it") when the active
+    entity is the Crypto Vault produces the SAME structured card as
+    "show my crypto vault" — including the downstream
+    ``populate_crypto_delegated_card_data`` entitlement injection.
+    """
+    inner = _crypto_classify_and_build("show my crypto vault")
+    inner_intent = inner.get("intent", _CRYPTO_INTENT_UNRECOGNIZED)
+    return {
+        "type":    VAULT_CHAT_ENVELOPE_TYPE,
+        "schema":  VAULT_CHAT_ENVELOPE_SCHEMA,
+        "intent":  INTENT_CRYPTO_DELEGATED,
+        "message": "",
+        "card":    _build_card(
+            CARD_CRYPTO_DELEGATED,
+            innerIntent=inner_intent,
+            innerCard=inner.get("card", {}),
+        ),
+    }
+
+
 def build_vault_chat_envelope(
     message: str,
 ) -> dict[str, Any] | None:
@@ -1256,6 +1281,7 @@ __all__ = [
 
     "classify_and_build_vault_intent",
     "build_vault_chat_envelope",
+    "build_crypto_delegated_show_vault_envelope",
     "VAULT_CHAT_ENVELOPE_TYPE",
     "VAULT_CHAT_ENVELOPE_SCHEMA",
 ]

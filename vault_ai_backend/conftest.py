@@ -70,8 +70,8 @@ def _reset_rate_limit_backend_between_tests():
         from rate_limit_backend import reset_rate_limit_backend_for_tests
         reset_rate_limit_backend_for_tests()
     except Exception:
-                                                                   
-                                                                   
+
+
         pass
     yield
     try:
@@ -79,3 +79,30 @@ def _reset_rate_limit_backend_between_tests():
         reset_rate_limit_backend_for_tests()
     except Exception:
         pass
+
+
+# ------------------------------------------------------------------
+# Crypto Vault entitlement — test default: PASS
+# ------------------------------------------------------------------
+# Every user-facing /crypto/wallet/* route now requires the shared
+# crypto entitlement dependency (see crypto_entitlement.py). The
+# existing wallet-route tests build fake principals whose vault_id
+# does not correspond to a real account row, so a live billing lookup
+# would fail-close them all to 403.
+#
+# Default the entitlement resolver to True for the test session; the
+# tests that specifically want to exercise the gate itself (e.g.
+# test_crypto_wallet_entitlement_gate_2026_07_11.py) already override
+# this with their own `patch(...)` block, which wins.
+@pytest.fixture(autouse=True)
+def _default_crypto_entitlement_passes_in_tests(monkeypatch):
+    try:
+        import crypto_entitlement
+        monkeypatch.setattr(
+            crypto_entitlement,
+            "_resolve_upgraded_flag",
+            lambda _vault_id: True,
+        )
+    except Exception:
+        pass
+    yield

@@ -1,7 +1,12 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 
 class MediaPlayer {
+  final ValueNotifier<String?> errorNotifier =
+      ValueNotifier<String?>(null);
+
   static bool canPlay({required String? mimeType, required bool isVideo}) =>
       false;
 
@@ -14,5 +19,7 @@ class MediaPlayer {
     return false;
   }
 
-  void dispose() {}
+  void dispose() {
+    errorNotifier.dispose();
+  }
 }

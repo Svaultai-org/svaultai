@@ -903,6 +903,16 @@ class AppState extends ChangeNotifier {
     return 'Free Vault Plan';
   }
 
+
+  /// Crypto Vault is a paid-tier feature. The same rule is applied on
+  /// the backend (`user_tier=="upgraded"` in
+  /// vault_chat_crypto_data.populate_crypto_delegated_card_data) and on
+  /// the destination page (`_buildCryptoVaultSection.isKnownNotUpgraded`).
+  /// Chat cards, follow-up dispatch, and the direct route all consult
+  /// this getter to keep the entitlement enforcement in one place.
+  bool get isCryptoEntitled =>
+      billingBlockCount > 0 && billingPurchasedBytes > 0;
+
   
   int uploadSafetyCapBytes = 100 * 1024 * 1024;
 
@@ -5464,32 +5474,40 @@ Widget _buildInheritanceSection(bool isMobile) {
 
             
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: EdgeInsets.all(_vrInh.cardInsetPadding),
               decoration: BoxDecoration(
                 color: const Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(
+                    _vrInh.isMobile ? 16 : 20),
                 border: Border.all(color: Colors.white10),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Vaults I\'ll inherit',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                        ),
-                      ),
+                  // Same responsive pattern as "People I've added" above.
+                  // On < 600dp the heading renders full-width and the
+                  // buttons wrap below, so "Vaults I'll inherit" never gets
+                  // squeezed into a one-char-per-line column.
+                  ResponsiveActionBar(
+                    heading: const Text(
+                      'Vaults I\'ll inherit',
+                      key: Key('inheritance_vaults_ill_inherit_heading'),
+                      style: TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                    actions: [
                       OutlinedButton.icon(
+                        key: const Key(
+                            'inheritance_refresh_inheritances_button'),
                         onPressed: _loadInheritances,
                         icon: const Icon(Icons.refresh, size: 18),
                         label: Text(
                           AppLocalizations.of(context).commonRefresh,
                         ),
                       ),
-                      const SizedBox(width: 8),
                       FilledButton.icon(
+                        key: const Key(
+                            'inheritance_enter_code_button'),
                         onPressed: _showEnterPairingCodeDialog,
                         icon: const Icon(Icons.vpn_key),
                         label: Text(
@@ -7299,11 +7317,12 @@ await _loadVaultLogins();
   }
 
   Future<void> _previewLocalAttachment(_Attachment attachment) async {
-    
-    
+
+
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      useRootNavigator: false,
+      builder: (dCtx) => AlertDialog(
         title: Text(attachment.name),
         content: Text(
           'Type: ${attachment.mimeType ?? 'unknown'}\n'
@@ -7311,7 +7330,10 @@ await _loadVaultLogins();
           'Preview opens after the file is saved to your vault.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          TextButton(
+              key: const Key('attachment_preview_dialog_close'),
+              onPressed: () => Navigator.pop(dCtx),
+              child: const Text('Close')),
         ],
       ),
     );
@@ -8713,30 +8735,46 @@ await _loadVaultLogins();
         if (!mounted) return;
         await showDialog(
           context: context,
-          builder: (_) => Dialog(
-            backgroundColor: Colors.black,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppBar(
-                  automaticallyImplyLeading: false,
-                  backgroundColor: Colors.black,
-                  title: Text(msg.fileName!),
-                  actions: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
+          useRootNavigator: false,
+          builder: (dCtx) {
+            final s = MediaQuery.of(dCtx).size;
+            final w = (s.width - 32).clamp(240.0, 900.0);
+            final h = (s.height - 120).clamp(200.0, 900.0);
+            return Dialog(
+              backgroundColor: Colors.black,
+              insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 24),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: w, maxHeight: h),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppBar(
+                      automaticallyImplyLeading: false,
+                      backgroundColor: Colors.black,
+                      title: Text(
+                        msg.fileName!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      actions: [
+                        IconButton(
+                          key: const Key('image_viewer_dialog_close'),
+                          onPressed: () => Navigator.pop(dCtx),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    Flexible(
+                      child: InteractiveViewer(
+                        child: Image.memory(bytes, fit: BoxFit.contain),
+                      ),
                     ),
                   ],
                 ),
-                Flexible(
-                  child: InteractiveViewer(
-                    child: Image.memory(bytes, fit: BoxFit.contain),
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
         return;
       }
@@ -8768,6 +8806,7 @@ await _loadVaultLogins();
         if (!mounted) return;
         await showDialog(
           context: context,
+          useRootNavigator: false,
           builder: (dCtx) {
             final s = MediaQuery.of(dCtx).size;
             final w = (s.width - 32).clamp(240.0, 600.0);
@@ -8787,7 +8826,8 @@ await _loadVaultLogins();
               ),
               actions: [
                 TextButton(
-                    onPressed: () => Navigator.pop(context),
+                    key: const Key('text_viewer_dialog_close'),
+                    onPressed: () => Navigator.pop(dCtx),
                     child: const Text('Close')),
               ],
             );
@@ -9063,6 +9103,7 @@ await _loadVaultLogins();
       if (!mounted) return;
       await showDialog(
         context: context,
+        useRootNavigator: false,
         builder: (dCtx) {
           final s = MediaQuery.of(dCtx).size;
           final w = (s.width - 32).clamp(240.0, 480.0);
@@ -9079,11 +9120,58 @@ await _loadVaultLogins();
             content: SizedBox(
               width: w,
               height: videoH,
-              child: HtmlElementView(viewType: viewType),
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: HtmlElementView(viewType: viewType),
+                  ),
+                  Positioned(
+                    left: 0, right: 0, bottom: 0,
+                    child: ValueListenableBuilder<String?>(
+                      valueListenable: player.errorNotifier,
+                      builder: (_, err, __) {
+                        if (err == null) return const SizedBox.shrink();
+                        return Container(
+                          key: const Key(
+                              'media_video_dialog_error_banner'),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          color: const Color(0xCC000000),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.error_outline,
+                                  color: Color(0xFFFFB4A2), size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  err,
+                                  style: const TextStyle(
+                                      color: Color(0xFFFFB4A2),
+                                      fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                key: const Key('media_video_dialog_close'),
+                // Close pops THIS dialog only. Using dCtx (the dialog's
+                // BuildContext) — not the ChatDashboardPage's context —
+                // guarantees the popped route is the DialogRoute even if
+                // the tree ever nests navigators. Without useRootNavigator
+                // + this fix, on some browsers/Flutter web configurations
+                // the HtmlElementView video element's blob-URL revocation
+                // in `finally { player.dispose(); }` fires a MediaError
+                // right as the Flutter shell is between routes — a stray
+                // reload then puts the user back on /pin.
+                onPressed: () => Navigator.pop(dCtx),
                 child: const Text('Close'),
               ),
             ],
@@ -9091,7 +9179,22 @@ await _loadVaultLogins();
         },
       );
     } finally {
-      player.dispose();
+      // Defer the blob-URL revocation to the frame AFTER the dialog is
+      // dismissed and the HtmlElementView has been removed from the
+      // DOM. Doing this in the same microtask as the pop occasionally
+      // fires a `MediaError` on Chromium — which on Flutter web is
+      // observable as an unhandled `error` event that reloads the
+      // shell. This scheduleMicrotask → Future.delayed pattern lets
+      // the platform-view detach first.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future<void>.delayed(const Duration(milliseconds: 100), () {
+          try {
+            player.dispose();
+          } catch (_) {
+
+          }
+        });
+      });
     }
   }
 
@@ -9107,7 +9210,8 @@ await _loadVaultLogins();
     final kind = isVideo ? 'Video' : 'Audio';
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      useRootNavigator: false,
+      builder: (dCtx) => AlertDialog(
         title: Text(fileName),
         content: Text(
           '$kind decrypted in memory.\n\n'
@@ -9118,7 +9222,8 @@ await _loadVaultLogins();
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            key: const Key('media_metadata_dialog_close'),
+            onPressed: () => Navigator.pop(dCtx),
             child: const Text('Close'),
           ),
         ],
@@ -10036,6 +10141,14 @@ await _loadVaultLogins();
 
 
             cryptoCache: CryptoChatLiveCache.instance,
+
+
+            cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
+            onOpenCryptoUpgrade: () {
+              if (!mounted) return;
+              setState(() =>
+                  selectedSection = _DashboardSection.settings);
+            },
           ),
         ),
         if (_isVideoRecording) _buildRecordingBanner(),

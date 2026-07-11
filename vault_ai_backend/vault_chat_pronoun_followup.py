@@ -66,6 +66,15 @@ _VERB_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("open", r"^\s*open\s+it\s*[.!?]*\s*$"),
         ("open", r"^\s*open\s+that\s*[.!?]*\s*$"),
         ("open", r"^\s*open\s+that\s+one\s*[.!?]*\s*$"),
+        ("open", r"^\s*open\s+the\s+vault\s*[.!?]*\s*$"),
+        ("open", r"^\s*open\s+it\s+up\s*[.!?]*\s*$"),
+        ("open", r"^\s*take\s+me\s+there\s*[.!?]*\s*$"),
+        ("open", r"^\s*take\s+me\s+to\s+it\s*[.!?]*\s*$"),
+        ("open", r"^\s*go\s+there\s*[.!?]*\s*$"),
+        ("open", r"^\s*let['’]s\s+go\s*[.!?]*\s*$"),
+        ("open", r"^\s*use\s+it\s*[.!?]*\s*$"),
+        ("open", r"^\s*use\s+that\s*[.!?]*\s*$"),
+        ("open", r"^\s*launch\s+it\s*[.!?]*\s*$"),
 
 
         ("view", r"^\s*view\s+it\s*[.!?]*\s*$"),

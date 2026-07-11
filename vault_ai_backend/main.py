@@ -11637,6 +11637,7 @@ async def chat_endpoint(
                 ENTITY_LOGIN,
                 ENTITY_FILE,
                 ENTITY_GENERATED_LOGIN_DRAFT,
+                ENTITY_CRYPTO_WALLET,
             )
             _pronoun_hit = detect_pronoun_followup(decrypted_message)
             if _pronoun_hit is not None:
@@ -11733,6 +11734,80 @@ async def chat_endpoint(
                             f"vault={(vault_id or '')[:8]}...",
                             flush=True,
                         )
+
+                    # Crypto Vault follow-up: "open it" / "take me
+                    # there" / "use it" when the last surfaced entity
+                    # was the Crypto Vault card. Rebuild the same
+                    # delegated show-vault envelope so the entitlement
+                    # branch runs — non-upgraded users still see the
+                    # upgrade CTA, entitled users get the Open button.
+                    # This is the fix for the "'open it' returns
+                    # nothing" bug.
+                    elif (
+                        _etype == ENTITY_CRYPTO_WALLET
+                        and _verb in ("open", "show", "view")
+                    ):
+                        try:
+                            from vault_chat_router import (
+                                build_crypto_delegated_show_vault_envelope,
+                            )
+                            _followup_envelope = (
+                                build_crypto_delegated_show_vault_envelope()
+                            )
+                            _cv_user_tier = "free"
+                            try:
+                                from billing import (
+                                    get_account_id_for_vault as _cv_acct,
+                                    get_entitlement as _cv_ent,
+                                )
+                                _cv_acct_id = _cv_acct(vault_id)
+                                if _cv_acct_id:
+                                    _cv_e = _cv_ent(_cv_acct_id)
+                                    if (
+                                        _cv_e.block_count > 0
+                                        and _cv_e.purchased_bytes > 0
+                                    ):
+                                        _cv_user_tier = "upgraded"
+                                    else:
+                                        _cv_user_tier = "free"
+                            except Exception:
+                                _cv_user_tier = "free"
+                            try:
+                                from vault_chat_crypto_data import (
+                                    populate_crypto_delegated_card_data,
+                                )
+                                _followup_envelope = (
+                                    populate_crypto_delegated_card_data(
+                                        _followup_envelope,
+                                        vault_id=vault_id,
+                                        client_platform=None,
+                                        user_tier=_cv_user_tier,
+                                    )
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "[CHAT-DEBUG] crypto_followup_populate_failed",
+                                )
+                            try:
+                                if isinstance(_followup_envelope, dict):
+                                    _followup_envelope["locale"] = _reply_language
+                            except Exception:
+                                pass
+                            print(
+                                "[CHAT-TRACE] crypto_pronoun_followup "
+                                f"vault={(vault_id or '')[:8]}... "
+                                f"verb={_verb} tier={_cv_user_tier}",
+                                flush=True,
+                            )
+                            return encrypted_reply(
+                                json.dumps(_followup_envelope),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "[CHAT-DEBUG] crypto_followup_dispatch_failed "
+                                "vault=%s",
+                                (vault_id or "")[:8] + "...",
+                            )
         except Exception:
             logger.exception(
                 "[CHAT-DEBUG] pronoun_followup_check_failed "
@@ -11860,10 +11935,33 @@ async def chat_endpoint(
                 from vault_chat_crypto_data import (
                     populate_crypto_delegated_card_data,
                 )
+
+                _fp_user_tier = "free"
+                try:
+                    from billing import (
+                        get_account_id_for_vault as _fp_get_acct,
+                        get_entitlement as _fp_get_ent,
+                    )
+                    _fp_acct = _fp_get_acct(vault_id)
+                    if _fp_acct:
+                        _fp_ent = _fp_get_ent(_fp_acct)
+                        if (
+                            _fp_ent.block_count > 0
+                            and _fp_ent.purchased_bytes > 0
+                        ):
+                            _fp_user_tier = "upgraded"
+                except Exception:
+                    logger.exception(
+                        "[CHAT-PERF] fast path crypto tier lookup failed "
+                        "vault=%s; defaulting to free",
+                        (vault_id or "")[:8] + "...",
+                    )
+                    _fp_user_tier = "free"
                 _fast_envelope = populate_crypto_delegated_card_data(
                     _fast_envelope,
                     vault_id=vault_id,
                     client_platform=_client_platform_fp,
+                    user_tier=_fp_user_tier,
                 )
             except Exception:
                 logger.exception(
@@ -11979,6 +12077,37 @@ async def chat_endpoint(
                         session_id=_fp_session_id,
                         is_multi=_fp_is_multi,
                         candidates=_fp_candidates,
+                    )
+
+                # When we surface a crypto-vault delegated show-vault
+                # card, remember that the last active entity is the
+                # Crypto Vault. A subsequent bare "open it" / "take me
+                # there" / "use it" is then routed through the same
+                # entitlement-aware envelope by the pronoun follow-up
+                # dispatcher above.
+                if (
+                    _fp_intent_str == "vault_crypto_delegated"
+                    and isinstance(_fp_card, dict)
+                    and _fp_card.get("innerIntent") == "crypto_vault_show_vault"
+                ):
+                    from vault_chat_active_entity import (
+                        set_active_entity as _fp_set_ae,
+                        ENTITY_CRYPTO_WALLET as _FP_ENTITY_CV,
+                        ACTION_OPEN as _FP_ACT_OPEN,
+                        ACTION_SHOW as _FP_ACT_SHOW,
+                        ACTION_VIEW as _FP_ACT_VIEW,
+                        ACTION_UPGRADE as _FP_ACT_UPGRADE,
+                    )
+                    _fp_set_ae(
+                        vault_id,
+                        entity_type=_FP_ENTITY_CV,
+                        entity_ref={},
+                        display_label="Crypto Vault",
+                        allowed_actions=(
+                            _FP_ACT_OPEN, _FP_ACT_SHOW,
+                            _FP_ACT_VIEW, _FP_ACT_UPGRADE,
+                        ),
+                        session_id=_fp_session_id,
                     )
             except Exception:
                 logger.exception(
@@ -12382,10 +12511,33 @@ async def chat_endpoint(
                     from vault_chat_crypto_data import (
                         populate_crypto_delegated_card_data,
                     )
+
+                    _vcr_user_tier = "free"
+                    try:
+                        from billing import (
+                            get_account_id_for_vault as _vcr_get_acct,
+                            get_entitlement as _vcr_get_ent,
+                        )
+                        _vcr_acct = _vcr_get_acct(vault_id)
+                        if _vcr_acct:
+                            _vcr_ent = _vcr_get_ent(_vcr_acct)
+                            if (
+                                _vcr_ent.block_count > 0
+                                and _vcr_ent.purchased_bytes > 0
+                            ):
+                                _vcr_user_tier = "upgraded"
+                    except Exception:
+                        logger.exception(
+                            "[CHAT-DEBUG] slow-path crypto tier lookup "
+                            "failed vault=%s; defaulting to free",
+                            (vault_id or "")[:8] + "...",
+                        )
+                        _vcr_user_tier = "free"
                     _vcr_envelope = populate_crypto_delegated_card_data(
                         _vcr_envelope,
                         vault_id=vault_id,
                         client_platform=_client_platform,
+                        user_tier=_vcr_user_tier,
                     )
                 except Exception:
                     logger.exception(
