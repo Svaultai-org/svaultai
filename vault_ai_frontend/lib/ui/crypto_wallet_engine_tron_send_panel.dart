@@ -9,10 +9,12 @@ import 'package:flutter/services.dart';
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/crypto_wallet_features.dart';
+import '../services/recipient_qr_parser.dart';
 import '../services/tron_transaction.dart';
 import '../services/tron_wallet.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
+import 'scan_recipient_qr_sheet.dart';
 
 
 const String kTronSendPanelTitle = 'Send USDT (TRC20)';
@@ -126,6 +128,13 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
 
   final String Function()? idempotencyKeyGenerator;
 
+  // 2026-07-13 QR-scan hook. Injectable for tests.
+  final Future<String?> Function(
+    BuildContext context,
+    RecipientNetwork network,
+    int? expectedChainId,
+  )? scanRecipientQr;
+
   const CryptoWalletEngineTronSendPanel({
     super.key,
     required this.authToken,
@@ -138,6 +147,7 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
     this.prefilledDestination,
     this.prefilledAmount,
     this.idempotencyKeyGenerator,
+    this.scanRecipientQr,
   });
 
   @override
@@ -635,6 +645,21 @@ class _CryptoWalletEngineTronSendPanelState
     );
   }
 
+  Future<void> _handleScanRecipientQr(BuildContext ctx) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final scanHook = widget.scanRecipientQr;
+    final scannedAddress = scanHook != null
+        ? await scanHook(ctx, RecipientNetwork.tron, null)
+        : await showScanRecipientQrSheet(
+            context: ctx,
+            network: RecipientNetwork.tron,
+          );
+    if (scannedAddress == null || !mounted) return;
+    setState(() {
+      _destinationController.text = scannedAddress;
+    });
+  }
+
   Widget _buildInputBody() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -648,9 +673,15 @@ class _CryptoWalletEngineTronSendPanelState
           autocorrect: false,
           enableSuggestions: false,
           onSubmitted: (_) => _amountFocus.requestFocus(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: kTronSendDestinationLabel,
             isDense: true,
+            suffixIcon: IconButton(
+              key: const Key('tron_send_panel_scan_qr_btn'),
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              tooltip: 'Scan recipient QR',
+              onPressed: () => _handleScanRecipientQr(context),
+            ),
           ),
         ),
         const SizedBox(height: 10),

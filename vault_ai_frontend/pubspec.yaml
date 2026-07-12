@@ -69,6 +69,7 @@ dependencies:
   # NEVER a transaction request, NEVER an amount. The app does not
   # sign, broadcast, generate wallets, or move funds.
   qr_flutter: ^4.1.0
+  mobile_scanner: ^7.2.0
 
 dev_dependencies:
   flutter_test:

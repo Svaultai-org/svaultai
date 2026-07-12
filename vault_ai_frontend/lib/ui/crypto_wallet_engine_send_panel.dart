@@ -7,8 +7,10 @@ import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/ethereum_transaction.dart';
 import '../services/evm_networks.dart';
+import '../services/recipient_qr_parser.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
+import 'scan_recipient_qr_sheet.dart';
 
 
 // 2026-07-13: The sheet chrome now supplies the sheet title
@@ -212,6 +214,16 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   
   final String Function()? idempotencyKeyGenerator;
 
+  // 2026-07-13 QR-scan hook. In production the panel opens the
+  // real `showScanRecipientQrSheet` (mobile_scanner-backed). In
+  // widget tests the caller injects a lambda that returns a
+  // fake / pre-canned address so tests never touch the camera.
+  final Future<String?> Function(
+    BuildContext context,
+    RecipientNetwork network,
+    int? expectedChainId,
+  )? scanRecipientQr;
+
   const CryptoWalletEngineSendPanel({
     super.key,
     required this.authToken,
@@ -229,6 +241,7 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     this.fetchAvailableBalance,
     this.fetchEthBalance,
     this.idempotencyKeyGenerator,
+    this.scanRecipientQr,
   });
 
   bool get isMainnet => network == kEvmNetworkEthereumMainnet;
@@ -866,10 +879,16 @@ class _CryptoWalletEngineSendPanelState
           autocorrect: false,
           enableSuggestions: false,
           onSubmitted: (_) => _amountFocus.requestFocus(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: kEthSendDestinationLabel,
             hintText: '0x...',
             isDense: true,
+            suffixIcon: IconButton(
+              key: const Key('eth_send_panel_scan_qr_btn'),
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              tooltip: 'Scan recipient QR',
+              onPressed: () => _handleScanRecipientQr(ctx),
+            ),
           ),
         ),
         const SizedBox(height: 10),
@@ -888,6 +907,26 @@ class _CryptoWalletEngineSendPanelState
         ),
       ],
     );
+  }
+
+  Future<void> _handleScanRecipientQr(BuildContext ctx) async {
+    // Dismiss the keyboard first — otherwise the scanner sheet opens
+    // half-covered on iPhone Safari.
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    final expectedChainId = widget.isMainnet ? 1 : 11155111;
+    final scanHook = widget.scanRecipientQr;
+    final scannedAddress = scanHook != null
+        ? await scanHook(ctx, RecipientNetwork.ethereum, expectedChainId)
+        : await showScanRecipientQrSheet(
+            context: ctx,
+            network: RecipientNetwork.ethereum,
+            expectedChainId: expectedChainId,
+          );
+    if (scannedAddress == null || !mounted) return;
+    setState(() {
+      _destCtrl.text = scannedAddress;
+    });
   }
 
   Widget _buildFormFooter(BuildContext ctx) {
