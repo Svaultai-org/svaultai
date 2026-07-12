@@ -20,6 +20,7 @@ import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_receive_panel.dart';
 import 'crypto_wallet_engine_security_page.dart';
 import 'crypto_wallet_engine_send_panel.dart';
+import 'crypto_wallet_engine_sheet_chrome.dart';
 import 'crypto_wallet_engine_solana_receive_panel.dart';
 import 'crypto_wallet_engine_tron_receive_panel.dart';
 import 'crypto_wallet_engine_monero_receive_panel.dart';
@@ -305,7 +306,16 @@ class CryptoWalletEnginePage extends StatefulWidget {
   final Future<bool> Function(String pin)? verifyPin;
 
 
-  final Future<String?> Function()? loadFromAddress;
+  // 2026-07-13 network-scoped: production bug was that the ETH Send
+  // path called a legacy /crypto/wallet/{asset}/receive endpoint which
+  // queries the wallet row keyed by service='ETH', while the actual
+  // mainnet ETH wallet is stored with service='ETH:ethereum_mainnet'
+  // (see backend routes/crypto_wallet_routes.py:_service_key_for_network).
+  // Balance/Receive already use the network-scoped endpoint; the Send
+  // handlers here now pass the caller's effectiveNetwork so
+  // loadFromAddress resolves the SAME wallet the balance/receive
+  // path resolves.
+  final Future<String?> Function(String network)? loadFromAddress;
 
 
   final MoneroWalletAdapter moneroWalletAdapter;
@@ -558,7 +568,9 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
 
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
-  final Future<String?> Function()? loadFromAddress;
+  // 2026-07-13: network-scoped signature — see notes on the public
+  // widget's field of the same name.
+  final Future<String?> Function(String network)? loadFromAddress;
 
 
   final String effectiveNetwork;
@@ -635,55 +647,54 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       );
       return;
     }
-    showModalBottomSheet<void>(
+    final String sheetTitle = isTronAsset
+        ? 'Receive USDT (TRC20)'
+        : isSolanaAsset
+            ? 'Receive SOL'
+            : isMoneroAsset
+                ? 'Receive XMR'
+                : 'Receive $assetForPanel';
+    showCryptoWalletSheet<void>(
       context: ctx,
-      isScrollControlled: true,
-      builder: (sheetCtx) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetCtx).size.height * 0.85,
-          ),
-          child: SingleChildScrollView(
-            child: isSolanaAsset
-                ? CryptoWalletEngineSolanaReceivePanel(
-                    key: const Key('solana_receive_panel_SOL'),
-                    authToken: authToken!,
-                    client: apiClient!,
-                    encryptForVault: encryptForVault!,
-                    isVaultKeyAvailable: isVaultKeyAvailable!,
-                    features: features,
-                  )
-                : isTronAsset
-                ? CryptoWalletEngineTronReceivePanel(
-                    key: const Key('tron_receive_panel_USDT_TRC20'),
-                    authToken: authToken!,
-                    client: apiClient!,
-                    encryptForVault: encryptForVault!,
-                    isVaultKeyAvailable: isVaultKeyAvailable!,
-                    features: features,
-                  )
-                : isMoneroAsset
-                ? CryptoWalletEngineMoneroReceivePanel(
-                    key: const Key('monero_receive_panel_XMR'),
-                    authToken: authToken!,
-                    client: apiClient!,
-                    features: features,
-                    walletAdapter: moneroWalletAdapter,
-                    encryptForVault: encryptForVault,
-                    isVaultKeyAvailable: isVaultKeyAvailable,
-                  )
-                : CryptoWalletEngineReceivePanel(
-                    key: Key('eth_receive_panel_$assetForPanel'),
-                    authToken: authToken!,
-                    client: apiClient!,
-                    encryptForVault: encryptForVault!,
-                    isVaultKeyAvailable: isVaultKeyAvailable!,
-                    asset: assetForPanel,
-                    network: effectiveNetwork,
-                  ),
-          ),
-        ),
-      ),
+      title: sheetTitle,
+      sheetKey: 'crypto_wallet_engine_receive_sheet',
+      child: isSolanaAsset
+          ? CryptoWalletEngineSolanaReceivePanel(
+              key: const Key('solana_receive_panel_SOL'),
+              authToken: authToken!,
+              client: apiClient!,
+              encryptForVault: encryptForVault!,
+              isVaultKeyAvailable: isVaultKeyAvailable!,
+              features: features,
+            )
+          : isTronAsset
+              ? CryptoWalletEngineTronReceivePanel(
+                  key: const Key('tron_receive_panel_USDT_TRC20'),
+                  authToken: authToken!,
+                  client: apiClient!,
+                  encryptForVault: encryptForVault!,
+                  isVaultKeyAvailable: isVaultKeyAvailable!,
+                  features: features,
+                )
+              : isMoneroAsset
+                  ? CryptoWalletEngineMoneroReceivePanel(
+                      key: const Key('monero_receive_panel_XMR'),
+                      authToken: authToken!,
+                      client: apiClient!,
+                      features: features,
+                      walletAdapter: moneroWalletAdapter,
+                      encryptForVault: encryptForVault,
+                      isVaultKeyAvailable: isVaultKeyAvailable,
+                    )
+                  : CryptoWalletEngineReceivePanel(
+                      key: Key('eth_receive_panel_$assetForPanel'),
+                      authToken: authToken!,
+                      client: apiClient!,
+                      encryptForVault: encryptForVault!,
+                      isVaultKeyAvailable: isVaultKeyAvailable!,
+                      asset: assetForPanel,
+                      network: effectiveNetwork,
+                    ),
     ).whenComplete(() {
       onFeatureRefreshRequested?.call();
       onAssetLiveRefreshRequested?.call(assetForPanel);
@@ -709,7 +720,14 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       );
       return;
     }
-    final fromAddress = await loadFromAddress!();
+    // 2026-07-13 fix: pass the effectiveNetwork so the callback hits
+    // the SAME network-scoped wallet-lookup endpoint the balance /
+    // receive paths use. Previously loadFromAddress was ()->Future,
+    // and the provider called the legacy /crypto/wallet/ETH/receive
+    // endpoint that queries service='ETH' — but the mainnet ETH
+    // wallet is persisted with service='ETH:ethereum_mainnet', so an
+    // existing wallet with a live balance was reported as missing.
+    final fromAddress = await loadFromAddress!(effectiveNetwork);
     if (fromAddress == null || fromAddress.isEmpty) {
       _showNotReadyBanner(
         ctx,
@@ -719,27 +737,21 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       return;
     }
     if (!ctx.mounted) return;
-    showModalBottomSheet<void>(
+    showCryptoWalletSheet<void>(
       context: ctx,
-      isScrollControlled: true,
-      builder: (sheetCtx) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetCtx).size.height * 0.85,
-          ),
-          child: CryptoWalletEngineSendPanel(
-            key: Key('eth_send_panel_$assetForPanel'),
-            authToken: authToken!,
-            fromAddress: fromAddress,
-            client: apiClient!,
-            decryptForVault: decryptForVault!,
-            isVaultKeyAvailable: isVaultKeyAvailable!,
-            verifyPin: verifyPin,
-            asset: assetForPanel,
-            network: effectiveNetwork,
-            mainnetSendPaused: sendPaused,
-          ),
-        ),
+      title: 'Send $assetForPanel',
+      sheetKey: 'crypto_wallet_engine_send_sheet',
+      child: CryptoWalletEngineSendPanel(
+        key: Key('eth_send_panel_$assetForPanel'),
+        authToken: authToken!,
+        fromAddress: fromAddress,
+        client: apiClient!,
+        decryptForVault: decryptForVault!,
+        isVaultKeyAvailable: isVaultKeyAvailable!,
+        verifyPin: verifyPin,
+        asset: assetForPanel,
+        network: effectiveNetwork,
+        mainnetSendPaused: sendPaused,
       ),
     );
   }

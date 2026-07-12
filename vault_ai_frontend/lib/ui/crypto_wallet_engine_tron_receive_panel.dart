@@ -350,8 +350,16 @@ class _CryptoWalletEngineTronReceivePanelState
   Widget _buildReadyState(BuildContext ctx, Map<String, dynamic> body) {
     final addr = (body['publicAddress'] ?? '').toString();
     final label = (body['walletLabel'] ?? '').toString();
+    // 2026-07-13 mobile fix: at 320 dp the fixed 18 dp outer padding
+    // + a 220 dp QR container was leaving zero slack for asset warning
+    // rows and the copy button, causing a 29 px right-side RenderFlex
+    // overflow. Shrink outer padding + QR size on narrow viewports.
+    final w = MediaQuery.of(ctx).size.width;
+    final narrow = w < 380;
+    final outerPad = narrow ? 12.0 : 18.0;
+    final qrSize = narrow ? 180.0 : 220.0;
     return Padding(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(outerPad),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -383,24 +391,37 @@ class _CryptoWalletEngineTronReceivePanelState
                       key: const Key(kTronReceivePanelQrKey),
                       data: addr,
                       version: QrVersions.auto,
-                      size: 220,
+                      size: qrSize,
                       backgroundColor: Colors.white,
                     ),
                   )
                 : const SizedBox.shrink(),
           ),
           const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: kWalletBgBase,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: kWalletBorder),
-            ),
-            child: SelectableText(
-              addr,
-              key: const Key(kTronReceivePanelAddressTextKey),
-              style: kWalletMonoStyle,
+          // 2026-07-13 mobile fix: SelectableText for a 34-char TRON
+          // address is a single unbroken token — Flutter's default text
+          // wrap can't split at whitespace. At 320 dp the address
+          // would overflow the panel to the right. Wrap in a horizontal
+          // scroll pinned to the container's inner width so the
+          // address stays fully copyable but its intrinsic width no
+          // longer forces the outer layout to overflow.
+          SizedBox(
+            width: double.infinity,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: kWalletBgBase,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kWalletBorder),
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SelectableText(
+                  addr,
+                  key: const Key(kTronReceivePanelAddressTextKey),
+                  style: kWalletMonoStyle,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 10),

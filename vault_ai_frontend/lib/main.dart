@@ -11236,11 +11236,27 @@ return LoginsPage(
             if (cachedPin == null) return false;
             return cachedPin == pin;
           },
-          loadFromAddress: () async {
+          // 2026-07-13 fix: was calling the legacy
+          // /crypto/wallet/{asset}/receive endpoint which queries
+          // service='ETH'. The mainnet ETH wallet is persisted with
+          // service='ETH:ethereum_mainnet' (see backend
+          // _service_key_for_network), so the legacy call returned
+          // no_account even when the wallet existed and had a live
+          // balance — the exact "No Ethereum wallet exists yet" bug
+          // the user hit on Send. Balance and Receive already use
+          // the network-scoped endpoint, so switching Send to the
+          // same endpoint aligns all three paths on one source of
+          // truth. For ERC20 tokens (USDT_ERC20/USDC_ERC20) the
+          // asset is still 'ETH' because the parent Ethereum wallet
+          // signs and pays gas for the ERC20 transfer — the token
+          // itself is not a separate wallet.
+          loadFromAddress: (network) async {
             try {
               final body = await VaultAIClient(baseUrl: backendBaseUrl)
-                  .getCryptoWalletReceive(
-                asset: 'ETH', authToken: authToken ?? '',
+                  .getCryptoWalletReceiveNetwork(
+                network: network,
+                asset: 'ETH',
+                authToken: authToken ?? '',
               );
               final status = (body['wallet_engine'] ?? '').toString();
               if (status != 'receive_ready') return null;
