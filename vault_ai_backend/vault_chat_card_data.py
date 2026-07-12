@@ -727,7 +727,22 @@ def build_login_list_data(
     query: Optional[str] = None,
     limit: int = DEFAULT_LIST_LIMIT,
 ) -> dict[str, Any]:
+    """Build the payload for an unqualified "show me my logins" request.
 
+    Semantics driven by the number of rows returned:
+
+      * 0 rows → view="not_found" so the frontend renders a clean
+        empty state ("You don't have any logins saved yet") instead
+        of a one-row selector that would look broken.
+      * 1 row → view="detail" with the FULL plaintext projection.
+        Reasoning: the user asked for "all my logins", and there is
+        exactly one — that is an unambiguous match, structurally the
+        same as INTENT_LOGIN_SEARCH with a single result. Same safety
+        story (authenticated + unlocked + specific-enough ask).
+        Emitting the chooser row would force the user to tap it just
+        to see the credential — that is the reported UX bug.
+      * >1 rows → view="list" with the projected chooser rows.
+    """
     if not vault_id or not key:
         return _unavailable(
             VAULT_LOGIN_DATA_SCHEMA,
@@ -738,6 +753,27 @@ def build_login_list_data(
             vault_id, "login", limit,
             service_ilike=query if view == "search" and query else None,
         )
+
+        if not rows:
+            return {
+                "schema":    VAULT_LOGIN_DATA_SCHEMA,
+                "available": True,
+                "view":      LOGIN_VIEW_NOT_FOUND,
+                "query":     query,
+                "count":     0,
+            }
+
+        if len(rows) == 1:
+            detail = _project_login_row_detail(rows[0], key)
+            return {
+                "schema":    VAULT_LOGIN_DATA_SCHEMA,
+                "available": True,
+                "view":      LOGIN_VIEW_DETAIL,
+                "query":     query,
+                "login":     detail,
+                "count":     1,
+            }
+
         logins = [_project_login_row(r, key) for r in rows]
         return {
             "schema":        VAULT_LOGIN_DATA_SCHEMA,
@@ -1415,6 +1451,14 @@ def populate_vault_chat_card_data(
                     INTENT_LOGIN_SEARCH,
                     INTENT_LOGIN_REVEAL,
                     INTENT_LOGIN_COPY,
+                    # 2026-07-12: "show me all my logins" with exactly ONE
+                    # saved login collapses to view=detail (0/1/many
+                    # branching in build_login_list_data). That single-
+                    # match case is structurally identical to
+                    # INTENT_LOGIN_SEARCH with one hit and inherits the
+                    # same safety story (authenticated + unlocked +
+                    # unambiguous). Same allowlist sanitizer.
+                    INTENT_LOGIN_LIST,
                 )
                 and isinstance(data, dict)
                 and data.get("view") == LOGIN_VIEW_DETAIL

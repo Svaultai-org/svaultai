@@ -11,6 +11,36 @@ import pytest
 if not os.environ.get("VAULT_SESSION_SECRET", "").strip():
     os.environ["VAULT_SESSION_SECRET"] = secrets.token_urlsafe(48)
 
+# Pin the initial value so per-test env-restoration can converge to it
+# even when a test file mutates VAULT_SESSION_SECRET during a run.
+_PINNED_SESSION_SECRET = os.environ["VAULT_SESSION_SECRET"]
+
+
+@pytest.fixture(autouse=True)
+def _restore_session_secret_between_tests():
+    """Guarantee every test starts with the process's pinned
+    VAULT_SESSION_SECRET and that auth_local's module-level cache is
+    invalidated. Some test files (e.g. test_vault_config.py,
+    test_auth_session_token.py) legitimately mutate this env var and
+    pop it in tearDown, but tests that use it in setUp/collection may
+    already have observed the pre-mutation value via cached module
+    state. This fixture centralises the reset so no downstream test
+    (e.g. test_vault_delete_and_inactive_cleanup_2026_07_08.py's HMAC
+    challenge signing) sees a stale or missing secret."""
+    os.environ["VAULT_SESSION_SECRET"] = _PINNED_SESSION_SECRET
+    try:
+        import auth_local
+        auth_local.reset_secret_for_tests()
+    except Exception:
+        pass
+    yield
+    os.environ["VAULT_SESSION_SECRET"] = _PINNED_SESSION_SECRET
+    try:
+        import auth_local
+        auth_local.reset_secret_for_tests()
+    except Exception:
+        pass
+
 
 
 _CRYPTO_TEST_SENSITIVE_ENV_KEYS = (

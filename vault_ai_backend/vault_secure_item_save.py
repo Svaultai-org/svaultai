@@ -109,11 +109,10 @@ ALL_TIERS: frozenset[str] = frozenset({
 
 
 _TIER_REQUIRED_MESSAGE: str = (
-    "Crypto Vault is available with upgrade. Upgrade to "
-    "save wallet addresses, crypto notes, seed phrases, private "
-    "keys, transaction records, and show receive QR codes "
-    "securely. Send features will come later with extra "
-    "protection."
+    "You can't save this to Crypto Vault on your current "
+    "plan. Upgrade your account to unlock Crypto Vault — a "
+    "real, non-custodial wallet with receive, send, and "
+    "balance tracking, where your keys stay on your device."
 )
 
 

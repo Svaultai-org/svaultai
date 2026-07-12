@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
 import '../primitives.dart';
+import '../responsive.dart';
 import '../tokens.dart';
 
 
@@ -78,36 +79,97 @@ class _DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return VaultCard(
-      padding: const EdgeInsets.all(VaultSpacing.xl),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          if (icon != null) ...[
-            IconBadge(icon: icon!, color: iconColor, size: 52),
-            const SizedBox(width: VaultSpacing.lg),
-          ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(title, style: VaultText.headline),
-                if (subtitle != null) ...[
-                  const SizedBox(height: VaultSpacing.xs + 2),
-                  Text(subtitle!, style: VaultText.bodyLg.copyWith(
-                    color: VaultColors.textSecondary,
-                  )),
-                ],
-              ],
-            ),
+    // 2026-07-12: header was a rigid Row that squeezed the title
+    // area between a 52dp badge, a subtitle wrapping to 3+ lines,
+    // and a full-width action button on narrow phones (320-430dp).
+    // Now the header uses LayoutBuilder + responsive font sizes so:
+    //   * < 600dp: badge + title/subtitle stack on top; actions
+    //     drop below on their own row, wrapping if there are many.
+    //   * >= 600dp: original single-row layout (icon + title/sub +
+    //     actions trailing).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow =
+            constraints.maxWidth < VaultBreakpoints.compactMax;
+        return VaultCard(
+          padding: EdgeInsets.all(
+            narrow ? VaultSpacing.lg : VaultSpacing.xl,
           ),
-          if (actions.isNotEmpty) ...[
-            const SizedBox(width: VaultSpacing.md),
-            Wrap(spacing: VaultSpacing.sm, children: actions),
-          ],
+          child: narrow
+              ? _buildNarrow(context)
+              : _buildWide(context),
+        );
+      },
+    );
+  }
+
+  Widget _buildTitleColumn(BuildContext context, {required bool narrow}) {
+    final titleStyle = VaultText.headline.copyWith(
+      fontSize: narrow ? vrHeadline(context) : null,
+    );
+    final subtitleStyle = VaultText.bodyLg.copyWith(
+      color: VaultColors.textSecondary,
+      fontSize: narrow ? 14 : null,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title, style: titleStyle),
+        if (subtitle != null) ...[
+          const SizedBox(height: VaultSpacing.xs + 2),
+          Text(subtitle!, style: subtitleStyle),
         ],
-      ),
+      ],
+    );
+  }
+
+  Widget _buildWide(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (icon != null) ...[
+          IconBadge(icon: icon!, color: iconColor, size: 52),
+          const SizedBox(width: VaultSpacing.lg),
+        ],
+        Expanded(child: _buildTitleColumn(context, narrow: false)),
+        if (actions.isNotEmpty) ...[
+          const SizedBox(width: VaultSpacing.md),
+          Wrap(
+            spacing: VaultSpacing.sm,
+            runSpacing: VaultSpacing.sm,
+            children: actions,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildNarrow(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            if (icon != null) ...[
+              IconBadge(icon: icon!, color: iconColor, size: 40),
+              const SizedBox(width: VaultSpacing.md),
+            ],
+            Expanded(child: _buildTitleColumn(context, narrow: true)),
+          ],
+        ),
+        if (actions.isNotEmpty) ...[
+          const SizedBox(height: VaultSpacing.md),
+          Wrap(
+            alignment: WrapAlignment.start,
+            spacing: VaultSpacing.sm,
+            runSpacing: VaultSpacing.sm,
+            children: actions,
+          ),
+        ],
+      ],
     );
   }
 }

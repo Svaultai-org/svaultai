@@ -7,16 +7,22 @@ const String kCryptoVaultLockedType = 'crypto_vault_locked';
 
 
 const String kCryptoVaultDefaultTitle  = 'Crypto Vault';
-const String kCryptoVaultDefaultStatus = 'Available with upgrade';
+const String kCryptoVaultDefaultStatus = 'Upgrade required';
 const String kCryptoVaultActiveStatus  = 'Active';
 
 
 const String kCryptoVaultLoadingStatus = 'Checking access…';
 const String kCryptoVaultDefaultBody   =
-    "Save wallet addresses, crypto notes, seed phrases, "
-    "private keys, transaction records, and receive QR codes "
-    "securely. Send features will come later with extra "
-    "protection.";
+    "Crypto Vault is a real, non-custodial wallet — receive, "
+    "send, and view balance on supported networks, with keys "
+    "that stay on your device. It's not available on your "
+    "current plan. Upgrade your account to unlock it.";
+
+const String kCryptoVaultActiveBody =
+    "Crypto Vault is active on your account. Open it to pick "
+    "a supported asset, use Receive for the wallet address and "
+    "QR code, use Send to enter a recipient and amount, and "
+    "view balance and transaction history where supported.";
 
 
 const String kCryptoVaultLoadingBody =
@@ -27,11 +33,14 @@ const String kCryptoVaultOpenCryptoVaultLabel  = 'Open Crypto Vault';
 
 
 const String kCryptoVaultLearnMoreBody =
-    "Crypto Vault is available for upgraded users, with secure "
-    "saving for wallet addresses, seed phrases, private keys, "
-    "crypto notes, and transaction records, plus receive QR "
-    "codes for saved wallet addresses. Send features will come "
-    "later with extra protection.";
+    "Crypto Vault is a real, non-custodial wallet built into "
+    "VaultAI. Upgrade your account to unlock it, then open "
+    "Crypto Vault to pick a supported asset, use Receive for "
+    "the wallet address and QR code, use Send to enter a "
+    "recipient and amount, and view balance and transaction "
+    "history where supported. Every send requires PIN unlock "
+    "and local signing on your device — VaultAI never moves "
+    "funds on its own.";
 
 
 const String kActionLearnMore        = 'crypto_vault_learn_more';
@@ -117,9 +126,15 @@ class CryptoVaultLockedCard extends StatelessWidget {
     final status = _str('status', defaultStatus);
     
     
-    final body = loading
-        ? _str('body', kCryptoVaultLoadingBody)
-        : _str('body', kCryptoVaultDefaultBody);
+    final String defaultBody;
+    if (loading) {
+      defaultBody = kCryptoVaultLoadingBody;
+    } else if (upgraded) {
+      defaultBody = kCryptoVaultActiveBody;
+    } else {
+      defaultBody = kCryptoVaultDefaultBody;
+    }
+    final body = _str('body', defaultBody);
 
     return Container(
       key: Key(loading

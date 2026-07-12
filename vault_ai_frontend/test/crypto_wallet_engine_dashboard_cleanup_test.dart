@@ -208,51 +208,10 @@ void main() {
       );
     });
 
-    testWidgets(
-        'CL9: tapping Security NEVER invokes onOpenLite (Lite is retired)',
-        (tester) async {
-      var litePushes = 0;
-      tester.view.physicalSize = const Size(1200, 2400);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(
-        MaterialApp(
-        localizationsDelegates: _testL10nDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: CryptoWalletEnginePage(
-              onOpenLite: () => litePushes++,
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      
-      final btn = find.byKey(
-        const Key('crypto_wallet_engine_security_open_btn'),
-      );
-      await tester.ensureVisible(btn);
-      await tester.pumpAndSettle();
-      await tester.tap(btn);
-      await tester.pumpAndSettle();
-      expect(litePushes, equals(0));
-      
-      Navigator.of(
-        tester.element(find.byKey(
-          const Key('crypto_wallet_engine_security_page'),
-        )),
-      ).pop();
-      await tester.pumpAndSettle();
-      final primaryBtn = find.byKey(
-        const Key('crypto_wallet_engine_primary_backup_btn'),
-      );
-      await tester.ensureVisible(primaryBtn);
-      await tester.pumpAndSettle();
-      await tester.tap(primaryBtn);
-      await tester.pumpAndSettle();
-      expect(litePushes, equals(0));
-    });
+    // 2026-07-12: CL9 removed. The onOpenLite parameter was fully
+    // deleted from CryptoWalletEnginePage on the same day Crypto
+    // Vault Lite was retired — there is no longer a hook to invoke.
+    // CL13 below still guards against re-introducing it in source.
   });
 
   group('crypto wallet engine security page', () {
@@ -315,23 +274,23 @@ void main() {
       );
     });
 
-    test('CL13: engine page no longer invokes onOpenLite from any button',
+    test('CL13: engine page carries no onOpenLite parameter at all',
         () {
+      // 2026-07-12: strengthened — onOpenLite is fully removed from
+      // the engine page's public API. Not just "never invoked" — the
+      // symbol must not exist as a parameter or field either.
       final src = File(
         'lib/ui/crypto_wallet_engine_page.dart',
       ).readAsStringSync();
-      
-      
       final scrubbed = src.split('\n').map((l) {
         final idx = l.indexOf('//');
         return idx >= 0 ? l.substring(0, idx) : l;
       }).join('\n');
       expect(
-        scrubbed.contains('onOpenLite!()') ||
-            scrubbed.contains('onOpenLite!.call('),
+        scrubbed.contains('onOpenLite'),
         isFalse,
-        reason: 'The engine page must not invoke onOpenLite from any '
-            'live code path.',
+        reason: 'onOpenLite has been fully removed alongside the '
+            'retirement of CryptoVaultLitePage.',
       );
     });
   });

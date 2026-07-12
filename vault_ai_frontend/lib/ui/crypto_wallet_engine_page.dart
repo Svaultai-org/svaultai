@@ -288,7 +288,10 @@ const String kCryptoWalletEngineSecurityOpenLabel = 'Open security';
 
 
 class CryptoWalletEnginePage extends StatefulWidget {
-  final VoidCallback? onOpenLite;
+  // 2026-07-12: onOpenLite parameter removed — CryptoVaultLitePage
+  // is retired. The engine page is the sole Crypto Vault surface;
+  // this parameter was never invoked from production callers
+  // (guarded by test_crypto_wallet_engine_dashboard_cleanup CL13).
   final void Function(String prompt)? onSendChatPrompt;
 
 
@@ -310,7 +313,6 @@ class CryptoWalletEnginePage extends StatefulWidget {
 
   const CryptoWalletEnginePage({
     super.key,
-    this.onOpenLite,
     this.onSendChatPrompt,
     this.authToken,
     this.apiClient,
@@ -521,7 +523,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   @override
   Widget build(BuildContext context) {
     return _CryptoWalletEnginePageBody(
-      onOpenLite: widget.onOpenLite,
       onSendChatPrompt: widget.onSendChatPrompt,
       authToken: widget.authToken,
       apiClient: widget.apiClient,
@@ -548,7 +549,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
 }
 
 class _CryptoWalletEnginePageBody extends StatelessWidget {
-  final VoidCallback? onOpenLite;
   final void Function(String prompt)? onSendChatPrompt;
 
   final String? authToken;
@@ -578,7 +578,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final Key activitySectionKey;
 
   const _CryptoWalletEnginePageBody({
-    this.onOpenLite,
     this.onSendChatPrompt,
     this.authToken,
     this.apiClient,

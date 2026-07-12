@@ -277,7 +277,11 @@ void main() {
         );
         
         
-        expect(find.text('Available with upgrade'), findsOneWidget);
+        // 2026-07-12: status label reads "Upgrade required" on
+        // the non-upgraded locked card (and matches the button
+        // label — two widgets).
+        expect(find.text('Upgrade required'), findsNWidgets(2));
+        expect(find.text('Available with upgrade'), findsNothing);
         expect(find.text('Coming soon for upgraded users'), findsNothing);
       },
     );

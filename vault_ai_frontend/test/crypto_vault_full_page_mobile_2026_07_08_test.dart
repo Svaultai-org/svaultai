@@ -8,7 +8,6 @@ import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 
 import 'package:vault_ai_frontend/services/crypto_wallet_features.dart';
 import 'package:vault_ai_frontend/services/evm_networks.dart';
-import 'package:vault_ai_frontend/ui/crypto_vault_lite_page.dart';
 import 'package:vault_ai_frontend/ui/crypto_vault_locked_card.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_asset_detail_page.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_page.dart';
@@ -233,12 +232,9 @@ void main() {
   });
 
 
-  group('CryptoVaultLitePage', () {
-    _forEachMobile(
-      'renders empty saved-records state',
-      () => const CryptoVaultLitePage(),
-    );
-  });
+  // 2026-07-12: CryptoVaultLitePage group removed. That page has
+  // been retired — the sole Crypto Vault surface is
+  // CryptoWalletEnginePage, already covered above.
 
 
   group('Content invariants at mobile widths', () {
@@ -349,7 +345,6 @@ void main() {
           _detailPage('ETH', network: kEvmNetworkEthereumMainnet),
           _detailPage('XMR', network: kMoneroNetworkId),
           const CryptoVaultLockedCard(),
-          const CryptoVaultLitePage(),
         ];
         for (int i = 0; i < surfaces.length; i++) {
           await _pumpAt(tester, surfaces[i],

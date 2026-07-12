@@ -235,7 +235,9 @@ void main() {
           findsOneWidget);
       expect(find.byKey(const Key('crypto_vault_loading_card')),
           findsNothing);
-      expect(find.text('Available with upgrade'), findsOneWidget);
+      // 2026-07-12: status label + button label both say
+      // "Upgrade required" on the default locked card.
+      expect(find.text('Upgrade required'), findsNWidgets(2));
     });
   });
 }

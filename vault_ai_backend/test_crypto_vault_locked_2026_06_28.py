@@ -1,15 +1,42 @@
+"""Wire-shape + copy tests for the Crypto Vault locked / active card.
 
+2026-07-12 refresh: the old "Crypto Vault Lite / save wallet
+addresses / seed phrases / send features will come later" copy
+described a saved-item vault feature, not the real wallet product
+that shipped. Users hitting the non-upgraded chat card thought the
+product only stored strings. This suite now enforces the new copy:
+
+  * Non-upgraded users see: "You can't access Crypto Vault on your
+    current plan. Upgrade your account to unlock it — Crypto Vault
+    is a real, non-custodial wallet…".
+  * Upgraded users see:      "Crypto Vault is active. Open it to
+    pick a supported asset, use Receive / Send / view balance…".
+  * Forbidden legacy fragments (Send features will come later, save
+    wallet addresses, seed phrases, Crypto Vault Lite, coming soon)
+    must not appear in any surface.
+"""
 
 from __future__ import annotations
 
 import importlib
 import json
 import logging
-import re
 import unittest
 
 import vault_crypto_locked_card as card_mod
 import vault_crypto_locked_chat as chat_mod
+
+
+LEGACY_STALE_FRAGMENTS: tuple[str, ...] = (
+    "send features will come later",
+    "save wallet addresses",
+    "seed phrases",
+    "private keys",
+    "transaction records",
+    "crypto vault lite",
+    "coming soon",
+    "receive and send features will come later",
+)
 
 
 class TestLockedCardWireShape(unittest.TestCase):
@@ -28,36 +55,27 @@ class TestLockedCardWireShape(unittest.TestCase):
         self.assertEqual(payload["title"], "Crypto Vault")
         self.assertEqual(card_mod.CARD_TITLE, "Crypto Vault")
 
-    def test_status_reads_available_with_upgrade(self):
-                                                                    
-                                                                   
+    def test_status_reads_upgrade_required_for_non_upgraded(self):
         payload = json.loads(card_mod.build_crypto_locked_envelope())
-        self.assertEqual(payload["status"], "Available with upgrade")
-        self.assertEqual(card_mod.CARD_STATUS, "Available with upgrade")
-                                                                   
-        self.assertNotIn("Coming soon", card_mod.CARD_STATUS)
+        self.assertEqual(payload["status"], "Upgrade required")
+        self.assertEqual(card_mod.CARD_STATUS, "Upgrade required")
 
-    def test_body_carries_operator_pinned_storage_list(self):
-                                                               
-                                                                 
+    def test_body_uses_new_wallet_copy_and_drops_legacy(self):
         payload = json.loads(card_mod.build_crypto_locked_envelope())
         body = payload["body"]
+        low = body.lower()
         for fragment in (
-            "Save wallet addresses",
-            "crypto notes",
-            "seed phrases",
-            "private keys",
-            "transaction records",
-            "receive QR codes",
-            "Send features will come later",
-            "extra protection",
+            "non-custodial wallet",
+            "receive",
+            "send",
+            "balance",
+            "upgrade",
         ):
             with self.subTest(fragment=fragment):
-                self.assertIn(fragment, body)
-                                                                   
-                                                
-        self.assertNotIn("Coming soon", body)
-        self.assertNotIn("Receive and send features will come later", body)
+                self.assertIn(fragment, low)
+        for legacy in LEGACY_STALE_FRAGMENTS:
+            with self.subTest(legacy=legacy):
+                self.assertNotIn(legacy, low)
 
     def test_card_carries_exactly_two_buttons(self):
         payload = json.loads(card_mod.build_crypto_locked_envelope())
@@ -71,7 +89,6 @@ class TestLockedCardWireShape(unittest.TestCase):
 
 
 class TestLockedAcrossTiers(unittest.TestCase):
-
 
     def test_free_user_sees_locked_card(self):
         env = json.loads(card_mod.build_crypto_locked_envelope(
@@ -92,9 +109,7 @@ class TestLockedAcrossTiers(unittest.TestCase):
         self.assertFalse(env["send_enabled"])
         self.assertEqual(env["tier"], "basic")
 
-    def test_upgraded_user_card_renders_active(self):
-                                                             
-                                                                    
+    def test_upgraded_user_card_renders_active_with_new_copy(self):
         env = json.loads(card_mod.build_crypto_locked_envelope(
             user_tier=card_mod.TIER_UPGRADED,
         ))
@@ -102,19 +117,35 @@ class TestLockedAcrossTiers(unittest.TestCase):
             env["locked"],
             msg="upgraded users must NOT see the locked card",
         )
-        self.assertFalse(env["send_enabled"])
+        # 2026-07-12: real wallet product — receive, send, and
+        # wallet generation are all live on the upgraded plan.
+        # Backend routes are authoritatively gated by
+        # require_crypto_entitlement so exposing these flags is safe.
+        self.assertTrue(env["send_enabled"])
         self.assertTrue(env["receive_enabled"])
-        self.assertFalse(env["wallet_generation_enabled"])
+        self.assertTrue(env["wallet_generation_enabled"])
         self.assertFalse(env["trading_enabled"])
         self.assertEqual(env["status"], "Active")
         self.assertEqual(env["tier"], "upgraded")
-                                                            
-                                                      
         secondary_labels = [
             b["label"] for b in env["buttons"]
             if b["id"] != card_mod.ACTION_LEARN_MORE
         ]
         self.assertEqual(secondary_labels, ["Open Crypto Vault"])
+
+        low = env["body"].lower()
+        for fragment in (
+            "active on your account",
+            "open",
+            "receive",
+            "send",
+            "balance",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, low)
+        for legacy in LEGACY_STALE_FRAGMENTS:
+            with self.subTest(legacy=legacy):
+                self.assertNotIn(legacy, low)
 
     def test_unknown_tier_falls_back_to_free(self):
         env = json.loads(card_mod.build_crypto_locked_envelope(
@@ -129,7 +160,6 @@ class TestLockedAcrossTiers(unittest.TestCase):
 
 
 class TestChatDeflectionRouting(unittest.TestCase):
-                             
     def test_save_question_routes_to_save_intent(self):
         for phrase in (
             "Can I save crypto in my vault?",
@@ -143,7 +173,6 @@ class TestChatDeflectionRouting(unittest.TestCase):
                     intent, chat_mod.INTENT_CRYPTO_SAVE_QUESTION,
                 )
 
-                             
     def test_send_question_routes_to_send_intent(self):
         for phrase in (
             "Can I send crypto?",
@@ -157,7 +186,6 @@ class TestChatDeflectionRouting(unittest.TestCase):
                     intent, chat_mod.INTENT_CRYPTO_SEND_QUESTION,
                 )
 
-                             
     def test_receive_question_routes_to_receive_intent(self):
         for phrase in (
             "Can I receive crypto?",
@@ -170,7 +198,6 @@ class TestChatDeflectionRouting(unittest.TestCase):
                     intent, chat_mod.INTENT_CRYPTO_RECEIVE_QUESTION,
                 )
 
-                             
     def test_buy_sell_trade_routes_to_buy_intent(self):
         for phrase in (
             "Can I buy crypto?",
@@ -190,7 +217,9 @@ class TestChatDeflectionRouting(unittest.TestCase):
         intent = chat_mod.classify_crypto_question(
             "Can VaultAI do crypto?",
         )
-        self.assertEqual(intent, chat_mod.INTENT_CRYPTO_GENERIC_QUESTION)
+        self.assertEqual(
+            intent, chat_mod.INTENT_CRYPTO_GENERIC_QUESTION,
+        )
 
     def test_unrelated_messages_return_none(self):
         for phrase in (
@@ -210,76 +239,151 @@ class TestChatDeflectionRouting(unittest.TestCase):
 
 class TestDeflectionReplies(unittest.TestCase):
 
+    def _assert_no_legacy(self, message: str):
+        low = message.lower()
+        for legacy in LEGACY_STALE_FRAGMENTS:
+            with self.subTest(legacy=legacy):
+                self.assertNotIn(legacy, low)
 
-    def test_save_reply_is_operator_pinned(self):
-                                                                 
-                                                                 
+    def test_save_reply_offers_upgrade_and_wallet_language(self):
         result = chat_mod.route_crypto_question(
             user_message="Can I save crypto in my vault?",
+            user_tier="free",
         )
         self.assertEqual(result["band"], chat_mod.BAND_DEFLECTED)
         self.assertEqual(
             result["message"], chat_mod.MESSAGE_CRYPTO_SAVE,
         )
+        low = result["message"].lower()
         for fragment in (
-            "Crypto Vault is available with upgrade",
-            "save wallet addresses",
-            "crypto notes",
-            "seed phrases",
-            "private keys",
-            "transaction records",
-            "receive QR codes",
-            "Send features will come later",
-            "extra protection",
+            "can't access crypto vault",
+            "upgrade",
+            "non-custodial wallet",
         ):
             with self.subTest(fragment=fragment):
-                self.assertIn(fragment, result["message"])
-                                                                   
-        self.assertNotIn("coming soon", result["message"].lower())
-        self.assertNotIn(
-            "Receive and send features will come later",
-            result["message"],
-        )
+                self.assertIn(fragment, low)
+        self._assert_no_legacy(result["message"])
 
-    def test_send_reply_is_operator_pinned(self):
+    def test_send_reply_non_upgraded_requires_upgrade(self):
         result = chat_mod.route_crypto_question(
             user_message="Can I send crypto?",
+            user_tier="free",
         )
         self.assertEqual(result["band"], chat_mod.BAND_DEFLECTED)
         self.assertEqual(
             result["message"], chat_mod.MESSAGE_CRYPTO_SEND,
         )
-        self.assertIn("Crypto send is not active yet", result["message"])
-        self.assertIn("extra protection", result["message"])
+        low = result["message"].lower()
+        self.assertIn("upgrade", low)
+        self.assertIn("send", low)
+        self.assertIn("pin", low)
+        self._assert_no_legacy(result["message"])
 
-    def test_receive_reply_confirms_receive_qr_is_available(self):
-                                                           
-                                                                
+    def test_send_reply_upgraded_describes_real_send_flow(self):
         result = chat_mod.route_crypto_question(
-            user_message="Can I receive crypto?",
+            user_message="Can I send crypto?",
+            user_tier="upgraded",
         )
         self.assertEqual(result["band"], chat_mod.BAND_DEFLECTED)
-        self.assertIn(
-            "Crypto Vault is available with upgrade",
-            result["message"],
+        self.assertEqual(
+            result["message"], chat_mod.MESSAGE_CRYPTO_SEND_UPGRADED,
         )
-        self.assertIn("receive QR code", result["message"])
-        self.assertNotIn("not active yet", result["message"])
-        self.assertNotIn("coming soon", result["message"].lower())
+        low = result["message"].lower()
+        self.assertIn("open crypto vault", low)
+        self.assertIn("recipient", low)
+        self.assertIn("pin", low)
+        self._assert_no_legacy(result["message"])
+
+    def test_receive_reply_confirms_receive_flow(self):
+        result_free = chat_mod.route_crypto_question(
+            user_message="Can I receive crypto?",
+            user_tier="free",
+        )
+        self.assertEqual(
+            result_free["band"], chat_mod.BAND_DEFLECTED,
+        )
+        low_free = result_free["message"].lower()
+        self.assertIn("can't access crypto vault", low_free)
+        self.assertIn("upgrade", low_free)
+        self._assert_no_legacy(result_free["message"])
+
+        result_up = chat_mod.route_crypto_question(
+            user_message="Can I receive crypto?",
+            user_tier="upgraded",
+        )
+        low_up = result_up["message"].lower()
+        self.assertIn("open crypto vault", low_up)
+        self.assertIn("qr code", low_up)
+        self.assertIn("non-custodial", low_up)
+        self._assert_no_legacy(result_up["message"])
 
     def test_buy_reply_disclaims_exchange_and_trading(self):
         result = chat_mod.route_crypto_question(
             user_message="Can I buy crypto?",
+            user_tier="free",
         )
         self.assertEqual(result["band"], chat_mod.BAND_DEFLECTED)
-        self.assertIn("doesn't buy, sell, or trade crypto", result["message"])
+        self.assertIn(
+            "doesn't buy, sell, or trade crypto", result["message"],
+        )
+        self._assert_no_legacy(result["message"])
+
+    def test_generic_reply_non_upgraded_requires_upgrade(self):
+        # 2026-07-12 core bug fixture: these are the exact prompts
+        # users sent and got the stale Lite copy back. Prompts like
+        # "do i have crypto vault" match the router's SHOW_VAULT
+        # regex directly at the router level and never reach this
+        # deflector; the router-level normalization covers them (see
+        # test_logins_and_crypto_2026_07_12.py).
+        for phrase in (
+            "can i use the crypto",
+            "can i access crypto vault",
+            "can i use crypto vault",
+        ):
+            with self.subTest(phrase=phrase):
+                result = chat_mod.route_crypto_question(
+                    user_message=phrase,
+                    user_tier="free",
+                )
+                self.assertEqual(
+                    result["band"], chat_mod.BAND_DEFLECTED,
+                )
+                self.assertEqual(
+                    result["message"],
+                    chat_mod.MESSAGE_CRYPTO_GENERIC,
+                )
+                low = result["message"].lower()
+                self.assertIn("can't access crypto vault", low)
+                self.assertIn("upgrade", low)
+                self.assertIn("non-custodial wallet", low)
+                self._assert_no_legacy(result["message"])
+
+    def test_generic_reply_upgraded_describes_real_wallet(self):
+        result = chat_mod.route_crypto_question(
+            user_message="can i use the crypto",
+            user_tier="upgraded",
+        )
+        self.assertEqual(result["band"], chat_mod.BAND_DEFLECTED)
+        self.assertEqual(
+            result["message"],
+            chat_mod.MESSAGE_CRYPTO_GENERIC_UPGRADED,
+        )
+        low = result["message"].lower()
+        for fragment in (
+            "yes",
+            "open crypto vault",
+            "receive",
+            "send",
+            "balance",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, low)
+        self._assert_no_legacy(result["message"])
 
 
 class TestAntiClaimGuardrails(unittest.TestCase):
 
-
     _FORBIDDEN = (
-                                  
         "you can send",
         "you can receive",
         "you can buy",
@@ -287,7 +391,6 @@ class TestAntiClaimGuardrails(unittest.TestCase):
         "you can trade",
         "you can swap",
         "you can exchange",
-                         
         "guaranteed",
         "profit",
         "high return",
@@ -300,7 +403,6 @@ class TestAntiClaimGuardrails(unittest.TestCase):
         "100x",
         "moon",
         "to the moon",
-                                   
         "we are an exchange",
         "we sell crypto",
         "we trade",
@@ -316,35 +418,42 @@ class TestAntiClaimGuardrails(unittest.TestCase):
                 self.assertNotIn(needle, lower)
 
     def test_card_body_has_no_claims(self):
-        env = json.loads(card_mod.build_crypto_locked_envelope())
-        self._check(env["body"])
-        self._check(env["status"])
+        for tier in ("free", "basic", "upgraded"):
+            env = json.loads(card_mod.build_crypto_locked_envelope(
+                user_tier=tier,
+            ))
+            self._check(env["body"])
+            self._check(env["status"])
 
     def test_save_reply_has_no_claims(self):
         self._check(chat_mod.MESSAGE_CRYPTO_SAVE)
+        self._check(chat_mod.MESSAGE_CRYPTO_SAVE_UPGRADED)
 
     def test_send_reply_has_no_claims(self):
         self._check(chat_mod.MESSAGE_CRYPTO_SEND)
+        self._check(chat_mod.MESSAGE_CRYPTO_SEND_UPGRADED)
 
     def test_receive_reply_has_no_claims(self):
         self._check(chat_mod.MESSAGE_CRYPTO_RECEIVE)
+        self._check(chat_mod.MESSAGE_CRYPTO_RECEIVE_UPGRADED)
 
     def test_buy_reply_has_no_claims(self):
         self._check(chat_mod.MESSAGE_CRYPTO_BUY)
+        self._check(chat_mod.MESSAGE_CRYPTO_BUY_UPGRADED)
 
     def test_generic_reply_has_no_claims(self):
         self._check(chat_mod.MESSAGE_CRYPTO_GENERIC)
+        self._check(chat_mod.MESSAGE_CRYPTO_GENERIC_UPGRADED)
 
 
 class TestNoTransactionCodeAdded(unittest.TestCase):
-
 
     _FORBIDDEN_IMPORTS = (
         "web3", "eth_account", "ecdsa",
         "secp256k1", "coincurve",
         "bitcoinlib", "bitcoin",
         "solana", "ethers",
-        "hashlib_signing",                           
+        "hashlib_signing",
     )
 
     _FORBIDDEN_NAMES = (
@@ -370,14 +479,8 @@ class TestNoTransactionCodeAdded(unittest.TestCase):
         src = self._read(chat_mod)
         for needle in self._FORBIDDEN_IMPORTS:
             with self.subTest(needle=needle):
-                                                                 
-                                                                   
-                self.assertNotIn(
-                    f"import {needle}", src,
-                )
-                self.assertNotIn(
-                    f"from {needle}", src,
-                )
+                self.assertNotIn(f"import {needle}", src)
+                self.assertNotIn(f"from {needle}", src)
 
     def test_modules_expose_no_signing_or_broadcast_names(self):
         for mod in (card_mod, chat_mod):
@@ -388,7 +491,6 @@ class TestNoTransactionCodeAdded(unittest.TestCase):
 
 
 class TestCryptoDeflectionPrivacy(unittest.TestCase):
-
 
     def test_route_logs_carry_no_user_text(self):
         records: list[logging.LogRecord] = []
@@ -414,9 +516,7 @@ class TestCryptoDeflectionPrivacy(unittest.TestCase):
                 "How do I buy 12 ETH using my secret bank login?",
             ):
                 chat_mod.route_crypto_question(user_message=msg)
-            for tier in (
-                "free", "basic", "upgraded",
-            ):
+            for tier in ("free", "basic", "upgraded"):
                 card_mod.build_crypto_locked_envelope(user_tier=tier)
         finally:
             for name in log_names:
@@ -433,5 +533,5 @@ class TestCryptoDeflectionPrivacy(unittest.TestCase):
                 self.assertNotIn(forbidden, joined)
 
 
-if __name__ == "__main__":                    
+if __name__ == "__main__":
     unittest.main()

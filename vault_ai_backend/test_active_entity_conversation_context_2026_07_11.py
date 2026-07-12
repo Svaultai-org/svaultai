@@ -721,7 +721,10 @@ class ChatHandlerWiringSourceGuards(unittest.TestCase):
         self.assertGreater(idx, -1,
             msg="fast-path must define the tuple of login intents",
         )
-        window = self.main_src[idx:idx + 2500]
+        # 2026-07-12: window widened to include the new
+        # single-login-list active-entity pinning block that landed
+        # ahead of the original set_active_entity() call.
+        window = self.main_src[idx:idx + 4500]
         self.assertIn("vault_login_search", window)
         self.assertIn("vault_login_reveal", window)
         self.assertIn("vault_login_copy", window)

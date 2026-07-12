@@ -505,8 +505,16 @@ class _EdgeRowCard extends StatelessWidget {
           : () => onAskVaultAI!(
               AppLocalizations.of(context).relationshipsAskRelated(srcLabel),
             ),
-      child: isMobile
-          ? Column(
+      // 2026-07-12: self-measure so a bad parent `isMobile=false`
+      // (split-view, sidebar-collapsed browser, narrow tablet) does
+      // NOT overflow the row into desktop layout. The desktop Row
+      // needs ~520dp to hold two endpoints + connector + 110dp meta
+      // without squeezing labels.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = isMobile || constraints.maxWidth < 520;
+          if (compact) {
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _EndpointTile(endpoint: src, accent: accent),
@@ -524,29 +532,36 @@ class _EdgeRowCard extends StatelessWidget {
                   updatedAt: updatedAt,
                 ),
               ],
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(child: _EndpointTile(endpoint: src, accent: accent)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: VaultSpacing.md,
-                  ),
-                  child: _Connector(accent: accent),
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: _EndpointTile(endpoint: src, accent: accent),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: VaultSpacing.md,
                 ),
-                Expanded(child: _EndpointTile(endpoint: tgt, accent: accent)),
-                const SizedBox(width: VaultSpacing.md),
-                SizedBox(
-                  width: 110,
-                  child: _MetaRow(
-                    confidence: confidence,
-                    updatedAt: updatedAt,
-                    vertical: true,
-                  ),
+                child: _Connector(accent: accent),
+              ),
+              Expanded(
+                child: _EndpointTile(endpoint: tgt, accent: accent),
+              ),
+              const SizedBox(width: VaultSpacing.md),
+              SizedBox(
+                width: 110,
+                child: _MetaRow(
+                  confidence: confidence,
+                  updatedAt: updatedAt,
+                  vertical: true,
                 ),
-              ],
-            ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

@@ -66,7 +66,6 @@ import 'ui/crypto_wallet_engine_receive_panel.dart';
 import 'ui/crypto_wallet_engine_send_panel.dart';
 import 'ui/chat/crypto_wallet_action_card.dart';
 
-import 'ui/crypto_vault_lite_page.dart';
 import 'ui/crypto_receive_panel.dart';
 
 import 'l10n/app_localizations.dart';

@@ -58,9 +58,12 @@ void main() {
       expect(kActionOpenCryptoVault, 'crypto_vault_open');
     });
 
-    test('Legacy "Available with upgrade" + "Upgrade required" '
-        'still exist for the free / basic branch', () {
-      expect(kCryptoVaultDefaultStatus, 'Available with upgrade');
+    test('2026-07-12 non-upgraded status + button label both read '
+        '"Upgrade required"', () {
+      // Refreshed copy: default status is now "Upgrade required"
+      // (previously "Available with upgrade"). Button label
+      // unchanged.
+      expect(kCryptoVaultDefaultStatus, 'Upgrade required');
       expect(kCryptoVaultUpgradeRequiredLabel, 'Upgrade required');
     });
 
@@ -76,39 +79,42 @@ void main() {
     testWidgets('default tier (null) renders locked card',
         (tester) async {
       await tester.pumpWidget(_wrap(const CryptoVaultLockedCard()));
-      
+
       expect(find.byKey(const Key('crypto_vault_locked_card')),
           findsOneWidget);
-      
+
       expect(find.byKey(const Key('crypto_vault_lock_icon')),
           findsOneWidget);
-      
-      expect(find.text('Available with upgrade'), findsOneWidget);
-      
+
+      // 2026-07-12: status label + button label both say
+      // "Upgrade required" — that's two matching Text widgets.
+      expect(find.text('Upgrade required'), findsNWidgets(2));
+
       expect(
         find.byKey(const Key('crypto_vault_upgrade_required_button')),
         findsOneWidget,
       );
-      expect(find.text('Upgrade required'), findsOneWidget);
-      
+
       expect(find.text('Active'), findsNothing);
       expect(find.text('Open Crypto Vault'), findsNothing);
+      // Legacy stale copy must be absent.
+      expect(find.text('Available with upgrade'), findsNothing);
     });
 
     testWidgets('tier=free renders locked card', (tester) async {
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierFreeLabel),
       ));
-      expect(find.text('Available with upgrade'), findsOneWidget);
-      expect(find.text('Upgrade required'), findsOneWidget);
+      expect(find.text('Upgrade required'), findsNWidgets(2));
+      expect(find.text('Available with upgrade'), findsNothing);
     });
 
     testWidgets('tier=basic renders locked card', (tester) async {
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierBasicLabel),
       ));
-      expect(find.text('Available with upgrade'), findsOneWidget);
-      expect(find.text('Upgrade required'), findsOneWidget);
+      expect(find.text('Upgrade required'), findsNWidgets(2));
+      expect(find.text('Available with upgrade'), findsNothing);
     });
   });
 
@@ -130,11 +136,12 @@ void main() {
           findsNothing);
       
       expect(find.text('Active'), findsOneWidget);
-      
+
       expect(find.byKey(const Key('crypto_vault_open_button')),
           findsOneWidget);
       expect(find.text('Open Crypto Vault'), findsOneWidget);
-      
+
+      // Legacy + non-upgraded copy must both be absent.
       expect(find.text('Available with upgrade'), findsNothing);
       expect(find.text('Upgrade required'), findsNothing);
       expect(

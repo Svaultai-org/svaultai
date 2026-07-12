@@ -14,17 +14,25 @@ TYPE_CRYPTO_VAULT_LOCKED: str = "crypto_vault_locked"
 
 
 SCHEMA_VERSION: str = "crypto_vault_locked.v1"
-COPY_VERSION:   str = "crypto_vault_locked_2026_06_28"
+COPY_VERSION:   str = "crypto_vault_locked_2026_07_12"
 
 
 CARD_TITLE:  str = "Crypto Vault"
-CARD_STATUS: str = "Available with upgrade"
+CARD_STATUS: str = "Upgrade required"
 CARD_STATUS_ACTIVE: str = "Active"
 CARD_BODY:   str = (
-    "Save wallet addresses, crypto notes, seed phrases, "
-    "private keys, transaction records, and receive QR codes "
-    "securely. Send features will come later with extra "
-    "protection."
+    "Crypto Vault is a real, non-custodial wallet — receive, "
+    "send, and view balance on supported networks, with keys "
+    "that stay on your device. It's not available on your "
+    "current plan. Upgrade your account to unlock it."
+)
+CARD_BODY_ACTIVE: str = (
+    "Crypto Vault is active on your account. Open it to pick "
+    "a supported asset, use Receive for the wallet address "
+    "and QR code, use Send to enter a recipient and amount, "
+    "and view balance and transaction history where "
+    "supported. The wallet is non-custodial — you control "
+    "the funds."
 )
 
 
@@ -64,9 +72,9 @@ def build_crypto_locked_envelope(
 
     tier = _safe_tier(user_tier)
     upgraded = (tier == TIER_UPGRADED)
-                                                                  
-                                                                 
+
     status = CARD_STATUS_ACTIVE if upgraded else CARD_STATUS
+    body = CARD_BODY_ACTIVE if upgraded else CARD_BODY
     if upgraded:
         secondary_button = {
             "id":    ACTION_OPEN_CRYPTO_VAULT,
@@ -86,23 +94,26 @@ def build_crypto_locked_envelope(
         "tier":            tier,
         "title":           CARD_TITLE,
         "status":          status,
-        "body":            CARD_BODY,
+        "body":            body,
         "buttons": [
             {
                 "id":      ACTION_LEARN_MORE,
                 "label":   BUTTON_LABEL_LEARN_MORE,
-                                                                 
-                                                                   
+
                 "kind":    "info",
             },
             secondary_button,
         ],
-                                                                
-                                                          
+
+        # Entitlement gates: on the non-upgraded card, send/receive/open
+        # are disabled — the frontend must not render an enabled Open
+        # Crypto Vault action. On the upgraded card, send + receive +
+        # open are all live because the real wallet routes are gated by
+        # require_crypto_entitlement on the backend anyway.
         "locked":         (not upgraded),
-        "send_enabled":   False,
+        "send_enabled":   upgraded,
         "receive_enabled": upgraded,
-        "wallet_generation_enabled": False,
+        "wallet_generation_enabled": upgraded,
         "trading_enabled":          False,
     }
     logger.info(
@@ -120,6 +131,7 @@ __all__ = [
     "CARD_STATUS",
     "CARD_STATUS_ACTIVE",
     "CARD_BODY",
+    "CARD_BODY_ACTIVE",
     "ACTION_LEARN_MORE",
     "ACTION_UPGRADE_REQUIRED",
     "ACTION_OPEN_CRYPTO_VAULT",

@@ -331,7 +331,14 @@ class TestTierGate(unittest.TestCase):
         )
                                                                  
                                                                    
-        self.assertIn("available with upgrade", result["message"])
+        # 2026-07-12: tier-gate message no longer uses the stale
+        # "available with upgrade" phrasing — it now points at the
+        # real wallet product ("non-custodial wallet") with an
+        # explicit Upgrade prompt.
+        self.assertIn("upgrade", result["message"].lower())
+        self.assertIn(
+            "non-custodial wallet", result["message"].lower(),
+        )
         self.assertNotIn("you can send", result["message"].lower())
         self.assertNotIn("you can receive", result["message"].lower())
         self.assertNotIn("login", result["message"].lower())

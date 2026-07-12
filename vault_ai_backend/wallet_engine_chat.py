@@ -143,9 +143,9 @@ def detect_wallet_engine_intent(message: Optional[str]) -> Optional[dict[str, An
 
 
 CHAT_MESSAGE_ENGINE_DISABLED: str = (
-    "The Crypto Wallet Engine is not yet enabled. Crypto Vault Lite "
-    "remains available for saved public addresses, encrypted backups, "
-    "and manual notes — open it from the sidebar."
+    "The Crypto Wallet Engine is not enabled for this network or "
+    "account yet. Open Crypto Vault to see which assets and networks "
+    "are currently supported, and try again once availability changes."
 )
 CHAT_MESSAGE_SEND_NOT_READY: str = (
     "Send is not yet available. When the wallet engine ships send, the "
@@ -172,8 +172,7 @@ CHAT_MESSAGE_TRANSACTIONS_NOT_READY: str = (
 CHAT_MESSAGE_MONERO_SPECIAL: str = (
     "Monero needs a special wallet-scanning design — its balance and "
     "transactions cannot be read from a public address alone. The "
-    "wallet engine will support Monero in a later phase. For now you "
-    "can still save a Monero public address in Crypto Vault Lite."
+    "wallet engine will support Monero in a later phase."
 )
 CHAT_MESSAGE_UNSUPPORTED_ASSET: str = (
     "This asset is not yet supported by the wallet engine."

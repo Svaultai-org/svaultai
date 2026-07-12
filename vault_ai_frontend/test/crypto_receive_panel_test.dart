@@ -9,7 +9,6 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/ui/crypto_receive_panel.dart';
-import 'package:vault_ai_frontend/ui/crypto_vault_lite_page.dart';
 
 
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
@@ -57,77 +56,12 @@ Future<void> _pumpPanel(
 }
 
 
-List<Map<String, dynamic>> _seedRecords() => [
-      {
-        'item_id':        'r1',
-        'type':           'crypto_wallet_address',
-        'title':          'USDT TRC20 wallet',
-        'category_label': 'Crypto wallet',
-        'preview': {
-          'wallet_address_mask': 'TQx2P5…1RnY',
-          'network':              'USDT TRC20',
-        },
-      },
-      {
-        'item_id':        'r2',
-        'type':           'crypto_seed_phrase',
-        'title':          'Bitcoin seed phrase',
-        'category_label': 'Seed phrase',
-        'preview': {
-          'seed_phrase_mask': '•••••• hidden',
-        },
-      },
-      {
-        'item_id':        'r3',
-        'type':           'crypto_private_key',
-        'title':          'ETH private key',
-        'category_label': 'Private key',
-        'preview': {
-          'private_key_mask': '•••••• hidden',
-        },
-      },
-      {
-        'item_id':        'r4',
-        'type':           'crypto_recovery_phrase',
-        'title':          'Crypto recovery phrase',
-        'category_label': 'Recovery phrase',
-        'preview': {
-          'recovery_phrase_mask': '•••••• hidden',
-        },
-      },
-      {
-        'item_id':        'r5',
-        'type':           'crypto_note',
-        'title':          'Avg buy notes',
-        'category_label': 'Crypto note',
-        'preview': {
-          'crypto_note_mask': '•••••• hidden',
-        },
-      },
-    ];
-
-
-Future<void> _pumpPage(
-  WidgetTester tester, {
-  void Function(Map<String, dynamic>)? onShowQR,
-}) async {
-  
-  
-  await tester.binding.setSurfaceSize(const Size(900, 2400));
-  await tester.pumpWidget(
-    MaterialApp(
-      localizationsDelegates: _testL10nDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(
-        body: CryptoVaultLitePage(
-          savedRecords: _seedRecords(),
-          onShowQR: onShowQR,
-        ),
-      ),
-    ),
-  );
-  await tester.pumpAndSettle();
-}
+// 2026-07-12: the "Show QR action on crypto cards" group in this
+// file used _seedRecords() + _pumpPage() to mount CryptoVaultLitePage
+// and assert Show QR appeared only on wallet cards. That page has
+// been retired (Crypto Vault Lite fully removed). The remaining
+// content-rendering + modal-flow groups exercise ReceivePanel /
+// showReceivePanelDialog directly and do NOT need the fixtures.
 
 
 void main() {
@@ -344,78 +278,10 @@ void main() {
     });
   });
 
-  group('Show QR action on crypto cards', () {
-    testWidgets('Show QR appears on crypto_wallet_address card only',
-        (tester) async {
-      await _pumpPage(tester, onShowQR: (_) {});
-      
-      expect(
-        find.byKey(const Key('crypto_card_show_qr_r1')),
-        findsOneWidget,
-      );
-      
-      expect(
-        find.byKey(const Key('crypto_card_show_qr_r2')),
-        findsNothing,
-      );
-      
-      expect(
-        find.byKey(const Key('crypto_card_show_qr_r3')),
-        findsNothing,
-      );
-      
-      expect(
-        find.byKey(const Key('crypto_card_show_qr_r4')),
-        findsNothing,
-      );
-      
-      expect(
-        find.byKey(const Key('crypto_card_show_qr_r5')),
-        findsNothing,
-      );
-    });
-
-    testWidgets('Show QR HIDDEN when callback not supplied',
-        (tester) async {
-      await _pumpPage(tester);
-      
-      
-      expect(
-        find.byKey(const Key('crypto_card_show_qr_r1')),
-        findsNothing,
-      );
-    });
-
-    testWidgets('Show QR tap fires onShowQR with the wallet record',
-        (tester) async {
-      Map<String, dynamic>? tapped;
-      await _pumpPage(
-        tester,
-        onShowQR: (r) => tapped = r,
-      );
-      await tester.tap(find.byKey(const Key('crypto_card_show_qr_r1')));
-      await tester.pumpAndSettle();
-      expect(tapped, isNotNull);
-      expect(tapped!['item_id'], 'r1');
-      expect(tapped!['type'],    'crypto_wallet_address');
-    });
-
-    testWidgets('full wallet address NEVER renders in the list view',
-        (tester) async {
-      await _pumpPage(tester, onShowQR: (_) {});
-      for (final t in tester.widgetList<Text>(find.byType(Text))) {
-        final body = t.data ?? '';
-        expect(
-          body.contains(_usdtFull), isFalse,
-          reason: 'List view must never render the full USDT address',
-        );
-        expect(
-          body.contains(_btcFull), isFalse,
-          reason: 'List view must never render the full BTC address',
-        );
-      }
-    });
-  });
+  // 2026-07-12: "Show QR action on crypto cards" group removed.
+  // It exercised CryptoVaultLitePage-hosted crypto cards, which
+  // no longer exist; the QR action lives inside CryptoWalletEnginePage
+  // now and is covered by test/crypto_wallet_engine_*_test.dart suites.
 
   group('showReceivePanelDialog — modal flow', () {
     testWidgets('dialog opens and renders the panel', (tester) async {

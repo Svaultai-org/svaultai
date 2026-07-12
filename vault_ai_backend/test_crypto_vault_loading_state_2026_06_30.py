@@ -94,65 +94,73 @@ class TestUnknownTierRoutesToCheckingAccess(unittest.TestCase):
                     )
 
 
-class TestSendStaysFutureOnly(unittest.TestCase):
+class TestSendMirrorsTheTier(unittest.TestCase):
+    """2026-07-12: Send is now a real feature on the upgraded plan.
+    Free users get the upgrade prompt; unknown-tier users get the
+    neutral checking-access response."""
 
-    def test_send_reply_same_for_unknown_and_free(self):
-        unknown_msg = chat_mod.route_crypto_question(
+    def test_send_reply_unknown_tier_is_checking_access(self):
+        msg = chat_mod.route_crypto_question(
             user_message="can I send Bitcoin",
             user_tier=chat_mod.TIER_UNKNOWN_LABEL,
         )["message"]
-        free_msg = chat_mod.route_crypto_question(
+        self.assertEqual(msg, chat_mod.MESSAGE_CRYPTO_CHECKING_ACCESS)
+
+    def test_send_reply_free_tier_prompts_upgrade(self):
+        msg = chat_mod.route_crypto_question(
             user_message="can I send Bitcoin",
             user_tier=chat_mod.TIER_FREE_LABEL,
         )["message"]
-        self.assertEqual(unknown_msg, free_msg)
-                                                          
-        self.assertEqual(unknown_msg, chat_mod.MESSAGE_CRYPTO_SEND)
+        self.assertEqual(msg, chat_mod.MESSAGE_CRYPTO_SEND)
+        self.assertIn("upgrade", msg.lower())
+
+    def test_send_reply_upgraded_tier_describes_real_send_flow(self):
+        msg = chat_mod.route_crypto_question(
+            user_message="can I send Bitcoin",
+            user_tier=chat_mod.TIER_UPGRADED_LABEL,
+        )["message"]
+        self.assertEqual(msg, chat_mod.MESSAGE_CRYPTO_SEND_UPGRADED)
+        self.assertIn("Open Crypto Vault", msg)
 
 
-class TestResolvedTiersUnchanged(unittest.TestCase):
+class TestResolvedTiersUseRealWalletCopy(unittest.TestCase):
 
-    def test_free_tier_keeps_available_with_upgrade(self):
+    def test_free_tier_prompts_upgrade_to_real_wallet(self):
         result = chat_mod.route_crypto_question(
             user_message="can I save crypto",
             user_tier=chat_mod.TIER_FREE_LABEL,
         )
-        self.assertIn(
-            "Crypto Vault is available with upgrade",
-            result["message"],
-        )
+        low = result["message"].lower()
+        self.assertIn("upgrade", low)
+        self.assertIn("non-custodial wallet", low)
+        self.assertNotIn("crypto vault lite", low)
 
-    def test_basic_tier_keeps_available_with_upgrade(self):
+    def test_basic_tier_matches_free(self):
         result = chat_mod.route_crypto_question(
             user_message="can I save crypto",
             user_tier=chat_mod.TIER_BASIC_LABEL,
         )
-        self.assertIn(
-            "Crypto Vault is available with upgrade",
-            result["message"],
-        )
+        low = result["message"].lower()
+        self.assertIn("upgrade", low)
+        self.assertNotIn("crypto vault lite", low)
 
-    def test_upgraded_tier_keeps_active_wording(self):
+    def test_upgraded_tier_names_open_receive_send(self):
         result = chat_mod.route_crypto_question(
             user_message="can I save crypto",
             user_tier=chat_mod.TIER_UPGRADED_LABEL,
         )
-        self.assertIn(
-            "Crypto Vault Lite is active",
-            result["message"],
-        )
+        low = result["message"].lower()
+        self.assertIn("open crypto vault", low)
+        self.assertNotIn("crypto vault lite", low)
 
-    def test_implicit_none_tier_still_defaults_to_free(self):
-                                                                  
-                                                                  
+    def test_implicit_none_tier_still_defaults_to_free_copy(self):
         result = chat_mod.route_crypto_question(
             user_message="can I save crypto",
             user_tier=None,
         )
-        self.assertIn(
-            "Crypto Vault is available with upgrade",
-            result["message"],
-        )
+        low = result["message"].lower()
+        self.assertIn("upgrade", low)
+        self.assertNotIn("crypto vault lite", low)
 
 
 if __name__ == "__main__":                    

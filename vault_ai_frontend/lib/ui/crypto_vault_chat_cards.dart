@@ -1417,9 +1417,11 @@ class _ShowVaultCardState extends State<_ShowVaultCard> {
 
             const SizedBox(height: 10),
             Text(
-              'Crypto Vault is not included in your current plan. '
-              'Upgrade to unlock wallet addresses, seed phrases, and '
-              'receive QR codes secured by your PIN.',
+              "You can't access Crypto Vault on your current "
+              "plan. Upgrade to unlock the real, non-custodial "
+              "wallet — receive, send, and view balance on "
+              "supported networks, with keys that stay on your "
+              "device.",
               key: const Key(
                 'crypto_vault_chat_show_vault_upgrade_body',
               ),

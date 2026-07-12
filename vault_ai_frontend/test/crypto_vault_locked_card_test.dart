@@ -99,40 +99,46 @@ void main() {
       );
     });
 
-    testWidgets('status reads "Available with upgrade"',
+    testWidgets('status reads "Upgrade required" (2026-07-12 copy)',
         (tester) async {
-      
-      
       await _pump(tester);
-      expect(find.text('Available with upgrade'), findsOneWidget);
+      expect(find.text('Upgrade required'), findsWidgets);
       expect(find.text('Coming soon for upgraded users'), findsNothing);
+      expect(find.text('Available with upgrade'), findsNothing);
     });
 
-    testWidgets('body lists the operator-pinned storage items',
+    testWidgets('body describes the real wallet product and prompts '
+        'upgrade — no legacy Lite fragments',
         (tester) async {
       await _pump(tester);
       final body = tester
           .widget<Text>(find.byKey(const Key('crypto_vault_body')))
-          .data!;
+          .data!
+          .toLowerCase();
       for (final fragment in [
-        'Save wallet addresses',
-        'crypto notes',
-        'seed phrases',
-        'private keys',
-        'transaction records',
-        'receive QR codes',
-        'Send features will come later',
-        'extra protection',
+        'non-custodial wallet',
+        'receive',
+        'send',
+        'balance',
+        'upgrade',
       ]) {
         expect(body, contains(fragment),
           reason: 'body must contain "$fragment"');
       }
-      
-      expect(body, isNot(contains('Coming soon')));
-      expect(
-        body,
-        isNot(contains('Receive and send features will come later')),
-      );
+      // 2026-07-12: forbid the stale Lite-era phrasing.
+      for (final legacy in [
+        'save wallet addresses',
+        'crypto notes',
+        'seed phrases',
+        'private keys',
+        'transaction records',
+        'send features will come later',
+        'crypto vault lite',
+        'coming soon',
+      ]) {
+        expect(body, isNot(contains(legacy)),
+            reason: 'body must NOT contain legacy "$legacy"');
+      }
     });
 
     testWidgets('lock icon is rendered', (tester) async {
@@ -158,7 +164,10 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Learn more'), findsOneWidget);
-      expect(find.text('Upgrade required'), findsOneWidget);
+      // 2026-07-12: "Upgrade required" is both the status text
+      // (top of the card) and the CTA button label. Both must
+      // render on the non-upgraded default card.
+      expect(find.text('Upgrade required'), findsNWidgets(2));
     });
   });
 
@@ -166,34 +175,39 @@ void main() {
   group('CryptoVaultLockedCard — backend envelope render', () {
     testWidgets('renders envelope title/status/body when provided',
         (tester) async {
-      
-      
+      // 2026-07-12: envelope now carries the wallet-product copy.
       await _pump(tester, envelope: const {
         'type':   kCryptoVaultLockedType,
         'title':  'Crypto Vault',
-        'status': 'Available with upgrade',
-        'body':   'Save wallet addresses, crypto notes, seed '
-            'phrases, private keys, transaction records, and '
-            'receive QR codes securely. Send features will come '
-            'later with extra protection.',
+        'status': 'Upgrade required',
+        'body':   "Crypto Vault is a real, non-custodial wallet — "
+                  "receive, send, and view balance on supported "
+                  "networks. Upgrade your account to unlock it.",
       });
       expect(find.text('Crypto Vault'), findsOneWidget);
-      expect(find.text('Available with upgrade'), findsOneWidget);
+      // 2026-07-12: "Upgrade required" is both the status text AND
+      // the button label, so `findsOneWidget` is wrong here.
+      expect(find.text('Upgrade required'), findsNWidgets(2));
       final body = tester
           .widget<Text>(find.byKey(const Key('crypto_vault_body')))
-          .data!;
-      expect(body, contains('wallet addresses'));
-      expect(body, contains('receive QR codes'));
+          .data!
+          .toLowerCase();
+      expect(body, contains('non-custodial wallet'));
+      expect(body, contains('upgrade'));
     });
 
     testWidgets('falls back to defaults when envelope key missing',
         (tester) async {
       await _pump(tester, envelope: const {
         'type':   kCryptoVaultLockedType,
-        
       });
-      expect(find.text(kCryptoVaultDefaultTitle),  findsOneWidget);
-      expect(find.text(kCryptoVaultDefaultStatus), findsOneWidget);
+      expect(find.text(kCryptoVaultDefaultTitle), findsOneWidget);
+      // Status label + button label share the same "Upgrade
+      // required" string on the non-upgraded default.
+      expect(
+        find.text(kCryptoVaultDefaultStatus),
+        findsNWidgets(2),
+      );
     });
 
     testWidgets('falls back when envelope value is empty string',
@@ -203,8 +217,11 @@ void main() {
         'status': '   ',
         'body':   '',
       });
-      expect(find.text(kCryptoVaultDefaultTitle),  findsOneWidget);
-      expect(find.text(kCryptoVaultDefaultStatus), findsOneWidget);
+      expect(find.text(kCryptoVaultDefaultTitle), findsOneWidget);
+      expect(
+        find.text(kCryptoVaultDefaultStatus),
+        findsNWidgets(2),
+      );
     });
   });
 
@@ -226,28 +243,34 @@ void main() {
         const Key('crypto_vault_learn_more_dialog_body'),
       );
       expect(bodyFinder, findsOneWidget);
-      final body = tester.widget<Text>(bodyFinder).data!;
+      final body = tester.widget<Text>(bodyFinder).data!.toLowerCase();
+      // 2026-07-12: modal now describes the real wallet product.
       for (final fragment in [
-        
-        
-        'Crypto Vault is available for upgraded users',
-        'wallet addresses',
+        'non-custodial wallet',
+        'upgrade',
+        'open crypto vault',
+        'receive',
+        'send',
+        'balance',
+        'pin unlock',
+        'local signing',
+      ]) {
+        expect(body, contains(fragment),
+            reason: 'modal must contain "$fragment"');
+      }
+      // Forbid the stale Lite-era phrases.
+      for (final legacy in [
+        'save wallet addresses',
         'seed phrases',
         'private keys',
         'crypto notes',
         'transaction records',
-        'receive QR codes',
-        'Send features will come later',
-        'extra protection',
+        'send features will come later',
+        'crypto vault lite',
       ]) {
-        expect(body, contains(fragment));
+        expect(body, isNot(contains(legacy)),
+            reason: 'modal must NOT contain legacy "$legacy"');
       }
-      
-      expect(body, isNot(contains('upcoming upgraded feature')));
-      expect(
-        body,
-        isNot(contains('Receive and send features will come later')),
-      );
     });
 
     testWidgets('modal Close button dismisses the dialog',

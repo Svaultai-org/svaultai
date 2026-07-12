@@ -254,19 +254,19 @@ void main() {
     testWidgets(
         'VP12: Security button opens the new dark security page (not Lite)',
         (tester) async {
-      
-      
-      var litePushes = 0;
+      // 2026-07-12: the onOpenLite hook was fully removed alongside
+      // the retirement of CryptoVaultLitePage. This test now just
+      // asserts the Security button opens the Security page — the
+      // "onOpenLite must not fire" invariant is trivially true
+      // because the callback no longer exists.
       tester.view.physicalSize = const Size(1200, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(
-        MaterialApp(
+        const MaterialApp(
           home: Scaffold(
-            body: CryptoWalletEnginePage(
-              onOpenLite: () => litePushes++,
-            ),
+            body: CryptoWalletEnginePage(),
           ),
         ),
       );
@@ -278,13 +278,6 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(securityBtn);
       await tester.pumpAndSettle();
-      expect(
-        litePushes, equals(0),
-        reason: 'Security button must NEVER invoke onOpenLite — the '
-            'legacy Lite page is no longer reachable from the live '
-            'wallet product.',
-      );
-      
       expect(
         find.byKey(const Key('crypto_wallet_engine_security_page')),
         findsOneWidget,

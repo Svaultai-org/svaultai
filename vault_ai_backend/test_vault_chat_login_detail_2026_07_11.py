@@ -314,7 +314,41 @@ class PopulateAppliesAllowlistOnDetailOnly(unittest.TestCase):
         data = env["card"]["data"]
         self.assertEqual(data["login"]["password"], "hunter2!")
 
-    def test_login_list_never_carries_plaintext_password(self):
+    def test_login_list_with_multiple_rows_never_carries_plaintext(self):
+        # 2026-07-12: the OLD contract was "LIST never has plaintext"
+        # regardless of count. That still holds for count >= 2 (the
+        # chooser view). For count == 1 the list now collapses to
+        # DETAIL — see next test — which is the intentional plaintext
+        # exception, identical to INTENT_LOGIN_SEARCH single-match.
+        rows = [
+            _row("l-1", "AFCU", "ada@example.com", "hunter2!",
+                 title="American First Credit Union"),
+            _row("l-2", "AFCU-2", "bob@example.com", "topsecret!",
+                 title="American First Credit Union (2)"),
+        ]
+        import pytest
+        with pytest.MonkeyPatch.context() as m:
+            _patch_fetch(m, {"afcu": rows})
+            envelope = {
+                "intent": INTENT_LOGIN_LIST,
+                "card": {"cardType": "vault_login_card", "view": "list"},
+            }
+            env = populate_vault_chat_card_data(
+                envelope, vault_id="v", key=_KEY,
+            )
+        data = env["card"]["data"]
+        self.assertEqual(data["view"], "list")
+        data_str = json.dumps(data)
+        self.assertNotIn("hunter2", data_str)
+        self.assertNotIn("topsecret", data_str)
+        self.assertNotIn('"password"', data_str)
+
+    def test_login_list_with_single_row_collapses_to_detail_plaintext(
+        self,
+    ):
+        # 0/1/many branching: exactly one login means an unambiguous
+        # match — same safety story as INTENT_LOGIN_SEARCH with a
+        # specific query returning one hit.
         rows = [
             _row("l-1", "AFCU", "ada@example.com", "hunter2!",
                  title="American First Credit Union"),
@@ -329,9 +363,25 @@ class PopulateAppliesAllowlistOnDetailOnly(unittest.TestCase):
             env = populate_vault_chat_card_data(
                 envelope, vault_id="v", key=_KEY,
             )
-        data_str = json.dumps(env["card"]["data"])
-        self.assertNotIn("hunter2", data_str)
-        self.assertNotIn('"password"', data_str)
+        data = env["card"]["data"]
+        self.assertEqual(data["view"], "detail")
+        self.assertEqual(data["login"]["password"], "hunter2!")
+        self.assertEqual(data["login"]["username"], "ada@example.com")
+
+    def test_login_list_with_zero_rows_emits_clean_empty_state(self):
+        import pytest
+        with pytest.MonkeyPatch.context() as m:
+            _patch_fetch(m, {"afcu": []})
+            envelope = {
+                "intent": INTENT_LOGIN_LIST,
+                "card": {"cardType": "vault_login_card", "view": "list"},
+            }
+            env = populate_vault_chat_card_data(
+                envelope, vault_id="v", key=_KEY,
+            )
+        data = env["card"]["data"]
+        self.assertEqual(data["view"], "not_found")
+        self.assertEqual(data["count"], 0)
 
 
 

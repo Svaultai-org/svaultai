@@ -187,7 +187,11 @@ class WalletEngineDisabledEnvelopeTests(unittest.TestCase):
         from crypto_wallet_schemas import engine_disabled_envelope
         body = engine_disabled_envelope()
         self.assertEqual(body["wallet_engine"], "engine_disabled")
-        self.assertIn("Crypto Vault Lite remains available", body["message"])
+        # 2026-07-12: dropped the stale "Crypto Vault Lite remains
+        # available" fragment; the message now points users at Crypto
+        # Vault and its supported assets.
+        self.assertIn("Crypto Wallet Engine is not enabled", body["message"])
+        self.assertNotIn("Crypto Vault Lite", body["message"])
 
     def test_unsupported_asset_envelope(self) -> None:
         from crypto_wallet_schemas import (

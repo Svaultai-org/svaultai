@@ -77,9 +77,10 @@ ENGINE_STATUS_UNSUPPORTED: str = "unsupported_asset"
 ENGINE_STATUS_NOT_READY:   str = "engine_not_ready"
 
 ENGINE_MESSAGE_DISABLED: str = (
-    "The Crypto Wallet Engine is not yet enabled. "
-    "Crypto Vault Lite remains available for saved public "
-    "addresses, encrypted backups, and manual notes."
+    "The Crypto Wallet Engine is not enabled for this "
+    "network or account yet. Try again later, or open "
+    "Crypto Vault to see which assets and networks are "
+    "currently supported."
 )
 ENGINE_MESSAGE_UNSUPPORTED_ASSET: str = (
     "This asset is not yet supported by the Crypto Wallet Engine."

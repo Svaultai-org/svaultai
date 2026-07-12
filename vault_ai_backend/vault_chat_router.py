@@ -49,6 +49,7 @@ from crypto_vault_chat_control import (
     INTENT_CLARIFY_USDT_NETWORK as _CRYPTO_INTENT_CLARIFY_USDT,
     INTENT_REFUSAL_EXCHANGE_ACTION as _CRYPTO_INTENT_REFUSAL_EXCHANGE,
     INTENT_REFUSAL_SECRET_MATERIAL as _CRYPTO_INTENT_REFUSAL_SECRET,
+    INTENT_SHOW_VAULT as _CRYPTO_INTENT_SHOW_VAULT,
     INTENT_UNRECOGNIZED as _CRYPTO_INTENT_UNRECOGNIZED,
 )
 
@@ -617,6 +618,60 @@ def _looks_like_crypto_message(text: str) -> bool:
     return False
 
 
+# 2026-07-12: a broad crypto-access question detector. When the inner
+# classifier fails to place the message into one of the concrete
+# receive/send/balance/scanner intents but the message reads like the
+# user asking "can I access / do I have / can I use" the crypto vault,
+# we DO NOT want to fall through to the plain-text deflector. Instead
+# the response should go through the entitlement-aware SHOW_VAULT card
+# so a non-upgraded user sees the correct locked card with the Upgrade
+# button, and an upgraded user sees the correct Open Crypto Vault card.
+# The old fall-through was returning stale marketing copy.
+_CRYPTO_ACCESS_QUESTION_RE = re.compile(
+    r"\b("
+    r"can\s+i\s+(?:use|access|open|see|get|have|try|start)|"
+    r"can\s+i\s+get\s+(?:to|into)|"
+    r"can\s+(?:you|vaultai|we)\s+(?:let\s+me|open|show|give\s+me)|"
+    r"do\s+i\s+(?:have|get|own)|"
+    r"is\s+(?:there|it|the)\s+(?:a\s+)?crypto|"
+    r"how\s+do\s+i\s+(?:use|access|open|start\s+using|get\s+to)|"
+    r"how\s+can\s+i\s+(?:use|access|open|start\s+using|get\s+to)|"
+    r"where\s+is\s+(?:the\s+)?(?:my\s+)?crypto|"
+    r"take\s+me\s+to\s+(?:the\s+)?(?:my\s+)?crypto|"
+    r"unlock\s+(?:the\s+)?(?:my\s+)?crypto|"
+    r"activate\s+(?:the\s+)?(?:my\s+)?crypto"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_CRYPTO_ACCESS_NOUN_RE = re.compile(
+    r"\b(?:crypto(?:\s+vault|\s+wallet)?|wallet|"
+    r"bitcoin|btc|ethereum|eth|solana|sol|"
+    r"usdt|usdc|monero|xmr|tron|trc20|erc20)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_crypto_access_question(text: str) -> bool:
+    """True when the message reads like an access/entitlement question
+    about the Crypto Vault as a whole (rather than a specific asset
+    action). Examples: "can i use the crypto", "do i have crypto
+    vault", "can i access crypto vault", "how do i open the crypto".
+
+    This is a POSITIVE broadener — it says "route this through the
+    entitlement-aware SHOW_VAULT card, don't drop it into the plain
+    text deflector". Concrete-action classifiers still win (send,
+    receive-address, balance, etc.) because those get checked earlier
+    in `classify_crypto_vault_intent`.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if not _CRYPTO_ACCESS_NOUN_RE.search(text):
+        return False
+    return bool(_CRYPTO_ACCESS_QUESTION_RE.search(text))
+
+
 def _matches_any(text: str, patterns) -> bool:
     for p in patterns:
         if p.search(text):
@@ -799,7 +854,32 @@ def classify_and_build_vault_intent(
                 _build_refusal(REFUSAL_REASON_EXCHANGE_ACTION),
             )
         if inner_intent == _CRYPTO_INTENT_UNRECOGNIZED:
-
+            # 2026-07-12: if the message reads like an entitlement /
+            # access question ("can i use the crypto", "do i have
+            # crypto vault", "how do i access crypto"), rerun the
+            # inner classifier on a canonical "show my crypto vault"
+            # so the router emits the entitlement-aware SHOW_VAULT
+            # envelope. That envelope goes through
+            # populate_crypto_delegated_card_data which produces the
+            # tier-correct locked card (Upgrade) or active card
+            # (Open Crypto Vault). Previously this fell through to
+            # the plain-text deflector in main.py which was returning
+            # stale "Crypto Vault Lite" marketing copy.
+            if _looks_like_crypto_access_question(text):
+                inner = _crypto_classify_and_build("show my crypto vault")
+                inner_intent = inner.get(
+                    "intent", _CRYPTO_INTENT_UNRECOGNIZED,
+                )
+                if inner_intent == _CRYPTO_INTENT_SHOW_VAULT:
+                    return {
+                        "schema":         VAULT_CHAT_ROUTER_SCHEMA_V1,
+                        "intent":         INTENT_CRYPTO_DELEGATED,
+                        "card":           _build_card(
+                            CARD_CRYPTO_DELEGATED,
+                            innerIntent=inner_intent,
+                            innerCard=inner.get("card", {}),
+                        ),
+                    }
             pass
         else:
 

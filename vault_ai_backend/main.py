@@ -12390,6 +12390,45 @@ async def chat_endpoint(
                     "vault_login_reveal",
                     "vault_login_copy",
                 )
+                # 2026-07-12: "show me all my logins" that collapses to a
+                # single detail card must pin the active entity to that
+                # login so "edit it" / "copy the password" / "delete it"
+                # follow-ups work — same shape as INTENT_LOGIN_SEARCH
+                # with one hit. When the count is >1 the fast-path
+                # renders a chooser (existing behavior below); when
+                # count is 0 the not_found view carries no id to pin.
+                _login_list_single = (
+                    _fp_intent_str == "vault_login_list"
+                    and isinstance(_fp_data, dict)
+                    and _fp_data.get("view") == "detail"
+                    and bool(_fp_login_id)
+                )
+                if _login_list_single:
+                    from vault_chat_active_entity import (
+                        set_active_entity as _lls_set_ae,
+                        ENTITY_LOGIN as _LLS_ENTITY_LOGIN,
+                        ACTION_SHOW as _LLS_ACT_SHOW,
+                        ACTION_OPEN as _LLS_ACT_OPEN,
+                        ACTION_VIEW as _LLS_ACT_VIEW,
+                        ACTION_COPY as _LLS_ACT_COPY,
+                        ACTION_RENAME as _LLS_ACT_RENAME,
+                        ACTION_DELETE as _LLS_ACT_DELETE,
+                        ACTION_EDIT as _LLS_ACT_EDIT,
+                        ACTION_SAVE as _LLS_ACT_SAVE,
+                    )
+                    _lls_set_ae(
+                        vault_id,
+                        entity_type=_LLS_ENTITY_LOGIN,
+                        entity_ref={"id": _fp_login_id},
+                        display_label=(_fp_login_label or "Login"),
+                        allowed_actions=(
+                            _LLS_ACT_SHOW, _LLS_ACT_OPEN, _LLS_ACT_VIEW,
+                            _LLS_ACT_COPY, _LLS_ACT_RENAME, _LLS_ACT_DELETE,
+                            _LLS_ACT_EDIT, _LLS_ACT_SAVE,
+                        ),
+                        session_id=_fp_session_id,
+                    )
+
                 if _fp_intent_str in _login_intents and \
                    isinstance(_fp_query, str) and _fp_query.strip():
                     from vault_chat_active_entity import (
@@ -12991,6 +13030,40 @@ async def chat_endpoint(
                             session_id=_vcr_session_id,
                             is_multi=_vcr_is_multi,
                             candidates=_vcr_candidates,
+                        )
+                    # Slow-path symmetry with the fast-path: pin the
+                    # single-login-list result to the active entity so
+                    # follow-ups like "edit it" / "delete it" fire on
+                    # the exact login just rendered.
+                    elif (
+                        _vcr_intent_str == "vault_login_list"
+                        and isinstance(_vcr_data, dict)
+                        and _vcr_data.get("view") == "detail"
+                        and bool(_vcr_login_id)
+                    ):
+                        from vault_chat_active_entity import (
+                            set_active_entity as _sl_set_ae,
+                            ENTITY_LOGIN as _SL_ENTITY_LOGIN,
+                            ACTION_SHOW as _SL_ACT_SHOW,
+                            ACTION_OPEN as _SL_ACT_OPEN,
+                            ACTION_VIEW as _SL_ACT_VIEW,
+                            ACTION_COPY as _SL_ACT_COPY,
+                            ACTION_RENAME as _SL_ACT_RENAME,
+                            ACTION_DELETE as _SL_ACT_DELETE,
+                            ACTION_EDIT as _SL_ACT_EDIT,
+                            ACTION_SAVE as _SL_ACT_SAVE,
+                        )
+                        _sl_set_ae(
+                            vault_id,
+                            entity_type=_SL_ENTITY_LOGIN,
+                            entity_ref={"id": _vcr_login_id},
+                            display_label=(_vcr_label or "Login"),
+                            allowed_actions=(
+                                _SL_ACT_SHOW, _SL_ACT_OPEN, _SL_ACT_VIEW,
+                                _SL_ACT_COPY, _SL_ACT_RENAME, _SL_ACT_DELETE,
+                                _SL_ACT_EDIT, _SL_ACT_SAVE,
+                            ),
+                            session_id=_vcr_session_id,
                         )
                 except Exception:
                     logger.exception(

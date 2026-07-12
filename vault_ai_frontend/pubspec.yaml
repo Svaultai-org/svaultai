@@ -61,7 +61,7 @@ dependencies:
   # after reading the bytes. This phase is web-only.
   record: ^6.0.0
 
-  # 2026-06-29 — Receive-only QR for Crypto Vault Lite. Pure Dart, no
+  # 2026-06-29 — Receive-only QR for Crypto Vault. Pure Dart, no
   # native code, no network. Renders the saved crypto wallet address
   # as a QR matrix the user can scan to receive funds.
   #
