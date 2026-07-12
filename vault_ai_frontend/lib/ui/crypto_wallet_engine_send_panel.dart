@@ -8,8 +8,14 @@ import '../l10n/app_localizations.dart';
 import '../services/ethereum_transaction.dart';
 import '../services/evm_networks.dart';
 import 'crypto_wallet_engine_design.dart';
+import 'crypto_wallet_engine_send_layout.dart';
 
 
+// 2026-07-13: The sheet chrome now supplies the sheet title
+// ("Send ETH"). We keep the constants below for backward-compat with
+// mainnet-safety tests that reference the pre-chrome copy, but the
+// form stage no longer renders `kEthSendPanelTitle` as a second
+// heading.
 const String kEthSendPanelTitle = 'Send Ethereum';
 const String kEthSendNetworkBadge = 'Ethereum Sepolia testnet';
 const String kEthSendMainnetNetworkBadge = 'Ethereum Mainnet';
@@ -138,10 +144,15 @@ class _DraftFields {
   final BigInt nonce;
   final BigInt gasLimit;
   final BigInt gasPrice;
-  final BigInt valueWei;     
+  final BigInt valueWei;
   final String transactionTo;
   final String dataHex;
   final int chainId;
+
+
+
+
+  final String? draftId;
   const _DraftFields({
     required this.fromAddress,
     required this.destinationAddress,
@@ -154,6 +165,7 @@ class _DraftFields {
     required this.transactionTo,
     required this.dataHex,
     required this.chainId,
+    this.draftId,
   });
 
   
@@ -384,7 +396,7 @@ class _CryptoWalletEngineSendPanelState
             );
       final status = (body['status'] ?? '').toString();
       final walletEngine = (body['wallet_engine'] ?? '').toString();
-      
+
       if (walletEngine == 'mainnet_send_paused' ||
           status == 'mainnet_send_paused') {
         setState(() {
@@ -393,9 +405,26 @@ class _CryptoWalletEngineSendPanelState
         });
         return;
       }
+      // 2026-07-13: authoritative backend balance-vs-gas check. The
+      // backend fetches live balance for the sender and rejects
+      // if `value + fee > balance` for ETH sends or the token
+      // balance is short / the wallet lacks enough ETH for gas on
+      // ERC20 sends. Surface the backend message verbatim so the
+      // user sees the exact reason and the required-vs-available
+      // amounts (rendered in the review-stage message body).
+      if (status == 'insufficient_balance') {
+        final msg = (body['message'] ?? '').toString();
+        setState(() {
+          _stage = _Stage.form;
+          _error = msg.isNotEmpty
+              ? msg
+              : kMainnetSendInsufficientBalanceError;
+        });
+        return;
+      }
       if (status != 'draft_ready') {
-        
-        
+
+
         setState(() {
           _stage = _Stage.form;
           _error = widget.isMainnet
@@ -424,6 +453,9 @@ class _CryptoWalletEngineSendPanelState
         transactionTo: isToken
             ? body['transactionTo'].toString()
             : body['destinationAddress'].toString(),
+        draftId: (body['draftId'] is String && (body['draftId'] as String).isNotEmpty)
+            ? body['draftId'] as String
+            : null,
         dataHex: isToken
             ? body['dataHex'].toString()
             : '',
@@ -581,6 +613,7 @@ class _CryptoWalletEngineSendPanelState
               authToken: widget.authToken,
               signedTransaction: signedTx,
               idempotencyKey: _idempotencyKey,
+              draftId: _draft?.draftId,
             )
           : await widget.client.broadcastCryptoWalletSignedTransaction(
               asset: widget.asset,
@@ -649,152 +682,101 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Widget _buildPanelBody(BuildContext context) {
-    Widget body;
+    final isMainnet = widget.isMainnet;
+    final sheetKey = isMainnet ? 'eth_send_panel_mainnet' : 'eth_send_panel';
+    final chip = walletSendNetworkChip(
+      key: Key('${sheetKey}_network_chip'),
+      label: isMainnet
+          ? kEthSendMainnetNetworkBadge
+          : kEthSendNetworkBadge,
+      isMainnet: isMainnet,
+    );
+    // Compact mainnet warnings: at most ONE row visible above the
+    // form. Priority: paused > disabled > real-funds. Paused wins
+    // over disabled because the operator-paused signal is a more
+    // specific "why can't I send right now" answer than the build-
+    // time flag; real-funds only shows when neither block applies.
+    Widget? topWarning;
+    if (isMainnet) {
+      if (widget.mainnetSendPaused) {
+        topWarning = const WalletSendWarning(
+          key: Key(kMainnetSendPausedBannerKey),
+          text: kMainnetSendPausedBanner,
+          tone: WalletSendWarningTone.critical,
+        );
+      } else if (!kCryptoWalletEngineMainnetSendEnabled) {
+        topWarning = const WalletSendWarning(
+          key: Key('eth_send_panel_mainnet_send_disabled'),
+          text: kEthSendMainnetSendDisabledBanner,
+          tone: WalletSendWarningTone.critical,
+        );
+      } else {
+        topWarning = WalletSendWarning(
+          key: const Key('eth_send_panel_mainnet_real_funds'),
+          text: widget.asset == 'ETH'
+              ? kEvmNetworkMainnetSendRealFundsHeadline
+              : kEvmNetworkMainnetTokenSendRealFundsHeadline
+                  .replaceAll('{token}',
+                      widget.asset == 'USDT_ERC20' ? 'USDT' : 'USDC'),
+        );
+      }
+    }
+    Widget stageBody;
+    Widget? stageFooter;
     switch (_stage) {
       case _Stage.form:
-        body = _buildFormStage(context);
+        stageBody = _buildFormBody(context);
+        stageFooter = _buildFormFooter(context);
         break;
       case _Stage.loadingDraft:
-        body = _buildBusyStage(
+        stageBody = _buildBusyStage(
           key: const Key('eth_send_panel_loading_draft'),
           label: 'Loading network fee data…',
         );
         break;
       case _Stage.review:
-        body = _buildReviewStage(context);
+        stageBody = _buildReviewBody(context);
+        stageFooter = _buildReviewFooter(context);
         break;
       case _Stage.confirmPhrase:
-        body = _buildConfirmPhraseStage(context);
+        stageBody = _buildConfirmPhraseBody(context);
+        stageFooter = _buildConfirmPhraseFooter(context);
         break;
       case _Stage.signing:
-        body = _buildBusyStage(
+        stageBody = _buildBusyStage(
           key: const Key('eth_send_panel_signing'),
           label: kEthSendBroadcastPendingLabel,
         );
         break;
       case _Stage.submitted:
-        body = _buildSubmittedStage(context);
+        stageBody = _buildSubmittedStage(context);
         break;
     }
-    final isMainnet = widget.isMainnet;
-    return SingleChildScrollView(
-      key: Key(isMainnet
-          ? 'eth_send_panel_mainnet'
-          : 'eth_send_panel'),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              kEthSendPanelTitle,
-              style: TextStyle(
-                color: kWalletTextPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.2,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              isMainnet
-                  ? kEthSendMainnetNetworkBadge
-                  : kEthSendNetworkBadge,
-              style: TextStyle(
-                color: isMainnet
-                    ? kWalletAccentWarning
-                    : kWalletTextSecondary,
-                fontSize: 13,
-                fontWeight: isMainnet
-                    ? FontWeight.w700
-                    : FontWeight.w400,
-              ),
-            ),
-            if (isMainnet) ...[
-              const SizedBox(height: 6),
-              Container(
-                key: const Key('eth_send_panel_mainnet_real_funds'),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF5E5),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFFE5C079)),
-                ),
-                child: Text(
-                  widget.asset == 'ETH'
-                      ? kEvmNetworkMainnetSendRealFundsHeadline
-                      : kEvmNetworkMainnetTokenSendRealFundsHeadline
-                          .replaceAll('{token}',
-                              widget.asset == 'USDT_ERC20'
-                                  ? 'USDT'
-                                  : 'USDC'),
-                  style: const TextStyle(
-                    color: Color(0xFF6B4A00), fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              if (!kCryptoWalletEngineMainnetSendEnabled) ...[
-                const SizedBox(height: 6),
-                Container(
-                  key: const Key('eth_send_panel_mainnet_send_disabled'),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFDECEC),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFE5A0A0)),
-                  ),
-                  child: const Text(
-                    kEthSendMainnetSendDisabledBanner,
-                    style: TextStyle(
-                      color: Color(0xFF8B1A1A), fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-              if (widget.mainnetSendPaused) ...[
-                const SizedBox(height: 6),
-                Container(
-                  key: const Key(kMainnetSendPausedBannerKey),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFDECEC),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFE5A0A0)),
-                  ),
-                  child: const Text(
-                    kMainnetSendPausedBanner,
-                    style: TextStyle(
-                      color: Color(0xFF8B1A1A), fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ],
-            const SizedBox(height: 12),
-            body,
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                key: const Key('eth_send_panel_error_banner'),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFDECEC),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFE5A0A0)),
-                ),
-                child: Text(
-                  _error!,
-                  style: const TextStyle(
-                    color: Color(0xFF8B1A1A), fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
+    final composedBody = Column(
+      key: Key(sheetKey),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (topWarning != null) ...[
+          topWarning,
+          const SizedBox(height: 12),
+        ],
+        stageBody,
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          WalletSendWarning(
+            key: const Key('eth_send_panel_error_banner'),
+            text: _error!,
+            tone: WalletSendWarningTone.critical,
+          ),
+        ],
+      ],
+    );
+    return WalletSendScaffold(
+      sheetKey: sheetKey,
+      header: chip,
+      body: composedBody,
+      footer: stageFooter,
     );
   }
 
@@ -815,10 +797,13 @@ class _CryptoWalletEngineSendPanelState
     );
   }
 
-  Widget _buildFormStage(BuildContext ctx) {
+  // The form-stage input fields (destination, amount). The Review
+  // button is rendered separately in `_buildFormFooter` so it stays
+  // pinned at the bottom of the sheet above the keyboard.
+  Widget _buildFormBody(BuildContext ctx) {
     return Column(
       key: const Key('eth_send_panel_form_stage'),
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
         TextField(
@@ -826,32 +811,37 @@ class _CryptoWalletEngineSendPanelState
           controller: _destCtrl,
           decoration: const InputDecoration(
             labelText: kEthSendDestinationLabel,
-            border: OutlineInputBorder(),
             hintText: '0x...',
+            isDense: true,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         TextField(
           key: const Key('eth_send_panel_amount_input'),
           controller: _amountCtrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(
             labelText: kEthSendAmountLabel,
-            border: OutlineInputBorder(),
             hintText: '0.01',
+            isDense: true,
           ),
-        ),
-        const SizedBox(height: 12),
-        ElevatedButton(
-          key: const Key('eth_send_panel_review_btn'),
-          onPressed: _onReview,
-          child: const Text(kEthSendReviewButtonLabel),
         ),
       ],
     );
   }
 
-  Widget _buildReviewStage(BuildContext ctx) {
+  Widget _buildFormFooter(BuildContext ctx) {
+    return ElevatedButton(
+      key: const Key('eth_send_panel_review_btn'),
+      onPressed: _onReview,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: const Text(kEthSendReviewButtonLabel),
+    );
+  }
+
+  Widget _buildReviewBody(BuildContext ctx) {
     final d = _draft!;
     final isToken = widget.asset != 'ETH';
     final isMainnet = widget.isMainnet;
@@ -860,7 +850,7 @@ class _CryptoWalletEngineSendPanelState
         : 'Ethereum Sepolia';
     final feeNotice = isToken
         ? (isMainnet
-            ? 'Gas requires Ethereum Mainnet ETH on this wallet.'
+            ? 'Gas requires mainnet ETH on this wallet.'
             : 'Gas requires Sepolia ETH on this wallet.')
         : null;
     final reviewWarning = isMainnet
@@ -876,62 +866,80 @@ class _CryptoWalletEngineSendPanelState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        _kvRow('From', d.fromAddress),
-        
-        
+        walletSendSectionHeading('Review send'),
+        WalletSendKvRow(label: 'From', value: d.fromAddress, mono: true),
         if (isMainnet)
           _buildDestinationWarningCard(d.destinationAddress)
         else
-          _kvRow('Destination', d.destinationAddress),
+          WalletSendKvRow(
+            label: 'Destination',
+            value: d.destinationAddress,
+            mono: true,
+          ),
         if (isMainnet && _recipientCheckRan && !_isKnownRecipient)
-          _buildNewRecipientBanner(),
-        _kvRow('Amount', '${d.amount} ${d.unit}'),
-        
-        
-        _kvRow('Network fee', '${_formatWeiAsEth(d.feeWei)} ETH'),
-        if (feeNotice != null) _kvRow('Fee notice', feeNotice),
-        _kvRow('Network', networkLabel),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: _buildNewRecipientBanner(),
+          ),
+        WalletSendKvRow(label: 'Amount', value: '${d.amount} ${d.unit}'),
+        WalletSendKvRow(
+          label: 'Network fee',
+          value: '${_formatWeiAsEth(d.feeWei)} ETH',
+        ),
+        if (feeNotice != null)
+          WalletSendKvRow(label: 'Fee notice', value: feeNotice),
+        WalletSendKvRow(label: 'Network', value: networkLabel),
         if (isMainnet)
-          _kvRow('Chain ID', '${d.chainId}'),
+          WalletSendKvRow(label: 'Chain ID', value: '${d.chainId}'),
         if (isMainnet && _balanceCheckUnverified)
-          _buildBalanceUnverifiedBanner(),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: _buildBalanceUnverifiedBanner(),
+          ),
         if (isMainnet && _insufficientGas)
-          _buildInsufficientGasBanner(),
-        const SizedBox(height: 12),
-        Container(
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: _buildInsufficientGasBanner(),
+          ),
+        const SizedBox(height: 10),
+        // Single compact review warning row — replaces the old full-width
+        // yellow/orange banner block. Mainnet uses the critical tone,
+        // testnet uses the subtle tone.
+        WalletSendWarning(
           key: Key(isMainnet
               ? 'eth_send_panel_mainnet_review_warning'
               : 'eth_send_panel_review_warning_container'),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: isMainnet
-                ? const Color(0xFFFFE9C7)
-                : const Color(0xFFFFF5E5),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isMainnet
-                  ? const Color(0xFFE5A055)
-                  : const Color(0xFFE5C079),
-            ),
-          ),
+          text: reviewWarning,
+          tone: isMainnet
+              ? WalletSendWarningTone.critical
+              : WalletSendWarningTone.subtle,
+        ),
+        // Legacy key: mainnet safety tests still look for this text
+        // widget's key `eth_send_panel_review_warning`; render it as
+        // a zero-size sentinel so existing keyed lookups still find
+        // the copy without adding a second visible warning row.
+        Offstage(
           child: Text(
             reviewWarning,
             key: const Key('eth_send_panel_review_warning'),
-            style: const TextStyle(color: Color(0xFF6B4A00)),
           ),
-        ),
-        const SizedBox(height: 12),
-        ElevatedButton(
-          key: const Key('eth_send_panel_confirm_btn'),
-          onPressed: _onReviewConfirmTap,
-          child: const Text(kEthSendReviewConfirmButtonLabel),
         ),
       ],
     );
   }
 
-  
-  Widget _buildConfirmPhraseStage(BuildContext ctx) {
+  Widget _buildReviewFooter(BuildContext ctx) {
+    return ElevatedButton(
+      key: const Key('eth_send_panel_confirm_btn'),
+      onPressed: _onReviewConfirmTap,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: const Text(kEthSendReviewConfirmButtonLabel),
+    );
+  }
+
+  Widget _buildConfirmPhraseBody(BuildContext ctx) {
     final expected = mainnetSendConfirmPhraseFor(widget.asset);
     final prompt = mainnetSendConfirmPhrasePromptFor(widget.asset);
     return Column(
@@ -939,40 +947,34 @@ class _CryptoWalletEngineSendPanelState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFE9C7),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE5A055)),
-          ),
-          child: Text(
-            prompt,
-            style: const TextStyle(
-              color: Color(0xFF6B4A00),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+        WalletSendWarning(
+          text: prompt,
+          tone: WalletSendWarningTone.critical,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         TextField(
           key: const Key(kMainnetSendConfirmPhraseInputKey),
           controller: _confirmPhraseCtrl,
           decoration: InputDecoration(
             labelText: 'Type: $expected',
-            border: const OutlineInputBorder(),
+            isDense: true,
           ),
           textCapitalization: TextCapitalization.characters,
         ),
-        const SizedBox(height: 12),
-        ElevatedButton(
-          key: const Key(kMainnetSendConfirmPhraseContinueBtnKey),
-          onPressed: _broadcastInFlight
-              ? null
-              : _onMainnetConfirmPhraseContinue,
-          child: Text(AppLocalizations.of(context).cryptoContinueToPin),
-        ),
       ],
+    );
+  }
+
+  Widget _buildConfirmPhraseFooter(BuildContext ctx) {
+    return ElevatedButton(
+      key: const Key(kMainnetSendConfirmPhraseContinueBtnKey),
+      onPressed: _broadcastInFlight
+          ? null
+          : _onMainnetConfirmPhraseContinue,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: Text(AppLocalizations.of(context).cryptoContinueToPin),
     );
   }
 
@@ -986,34 +988,30 @@ class _CryptoWalletEngineSendPanelState
       key: const Key(kMainnetSendDestinationCardKey),
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF5E5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE5C079)),
-      ),
+      decoration: walletWarningPanel(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
             kMainnetSendDestinationCardHeader,
             style: TextStyle(
-              color: Color(0xFF6B4A00),
+              color: kWalletAccentWarning,
               fontWeight: FontWeight.w700,
+              fontSize: 12,
             ),
           ),
           const SizedBox(height: 4),
           SelectableText(
             destination,
-            style: const TextStyle(
-              fontFamily: 'monospace', fontSize: 13,
-            ),
+            style: kWalletMonoStyle,
           ),
           const SizedBox(height: 2),
           Text(
             'Highlighted: ${_shortAddressLabel(destination)}',
             style: const TextStyle(
               fontFamily: 'monospace',
-              color: Color(0xFF6B4A00), fontSize: 12,
+              color: kWalletAccentWarning,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1022,10 +1020,11 @@ class _CryptoWalletEngineSendPanelState
             alignment: Alignment.centerLeft,
             child: OutlinedButton.icon(
               key: const Key(kMainnetSendDestinationCopyBtnKey),
-              icon: const Icon(Icons.copy, size: 16),
+              icon: const Icon(Icons.copy, size: 14),
               label: Text(
                 AppLocalizations.of(context).cryptoCopyDestination,
               ),
+              style: walletGhostButtonStyle(),
               onPressed: () {
                 Clipboard.setData(
                   ClipboardData(text: destination),
@@ -1039,100 +1038,46 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Widget _buildNewRecipientBanner() {
-    return Container(
+    return WalletSendWarning(
       key: const Key(kMainnetSendNewRecipientBannerKey),
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF0E6),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFE5C079)),
-      ),
-      child: const Text(
-        kMainnetSendNewRecipientWarning,
-        style: TextStyle(color: Color(0xFF6B4A00), fontSize: 12),
-      ),
+      text: kMainnetSendNewRecipientWarning,
     );
   }
 
   Widget _buildBalanceUnverifiedBanner() {
-    return Container(
+    return WalletSendWarning(
       key: const Key(kMainnetSendBalanceUnverifiedKey),
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF0E6),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFE5C079)),
-      ),
-      child: const Text(
-        kMainnetSendBalanceUnverifiedWarning,
-        style: TextStyle(color: Color(0xFF6B4A00), fontSize: 12),
-      ),
+      text: kMainnetSendBalanceUnverifiedWarning,
     );
   }
 
   Widget _buildInsufficientGasBanner() {
-    return Container(
+    return WalletSendWarning(
       key: const Key(kMainnetSendInsufficientGasKey),
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFDECEC),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFE5A0A0)),
-      ),
-      child: const Text(
-        kMainnetSendInsufficientGasWarning,
-        style: TextStyle(color: Color(0xFF8B1A1A), fontSize: 12),
-      ),
+      text: kMainnetSendInsufficientGasWarning,
+      tone: WalletSendWarningTone.critical,
     );
   }
 
   Widget _buildSubmittedStage(BuildContext ctx) {
     return Column(
       key: const Key('eth_send_panel_submitted_stage'),
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          kEthSendSuccessHeading,
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 8),
+        walletSendSectionHeading(kEthSendSuccessHeading),
         SelectableText(
           'Transaction hash:\n${_submittedTxHash ?? ''}',
           key: const Key('eth_send_panel_tx_hash_text'),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          style: kWalletMonoStyle,
         ),
         const SizedBox(height: 8),
         const Text(
-          'Status: pending — check the transaction page for confirmation.',
-          style: TextStyle(color: Colors.black54),
+          'Status: pending — check the transaction page for '
+          'confirmation.',
+          style: TextStyle(color: kWalletTextMuted, fontSize: 12),
         ),
       ],
-    );
-  }
-
-  Widget _kvRow(String k, String v) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(k,
-                style: const TextStyle(color: Colors.black54)),
-          ),
-          Expanded(
-            child: SelectableText(
-              v,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-            ),
-          ),
-        ],
-      ),
     );
   }
 

@@ -133,6 +133,31 @@ class MainnetSendRouteTests(unittest.TestCase):
             "backupStatus":  "encrypted_backup_saved",
         }
 
+    def _seed_draft(self, *, asset: str = "ETH") -> str:
+
+
+
+
+
+        self._wallet_mod._mainnet_store.clear()
+        did = "draftId-test-slice11-abcdef"
+        self._wallet_mod._mainnet_store.seed_draft(
+            did,
+            vault_id="test-vault-id-slice11",
+            network_id="ethereum_mainnet",
+            asset=asset,
+            sender_address=_FROM_ADDR,
+            destination_address=_DEST_ADDR,
+            value_wei=0,
+            data_hex="0x",
+            nonce=0,
+            gas_limit=21000,
+            gas_price=1000000000,
+            chain_id=1,
+            transaction_to=_DEST_ADDR,
+        )
+        return did
+
                                                                         
     def test_S13_S20_draft_refused_when_send_flag_off(self) -> None:
                                                             
@@ -155,7 +180,7 @@ class MainnetSendRouteTests(unittest.TestCase):
         )
 
     def test_S2_S3_S5_S6_eth_draft_uses_mainnet_only(self) -> None:
-                                                                    
+
         _set_env(
             VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
             VAULTAI_CRYPTO_ETH_MAINNET_RECEIVE_ENABLED="true",
@@ -163,6 +188,11 @@ class MainnetSendRouteTests(unittest.TestCase):
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
             ETHEREUM_SEPOLIA_RPC_URL="https://example.invalid/sepolia",
         )
+        # 2026-07-13: mainnet draft now looks up the server-side
+        # wallet record to authenticate the sender address and derive
+        # the lock/registry identity. Seed the record.
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         urls_seen: list[str] = []
 
         def _nonce(rpc_url, address):
@@ -171,11 +201,18 @@ class MainnetSendRouteTests(unittest.TestCase):
 
         def _gas_price(rpc_url):
             urls_seen.append(("gas_price", rpc_url))
-            return 1_000_000_000          
+            return 1_000_000_000
 
         def _estimate(rpc_url, **kwargs):
             urls_seen.append(("estimate", rpc_url))
             return 21_000
+
+        balance_tags: list[str] = []
+
+        def _balance(rpc_url, address, block_tag="latest"):
+            balance_tags.append(block_tag)
+            urls_seen.append(("balance", rpc_url))
+            return 10 * (10 ** 18)
 
         import evm_rpc
         with mock.patch.object(
@@ -187,6 +224,9 @@ class MainnetSendRouteTests(unittest.TestCase):
         ), mock.patch.object(
             evm_rpc, "eth_estimate_gas_at_url",
             side_effect=_estimate,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_balance_wei_at_url",
+            side_effect=_balance,
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/draft",
@@ -205,11 +245,12 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(body["gasLimit"], "21000")
         self.assertEqual(body["gasPrice"], "1000000000")
                                                     
-        self.assertEqual(len(urls_seen), 3)
+        self.assertEqual(len(urls_seen), 4)
         for _, url in urls_seen:
             self.assertEqual(url, "https://example.invalid/mainnet")
-                                         
             self.assertNotIn("sepolia", url.lower())
+
+        self.assertIn("pending", balance_tags)
                                            
         self.assertIn(
             "real eth", body["realFundsWarning"].lower(),
@@ -227,6 +268,8 @@ class MainnetSendRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         resp = self._client.post(
             "/crypto/wallet/network/ethereum_mainnet/ETH/send/draft",
             json={
@@ -243,6 +286,8 @@ class MainnetSendRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         resp = self._client.post(
             "/crypto/wallet/network/ethereum_mainnet/ETH/send/draft",
             json={
@@ -259,6 +304,8 @@ class MainnetSendRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         resp = self._client.post(
             "/crypto/wallet/network/ethereum_mainnet/ETH/send/draft",
             json={
@@ -270,12 +317,14 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 422)
 
     def test_S5b_eth_draft_rpc_not_configured(self) -> None:
-                                               
+
         _set_env(
             VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_SEPOLIA_RPC_URL="https://example.invalid/sepolia",
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         resp = self._client.post(
             "/crypto/wallet/network/ethereum_mainnet/ETH/send/draft",
             json={
@@ -288,15 +337,17 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(body["status"], "draft_unavailable")
         self.assertEqual(body["reason"], "rpc_not_configured")
 
-                                                                        
+
     def test_S7_erc20_draft_token_contract_missing(self) -> None:
         _set_env(
             VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
-                                                   
+
             ETH_SEPOLIA_USDT_CONTRACT_ADDRESS="0x" + "33" * 20,
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         resp = self._client.post(
             "/crypto/wallet/network/ethereum_mainnet/USDT_ERC20/send/draft",
             json={
@@ -315,9 +366,11 @@ class MainnetSendRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
             ETHEREUM_MAINNET_USDT_CONTRACT_ADDRESS=_USDT_MAINNET,
-                                                            
+
             ETH_SEPOLIA_USDT_CONTRACT_ADDRESS="0x" + "44" * 20,
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         urls_seen: list[str] = []
 
         def _nonce(rpc_url, address):
@@ -345,6 +398,16 @@ class MainnetSendRouteTests(unittest.TestCase):
         ), mock.patch.object(
             evm_rpc, "eth_estimate_gas_at_url",
             side_effect=_estimate,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_balance_wei_at_url",
+            # Abundant ETH for gas — the new backend check reads
+            # `eth_getBalance` and rejects if ETH < gas fee.
+            return_value=10 * (10 ** 18),
+        ), mock.patch.object(
+            evm_rpc, "erc20_balance_of_at_url",
+            # Abundant USDT (6 decimals) — the new backend check
+            # reads `balanceOf` and rejects if token balance < send.
+            return_value=1_000_000 * (10 ** 6),
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/USDT_ERC20/"
@@ -390,6 +453,8 @@ class MainnetSendRouteTests(unittest.TestCase):
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
             ETHEREUM_MAINNET_USDC_CONTRACT_ADDRESS=_USDC_MAINNET,
         )
+        self._create_mainnet_eth_record()
+        self._wallet_mod.reset_mainnet_safety_state_for_tests()
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_get_transaction_count_at_url",
@@ -398,6 +463,14 @@ class MainnetSendRouteTests(unittest.TestCase):
             evm_rpc, "eth_gas_price_wei_at_url", return_value=1000,
         ), mock.patch.object(
             evm_rpc, "eth_estimate_gas_at_url", return_value=60_000,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_balance_wei_at_url",
+            # Enough ETH for gas — 2026-07-13 new backend check.
+            return_value=10 * (10 ** 18),
+        ), mock.patch.object(
+            evm_rpc, "erc20_balance_of_at_url",
+            # Enough USDC (6 decimals) for 2.5 USDC send.
+            return_value=1_000_000 * (10 ** 6),
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/USDC_ERC20/"
@@ -412,7 +485,7 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(body["status"], "draft_ready")
         self.assertEqual(body["transactionTo"], _USDC_MAINNET)
         self.assertEqual(body["unit"], "USDC")
-                                            
+
         self.assertEqual(body["amountBaseUnits"], "2500000")
 
                                                                         
@@ -454,8 +527,28 @@ class MainnetSendRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
-                                                       
+
             ETHEREUM_SEPOLIA_RPC_URL="https://example.invalid/sepolia",
+        )
+        self._create_mainnet_eth_record()
+        from _test_fake_mainnet_store import make_signed_tx_and_matching_draft
+        fixture = make_signed_tx_and_matching_draft(chain_id=1)
+        self._wallet_mod._mainnet_store.clear()
+        did = "draftId-test-slice11-abcdef"
+        self._wallet_mod._mainnet_store.seed_draft(
+            did,
+            vault_id="test-vault-id-slice11",
+            network_id="ethereum_mainnet",
+            asset="ETH",
+            sender_address=fixture["sender_address"],
+            destination_address=fixture["transaction_to"],
+            value_wei=fixture["value_wei"],
+            data_hex=fixture["data_hex"],
+            nonce=fixture["nonce"],
+            gas_limit=fixture["gas_limit"],
+            gas_price=fixture["gas_price"],
+            chain_id=fixture["chain_id"],
+            transaction_to=fixture["transaction_to"],
         )
         captured: list[Any] = []
 
@@ -470,17 +563,18 @@ class MainnetSendRouteTests(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
-                json={"signedTransaction": _SIGNED_TX},
+                json={"signedTransaction": fixture["signed_tx_hex"],
+                      "draftId": did},
             )
         body = resp.json()
-        self.assertEqual(body["status"], "submitted")
+        self.assertEqual(body["status"], "submitted", msg=body)
         self.assertEqual(body["txHash"], _TX_HASH)
         self.assertEqual(body["network"], "Ethereum Mainnet")
                                                    
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0][0], "https://example.invalid/mainnet")
                                                     
-        self.assertEqual(captured[0][1], _SIGNED_TX)
+        self.assertEqual(captured[0][1], fixture["signed_tx_hex"])
 
     def test_S13b_broadcast_send_flag_off(self) -> None:
         _set_env(
@@ -511,10 +605,51 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(body["reason"], "rpc_not_configured")
 
     def test_S15_broadcast_never_fakes_tx_hash(self) -> None:
+        # 2026-07-13: rewritten for the RPC-ambiguity rework.
+        # Old assertion: `upstream_io` -> broadcast_unavailable with
+        # no txHash. That was unsafe: a TCP RESET can occur AFTER
+        # the write half completed and the raw tx MAY already have
+        # reached the RPC node. The new invariant is:
+        #
+        #   ambiguous transport outcome -> submission_uncertain
+        #   with the LOCALLY DERIVED tx hash (keccak256 of the
+        #   client's raw signed bytes, NOT anything fabricated).
+        #
+        # The "never fakes tx hash" contract is preserved: the
+        # local hash is a deterministic keccak256 of the client's
+        # own signed transaction, so the client can and should
+        # verify it independently. The endpoint never invents a
+        # hash the client did not effectively already commit to.
+        #
+        # An EXPLICIT JSON-RPC rejection (`upstream_rpc` with
+        # `is_ambiguous=False`) still returns broadcast_unavailable
+        # with no txHash -- exercised by
+        # RpcExplicitRejection.test_insufficient_funds_is_broadcast_unavailable
+        # in test_mainnet_rpc_classification_2026_07_13.py.
         _set_env(
             VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
+        )
+        self._create_mainnet_eth_record()
+        from _test_fake_mainnet_store import make_signed_tx_and_matching_draft
+        fixture = make_signed_tx_and_matching_draft(chain_id=1)
+        did = "draftId-test-slice11-s15aaa"
+        self._wallet_mod._mainnet_store.clear()
+        self._wallet_mod._mainnet_store.seed_draft(
+            did,
+            vault_id="test-vault-id-slice11",
+            network_id="ethereum_mainnet",
+            asset="ETH",
+            sender_address=fixture["sender_address"],
+            destination_address=fixture["transaction_to"],
+            value_wei=fixture["value_wei"],
+            data_hex=fixture["data_hex"],
+            nonce=fixture["nonce"],
+            gas_limit=fixture["gas_limit"],
+            gas_price=fixture["gas_price"],
+            chain_id=fixture["chain_id"],
+            transaction_to=fixture["transaction_to"],
         )
         from evm_rpc import EvmRpcError
         import evm_rpc
@@ -528,12 +663,24 @@ class MainnetSendRouteTests(unittest.TestCase):
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
-                json={"signedTransaction": _SIGNED_TX},
+                json={"signedTransaction": fixture["signed_tx_hex"],
+                      "draftId": did},
             )
         body = resp.json()
-        self.assertEqual(body["status"], "broadcast_unavailable")
+        self.assertEqual(body["status"], "submission_uncertain")
         self.assertEqual(body["reason"], "upstream_io")
-        self.assertNotIn("txHash", body)
+        self.assertIn("txHash", body)
+        self.assertTrue(body["txHash"].startswith("0x"))
+        self.assertEqual(len(body["txHash"]), 66)
+
+        from evm_signed_tx_verify import compute_local_tx_hash
+        self.assertEqual(
+            body["txHash"].lower(),
+            compute_local_tx_hash(fixture["signed_tx_hex"]).lower(),
+            msg="returned txHash must be the LOCAL keccak256 of "
+                "the client-signed tx, not a value the server "
+                "made up",
+        )
 
     def test_S10b_broadcast_invalid_hex_refused(self) -> None:
         _set_env(

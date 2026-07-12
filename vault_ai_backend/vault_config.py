@@ -677,12 +677,85 @@ def ethereum_mainnet_token_unit(asset: str) -> str:
     return _TOKEN_UNIT_LABEL.get(asset, asset)
 
 
+
+
+
+
+
+
+
+
+def _mainnet_send_pause_flag_path() -> str:
+    raw = os.getenv(
+        "VAULTAI_CRYPTO_MAINNET_SEND_PAUSED_FILE", "",
+    ).strip()
+    return raw or "/opt/vaultai/mainnet_send_paused.flag"
+
+
 def ethereum_mainnet_send_paused() -> bool:
 
 
-    return _env_bool(
-        "VAULTAI_CRYPTO_MAINNET_SEND_PAUSED", default=False,
-    )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if _env_bool("VAULTAI_CRYPTO_MAINNET_SEND_PAUSED", default=False):
+        return True
+    flag_path = _mainnet_send_pause_flag_path()
+    if flag_path:
+        try:
+            if os.path.exists(flag_path):
+                return True
+        except OSError:
+
+
+
+            return True
+    override = globals().get("_db_pause_override")
+    if callable(override):
+        try:
+            return bool(override())
+        except Exception:
+
+
+
+            return True
+    try:
+        from crypto_mainnet_control_store import (
+            is_mainnet_send_paused as _db_pause,
+        )
+    except Exception:
+
+
+
+        return False
+    try:
+        return bool(_db_pause())
+    except Exception:
+
+
+
+        return True
 
 
 def ethereum_mainnet_broadcast_rate_limit() -> int:

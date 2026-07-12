@@ -73,6 +73,7 @@ class _FakeSafetyClient extends VaultAIClient {
     required String authToken,
     required Object signedTransaction,
     String? idempotencyKey,
+    String? draftId,
   }) async {
     broadcastNetworkCount++;
     lastBroadcastBody = {

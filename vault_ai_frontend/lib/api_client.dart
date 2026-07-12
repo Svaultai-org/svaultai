@@ -3841,6 +3841,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
     required String authToken,
     required Object signedTransaction,
     String? idempotencyKey,
+    String? draftId,
   }) async {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/send/broadcast',
@@ -3850,6 +3851,9 @@ Future<Map<String, dynamic>> deleteVaultFile({
     };
     if (idempotencyKey != null && idempotencyKey.isNotEmpty) {
       body['idempotencyKey'] = idempotencyKey;
+    }
+    if (draftId != null && draftId.isNotEmpty) {
+      body['draftId'] = draftId;
     }
     final response = await http.post(
       uri,

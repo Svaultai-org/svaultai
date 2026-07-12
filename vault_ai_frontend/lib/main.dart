@@ -64,6 +64,7 @@ import 'ui/crypto_wallet_engine_page.dart';
 
 import 'ui/crypto_wallet_engine_receive_panel.dart';
 import 'ui/crypto_wallet_engine_send_panel.dart';
+import 'ui/crypto_wallet_engine_sheet_chrome.dart';
 import 'ui/chat/crypto_wallet_action_card.dart';
 
 import 'ui/crypto_receive_panel.dart';
@@ -9721,34 +9722,41 @@ await _loadVaultLogins();
     }
     final resolvedFromAddress = fromAddress;
     if (!mounted) return;
-    showModalBottomSheet<void>(
+    // 2026-07-13: migrate the chat structured-action send sheet onto
+    // `showCryptoWalletSheet` so it inherits the shared chrome (drag
+    // handle, close X, escape-to-close) and lets
+    // `WalletSendScaffold` manage the sticky Review button + keyboard
+    // padding. Previously this used a bare `showModalBottomSheet`
+    // with a `ConstrainedBox`, so the chat-triggered send sheet
+    // lacked a visible close control.
+    final shortAsset = switch (asset) {
+      'USDT_ERC20' => 'USDT',
+      'USDC_ERC20' => 'USDC',
+      _ => asset,
+    };
+    showCryptoWalletSheet<void>(
       context: context,
-      isScrollControlled: true,
-      builder: (sheetCtx) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetCtx).size.height * 0.85,
-          ),
-          child: CryptoWalletEngineSendPanel(
-            key: Key('chat_send_panel_$asset'),
-            authToken: authToken,
-            fromAddress: resolvedFromAddress,
-            client: VaultAIClient(baseUrl: backendBaseUrl),
-            decryptForVault: (ciphertext) => _VaultCrypto.decrypt(ciphertext),
-            isVaultKeyAvailable: () => hasVaultKey,
-            verifyPin: (pin) async {
-              final cachedPin = _VaultCrypto.cachedPinFor(
-                vaultId: app.vaultId ?? '',
-                vaultName: app.vaultName ?? '',
-              );
-              if (cachedPin == null) return false;
-              return cachedPin == pin;
-            },
-            asset: asset,
-            prefilledDestination: request.destinationAddress,
-            prefilledAmount: request.amount,
-          ),
-        ),
+      title: 'Send $shortAsset',
+      sheetKey: 'chat_send_sheet',
+      bodyOwnsLayout: true,
+      child: CryptoWalletEngineSendPanel(
+        key: Key('chat_send_panel_$asset'),
+        authToken: authToken,
+        fromAddress: resolvedFromAddress,
+        client: VaultAIClient(baseUrl: backendBaseUrl),
+        decryptForVault: (ciphertext) => _VaultCrypto.decrypt(ciphertext),
+        isVaultKeyAvailable: () => hasVaultKey,
+        verifyPin: (pin) async {
+          final cachedPin = _VaultCrypto.cachedPinFor(
+            vaultId: app.vaultId ?? '',
+            vaultName: app.vaultName ?? '',
+          );
+          if (cachedPin == null) return false;
+          return cachedPin == pin;
+        },
+        asset: asset,
+        prefilledDestination: request.destinationAddress,
+        prefilledAmount: request.amount,
       ),
     );
   }

@@ -17,6 +17,47 @@ _PINNED_SESSION_SECRET = os.environ["VAULT_SESSION_SECRET"]
 
 
 @pytest.fixture(autouse=True)
+def _install_fake_mainnet_control_store():
+    """2026-07-13: swap the Postgres-backed mainnet safety store for
+    the in-process `FakeMainnetStore` so every test file exercises
+    the real routing/binding/lock ordering without needing a live
+    Postgres. Tests that specifically want to simulate cross-worker
+    behavior instantiate TWO independent FakeMainnetStore instances
+    inside the test body — see `test_mainnet_shared_state_2026_07_13`.
+    """
+    try:
+        from routes import crypto_wallet_routes as _routes
+    except Exception:
+        yield
+        return
+    from _test_fake_mainnet_store import get_shared_fake, reset_shared_fake
+    reset_shared_fake()
+    fake = get_shared_fake()
+    original = getattr(_routes, "_mainnet_store", None)
+    _routes._mainnet_store = fake
+    try:
+        import vault_config
+        original_pause = getattr(vault_config, "_db_pause_override", None)
+        vault_config._db_pause_override = fake.is_mainnet_send_paused
+    except Exception:
+        original_pause = None
+    try:
+        yield fake
+    finally:
+        _routes._mainnet_store = original
+        try:
+            import vault_config
+            if original_pause is None:
+                if hasattr(vault_config, "_db_pause_override"):
+                    delattr(vault_config, "_db_pause_override")
+            else:
+                vault_config._db_pause_override = original_pause
+        except Exception:
+            pass
+        reset_shared_fake()
+
+
+@pytest.fixture(autouse=True)
 def _restore_session_secret_between_tests():
     """Guarantee every test starts with the process's pinned
     VAULT_SESSION_SECRET and that auth_local's module-level cache is

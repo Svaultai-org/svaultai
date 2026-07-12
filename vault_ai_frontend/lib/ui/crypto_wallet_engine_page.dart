@@ -701,6 +701,21 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     });
   }
 
+  // Compact label for send-sheet titles — collapses long asset IDs
+  // to short symbols so the sheet header reads "Send USDT" instead of
+  // "Send USDT_ERC20".
+  String _shortAssetLabel(String asset) {
+    switch (asset) {
+      case 'USDT_ERC20':
+        return 'USDT';
+      case 'USDC_ERC20':
+        return 'USDC';
+      case 'USDT_TRC20':
+        return 'USDT (TRC20)';
+    }
+    return asset;
+  }
+
   Future<void> _openSendPanel(
     BuildContext ctx, String assetForPanel,
   ) async {
@@ -739,8 +754,9 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     if (!ctx.mounted) return;
     showCryptoWalletSheet<void>(
       context: ctx,
-      title: 'Send $assetForPanel',
+      title: 'Send ${_shortAssetLabel(assetForPanel)}',
       sheetKey: 'crypto_wallet_engine_send_sheet',
+      bodyOwnsLayout: true,
       child: CryptoWalletEngineSendPanel(
         key: Key('eth_send_panel_$assetForPanel'),
         authToken: authToken!,

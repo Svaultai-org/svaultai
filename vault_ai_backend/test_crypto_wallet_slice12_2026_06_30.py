@@ -129,6 +129,54 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
         _clear_all_env()
 
+
+
+
+
+
+
+
+
+    def _seed_wallet(self) -> None:
+        self._store[("vault", "ETH:ethereum_mainnet")] = {
+            "schema":        "crypto_wallet_account_v1",
+            "asset":         "ETH",
+            "network":       "ethereum_mainnet",
+            "walletLabel":   "VaultAI ETH",
+            "publicAddress": _FROM_ADDR,
+            "encryptedWalletSecret": "ct-h",
+            "keyOrigin":     "generated_client_side",
+            "signingMode":   "client_side",
+            "backupStatus":  "encrypted_backup_saved",
+        }
+
+    def _seed_broadcast_draft(
+        self, suffix: str = "aaaa", nonce: int = 0,
+    ) -> tuple[str, dict]:
+
+
+
+        from _test_fake_mainnet_store import make_signed_tx_and_matching_draft
+        fixture = make_signed_tx_and_matching_draft(nonce=nonce)
+        vault_id = "test-vault-id-slice12"
+        did = f"draftId-slice12-{suffix}"
+        self._wallet_mod._mainnet_store.seed_draft(
+            did,
+            vault_id=vault_id,
+            network_id="ethereum_mainnet",
+            asset="ETH",
+            sender_address=fixture["sender_address"],
+            destination_address=fixture["transaction_to"],
+            value_wei=fixture["value_wei"],
+            data_hex=fixture["data_hex"],
+            nonce=fixture["nonce"],
+            gas_limit=fixture["gas_limit"],
+            gas_price=fixture["gas_price"],
+            chain_id=fixture["chain_id"],
+            transaction_to=fixture["transaction_to"],
+        )
+        return did, fixture
+
                                                                        
     def test_H2_pause_blocks_send_draft(self) -> None:
         _set_env(
@@ -229,25 +277,30 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_MAINNET_BROADCAST_RATE_WINDOW_SECS="60",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._seed_wallet()
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
             side_effect=lambda u, s: _TX_HASH,
         ):
-                              
+
             for i in range(2):
+                did, fixture = self._seed_broadcast_draft(suffix=f"round-{i}-aa")
                 resp = self._client.post(
                     "/crypto/wallet/network/ethereum_mainnet/"
                     "ETH/send/broadcast",
                     json={
-                        "signedTransaction": "0x" + (str(i) * 2 + "ab") * 60,
+                        "signedTransaction": fixture["signed_tx_hex"],
+                        "draftId":            did,
                     },
                 )
                 self.assertEqual(resp.status_code, 200, msg=i)
-                                           
+
+            did, fixture = self._seed_broadcast_draft(suffix="round-2-aa")
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
-                json={"signedTransaction": _SIGNED_TX},
+                json={"signedTransaction": fixture["signed_tx_hex"],
+                      "draftId":            did},
             )
         self.assertEqual(resp.status_code, 429)
         self.assertIn("retry-after", {k.lower() for k in resp.headers})
@@ -270,18 +323,21 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_MAINNET_BROADCAST_RATE_LIMIT="0",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._seed_wallet()
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
             side_effect=lambda u, s: _TX_HASH,
         ):
-                                                             
+
             for i in range(5):
+                did, fixture = self._seed_broadcast_draft(suffix=f"nolim-{i}-aa")
                 resp = self._client.post(
                     "/crypto/wallet/network/ethereum_mainnet/"
                     "ETH/send/broadcast",
                     json={
-                        "signedTransaction": "0x" + (str(i) * 2 + "ab") * 60,
+                        "signedTransaction": fixture["signed_tx_hex"],
+                        "draftId":            did,
                     },
                 )
                 self.assertEqual(resp.status_code, 200)
@@ -293,6 +349,8 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._seed_wallet()
+        did, fixture = self._seed_broadcast_draft()
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
@@ -301,8 +359,9 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
                 json={
-                    "signedTransaction": _SIGNED_TX,
+                    "signedTransaction": fixture["signed_tx_hex"],
                     "idempotencyKey":    _VALID_IDEM,
+                    "draftId":           did,
                 },
             )
         self.assertEqual(resp.status_code, 200)
@@ -332,6 +391,8 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._seed_wallet()
+        did, fixture = self._seed_broadcast_draft()
         import evm_rpc
         call_count = {"n": 0}
 
@@ -343,27 +404,30 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             evm_rpc, "eth_send_raw_transaction_at_url",
             side_effect=_stub,
         ):
-                                 
+
             resp1 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
                 json={
-                    "signedTransaction": _SIGNED_TX,
+                    "signedTransaction": fixture["signed_tx_hex"],
                     "idempotencyKey":    _VALID_IDEM,
+                    "draftId":           did,
                 },
             )
-                                                                      
-                                                  
+
+
+
             resp2 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
                 json={
-                    "signedTransaction": _SIGNED_TX,
+                    "signedTransaction": fixture["signed_tx_hex"],
                     "idempotencyKey":    _VALID_IDEM,
+                    "draftId":           did,
                 },
             )
         self.assertEqual(resp1.status_code, 200)
         self.assertEqual(resp2.status_code, 200)
         self.assertEqual(resp1.json(), resp2.json())
-                                      
+
         self.assertEqual(call_count["n"], 1)
 
     def test_H9_duplicate_key_different_payload_rejected(self) -> None:
@@ -372,6 +436,9 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._seed_wallet()
+        did1, fixture1 = self._seed_broadcast_draft(suffix="dup-1a", nonce=7)
+        did2, fixture2 = self._seed_broadcast_draft(suffix="dup-2b", nonce=8)
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
@@ -380,17 +447,19 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             resp1 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
                 json={
-                    "signedTransaction": _SIGNED_TX,
+                    "signedTransaction": fixture1["signed_tx_hex"],
                     "idempotencyKey":    _VALID_IDEM,
+                    "draftId":           did1,
                 },
             )
             self.assertEqual(resp1.status_code, 200)
-                                                 
+
             resp2 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
                 json={
-                    "signedTransaction": _SIGNED_TX_ALT,
+                    "signedTransaction": fixture2["signed_tx_hex"],
                     "idempotencyKey":    _VALID_IDEM,
+                    "draftId":           did2,
                 },
             )
         self.assertEqual(resp2.status_code, 409)
@@ -563,28 +632,35 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             VAULTAI_CRYPTO_MAINNET_BROADCAST_RATE_LIMIT="1",
             ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
         )
+        self._seed_wallet()
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
             side_effect=lambda u, s: _TX_HASH,
         ):
-                                        
+
+            did1, fixture1 = self._seed_broadcast_draft(suffix="reset-1-aa", nonce=1)
             r1 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
-                json={"signedTransaction": _SIGNED_TX},
+                json={"signedTransaction": fixture1["signed_tx_hex"],
+                      "draftId":            did1},
             )
             self.assertEqual(r1.status_code, 200)
-                                       
+
+            did2, fixture2 = self._seed_broadcast_draft(suffix="reset-2-bb", nonce=2)
             r2 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
-                json={"signedTransaction": _SIGNED_TX_ALT},
+                json={"signedTransaction": fixture2["signed_tx_hex"],
+                      "draftId":            did2},
             )
             self.assertEqual(r2.status_code, 429)
-                                   
+
             self._wallet_mod.reset_mainnet_safety_state_for_tests()
+            did3, fixture3 = self._seed_broadcast_draft(suffix="reset-3-cc", nonce=3)
             r3 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
-                json={"signedTransaction": _SIGNED_TX_ALT},
+                json={"signedTransaction": fixture3["signed_tx_hex"],
+                      "draftId":            did3},
             )
             self.assertEqual(r3.status_code, 200)
 

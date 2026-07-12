@@ -129,6 +129,7 @@ class _FakeMainnetClient extends VaultAIClient {
     required String authToken,
     required Object signedTransaction,
     String? idempotencyKey,
+    String? draftId,
   }) async {
     broadcastNetworkCount++;
     lastBroadcastBody = {
@@ -260,7 +261,10 @@ void main() {
       expect(find.text(kEthSendMainnetNetworkBadge), findsOneWidget);
     });
 
-    testWidgets('SS4: real-funds warning shows on form stage',
+    testWidgets(
+        'SS4: mainnet form stage renders exactly one prominent '
+        'top-of-panel warning (disabled OR paused OR real-funds — '
+        'never overlapping banners)',
         (tester) async {
       final client = _FakeMainnetClient(
         draftResponse: _mainnetEthDraftReady(),
@@ -273,15 +277,27 @@ void main() {
         },
       );
       await _pumpMainnetPanel(tester, client: client);
-      expect(
-        find.byKey(const Key('eth_send_panel_mainnet_real_funds')),
-        findsOneWidget,
+      // 2026-07-13: the mobile Send layout now shows AT MOST ONE
+      // prominent top-of-panel warning. Priority order: disabled >
+      // paused > real-funds. In test env
+      // `kCryptoWalletEngineMainnetSendEnabled` defaults to false, so
+      // we expect the disabled banner and NOT the real-funds banner.
+      // If a future test env sets the flag to true, the real-funds
+      // banner would be present instead.
+      final realFundsFinder = find.byKey(
+        const Key('eth_send_panel_mainnet_real_funds'),
       );
-      
-      expect(
-        find.text(kEvmNetworkMainnetSendRealFundsHeadline),
-        findsOneWidget,
+      final disabledFinder = find.byKey(
+        const Key('eth_send_panel_mainnet_send_disabled'),
       );
+      final hasReal = realFundsFinder.evaluate().isNotEmpty;
+      final hasDisabled = disabledFinder.evaluate().isNotEmpty;
+      expect(hasReal || hasDisabled, isTrue,
+          reason: 'expected at least one mainnet warning row');
+      // The two banners must never appear simultaneously.
+      expect(hasReal && hasDisabled, isFalse,
+          reason: 'mobile UX must not stack overlapping mainnet '
+              'warnings — disabled should subsume real-funds');
     });
 
     testWidgets('SS5: send-disabled banner + refuses draft when flag off',
@@ -359,10 +375,12 @@ void main() {
       expect(client.encryptedSecretSepoliaCount, equals(0));
     });
 
-    testWidgets('SS11: review stage shows Ethereum Mainnet + chainId=1',
+    testWidgets(
+        'SS11: form stage shows the "Ethereum Mainnet" chip and a '
+        'top-of-panel mainnet warning row (single, prioritized)',
         (tester) async {
-      
-      
+
+
       final client = _FakeMainnetClient(
         draftResponse: _mainnetEthDraftReady(),
         encryptedSecretResponse: const {
@@ -374,13 +392,20 @@ void main() {
         },
       );
       await _pumpMainnetPanel(tester, client: client);
-      
+      // 2026-07-13: the chip lives in the compact header row of the
+      // shared `WalletSendScaffold`, not the old wide network badge.
       expect(find.text(kEthSendMainnetNetworkBadge), findsOneWidget);
-      
-      expect(
-        find.byKey(const Key('eth_send_panel_mainnet_real_funds')),
-        findsOneWidget,
-      );
+      // The top-of-panel warning must be present. With the default
+      // send-disabled flag it appears as the disabled banner; if the
+      // flag is toggled on it appears as the real-funds banner.
+      final anyMainnetWarning = find
+          .byWidgetPredicate((w) {
+            final k = w.key;
+            if (k is! ValueKey) return false;
+            return k.value == 'eth_send_panel_mainnet_real_funds'
+                || k.value == 'eth_send_panel_mainnet_send_disabled';
+          });
+      expect(anyMainnetWarning, findsOneWidget);
     });
 
     testWidgets('SS9: source guard — broadcast body carries ONLY '

@@ -56,9 +56,43 @@ _TIMEOUT_SECS = 6
 
 class EvmRpcError(RuntimeError):
 
+    # 2026-07-13: rework: an RPC failure is only "definitely not
+    # submitted to the network" when we successfully parsed a valid
+    # JSON-RPC error object from the provider. Any transport or
+    # protocol ambiguity (timeout, connection reset after write,
+    # HTTP 5xx, HTTP 4xx from the gateway, malformed JSON body,
+    # missing result envelope) leaves the request status unknown --
+    # the raw transaction MAY have reached and been accepted by the
+    # provider before the response was lost. Callers doing a state-
+    # changing broadcast MUST treat is_ambiguous=True as "submission
+    # uncertain" and preserve the draft's consumed state, not as
+    # "rejected".
+    #
+    # If `is_ambiguous` is not explicitly passed we DERIVE it from
+    # `code` so legacy call sites (tests that only pass the code)
+    # keep working correctly. Only `upstream_rpc` -- the explicit
+    # JSON-RPC error path -- is treated as non-ambiguous by default.
+    _AMBIGUOUS_CODES = frozenset({
+        "upstream_timeout",
+        "upstream_io",
+        "upstream_http",
+        "upstream_json",
+    })
 
-    def __init__(self, code: str) -> None:
+    def __init__(
+        self,
+        code,
+        *,
+        is_ambiguous=None,
+        rpc_error_code=None,
+        rpc_error_message=None,
+    ):
         self.code = code
+        if is_ambiguous is None:
+            is_ambiguous = code in EvmRpcError._AMBIGUOUS_CODES
+        self.is_ambiguous = bool(is_ambiguous)
+        self.rpc_error_code = rpc_error_code
+        self.rpc_error_message = rpc_error_message
         super().__init__(code)
 
 
@@ -91,32 +125,70 @@ def _emit_rpc_at_url(rpc_url: str, method: str, params: list) -> dict:
                 },
             )
     except httpx.TimeoutException:
+        # Timeouts split into two cases: pre-request (connect timeout,
+        # write timeout mid-payload -> theoretically not delivered)
+        # and post-request (read timeout -> upstream may already have
+        # accepted). httpx doesn't cleanly distinguish these in a
+        # portable way and the write-half completing does NOT prove
+        # non-delivery. Conservative: treat every timeout as ambiguous.
         logger.warning("[EVM-RPC] upstream_timeout method=%s", method)
-        raise EvmRpcError("upstream_timeout")
+        raise EvmRpcError("upstream_timeout", is_ambiguous=True)
     except (httpx.HTTPError, OSError):
+        # Includes ConnectionError, ProtocolError, ReadError,
+        # ConnectionResetError. The request bytes may have been
+        # written to the socket and received by the upstream before
+        # the response was lost -- ambiguous.
         logger.warning("[EVM-RPC] upstream_io method=%s", method)
-        raise EvmRpcError("upstream_io")
+        raise EvmRpcError("upstream_io", is_ambiguous=True)
     if resp.status_code != 200:
+        # HTTP != 200: the upstream (or an intermediary) responded with
+        # a non-success status. 5xx especially can happen AFTER the
+        # request reached the RPC node -- we cannot prove the node
+        # did not process the raw tx. Conservative: ambiguous.
         logger.warning(
             "[EVM-RPC] upstream_http method=%s status=%s",
             method, resp.status_code,
         )
-        raise EvmRpcError("upstream_http")
+        raise EvmRpcError("upstream_http", is_ambiguous=True)
     try:
         body = resp.json()
     except (json.JSONDecodeError, ValueError):
+        # HTTP 200 + unparseable body. Node responded but the body is
+        # corrupt/truncated -- we don't know the outcome.
         logger.warning("[EVM-RPC] upstream_json method=%s", method)
-        raise EvmRpcError("upstream_json")
+        raise EvmRpcError("upstream_json", is_ambiguous=True)
     if not isinstance(body, dict):
-        raise EvmRpcError("upstream_json")
+        raise EvmRpcError("upstream_json", is_ambiguous=True)
     if "error" in body:
+        # Explicit JSON-RPC error object -- the node processed the
+        # request and returned a structured rejection. NOT ambiguous.
         err = body["error"]
+        rpc_code = None
+        rpc_msg = None
         if isinstance(err, dict):
+            rpc_code = err.get("code") if isinstance(
+                err.get("code"), int
+            ) else None
+            rpc_msg_raw = err.get("message")
+            if isinstance(rpc_msg_raw, str):
+                rpc_msg = rpc_msg_raw
             logger.warning(
                 "[EVM-RPC] upstream_rpc method=%s code=%s",
-                method, err.get("code"),
+                method, rpc_code,
             )
-        raise EvmRpcError("upstream_rpc")
+        raise EvmRpcError(
+            "upstream_rpc",
+            is_ambiguous=False,
+            rpc_error_code=rpc_code,
+            rpc_error_message=rpc_msg,
+        )
+    # Missing result field (and no error field either) -- unexpected
+    # envelope shape; treat as ambiguous since we can't confirm outcome.
+    if "result" not in body:
+        logger.warning(
+            "[EVM-RPC] upstream_json_missing_result method=%s", method,
+        )
+        raise EvmRpcError("upstream_json", is_ambiguous=True)
     return body
 
 
@@ -129,12 +201,30 @@ def _parse_hex_int(result: object) -> int:
         raise EvmRpcError("upstream_json")
 
 
-def eth_get_balance_wei_at_url(rpc_url: str, address: str) -> int:
+_ALLOWED_BLOCK_TAGS: frozenset[str] = frozenset({"latest", "pending"})
+
+
+def eth_get_balance_wei_at_url(
+    rpc_url: str,
+    address: str,
+    *,
+    block_tag: str = "latest",
+) -> int:
+
+
+
+
+
+
+
+
 
 
     if not is_valid_eth_address(address):
         raise EvmRpcError("invalid_address")
-    body = _emit_rpc_at_url(rpc_url, "eth_getBalance", [address, "latest"])
+    if block_tag not in _ALLOWED_BLOCK_TAGS:
+        raise EvmRpcError("invalid_block_tag")
+    body = _emit_rpc_at_url(rpc_url, "eth_getBalance", [address, block_tag])
     return _parse_hex_int(body.get("result"))
 
 
@@ -159,17 +249,28 @@ def erc20_balance_of_at_url(
     *,
     token_contract_address: str,
     holder_address: str,
+    block_tag: str = "latest",
 ) -> int:
+
+
+
+
+
+
+
+
 
 
     if not is_valid_eth_address(token_contract_address):
         raise EvmRpcError("invalid_token_contract")
     if not is_valid_eth_address(holder_address):
         raise EvmRpcError("invalid_address")
+    if block_tag not in _ALLOWED_BLOCK_TAGS:
+        raise EvmRpcError("invalid_block_tag")
     calldata = encode_erc20_balance_of_calldata(holder_address)
     params = [
         {"to": token_contract_address, "data": calldata},
-        "latest",
+        block_tag,
     ]
     body = _emit_rpc_at_url(rpc_url, "eth_call", params)
     result = body.get("result")

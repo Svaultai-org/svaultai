@@ -13,6 +13,7 @@ import '../services/crypto_wallet_features.dart';
 import '../services/solana_transaction.dart';
 import '../services/solana_wallet.dart';
 import 'crypto_wallet_engine_design.dart';
+import 'crypto_wallet_engine_send_layout.dart';
 
 
 const String kSolanaSendPanelTitle = 'Send SOL';
@@ -497,33 +498,65 @@ class _CryptoWalletEngineSolanaSendPanelState
 
   @override
   Widget build(BuildContext context) {
+    // 2026-07-13: Send SOL sheets adopt the shared compact layout —
+    // network chip in the header row, sticky Review button pinned
+    // above the keyboard, no duplicated `Send SOL` heading (the sheet
+    // chrome already shows the sheet title).
     return WalletDarkPanelScope(
-      child: SingleChildScrollView(
+      child: KeyedSubtree(
         key: const Key(kSolanaSendPanelKey),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: _buildBody(),
-        ),
+        child: _buildLayoutForStage(),
       ),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildLayoutForStage() {
+    final header = walletSendNetworkChip(
+      key: const Key('solana_send_panel_network_chip'),
+      label: 'Solana Mainnet',
+      isMainnet: true,
+    );
     if (!_sendEnabled) {
-      return _buildDisabledBanner();
+      return WalletSendScaffold(
+        sheetKey: 'solana_send_panel',
+        header: header,
+        body: _buildDisabledBanner(),
+      );
     }
     if (_sendPaused) {
-      return _buildPausedBanner();
+      return WalletSendScaffold(
+        sheetKey: 'solana_send_panel',
+        header: header,
+        body: _buildPausedBanner(),
+      );
     }
     switch (_stage) {
       case _SolanaSendStage.input:
-        return _buildInputStage();
+        return WalletSendScaffold(
+          sheetKey: 'solana_send_panel',
+          header: header,
+          body: _buildInputBody(),
+          footer: _buildInputFooter(),
+        );
       case _SolanaSendStage.review:
-        return _buildReviewStage();
+        return WalletSendScaffold(
+          sheetKey: 'solana_send_panel',
+          header: header,
+          body: _buildReviewBody(),
+          footer: _buildReviewFooter(),
+        );
       case _SolanaSendStage.submitting:
-        return _buildSubmittingStage();
+        return WalletSendScaffold(
+          sheetKey: 'solana_send_panel',
+          header: header,
+          body: _buildSubmittingStage(),
+        );
       case _SolanaSendStage.submitted:
-        return _buildSubmittedStage();
+        return WalletSendScaffold(
+          sheetKey: 'solana_send_panel',
+          header: header,
+          body: _buildSubmittedStage(),
+        );
     }
   }
 
@@ -577,26 +610,17 @@ class _CryptoWalletEngineSolanaSendPanelState
     );
   }
 
-  Widget _buildInputStage() {
+  Widget _buildInputBody() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          kSolanaSendPanelTitle,
-          style: TextStyle(
-            color: kWalletTextPrimary,
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.2,
-          ),
-        ),
-        const SizedBox(height: 12),
         TextField(
           key: const Key(kSolanaSendDestinationInputKey),
           controller: _destinationController,
           decoration: const InputDecoration(
             labelText: kSolanaSendDestinationLabel,
+            isDense: true,
           ),
         ),
         const SizedBox(height: 10),
@@ -605,103 +629,90 @@ class _CryptoWalletEngineSolanaSendPanelState
           controller: _amountController,
           decoration: const InputDecoration(
             labelText: kSolanaSendAmountLabel,
+            isDense: true,
           ),
           keyboardType: const TextInputType.numberWithOptions(
             decimal: true,
           ),
         ),
         if (_error != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            _error!,
-            style: const TextStyle(
-              color: kWalletAccentDanger, fontSize: 13,
-            ),
+          const SizedBox(height: 10),
+          WalletSendWarning(
+            text: _error!,
+            tone: WalletSendWarningTone.critical,
           ),
         ],
-        const SizedBox(height: 16),
-        ElevatedButton(
-          key: const Key(kSolanaSendReviewButtonKey),
-          onPressed: _onReview,
-          style: walletPrimaryButtonStyle(),
-          child: const Text(kSolanaSendReviewButtonLabel),
-        ),
       ],
     );
   }
 
-  Widget _buildReviewStage() {
+  Widget _buildInputFooter() {
+    return ElevatedButton(
+      key: const Key(kSolanaSendReviewButtonKey),
+      onPressed: _onReview,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: const Text(kSolanaSendReviewButtonLabel),
+    );
+  }
+
+  Widget _buildReviewBody() {
     final draft = _draft!;
     return Column(
       key: const Key(kSolanaSendReviewCardKey),
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          kSolanaSendReviewHeading,
-          style: TextStyle(
-            color: kWalletTextPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-          ),
+        walletSendSectionHeading(kSolanaSendReviewHeading),
+        WalletSendKvRow(label: 'Network', value: 'Solana'),
+        WalletSendKvRow(
+          label: 'From', value: widget.fromAddress, mono: true,
         ),
-        const SizedBox(height: 8),
-        _kv('Network', 'Solana'),
-        _kv('From', widget.fromAddress),
-        _kv('Destination',
-            (draft['destinationAddress'] ?? '').toString()),
-        _kv('Amount', '${draft['amountSol']} SOL'),
+        WalletSendKvRow(
+          label: 'Destination',
+          value: (draft['destinationAddress'] ?? '').toString(),
+          mono: true,
+        ),
+        WalletSendKvRow(
+          label: 'Amount', value: '${draft['amountSol']} SOL',
+        ),
         if (draft['feeSol'] != null)
-          _kv(
-            solanaSendFeeLabelFor(
+          WalletSendKvRow(
+            label: solanaSendFeeLabelFor(
               (draft['feeSource'] as String?),
             ),
-            '${draft['feeSol']} SOL',
+            value: '${draft['feeSol']} SOL',
           ),
         const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: walletWarningPanel(),
-          child: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded,
-                  size: 16, color: kWalletAccentWarning),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  kSolanaSendConfirmationWarning,
-                  key: Key(kSolanaSendWarningKey),
-                  style: TextStyle(
-                    color: kWalletAccentWarning,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        const WalletSendWarning(
+          key: Key(kSolanaSendWarningKey),
+          text: kSolanaSendConfirmationWarning,
         ),
         if (_error != null) ...[
           const SizedBox(height: 8),
-          Text(
-            _error!,
-            style: const TextStyle(
-              color: kWalletAccentDanger, fontSize: 13,
-            ),
+          WalletSendWarning(
+            text: _error!,
+            tone: WalletSendWarningTone.critical,
           ),
         ],
-        const SizedBox(height: 16),
-        ElevatedButton(
-          key: const Key(kSolanaSendConfirmButtonKey),
-          onPressed:
-              _broadcastInFlight ? null : _onConfirmAndSign,
-          style: walletPrimaryButtonStyle(),
-          child: Text(
-            _broadcastInFlight
-                ? 'Submitting…'
-                : kSolanaSendConfirmButtonLabel,
-          ),
-        ),
       ],
+    );
+  }
+
+  Widget _buildReviewFooter() {
+    return ElevatedButton(
+      key: const Key(kSolanaSendConfirmButtonKey),
+      onPressed:
+          _broadcastInFlight ? null : _onConfirmAndSign,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: Text(
+        _broadcastInFlight
+            ? 'Submitting…'
+            : kSolanaSendConfirmButtonLabel,
+      ),
     );
   }
 
@@ -788,29 +799,4 @@ class _CryptoWalletEngineSolanaSendPanelState
     );
   }
 
-  Widget _kv(String key, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(
-              key,
-              style: const TextStyle(
-                color: kWalletTextSecondary, fontSize: 12,
-              ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: kWalletMonoStyle,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

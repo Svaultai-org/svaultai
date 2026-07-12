@@ -37,6 +37,12 @@ Future<T?> showCryptoWalletSheet<T>({
   String sheetKey = 'crypto_wallet_engine_sheet',
   VoidCallback? onBack,
   double heightFraction = 0.92,
+  // When true, the chrome does NOT wrap `child` in a
+  // Flexible+SingleChildScrollView — the child manages its own scroll
+  // and sticky footer (used by Send panels via `WalletSendScaffold`).
+  // When false (default), the chrome scrolls the child, matching the
+  // legacy Receive-panel behavior.
+  bool bodyOwnsLayout = false,
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -51,6 +57,7 @@ Future<T?> showCryptoWalletSheet<T>({
       sheetKey: sheetKey,
       onBack: onBack,
       heightFraction: heightFraction,
+      bodyOwnsLayout: bodyOwnsLayout,
       child: child,
     ),
   );
@@ -65,6 +72,7 @@ class CryptoWalletSheetChrome extends StatelessWidget {
   final String sheetKey;
   final VoidCallback? onBack;
   final double heightFraction;
+  final bool bodyOwnsLayout;
 
   const CryptoWalletSheetChrome({
     super.key,
@@ -73,6 +81,7 @@ class CryptoWalletSheetChrome extends StatelessWidget {
     this.sheetKey = 'crypto_wallet_engine_sheet',
     this.onBack,
     this.heightFraction = 0.92,
+    this.bodyOwnsLayout = false,
   });
 
   @override
@@ -109,6 +118,13 @@ class CryptoWalletSheetChrome extends StatelessWidget {
             right: BorderSide(color: kWalletBorder, width: 1),
           ),
         ),
+        // The chrome itself does NOT bake `viewInsets.bottom` into the
+        // frame — panels that want a sticky action footer above the
+        // keyboard (all Send panels via `WalletSendScaffold`) handle
+        // that inside their body so the header/close X stays fully
+        // reachable on the header. For panels that pass a plain body
+        // (e.g. Receive sheets), we still respect the keyboard by
+        // scrolling the inner content.
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -124,13 +140,16 @@ class CryptoWalletSheetChrome extends StatelessWidget {
               thickness: 1,
               color: kWalletBorder,
             ),
-            Flexible(
-              child: SingleChildScrollView(
-                key: Key('${sheetKey}_scroll'),
-                padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
-                child: child,
+            if (bodyOwnsLayout)
+              Flexible(child: child)
+            else
+              Flexible(
+                child: SingleChildScrollView(
+                  key: Key('${sheetKey}_scroll'),
+                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+                  child: child,
+                ),
               ),
-            ),
           ],
         ),
       ),

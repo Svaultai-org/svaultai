@@ -74,6 +74,7 @@ class _SendSpyClient extends VaultAIClient {
     required String authToken,
     required Object signedTransaction,
     String? idempotencyKey,
+    String? draftId,
   }) async {
     capturedBroadcastPayload = {
       'signedTransaction': signedTransaction,

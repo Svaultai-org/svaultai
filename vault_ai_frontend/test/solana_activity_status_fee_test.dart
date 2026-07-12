@@ -85,6 +85,7 @@ class _StatusSpyClient extends VaultAIClient {
     required String authToken,
     required Object signedTransaction,
     String? idempotencyKey,
+    String? draftId,
   }) async {
     return nextBroadcastResponse;
   }

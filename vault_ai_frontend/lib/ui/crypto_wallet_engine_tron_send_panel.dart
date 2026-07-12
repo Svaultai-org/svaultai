@@ -12,6 +12,7 @@ import '../services/crypto_wallet_features.dart';
 import '../services/tron_transaction.dart';
 import '../services/tron_wallet.dart';
 import 'crypto_wallet_engine_design.dart';
+import 'crypto_wallet_engine_send_layout.dart';
 
 
 const String kTronSendPanelTitle = 'Send USDT (TRC20)';
@@ -490,33 +491,64 @@ class _CryptoWalletEngineTronSendPanelState
 
   @override
   Widget build(BuildContext context) {
+    // 2026-07-13: Send TRC20 sheets adopt the shared compact layout —
+    // network chip, sticky Confirm button pinned above the keyboard,
+    // no duplicated `Send USDT (TRC20)` heading (chrome supplies it).
     return WalletDarkPanelScope(
-      child: SingleChildScrollView(
+      child: KeyedSubtree(
         key: const Key(kTronSendPanelKey),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: _buildBody(),
-        ),
+        child: _buildLayoutForStage(),
       ),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildLayoutForStage() {
+    final header = walletSendNetworkChip(
+      key: const Key('tron_send_panel_network_chip'),
+      label: 'TRON Mainnet',
+      isMainnet: true,
+    );
     if (_sendPaused) {
-      return _buildPausedBanner();
+      return WalletSendScaffold(
+        sheetKey: 'tron_send_panel',
+        header: header,
+        body: _buildPausedBanner(),
+      );
     }
     if (!_sendEnabled) {
-      return _buildDisabledBanner();
+      return WalletSendScaffold(
+        sheetKey: 'tron_send_panel',
+        header: header,
+        body: _buildDisabledBanner(),
+      );
     }
     switch (_stage) {
       case _TronSendStage.input:
-        return _buildInputStage();
+        return WalletSendScaffold(
+          sheetKey: 'tron_send_panel',
+          header: header,
+          body: _buildInputBody(),
+          footer: _buildInputFooter(),
+        );
       case _TronSendStage.review:
-        return _buildReviewStage();
+        return WalletSendScaffold(
+          sheetKey: 'tron_send_panel',
+          header: header,
+          body: _buildReviewBody(),
+          footer: _buildReviewFooter(),
+        );
       case _TronSendStage.submitting:
-        return _buildSubmittingStage();
+        return WalletSendScaffold(
+          sheetKey: 'tron_send_panel',
+          header: header,
+          body: _buildSubmittingStage(),
+        );
       case _TronSendStage.submitted:
-        return _buildSubmittedStage();
+        return WalletSendScaffold(
+          sheetKey: 'tron_send_panel',
+          header: header,
+          body: _buildSubmittedStage(),
+        );
     }
   }
 
@@ -570,26 +602,17 @@ class _CryptoWalletEngineTronSendPanelState
     );
   }
 
-  Widget _buildInputStage() {
+  Widget _buildInputBody() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          kTronSendPanelTitle,
-          style: TextStyle(
-            color: kWalletTextPrimary,
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.2,
-          ),
-        ),
-        const SizedBox(height: 12),
         TextField(
           key: const Key(kTronSendDestinationInputKey),
           controller: _destinationController,
           decoration: const InputDecoration(
             labelText: kTronSendDestinationLabel,
+            isDense: true,
           ),
         ),
         const SizedBox(height: 10),
@@ -598,32 +621,35 @@ class _CryptoWalletEngineTronSendPanelState
           controller: _amountController,
           decoration: const InputDecoration(
             labelText: kTronSendAmountLabel,
+            isDense: true,
           ),
           keyboardType: const TextInputType.numberWithOptions(
             decimal: true,
           ),
         ),
         if (_error != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            _error!,
-            style: const TextStyle(
-              color: kWalletAccentDanger, fontSize: 13,
-            ),
+          const SizedBox(height: 10),
+          WalletSendWarning(
+            text: _error!,
+            tone: WalletSendWarningTone.critical,
           ),
         ],
-        const SizedBox(height: 16),
-        ElevatedButton(
-          key: const Key(kTronSendReviewButtonKey),
-          onPressed: _onReview,
-          style: walletPrimaryButtonStyle(),
-          child: const Text(kTronSendReviewButtonLabel),
-        ),
       ],
     );
   }
 
-  Widget _buildReviewStage() {
+  Widget _buildInputFooter() {
+    return ElevatedButton(
+      key: const Key(kTronSendReviewButtonKey),
+      onPressed: _onReview,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: const Text(kTronSendReviewButtonLabel),
+    );
+  }
+
+  Widget _buildReviewBody() {
     final draft = _draft!;
     final resourceStatus =
         (draft['resourceStatus'] ?? 'unavailable').toString();
@@ -631,121 +657,96 @@ class _CryptoWalletEngineTronSendPanelState
     final trxBalance = (draft['trxBalance'] ?? '').toString();
     return Column(
       key: const Key(kTronSendReviewCardKey),
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          kTronSendReviewHeading,
-          style: TextStyle(
-            color: kWalletTextPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-          ),
+        walletSendSectionHeading(kTronSendReviewHeading),
+        WalletSendKvRow(label: 'Asset', value: 'USDT TRC20'),
+        WalletSendKvRow(label: 'Network', value: 'TRON'),
+        WalletSendKvRow(
+          label: 'From', value: widget.fromAddress, mono: true,
         ),
-        const SizedBox(height: 8),
-        _kv('Asset', 'USDT TRC20'),
-        _kv('Network', 'TRON'),
-        _kv('From', widget.fromAddress),
-        _kv('Destination',
-            (draft['destinationAddress'] ?? '').toString()),
-        _kv('Amount', '${draft['amountUsdt']} USDT'),
+        WalletSendKvRow(
+          label: 'Destination',
+          value: (draft['destinationAddress'] ?? '').toString(),
+          mono: true,
+        ),
+        WalletSendKvRow(
+          label: 'Amount',
+          value: '${draft['amountUsdt']} USDT',
+        ),
         if (feeLimitTrx.isNotEmpty)
-          _kv('Fee limit (max)', '$feeLimitTrx TRX'),
+          WalletSendKvRow(
+            label: 'Fee limit (max)',
+            value: '$feeLimitTrx TRX',
+          ),
         if (trxBalance.isNotEmpty)
-          _kv('TRX balance', '$trxBalance TRX'),
-        _kv('Resource status', resourceStatus),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: walletWarningPanel(),
-          child: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded,
-                  size: 16, color: kWalletAccentWarning),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  kTronSendConfirmationWarning,
-                  key: Key(kTronSendWarningKey),
-                  style: TextStyle(
-                    color: kWalletAccentWarning,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
+          WalletSendKvRow(
+            label: 'TRX balance',
+            value: '$trxBalance TRX',
           ),
+        WalletSendKvRow(
+          label: 'Resource status',
+          value: resourceStatus,
         ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: kWalletBgBase,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: kWalletBorder),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.local_gas_station_outlined,
-                  size: 16, color: kWalletTextSecondary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  kTronSendFeeWarning,
-                  key: const Key(kTronSendFeeWarningKey),
-                  style: kWalletMutedStyle,
-                ),
+        const SizedBox(height: 10),
+        const WalletSendWarning(
+          key: Key(kTronSendWarningKey),
+          text: kTronSendConfirmationWarning,
+        ),
+        // Compact muted fee-notice line — replaces the old bordered
+        // fee-warning card so the review stage stays scan-able. The
+        // key is preserved so existing keyed test lookups continue to
+        // find it.
+        const SizedBox(height: 6),
+        Row(
+          key: Key('${kTronSendFeeWarningKey}_row'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Icon(Icons.local_gas_station_outlined,
+                size: 14, color: kWalletTextMuted),
+            SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                kTronSendFeeWarning,
+                key: Key(kTronSendFeeWarningKey),
+                style: kWalletMutedStyle,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
         if (resourceStatus == 'low_trx') ...[
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: walletWarningPanel(),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline,
-                    size: 16, color: kWalletAccentWarning),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    kTronSendLowTrxWarning,
-                    key: const Key(kTronSendLowTrxWarningKey),
-                    style: const TextStyle(
-                      color: kWalletAccentWarning,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 6),
+          const WalletSendWarning(
+            key: Key(kTronSendLowTrxWarningKey),
+            text: kTronSendLowTrxWarning,
+            tone: WalletSendWarningTone.critical,
           ),
         ],
         if (_error != null) ...[
           const SizedBox(height: 8),
-          Text(
-            _error!,
-            style: const TextStyle(
-              color: kWalletAccentDanger, fontSize: 13,
-            ),
+          WalletSendWarning(
+            text: _error!,
+            tone: WalletSendWarningTone.critical,
           ),
         ],
-        const SizedBox(height: 16),
-        ElevatedButton(
-          key: const Key(kTronSendConfirmButtonKey),
-          onPressed:
-              _broadcastInFlight ? null : _onConfirmAndSign,
-          style: walletPrimaryButtonStyle(),
-          child: Text(
-            _broadcastInFlight
-                ? 'Submitting…'
-                : kTronSendConfirmButtonLabel,
-          ),
-        ),
       ],
+    );
+  }
+
+  Widget _buildReviewFooter() {
+    return ElevatedButton(
+      key: const Key(kTronSendConfirmButtonKey),
+      onPressed:
+          _broadcastInFlight ? null : _onConfirmAndSign,
+      style: walletPrimaryButtonStyle().copyWith(
+        minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+      ),
+      child: Text(
+        _broadcastInFlight
+            ? 'Submitting…'
+            : kTronSendConfirmButtonLabel,
+      ),
     );
   }
 
@@ -829,29 +830,4 @@ class _CryptoWalletEngineTronSendPanelState
     );
   }
 
-  Widget _kv(String key, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 130,
-            child: Text(
-              key,
-              style: const TextStyle(
-                color: kWalletTextSecondary, fontSize: 12,
-              ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: kWalletMonoStyle,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

@@ -74,6 +74,7 @@ class _SolanaSendSpyClient extends VaultAIClient {
     required String authToken,
     required Object signedTransaction,
     String? idempotencyKey,
+    String? draftId,
   }) async {
     broadcastCalls++;
     broadcastBodies.add({

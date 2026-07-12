@@ -64,9 +64,76 @@ _MAINNET_SAFETY_LOCK = threading.Lock()
 _MAINNET_BROADCAST_TIMES: dict[str, "deque[float]"] = {}
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+_MAINNET_WALLET_INFLIGHT: set[tuple[str, str]] = set()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+_MAINNET_DRAFTS: dict[str, dict[str, Any]] = {}
+_MAINNET_DRAFT_TTL_SECS: int = 300
+_MAINNET_DRAFT_ID_RE = __import__("re").compile(
+    r"^[A-Za-z0-9_-]{16,64}$",
+)
+
+
 _MAINNET_IDEMPOTENCY_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _IDEMPOTENCY_TTL_SECS: int = 24 * 60 * 60
 _IDEMPOTENCY_KEY_RE = __import__("re").compile(r"^[A-Za-z0-9._\-]{8,128}$")
+
+
+# 2026-07-13: shared-state backend for the mainnet safety primitives.
+# In production this is the Postgres-backed
+# `crypto_mainnet_control_store`, atomic across all workers and
+# containers. Tests monkey-patch `_mainnet_store` on this module
+# with a fake in-process backend so they exercise the routing paths
+# without a live database.
+import crypto_mainnet_control_store as _mainnet_store
 
 
 _SOLANA_SAFETY_LOCK = threading.Lock()
@@ -85,6 +152,258 @@ def reset_mainnet_safety_state_for_tests() -> None:
     with _MAINNET_SAFETY_LOCK:
         _MAINNET_BROADCAST_TIMES.clear()
         _MAINNET_IDEMPOTENCY_CACHE.clear()
+        _MAINNET_WALLET_INFLIGHT.clear()
+        _MAINNET_DRAFTS.clear()
+    try:
+        _mainnet_store.reset_for_tests()
+    except Exception:
+        pass
+
+
+def _mainnet_lock_key(
+    network_id: str, sender_address: str,
+) -> tuple[str, str]:
+    """Canonical lock key: (network_id, lowercase sender address).
+
+    Uses the on-chain sender address as the concurrency identity so
+    two vaults that happen to share nothing but a vault_id-space
+    cannot collide, and so a hypothetical future multi-wallet-per-
+    (vault, network) design would still lock at address granularity.
+    Callers MUST derive `sender_address` from server-side wallet
+    state (`_load_wallet_account_record_network(...).publicAddress`)
+    — never from a caller-supplied `fromAddress` payload field.
+    """
+    addr_lower = (sender_address or "").strip().lower()
+    return (network_id, addr_lower)
+
+
+def _try_acquire_mainnet_wallet_lock(
+    network_id: str, sender_address: str,
+) -> Optional[str]:
+    """Reserve the (network_id, sender_address) slot for a mainnet
+    broadcast via the shared Postgres store. Returns the owner-safe
+    `lock_token` on success (which the caller MUST pass back to
+    `_release_mainnet_wallet_lock`). Returns None if another
+    broadcast against the same on-chain sender is already in
+    flight in ANY worker or container.
+
+    Fails CLOSED — a store-side exception propagates so the route
+    returns 500 rather than silently letting the broadcast through
+    without the guarantee.
+    """
+    key = _mainnet_lock_key(network_id, sender_address)
+    if not key[1]:
+        return None
+    return _mainnet_store.acquire_wallet_lock(
+        network_id=network_id, sender_address=sender_address,
+    )
+
+
+def _release_mainnet_wallet_lock(
+    network_id: str, sender_address: str, lock_token: str,
+) -> None:
+    """Release the (network_id, sender_address) mainnet-broadcast
+    slot in the shared store. Owner-safe: the DB row is only
+    removed if the caller's `lock_token` matches the one currently
+    holding the slot, so a stale attempt after lease-expiry cannot
+    delete a fresh acquire.
+    """
+    if not lock_token:
+        return
+    try:
+        _mainnet_store.release_wallet_lock(
+            network_id=network_id,
+            sender_address=sender_address,
+            lock_token=lock_token,
+        )
+    except Exception:
+
+
+
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_wallet_lock_release_failed "
+            "network=%s", network_id,
+        )
+
+
+
+
+
+
+
+
+
+
+def _purge_expired_drafts_locked(now: float) -> None:
+    expired = [
+        did for did, d in _MAINNET_DRAFTS.items()
+        if d.get("expires_at", 0) <= now
+    ]
+    for did in expired:
+        _MAINNET_DRAFTS.pop(did, None)
+
+
+def _generate_draft_id() -> str:
+
+
+
+    import secrets as _secrets
+    return _secrets.token_urlsafe(24)
+
+
+def _register_mainnet_draft(
+    *,
+    vault_id: str,
+    network_id: str,
+    asset: str,
+    sender_address: str,
+    destination_address: str,
+    value_wei: int,
+    data_hex: str,
+    nonce: int,
+    gas_limit: int,
+    gas_price: int,
+    chain_id: int,
+    transaction_to: str,
+) -> Optional[str]:
+    """Register a fresh mainnet send draft via the shared store.
+
+    The Postgres store performs atomic per-`(network, sender)`
+    single-active-draft enforcement using a transaction-scoped
+    advisory lock, so a second concurrent draft for the same
+    wallet — even on a different worker or container — returns
+    None (draft-conflict) instead of both succeeding.
+
+    Fails CLOSED: a store-side exception propagates so the caller
+    returns 500. A silent None (draft-conflict) is never emitted
+    for a DB error.
+    """
+    return _mainnet_store.register_draft(
+        vault_id=str(vault_id),
+        network_id=network_id,
+        sender_address=sender_address,
+        asset=asset,
+        destination_address=destination_address,
+        value_wei=int(value_wei),
+        data_hex=data_hex,
+        nonce=int(nonce),
+        gas_limit=int(gas_limit),
+        gas_price=int(gas_price),
+        chain_id=int(chain_id),
+        transaction_to=transaction_to,
+        ttl_secs=_MAINNET_DRAFT_TTL_SECS,
+    )
+
+
+def _validate_draft_id(raw: Optional[str]) -> Optional[str]:
+
+
+
+    if raw is None:
+        return None
+    candidate = str(raw).strip()
+    if not candidate:
+        return None
+    if not _MAINNET_DRAFT_ID_RE.match(candidate):
+        return None
+    return candidate
+
+
+def _load_mainnet_draft_readonly(
+    *,
+    draft_id: str,
+    vault_id: str,
+    network_id: str,
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """SELECT-only draft fetch. Does NOT mutate state. Used to load
+    the draft's fields BEFORE running signed-transaction
+    verification so that a mismatched signed tx cannot burn a
+    legitimate draft.
+    """
+    return _mainnet_store.load_draft_readonly(
+        draft_id=draft_id,
+        vault_id=str(vault_id),
+        network_id=network_id,
+    )
+
+
+def _claim_mainnet_draft(
+    *,
+    draft_id: str,
+    vault_id: str,
+    network_id: str,
+    lease_secs: int = 60,
+) -> tuple[Optional[str], Optional[str]]:
+    """Atomically transition a draft ACTIVE -> CLAIMED.
+
+    Returns (claim_token, None) on success or (None, error_code)
+    with one of: `unknown_or_expired_draft`, `draft_vault_mismatch`,
+    `draft_network_mismatch`, `draft_already_consumed`, or
+    `draft_already_claimed`. Owner-safe: the returned claim_token
+    is the ONLY way to subsequently release or consume the draft.
+    """
+    return _mainnet_store.claim_draft(
+        draft_id=draft_id,
+        vault_id=str(vault_id),
+        network_id=network_id,
+        lease_secs=int(lease_secs),
+    )
+
+
+def _release_claimed_mainnet_draft(
+    *, draft_id: str, claim_token: str,
+) -> bool:
+    """Owner-safe transition CLAIMED -> ACTIVE. Called on structural
+    or cryptographic signed-transaction verification failure
+    BEFORE any RPC broadcast — the caller can then re-sign against
+    the same draft with the correct fields and retry."""
+    try:
+        return _mainnet_store.release_claimed_draft(
+            draft_id=draft_id, claim_token=claim_token,
+        )
+    except Exception:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_draft_release_failed "
+            "draft=%s",
+            (draft_id or "")[:16],
+        )
+        return False
+
+
+def _consume_claimed_mainnet_draft(
+    *, draft_id: str, claim_token: str, local_tx_hash: str,
+) -> bool:
+    """Owner-safe transition CLAIMED -> CONSUMED (outcome pending).
+    Records the local keccak256 hash of the raw signed transaction
+    so future retries can identify which transaction was (or may
+    have been) submitted even if the RPC broadcast times out
+    ambiguously. Leaves `claim_token` in place so the subsequent
+    `_record_mainnet_broadcast_outcome` write can be owner-safe.
+    """
+    return _mainnet_store.consume_claimed_draft(
+        draft_id=draft_id,
+        claim_token=claim_token,
+        local_tx_hash=local_tx_hash,
+    )
+
+
+def _record_mainnet_broadcast_outcome(
+    *, draft_id: str, claim_token: str, outcome: str,
+) -> bool:
+    """Owner-safe, write-once persist of the terminal broadcast
+    outcome onto a CONSUMED draft. Called immediately after the RPC
+    call completes (success or failure) so a subsequent replay
+    dispatches from the true outcome instead of blindly returning
+    `already_submitted`. False return means the outcome was already
+    recorded (or the claim_token no longer matches) -- the caller's
+    envelope is still returned to the client; a stale worker cannot
+    overwrite a fresh worker's terminal state.
+    """
+    return _mainnet_store.record_broadcast_outcome(
+        draft_id=draft_id,
+        claim_token=claim_token,
+        outcome=outcome,
+    )
 
 
 def reset_solana_safety_state_for_tests() -> None:
@@ -285,6 +604,7 @@ class SendBroadcastPayload(BaseModel):
 
     signedTransaction: Any
     idempotencyKey:    Optional[str] = None
+    draftId:           Optional[str] = None
 
     model_config = {"extra": "forbid"}
 
@@ -2449,7 +2769,9 @@ def _create_mainnet_send_draft(
     from evm_networks import NETWORK_ETHEREUM_MAINNET, chain_id_for
     from evm_rpc import (
         EvmRpcError, encode_erc20_transfer_calldata,
+        erc20_balance_of_at_url,
         eth_estimate_gas_at_url, eth_gas_price_wei_at_url,
+        eth_get_balance_wei_at_url,
         eth_get_transaction_count_at_url, is_valid_eth_address,
     )
     from vault_config import (
@@ -2484,6 +2806,60 @@ def _create_mainnet_send_draft(
                 "wallet_engine": "invalid_from_address",
                 "message": (
                     "The from address must be 0x + 40 hex chars."
+                ),
+            },
+        )
+
+
+
+
+
+
+
+
+
+
+    server_wallet_record = _load_wallet_account_record_network(
+        principal["vault_id"], "ETH", NETWORK_ETHEREUM_MAINNET,
+    )
+    if server_wallet_record is None:
+        return {
+            "status":  "draft_unavailable",
+            "asset":   norm,
+            "network": "Ethereum Mainnet",
+            "reason":  "no_mainnet_wallet",
+            "message": (
+                "No Ethereum Mainnet wallet exists for this vault. "
+                "Create one first from the Receive panel."
+            ),
+        }
+    server_from_address = (
+        server_wallet_record.get("publicAddress") or ""
+    ).strip()
+    if not is_valid_eth_address(server_from_address):
+        return {
+            "status":  "draft_unavailable",
+            "asset":   norm,
+            "network": "Ethereum Mainnet",
+            "reason":  "malformed_wallet_address",
+            "message": (
+                "The stored wallet address is malformed. Contact "
+                "support."
+            ),
+        }
+    if server_from_address.lower() != payload.fromAddress.strip().lower():
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_from_address_mismatch "
+            "vault=%s asset=%s",
+            str(principal["vault_id"])[:8] + "…", norm,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "from_address_mismatch",
+                "message": (
+                    "The from address does not match the vault's "
+                    "server-recorded Ethereum Mainnet wallet."
                 ),
             },
         )
@@ -2620,6 +2996,149 @@ def _create_mainnet_send_draft(
             ),
         }
 
+    # 2026-07-13: hard backend balance check. The mainnet draft used
+    # to return `draft_ready` without verifying the sender could
+    # actually pay for the transaction — so the UX was:
+    #   * user drafts a send of 0.05 ETH with 0.05 ETH in the wallet
+    #   * frontend hard-shows the review card and takes the PIN
+    #   * broadcast fails at the RPC with `insufficient funds for
+    #     gas * price + value`, the user has already unlocked their
+    #     PIN and paid the mental cost of "signing".
+    # For ETH: reject if `balance_wei < value_wei + gas_limit *
+    # gas_price`. For ERC20: reject if the token balance is less
+    # than the send amount, or if the ETH balance can't cover the
+    # gas cost (uses the live estimate — never a hard-coded
+    # 0.0005 ETH floor). The frontend `fetchAvailableBalance` and
+    # `fetchEthBalance` still surface a friendly warning earlier;
+    # this backend check is the authoritative source of truth.
+    fee_wei = gas_limit * gas_price
+    try:
+
+
+
+
+
+
+
+
+
+
+        eth_balance_wei = eth_get_balance_wei_at_url(
+            rpc_url, server_from_address, block_tag="pending",
+        )
+    except EvmRpcError as exc:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_balance_check_failed vault=%s "
+            "asset=%s reason=%s",
+            str(principal["vault_id"])[:8] + "…", norm, exc.code,
+        )
+        return {
+            "status":  "draft_unavailable",
+            "asset":   norm,
+            "network": "Ethereum Mainnet",
+            "reason":  "balance_check_failed",
+            "message": (
+                "Cannot draft a mainnet send: the upstream Ethereum "
+                "Mainnet RPC could not report the sender balance."
+            ),
+        }
+
+    if is_token:
+        # For ERC20 sends, verify the token balance (uses eth_call
+        # against the same token contract Balance uses — one config
+        # source) AND that the wallet has enough ETH for gas.
+        try:
+            token_balance = erc20_balance_of_at_url(
+                rpc_url,
+                token_contract_address=token_contract,
+                holder_address=server_from_address,
+                block_tag="pending",
+            )
+        except EvmRpcError as exc:
+            logger.warning(
+                "[WALLET-ENGINE] mainnet_token_balance_check_failed "
+                "vault=%s asset=%s reason=%s",
+                str(principal["vault_id"])[:8] + "…", norm, exc.code,
+            )
+            return {
+                "status":  "draft_unavailable",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  "token_balance_check_failed",
+                "message": (
+                    "Cannot draft a mainnet token send: the upstream "
+                    "Ethereum Mainnet RPC could not report the token "
+                    "balance."
+                ),
+            }
+        if token_balance < base_units:
+            logger.info(
+                "[WALLET-ENGINE] mainnet_insufficient_token_balance "
+                "vault=%s asset=%s",
+                str(principal["vault_id"])[:8] + "…", norm,
+            )
+            return {
+                "status":  "insufficient_balance",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  "insufficient_token_balance",
+                "message": (
+                    "The wallet's token balance is less than the "
+                    "amount to send. Reduce the amount or top up "
+                    "the wallet before retrying."
+                ),
+                "unit":              ethereum_mainnet_token_unit(norm),
+                "requiredBaseUnits": str(base_units),
+                "availableBaseUnits": str(token_balance),
+            }
+        if eth_balance_wei < fee_wei:
+            logger.info(
+                "[WALLET-ENGINE] mainnet_insufficient_gas_eth "
+                "vault=%s asset=%s",
+                str(principal["vault_id"])[:8] + "…", norm,
+            )
+            return {
+                "status":  "insufficient_balance",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  "insufficient_gas_eth",
+                "message": (
+                    "The wallet's ETH balance is less than the "
+                    "estimated network fee for this token send. "
+                    "Top up ETH before retrying."
+                ),
+                "requiredWei":  str(fee_wei),
+                "availableWei": str(eth_balance_wei),
+            }
+    else:
+        # For native ETH sends, verify `value + fee <= balance`.
+        # This is the exact anti-check for the "amount only, no gas
+        # reservation" bug: a user with 0.05 ETH cannot draft a
+        # 0.05 ETH send.
+        required_wei = value_wei + fee_wei
+        if eth_balance_wei < required_wei:
+            logger.info(
+                "[WALLET-ENGINE] mainnet_insufficient_eth_for_amount_"
+                "plus_gas vault=%s",
+                str(principal["vault_id"])[:8] + "…",
+            )
+            return {
+                "status":  "insufficient_balance",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  "insufficient_eth_for_amount_plus_gas",
+                "message": (
+                    "The wallet's ETH balance is less than the send "
+                    "amount plus the estimated network fee. Reduce "
+                    "the amount or top up the wallet before "
+                    "retrying."
+                ),
+                "requiredWei":  str(required_wei),
+                "availableWei": str(eth_balance_wei),
+                "valueWei":     str(value_wei),
+                "feeWei":       str(fee_wei),
+            }
+
     logger.info(
         "[WALLET-ENGINE] mainnet_draft_ok vault=%s asset=%s",
         str(principal["vault_id"])[:8] + "…", norm,
@@ -2627,10 +3146,52 @@ def _create_mainnet_send_draft(
 
     mainnet_chain_id = chain_id_for(NETWORK_ETHEREUM_MAINNET)
 
+
+
+
+
+
+
+
+
+
+    draft_id = _register_mainnet_draft(
+        vault_id=str(principal["vault_id"]),
+        network_id=NETWORK_ETHEREUM_MAINNET,
+        asset=norm,
+        sender_address=server_from_address,
+        destination_address=payload.destinationAddress,
+        value_wei=value_wei,
+        data_hex=data_hex,
+        nonce=nonce,
+        gas_limit=gas_limit,
+        gas_price=gas_price,
+        chain_id=int(mainnet_chain_id or 0),
+        transaction_to=transaction_to,
+    )
+    if draft_id is None:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_draft_conflict "
+            "vault=%s asset=%s",
+            str(principal["vault_id"])[:8] + "…", norm,
+        )
+        return {
+            "wallet_engine": "draft_conflict",
+            "status":        "draft_conflict",
+            "asset":         norm,
+            "network":       "Ethereum Mainnet",
+            "message": (
+                "Another mainnet draft for this wallet is still in "
+                "flight. Wait for the previous transaction to be "
+                "broadcast or expire before drafting a new one."
+            ),
+        }
+
     if is_token:
         token_unit = ethereum_mainnet_token_unit(norm)
         return {
             "status":              "draft_ready",
+            "draftId":             draft_id,
             "asset":               norm,
             "network":             "Ethereum Mainnet",
             "fromAddress":         payload.fromAddress,
@@ -2656,6 +3217,7 @@ def _create_mainnet_send_draft(
 
     return {
         "status":             "draft_ready",
+        "draftId":            draft_id,
         "asset":              norm,
         "network":            "Ethereum Mainnet",
         "fromAddress":        payload.fromAddress,
@@ -2818,45 +3380,483 @@ def _broadcast_mainnet_signed_transaction(
                 "Retry-After": str(rate_blocked["retry_after"]),
             },
         )
-                        
-    try:
-        tx_hash = eth_send_raw_transaction_at_url(
-            rpc_url, payload.signedTransaction,
-        )
-    except EvmRpcError as exc:
+
+    from evm_networks import NETWORK_ETHEREUM_MAINNET
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    raw_draft_id = getattr(payload, "draftId", None)
+    draft_id = _validate_draft_id(raw_draft_id)
+    if draft_id is None:
         logger.warning(
-            "[WALLET-ENGINE] mainnet_broadcast_unavailable vault=%s "
-            "asset=%s reason=%s",
-            str(vault_id)[:8] + "…", norm, exc.code,
+            "[WALLET-ENGINE] mainnet_broadcast_missing_draft_id "
+            "vault=%s asset=%s",
+            str(vault_id)[:8] + "…", norm,
         )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "draft_id_required",
+                "message": (
+                    "Mainnet broadcast requires a fresh draftId "
+                    "issued by /send/draft. Re-draft and retry."
+                ),
+            },
+        )
+
+
+
+
+    # 2026-07-13: draft state machine.
+    #     ACTIVE  --claim-->  CLAIMED  --consume-->  CONSUMED
+    #                             |
+    #                             +-- release (post-claim failure)
+    #
+    # Verification runs BEFORE claim, so a verify failure returns 400
+    # from the pre-claim step without touching draft state -- no
+    # release is needed on the verify-failure path. release_draft is
+    # invoked only if the wallet-lock acquisition fails AFTER claim,
+    # to hand ownership back so a fresh worker can retry.
+    #
+    # STEP 1: SELECT-only load. Cannot mutate draft state -- the
+    # signed-tx verification MUST run before any state change so a
+    # malformed / mismatching signed tx cannot burn a legitimate
+    # draft.
+    draft, err = _load_mainnet_draft_readonly(
+        draft_id=draft_id,
+        vault_id=vault_id,
+        network_id=NETWORK_ETHEREUM_MAINNET,
+    )
+    if err is not None or draft is None:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_broadcast_draft_%s "
+            "vault=%s asset=%s",
+            err or "missing", str(vault_id)[:8] + "…", norm,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": err or "unknown_or_expired_draft",
+                "message": (
+                    "Mainnet broadcast: the draft is unknown or has "
+                    "expired. Re-draft and retry."
+                ),
+            },
+        )
+
+
+
+
+    if draft.get("consumed"):
+        # 2026-07-13 CONSUMED replay dispatch.
+        #
+        # The previous version returned `already_submitted` for ANY
+        # same-tx replay against a consumed draft. That was wrong for
+        # explicit RPC rejections: the client had proof the provider
+        # rejected the tx yet was told it was already_submitted. We
+        # now persist the true broadcast outcome on the draft row
+        # (`broadcast_outcome`) and dispatch the replay envelope from
+        # that.
+        #
+        # Crash-window semantics: a CONSUMED row whose
+        # `broadcast_outcome IS NULL` means the worker process
+        # crashed between `consume_claimed_draft` and
+        # `record_broadcast_outcome`. Conservative: treat as
+        # `submission_uncertain`. The transaction MAY have been
+        # submitted; the client should poll the local hash before
+        # assuming rejection.
+        cached_hash = draft.get("local_tx_hash")
+        outcome = draft.get("broadcast_outcome")
+        from evm_signed_tx_verify import compute_local_tx_hash
+        submitted_hash = compute_local_tx_hash(
+            str(payload.signedTransaction),
+        )
+        different_tx = not (
+            cached_hash
+            and submitted_hash
+            and cached_hash.lower() == submitted_hash.lower()
+        )
+        if different_tx:
+            logger.warning(
+                "[WALLET-ENGINE] mainnet_broadcast_replay_wrong_tx "
+                "vault=%s asset=%s outcome=%s",
+                str(vault_id)[:8] + "…", norm, outcome,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "wallet_engine": "draft_already_consumed",
+                    "message": (
+                        "The draft was already broadcast against a "
+                        "different signed transaction. Draft a new "
+                        "send if you need to retry."
+                    ),
+                },
+            )
+
+        # Same-tx replay. Dispatch on persisted outcome.
+        logger.info(
+            "[WALLET-ENGINE] mainnet_broadcast_replay "
+            "vault=%s asset=%s outcome=%s hash=%s",
+            str(vault_id)[:8] + "…", norm,
+            outcome or "pending", cached_hash[:14],
+        )
+        if outcome == "submitted" or outcome == "already_known":
+            return {
+                "status":  "already_submitted",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "txHash":  cached_hash,
+                "message": (
+                    "This draft was already broadcast with this "
+                    "exact signed transaction. Check the transaction "
+                    "status page for confirmation state."
+                ),
+            }
+        if outcome == "explicitly_rejected":
+            return {
+                "status":  "broadcast_rejected",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "txHash":  cached_hash,
+                "reason":  "previously_rejected_by_rpc",
+                "message": (
+                    "This signed transaction was previously rejected "
+                    "by the mainnet RPC provider (for example: "
+                    "insufficient funds, invalid sender, or intrinsic "
+                    "gas too low). The old draft is permanently "
+                    "consumed under the single-attempt policy; draft "
+                    "a fresh send to retry."
+                ),
+            }
+        # outcome == "submission_uncertain" OR outcome IS NULL
+        # (crash window between consume and outcome persist).
         return {
-            "status":  "broadcast_unavailable",
+            "status":  "submission_uncertain",
             "asset":   norm,
             "network": "Ethereum Mainnet",
-            "reason":  exc.code,
+            "txHash":  cached_hash,
+            "reason":  outcome or "outcome_not_recorded",
             "message": (
-                "Cannot broadcast the mainnet transaction: the "
-                "upstream Ethereum Mainnet RPC returned an error."
+                "This draft's broadcast outcome is uncertain "
+                "(transport ambiguity or a worker process interrupted "
+                "between transaction consume and outcome persistence). "
+                "The transaction MAY have been accepted by the "
+                "network. Check the transaction status page with the "
+                "returned txHash before drafting a new send."
             ),
         }
-    logger.info(
-        "[WALLET-ENGINE] mainnet_broadcast_ok vault=%s asset=%s "
-        "txHashPrefix=%s",
-        str(vault_id)[:8] + "…", norm,
-        (tx_hash or "")[:10],
+    sender_address = str(draft.get("sender_address", "")).strip()
+    if not sender_address:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "wallet_engine": "draft_missing_sender",
+                "message": "Draft has no sender address on record.",
+            },
+        )
+
+
+
+
+    from evm_signed_tx_verify import (
+        verify_signed_tx_against_draft, compute_local_tx_hash,
     )
-    envelope = {
-        "status":  "submitted",
-        "asset":   norm,
-        "network": "Ethereum Mainnet",
-        "txHash":  tx_hash,
-    }
-                                                                    
-                                                                    
-    _record_idempotent_broadcast(
-        vault_id, idem_key or "", payload.signedTransaction, envelope,
+    verify = verify_signed_tx_against_draft(
+        raw_signed_tx_hex=str(payload.signedTransaction),
+        draft=draft,
     )
-    return envelope
+    if not verify.ok:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_signed_tx_binding_failed "
+            "vault=%s asset=%s reason=%s field=%s",
+            str(vault_id)[:8] + "…", norm,
+            verify.reason, verify.field,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": verify.reason
+                    or "signed_tx_binding_failed",
+                "status":        "signed_tx_binding_failed",
+                "asset":         norm,
+                "network":       "Ethereum Mainnet",
+                "field":         verify.field,
+                "message": (
+                    "The signed transaction does not match the "
+                    "server-issued draft's fields. Re-sign with the "
+                    "drafted parameters and retry with the same "
+                    "draftId."
+                ),
+            },
+        )
+
+    local_tx_hash = verify.decoded.local_tx_hash
+
+
+
+
+
+
+
+
+    claim_token, claim_err = _claim_mainnet_draft(
+        draft_id=draft_id,
+        vault_id=vault_id,
+        network_id=NETWORK_ETHEREUM_MAINNET,
+        lease_secs=60,
+    )
+    if claim_token is None:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_broadcast_draft_claim_%s "
+            "vault=%s asset=%s",
+            claim_err or "missing",
+            str(vault_id)[:8] + "…", norm,
+        )
+        status_code = 409 if claim_err == "draft_already_claimed" else 400
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "wallet_engine": claim_err or "draft_claim_failed",
+                "message": (
+                    "Mainnet broadcast: the draft could not be "
+                    "atomically claimed. Retry with a fresh draft "
+                    "if this persists."
+                ),
+            },
+        )
+
+
+
+
+    lock_token = _try_acquire_mainnet_wallet_lock(
+        NETWORK_ETHEREUM_MAINNET, sender_address,
+    )
+    if not lock_token:
+
+        _release_claimed_mainnet_draft(
+            draft_id=draft_id, claim_token=claim_token,
+        )
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_wallet_broadcast_inflight "
+            "vault=%s asset=%s",
+            str(vault_id)[:8] + "…", norm,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "wallet_engine": "wallet_broadcast_inflight",
+                "status":        "wallet_broadcast_inflight",
+                "asset":         norm,
+                "network":       "Ethereum Mainnet",
+                "message": (
+                    "Another mainnet send for this wallet is already "
+                    "in flight. Wait for it to finish before "
+                    "submitting a new send from this wallet."
+                ),
+            },
+        )
+
+    try:
+
+
+
+        consumed = _consume_claimed_mainnet_draft(
+            draft_id=draft_id,
+            claim_token=claim_token,
+            local_tx_hash=local_tx_hash,
+        )
+        if not consumed:
+
+
+
+            logger.warning(
+                "[WALLET-ENGINE] mainnet_claim_lost_before_consume "
+                "vault=%s asset=%s",
+                str(vault_id)[:8] + "…", norm,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "wallet_engine": "draft_claim_lost",
+                    "message": (
+                        "The draft's claim expired before this "
+                        "worker could consume it. Re-draft and "
+                        "retry."
+                    ),
+                },
+            )
+
+        try:
+            tx_hash = eth_send_raw_transaction_at_url(
+                rpc_url, payload.signedTransaction,
+            )
+        except EvmRpcError as exc:
+
+
+
+
+
+
+            rpc_msg_lower = (
+                (exc.rpc_error_message or "").lower()
+                if not exc.is_ambiguous else ""
+            )
+            is_already_known = (
+                not exc.is_ambiguous
+                and (
+                    "already known" in rpc_msg_lower
+                    or "known transaction" in rpc_msg_lower
+                )
+            )
+            is_nonce_too_low = (
+                not exc.is_ambiguous
+                and "nonce too low" in rpc_msg_lower
+            )
+            vault_prefix = str(vault_id)[:8] + "…"
+            if is_already_known:
+                logger.info(
+                    "[WALLET-ENGINE] mainnet_broadcast_already_known "
+                    "vault=%s asset=%s localHash=%s",
+                    vault_prefix, norm, local_tx_hash[:14],
+                )
+                _record_mainnet_broadcast_outcome(
+                    draft_id=draft_id, claim_token=claim_token,
+                    outcome="already_known",
+                )
+                envelope = {
+                    "status":  "already_submitted",
+                    "asset":   norm,
+                    "network": "Ethereum Mainnet",
+                    "txHash":  local_tx_hash,
+                    "message": (
+                        "The mainnet RPC provider reports this "
+                        "exact transaction is already known to "
+                        "the network. Check the transaction "
+                        "status page with the returned txHash."
+                    ),
+                }
+                _record_idempotent_broadcast(
+                    vault_id, idem_key or "",
+                    payload.signedTransaction, envelope,
+                )
+                return envelope
+            if exc.is_ambiguous or is_nonce_too_low:
+                logger.warning(
+                    "[WALLET-ENGINE] mainnet_broadcast_uncertain "
+                    "vault=%s asset=%s reason=%s ambiguous=%s "
+                    "rpcCode=%s localHash=%s",
+                    vault_prefix, norm, exc.code,
+                    "yes" if exc.is_ambiguous else "no",
+                    exc.rpc_error_code, local_tx_hash[:14],
+                )
+                if is_nonce_too_low:
+                    uncertain_msg = (
+                        "The mainnet RPC provider returned "
+                        "`nonce too low`. This can happen if "
+                        "this sender's nonce was already "
+                        "consumed by a prior successful "
+                        "broadcast (possibly through a different "
+                        "provider). The transaction MAY already "
+                        "be on-chain. Check the transaction "
+                        "status page with the returned txHash "
+                        "before assuming rejection or re-signing "
+                        "with a new nonce."
+                    )
+                else:
+                    uncertain_msg = (
+                        "The mainnet RPC connection was "
+                        "interrupted during broadcast. The "
+                        "transaction MAY have been accepted by "
+                        "the network. Check the transaction "
+                        "status page with the returned txHash. "
+                        "Do not re-sign with a new nonce until "
+                        "the status is confirmed as `not_found` "
+                        "on the network."
+                    )
+                _record_mainnet_broadcast_outcome(
+                    draft_id=draft_id, claim_token=claim_token,
+                    outcome="submission_uncertain",
+                )
+                envelope = {
+                    "status":  "submission_uncertain",
+                    "asset":   norm,
+                    "network": "Ethereum Mainnet",
+                    "reason":  exc.code,
+                    "txHash":  local_tx_hash,
+                    "message": uncertain_msg,
+                }
+                _record_idempotent_broadcast(
+                    vault_id, idem_key or "",
+                    payload.signedTransaction, envelope,
+                )
+                return envelope
+            logger.warning(
+                "[WALLET-ENGINE] mainnet_broadcast_unavailable "
+                "vault=%s asset=%s reason=%s rpcCode=%s",
+                vault_prefix, norm, exc.code, exc.rpc_error_code,
+            )
+            _record_mainnet_broadcast_outcome(
+                draft_id=draft_id, claim_token=claim_token,
+                outcome="explicitly_rejected",
+            )
+            envelope = {
+                "status":  "broadcast_unavailable",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  exc.code,
+                "message": (
+                    "Cannot broadcast the mainnet transaction: "
+                    "the upstream Ethereum Mainnet RPC returned "
+                    "an explicit rejection. The draft was "
+                    "consumed under the single-attempt policy; "
+                    "retrying requires a fresh draft."
+                ),
+            }
+            _record_idempotent_broadcast(
+                vault_id, idem_key or "",
+                payload.signedTransaction, envelope,
+            )
+            return envelope
+        logger.info(
+            "[WALLET-ENGINE] mainnet_broadcast_ok vault=%s asset=%s "
+            "txHashPrefix=%s localMatch=%s",
+            str(vault_id)[:8] + "…", norm,
+            (tx_hash or "")[:10],
+            "yes" if (tx_hash or "").lower() == local_tx_hash.lower()
+                else "no",
+        )
+        _record_mainnet_broadcast_outcome(
+            draft_id=draft_id, claim_token=claim_token,
+            outcome="submitted",
+        )
+        envelope = {
+            "status":  "submitted",
+            "asset":   norm,
+            "network": "Ethereum Mainnet",
+            "txHash":  tx_hash,
+        }
+        _record_idempotent_broadcast(
+            vault_id, idem_key or "",
+            payload.signedTransaction, envelope,
+        )
+        return envelope
+    finally:
+        _release_mainnet_wallet_lock(
+            NETWORK_ETHEREUM_MAINNET, sender_address, lock_token,
+        )
 
 
 @router.get(

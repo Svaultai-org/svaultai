@@ -225,6 +225,21 @@ class _CryptoWalletEngineAssetDetailPageState
 
   MoneroScannerStatus? _backendMoneroScannerStatus;
 
+  // Compact label for sheet titles — collapses ERC20 token asset IDs
+  // to their short symbol so the sheet title reads "Send USDT" instead
+  // of "Send USDT_ERC20". Called only from send sheet callers.
+  String _shortAssetLabel(String asset) {
+    switch (asset) {
+      case 'USDT_ERC20':
+        return 'USDT';
+      case 'USDC_ERC20':
+        return 'USDC';
+      case 'USDT_TRC20':
+        return 'USDT (TRC20)';
+    }
+    return asset;
+  }
+
   bool get _isSolana =>
       widget.asset == 'SOL'
       && widget.network == 'solana_mainnet';
@@ -688,6 +703,7 @@ class _CryptoWalletEngineAssetDetailPageState
         context: context,
         title: 'Send USDT (TRC20)',
         sheetKey: 'crypto_wallet_engine_asset_detail_tron_send_sheet',
+        bodyOwnsLayout: true,
         child: CryptoWalletEngineTronSendPanel(
           key: const Key(
             'crypto_wallet_engine_asset_detail_tron_send_panel',
@@ -728,6 +744,7 @@ class _CryptoWalletEngineAssetDetailPageState
         context: context,
         title: 'Send SOL',
         sheetKey: 'crypto_wallet_engine_asset_detail_solana_send_sheet',
+        bodyOwnsLayout: true,
         child: CryptoWalletEngineSolanaSendPanel(
           key: const Key(
             'crypto_wallet_engine_asset_detail_solana_send_panel',
@@ -771,8 +788,9 @@ class _CryptoWalletEngineAssetDetailPageState
     if (!mounted) return;
     showCryptoWalletSheet<void>(
       context: context,
-      title: 'Send ${widget.asset}',
+      title: 'Send ${_shortAssetLabel(widget.asset)}',
       sheetKey: 'crypto_wallet_engine_asset_detail_send_sheet',
+      bodyOwnsLayout: true,
       child: CryptoWalletEngineSendPanel(
         key: Key(
           'crypto_wallet_engine_asset_detail_send_panel_${widget.asset}',
