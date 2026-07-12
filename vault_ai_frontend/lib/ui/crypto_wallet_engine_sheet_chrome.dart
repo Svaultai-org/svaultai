@@ -86,7 +86,27 @@ class CryptoWalletSheetChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final maxHeight = MediaQuery.of(context).size.height * heightFraction;
+    // 2026-07-13 mobile-keyboard fix:
+    //
+    // showModalBottomSheet does NOT automatically wrap the sheet in a
+    // viewInsets.bottom padding on mobile Safari / iOS. We do it here,
+    // at the sheet's outermost level, so the ENTIRE sheet (header +
+    // scroll body + footer) lifts above the keyboard as one unit. The
+    // header and close X therefore stay reachable at every keyboard
+    // state, and the sticky footer (Review button) sits naturally at
+    // the sheet's bottom edge -- just above the keyboard -- instead
+    // of floating in the middle.
+    //
+    // The maxHeight cap also subtracts the keyboard inset so the
+    // sheet doesn't demand more space than the keyboard-free area.
+    // A 240dp floor prevents a huge keyboard from squashing the sheet
+    // below usability.
+    final mq = MediaQuery.of(context);
+    final availableHeight =
+        (mq.size.height - mq.viewInsets.bottom).clamp(0.0, mq.size.height);
+    final maxHeight = (availableHeight * heightFraction).clamp(
+      240.0, mq.size.height,
+    );
     return Focus(
       autofocus: true,
       canRequestFocus: true,
@@ -104,53 +124,72 @@ class CryptoWalletSheetChrome extends StatelessWidget {
         }
         return KeyEventResult.ignored;
       },
-      child: Container(
-        key: Key(sheetKey),
-        constraints: BoxConstraints(maxHeight: maxHeight),
-        decoration: const BoxDecoration(
-          color: kWalletBgBase,
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(18),
-          ),
-          border: Border(
-            top: BorderSide(color: kWalletBorder, width: 1),
-            left: BorderSide(color: kWalletBorder, width: 1),
-            right: BorderSide(color: kWalletBorder, width: 1),
-          ),
-        ),
-        // The chrome itself does NOT bake `viewInsets.bottom` into the
-        // frame — panels that want a sticky action footer above the
-        // keyboard (all Send panels via `WalletSendScaffold`) handle
-        // that inside their body so the header/close X stays fully
-        // reachable on the header. For panels that pass a plain body
-        // (e.g. Receive sheets), we still respect the keyboard by
-        // scrolling the inner content.
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _DragHandle(sheetKey: sheetKey),
-            _Header(
-              title: title,
-              sheetKey: sheetKey,
-              onBack: onBack,
+      child: AnimatedPadding(
+        // Lift the whole sheet (header + body + footer as one unit)
+        // above the keyboard. Animated so the transition matches the
+        // OS keyboard's raise/dismiss animation.
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+        child: Container(
+          key: Key(sheetKey),
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          decoration: const BoxDecoration(
+            color: kWalletBgBase,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(18),
             ),
-            const Divider(
-              key: Key('crypto_wallet_engine_sheet_divider'),
-              height: 1,
-              thickness: 1,
-              color: kWalletBorder,
+            border: Border(
+              top: BorderSide(color: kWalletBorder, width: 1),
+              left: BorderSide(color: kWalletBorder, width: 1),
+              right: BorderSide(color: kWalletBorder, width: 1),
             ),
-            if (bodyOwnsLayout)
-              Flexible(child: child)
-            else
-              Flexible(
-                child: SingleChildScrollView(
-                  key: Key('${sheetKey}_scroll'),
-                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                  child: child,
+          ),
+          // ViewInsets are applied ONCE at the sheet's outer edge (in
+          // the AnimatedPadding above). The inner Column, scroll body,
+          // and any sticky footer do NOT add extra viewInsets padding
+          // -- that double-padding was the "Review floats in the
+          // middle" bug the 2026-07-13 mobile fix removed.
+          //
+          // NOTE: because the inner children now see
+          // `MediaQuery.viewInsets.bottom` == 0 relative to their
+          // parent's viewport (the padding consumed it), we wrap the
+          // subtree in a MediaQuery override so `viewInsets.bottom`
+          // reads as zero for descendants -- otherwise the descendant
+          // WalletSendScaffold body-bottom-padding would grow twice on
+          // the keyboard event.
+          child: MediaQuery(
+            data: mq.copyWith(
+              viewInsets: mq.viewInsets.copyWith(bottom: 0.0),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _DragHandle(sheetKey: sheetKey),
+                _Header(
+                  title: title,
+                  sheetKey: sheetKey,
+                  onBack: onBack,
                 ),
-              ),
-          ],
+                const Divider(
+                  key: Key('crypto_wallet_engine_sheet_divider'),
+                  height: 1,
+                  thickness: 1,
+                  color: kWalletBorder,
+                ),
+                if (bodyOwnsLayout)
+                  Flexible(child: child)
+                else
+                  Flexible(
+                    child: SingleChildScrollView(
+                      key: Key('${sheetKey}_scroll'),
+                      padding: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+                      child: child,
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );

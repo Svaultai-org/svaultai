@@ -153,6 +153,13 @@ class _CryptoWalletEngineTronSendPanelState
   final TextEditingController _amountController =
       TextEditingController();
 
+  // 2026-07-13 mobile-keyboard fix: shared scroll controller +
+  // FocusNodes so tapping / Next-key-hopping to a field slides it
+  // above the mobile Safari keyboard.
+  final ScrollController _formScrollCtrl = ScrollController();
+  final FocusNode _destFocus = FocusNode(debugLabel: 'tron_send_dest');
+  final FocusNode _amountFocus = FocusNode(debugLabel: 'tron_send_amount');
+
   _TronSendStage _stage = _TronSendStage.input;
   String? _error;
   Map<String, dynamic>? _draft;
@@ -173,6 +180,8 @@ class _CryptoWalletEngineTronSendPanelState
     if (widget.prefilledAmount != null) {
       _amountController.text = widget.prefilledAmount!;
     }
+    _destFocus.addListener(_maybeScrollFocusedFieldIntoView);
+    _amountFocus.addListener(_maybeScrollFocusedFieldIntoView);
   }
 
   @override
@@ -180,9 +189,32 @@ class _CryptoWalletEngineTronSendPanelState
     _statusPollActive = false;
     _statusTimer?.cancel();
     _statusTimer = null;
+    _destFocus.removeListener(_maybeScrollFocusedFieldIntoView);
+    _amountFocus.removeListener(_maybeScrollFocusedFieldIntoView);
+    _destFocus.dispose();
+    _amountFocus.dispose();
+    _formScrollCtrl.dispose();
     _destinationController.dispose();
     _amountController.dispose();
     super.dispose();
+  }
+
+  void _maybeScrollFocusedFieldIntoView() {
+    if (!mounted) return;
+    final BuildContext? focusedContext = _destFocus.hasFocus
+        ? _destFocus.context
+        : (_amountFocus.hasFocus ? _amountFocus.context : null);
+    if (focusedContext == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!focusedContext.mounted) return;
+      Scrollable.ensureVisible(
+        focusedContext,
+        alignment: 0.25,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   bool get _sendEnabled =>
@@ -529,6 +561,7 @@ class _CryptoWalletEngineTronSendPanelState
           header: header,
           body: _buildInputBody(),
           footer: _buildInputFooter(),
+          scrollController: _formScrollCtrl,
         );
       case _TronSendStage.review:
         return WalletSendScaffold(
@@ -610,6 +643,11 @@ class _CryptoWalletEngineTronSendPanelState
         TextField(
           key: const Key(kTronSendDestinationInputKey),
           controller: _destinationController,
+          focusNode: _destFocus,
+          textInputAction: TextInputAction.next,
+          autocorrect: false,
+          enableSuggestions: false,
+          onSubmitted: (_) => _amountFocus.requestFocus(),
           decoration: const InputDecoration(
             labelText: kTronSendDestinationLabel,
             isDense: true,
@@ -619,6 +657,9 @@ class _CryptoWalletEngineTronSendPanelState
         TextField(
           key: const Key(kTronSendAmountInputKey),
           controller: _amountController,
+          focusNode: _amountFocus,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _amountFocus.unfocus(),
           decoration: const InputDecoration(
             labelText: kTronSendAmountLabel,
             isDense: true,

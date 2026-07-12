@@ -247,6 +247,13 @@ class _CryptoWalletEngineSendPanelState
   final TextEditingController _amountCtrl = TextEditingController();
   final TextEditingController _confirmPhraseCtrl = TextEditingController();
 
+  // 2026-07-13 mobile-keyboard fix: a scroll controller shared with
+  // WalletSendScaffold plus a FocusNode per text field so tapping /
+  // hopping to a field programmatically slides it above the keyboard.
+  final ScrollController _formScrollCtrl = ScrollController();
+  final FocusNode _destFocus = FocusNode(debugLabel: 'eth_send_dest');
+  final FocusNode _amountFocus = FocusNode(debugLabel: 'eth_send_amount');
+
   _DraftFields? _draft;
   String? _submittedTxHash;
 
@@ -263,8 +270,8 @@ class _CryptoWalletEngineSendPanelState
   @override
   void initState() {
     super.initState();
-    
-    
+
+
     if (widget.prefilledDestination != null &&
         widget.prefilledDestination!.isNotEmpty) {
       _destCtrl.text = widget.prefilledDestination!;
@@ -273,14 +280,45 @@ class _CryptoWalletEngineSendPanelState
         widget.prefilledAmount!.isNotEmpty) {
       _amountCtrl.text = widget.prefilledAmount!;
     }
+    _destFocus.addListener(_maybeScrollFocusedFieldIntoView);
+    _amountFocus.addListener(_maybeScrollFocusedFieldIntoView);
   }
 
   @override
   void dispose() {
+    _destFocus.removeListener(_maybeScrollFocusedFieldIntoView);
+    _amountFocus.removeListener(_maybeScrollFocusedFieldIntoView);
+    _destFocus.dispose();
+    _amountFocus.dispose();
+    _formScrollCtrl.dispose();
     _destCtrl.dispose();
     _amountCtrl.dispose();
     _confirmPhraseCtrl.dispose();
     super.dispose();
+  }
+
+  // 2026-07-13 mobile-keyboard fix: when either the Destination or
+  // Amount text field gains focus (real tap or Next-key hop), wait a
+  // frame for the OS keyboard to raise its inset, then Scrollable-
+  // .ensureVisible the field so it's centered in the remaining
+  // viewport. If no focus is held, no scroll happens — closing the
+  // keyboard preserves scroll position and entered values.
+  void _maybeScrollFocusedFieldIntoView() {
+    if (!mounted) return;
+    final BuildContext? focusedContext = _destFocus.hasFocus
+        ? _destFocus.context
+        : (_amountFocus.hasFocus ? _amountFocus.context : null);
+    if (focusedContext == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!focusedContext.mounted) return;
+      Scrollable.ensureVisible(
+        focusedContext,
+        alignment: 0.25,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   String _generateIdempotencyKey() {
@@ -772,11 +810,20 @@ class _CryptoWalletEngineSendPanelState
         ],
       ],
     );
+    // 2026-07-13 mobile-keyboard fix: only wire the shared scroll
+    // controller in the form stage — that's the only stage with focus-
+    // triggered scroll behavior (destination + amount fields). Review
+    // / confirm-phrase / submitted stages use the default controller
+    // to avoid the controller being attached to two different
+    // Scrollables when the stage rebuilds.
+    final scaffoldScrollController =
+        _stage == _Stage.form ? _formScrollCtrl : null;
     return WalletSendScaffold(
       sheetKey: sheetKey,
       header: chip,
       body: composedBody,
       footer: stageFooter,
+      scrollController: scaffoldScrollController,
     );
   }
 
@@ -800,6 +847,11 @@ class _CryptoWalletEngineSendPanelState
   // The form-stage input fields (destination, amount). The Review
   // button is rendered separately in `_buildFormFooter` so it stays
   // pinned at the bottom of the sheet above the keyboard.
+  //
+  // 2026-07-13 mobile-keyboard fix: FocusNode + textInputAction wire-
+  // up so the mobile Safari keyboard renders a "Next" button on
+  // Destination and a "Done" button on Amount; hopping Next moves
+  // focus programmatically to Amount which then autoscrolls into view.
   Widget _buildFormBody(BuildContext ctx) {
     return Column(
       key: const Key('eth_send_panel_form_stage'),
@@ -809,6 +861,11 @@ class _CryptoWalletEngineSendPanelState
         TextField(
           key: const Key('eth_send_panel_destination_input'),
           controller: _destCtrl,
+          focusNode: _destFocus,
+          textInputAction: TextInputAction.next,
+          autocorrect: false,
+          enableSuggestions: false,
+          onSubmitted: (_) => _amountFocus.requestFocus(),
           decoration: const InputDecoration(
             labelText: kEthSendDestinationLabel,
             hintText: '0x...',
@@ -819,7 +876,10 @@ class _CryptoWalletEngineSendPanelState
         TextField(
           key: const Key('eth_send_panel_amount_input'),
           controller: _amountCtrl,
+          focusNode: _amountFocus,
+          textInputAction: TextInputAction.done,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onSubmitted: (_) => _amountFocus.unfocus(),
           decoration: const InputDecoration(
             labelText: kEthSendAmountLabel,
             hintText: '0.01',

@@ -46,11 +46,23 @@ import 'crypto_wallet_engine_design.dart';
 ///
 /// Passing `footer: null` hides the sticky footer entirely (used by
 /// stages that don't need it, e.g. the disabled/paused banners).
+///
+/// 2026-07-13 mobile-keyboard fix: the sheet chrome already caps its
+/// own maxHeight against (screen - viewInsets.bottom), so this
+/// scaffold does NOT add extra `viewInsets.bottom` padding to the
+/// footer. Doing so was the exact "Review action becomes a very
+/// large fixed bar in the middle of the screen" bug — double
+/// keyboard-inset accounting pushed the footer up over the body.
+///
+/// Callers may pass a [scrollController] to observe/drive scroll
+/// (used by the Send panels to bring the focused text field above
+/// the keyboard via Scrollable.ensureVisible on focus).
 class WalletSendScaffold extends StatelessWidget {
   final Widget? header;
   final Widget body;
   final Widget? footer;
   final String sheetKey;
+  final ScrollController? scrollController;
 
   const WalletSendScaffold({
     super.key,
@@ -58,11 +70,17 @@ class WalletSendScaffold extends StatelessWidget {
     this.header,
     this.footer,
     this.sheetKey = 'wallet_send',
+    this.scrollController,
   });
 
   @override
   Widget build(BuildContext context) {
+    // The scroll body needs breathing room above the footer so the
+    // last focused field's caret and label sit comfortably above the
+    // border, not glued to it. Grows a bit more when the keyboard is
+    // open so ensureVisible has room to slide the field upward.
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    final bodyBottomPad = keyboardInset > 0 ? 40.0 : 24.0;
     return Column(
       key: Key('${sheetKey}_scaffold'),
       mainAxisSize: MainAxisSize.min,
@@ -76,28 +94,29 @@ class WalletSendScaffold extends StatelessWidget {
         Flexible(
           child: SingleChildScrollView(
             key: Key('${sheetKey}_scroll'),
-            padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+            controller: scrollController,
+            keyboardDismissBehavior:
+                ScrollViewKeyboardDismissBehavior.manual,
+            padding: EdgeInsets.fromLTRB(18, 8, 18, bodyBottomPad),
             child: body,
           ),
         ),
         if (footer != null)
-          AnimatedPadding(
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOut,
-            padding: EdgeInsets.only(bottom: keyboardInset),
-            child: Container(
-              key: Key('${sheetKey}_footer'),
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
-              decoration: const BoxDecoration(
-                color: kWalletBgBase,
-                border: Border(
-                  top: BorderSide(color: kWalletBorder, width: 1),
-                ),
+          Container(
+            key: Key('${sheetKey}_footer'),
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
+            decoration: const BoxDecoration(
+              color: kWalletBgBase,
+              border: Border(
+                top: BorderSide(color: kWalletBorder, width: 1),
               ),
-              child: SafeArea(
-                top: false,
-                child: footer!,
-              ),
+            ),
+            // SafeArea's bottom padding drops to zero when the
+            // keyboard is up (the OS reports viewPadding - viewInsets),
+            // so no double-padding here either.
+            child: SafeArea(
+              top: false,
+              child: footer!,
             ),
           ),
       ],
