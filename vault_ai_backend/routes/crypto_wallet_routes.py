@@ -676,6 +676,22 @@ class SendDraftPayload(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+# 2026-07-14 (Round 10 — Max UX): payload for the fee-estimate
+# endpoint used by the client's Max button. No amount is required —
+# the endpoint returns the authoritative maximum network fee the
+# server would authorize for a plain transfer to `destinationAddress`
+# so the client can compute `available - fee` locally without
+# creating a persisted draft first.
+class SendFeeEstimatePayload(BaseModel):
+
+
+    fromAddress:        str
+    destinationAddress: str
+    asset:              str
+
+    model_config = {"extra": "forbid"}
+
+
 class SendBroadcastPayload(BaseModel):
 
 
@@ -4429,6 +4445,263 @@ def _get_tron_draft_expiry(
             TRON_EXPIRY_REASON_EXPIRATION_PASSED
             if expired else TRON_EXPIRY_REASON_STILL_VALID
         ),
+    }
+
+
+# ---------------------------------------------------------------
+# 2026-07-14 (Round 10 — Max UX): fee-estimate endpoint.
+#
+# The Max button on the Send form must not depend on the user
+# entering an amount + tapping Review first. This endpoint returns
+# an authoritative maximum-fee estimate for a plain transfer to
+# `destinationAddress` so the client can compute
+#     maxAmount = verifiedBalance - authorizedMaxFeeBaseUnits
+# and populate the amount field directly.
+#
+# Design:
+#   * NO persisted draft — this is a read-only estimate.
+#   * NO state machine — no claim / consume / broadcast slot.
+#   * NO secret retrieval.
+#   * Same billing entitlement + trusted-device gates as send/draft.
+#   * Same authoritative RPC helpers as the real draft path
+#     (eth_estimate_gas × gas_price for EVM, getFeeForMessage for
+#     SOL) so the number the client subtracts is the number the
+#     real draft would show.
+#   * Fail-closed on any RPC error → the client shows a simple
+#     "Maximum amount is temporarily unavailable" message.
+#
+# For ERC-20 tokens the endpoint returns the ETH gas fee that the
+# ERC-20 transfer would cost — but the ERC-20 Max button uses the
+# full token balance in base units (does NOT subtract this fee),
+# and this value is exposed here only so the client can surface a
+# separate "requires enough ETH for gas" warning if the ETH
+# balance is below it.
+#
+# For TRC-20 the same principle applies: Max = full token balance;
+# the endpoint is not called for TRC-20 Max. TRC-20 draft flow
+# already verifies feeLimitSun < TRX balance before signing.
+# ---------------------------------------------------------------
+@router.post(
+    "/crypto/wallet/network/{network}/send/fee_estimate",
+)
+def get_send_fee_estimate_network(
+    network: str,
+    payload: SendFeeEstimatePayload,
+    principal=Depends(require_crypto_entitlement),
+):
+    if not crypto_wallet_engine_enabled():
+        return _engine_off_response()
+    nid, err = _resolve_network_for_route(network)
+    if err is not None:
+        return err
+    if nid == NETWORK_SOLANA_MAINNET:
+        return _get_solana_send_fee_estimate(payload)
+    from evm_networks import NETWORK_ETHEREUM_MAINNET
+    if nid == NETWORK_ETHEREUM_MAINNET:
+        return _get_mainnet_send_fee_estimate(payload)
+    return {
+        "status":  "fee_estimate_unavailable",
+        "network": network,
+        "reason":  "no_fee_estimate_semantics",
+        "message": (
+            "Max on this network does not require a server fee "
+            "estimate — use the full verified balance."
+        ),
+    }
+
+
+def _get_mainnet_send_fee_estimate(
+    payload: SendFeeEstimatePayload,
+) -> dict[str, Any]:
+    from evm_networks import (
+        NETWORK_ETHEREUM_MAINNET, chain_id_for, token_contract_for,
+    )
+    from evm_rpc import (
+        EvmRpcError, encode_erc20_transfer_calldata,
+        eth_estimate_gas_at_url, eth_gas_price_wei_at_url,
+        is_valid_eth_address,
+    )
+    from vault_config import ethereum_mainnet_rpc_url
+    norm = _normalize_asset(payload.asset)
+    if norm not in ("ETH", "USDT_ERC20", "USDC_ERC20"):
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "ethereum_mainnet",
+            "reason":  "unsupported_asset",
+        }
+    if not is_valid_eth_address(payload.fromAddress):
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "ethereum_mainnet",
+            "reason":  "invalid_from_address",
+            "message": (
+                "The sender address is not a valid Ethereum "
+                "address."
+            ),
+        }
+    if not is_valid_eth_address(payload.destinationAddress):
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "ethereum_mainnet",
+            "reason":  "invalid_destination_address",
+            "message": (
+                "Enter a valid Ethereum destination address before "
+                "using Max."
+            ),
+        }
+    rpc_url = ethereum_mainnet_rpc_url()
+    if not rpc_url:
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "ethereum_mainnet",
+            "reason":  "rpc_not_configured",
+            "message": (
+                "Cannot estimate fee: mainnet RPC is not "
+                "configured."
+            ),
+        }
+    is_token = norm in ("USDT_ERC20", "USDC_ERC20")
+    if is_token:
+        token_contract = token_contract_for(
+            NETWORK_ETHEREUM_MAINNET, norm,
+        )
+        if not token_contract or not is_valid_eth_address(
+            token_contract,
+        ):
+            return {
+                "status":  "fee_estimate_unavailable",
+                "network": "ethereum_mainnet",
+                "reason":  "token_contract_not_configured",
+            }
+        try:
+            data_hex = encode_erc20_transfer_calldata(
+                destination_address=payload.destinationAddress,
+                amount_base_units=1,
+            )
+        except EvmRpcError as exc:
+            return {
+                "status":  "fee_estimate_unavailable",
+                "network": "ethereum_mainnet",
+                "reason":  exc.code,
+            }
+        tx_to = token_contract
+        value_wei = 0
+    else:
+        data_hex = "0x"
+        tx_to = payload.destinationAddress
+        # Use `value_wei=0` for the estimate — the estimated gas
+        # for a plain ETH transfer does not depend on the value.
+        value_wei = 0
+    try:
+        gas_limit = eth_estimate_gas_at_url(
+            rpc_url,
+            from_address=payload.fromAddress,
+            to_address=tx_to,
+            value_wei=value_wei,
+            data_hex=data_hex,
+        )
+        gas_price = eth_gas_price_wei_at_url(rpc_url)
+    except EvmRpcError as exc:
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "ethereum_mainnet",
+            "reason":  exc.code,
+            "message": (
+                "Maximum amount is temporarily unavailable. Try "
+                "again."
+            ),
+        }
+    fee_wei = int(gas_limit) * int(gas_price)
+    return {
+        "status":                   "fee_estimate_ready",
+        "network":                  "ethereum_mainnet",
+        "asset":                    norm,
+        "chainId":                  chain_id_for(
+            NETWORK_ETHEREUM_MAINNET,
+        ),
+        "authorizedMaxFeeBaseUnits": str(fee_wei),
+        "gasLimit":                 str(int(gas_limit)),
+        "gasPriceWei":              str(int(gas_price)),
+        "feeSource":                "eth_estimateGas_x_gasPrice",
+    }
+
+
+def _get_solana_send_fee_estimate(
+    payload: SendFeeEstimatePayload,
+) -> dict[str, Any]:
+    from vault_config import solana_rpc_url
+    from solana_rpc import (
+        SolanaRpcError, build_sol_transfer_message_bytes,
+        is_valid_solana_address,
+        sol_get_fee_for_message_at_url,
+        sol_get_latest_blockhash_at_url,
+    )
+    import base64 as _base64
+    norm = _normalize_asset(payload.asset)
+    if norm != _SOLANA_ASSET:
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "solana_mainnet",
+            "reason":  "unsupported_asset",
+        }
+    if not is_valid_solana_address(payload.fromAddress):
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "solana_mainnet",
+            "reason":  "invalid_from_address",
+        }
+    if not is_valid_solana_address(payload.destinationAddress):
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "solana_mainnet",
+            "reason":  "invalid_destination_address",
+            "message": (
+                "Enter a valid Solana destination address before "
+                "using Max."
+            ),
+        }
+    rpc_url = solana_rpc_url()
+    if not rpc_url:
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "solana_mainnet",
+            "reason":  "rpc_not_configured",
+        }
+    try:
+        blockhash_result = sol_get_latest_blockhash_at_url(rpc_url)
+        msg_bytes = build_sol_transfer_message_bytes(
+            from_address_b58=payload.fromAddress,
+            to_address_b58=payload.destinationAddress,
+            lamports=1,
+            recent_blockhash_b58=blockhash_result["blockhash"],
+        )
+        msg_b64 = _base64.b64encode(msg_bytes).decode("ascii")
+        fee_lamports = sol_get_fee_for_message_at_url(
+            rpc_url, msg_b64,
+        )
+    except SolanaRpcError as exc:
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "solana_mainnet",
+            "reason":  exc.code,
+            "message": (
+                "Maximum amount is temporarily unavailable. Try "
+                "again."
+            ),
+        }
+    if fee_lamports <= 0:
+        # Malformed / non-positive fee → fail closed.
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "solana_mainnet",
+            "reason":  "malformed_fee_estimate",
+        }
+    return {
+        "status":                    "fee_estimate_ready",
+        "network":                   "solana_mainnet",
+        "asset":                     norm,
+        "authorizedMaxFeeBaseUnits": str(int(fee_lamports)),
+        "feeSource":                 "sol_getFeeForMessage",
     }
 
 

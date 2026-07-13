@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
+import 'services/app_release_controller.dart' as release;
 import 'ui/responsive.dart';
 import 'main.dart' show AppState, backendBaseUrl;
 
@@ -813,12 +814,39 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                               _storageSection(_summary!),
                               _inheritanceSection(_summary!),
                               _recommendationsSection(_summary!),
+                              _buildDiagnosticsSection(),
                             ],
                           ),
                         ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // 2026-07-14 (Round 11 — release wiring): the running-release
+  // diagnostic. Support uses this to confirm which bundle a user's
+  // browser is actually running when a stale-cache complaint comes
+  // in.
+  Widget _buildDiagnosticsSection() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline, size: 16,
+              color: Color(0xFF888888)),
+          const SizedBox(width: 8),
+          Text(
+            release.kAppReleaseDisplayLabel,
+            key: const Key('vaultai_running_release_label'),
+            style: const TextStyle(
+              color: Color(0xFF888888),
+              fontSize: 12,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
       ),
     );
   }

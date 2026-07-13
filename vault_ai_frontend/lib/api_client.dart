@@ -4144,6 +4144,69 @@ Future<Map<String, dynamic>> deleteVaultFile({
   // `expired == null` means the authoritative chain observation
   // could not be fetched (RPC unavailable). The caller MUST treat
   // null as a block signal — never as "not expired".
+  // 2026-07-14 (Round 10 — Max UX): fee-estimate endpoint used by
+  // the Send-form Max button so users do NOT have to enter an
+  // amount + tap Review before Max can populate the field.
+  //
+  // Request:
+  //   POST /crypto/wallet/network/{network}/send/fee_estimate
+  //   body: { fromAddress, destinationAddress, asset }
+  //
+  // Success shape (ETH / SOL — TRC-20 does not use this endpoint):
+  //   {
+  //     "status": "fee_estimate_ready",
+  //     "network": "ethereum_mainnet" | "solana_mainnet",
+  //     "asset": "ETH" | "USDT_ERC20" | "USDC_ERC20" | "SOL",
+  //     "authorizedMaxFeeBaseUnits": "21000000000000",   // wei/lamports
+  //     "feeSource": "eth_estimateGas_x_gasPrice" | "sol_getFeeForMessage",
+  //   }
+  //
+  // Failure shape:
+  //   {
+  //     "status": "fee_estimate_unavailable",
+  //     "reason": "rpc_error" | "invalid_destination_address" | ...
+  //     "message": optional user-facing string,
+  //   }
+  //
+  // Anything other than exactly `status: "fee_estimate_ready"` +
+  // parseable `authorizedMaxFeeBaseUnits` MUST be treated as a
+  // "Max temporarily unavailable" fail-closed state by the caller.
+  Future<Map<String, dynamic>>
+      postCryptoWalletSendFeeEstimateNetwork({
+    required String network,
+    required String fromAddress,
+    required String destinationAddress,
+    required String asset,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/crypto/wallet/network/$network/send/fee_estimate',
+    );
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'fromAddress':        fromAddress,
+        'destinationAddress': destinationAddress,
+        'asset':              asset,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Fee estimate failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid fee estimate response');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>>
       getCryptoWalletDraftExpiryNetwork({
     required String network,

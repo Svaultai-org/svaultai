@@ -678,22 +678,25 @@ void main() {
   // ───────────────────────────────────────────────────────────
   group('Max architecture', () {
     testWidgets(
-        'ETH Max with NO draft → BLOCKED with authoritative-fee-'
-        'required error (no 21000 * 100 gwei fallback)',
-        (tester) async {
+        'ETH Max with NO destination → BLOCKED asking for '
+        'destination (no 21000 * 100 gwei fallback, no draft '
+        'requirement)', (tester) async {
+      // 2026-07-14 (Round 10 — Max UX): Max no longer requires a
+      // persisted draft. Instead it needs a valid destination so
+      // it can ask the fee-estimate endpoint for the authoritative
+      // maximum fee for THAT recipient. This test asserts the
+      // destination-required fail-closed branch and the amount
+      // field stays empty.
       final client = _FakeR8Client(
         draftResponse: _draftReadyEth().cast<String, dynamic>(),
       );
       await _pumpEth(tester, client: client,
           fetchAvailableBalanceWei: () async =>
               BigInt.parse('1000000000000000000'));
-      // Tap Max WITHOUT tapping Review first.
       await tester.tap(find.byKey(const Key('eth_send_panel_max_btn')));
       await tester.pumpAndSettle();
-      expect(find.text(kEthSendMaxRequiresDraftError),
+      expect(find.text(kEthSendMaxRequiresDestinationError),
           findsOneWidget);
-      // Amount field remains empty — no 0.9979 or similar
-      // hard-coded target.
       final tf = tester.widget<TextField>(
         find.byKey(const Key('eth_send_panel_amount_input')),
       );
@@ -725,9 +728,13 @@ void main() {
     });
 
     testWidgets(
-        'SOL Max = available − persistedFeeLamports; no draft → '
-        'BLOCKED', (tester) async {
-      // Case 1: no draft yet → BLOCKED with clear message.
+        'SOL Max without destination → BLOCKED asking for '
+        'destination (Round 10 — no draft required)',
+        (tester) async {
+      // 2026-07-14 (Round 10 — Max UX): SOL Max no longer needs a
+      // persisted draft. It calls the fee-estimate endpoint for
+      // the destination the user has entered. Missing destination
+      // → clear fail-closed message.
       final client = _FakeR8Client(
         draftResponse: _draftReadySol().cast<String, dynamic>(),
       );
@@ -737,29 +744,34 @@ void main() {
         find.byKey(const Key('solana_send_panel_max_btn')),
       );
       await tester.pumpAndSettle();
-      expect(find.text(kSolanaSendMaxRequiresDraftError),
+      expect(find.text(kSolanaSendMaxRequiresDestinationError),
           findsOneWidget);
     });
 
     testWidgets(
-        'source: SOL Max helper uses persistedFeeLamports from '
-        '_draft and does NOT hard-code any fee', (tester) async {
+        'source: SOL Max helper reads fee from the authoritative '
+        'fee-estimate endpoint and does NOT hard-code any fee',
+        (tester) async {
+      // 2026-07-14 (Round 10 — Max UX): SOL Max reads the fee from
+      // `postCryptoWalletSendFeeEstimateNetwork`, not from a
+      // persisted draft. The property this test enforces — no
+      // hard-coded numeric fee — is unchanged. Only the source
+      // of the fee changed.
       final src = await _readLibFile(
         'ui/crypto_wallet_engine_solana_send_panel.dart',
       );
       final onMax = src.indexOf('Future<void> _onMaxTap()');
       expect(onMax, greaterThan(-1));
       final scope = src.substring(onMax, onMax + 2500);
-      // Reads fee from the persisted draft.
-      expect(scope.contains("draft['feeLamports']"), isTrue,
-          reason: 'SOL Max must read the persisted feeLamports');
+      // The Max path must call the fee-estimate helper.
+      expect(scope.contains('_fetchAuthorizedMaxFeeLamports'), isTrue,
+          reason: 'SOL Max must call the authoritative fee-estimate '
+                  'helper for the entered destination.');
       // No hard-coded numeric fee constants.
       final numericLiterals = RegExp(r'\b\d{5,}\b')
           .allMatches(scope)
           .map((m) => m.group(0))
           .toList();
-      // Allow only tiny magic numbers used for BigInt.pow(9) etc.
-      // (10^9 = 1000000000). Nothing above that.
       for (final n in numericLiterals) {
         final v = int.tryParse(n!);
         if (v != null) {

@@ -8,6 +8,7 @@ import 'package:pointycastle/digests/keccak.dart';
 
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
+import '../services/app_release_controller_scope.dart';
 import '../services/ethereum_transaction.dart';
 import '../services/evm_networks.dart';
 import '../services/local_outgoing_tx_store.dart';
@@ -195,9 +196,21 @@ const String kEthSendMaxActionLabel = 'Max';
 // 2026-07-14 (Round 8 hardening): ETH Max requires a persisted
 // draft so authoritative feeWei is available. No hardcoded gas
 // reservation fallback exists.
+// 2026-07-14 (Round 10 — Max UX): Max no longer requires a
+// persisted draft. It calls the dedicated fee-estimate endpoint
+// with the destination address the user has already entered.
+const String kSendUpdatePendingError =
+    'VaultAI was updated. Refresh before starting a new send.';
+const String kEthSendMaxRequiresDestinationError =
+    'Enter a destination address first so we can estimate the '
+    'network fee.';
+const String kEthSendMaxTemporarilyUnavailableError =
+    'Maximum amount is temporarily unavailable. Try again.';
+// Kept for backward compatibility with any external caller reading
+// this constant. New code paths use the destination / temporarily-
+// unavailable messages above.
 const String kEthSendMaxRequiresDraftError =
-    'Enter an amount and tap Review first — Max needs the '
-    'server-authorized fee from your current draft.';
+    kEthSendMaxTemporarilyUnavailableError;
 const String kEthSendReviewButtonLabel = 'Review';
 const String kEthSendReviewWarning =
     'Review carefully. Crypto transactions cannot be reversed.';
@@ -711,6 +724,19 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Future<void> _onReview() async {
+    // 2026-07-14 (Round 11 — release wiring): block a NEW Send if
+    // the release-update controller has detected a pending
+    // update. The user must reload before starting a fresh Send.
+    final rc = AppReleaseControllerScope.maybeOf(context);
+    if (rc != null && rc.sendShouldBeBlocked()) {
+      // Try to check right now — some update paths may already be
+      // resolved by the time the user tapped Review.
+      await rc.checkForUpdate();
+      if (rc.sendShouldBeBlocked()) {
+        setState(() => _error = kSendUpdatePendingError);
+        return;
+      }
+    }
     // 2026-07-14 (Round 8 hardening): SYNCHRONOUS draft-in-flight
     // guard. Set BEFORE any await so a rapid double-tap does not
     // spawn a second draft. Backend single-active-draft-per-sender
@@ -1746,18 +1772,67 @@ class _CryptoWalletEngineSendPanelState
   // For ERC-20: sets the amount to the full token balance. Gas is
   // paid in ETH (checked separately by the exact-fee gate).
   Future<void> _onMaxTap() async {
-    // 2026-07-14 (Round 8 hardening): ETH Max uses the AUTHORITATIVE
-    // persisted draft fee. NEVER a hard-coded gas reservation.
+    // 2026-07-14 (Round 10 — Max UX): Max no longer requires a
+    // persisted draft. Flow:
     //
-    //   * ETH:   Max = verifiedBalanceWei - persistedDraft.feeWei
-    //   * ERC-20: Max = verified token base-unit balance
+    //   1. ETH — needs a valid destination first (fee estimate
+    //      depends on the destination). Then:
+    //        * fetch verified ETH balance in wei (existing hook);
+    //        * call the fee-estimate endpoint for that destination
+    //          to obtain the authoritative max fee in wei;
+    //        * fill amount with (balance - fee) via BigInt.
+    //   2. ERC-20 — Max = full verified token base-unit balance.
+    //      No ETH is subtracted from the token amount. The pre-sign
+    //      exact-fee gate independently verifies the ETH balance
+    //      can cover the final draft's gas.
     //
-    // If no draft has been created yet this session, Max fails
-    // closed with an honest message asking the user to enter an
-    // amount and tap Review first — that materialises a server-
-    // authorized fee via the state-machine draft flow. The
-    // subsequent integer-exact authorization gate re-verifies the
-    // exact fee before signing.
+    // Fail-closed on any missing hook / missing destination /
+    // unverifiable balance / unavailable fee estimate. Never a
+    // hard-coded 21000×100gwei fallback.
+    if (widget.asset == 'ETH') {
+      final destination = _destCtrl.text.trim();
+      if (destination.isEmpty ||
+          !_looksLikeEthAddress(destination)) {
+        setState(() {
+          _error = kEthSendMaxRequiresDestinationError;
+        });
+        return;
+      }
+      final wei = (widget.fetchAvailableBalanceWei != null)
+          ? await widget.fetchAvailableBalanceWei!()
+          : null;
+      if (wei == null || wei <= BigInt.zero) {
+        setState(() {
+          _error = kMainnetSendBalanceUnverifiedError;
+          _balanceCheckUnverified = true;
+        });
+        return;
+      }
+      final BigInt? feeWei = await _fetchAuthorizedMaxFeeWei(
+        destination: destination,
+      );
+      if (feeWei == null || feeWei <= BigInt.zero) {
+        setState(() {
+          _error = kEthSendMaxTemporarilyUnavailableError;
+        });
+        return;
+      }
+      final BigInt target = wei - feeWei;
+      if (target <= BigInt.zero) {
+        setState(() {
+          _error = kMainnetSendInsufficientBalanceError;
+        });
+        return;
+      }
+      _amountCtrl.text = _formatMaxWeiAsEth(target);
+      setState(() {
+        _error = null;
+      });
+      return;
+    }
+    // ERC-20: Max = full verified token base-unit balance. Never
+    // subtracts ETH. Gas is verified separately by the pre-sign
+    // exact-fee gate.
     final wei = (widget.fetchAvailableBalanceWei != null)
         ? await widget.fetchAvailableBalanceWei!()
         : null;
@@ -1768,32 +1843,35 @@ class _CryptoWalletEngineSendPanelState
       });
       return;
     }
-    if (widget.asset == 'ETH') {
-      // Authoritative fee only. NO hard-coded fallback.
-      if (_draft == null || _draft!.feeWei <= BigInt.zero) {
-        setState(() {
-          _error = kEthSendMaxRequiresDraftError;
-        });
-        return;
-      }
-      final BigInt gasReserve = _draft!.feeWei;
-      final BigInt target = wei - gasReserve;
-      if (target <= BigInt.zero) {
-        setState(() {
-          _error = kMainnetSendInsufficientBalanceError;
-        });
-        return;
-      }
-      _amountCtrl.text = _formatMaxWeiAsEth(target);
-    } else {
-      // ERC-20: Max = full verified token base-unit balance.
-      final decimals = (widget.asset == 'USDT_ERC20' ||
-              widget.asset == 'USDC_ERC20')
-          ? 6
-          : 18;
-      _amountCtrl.text = _formatMaxBaseUnits(wei, decimals);
-    }
+    final decimals = (widget.asset == 'USDT_ERC20' ||
+            widget.asset == 'USDC_ERC20')
+        ? 6
+        : 18;
+    _amountCtrl.text = _formatMaxBaseUnits(wei, decimals);
     setState(() {});
+  }
+
+  Future<BigInt?> _fetchAuthorizedMaxFeeWei({
+    required String destination,
+  }) async {
+    Map<String, dynamic>? resp;
+    try {
+      resp = await widget.client
+          .postCryptoWalletSendFeeEstimateNetwork(
+        network: widget.isMainnet
+            ? 'ethereum_mainnet'
+            : 'ethereum_sepolia',
+        fromAddress: widget.fromAddress,
+        destinationAddress: destination,
+        asset: widget.asset,
+        authToken: widget.authToken,
+      );
+    } catch (_) {
+      return null;
+    }
+    if (resp['status'] != 'fee_estimate_ready') return null;
+    final raw = (resp['authorizedMaxFeeBaseUnits'] ?? '').toString();
+    return BigInt.tryParse(raw);
   }
 
   static String _formatMaxWeiAsEth(BigInt wei) {

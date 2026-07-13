@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
+import '../services/app_release_controller_scope.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/recipient_qr_parser.dart';
 import '../services/solana_transaction.dart';
@@ -86,9 +87,19 @@ const String kSolanaSendAvailableBalancePrefix = 'Available:';
 // so the authoritative feeLamports is available. If none exists
 // yet, we fail closed with a clear next-step message rather than
 // invent a client-side fee estimate.
+const String kSolanaSendUpdatePendingError =
+    'VaultAI was updated. Refresh before starting a new send.';
+// 2026-07-14 (Round 10 — Max UX): SOL Max no longer requires a
+// persisted draft. It calls the fee-estimate endpoint with the
+// destination the user has entered.
+const String kSolanaSendMaxRequiresDestinationError =
+    'Enter a destination address first so we can estimate the '
+    'network fee.';
+const String kSolanaSendMaxTemporarilyUnavailableError =
+    'Maximum amount is temporarily unavailable. Try again.';
+// Kept for backward compatibility only.
 const String kSolanaSendMaxRequiresDraftError =
-    'Enter an amount and tap Review first — Max needs the '
-    'server-authorized fee from your current draft.';
+    kSolanaSendMaxTemporarilyUnavailableError;
 const String kSolanaSendMaxBalanceUnverifiedError =
     'Your SOL balance is not verified. Try again after the balance '
     'refreshes.';
@@ -314,6 +325,16 @@ class _CryptoWalletEngineSolanaSendPanelState
       widget.features?.solanaSendPaused ?? false;
 
   Future<void> _onReview() async {
+    // 2026-07-14 (Round 11 — release wiring): block a NEW Send if
+    // the release-update controller reports a pending update.
+    final rc = AppReleaseControllerScope.maybeOf(context);
+    if (rc != null && rc.sendShouldBeBlocked()) {
+      await rc.checkForUpdate();
+      if (rc.sendShouldBeBlocked()) {
+        setState(() => _error = kSolanaSendUpdatePendingError);
+        return;
+      }
+    }
     // 2026-07-14 (Round 8 hardening): SYNCHRONOUS draft-in-flight
     // guard. Set BEFORE any await so a rapid double-tap does not
     // spawn a second draft. Backend single-active-draft-per-sender
@@ -692,24 +713,16 @@ class _CryptoWalletEngineSolanaSendPanelState
   // `_verifyExactLamportAuthorization` before signing — Max does
   // NOT replace the gate.
   Future<void> _onMaxTap() async {
-    final draft = _draft;
-    if (draft == null) {
+    // 2026-07-14 (Round 10 — Max UX): SOL Max = verified lamports
+    // minus authoritative fee-estimate for a transfer to the
+    // destination the user has entered. NO persisted draft
+    // required. Fee-estimate call goes to the dedicated endpoint;
+    // any failure surfaces a simple "temporarily unavailable"
+    // message.
+    final destination = _destinationController.text.trim();
+    if (destination.isEmpty || !isValidSolanaAddress(destination)) {
       setState(() {
-        _error = kSolanaSendMaxRequiresDraftError;
-      });
-      return;
-    }
-    final rawFee = (draft['feeLamports'] ?? '').toString();
-    if (rawFee.isEmpty) {
-      setState(() {
-        _error = kSolanaSendMaxRequiresDraftError;
-      });
-      return;
-    }
-    final BigInt? feeLamports = BigInt.tryParse(rawFee);
-    if (feeLamports == null || feeLamports < BigInt.zero) {
-      setState(() {
-        _error = kSolanaSendMaxRequiresDraftError;
+        _error = kSolanaSendMaxRequiresDestinationError;
       });
       return;
     }
@@ -731,6 +744,15 @@ class _CryptoWalletEngineSolanaSendPanelState
       });
       return;
     }
+    final BigInt? feeLamports = await _fetchAuthorizedMaxFeeLamports(
+      destination: destination,
+    );
+    if (feeLamports == null || feeLamports <= BigInt.zero) {
+      setState(() {
+        _error = kSolanaSendMaxTemporarilyUnavailableError;
+      });
+      return;
+    }
     final BigInt target = available - feeLamports;
     if (target <= BigInt.zero) {
       setState(() {
@@ -742,6 +764,27 @@ class _CryptoWalletEngineSolanaSendPanelState
     setState(() {
       _error = null;
     });
+  }
+
+  Future<BigInt?> _fetchAuthorizedMaxFeeLamports({
+    required String destination,
+  }) async {
+    Map<String, dynamic>? resp;
+    try {
+      resp = await widget.client
+          .postCryptoWalletSendFeeEstimateNetwork(
+        network: kSolanaNetworkId,
+        fromAddress: widget.fromAddress,
+        destinationAddress: destination,
+        asset: 'SOL',
+        authToken: widget.authToken,
+      );
+    } catch (_) {
+      return null;
+    }
+    if (resp['status'] != 'fee_estimate_ready') return null;
+    final raw = (resp['authorizedMaxFeeBaseUnits'] ?? '').toString();
+    return BigInt.tryParse(raw);
   }
 
   static String _lamportsToSolString(BigInt lamports) {

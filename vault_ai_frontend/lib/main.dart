@@ -59,6 +59,8 @@ import 'ui/dashboards/memory_page.dart';
 import 'ui/dashboards/relationships_page.dart';
 
 import 'services/crypto_chat_live_cache.dart';
+import 'services/app_release_controller_scope.dart';
+import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
 import 'ui/crypto_wallet_engine_page.dart';
 
@@ -646,7 +648,10 @@ Future<void> main() async {
       runApp(
         ChangeNotifierProvider.value(
           value: appState,
-          child: const VaultaiApp(),
+          child: const AppReleaseControllerScope(
+            baseUrl: backendBaseUrl,
+            child: VaultaiApp(),
+          ),
         ),
       );
     },
@@ -2235,7 +2240,7 @@ class _ActivityWrapperState extends State<_ActivityWrapper> {
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => _bump(),
       onPointerSignal: (_) => _bump(),
-      child: widget.child,
+      child: AppReleaseUpdateBanner(child: widget.child),
     );
   }
 }

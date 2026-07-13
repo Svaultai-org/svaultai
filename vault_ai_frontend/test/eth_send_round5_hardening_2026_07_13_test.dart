@@ -319,16 +319,22 @@ void main() {
     // persisted draft fee otherwise. This test is rewritten to
     // reflect the new fail-closed behavior.
     testWidgets(
-        'ETH Max with NO draft yet fails closed with '
-        'authoritative-fee-required error (no hard-coded reserve)',
+        'ETH Max without destination fails closed asking for '
+        'destination (no hard-coded reserve, no draft required)',
         (tester) async {
+      // 2026-07-14 (Round 10 — Max UX): the property this test
+      // originally proved — no hard-coded 21000×100 gwei fallback —
+      // is still enforced by the source-level assertion in the
+      // Round-8 test file. Under the Round-10 architecture, Max
+      // no longer requires a persisted draft; it requires a valid
+      // destination address (so the fee-estimate endpoint can be
+      // called for THAT destination). This test now proves the
+      // new destination-required fail-closed path.
       final client = _FakeRound5Client(
         draftResponse: _draftReadyEth().cast<String, dynamic>(),
         encryptedSecretResponse: const {},
         broadcastResponse: const {},
       );
-      // Balance = 1 ETH = 1e18 wei. No draft has been created yet
-      // this session.
       final wei = BigInt.from(10).pow(18);
       await _pumpPanel(
         tester,
@@ -340,10 +346,11 @@ void main() {
       await tester.tap(find.byKey(const Key('eth_send_panel_max_btn')));
       await tester.pumpAndSettle();
       expect(
-        find.text(kEthSendMaxRequiresDraftError),
+        find.text(kEthSendMaxRequiresDestinationError),
         findsOneWidget,
-        reason: 'ETH Max MUST fail closed when no draft exists '
-                '(no hard-coded 100 gwei fallback).',
+        reason: 'ETH Max MUST fail closed when no destination is '
+                'entered, so we cannot request an authoritative '
+                'fee estimate for the wrong address.',
       );
     });
 
@@ -380,6 +387,10 @@ void main() {
     testWidgets(
         'Max when balance-wei hook returns null → hard-gate error, '
         'no draft', (tester) async {
+      // 2026-07-14 (Round 10 — Max UX): Max now requires a valid
+      // destination before it can consult the balance hook (fee
+      // estimate depends on the destination). Enter one so the
+      // balance-null branch is what actually blocks.
       final client = _FakeRound5Client(
         draftResponse: _draftReadyEth().cast<String, dynamic>(),
         encryptedSecretResponse: const {},
@@ -392,6 +403,11 @@ void main() {
         fetchAvailableBalance: () async => 1.0,
         fetchAvailableBalanceWei: () async => null,
       );
+      await tester.enterText(
+        find.byKey(const Key('eth_send_panel_destination_input')),
+        '0x7C49215A2cB86aaC3e6308EA4D6206912578e870',
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('eth_send_panel_max_btn')));
       await tester.pumpAndSettle();
       expect(

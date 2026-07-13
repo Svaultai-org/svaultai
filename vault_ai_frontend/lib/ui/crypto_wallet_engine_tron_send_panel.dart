@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
+import '../services/app_release_controller_scope.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/recipient_qr_parser.dart';
 import '../services/tron_transaction.dart';
@@ -17,6 +18,8 @@ import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
 
 
+const String kTronSendUpdatePendingError =
+    'VaultAI was updated. Refresh before starting a new send.';
 const String kTronSendPanelTitle = 'Send USDT (TRC20)';
 const String kTronSendReviewHeading = 'Review USDT TRC20 send';
 const String kTronSendConfirmationWarning =
@@ -324,6 +327,16 @@ class _CryptoWalletEngineTronSendPanelState
       widget.features?.tronSendPaused ?? false;
 
   Future<void> _onReview() async {
+    // 2026-07-14 (Round 11 — release wiring): block a NEW Send if
+    // the release-update controller reports a pending update.
+    final rc = AppReleaseControllerScope.maybeOf(context);
+    if (rc != null && rc.sendShouldBeBlocked()) {
+      await rc.checkForUpdate();
+      if (rc.sendShouldBeBlocked()) {
+        setState(() => _error = kTronSendUpdatePendingError);
+        return;
+      }
+    }
     // 2026-07-14 (Round 8 hardening): synchronous draft-in-flight
     // guard. Rapid double-tap → single draft.
     if (_draftInFlight) return;
