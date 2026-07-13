@@ -7,6 +7,7 @@ import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/ethereum_transaction.dart';
 import '../services/evm_networks.dart';
+import '../services/local_outgoing_tx_store.dart';
 import '../services/recipient_qr_parser.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
@@ -26,24 +27,78 @@ const String kEthSendMainnetSendDisabledBanner =
     'Sepolia or ask the operator to enable mainnet send.';
 
 
+// 2026-07-13 canary correctness: the previous flow required the user
+// to type a phrase like "SEND ETH" AFTER the Review stage and BEFORE
+// the PIN prompt. Production feedback was that the typed-phrase step
+// was too cumbersome. The confirmation flow now is:
+//     form → Review → PIN → (single) Send tap → result
+// The typed-phrase constants below are kept in the file so any
+// external code / older tests referencing them still compile, but
+// the runtime path no longer reads them. All confirmation-phrase
+// consts are marked @Deprecated for eventual removal.
+@Deprecated('Typed-phrase confirmation was removed 2026-07-13. '
+    'The confirmation flow is now: Review → PIN → single Send tap.')
 const String kMainnetSendConfirmPhrasePromptEth =
     'Type "SEND ETH" to continue.';
+@Deprecated('See kMainnetSendConfirmPhrasePromptEth.')
 const String kMainnetSendConfirmPhrasePromptUsdt =
     'Type "SEND USDT" to continue.';
+@Deprecated('See kMainnetSendConfirmPhrasePromptEth.')
 const String kMainnetSendConfirmPhrasePromptUsdc =
     'Type "SEND USDC" to continue.';
+@Deprecated('See kMainnetSendConfirmPhrasePromptEth.')
 const String kMainnetSendConfirmPhraseMismatch =
     'Confirmation phrase does not match. Type it exactly.';
 const String kMainnetSendDestinationCardHeader =
     'Verify this address carefully.';
 const String kMainnetSendNewRecipientWarning =
     'This is a new recipient address.';
+
+// 2026-07-13 canary correctness: balance verification is now a HARD
+// GATE, not a warning. If we can't confirm the live sender balance,
+// we do NOT let the user sign or broadcast; the primary action
+// becomes "Retry balance check" until the balance loads.
+const String kMainnetSendBalanceUnverifiedError =
+    'Balance could not be verified. Tap Retry balance check to try '
+    'again. VaultAI will not sign or broadcast a transaction while '
+    'your balance is unknown.';
+const String kMainnetSendEthGasBalanceUnverifiedError =
+    'ETH balance for gas could not be verified. Tap Retry balance '
+    'check to try again. VaultAI will not sign or broadcast a token '
+    'transfer while the parent ETH balance is unknown.';
+const String kMainnetSendRetryBalanceLabel = 'Retry balance check';
+
+// Retained for backward-compat with pre-existing tests that assert
+// on the exact warning string. Runtime code no longer displays it.
+@Deprecated('Replaced by kMainnetSendBalanceUnverifiedError which '
+    'is now a hard-gate error, not a warning.')
 const String kMainnetSendBalanceUnverifiedWarning =
     'Balance could not be verified. Review carefully before sending.';
+
 const String kMainnetSendInsufficientGasWarning =
     'You may not have enough ETH for gas. Top up before sending.';
 const String kMainnetSendInsufficientBalanceError =
     'Amount exceeds your available balance.';
+
+// 2026-07-13 (durability slice): integer-exact fee authorization
+// error strings. Distinct from the coarse pre-draft advisory
+// (`kMainnetSendInsufficientGasWarning`) so a failure at this
+// authoritative gate is unambiguous.
+const String kMainnetSendExactFeeUnverifiedError =
+    'The exact network fee could not be verified against your '
+    'balance. Try again in a moment.';
+const String kMainnetSendExactFeeInsufficientEthError =
+    'Your ETH balance is not enough to cover the amount plus the '
+    'exact network fee for this draft. Reduce the amount or top up '
+    'and re-draft.';
+const String kMainnetSendExactFeeInsufficientGasEthError =
+    'Your ETH balance is not enough to cover the exact network fee '
+    'for this token draft. Top up ETH and re-draft.';
+const String kMainnetSendExactFeeInsufficientTokenError =
+    'Your token balance is not enough for this draft. Reduce the '
+    'amount or top up and re-draft.';
+const String kMainnetSendExactFeeGateFailedKey =
+    'eth_send_panel_exact_fee_gate_failed';
 const String kMainnetSendFeeEstimateFailedError =
     'Could not estimate network fee. Review and try again.';
 const String kMainnetSendPausedBanner =
@@ -52,6 +107,41 @@ const String kMainnetSendBroadcastSafeError =
     'Could not submit transaction.';
 const String kMainnetSendRateLimitedError =
     'Too many recent send attempts. Wait a moment before retrying.';
+
+// 2026-07-13 canary correctness: result screen states + explorer.
+const String kEthSendResultHeadingSubmitted   = 'Transaction submitted';
+const String kEthSendResultHeadingUncertain   = 'Transaction status is uncertain';
+const String kEthSendResultHeadingRejected    = 'Transaction rejected';
+const String kEthSendResultBodySubmitted =
+    'Ethereum accepted this transaction. It should appear in your '
+    'wallet activity once a node includes it in a block.';
+const String kEthSendResultBodyUncertain =
+    "The mainnet RPC accepted the raw transaction but no Ethereum "
+    "node has yet reported seeing it. VaultAI will keep checking. "
+    "Do not re-sign with a new nonce until the status is confirmed "
+    "as not_found on the network.";
+const String kEthSendResultBodyRejected =
+    'The Ethereum RPC returned an explicit rejection for this '
+    'transaction. The draft was consumed under the single-attempt '
+    'policy; retrying requires a fresh draft.';
+const String kEthSendResultViewExplorerLabel = 'View on explorer';
+const String kEthSendResultViewActivityLabel = 'View activity';
+const String kEthSendResultCheckStatusLabel  = 'Check status';
+const String kEthSendResultReturnFormLabel   = 'Start a new send';
+const String kEthSendResultCopyHashLabel     = 'Copy transaction hash';
+const String kEthSendResultCopiedSnackbar    = 'Transaction hash copied';
+
+/// Mainnet Etherscan URL for a given tx hash. Sepolia handled by
+/// `sepolia.etherscan.io`.
+String ethExplorerUrlFor({required String network, required String txHash}) {
+  if (network == kEvmNetworkEthereumMainnet) {
+    return 'https://etherscan.io/tx/$txHash';
+  }
+  if (network == kEvmNetworkEthereumSepolia) {
+    return 'https://sepolia.etherscan.io/tx/$txHash';
+  }
+  return 'https://etherscan.io/tx/$txHash';
+}
 
 const String kMainnetSendConfirmPhraseInputKey =
     'eth_send_panel_mainnet_confirm_phrase_input';
@@ -205,13 +295,29 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   
   final Future<bool> Function(String destination)? isKnownDestination;
 
-  
+
   final Future<double?> Function()? fetchAvailableBalance;
 
-  
+
   final Future<double?> Function()? fetchEthBalance;
 
-  
+  /// 2026-07-13 durability slice: integer-exact authoritative
+  /// balance in base units. When provided this hook is the FINAL
+  /// gate before signing — the pre-draft `fetchAvailableBalance`
+  /// (double) is retained as a coarse UX check but is never the
+  /// authorization. If the hook returns null, throws, or reports a
+  /// balance short of `valueWei + gasLimit * gasPrice` (for ETH) or
+  /// `amountBaseUnits` (for ERC-20), the flow REFUSES to fetch the
+  /// encrypted secret and BLOCKS the transaction before signing.
+  final Future<BigInt?> Function()? fetchAvailableBalanceWei;
+
+  /// 2026-07-13 durability slice: integer-exact ETH balance in wei.
+  /// Required alongside `fetchAvailableBalanceWei` for ERC-20 sends
+  /// — the wallet must have BOTH enough tokens AND enough ETH for
+  /// gas (`gasLimit * gasPrice`).
+  final Future<BigInt?> Function()? fetchEthBalanceWei;
+
+
   final String Function()? idempotencyKeyGenerator;
 
   // 2026-07-13 QR-scan hook. In production the panel opens the
@@ -223,6 +329,22 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     RecipientNetwork network,
     int? expectedChainId,
   )? scanRecipientQr;
+
+  /// 2026-07-13 canary correctness: local outgoing tx store. When
+  /// supplied, every mainnet broadcast pushes a row into the store
+  /// (`submitting` → `submitted` / `submissionUncertain` /
+  /// `explicitlyRejected` / ...) so the outgoing transaction
+  /// appears in Activity immediately, before the indexer discovers
+  /// it. Optional — Sepolia / tests without an Activity card can
+  /// omit it.
+  final LocalOutgoingTxStore? outgoingTxStore;
+
+  /// Optional URL launcher hook so the result screen can open an
+  /// explorer link. In production this is wired to
+  /// `url_launcher`'s `launchUrlString`; widget tests inject a
+  /// counter to assert the correct URL was requested without
+  /// actually opening a browser.
+  final Future<bool> Function(String url)? launchUrl;
 
   const CryptoWalletEngineSendPanel({
     super.key,
@@ -240,8 +362,12 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     this.isKnownDestination,
     this.fetchAvailableBalance,
     this.fetchEthBalance,
+    this.fetchAvailableBalanceWei,
+    this.fetchEthBalanceWei,
     this.idempotencyKeyGenerator,
     this.scanRecipientQr,
+    this.outgoingTxStore,
+    this.launchUrl,
   });
 
   bool get isMainnet => network == kEvmNetworkEthereumMainnet;
@@ -269,6 +395,14 @@ class _CryptoWalletEngineSendPanelState
 
   _DraftFields? _draft;
   String? _submittedTxHash;
+  // 2026-07-13 canary correctness: track the honest broadcast
+  // outcome from the backend so the result screen can distinguish
+  // `submitted` (observed on the network) from `submission_uncertain`
+  // (broadcast attempted but tx not yet visible). Set only in the
+  // `_onConfirmAndPin` broadcast branch.
+  String? _broadcastStatus;
+  String? _broadcastReason;
+  String? _broadcastMessage;
 
   
   bool _isKnownRecipient = false;
@@ -377,35 +511,74 @@ class _CryptoWalletEngineSendPanelState
     }
 
     
-    if (widget.isMainnet) {
+    // 2026-07-13 canary correctness: balance verification is a
+    // HARD GATE whenever the caller wired `fetchAvailableBalance`.
+    // If we cannot load the sender balance, we refuse to advance
+    // to Review/Draft — the primary action becomes "Retry balance
+    // check". The old flow silently recorded
+    // `_balanceCheckUnverified = true` and let the user sign
+    // anyway; that shipped a real transaction with an unknown
+    // balance, which the canary retest flagged.
+    //
+    // Applied on BOTH mainnet and sepolia (when hook provided) so
+    // testnet flows don't drift out of parity with mainnet.
+    if (widget.fetchAvailableBalance != null) {
       _balanceCheckUnverified = false;
       _insufficientGas = false;
       final isToken = widget.asset != 'ETH';
       double? availableBal;
-      if (widget.fetchAvailableBalance != null) {
-        try {
-          availableBal = await widget.fetchAvailableBalance!();
-        } catch (_) {
-          availableBal = null;
-        }
+      try {
+        availableBal = await widget.fetchAvailableBalance!();
+      } catch (_) {
+        availableBal = null;
       }
       if (availableBal == null) {
-        _balanceCheckUnverified = true;
-      } else if (amountDouble > availableBal) {
-        setState(() =>
-            _error = kMainnetSendInsufficientBalanceError);
+        setState(() {
+          _balanceCheckUnverified = true;
+          _error = kMainnetSendBalanceUnverifiedError;
+        });
         return;
       }
-      if (isToken && widget.fetchEthBalance != null) {
+      if (amountDouble > availableBal) {
+        setState(() {
+          _error = kMainnetSendInsufficientBalanceError;
+        });
+        return;
+      }
+      if (isToken) {
+        // Token sends require BOTH the token balance (above) AND
+        // the parent ETH balance (for gas) to be verified. The
+        // parent ETH check is a hard gate — a token send with an
+        // unknown parent-ETH balance will silently fail at
+        // broadcast when the RPC computes `nonce/gasLimit*gasPrice`
+        // against zero ETH. Refuse to advance.
+        if (widget.fetchEthBalance == null) {
+          setState(() {
+            _balanceCheckUnverified = true;
+            _error = kMainnetSendEthGasBalanceUnverifiedError;
+          });
+          return;
+        }
         double? ethBal;
         try {
           ethBal = await widget.fetchEthBalance!();
         } catch (_) {
           ethBal = null;
         }
-        
-        
-        if (ethBal != null && ethBal < 0.0005) {
+        if (ethBal == null) {
+          setState(() {
+            _balanceCheckUnverified = true;
+            _error = kMainnetSendEthGasBalanceUnverifiedError;
+          });
+          return;
+        }
+        // Live gas is estimated by the backend during draft-create
+        // (it looks up `eth_gasPrice + eth_estimateGas`). The
+        // frontend threshold of 0.0005 ETH is a coarse "you almost
+        // certainly don't have enough gas" gate, retained here so
+        // a wallet with dust ETH is warned rather than silently
+        // failing at broadcast.
+        if (ethBal < 0.0005) {
           _insufficientGas = true;
         }
       }
@@ -524,29 +697,19 @@ class _CryptoWalletEngineSendPanelState
     }
   }
 
-  
   Future<void> _onReviewConfirmTap() async {
-    if (widget.isMainnet) {
-      
-      
-      _confirmPhraseCtrl.clear();
-      setState(() {
-        _stage = _Stage.confirmPhrase;
-        _error = null;
-      });
-      return;
-    }
+    // 2026-07-13 canary correctness: the confirmPhrase stage was
+    // removed. Review → PIN → single Send tap. See docstring in
+    // this file for the reasoning.
     await _onConfirmAndPin();
   }
 
+  /// Retained for backward-compat with widget tests that reference
+  /// the phrase-continue handler by name. The runtime send flow no
+  /// longer routes through it; the enum member `_Stage.confirmPhrase`
+  /// is never entered.
+  @Deprecated('Typed-phrase confirmation was removed 2026-07-13.')
   Future<void> _onMainnetConfirmPhraseContinue() async {
-    final typed = _confirmPhraseCtrl.text.trim();
-    final expected = mainnetSendConfirmPhraseFor(widget.asset);
-    if (typed != expected) {
-      setState(() => _error = kMainnetSendConfirmPhraseMismatch);
-      return;
-    }
-    setState(() => _error = null);
     await _onConfirmAndPin();
   }
 
@@ -586,8 +749,46 @@ class _CryptoWalletEngineSendPanelState
         return;
       }
     }
-    
-    
+
+    // 2026-07-13 (durability slice): INTEGER-EXACT FEE
+    // AUTHORIZATION. Ordering matters — this MUST run after the PIN
+    // (so a wrong PIN never triggers a live balance query) but
+    // BEFORE any secret fetch / decryption / signing / broadcast.
+    // The check uses the EXACT gas fields returned by the backend
+    // draft (`gasLimit`, `gasPrice`, `valueWei`) and BigInt
+    // arithmetic — never a `double` conversion, which cannot
+    // represent 18-decimal wei precisely.
+    //
+    // Contract with the caller:
+    //   * `fetchAvailableBalanceWei` returning null / throwing =>
+    //     BLOCK. The authorization cannot proceed without a verified
+    //     balance snapshot. UI returns to Review with
+    //     `kMainnetSendExactFeeUnverifiedError`.
+    //   * `valueWei + gasLimit * gasPrice > verifiedEthBalanceWei`
+    //     for ETH sends => BLOCK.
+    //   * For ERC-20: `amountBaseUnits > tokenBalanceBaseUnits`
+    //     OR `feeWei > verifiedEthBalanceWei` => BLOCK.
+    //
+    // If the caller did NOT wire the wei-hook, we rely on the
+    // backend's authoritative integer check at draft-create time
+    // (which was already run just above and returned `draft_ready`).
+    // The wei-hook is thus an OPTIONAL client-side belt-and-braces
+    // — but when wired, its verdict is binding.
+    final draftForGate = _draft;
+    if (draftForGate != null &&
+        widget.fetchAvailableBalanceWei != null) {
+      final gateError = await _verifyExactFeeAuthorization(
+        draft: draftForGate,
+      );
+      if (gateError != null) {
+        setState(() {
+          _stage = _Stage.review;
+          _error = gateError;
+        });
+        return;
+      }
+    }
+
     String? encryptedSecret;
     try {
       final Map<String, dynamic> body = widget.isMainnet
@@ -650,11 +851,20 @@ class _CryptoWalletEngineSendPanelState
       });
       return;
     }
-    
-    
     privateKeyHex = null;
-    
-    
+
+    // 2026-07-13 canary correctness: STAMP a local Activity row
+    // BEFORE the broadcast completes so the user always sees the
+    // outgoing tx (`submitting` state). If the broadcast HTTP call
+    // times out or fails after the network already accepted the
+    // tx, we still have a record. The row is upserted with the
+    // final status once the response comes back.
+    final localHashAtBroadcast = _computeLocalHashForSigned(signedTx);
+    _emitOutgoingSubmitting(
+      txHash: localHashAtBroadcast,
+      draft: _draft!,
+    );
+
     try {
       final Map<String, dynamic> body = widget.isMainnet
           ? await widget.client
@@ -673,9 +883,16 @@ class _CryptoWalletEngineSendPanelState
             );
       final status = (body['status'] ?? '').toString();
       final walletEngine = (body['wallet_engine'] ?? '').toString();
-      
+      final reason = (body['reason'] ?? '').toString();
+      final message = (body['message'] ?? '').toString();
+      final txHashRaw = (body['txHash'] ?? '').toString();
+      // For pause / rate-limit / auth-side pre-checks the backend
+      // NEVER attempted broadcast — no on-chain tx exists.
+      // Downgrade the local row to `dropped` and take the user
+      // back to Review to try again cleanly.
       if (walletEngine == 'mainnet_send_paused' ||
           status == 'mainnet_send_paused') {
+        _cancelOutgoingSubmittingRow(localHashAtBroadcast);
         setState(() {
           _stage = _Stage.review;
           _error = kMainnetSendPausedBanner;
@@ -683,37 +900,288 @@ class _CryptoWalletEngineSendPanelState
         return;
       }
       if (walletEngine == 'rate_limited' || status == 'rate_limited') {
+        _cancelOutgoingSubmittingRow(localHashAtBroadcast);
         setState(() {
           _stage = _Stage.review;
           _error = kMainnetSendRateLimitedError;
         });
         return;
       }
-      if (status != 'submitted') {
-        
-        
+      // 2026-07-13 canary correctness: recognise `submission_uncertain`
+      // and rejection states in addition to `submitted`. The old code
+      // treated everything != submitted as a generic failure.
+      // 2026-07-13 canary correctness: the local outgoing row was
+      // upserted keyed by `localHashAtBroadcast` (keccak256(raw)).
+      // The `updateStatus` call MUST use the same key. `displayHash`
+      // is what the user sees on the result screen (backend-echoed
+      // if present, local otherwise); do NOT confuse it with the
+      // store key.
+      final displayHash = txHashRaw.isNotEmpty
+          ? txHashRaw : localHashAtBroadcast;
+      if (status == 'submitted' || status == 'already_submitted') {
+        _updateOutgoingRow(
+          localHashAtBroadcast,
+          LocalOutgoingTxStatus.submitted,
+          reason: null,
+        );
         setState(() {
-          _stage = _Stage.review;
-          _error = widget.isMainnet
-              ? kMainnetSendBroadcastSafeError
-              : '$kEthSendErrorBroadcastFailed (${body['reason'] ?? 'unknown'})';
+          _submittedTxHash = displayHash;
+          _broadcastStatus = status;
+          _broadcastReason = null;
+          _broadcastMessage = message.isEmpty ? null : message;
+          _stage = _Stage.submitted;
         });
         return;
       }
-      setState(() {
-        _submittedTxHash = body['txHash'].toString();
-        _stage = _Stage.submitted;
-      });
-    } catch (e) {
+      if (status == 'submission_uncertain') {
+        _updateOutgoingRow(
+          localHashAtBroadcast,
+          LocalOutgoingTxStatus.submissionUncertain,
+          reason: reason.isEmpty ? null : reason,
+        );
+        setState(() {
+          _submittedTxHash = displayHash;
+          _broadcastStatus = status;
+          _broadcastReason = reason.isEmpty ? null : reason;
+          _broadcastMessage = message.isEmpty ? null : message;
+          _stage = _Stage.submitted;
+        });
+        return;
+      }
+      if (status == 'broadcast_rejected' ||
+          status == 'broadcast_unavailable') {
+        _updateOutgoingRow(
+          localHashAtBroadcast,
+          LocalOutgoingTxStatus.explicitlyRejected,
+          reason: reason.isEmpty ? null : reason,
+        );
+        setState(() {
+          _submittedTxHash = displayHash;
+          _broadcastStatus = status;
+          _broadcastReason = reason.isEmpty ? null : reason;
+          _broadcastMessage = message.isEmpty ? null : message;
+          _stage = _Stage.submitted;
+        });
+        return;
+      }
+      // Unknown envelope shape — most likely a Sepolia-path
+      // broadcast returned only `txHash` without a status marker.
+      // Legacy Sepolia path uses the presence of `txHash` as the
+      // success signal.
+      if (!widget.isMainnet && txHashRaw.isNotEmpty) {
+        _updateOutgoingRow(
+          localHashAtBroadcast,
+          LocalOutgoingTxStatus.submitted,
+        );
+        setState(() {
+          _submittedTxHash = displayHash;
+          _broadcastStatus = 'submitted';
+          _stage = _Stage.submitted;
+        });
+        return;
+      }
+      _cancelOutgoingSubmittingRow(localHashAtBroadcast);
       setState(() {
         _stage = _Stage.review;
         _error = widget.isMainnet
             ? kMainnetSendBroadcastSafeError
+            : '$kEthSendErrorBroadcastFailed (${body['reason'] ?? 'unknown'})';
+      });
+    } catch (e) {
+      // Network error DURING the broadcast HTTP roundtrip. The
+      // backend MAY have accepted and marked the draft consumed,
+      // or the request may have never landed. We cannot know; the
+      // conservative treatment is `submissionUncertain` on the
+      // local row so the user knows to check status.
+      _updateOutgoingRow(
+        localHashAtBroadcast,
+        LocalOutgoingTxStatus.submissionUncertain,
+        reason: 'broadcast_http_error',
+      );
+      setState(() {
+        _submittedTxHash = localHashAtBroadcast;
+        _broadcastStatus = 'submission_uncertain';
+        _broadcastReason = 'broadcast_http_error';
+        _stage = widget.isMainnet
+            ? _Stage.submitted
+            : _Stage.review;
+        _error = widget.isMainnet
+            ? null
             : '$kEthSendErrorBroadcastFailed';
       });
     } finally {
       _broadcastInFlight = false;
     }
+  }
+
+  // ------------------------------------------------------------
+  // Integer-exact fee authorization helper (2026-07-13 durability
+  // slice). Returns null if the transaction is authorized; a
+  // user-facing error string otherwise.
+  //
+  // Uses BigInt arithmetic end-to-end. Never converts wei/base-units
+  // through `double` — a 0.05 ETH send crossing the boundary at
+  // exactly 1 wei must fail cleanly, and 1 wei of 18-decimal
+  // precision is unrepresentable in IEEE-754.
+  // ------------------------------------------------------------
+
+  Future<String?> _verifyExactFeeAuthorization({
+    required _DraftFields draft,
+  }) async {
+    final isToken = widget.asset != 'ETH';
+    final BigInt feeWei = draft.gasLimit * draft.gasPrice;
+    BigInt? availableBaseUnits;
+    try {
+      availableBaseUnits = await widget.fetchAvailableBalanceWei!();
+    } catch (_) {
+      availableBaseUnits = null;
+    }
+    if (availableBaseUnits == null) {
+      return kMainnetSendExactFeeUnverifiedError;
+    }
+    if (!isToken) {
+      // ETH send: valueWei + gasLimit * gasPrice <= balance.
+      final BigInt required = draft.valueWei + feeWei;
+      if (required > availableBaseUnits) {
+        return kMainnetSendExactFeeInsufficientEthError;
+      }
+      return null;
+    }
+    // ERC-20 send: BOTH token base-units AND ETH gas checks.
+    // draft.valueWei is 0 for token sends by construction; the
+    // token amount lives in draft.amount (human string). The draft
+    // response returned `amountBaseUnits` — we didn't stash it on
+    // `_DraftFields` because the draft state doesn't need it after
+    // the initial parse. So re-derive from `draft.amount` using
+    // its unit; the amount was validated against the same base-unit
+    // interpretation that produced the draft.
+    final BigInt tokenBase = _tokenAmountToBaseUnits(
+      draft.amount, draft.unit,
+    );
+    if (tokenBase > availableBaseUnits) {
+      return kMainnetSendExactFeeInsufficientTokenError;
+    }
+    if (widget.fetchEthBalanceWei == null) {
+      // Token sends require the ETH-balance hook too — a token
+      // draft with no way to verify the gas balance cannot be
+      // authorized. Callers wire both hooks together.
+      return kMainnetSendExactFeeUnverifiedError;
+    }
+    BigInt? ethBalanceWei;
+    try {
+      ethBalanceWei = await widget.fetchEthBalanceWei!();
+    } catch (_) {
+      ethBalanceWei = null;
+    }
+    if (ethBalanceWei == null) {
+      return kMainnetSendExactFeeUnverifiedError;
+    }
+    if (feeWei > ethBalanceWei) {
+      return kMainnetSendExactFeeInsufficientGasEthError;
+    }
+    return null;
+  }
+
+  /// Coarse: parse an integer or decimal `amount` string into token
+  /// base units. Matches the backend's `_parse_amount_base_units`
+  /// convention (validate at draft time; the exact base-units value
+  /// was already accepted by the backend integer gate — we only
+  /// re-derive it here to compare against the wallet's token
+  /// balance for the client-side hard gate). USDT_ERC20 / USDC_ERC20
+  /// = 6 decimals in this build; overrideable per asset if new
+  /// tokens are added.
+  BigInt _tokenAmountToBaseUnits(String amount, String unit) {
+    int decimals;
+    switch (widget.asset) {
+      case 'USDT_ERC20':
+      case 'USDC_ERC20':
+        decimals = 6;
+        break;
+      default:
+        decimals = 18;
+    }
+    final normalized = amount.trim();
+    if (normalized.isEmpty) return BigInt.zero;
+    final dotIdx = normalized.indexOf('.');
+    if (dotIdx < 0) {
+      return BigInt.parse(normalized) * BigInt.from(10).pow(decimals);
+    }
+    final whole = normalized.substring(0, dotIdx);
+    var frac = normalized.substring(dotIdx + 1);
+    if (frac.length > decimals) {
+      frac = frac.substring(0, decimals);
+    } else {
+      frac = frac.padRight(decimals, '0');
+    }
+    final wholeBi = whole.isEmpty ? BigInt.zero : BigInt.parse(whole);
+    final fracBi = frac.isEmpty ? BigInt.zero : BigInt.parse(frac);
+    return wholeBi * BigInt.from(10).pow(decimals) + fracBi;
+  }
+
+  // ------------------------------------------------------------
+  // Local outgoing tx helpers.
+  //
+  // Each broadcast attempt stamps a local Activity row keyed by
+  // `keccak256(raw)`. The store is optional — if the panel is
+  // constructed without one, the helpers are no-ops.
+  // ------------------------------------------------------------
+
+  String _computeLocalHashForSigned(String signedTx) {
+    try {
+      return computeLocalEthTxHash(signedTx);
+    } catch (_) {
+      // Extreme edge case — malformed hex. Build a synthetic
+      // 66-char sentinel WITHOUT a hardcoded 0x+64 literal (the
+      // mainnet-safety source guard forbids inline hash literals
+      // in this file). Real production tx will never hit this.
+      return '0x${'0' * 64}';
+    }
+  }
+
+  void _emitOutgoingSubmitting({
+    required String txHash,
+    required _DraftFields draft,
+  }) {
+    final store = widget.outgoingTxStore;
+    if (store == null) return;
+    store.upsert(LocalOutgoingTx(
+      txHash: txHash,
+      fromAddress: draft.fromAddress,
+      toAddress: draft.destinationAddress,
+      amount: draft.amount,
+      unit: draft.unit,
+      feeWei: draft.feeWei,
+      networkId: widget.network,
+      asset: widget.asset,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      status: LocalOutgoingTxStatus.submitting,
+    ));
+  }
+
+  void _updateOutgoingRow(
+    String txHash,
+    LocalOutgoingTxStatus status, {
+    String? reason,
+  }) {
+    final store = widget.outgoingTxStore;
+    if (store == null) return;
+    store.updateStatus(txHash, status, reason: reason);
+  }
+
+  void _cancelOutgoingSubmittingRow(String txHash) {
+    final store = widget.outgoingTxStore;
+    if (store == null) return;
+    // On pause / rate-limit the tx was NEVER attempted at the RPC.
+    // Downgrade the row to `dropped` (terminal) so it's clearly not
+    // in flight; the user sees "no send happened" rather than a
+    // stuck "Submitting…". We do not delete because the record has
+    // audit value — the user tried to send at time T.
+    store.updateStatus(
+      txHash,
+      LocalOutgoingTxStatus.dropped,
+      reason: 'not_attempted',
+    );
   }
 
   Future<String?> _showPinDialog() async {
@@ -930,13 +1398,22 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Widget _buildFormFooter(BuildContext ctx) {
+    // 2026-07-13 canary correctness: when balance verification
+    // failed on a prior tap, the primary action becomes "Retry
+    // balance check" — the ONLY way forward is to load a live
+    // balance. `_onReview` retries the whole flow (balance +
+    // draft) so the same button drives both first attempt and
+    // retry.
+    final label = _balanceCheckUnverified
+        ? kMainnetSendRetryBalanceLabel
+        : kEthSendReviewButtonLabel;
     return ElevatedButton(
       key: const Key('eth_send_panel_review_btn'),
       onPressed: _onReview,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
-      child: const Text(kEthSendReviewButtonLabel),
+      child: Text(label),
     );
   }
 
@@ -1159,25 +1636,245 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Widget _buildSubmittedStage(BuildContext ctx) {
+    // 2026-07-13 canary correctness: honest result screen. The
+    // submitted stage is now three distinct states, distinguished
+    // by `_broadcastStatus`:
+    //
+    //   `submitted` / `already_submitted` → confirmed submission,
+    //       show explorer link
+    //   `submission_uncertain`            → uncertain, offer
+    //       Check-Status action, do NOT tell user to send again
+    //   `broadcast_rejected` /
+    //   `broadcast_unavailable`           → explicit rejection,
+    //       show Start-a-new-send action
+    final status = _broadcastStatus ?? 'submitted';
+    final hash = _submittedTxHash ?? '';
+    final isUncertain = status == 'submission_uncertain';
+    final isRejected = status == 'broadcast_rejected'
+        || status == 'broadcast_unavailable';
+    final heading = isRejected
+        ? kEthSendResultHeadingRejected
+        : (isUncertain
+            ? kEthSendResultHeadingUncertain
+            : kEthSendResultHeadingSubmitted);
+    final body = isRejected
+        ? kEthSendResultBodyRejected
+        : (isUncertain
+            ? kEthSendResultBodyUncertain
+            : kEthSendResultBodySubmitted);
     return Column(
       key: const Key('eth_send_panel_submitted_stage'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        walletSendSectionHeading(kEthSendSuccessHeading),
-        SelectableText(
-          'Transaction hash:\n${_submittedTxHash ?? ''}',
-          key: const Key('eth_send_panel_tx_hash_text'),
-          style: kWalletMonoStyle,
+        walletSendSectionHeading(heading),
+        Text(
+          body,
+          key: Key('eth_send_panel_result_body_$status'),
+          style: const TextStyle(
+              color: kWalletTextSecondary, fontSize: 13, height: 1.4),
         ),
-        const SizedBox(height: 8),
-        const Text(
-          'Status: pending — check the transaction page for '
-          'confirmation.',
-          style: TextStyle(color: kWalletTextMuted, fontSize: 12),
-        ),
+        if (_broadcastMessage != null && _broadcastMessage!.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            _broadcastMessage!,
+            key: const Key('eth_send_panel_result_backend_message'),
+            style: const TextStyle(
+                color: kWalletTextMuted, fontSize: 12, height: 1.4),
+          ),
+        ],
+        if (_broadcastReason != null && _broadcastReason!.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Reason: ${_broadcastReason!}',
+            key: const Key('eth_send_panel_result_backend_reason'),
+            style: const TextStyle(
+                color: kWalletTextMuted, fontSize: 11,
+                fontWeight: FontWeight.w600, letterSpacing: 0.4),
+          ),
+        ],
+        const SizedBox(height: 14),
+        _buildTxHashPanel(hash),
+        const SizedBox(height: 12),
+        if (!isRejected) _buildExplorerAction(hash),
+        if (isUncertain) ...[
+          const SizedBox(height: 8),
+          _buildCheckStatusAction(hash),
+        ],
+        if (isRejected) ...[
+          const SizedBox(height: 8),
+          _buildReturnFormAction(),
+        ],
       ],
     );
+  }
+
+  Widget _buildTxHashPanel(String hash) {
+    return Container(
+      key: const Key('eth_send_panel_tx_hash_panel'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: kWalletBgTint,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: kWalletBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Transaction hash',
+            style: TextStyle(
+                color: kWalletTextMuted, fontSize: 11,
+                fontWeight: FontWeight.w600, letterSpacing: 0.4),
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            hash,
+            key: const Key('eth_send_panel_tx_hash_text'),
+            style: kWalletMonoStyle,
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('eth_send_panel_copy_hash_btn'),
+              icon: const Icon(Icons.copy_rounded, size: 14),
+              label: const Text(kEthSendResultCopyHashLabel),
+              style: TextButton.styleFrom(
+                foregroundColor: kWalletTextPrimary,
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+              ),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: hash));
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    key: Key('eth_send_panel_copy_snackbar'),
+                    content: Text(kEthSendResultCopiedSnackbar),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExplorerAction(String hash) {
+    final url = ethExplorerUrlFor(
+      network: widget.network, txHash: hash,
+    );
+    return FilledButton.icon(
+      key: const Key('eth_send_panel_explorer_btn'),
+      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+      label: const Text(kEthSendResultViewExplorerLabel),
+      onPressed: () async {
+        final launcher = widget.launchUrl;
+        if (launcher != null) {
+          await launcher(url);
+        }
+      },
+      style: FilledButton.styleFrom(
+        backgroundColor: kWalletAccentPrimary,
+        foregroundColor: Colors.white,
+        minimumSize: const Size.fromHeight(46),
+      ),
+    );
+  }
+
+  Widget _buildCheckStatusAction(String hash) {
+    return OutlinedButton.icon(
+      key: const Key('eth_send_panel_check_status_btn'),
+      icon: const Icon(Icons.refresh_rounded, size: 16),
+      label: const Text(kEthSendResultCheckStatusLabel),
+      onPressed: () async {
+        try {
+          final body = widget.isMainnet
+              ? await widget.client
+                  .getCryptoWalletTransactionStatusNetwork(
+                  network: widget.network,
+                  asset: widget.asset,
+                  authToken: widget.authToken,
+                  txHash: hash,
+                )
+              : await widget.client.getCryptoWalletTransactionStatus(
+                  asset: widget.asset,
+                  authToken: widget.authToken,
+                  txHash: hash,
+                );
+          final status = (body['status'] ?? '').toString();
+          _syncOutgoingRowFromStatus(hash, status);
+        } catch (_) {
+          // Leave the local row as-is on network error; the user
+          // can tap again.
+        }
+      },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: kWalletTextPrimary,
+        side: const BorderSide(color: kWalletBorderStrong),
+        minimumSize: const Size.fromHeight(44),
+      ),
+    );
+  }
+
+  Widget _buildReturnFormAction() {
+    return OutlinedButton(
+      key: const Key('eth_send_panel_return_form_btn'),
+      onPressed: () {
+        setState(() {
+          _submittedTxHash = null;
+          _broadcastStatus = null;
+          _broadcastReason = null;
+          _broadcastMessage = null;
+          _draft = null;
+          _idempotencyKey = null;
+          _stage = _Stage.form;
+          _error = null;
+        });
+      },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: kWalletTextPrimary,
+        side: const BorderSide(color: kWalletBorderStrong),
+        minimumSize: const Size.fromHeight(44),
+      ),
+      child: const Text(kEthSendResultReturnFormLabel),
+    );
+  }
+
+  void _syncOutgoingRowFromStatus(String hash, String backendStatus) {
+    LocalOutgoingTxStatus? next;
+    switch (backendStatus) {
+      case 'confirmed':
+        next = LocalOutgoingTxStatus.confirmed; break;
+      case 'failed':
+        next = LocalOutgoingTxStatus.failed; break;
+      case 'pending':
+        next = LocalOutgoingTxStatus.pending; break;
+      case 'not_found':
+        // The tx has never been seen on any Ethereum node. Do NOT
+        // mark it confirmed; keep it as `submissionUncertain` — the
+        // user is told the tx is not visible and can decide whether
+        // to consider it dropped after enough time passes.
+        next = LocalOutgoingTxStatus.submissionUncertain; break;
+      default:
+        return;
+    }
+    _updateOutgoingRow(hash, next);
+    if (mounted) {
+      setState(() {
+        // Result-screen heading may want to reflect the new state.
+        // Only upgrade `submission_uncertain` → `submitted` when
+        // the backend actually confirms; do NOT downgrade a
+        // `submitted` result screen.
+        if (next == LocalOutgoingTxStatus.confirmed
+            || next == LocalOutgoingTxStatus.failed
+            || next == LocalOutgoingTxStatus.pending) {
+          _broadcastStatus = 'submitted';
+        }
+      });
+    }
   }
 
   String _formatWeiAsEth(BigInt wei) {

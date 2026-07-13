@@ -298,6 +298,56 @@ class FakeMainnetStore:
             return True
 
 
+    def list_outgoing_history(
+        self, *, vault_id: str, network_id: str, limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        # Same field shape and same filter/order rules as the real
+        # Postgres-backed `list_outgoing_history` — CONSUMED drafts
+        # (local_tx_hash is not None) belonging to the vault + network,
+        # most-recent consumed_at first, ties broken by draft_id ASC.
+        if limit < 1:
+            limit = 1
+        if limit > 500:
+            limit = 500
+        with self._lock:
+            candidates: list[dict[str, Any]] = []
+            for d in self._drafts.values():
+                if d.get("vault_id") != str(vault_id):
+                    continue
+                if d.get("network_id") != network_id:
+                    continue
+                if d.get("local_tx_hash") in (None, ""):
+                    continue
+                candidates.append(d)
+            candidates.sort(
+                key=lambda r: (
+                    -(r.get("consumed_at") or 0.0),
+                    r.get("draft_id") or "",
+                ),
+            )
+            out: list[dict[str, Any]] = []
+            for r in candidates[:limit]:
+                out.append({
+                    "draft_id":            r["draft_id"],
+                    "network_id":          r["network_id"],
+                    "asset":               r["asset"],
+                    "sender_address":      r["sender_address_lower"],
+                    "destination_address": r["destination_address"],
+                    "value_wei":           int(r["value_wei"]),
+                    "data_hex":            r["data_hex"],
+                    "gas_limit":           int(r["gas_limit"]),
+                    "gas_price":           int(r["gas_price"]),
+                    "chain_id":            int(r["chain_id"]),
+                    "transaction_to":      r["transaction_to"],
+                    "local_tx_hash":       r["local_tx_hash"],
+                    "broadcast_outcome":   r.get("broadcast_outcome"),
+                    "created_at":          r.get("created_at"),
+                    "consumed_at":         r.get("consumed_at"),
+                    "outcome_recorded_at": r.get("outcome_recorded_at"),
+                })
+            return out
+
+
     def acquire_wallet_lock(
         self, *, network_id: str, sender_address: str,
         lease_secs: int = 30,
@@ -411,6 +461,14 @@ def make_signed_tx_and_matching_draft(
     raw_hex = signed.raw_transaction.hex()
     if not raw_hex.startswith("0x"):
         raw_hex = "0x" + raw_hex
+    # 2026-07-13 canary hardening: `_broadcast_mainnet_signed_transaction`
+    # rejects an RPC-echoed hash that does not match the locally derived
+    # `keccak256(raw)`. Expose the local hash so tests that mock the
+    # RPC can return the exact value the broadcast handler will compare
+    # against — the alternative is a hard-coded stub that no longer
+    # passes the mismatch guard.
+    from evm_signed_tx_verify import compute_local_tx_hash
+    local_hash = compute_local_tx_hash(raw_hex)
     return {
         "signed_tx_hex":      raw_hex,
         "sender_address":     sender_addr.lower(),
@@ -421,6 +479,7 @@ def make_signed_tx_and_matching_draft(
         "value_wei":          int(value_wei),
         "data_hex":           data_hex.lower(),
         "chain_id":           int(chain_id),
+        "local_tx_hash":      local_hash,
     }
 
 

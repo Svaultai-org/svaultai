@@ -23,6 +23,7 @@ ALLOWED_RPC_METHODS: frozenset[str] = frozenset({
     "eth_gasPrice",
     "eth_estimateGas",
     "eth_sendRawTransaction",
+    "eth_getTransactionByHash",
     "eth_getTransactionReceipt",
 })
 
@@ -367,6 +368,42 @@ def eth_get_transaction_receipt_at_url(
     return result
 
 
+# 2026-07-13 (canary): `eth_getTransactionByHash` lets us distinguish
+# "the RPC provider echoed a valid-shaped hash but the transaction
+# never propagated to any Ethereum node" from "the transaction is on
+# the network but not yet mined". The production canary
+# (draft 02ctGuBjqYXERNxD1k5AiplGgc_dyg5a) was falsely marked
+# `submitted` because the broadcast handler ONLY checked whether
+# `eth_sendRawTransaction` returned a value — the returned hash was
+# never re-fetched. A returned value from `eth_sendRawTransaction`
+# is NOT a guarantee that the tx will ever be visible on the network.
+#
+# Returns:
+#   * dict — the transaction envelope is visible on the RPC
+#     (mempool or mined). Sufficient evidence to record `submitted`.
+#   * None — the RPC returned `null` for `result` (definite "the node
+#     does not know this hash right now").
+#
+# Ambiguity handling matches `eth_get_transaction_receipt_at_url`:
+# transport failures raise `EvmRpcError(is_ambiguous=True)`.
+def eth_get_transaction_by_hash_at_url(
+    rpc_url: str, tx_hash: str,
+) -> Optional[dict]:
+
+
+    if not is_valid_tx_hash(tx_hash):
+        raise EvmRpcError("invalid_tx_hash")
+    body = _emit_rpc_at_url(
+        rpc_url, "eth_getTransactionByHash", [tx_hash],
+    )
+    result = body.get("result")
+    if result is None:
+        return None
+    if not isinstance(result, dict):
+        raise EvmRpcError("upstream_json")
+    return result
+
+
 def _pad_uint256(value: int) -> str:
 
 
@@ -405,6 +442,7 @@ __all__ = [
     "eth_gas_price_wei_at_url",
     "eth_estimate_gas_at_url",
     "eth_send_raw_transaction_at_url",
+    "eth_get_transaction_by_hash_at_url",
     "eth_get_transaction_receipt_at_url",
     "encode_erc20_transfer_calldata",
 ]

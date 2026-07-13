@@ -394,8 +394,15 @@ void main() {
       );
     });
 
-    testWidgets('SP10: broadcast failure → no tx hash shown, error banner',
+    testWidgets(
+        'SP10: broadcast_unavailable → honest rejection result screen '
+        '(2026-07-13 canary correctness)',
         (tester) async {
+      // Pre-canary this test asserted the submitted stage was NOT
+      // shown. Post-canary, an explicit backend rejection routes to
+      // an HONEST result screen with the rejection heading + reason.
+      // The submitted-stage KEY is reused, but the body shows the
+      // rejection copy — never a generic success.
       final client = _FakeSendClient(
         draftResponse: _draftReady(),
         encryptedSecretResponse: const {
@@ -430,11 +437,23 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('eth_send_panel_pin_confirm')));
       await tester.pumpAndSettle();
+      // Result screen is shown, but with the REJECTED heading + body
+      // (not the submitted body). "Start a new send" is the primary
+      // action; there's no fake success and no explorer link.
       expect(
         find.byKey(const Key('eth_send_panel_submitted_stage')),
-        findsNothing,
+        findsOneWidget,
       );
-      expect(find.textContaining(kEthSendErrorBroadcastFailed), findsOneWidget);
+      expect(find.text(kEthSendResultHeadingRejected), findsOneWidget);
+      expect(
+        find.byKey(const Key('eth_send_panel_return_form_btn')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('eth_send_panel_explorer_btn')),
+        findsNothing,
+        reason: 'A rejected transaction MUST NOT offer an explorer link.',
+      );
     });
 
     test('SP11: source guard — no seed / mnemonic / private key input', () {

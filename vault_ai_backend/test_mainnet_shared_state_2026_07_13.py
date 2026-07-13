@@ -174,14 +174,34 @@ class SignedTxBindingBlocksSubstitution(unittest.TestCase):
         )
 
     def _rpc_spy(self):
-        return mock.patch(
+        # 2026-07-13 canary hardening: the broadcast handler rejects
+        # a returned hash that does not match `keccak256(raw)` and
+        # requires a post-broadcast visibility observation. Patch
+        # both the send RPC (echo the local hash so the mismatch
+        # guard passes) AND `eth_getTransactionByHash` (return a
+        # visible envelope so the visibility gate passes) while
+        # still counting only send-RPC invocations for the tests
+        # that assert on `self._rpc_calls`.
+        from contextlib import ExitStack
+        stack = ExitStack()
+        stack.enter_context(mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
             side_effect=self._track_and_return,
-        )
+        ))
+        stack.enter_context(mock.patch(
+            "evm_rpc.eth_get_transaction_by_hash_at_url",
+            side_effect=lambda url, tx_hash: {
+                "hash": tx_hash, "blockNumber": None,
+            },
+        ))
+        return stack
 
     def _track_and_return(self, url, signed):
         self._rpc_calls += 1
-        return _TX_HASH
+        # Return the local keccak256 so the broadcast handler's
+        # mismatch guard passes.
+        from evm_signed_tx_verify import compute_local_tx_hash
+        return compute_local_tx_hash(signed)
 
     def _sign_variant(self, **overrides):
 

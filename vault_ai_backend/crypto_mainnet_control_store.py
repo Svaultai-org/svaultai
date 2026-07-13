@@ -530,6 +530,109 @@ def record_broadcast_outcome(
 
 
 
+def list_outgoing_history(
+    *, vault_id: str, network_id: str, limit: int = 100,
+) -> list[dict[str, Any]]:
+    """SELECT-only vault-scoped read of CONSUMED outgoing drafts.
+
+    2026-07-13 (durability slice): the outgoing-Activity row must
+    survive Flutter web reload / browser restart / re-authentication
+    on a second device. `crypto_mainnet_drafts` already stores every
+    field required to render an Activity row (sender, destination,
+    value, gas, local_tx_hash, broadcast_outcome, timestamps), so
+    the vault-owner-scoped history read is a projection of that
+    table — no duplicate transaction truth is created.
+
+    Only rows with `local_tx_hash IS NOT NULL` are returned: pre-
+    consume drafts are still-active drafts, not history — the client
+    should not surface them in Activity because no signed transaction
+    exists yet.
+
+    Rows are ordered by `consumed_at DESC` (most recent first) and
+    then draft_id to make the response stable for tests. `limit` is
+    clamped to `[1, 500]` to protect against pathological callers.
+
+    The returned dict has ONLY the fields safe to expose to the
+    authenticated vault owner. It never includes:
+      * `claim_token`         — the broadcast-worker owner secret
+      * `claim_expires_at`    — internal lock lease
+      * `expires_at`          — draft TTL (internal)
+      * `vault_id`            — implicit from the scoping WHERE
+                                 clause; not needed by the caller
+                                 and would leak a shared identifier
+                                 if the row was ever mis-routed.
+
+    A DB read failure raises — callers turn it into a 5xx envelope;
+    a silent empty list would misrepresent the state as
+    "no outgoing history".
+    """
+    if limit < 1:
+        limit = 1
+    if limit > 500:
+        limit = 500
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT draft_id, network_id,
+                   sender_address_lower AS sender_address, asset,
+                   destination_address, value_wei_str, data_hex,
+                   gas_limit, gas_price_str, chain_id,
+                   transaction_to, local_tx_hash, broadcast_outcome,
+                   EXTRACT(EPOCH FROM created_at)        AS created_at,
+                   EXTRACT(EPOCH FROM consumed_at)       AS consumed_at,
+                   EXTRACT(EPOCH FROM outcome_recorded_at)
+                       AS outcome_recorded_at
+              FROM crypto_mainnet_drafts
+             WHERE vault_id = %s
+               AND network_id = %s
+               AND local_tx_hash IS NOT NULL
+             ORDER BY consumed_at DESC NULLS LAST, draft_id ASC
+             LIMIT %s
+            """,
+            (str(vault_id), network_id, int(limit)),
+        )
+        rows = cur.fetchall() or []
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append({
+            "draft_id":            r["draft_id"],
+            "network_id":          r["network_id"],
+            "asset":               r["asset"],
+            "sender_address":      r["sender_address"],
+            "destination_address": r["destination_address"],
+            "value_wei":           int(r["value_wei_str"]),
+            "data_hex":            r["data_hex"],
+            "gas_limit":           int(r["gas_limit"]),
+            "gas_price":           int(r["gas_price_str"]),
+            "chain_id":            int(r["chain_id"]),
+            "transaction_to":      r["transaction_to"],
+            "local_tx_hash":       r["local_tx_hash"],
+            "broadcast_outcome":   r["broadcast_outcome"],
+            "created_at":          (
+                float(r["created_at"])
+                if r["created_at"] is not None else None
+            ),
+            "consumed_at":         (
+                float(r["consumed_at"])
+                if r["consumed_at"] is not None else None
+            ),
+            "outcome_recorded_at": (
+                float(r["outcome_recorded_at"])
+                if r["outcome_recorded_at"] is not None else None
+            ),
+        })
+    return out
+
+
 def acquire_wallet_lock(
     *, network_id: str, sender_address: str, lease_secs: int = 60,
 ) -> Optional[str]:
@@ -745,6 +848,7 @@ __all__ = [
     "release_claimed_draft",
     "consume_claimed_draft",
     "record_broadcast_outcome",
+    "list_outgoing_history",
     "acquire_wallet_lock",
     "release_wallet_lock",
     "is_mainnet_send_paused",

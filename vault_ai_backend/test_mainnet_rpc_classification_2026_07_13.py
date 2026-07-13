@@ -92,6 +92,11 @@ def _enable():
 
 _VAULT_ID = "rpc-classification-vault"
 _TX_HASH_HEX = "0x" + "0f" * 32
+# 2026-07-13 canary hardening.
+from _test_broadcast_mocks import (
+    echo_local_hash as _echo_local_hash,
+    visible_by_hash as _visible_by_hash,
+)
 
 
 def _make_client():
@@ -153,6 +158,14 @@ class _BroadcastFixture(unittest.TestCase):
         )
 
     def setUp(self):
+        # 2026-07-13 canary hardening: baseline
+        # `eth_getTransactionByHash` to "visible".
+        self._by_hash_patcher = mock.patch(
+            "evm_rpc.eth_get_transaction_by_hash_at_url",
+            side_effect=_visible_by_hash,
+        )
+        self._by_hash_patcher.start()
+        self.addCleanup(self._by_hash_patcher.stop)
         self._seed(nonce=1000 + os.getpid() % 8000)
 
     def tearDown(self):
@@ -380,7 +393,7 @@ class RpcRetryAfterAmbiguity(_BroadcastFixture):
 
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH_HEX,
+            side_effect=_echo_local_hash,
         ) as rpc:
             r2 = self._broadcast(self._fx["signed_tx_hex"])
         self.assertEqual(r2.status_code, 200, msg=r2.json())
@@ -402,7 +415,7 @@ class RpcRetryAfterAmbiguity(_BroadcastFixture):
         )
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH_HEX,
+            side_effect=_echo_local_hash,
         ) as rpc2:
             r3 = self._broadcast(different["signed_tx_hex"])
         self.assertEqual(r3.status_code, 409, msg=r3.json())

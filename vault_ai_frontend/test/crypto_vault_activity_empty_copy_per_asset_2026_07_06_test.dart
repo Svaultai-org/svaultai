@@ -127,11 +127,17 @@ void main() {
 
     test('the render site calls activityCopyEmptyForNetwork with '
         'widget.asset — not just widget.network', () {
+      // 2026-07-13 canary correctness: the render site merges
+      // indexer rows with the LocalOutgoingTxStore, so the empty
+      // branch is now guarded by `rows.isEmpty` (merged snapshot)
+      // rather than `_rows.isEmpty` (indexer-only field). The
+      // intent — that the empty-copy call passes widget.asset —
+      // still holds.
       final src = _readLib('ui/crypto_wallet_engine_activity_card.dart');
 
-      final emptyBlockStart = src.indexOf('_rows.isEmpty');
+      final emptyBlockStart = src.indexOf('rows.isEmpty');
       expect(emptyBlockStart, greaterThan(-1),
-          reason: 'expected the render site to have an _rows.isEmpty '
+          reason: 'expected the render site to have a rows.isEmpty '
               'branch');
       final emptyBlock = src.substring(emptyBlockStart,
           emptyBlockStart + 400);

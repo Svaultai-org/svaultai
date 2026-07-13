@@ -456,24 +456,35 @@ class MainnetWalletBroadcastConcurrency(unittest.TestCase):
         first_entered = threading.Event()
         second_tried = threading.Event()
 
-        def _blocking_send(rpc_url, signed_tx_hex):
-            first_entered.set()
-            # Wait for the second call to have tried the guard.
-            if not second_tried.wait(timeout=5):
-                raise AssertionError("second broadcast never landed")
-            return _TX_HASH
-
-        results: list[Any] = []
-        results_lock = threading.Lock()
-
-
-
-
         from _test_fake_mainnet_store import (
             make_signed_tx_and_matching_draft,
         )
         fixture1 = make_signed_tx_and_matching_draft(nonce=0)
         fixture2 = make_signed_tx_and_matching_draft(nonce=1)
+
+        # 2026-07-13 canary hardening: the broadcast route now rejects
+        # a returned hash that does not match `keccak256(raw)`, and
+        # ALSO requires a post-broadcast visibility observation on
+        # `eth_getTransactionByHash` before recording `submitted`.
+        # Have the mock echo the exact local hash and separately mock
+        # the by-hash visibility helper to return a non-null envelope.
+        _local_hash_by_signed = {
+            fixture1["signed_tx_hex"].lower(): fixture1["local_tx_hash"],
+            fixture2["signed_tx_hex"].lower(): fixture2["local_tx_hash"],
+        }
+
+        def _blocking_send(rpc_url, signed_tx_hex):
+            first_entered.set()
+            # Wait for the second call to have tried the guard.
+            if not second_tried.wait(timeout=5):
+                raise AssertionError("second broadcast never landed")
+            return _local_hash_by_signed[signed_tx_hex.lower()]
+
+        def _by_hash_visible(rpc_url, tx_hash):
+            return {"hash": tx_hash, "blockNumber": None}
+
+        results: list[Any] = []
+        results_lock = threading.Lock()
 
 
         did_first = "safetydraft-conc-first"
@@ -511,6 +522,9 @@ class MainnetWalletBroadcastConcurrency(unittest.TestCase):
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
             side_effect=_blocking_send,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_transaction_by_hash_at_url",
+            side_effect=_by_hash_visible,
         ):
             t1 = threading.Thread(
                 target=self._raw_broadcast,
@@ -602,9 +616,23 @@ class MainnetWalletBroadcastConcurrency(unittest.TestCase):
         import evm_rpc
         did1, fixture1 = self._seed_fixture_draft("rel-1a", 10)
         did2, fixture2 = self._seed_fixture_draft("rel-2b", 11)
+        _local_hash_by_signed = {
+            fixture1["signed_tx_hex"].lower(): fixture1["local_tx_hash"],
+            fixture2["signed_tx_hex"].lower(): fixture2["local_tx_hash"],
+        }
+
+        def _send_echo_local(rpc_url, signed_tx_hex):
+            return _local_hash_by_signed[signed_tx_hex.lower()]
+
+        def _by_hash_visible(rpc_url, tx_hash):
+            return {"hash": tx_hash, "blockNumber": None}
+
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_send_echo_local,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_transaction_by_hash_at_url",
+            side_effect=_by_hash_visible,
         ):
             first = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/"
@@ -651,9 +679,14 @@ class MainnetWalletBroadcastConcurrency(unittest.TestCase):
         self.assertEqual(first.status_code, 200, msg=first.json())
         self.assertEqual(first.json()["reason"], "upstream_io")
         # A subsequent broadcast must not be locked out.
+        def _by_hash_visible(rpc_url, tx_hash):
+            return {"hash": tx_hash, "blockNumber": None}
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            return_value=fixture2["local_tx_hash"],
+        ), mock.patch.object(
+            evm_rpc, "eth_get_transaction_by_hash_at_url",
+            side_effect=_by_hash_visible,
         ):
             second = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/"
@@ -738,11 +771,15 @@ class MainnetContractsAndDecimals(unittest.TestCase):
 class MainnetRpcMethodContract(unittest.TestCase):
     """
     The only JSON-RPC methods VaultAI ever sends to a mainnet RPC
-    are the 7 documented in `evm_rpc.ALLOWED_RPC_METHODS`. Any
-    method outside that set raises `method_forbidden` before ever
-    reaching the wire. This is what makes VaultAI compatible with
-    any standard Ethereum JSON-RPC provider — no archive node,
-    no debug/trace methods, no WebSocket, no paid-only endpoints.
+    are documented in `evm_rpc.ALLOWED_RPC_METHODS`. Any method
+    outside that set raises `method_forbidden` before ever reaching
+    the wire. This is what makes VaultAI compatible with any standard
+    Ethereum JSON-RPC provider — no archive node, no debug/trace
+    methods, no WebSocket, no paid-only endpoints.
+
+    2026-07-13 canary hardening: `eth_getTransactionByHash` was added
+    so the broadcast handler can verify the transaction actually
+    reached at least one Ethereum node before recording `submitted`.
     """
 
     def test_allowed_rpc_methods_is_the_public_surface(self) -> None:
@@ -756,6 +793,7 @@ class MainnetRpcMethodContract(unittest.TestCase):
                 "eth_gasPrice",
                 "eth_estimateGas",
                 "eth_sendRawTransaction",
+                "eth_getTransactionByHash",
                 "eth_getTransactionReceipt",
             }),
         )

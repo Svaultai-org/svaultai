@@ -76,6 +76,19 @@ _SIGNED_TX_ALT = "0x" + "ff" * 120
 _TX_HASH = "0x" + "12" * 32
 _TX_HASH_2 = "0x" + "34" * 32
 _VALID_IDEM = "test-idem-key-001"
+# 2026-07-13 canary hardening.
+from _test_broadcast_mocks import (
+    echo_local_hash as _echo_local_hash,
+    visible_by_hash as _visible_by_hash,
+)
+
+
+def _local_hash_of(signed_tx_hex: str) -> str:
+    """Compute the local keccak256 of a signed tx — the value the
+    hardened broadcast handler will echo back as `txHash` in the
+    success envelope."""
+    from evm_signed_tx_verify import compute_local_tx_hash
+    return compute_local_tx_hash(signed_tx_hex)
 
 
 class FlagDefaultsTests(unittest.TestCase):
@@ -109,6 +122,14 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         _clear_all_env()
         os.environ["VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED"] = "true"
         vault_config.reset_for_tests()
+        # 2026-07-13 canary hardening: baseline
+        # `eth_getTransactionByHash` to "visible".
+        self._by_hash_patcher = mock.patch(
+            "evm_rpc.eth_get_transaction_by_hash_at_url",
+            side_effect=_visible_by_hash,
+        )
+        self._by_hash_patcher.start()
+        self.addCleanup(self._by_hash_patcher.stop)
         self._client, self._app, self._wallet_mod = _make_app_client()
         self._store: dict[tuple[str, str], dict] = {}
         self._orig_load = self._wallet_mod._load_wallet_account_record
@@ -217,7 +238,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
 
         def _stub(rpc_url, signed_tx_hex):
             call_count["n"] += 1
-            return _TX_HASH
+            return _echo_local_hash(rpc_url, signed_tx_hex)
 
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
@@ -281,7 +302,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            side_effect=lambda u, s: _TX_HASH,
+            side_effect=_echo_local_hash,
         ):
 
             for i in range(2):
@@ -327,7 +348,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            side_effect=lambda u, s: _TX_HASH,
+            side_effect=_echo_local_hash,
         ):
 
             for i in range(5):
@@ -354,7 +375,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            side_effect=lambda u, s: _TX_HASH,
+            side_effect=_echo_local_hash,
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
@@ -367,7 +388,9 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["status"], "submitted")
-        self.assertEqual(body["txHash"], _TX_HASH)
+        # 2026-07-13 canary hardening: the envelope now carries the
+        # LOCAL keccak256(raw) hash, not whatever the RPC echoes.
+        self.assertEqual(body["txHash"], _local_hash_of(fixture["signed_tx_hex"]))
 
     def test_H7b_broadcast_still_rejects_other_extras(self) -> None:
         _set_env(
@@ -398,7 +421,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
 
         def _stub(rpc_url, signed_tx_hex):
             call_count["n"] += 1
-            return _TX_HASH
+            return _echo_local_hash(rpc_url, signed_tx_hex)
 
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
@@ -442,7 +465,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            side_effect=lambda u, s: _TX_HASH,
+            side_effect=_echo_local_hash,
         ):
             resp1 = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
@@ -579,7 +602,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
             import evm_rpc
             with mock.patch.object(
                 evm_rpc, "eth_send_raw_transaction_at_url",
-                side_effect=lambda u, s: _TX_HASH,
+                side_effect=_echo_local_hash,
             ):
                 self._client.post(
                     "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
@@ -636,7 +659,7 @@ class MainnetSendSafetyRouteTests(unittest.TestCase):
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
-            side_effect=lambda u, s: _TX_HASH,
+            side_effect=_echo_local_hash,
         ):
 
             did1, fixture1 = self._seed_broadcast_draft(suffix="reset-1-aa", nonce=1)

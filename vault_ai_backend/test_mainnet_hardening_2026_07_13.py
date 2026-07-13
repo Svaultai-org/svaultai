@@ -287,10 +287,13 @@ class MainnetDraftRegistryAndBroadcastBinding(unittest.TestCase):
             chain_id=fixture["chain_id"],
             transaction_to=fixture["transaction_to"],
         )
-        with mock.patch.object(
-            evm_rpc, "eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
-        ):
+        # 2026-07-13 canary hardening: use the shared broadcast-mock
+        # helper. It patches BOTH the send RPC and the
+        # `eth_getTransactionByHash` visibility helper, satisfying
+        # the new mismatch guard and the post-broadcast visibility
+        # requirement without duplicating the setup in every test.
+        from _test_broadcast_mocks import mock_successful_broadcast
+        with mock_successful_broadcast([fixture]):
             first = self._post_broadcast(
                 signed=fixture["signed_tx_hex"], draft_id=did,
             )

@@ -16,6 +16,32 @@ import 'ethereum_wallet.dart' show deriveEthereumAddressFromPrivateKeyHex;
 final ECDomainParameters _secp256k1 = ECCurve_secp256k1();
 
 
+/// 2026-07-13 canary correctness: derive `keccak256(raw)` — the
+/// canonical Ethereum transaction hash — from the fully signed RLP
+/// hex the client just built. Matches the backend's
+/// `evm_signed_tx_verify.compute_local_tx_hash`. Used by the send
+/// panel to (a) key the local outgoing Activity row and (b) drive
+/// post-broadcast status polling.
+String computeLocalEthTxHash(String signedTxHex) {
+  final hex = signedTxHex.startsWith('0x')
+      ? signedTxHex.substring(2)
+      : signedTxHex;
+  if (hex.length.isOdd || hex.isEmpty) {
+    throw ArgumentError('signedTxHex must be non-empty even hex');
+  }
+  final bytes = Uint8List(hex.length ~/ 2);
+  for (var i = 0; i < bytes.length; i++) {
+    bytes[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+  }
+  final hash = KeccakDigest(256).process(bytes);
+  final buf = StringBuffer('0x');
+  for (final b in hash) {
+    buf.write(b.toRadixString(16).padLeft(2, '0'));
+  }
+  return buf.toString();
+}
+
+
 String signLegacyEthTransaction({
   required BigInt nonce,
   required BigInt gasPrice,

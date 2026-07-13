@@ -83,7 +83,16 @@ def _enable():
 
 
 _VAULT_ID = "terminal-outcome-vault"
+# 2026-07-13 canary hardening: retained as a hex hash constant so
+# `explicit_rejected` / `nonce_too_low` tests (which mock the RPC to
+# RAISE and therefore never trip the mismatch guard) still compile.
+# For success-path tests the mock returns `_echo_local_hash` and the
+# by-hash visibility helper is auto-patched to "visible" in setUp.
 _TX_HASH_HEX = "0x" + "0f" * 32
+from _test_broadcast_mocks import (
+    echo_local_hash as _echo_local_hash,
+    visible_by_hash as _visible_by_hash,
+)
 
 
 def _make_client():
@@ -119,6 +128,14 @@ class _OutcomeReplayFixture(unittest.TestCase):
     def setUp(self):
         _clear_all()
         _enable()
+        # 2026-07-13 canary hardening: baseline `eth_getTransactionByHash`
+        # to "visible" for tests that don't override it.
+        self._by_hash_patcher = mock.patch(
+            "evm_rpc.eth_get_transaction_by_hash_at_url",
+            side_effect=_visible_by_hash,
+        )
+        self._by_hash_patcher.start()
+        self.addCleanup(self._by_hash_patcher.stop)
         self._client, self._app, self._m = _make_client()
         self._m.reset_mainnet_safety_state_for_tests()
         from _test_fake_mainnet_store import (
@@ -186,7 +203,7 @@ class _OutcomeReplayFixture(unittest.TestCase):
     ):
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH_HEX,
+            side_effect=_echo_local_hash,
         ) as rpc:
             r = self._broadcast(self._fx["signed_tx_hex"])
         self.assertEqual(
@@ -213,7 +230,7 @@ class _OutcomeReplayFixture(unittest.TestCase):
         )
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH_HEX,
+            side_effect=_echo_local_hash,
         ) as rpc:
             r = self._broadcast(different["signed_tx_hex"])
         self.assertEqual(
@@ -230,7 +247,9 @@ class _OutcomeReplayFixture(unittest.TestCase):
 
 class SuccessfulSubmissionReplay(_OutcomeReplayFixture):
     def test_submitted_replay_returns_already_submitted(self):
-        r = self._drive_first_broadcast(_TX_HASH_HEX)
+        # 2026-07-13 canary hardening: pass the echo-local-hash
+        # side_effect so the mismatch guard sees a matching hash.
+        r = self._drive_first_broadcast(_echo_local_hash)
         self.assertEqual(r.json()["status"], "submitted")
 
         body = self._replay_same_tx_expecting("already_submitted")
@@ -241,7 +260,7 @@ class SuccessfulSubmissionReplay(_OutcomeReplayFixture):
         self.assertIsNotNone(d["outcome_recorded_at"])
 
     def test_submitted_different_tx_replay_returns_409(self):
-        self._drive_first_broadcast(_TX_HASH_HEX)
+        self._drive_first_broadcast(_echo_local_hash)
         self._replay_different_tx_expecting_409()
 
     def _fx_local_hash(self):
@@ -496,7 +515,7 @@ class CrashBetweenRpcAndOutcomePersist(_OutcomeReplayFixture):
             self._m._mainnet_store.record_broadcast_outcome = _crash
             with mock.patch(
                 "evm_rpc.eth_send_raw_transaction_at_url",
-                return_value=_TX_HASH_HEX,
+                side_effect=_echo_local_hash,
             ):
                 # The route currently does not wrap the outcome-write
                 # in try/except (a persistence failure is unusual and
@@ -531,7 +550,7 @@ class OutcomeIsWriteOnceOwnerSafe(_OutcomeReplayFixture):
         # Drive the draft to CONSUMED with outcome=submitted.
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH_HEX,
+            side_effect=_echo_local_hash,
         ):
             self._broadcast(self._fx["signed_tx_hex"])
 

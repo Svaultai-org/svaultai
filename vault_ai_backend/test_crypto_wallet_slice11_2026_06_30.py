@@ -552,14 +552,25 @@ class MainnetSendRouteTests(unittest.TestCase):
         )
         captured: list[Any] = []
 
+        # 2026-07-13 canary hardening: the broadcast handler now
+        # requires the RPC-echoed hash to match the locally derived
+        # `keccak256(raw)`. Echo the local hash and mock
+        # `eth_getTransactionByHash` to report the tx as visible so
+        # the post-broadcast visibility gate passes.
+        from evm_signed_tx_verify import compute_local_tx_hash
+        local_hash = compute_local_tx_hash(fixture["signed_tx_hex"])
+
         def _stub(rpc_url, signed_tx_hex):
             captured.append((rpc_url, signed_tx_hex))
-            return _TX_HASH
+            return local_hash
 
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_send_raw_transaction_at_url",
             side_effect=_stub,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_transaction_by_hash_at_url",
+            side_effect=lambda u, tx: {"hash": tx, "blockNumber": None},
         ):
             resp = self._client.post(
                 "/crypto/wallet/network/ethereum_mainnet/ETH/send/broadcast",
@@ -568,12 +579,12 @@ class MainnetSendRouteTests(unittest.TestCase):
             )
         body = resp.json()
         self.assertEqual(body["status"], "submitted", msg=body)
-        self.assertEqual(body["txHash"], _TX_HASH)
+        self.assertEqual(body["txHash"], local_hash)
         self.assertEqual(body["network"], "Ethereum Mainnet")
-                                                   
+
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0][0], "https://example.invalid/mainnet")
-                                                    
+
         self.assertEqual(captured[0][1], fixture["signed_tx_hex"])
 
     def test_S13b_broadcast_send_flag_off(self) -> None:
@@ -709,10 +720,16 @@ class MainnetSendRouteTests(unittest.TestCase):
             captured.append(rpc_url)
             return {"status": "0x1", "blockNumber": "0x1234"}
 
+        # 2026-07-13 canary hardening: the mainnet transaction-status
+        # endpoint now consults both `eth_getTransactionByHash` AND
+        # `eth_getTransactionReceipt`. Stub both.
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_get_transaction_receipt_at_url",
             side_effect=_stub,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_transaction_by_hash_at_url",
+            side_effect=lambda u, tx: {"hash": tx, "blockNumber": "0x1234"},
         ):
             resp = self._client.get(
                 f"/crypto/wallet/network/ethereum_mainnet/ETH/"
@@ -722,6 +739,7 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(body["status"], "confirmed")
         self.assertEqual(body["txHash"], _TX_HASH)
         self.assertEqual(body["blockNumber"], 0x1234)
+        # by_hash + receipt each captured once → 2 URLs, both mainnet
         self.assertEqual(captured, ["https://example.invalid/mainnet"])
 
     def test_S17b_status_pending_when_receipt_null(self) -> None:
@@ -734,10 +752,18 @@ class MainnetSendRouteTests(unittest.TestCase):
         def _stub(rpc_url, tx_hash):
             return None
 
+        # 2026-07-13 canary hardening: "pending" now requires
+        # `eth_getTransactionByHash` to return non-null AND
+        # `eth_getTransactionReceipt` null. If BOTH are null the
+        # status is `not_found`. This test targets the "in-mempool"
+        # case so we stub by_hash to non-null and receipt to null.
         import evm_rpc
         with mock.patch.object(
             evm_rpc, "eth_get_transaction_receipt_at_url",
             side_effect=_stub,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_transaction_by_hash_at_url",
+            side_effect=lambda u, tx: {"hash": tx, "blockNumber": None},
         ):
             resp = self._client.get(
                 f"/crypto/wallet/network/ethereum_mainnet/ETH/"
@@ -899,6 +925,8 @@ class SourceGuardTests(unittest.TestCase):
             "eth_getBalance", "eth_call",
             "eth_getTransactionCount", "eth_gasPrice",
             "eth_estimateGas", "eth_sendRawTransaction",
+            # 2026-07-13 canary hardening: post-broadcast visibility
+            "eth_getTransactionByHash",
             "eth_getTransactionReceipt",
         }
         self.assertEqual(set(ALLOWED_RPC_METHODS), expected)

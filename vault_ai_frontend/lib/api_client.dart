@@ -4096,4 +4096,36 @@ Future<Map<String, dynamic>> deleteVaultFile({
     }
     return decoded;
   }
+
+  // 2026-07-13 (durability slice): vault-scoped durable outgoing
+  // history. The backend response never includes claim tokens or
+  // internal lock fields — only the projection of consumed drafts
+  // that Activity needs to render (and the local tx hash the client
+  // uses to fetch chain-observed status separately).
+  Future<Map<String, dynamic>> getCryptoWalletOutgoingHistoryNetwork({
+    required String network,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/crypto/wallet/network/$network/outgoing/history',
+    );
+    final response = await http.get(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: false),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Get outgoing history failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid outgoing history response');
+    }
+    return decoded;
+  }
 }

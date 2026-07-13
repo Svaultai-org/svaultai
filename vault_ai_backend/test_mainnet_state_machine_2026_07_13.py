@@ -77,7 +77,16 @@ def _enable():
 
 
 _VAULT_ID = "state-machine-vault"
-_TX_HASH  = "0x" + "0f" * 32
+# 2026-07-13 canary hardening: broadcast handler now rejects a
+# returned hash that does not match `keccak256(raw)` and requires
+# a post-broadcast visibility observation before recording
+# `submitted`. These helpers make the pre-hardening test structure
+# still exercise a successful broadcast — the mock echoes the local
+# hash and `eth_getTransactionByHash` reports the tx as visible.
+from _test_broadcast_mocks import (
+    echo_local_hash as _echo_local_hash,
+    visible_by_hash as _visible_by_hash,
+)
 
 
 def _make_client():
@@ -113,6 +122,16 @@ class DraftClaimStateMachine(unittest.TestCase):
     def setUp(self):
         _clear_all()
         _enable()
+        # 2026-07-13 canary hardening: baseline the post-broadcast
+        # visibility helper to "visible". Tests that specifically
+        # probe the invisible / not-yet-visible cases replace this
+        # inside the test body.
+        self._by_hash_patcher = mock.patch(
+            "evm_rpc.eth_get_transaction_by_hash_at_url",
+            side_effect=_visible_by_hash,
+        )
+        self._by_hash_patcher.start()
+        self.addCleanup(self._by_hash_patcher.stop)
         self._client, self._app, self._m = _make_client()
         self._m.reset_mainnet_safety_state_for_tests()
 
@@ -160,7 +179,7 @@ class DraftClaimStateMachine(unittest.TestCase):
         bad = make_signed_tx_and_matching_draft(nonce=999)
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_echo_local_hash,
         ) as rpc:
 
             r1 = self._broadcast(bad["signed_tx_hex"])
@@ -182,7 +201,7 @@ class DraftClaimStateMachine(unittest.TestCase):
         )
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_echo_local_hash,
         ) as rpc:
             for _ in range(3):
                 bad = make_signed_tx_and_matching_draft(nonce=1234)
@@ -196,7 +215,7 @@ class DraftClaimStateMachine(unittest.TestCase):
     def test_successful_broadcast_records_local_tx_hash(self):
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_echo_local_hash,
         ):
             r = self._broadcast(self._fx["signed_tx_hex"])
         self.assertEqual(r.status_code, 200)
@@ -214,7 +233,7 @@ class DraftClaimStateMachine(unittest.TestCase):
         self._m._mainnet_store.set_mainnet_send_paused(True)
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_echo_local_hash,
         ) as rpc:
             r = self._broadcast(self._fx["signed_tx_hex"])
         self.assertEqual(r.status_code, 200)
@@ -238,6 +257,14 @@ class AmbiguousRpcTimeout(unittest.TestCase):
     def setUp(self):
         _clear_all()
         _enable()
+        # 2026-07-13 canary hardening: baseline `eth_getTransactionByHash`
+        # to "visible" for tests that don't override it.
+        self._by_hash_patcher = mock.patch(
+            "evm_rpc.eth_get_transaction_by_hash_at_url",
+            side_effect=_visible_by_hash,
+        )
+        self._by_hash_patcher.start()
+        self.addCleanup(self._by_hash_patcher.stop)
         self._client, self._app, self._m = _make_client()
         self._m.reset_mainnet_safety_state_for_tests()
         from _test_fake_mainnet_store import (
@@ -314,7 +341,7 @@ class AmbiguousRpcTimeout(unittest.TestCase):
 
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_echo_local_hash,
         ) as rpc:
             r2 = self._broadcast(self._fx["signed_tx_hex"])
         self.assertEqual(r2.status_code, 200, msg=r2.json())
@@ -334,7 +361,7 @@ class AmbiguousRpcTimeout(unittest.TestCase):
         not silently accepted as a fresh broadcast."""
         with mock.patch(
             "evm_rpc.eth_send_raw_transaction_at_url",
-            return_value=_TX_HASH,
+            side_effect=_echo_local_hash,
         ):
             r_ok = self._broadcast(self._fx["signed_tx_hex"])
         self.assertEqual(r_ok.status_code, 200)

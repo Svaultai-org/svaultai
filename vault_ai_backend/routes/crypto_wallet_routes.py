@@ -406,6 +406,77 @@ def _record_mainnet_broadcast_outcome(
     )
 
 
+# 2026-07-13 (canary hardening): number of `eth_getTransactionByHash`
+# / `eth_getTransactionReceipt` polls we perform inside the broadcast
+# HTTP request after the RPC's echoed hash but before we return the
+# outcome. Total time-budget = _VISIBILITY_POLLS * _VISIBILITY_INTERVAL_S.
+# Kept small so the broadcast HTTP request finishes well within any
+# reasonable frontend timeout; a longer visibility check is delegated
+# to the transaction-status endpoint the client polls afterwards.
+_VISIBILITY_POLLS: int = 3
+_VISIBILITY_INTERVAL_S: float = 0.4
+
+
+def _mainnet_visibility_after_broadcast(
+    *, rpc_url: str, local_tx_hash: str,
+    max_polls: int = _VISIBILITY_POLLS,
+    interval_s: float = _VISIBILITY_INTERVAL_S,
+) -> tuple[bool, str]:
+    """Bounded post-broadcast visibility check.
+
+    Canary incident 2026-07-13: `eth_sendRawTransaction` returned a
+    valid-shaped hash for the canary transaction but the transaction
+    was never visible on Ethereum Mainnet. The old code took
+    "RPC returned a hash" as sufficient evidence for `submitted`;
+    that classification is now REJECTED.
+
+    A transaction is `submitted` iff at least one Ethereum RPC returns
+    non-null for `eth_getTransactionByHash(local_hash)` OR non-null
+    for `eth_getTransactionReceipt(local_hash)`. If both stay null for
+    the whole visibility window, the outcome is `submission_uncertain`
+    and the client is told to keep checking. `submitted` is NEVER
+    inferred from the RPC echo alone.
+
+    Ambiguous RPC transport errors during visibility polling do not
+    downgrade an already-observed transaction — but they DO leave the
+    outcome uncertain if we never actually observed one.
+
+    Returns:
+        (visible: bool, reason: str)
+            visible=True  → observed on RPC → caller records `submitted`
+            visible=False → not yet observed within budget → caller records
+                            `submission_uncertain`; `reason` is a short
+                            non-sensitive token for the log line only.
+    """
+    from evm_rpc import (
+        EvmRpcError, eth_get_transaction_by_hash_at_url,
+        eth_get_transaction_receipt_at_url,
+    )
+    last_reason = "not_yet_visible"
+    for attempt in range(max_polls):
+        try:
+            tx = eth_get_transaction_by_hash_at_url(
+                rpc_url, local_tx_hash,
+            )
+        except EvmRpcError as exc:
+            last_reason = f"by_hash_{exc.code}"
+            tx = None
+        if tx is not None:
+            return True, "by_hash"
+        try:
+            receipt = eth_get_transaction_receipt_at_url(
+                rpc_url, local_tx_hash,
+            )
+        except EvmRpcError as exc:
+            last_reason = f"receipt_{exc.code}"
+            receipt = None
+        if receipt is not None:
+            return True, "receipt"
+        if attempt < max_polls - 1:
+            _time.sleep(interval_s)
+    return False, last_reason
+
+
 def reset_solana_safety_state_for_tests() -> None:
     with _SOLANA_SAFETY_LOCK:
         _SOLANA_BROADCAST_TIMES.clear()
@@ -3289,6 +3360,8 @@ def _broadcast_mainnet_signed_transaction(
 
     from evm_rpc import (
         EvmRpcError, eth_send_raw_transaction_at_url,
+        eth_get_transaction_by_hash_at_url,
+        eth_get_transaction_receipt_at_url,
         is_valid_signed_tx_hex,
     )
     from vault_config import (
@@ -3297,7 +3370,7 @@ def _broadcast_mainnet_signed_transaction(
     )
     norm = _normalize_asset(asset)
     vault_id = principal["vault_id"]
-                         
+
     if ethereum_mainnet_send_paused():
         return _mainnet_send_paused_envelope(norm)
                                       
@@ -3830,13 +3903,105 @@ def _broadcast_mainnet_signed_transaction(
                 payload.signedTransaction, envelope,
             )
             return envelope
+        # 2026-07-13 (canary hardening): a returned hash from
+        # `eth_send_raw_transaction_at_url` is NOT sufficient evidence
+        # for `submitted`. The production canary (draft
+        # 02ctGuBjqYXERNxD1k5AiplGgc_dyg5a, local hash
+        # 0x783ddc09…4c415b) received a valid-shaped hash from the
+        # provider yet was never visible on any Ethereum mainnet RPC
+        # (`getTransactionByHash` → null; `getTransactionReceipt`
+        # → null; sender balance unchanged). The old classification
+        # was wrong. Rules now:
+        #
+        #   (a) If the provider's returned hash differs from our
+        #       locally-derived hash, the provider is not echoing what
+        #       we asked it to broadcast. This is not proof of
+        #       submission — return `submission_uncertain` with the
+        #       LOCAL hash so the client can keep checking.
+        #   (b) Bounded post-broadcast visibility poll against
+        #       `eth_getTransactionByHash` + `eth_getTransactionReceipt`
+        #       (see `_mainnet_visibility_after_broadcast`). If the tx
+        #       is observed within the budget → `submitted`. If not
+        #       observed → `submission_uncertain`.
+        #
+        # `submitted` from here on means "at least one Ethereum RPC
+        # can name this transaction". `submission_uncertain` means
+        # "broadcast was attempted but the transaction is not yet
+        # observable" — the client keeps polling the status endpoint.
+        returned_hash_lc = (tx_hash or "").lower()
+        local_hash_lc = local_tx_hash.lower()
+        vault_prefix = str(vault_id)[:8] + "…"
+        if returned_hash_lc != local_hash_lc:
+            logger.warning(
+                "[WALLET-ENGINE] mainnet_broadcast_hash_mismatch "
+                "vault=%s asset=%s returnedPrefix=%s localPrefix=%s",
+                vault_prefix, norm,
+                returned_hash_lc[:10], local_hash_lc[:10],
+            )
+            _record_mainnet_broadcast_outcome(
+                draft_id=draft_id, claim_token=claim_token,
+                outcome="submission_uncertain",
+            )
+            envelope = {
+                "status":  "submission_uncertain",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  "returned_hash_mismatch",
+                "txHash":  local_tx_hash,
+                "message": (
+                    "The mainnet RPC provider echoed a different "
+                    "transaction hash than the one we signed. This "
+                    "is not proof the transaction was broadcast. "
+                    "Check the transaction status page with the "
+                    "returned txHash before assuming success or "
+                    "re-signing with a new nonce."
+                ),
+            }
+            _record_idempotent_broadcast(
+                vault_id, idem_key or "",
+                payload.signedTransaction, envelope,
+            )
+            return envelope
+        visible, visibility_reason = _mainnet_visibility_after_broadcast(
+            rpc_url=rpc_url, local_tx_hash=local_tx_hash,
+        )
+        if not visible:
+            logger.warning(
+                "[WALLET-ENGINE] mainnet_broadcast_invisible "
+                "vault=%s asset=%s localPrefix=%s lastReason=%s",
+                vault_prefix, norm,
+                local_hash_lc[:10], visibility_reason,
+            )
+            _record_mainnet_broadcast_outcome(
+                draft_id=draft_id, claim_token=claim_token,
+                outcome="submission_uncertain",
+            )
+            envelope = {
+                "status":  "submission_uncertain",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "reason":  "not_yet_visible",
+                "txHash":  local_tx_hash,
+                "message": (
+                    "The mainnet RPC provider accepted the raw "
+                    "transaction but no Ethereum node has yet "
+                    "reported seeing it. The transaction MAY still "
+                    "propagate. Check the transaction status page "
+                    "with the returned txHash. Do not re-sign with "
+                    "a new nonce until the status is confirmed as "
+                    "`not_found` on the network."
+                ),
+            }
+            _record_idempotent_broadcast(
+                vault_id, idem_key or "",
+                payload.signedTransaction, envelope,
+            )
+            return envelope
         logger.info(
             "[WALLET-ENGINE] mainnet_broadcast_ok vault=%s asset=%s "
-            "txHashPrefix=%s localMatch=%s",
-            str(vault_id)[:8] + "…", norm,
-            (tx_hash or "")[:10],
-            "yes" if (tx_hash or "").lower() == local_tx_hash.lower()
-                else "no",
+            "txHashPrefix=%s visibleVia=%s",
+            vault_prefix, norm,
+            local_hash_lc[:10], visibility_reason,
         )
         _record_mainnet_broadcast_outcome(
             draft_id=draft_id, claim_token=claim_token,
@@ -3846,7 +4011,7 @@ def _broadcast_mainnet_signed_transaction(
             "status":  "submitted",
             "asset":   norm,
             "network": "Ethereum Mainnet",
-            "txHash":  tx_hash,
+            "txHash":  local_tx_hash,
         }
         _record_idempotent_broadcast(
             vault_id, idem_key or "",
@@ -3912,11 +4077,34 @@ def get_transaction_status_network(
 def _get_mainnet_transaction_status(
     asset: str, tx_hash: str,
 ) -> dict[str, Any]:
+    """
+    Post-broadcast transaction visibility endpoint.
 
+    2026-07-13 (canary hardening): the old implementation ONLY called
+    `eth_getTransactionReceipt`. That cannot distinguish
+    "the transaction is in the mempool waiting to be mined" from
+    "no Ethereum node has ever seen this hash" — both return
+    `receipt=null`. The production canary lived in that second bucket
+    for hours and the old status endpoint kept reporting `pending`,
+    which is inconsistent with the truth ("not visible anywhere").
+    The status lifecycle is now:
 
+        not_found  → getTransactionByHash null AND getTransactionReceipt null
+                     (nothing on the network can name this hash)
+        pending    → getTransactionByHash returns an envelope but
+                     receipt is null (in mempool, awaiting inclusion)
+        confirmed  → receipt.status == "0x1"
+        failed     → receipt.status == "0x0"
+        unavailable → transport error hitting the RPC
+
+    The client uses `not_found` to progressively escalate the local
+    outgoing Activity row from `submission_uncertain` towards
+    `dropped/unknown` after a documented time window, WITHOUT
+    inferring confirmation from any of it.
+    """
     from evm_rpc import (
-        EvmRpcError, eth_get_transaction_receipt_at_url,
-        is_valid_tx_hash,
+        EvmRpcError, eth_get_transaction_by_hash_at_url,
+        eth_get_transaction_receipt_at_url, is_valid_tx_hash,
     )
     from vault_config import ethereum_mainnet_rpc_url
     norm = _normalize_asset(asset)
@@ -3943,6 +4131,17 @@ def _get_mainnet_transaction_status(
         }
 
     try:
+        by_hash = eth_get_transaction_by_hash_at_url(rpc_url, tx_hash)
+    except EvmRpcError as exc:
+        return {
+            "status":  "unavailable",
+            "asset":   norm,
+            "network": "Ethereum Mainnet",
+            "txHash":  tx_hash,
+            "reason":  exc.code,
+        }
+
+    try:
         receipt = eth_get_transaction_receipt_at_url(rpc_url, tx_hash)
     except EvmRpcError as exc:
         return {
@@ -3954,6 +4153,13 @@ def _get_mainnet_transaction_status(
         }
 
     if receipt is None:
+        if by_hash is None:
+            return {
+                "status":  "not_found",
+                "asset":   norm,
+                "network": "Ethereum Mainnet",
+                "txHash":  tx_hash,
+            }
         return {
             "status":  "pending",
             "asset":   norm,
@@ -3983,6 +4189,122 @@ def _get_mainnet_transaction_status(
         "network":     "Ethereum Mainnet",
         "txHash":      tx_hash,
         "blockNumber": block_number,
+    }
+
+
+# ---------------------------------------------------------------
+# 2026-07-13 (durability slice). Vault-scoped authenticated read
+# of the outgoing send history — the durable source of truth that
+# lets the Activity card survive Flutter web reload / browser
+# restart / re-authentication on a second device.
+#
+# Only projects fields already stored on `crypto_mainnet_drafts`
+# (register_draft → consume_claimed_draft → record_broadcast_outcome).
+# No duplicate transaction truth is created; a "draft" that never
+# reached `consumed_at` never appears here.
+#
+# The response is deliberately narrow — never includes claim tokens,
+# claim-lease timestamps, or draft-expiry timestamps. Only the
+# fields the Activity card needs to render a row + let the client
+# fetch chain-observed status via /transaction/{tx_hash}.
+#
+# Sepolia and non-EVM networks return an empty list: their outgoing
+# state lives in the indexer + the client's LocalOutgoingTxStore.
+# Mainnet is where the canary-caliber durability guarantee is
+# required and where the shared-state Postgres store already exists.
+# ---------------------------------------------------------------
+@router.get(
+    "/crypto/wallet/network/{network}/outgoing/history",
+)
+def get_outgoing_history_network(
+    network: str,
+    principal=Depends(require_crypto_entitlement),
+):
+    if not crypto_wallet_engine_enabled():
+        return _engine_off_response()
+    nid, err = _resolve_network_for_route(network)
+    if err is not None:
+        return err
+    from evm_networks import NETWORK_ETHEREUM_MAINNET
+    from vault_config import (
+        ethereum_mainnet_token_decimals,
+        ethereum_mainnet_token_unit,
+    )
+    if nid != NETWORK_ETHEREUM_MAINNET:
+        # Sepolia + non-EVM: no durable outgoing store — the client's
+        # LocalOutgoingTxStore + the indexer are authoritative for
+        # those networks. Explicit empty list, not a 404, so the
+        # client can uniformly `.length` the response.
+        return {
+            "status":   "ok",
+            "network":  network,
+            "outgoing": [],
+        }
+    try:
+        rows = _mainnet_store.list_outgoing_history(
+            vault_id=str(principal["vault_id"]),
+            network_id=NETWORK_ETHEREUM_MAINNET,
+            limit=100,
+        )
+    except Exception:
+        logger.warning(
+            "[WALLET-ENGINE] mainnet_outgoing_history_failed vault=%s",
+            str(principal["vault_id"])[:8] + "…",
+        )
+        return {
+            "status":  "unavailable",
+            "network": network,
+            "reason":  "history_store_failed",
+        }
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        asset = (r.get("asset") or "").strip()
+        is_token = asset in ERC20_TOKEN_ASSETS
+        unit = (
+            ethereum_mainnet_token_unit(asset) if is_token
+            else "ETH"
+        )
+        decimals = (
+            ethereum_mainnet_token_decimals(asset) if is_token
+            else 18
+        )
+        # For token sends the payload value is 0 (native ETH value)
+        # and the "amount" is inside dataHex; for the client-friendly
+        # response we expose the token amount as amountBaseUnits
+        # (parsed from calldata by the client when it needs to
+        # render). For native ETH sends, amountBaseUnits == valueWei.
+        amount_base_units: Optional[str] = None
+        if not is_token:
+            amount_base_units = str(int(r.get("value_wei") or 0))
+        gas_limit = int(r.get("gas_limit") or 0)
+        gas_price = int(r.get("gas_price") or 0)
+        fee_wei = gas_limit * gas_price
+        out.append({
+            "draftId":             r.get("draft_id"),
+            "networkId":           r.get("network_id"),
+            "asset":               asset,
+            "unit":                unit,
+            "decimals":            decimals,
+            "fromAddress":         r.get("sender_address"),
+            "destinationAddress":  r.get("destination_address"),
+            "transactionTo":       r.get("transaction_to"),
+            "valueWei":            str(int(r.get("value_wei") or 0)),
+            "amountBaseUnits":     amount_base_units,
+            "dataHex":             r.get("data_hex"),
+            "gasLimit":            str(gas_limit),
+            "gasPrice":            str(gas_price),
+            "feeWei":              str(fee_wei),
+            "chainId":             int(r.get("chain_id") or 0),
+            "localTxHash":         r.get("local_tx_hash"),
+            "broadcastOutcome":    r.get("broadcast_outcome"),
+            "createdAt":           r.get("created_at"),
+            "consumedAt":          r.get("consumed_at"),
+            "outcomeRecordedAt":   r.get("outcome_recorded_at"),
+        })
+    return {
+        "status":   "ok",
+        "network":  network,
+        "outgoing": out,
     }
 
 
