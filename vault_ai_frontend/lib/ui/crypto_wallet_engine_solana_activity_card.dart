@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/crypto_wallet_features.dart';
+import '../services/durable_outgoing_history_store.dart';
+import '../services/local_outgoing_tx_store.dart';
 import 'crypto_wallet_engine_design.dart';
 
 
@@ -57,12 +59,18 @@ class CryptoWalletEngineSolanaActivityCard extends StatefulWidget {
   final CryptoWalletFeatures? features;
   final int limit;
 
+  /// 2026-07-14 (Round 7 hardening): three-source merge stores.
+  final LocalOutgoingTxStore? localStore;
+  final DurableOutgoingHistoryStore? durableStore;
+
   const CryptoWalletEngineSolanaActivityCard({
     super.key,
     this.authToken,
     this.apiClient,
     this.features,
     this.limit = 20,
+    this.localStore,
+    this.durableStore,
   });
 
   @override
@@ -84,7 +92,57 @@ class _CryptoWalletEngineSolanaActivityCardState
   @override
   void initState() {
     super.initState();
+    widget.localStore?.addListener(_onLocalChanged);
+    widget.durableStore?.addListener(_onDurableChanged);
     _load();
+    _refreshDurable();
+  }
+
+  @override
+  void didUpdateWidget(covariant CryptoWalletEngineSolanaActivityCard old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.localStore, widget.localStore)) {
+      old.localStore?.removeListener(_onLocalChanged);
+      widget.localStore?.addListener(_onLocalChanged);
+    }
+    if (!identical(old.durableStore, widget.durableStore)) {
+      old.durableStore?.removeListener(_onDurableChanged);
+      widget.durableStore?.addListener(_onDurableChanged);
+      _refreshDurable();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.localStore?.removeListener(_onLocalChanged);
+    widget.durableStore?.removeListener(_onDurableChanged);
+    super.dispose();
+  }
+
+  void _onLocalChanged() {
+    if (!mounted) return;
+    // A new outgoing broadcast typically produces a durable row on
+    // the same request; kick a durable refresh here so the merged
+    // snapshot converges quickly.
+    _refreshDurable();
+    setState(() {});
+  }
+
+  void _onDurableChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _refreshDurable() {
+    final ds = widget.durableStore;
+    if (ds == null) return;
+    // ignore: discarded_futures
+    ds.refresh('solana_mainnet');
+  }
+
+  Future<void> refreshAllForTest() async {
+    await _load();
+    _refreshDurable();
   }
 
   Future<void> _load() async {
@@ -214,7 +272,8 @@ class _CryptoWalletEngineSolanaActivityCardState
         ),
       );
     }
-    if (_rows.isEmpty) {
+    final rows = _merged();
+    if (rows.isEmpty) {
       return const Padding(
         key: Key(kSolanaActivityEmptyKey),
         padding: EdgeInsets.symmetric(vertical: 8),
@@ -228,9 +287,142 @@ class _CryptoWalletEngineSolanaActivityCardState
       key: const Key(kSolanaActivityListKey),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final r in _rows) _buildRow(r),
+        for (final r in rows) _buildRow(r),
       ],
     );
+  }
+
+  /// 2026-07-14 (Round 7 hardening): three-source merge.
+  ///
+  /// Precedence (most authoritative first):
+  ///   1. INDEXER (`_rows`) — chain-observed `confirmed` / `failed`
+  ///      always wins.
+  ///   2. DURABLE (backend history) — survives browser reload; wins
+  ///      over local unless local has fresher timestamp or expresses
+  ///      a strictly-transient state (`submitting`, `dropped`).
+  ///   3. LOCAL — in-session snapshot with `submitting` /
+  ///      `submissionUncertain` states that neither source can name.
+  ///
+  /// Deduplication key is the lower-case signature.
+  List<Map<String, dynamic>> _merged() {
+    final byKey = <String, Map<String, dynamic>>{};
+    // Base: indexer.
+    for (final r in _rows) {
+      final sig = (r['txHash'] ?? '').toString().toLowerCase();
+      if (sig.isEmpty) continue;
+      byKey[sig] = r;
+    }
+    // Middle: durable rows. Never downgrade chain-observed.
+    final durable = widget.durableStore;
+    if (durable != null) {
+      final durRows = durable.rowsFor(
+        networkId: 'solana_mainnet', asset: 'SOL',
+      );
+      for (final d in durRows) {
+        final sig = d.localTxHash.toLowerCase();
+        if (sig.isEmpty) continue;
+        final existing = byKey[sig];
+        if (existing != null &&
+            _isChainObservedStatus(
+              (existing['status'] ?? '').toString(),
+            )) {
+          continue;
+        }
+        byKey[sig] = _durableToRow(d);
+      }
+    }
+    // Top: local rows.
+    final local = widget.localStore;
+    if (local != null) {
+      final locRows = local.rowsFor(
+        networkId: 'solana_mainnet', asset: 'SOL',
+      );
+      for (final l in locRows) {
+        final sig = l.txHash.toLowerCase();
+        if (sig.isEmpty) continue;
+        final existing = byKey[sig];
+        final asRow = _localToRow(l);
+        if (existing == null) {
+          byKey[sig] = asRow;
+          continue;
+        }
+        if (_isChainObservedStatus(
+          (existing['status'] ?? '').toString(),
+        )) {
+          continue;
+        }
+        if (l.status == LocalOutgoingTxStatus.submitting
+            || l.status == LocalOutgoingTxStatus.dropped) {
+          byKey[sig] = asRow;
+          continue;
+        }
+        // Otherwise newest wins.
+        final exTs = (existing['timestamp'] is num)
+            ? (existing['timestamp'] as num).toInt()
+            : 0;
+        final loTs = (asRow['timestamp'] as num).toInt();
+        if (loTs >= exTs) byKey[sig] = asRow;
+      }
+    }
+    final out = byKey.values.toList();
+    out.sort((a, b) {
+      final ta = a['timestamp'] is num
+          ? (a['timestamp'] as num).toInt() : 0;
+      final tb = b['timestamp'] is num
+          ? (b['timestamp'] as num).toInt() : 0;
+      return tb.compareTo(ta);
+    });
+    return out;
+  }
+
+  static bool _isChainObservedStatus(String status) =>
+      status == 'confirmed' || status == 'failed';
+
+  Map<String, dynamic> _durableToRow(DurableOutgoingTx d) {
+    final ts = (d.consumedAt ?? d.createdAt ?? 0).toInt();
+    return <String, dynamic>{
+      'txHash': d.localTxHash,
+      'status': _durableStatus(d.broadcastOutcome),
+      'timestamp': ts,
+      'source': 'durable',
+    };
+  }
+
+  Map<String, dynamic> _localToRow(LocalOutgoingTx l) {
+    return <String, dynamic>{
+      'txHash': l.txHash,
+      'status': _localStatus(l.status),
+      'timestamp': (l.createdAt.millisecondsSinceEpoch / 1000).round(),
+      'source': 'local',
+    };
+  }
+
+  static String _durableStatus(String? outcome) {
+    switch (outcome) {
+      case 'submitted':
+      case 'already_known':
+        return 'pending';   // durable submitted → still awaits chain
+      case 'submission_uncertain':
+        return 'submission_uncertain';
+      case 'explicitly_rejected':
+        return 'rejected';
+      default:
+        return 'submission_uncertain';
+    }
+  }
+
+  static String _localStatus(LocalOutgoingTxStatus s) {
+    switch (s) {
+      case LocalOutgoingTxStatus.submitting:  return 'submitting';
+      case LocalOutgoingTxStatus.submitted:    return 'pending';
+      case LocalOutgoingTxStatus.pending:      return 'pending';
+      case LocalOutgoingTxStatus.submissionUncertain:
+        return 'submission_uncertain';
+      case LocalOutgoingTxStatus.confirmed:    return 'confirmed';
+      case LocalOutgoingTxStatus.failed:       return 'failed';
+      case LocalOutgoingTxStatus.explicitlyRejected: return 'rejected';
+      case LocalOutgoingTxStatus.dropped:      return 'dropped';
+    }
   }
 
   Widget _buildRow(Map<String, dynamic> row) {

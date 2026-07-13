@@ -134,6 +134,12 @@ _IDEMPOTENCY_KEY_RE = __import__("re").compile(r"^[A-Za-z0-9._\-]{8,128}$")
 # with a fake in-process backend so they exercise the routing paths
 # without a live database.
 import crypto_mainnet_control_store as _mainnet_store
+# 2026-07-14 (Round 6 hardening): SOL + TRON control stores mirror the
+# ETH pattern (register_draft → claim → consume → record_outcome).
+# Same rebind trick from conftest.py — tests swap in an in-process
+# FakeSolanaStore / FakeTronStore.
+import crypto_solana_control_store as _solana_store
+import crypto_tron_control_store as _tron_store
 
 
 _SOLANA_SAFETY_LOCK = threading.Lock()
@@ -4213,6 +4219,219 @@ def _get_mainnet_transaction_status(
 # Mainnet is where the canary-caliber durability guarantee is
 # required and where the shared-state Postgres store already exists.
 # ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# 2026-07-14 (Round 8 hardening): authoritative pre-sign +
+# pre-broadcast draft-expiry verification.
+#
+# The Round-7 SOL/TRON panels signed transactions locally and only
+# learned the draft had expired when the broadcast came back
+# `draft_expired`. That leaked secrets (fetched + decrypted +
+# signed) for a draft that never had a chance of landing on-chain.
+# This endpoint lets the client fail closed BEFORE any of that
+# happens.
+#
+# The response is intentionally narrow: `expired: bool` + a
+# reason. Nothing that could leak internal state (no claim tokens,
+# no lock leases, no vault_id in the body — vault scoping is
+# enforced by the WHERE clause in load_draft_readonly).
+#
+# Fail-closed semantics:
+#   * unknown / mismatched / consumed draft → `expired: true`
+#     with a distinct reason so the client can preserve the form
+#     and prompt for re-draft.
+#   * RPC unavailable for the chain-observed side (Solana block
+#     height) → `expired: null` — the client reads this as
+#     "cannot verify" and BLOCKS the flow. Never treats null as
+#     "not expired".
+# ---------------------------------------------------------------
+@router.get(
+    "/crypto/wallet/network/{network}/draft/{draft_id}/expiry",
+)
+def get_draft_expiry_network(
+    network: str,
+    draft_id: str,
+    principal=Depends(require_crypto_entitlement),
+):
+    if not crypto_wallet_engine_enabled():
+        return _engine_off_response()
+    nid, err = _resolve_network_for_route(network)
+    if err is not None:
+        return err
+
+    validated = _validate_draft_id(draft_id)
+    if validated is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "invalid_draft_id",
+                "message": "The draft_id must be 16-64 chars from "
+                           "[A-Za-z0-9_-].",
+            },
+        )
+
+    if nid == NETWORK_SOLANA_MAINNET:
+        return _get_solana_draft_expiry(
+            draft_id=validated,
+            vault_id=str(principal["vault_id"]),
+        )
+    if nid == NETWORK_TRON_MAINNET:
+        return _get_tron_draft_expiry(
+            draft_id=validated,
+            vault_id=str(principal["vault_id"]),
+        )
+    # Non-SOL/TRON networks don't have this concept surface today.
+    # ETH uses nonce-based ordering rather than expiry.
+    return {
+        "expired": False,
+        "network": network,
+        "reason": "no_expiry_semantics",
+    }
+
+
+def _get_solana_draft_expiry(
+    *, draft_id: str, vault_id: str,
+) -> dict[str, Any]:
+    """SOL draft expiry = the draft row was consumed, OR the
+    current chain block height exceeds `last_valid_block_height`.
+
+    Chain observation is authoritative. If the RPC cannot be
+    reached the response is `expired: null` (unverifiable) — the
+    client MUST treat this as a block signal, not a green light.
+    """
+    draft, err = _solana_store.load_draft_readonly(
+        draft_id=draft_id, vault_id=vault_id,
+        network_id=NETWORK_SOLANA_MAINNET,
+    )
+    if draft is None:
+        return {
+            "expired": True,
+            "network": "solana_mainnet",
+            "reason": err or "unknown_draft",
+        }
+    if draft.get("consumed"):
+        return {
+            "expired": True,
+            "network": "solana_mainnet",
+            "reason": "draft_already_consumed",
+        }
+    from vault_config import solana_rpc_url
+    from solana_rpc import (
+        SolanaRpcError, sol_get_block_height_at_url,
+    )
+    rpc_url = solana_rpc_url()
+    if not rpc_url:
+        return {
+            "expired": None,
+            "network": "solana_mainnet",
+            "reason": "rpc_not_configured",
+        }
+    try:
+        current = sol_get_block_height_at_url(rpc_url)
+    except SolanaRpcError as exc:
+        return {
+            "expired": None,
+            "network": "solana_mainnet",
+            "reason": exc.code,
+        }
+    from crypto_wallet_draft_expiry import (
+        SOLANA_EXPIRY_REASON_EXCEEDED,
+        SOLANA_EXPIRY_REASON_STILL_VALID,
+        solana_draft_expired_by_blockheight,
+    )
+    raw_last_valid = draft.get("last_valid_block_height")
+    try:
+        last_valid = int(raw_last_valid) if raw_last_valid is not None else 0
+    except (TypeError, ValueError):
+        return {
+            "expired": True,
+            "network": "solana_mainnet",
+            "reason": "malformed_last_valid_block_height",
+        }
+    if last_valid <= 0:
+        return {
+            "expired": True,
+            "network": "solana_mainnet",
+            "reason": "malformed_last_valid_block_height",
+        }
+    expired = solana_draft_expired_by_blockheight(
+        current_block_height=current,
+        last_valid_block_height=last_valid,
+    )
+    return {
+        "expired": expired,
+        "network": "solana_mainnet",
+        "currentBlockHeight": current,
+        "lastValidBlockHeight": last_valid,
+        "reason": (
+            SOLANA_EXPIRY_REASON_EXCEEDED
+            if expired else SOLANA_EXPIRY_REASON_STILL_VALID
+        ),
+    }
+
+
+def _get_tron_draft_expiry(
+    *, draft_id: str, vault_id: str,
+) -> dict[str, Any]:
+    """TRON draft expiry = the draft row was consumed, OR the
+    server clock has passed `expiration_ms`.
+
+    TRON transactions include an in-network `expiration` timestamp;
+    the state machine refuses to consume past-expiration drafts.
+    This endpoint exposes the same check so the client can fail
+    closed before signing.
+    """
+    draft, err = _tron_store.load_draft_readonly(
+        draft_id=draft_id, vault_id=vault_id,
+        network_id=NETWORK_TRON_MAINNET,
+    )
+    if draft is None:
+        return {
+            "expired": True,
+            "network": "tron_mainnet",
+            "reason": err or "unknown_draft",
+        }
+    if draft.get("consumed"):
+        return {
+            "expired": True,
+            "network": "tron_mainnet",
+            "reason": "draft_already_consumed",
+        }
+    from crypto_wallet_draft_expiry import (
+        TRON_EXPIRY_REASON_EXPIRATION_PASSED,
+        TRON_EXPIRY_REASON_STILL_VALID,
+        tron_draft_expired_by_expiration_ms,
+    )
+    now_ms = int(_now_secs() * 1000)
+    raw_exp = draft.get("expiration_ms")
+    try:
+        exp_ms = int(raw_exp) if raw_exp is not None else 0
+    except (TypeError, ValueError):
+        return {
+            "expired": True,
+            "network": "tron_mainnet",
+            "reason": "malformed_expiration_ms",
+        }
+    if exp_ms <= 0:
+        return {
+            "expired": True,
+            "network": "tron_mainnet",
+            "reason": "draft_missing_expiration",
+        }
+    expired = tron_draft_expired_by_expiration_ms(
+        now_ms=now_ms, expiration_ms=exp_ms,
+    )
+    return {
+        "expired": expired,
+        "network": "tron_mainnet",
+        "nowMs": now_ms,
+        "expirationMs": exp_ms,
+        "reason": (
+            TRON_EXPIRY_REASON_EXPIRATION_PASSED
+            if expired else TRON_EXPIRY_REASON_STILL_VALID
+        ),
+    }
+
+
 @router.get(
     "/crypto/wallet/network/{network}/outgoing/history",
 )
@@ -4230,11 +4449,99 @@ def get_outgoing_history_network(
         ethereum_mainnet_token_decimals,
         ethereum_mainnet_token_unit,
     )
+    # 2026-07-14 (Round 6 hardening): Solana + TRON durable outgoing
+    # history now exists (mirrors ETH). Route each network to its
+    # own store.
+    if nid == NETWORK_SOLANA_MAINNET:
+        try:
+            rows = _solana_store.list_outgoing_history(
+                vault_id=str(principal["vault_id"]),
+                network_id=NETWORK_SOLANA_MAINNET, limit=100,
+            )
+        except Exception:
+            logger.warning(
+                "[WALLET-ENGINE] solana_outgoing_history_failed "
+                "vault=%s",
+                str(principal["vault_id"])[:8] + "…",
+            )
+            return {
+                "status": "unavailable", "network": network,
+                "reason": "history_store_failed",
+            }
+        out_sol: list[dict[str, Any]] = []
+        for r in rows:
+            out_sol.append({
+                "draftId":              r.get("draft_id"),
+                "networkId":            r.get("network_id"),
+                "asset":                r.get("asset"),
+                "unit":                 "SOL",
+                "decimals":             9,
+                "fromAddress":          r.get("sender_address"),
+                "destinationAddress":   r.get("destination_address"),
+                "amountBaseUnits":      str(int(
+                    r.get("value_lamports") or 0
+                )),
+                "feeLamports":          str(int(
+                    r.get("fee_lamports") or 0
+                )),
+                "recentBlockhash":      r.get("recent_blockhash"),
+                "lastValidBlockHeight": int(
+                    r.get("last_valid_block_height") or 0
+                ),
+                "localSignature":       r.get("local_signature"),
+                "broadcastOutcome":     r.get("broadcast_outcome"),
+                "createdAt":            r.get("created_at"),
+                "consumedAt":           r.get("consumed_at"),
+                "outcomeRecordedAt":    r.get("outcome_recorded_at"),
+            })
+        return {
+            "status": "ok", "network": network, "outgoing": out_sol,
+        }
+    if nid == NETWORK_TRON_MAINNET:
+        try:
+            rows = _tron_store.list_outgoing_history(
+                vault_id=str(principal["vault_id"]),
+                network_id=NETWORK_TRON_MAINNET, limit=100,
+            )
+        except Exception:
+            logger.warning(
+                "[WALLET-ENGINE] tron_outgoing_history_failed vault=%s",
+                str(principal["vault_id"])[:8] + "…",
+            )
+            return {
+                "status": "unavailable", "network": network,
+                "reason": "history_store_failed",
+            }
+        out_trn: list[dict[str, Any]] = []
+        for r in rows:
+            out_trn.append({
+                "draftId":              r.get("draft_id"),
+                "networkId":            r.get("network_id"),
+                "asset":                r.get("asset"),
+                "unit":                 "USDT",
+                "decimals":             6,
+                "fromAddress":          r.get("sender_address"),
+                "destinationAddress":   r.get("destination_address"),
+                "tokenContractAddress": r.get("token_contract_address"),
+                "amountBaseUnits":      str(int(
+                    r.get("amount_base_units") or 0
+                )),
+                "feeLimitSun":          str(int(
+                    r.get("fee_limit_sun") or 0
+                )),
+                "expirationMs":         int(r.get("expiration_ms") or 0),
+                "serverTxIdHex":        r.get("server_txid_hex"),
+                "localTxIdHex":         r.get("local_txid_hex"),
+                "broadcastOutcome":     r.get("broadcast_outcome"),
+                "createdAt":            r.get("created_at"),
+                "consumedAt":           r.get("consumed_at"),
+                "outcomeRecordedAt":    r.get("outcome_recorded_at"),
+            })
+        return {
+            "status": "ok", "network": network, "outgoing": out_trn,
+        }
     if nid != NETWORK_ETHEREUM_MAINNET:
-        # Sepolia + non-EVM: no durable outgoing store — the client's
-        # LocalOutgoingTxStore + the indexer are authoritative for
-        # those networks. Explicit empty list, not a 404, so the
-        # client can uniformly `.length` the response.
+        # Sepolia + non-EVM non-SOL/TRON: no durable outgoing store.
         return {
             "status":   "ok",
             "network":  network,
@@ -5110,6 +5417,49 @@ def _solana_send_dispatch(
         pass
     fee_sol = lamports_to_sol_string(fee_lamports)
 
+    # 2026-07-14 (Round 6 hardening): persist the Solana draft so
+    # broadcast can bind the signed transaction to it. Mirrors ETH
+    # Mainnet draft registration. Returns None on single-active-
+    # draft-per-sender conflict.
+    last_valid_block_height = (
+        blockhash_result.get("lastValidBlockHeight") or 0
+    )
+    try:
+        draft_id = _solana_store.register_draft(
+            vault_id=str(principal["vault_id"]),
+            network_id=NETWORK_SOLANA_MAINNET,
+            sender_address=from_addr,
+            asset=norm,
+            destination_address=dest_addr,
+            value_lamports=int(lamports),
+            fee_lamports=int(fee_lamports),
+            recent_blockhash=str(blockhash_result["blockhash"]),
+            last_valid_block_height=int(last_valid_block_height),
+            ttl_secs=60,
+        )
+    except Exception:
+        logger.exception(
+            "[WALLET-ENGINE] solana_draft_register_failed vault=%s",
+            str(principal["vault_id"])[:8] + "…",
+        )
+        return {
+            "status": "draft_unavailable", "asset": norm,
+            "network": _SOLANA_NETWORK_LABEL,
+            "reason": "draft_register_failed",
+            "message": "Could not register a Solana draft. Retry.",
+        }
+    if draft_id is None:
+        return {
+            "wallet_engine": "draft_conflict",
+            "status": "draft_conflict",
+            "asset": norm,
+            "network": _SOLANA_NETWORK_LABEL,
+            "message": (
+                "Another Solana draft for this wallet is still in "
+                "flight. Wait for it to broadcast or expire."
+            ),
+        }
+
     return {
         "status":              "draft_ready",
         "schema":              SCHEMA_SOLANA_SEND_DRAFT_V1,
@@ -5128,6 +5478,10 @@ def _solana_send_dispatch(
         "feeLamports":         fee_lamports,
         "feeSol":              fee_sol,
         "feeSource":           fee_source,
+        # 2026-07-14 (Round 6): draft ID must be echoed back to the
+        # client and re-supplied on /broadcast so the state machine
+        # can enforce single-attempt semantics.
+        "draftId":             draft_id,
         "warning": (
             "Review carefully. Solana transactions cannot be "
             "reversed."
@@ -5210,8 +5564,101 @@ def _solana_broadcast_dispatch(
     if rate_limit is not None:
         return rate_limit["envelope"]
 
-    rpc_url = solana_rpc_url()
-    if not rpc_url:
+    # 2026-07-14 (Round 6 hardening): draft binding + state machine.
+    # 1. Validate + load the draft (SELECT-only, does not mutate).
+    # 2. Claim it (ACTIVE → CLAIMED, owner-token).
+    # 3. Extract the primary signature from the signed tx as the
+    #    local_signature identity for consume.
+    # 4. Consume (CLAIMED → CONSUMED + local_signature stamped).
+    # 5. Broadcast.
+    # 6. record_broadcast_outcome (owner-safe terminal write).
+    raw_draft_id = getattr(payload, "draftId", None)
+    draft_id = _validate_draft_id(raw_draft_id)
+    if draft_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "draft_id_required",
+                "message": (
+                    "Solana broadcast requires a fresh draftId issued "
+                    "by /send/draft. Re-draft and retry."
+                ),
+            },
+        )
+    draft, load_err = _solana_store.load_draft_readonly(
+        draft_id=draft_id, vault_id=str(vault_id),
+        network_id=NETWORK_SOLANA_MAINNET,
+    )
+    if draft is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": "draft_load_failed",
+                "reason": load_err or "unknown",
+                "message": (
+                    "Cannot broadcast: the referenced draft could not "
+                    "be loaded. Re-draft and retry."
+                ),
+            },
+        )
+    if draft.get("consumed"):
+        prior = draft.get("broadcast_outcome")
+        if prior in {"submitted", "already_known"}:
+            return {
+                "wallet_engine": "already_submitted",
+                "status": "already_submitted",
+                "network": _SOLANA_NETWORK_LABEL,
+                "asset": norm,
+                "signature": draft.get("local_signature"),
+                "reason": "draft_already_broadcast",
+            }
+        if prior == "submission_uncertain":
+            return {
+                "wallet_engine": "submission_uncertain",
+                "status": "submission_uncertain",
+                "network": _SOLANA_NETWORK_LABEL,
+                "asset": norm,
+                "signature": draft.get("local_signature"),
+                "reason": "draft_uncertain_retry_blocked",
+            }
+        if prior == "explicitly_rejected":
+            return {
+                "wallet_engine": "broadcast_rejected",
+                "status": "broadcast_rejected",
+                "network": _SOLANA_NETWORK_LABEL,
+                "reason": "draft_already_rejected",
+                "message": (
+                    "The draft was already broadcast and rejected. "
+                    "Re-draft and retry."
+                ),
+            }
+        # broadcast_outcome IS NULL → the previous worker crashed.
+        # Conservative: report uncertain rather than let the caller
+        # retry a duplicate broadcast against the network.
+        return {
+            "wallet_engine": "submission_uncertain",
+            "status": "submission_uncertain",
+            "network": _SOLANA_NETWORK_LABEL,
+            "asset": norm,
+            "signature": draft.get("local_signature"),
+            "reason": "prior_broadcast_crashed_before_outcome",
+        }
+
+    # 2026-07-14 (Round 9): authoritative pre-broadcast block-height
+    # expiry check. Same shared helper as `_get_solana_draft_expiry`
+    # so the client's pre-sign endpoint check and this pre-broadcast
+    # guard cannot drift. On RPC failure the transaction MUST NOT be
+    # forwarded to the network (fail closed).
+    from crypto_wallet_draft_expiry import (
+        solana_draft_expired_by_blockheight,
+    )
+    from vault_config import solana_rpc_url as _sol_rpc_url_probe
+    from solana_rpc import (
+        SolanaRpcError as _SolRpcErrProbe,
+        sol_get_block_height_at_url as _sol_get_bh_probe,
+    )
+    _probe_rpc_url = _sol_rpc_url_probe()
+    if not _probe_rpc_url:
         return {
             "wallet_engine": "rpc_not_configured",
             "status":        "broadcast_unavailable",
@@ -5221,6 +5668,103 @@ def _solana_broadcast_dispatch(
                 "Solana RPC endpoint."
             ),
         }
+    try:
+        _current_bh = _sol_get_bh_probe(_probe_rpc_url)
+    except _SolRpcErrProbe:
+        return {
+            "wallet_engine": "submission_uncertain",
+            "status":        "submission_uncertain",
+            "network":       _SOLANA_NETWORK_LABEL,
+            "reason":        "blockheight_unverifiable_pre_broadcast",
+            "message": (
+                "Cannot verify Solana chain block height before "
+                "broadcast. Retry — the network was not contacted."
+            ),
+        }
+    _last_valid_probe = int(draft.get("last_valid_block_height") or 0)
+    if _last_valid_probe > 0 and solana_draft_expired_by_blockheight(
+        current_block_height=_current_bh,
+        last_valid_block_height=_last_valid_probe,
+    ):
+        return {
+            "wallet_engine": "draft_expired",
+            "status":        "draft_expired",
+            "network":       _SOLANA_NETWORK_LABEL,
+            "reason":        "blockheight_exceeded",
+            "currentBlockHeight":   _current_bh,
+            "lastValidBlockHeight": _last_valid_probe,
+            "message": (
+                "The Solana draft's last-valid block height has been "
+                "exceeded. Re-draft to obtain a fresh recent blockhash."
+            ),
+        }
+
+    # Extract the primary Ed25519 signature (base58) — Solana
+    # transaction identity. We use it as `local_signature`.
+    local_signature = _extract_solana_primary_signature(signed_tx)
+    if not local_signature:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "invalid_signed_transaction",
+                "message": (
+                    "Could not extract a primary Ed25519 signature "
+                    "from the signed transaction."
+                ),
+            },
+        )
+
+    claim_token, claim_err = _solana_store.claim_draft(
+        draft_id=draft_id, vault_id=str(vault_id),
+        network_id=NETWORK_SOLANA_MAINNET,
+    )
+    if claim_token is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "wallet_engine": "draft_claim_failed",
+                "reason": claim_err or "unknown",
+                "message": (
+                    "Cannot broadcast: the draft could not be claimed. "
+                    "Another request may be in flight."
+                ),
+            },
+        )
+
+    rpc_url = solana_rpc_url()
+    if not rpc_url:
+        _solana_store.release_claimed_draft(
+            draft_id=draft_id, claim_token=claim_token,
+        )
+        return {
+            "wallet_engine": "rpc_not_configured",
+            "status":        "broadcast_unavailable",
+            "network":       _SOLANA_NETWORK_LABEL,
+            "message": (
+                "Cannot broadcast: the operator has not configured a "
+                "Solana RPC endpoint."
+            ),
+        }
+
+    # Consume the draft BEFORE the RPC call so a crash between
+    # sendRawTransaction and record_broadcast_outcome leaves the
+    # draft in the "CONSUMED + outcome NULL" state — the next
+    # request sees it and reports `submission_uncertain` (never
+    # `submitted`).
+    if not _solana_store.consume_claimed_draft(
+        draft_id=draft_id, claim_token=claim_token,
+        local_signature=local_signature,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "wallet_engine": "draft_consume_failed",
+                "message": (
+                    "Could not consume the claimed draft. It may have "
+                    "been claimed by another request."
+                ),
+            },
+        )
 
     try:
         signature = sol_send_signed_transaction_at_url(
@@ -5233,6 +5777,16 @@ def _solana_broadcast_dispatch(
             "vault=%s reason=%s",
             str(vault_id)[:8] + "…", reason,
         )
+        # Classify the RPC error into a terminal outcome. Ambiguous
+        # transport errors → submission_uncertain (the tx MAY have
+        # been submitted). Explicit rejection → explicitly_rejected.
+        outcome = "submission_uncertain"
+        if reason in ("provider_error", "rpc_error"):
+            outcome = "explicitly_rejected"
+        _solana_store.record_broadcast_outcome(
+            draft_id=draft_id, claim_token=claim_token,
+            outcome=outcome,
+        )
         if reason == REASON_INVALID_SIGNED_TX:
             raise HTTPException(
                 status_code=422,
@@ -5244,24 +5798,64 @@ def _solana_broadcast_dispatch(
                     ),
                 },
             )
+        if outcome == "submission_uncertain":
+            return {
+                "wallet_engine": "submission_uncertain",
+                "status":        "submission_uncertain",
+                "network":       _SOLANA_NETWORK_LABEL,
+                "reason":        reason,
+                "signature":     local_signature,
+                "message": (
+                    "The Solana broadcast could not be confirmed. "
+                    "Check the signature status before re-signing."
+                ),
+            }
         return {
-            "wallet_engine": "broadcast_failed",
-            "status":        "broadcast_failed",
+            "wallet_engine": "broadcast_rejected",
+            "status":        "broadcast_rejected",
             "network":       _SOLANA_NETWORK_LABEL,
             "reason":        reason,
             "message": (
-                "Solana broadcast failed. Try again."
+                "Solana broadcast was rejected by the RPC provider. "
+                "Re-draft and retry."
             ),
         }
 
+    # Successful broadcast. Cross-check that the RPC-returned
+    # signature matches what we derived locally — a mismatch is not
+    # `submitted` proof.
+    if signature and signature != local_signature:
+        _solana_store.record_broadcast_outcome(
+            draft_id=draft_id, claim_token=claim_token,
+            outcome="submission_uncertain",
+        )
+        return {
+            "wallet_engine": "submission_uncertain",
+            "status":        "submission_uncertain",
+            "network":       _SOLANA_NETWORK_LABEL,
+            "reason":        "signature_mismatch",
+            "signature":     local_signature,
+            "message": (
+                "The RPC-returned signature did not match the locally "
+                "derived one. Verify the transaction on the network "
+                "before re-signing."
+            ),
+        }
+
+    _solana_store.record_broadcast_outcome(
+        draft_id=draft_id, claim_token=claim_token,
+        outcome="submitted",
+    )
     envelope = {
         "wallet_engine":         "broadcast_submitted",
         "status":                "submitted",
         "network":               _SOLANA_NETWORK_LABEL,
         "networkLabel":          "Solana",
         "asset":                 norm,
-        "signature":             signature,
-        "signaturePrefix":       signature[:8] + "…",
+        "signature":             signature or local_signature,
+        "signaturePrefix": (
+            (signature or local_signature)[:8] + "…"
+        ),
     }
     _record_solana_idempotent_broadcast(
         vault_id, idempotency_key, signed_tx, envelope,
@@ -5269,9 +5863,62 @@ def _solana_broadcast_dispatch(
     logger.info(
         "[WALLET-ENGINE] solana_broadcast_ok vault=%s sig_prefix=%s",
         str(vault_id)[:8] + "…",
-        signature[:8] + "…" if signature else "",
+        (signature or local_signature)[:8] + "…",
     )
     return envelope
+
+
+def _extract_solana_primary_signature(signed_tx_b64: str) -> Optional[str]:
+    """Extract the first Ed25519 signature (64 bytes) from a base64-
+    encoded Solana wire transaction as a base58 string.
+
+    Solana wire format: `signatures[]` is a compact-array (u8-varint
+    count followed by count × 64-byte signatures), then the message.
+    We only need the first signature — that IS the transaction
+    identity used by getSignatureStatus / explorers.
+
+    Returns None on a malformed input; the caller turns this into a
+    422 invalid_signed_transaction envelope.
+    """
+    import base64 as _base64
+    try:
+        raw = _base64.b64decode(signed_tx_b64, validate=False)
+    except Exception:
+        return None
+    if len(raw) < 1 + 64:
+        return None
+    n = raw[0]
+    # For a compact-u16 with n < 128 (which covers all realistic
+    # transaction signer counts), the leading byte encodes the count
+    # in a single u8. Any real send tx has 1 signer.
+    if n == 0 or n > 8:
+        return None
+    if len(raw) < 1 + 64 * n:
+        return None
+    sig_bytes = raw[1:1 + 64]
+    try:
+        from solana_rpc import _b58encode  # type: ignore
+        return _b58encode(sig_bytes)
+    except Exception:
+        # Fallback: use the pure-python base58 encoding if
+        # solana_rpc doesn't expose an encoder.
+        alphabet = ("123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+                    "abcdefghijkmnopqrstuvwxyz")
+        n_int = int.from_bytes(sig_bytes, "big")
+        if n_int == 0:
+            return "1" * 64
+        out = ""
+        while n_int > 0:
+            n_int, r = divmod(n_int, 58)
+            out = alphabet[r] + out
+        # Preserve leading zeros as "1"s (base58 convention).
+        pad = 0
+        for b in sig_bytes:
+            if b == 0:
+                pad += 1
+            else:
+                break
+        return "1" * pad + out
 
 
 _TRON_NETWORK_LABEL: str = "tron_mainnet"
@@ -6066,6 +6713,52 @@ def _tron_send_dispatch(
         sun_to_trx_string(trx_sun) if trx_sun is not None else None
     )
 
+    # 2026-07-14 (Round 6 hardening): persist the TRON draft. The
+    # expiration comes from the Trongrid-issued raw_data; we extract
+    # it from `unsignedTransaction["raw_data"]["expiration"]` so the
+    # state machine can refuse to consume an expired draft.
+    unsigned = draft.get("unsignedTransaction") or {}
+    raw_data = unsigned.get("raw_data") or {}
+    expiration_ms = int(raw_data.get("expiration") or 0)
+    contract_address = tron_usdt_contract_address()
+    try:
+        draft_id = _tron_store.register_draft(
+            vault_id=str(principal["vault_id"]),
+            network_id=NETWORK_TRON_MAINNET,
+            sender_address=from_addr,
+            asset=norm,
+            destination_address=dest_addr,
+            token_contract_address=contract_address,
+            amount_base_units=int(base_units),
+            fee_limit_sun=int(fee_limit_sun),
+            raw_data_hex=str(draft.get("rawDataHex") or ""),
+            expiration_ms=expiration_ms,
+            server_txid_hex=str(draft.get("txID") or ""),
+            ttl_secs=45,
+        )
+    except Exception:
+        logger.exception(
+            "[WALLET-ENGINE] tron_draft_register_failed vault=%s",
+            str(principal["vault_id"])[:8] + "…",
+        )
+        return {
+            "status": "draft_unavailable", "asset": norm,
+            "network": _TRON_NETWORK_LABEL,
+            "reason": "draft_register_failed",
+            "message": "Could not register a TRON draft. Retry.",
+        }
+    if draft_id is None:
+        return {
+            "wallet_engine": "draft_conflict",
+            "status": "draft_conflict",
+            "asset": norm,
+            "network": _TRON_NETWORK_LABEL,
+            "message": (
+                "Another TRON draft for this wallet is still in "
+                "flight. Wait for it to broadcast or expire."
+            ),
+        }
+
     return {
         "status":              "draft_ready",
         "schema":              SCHEMA_TRON_SEND_DRAFT_V1,
@@ -6090,6 +6783,9 @@ def _tron_send_dispatch(
         "trxBalance":          trx_balance_str,
         "resourceStatus":      resource_status,
         "resourceInfo":        resource_info,
+        # 2026-07-14 (Round 6): draftId must be echoed to the client.
+        "draftId":             draft_id,
+        "expirationMs":        expiration_ms,
         "feeWarning": (
             "USDT TRC20 transfers require TRX for TRON network fees."
         ),
@@ -6176,8 +6872,138 @@ def _tron_broadcast_dispatch(
     if rate_blocked is not None:
         return rate_blocked["envelope"]
 
+    # 2026-07-14 (Round 6 hardening): draft binding for TRON. Same
+    # state machine as ETH/SOL. txID from the signed_tx must match
+    # the drafted server_txid_hex — if not, the client signed a
+    # different transaction than we drafted (potentially malicious
+    # or a bug); refuse.
+    raw_draft_id = getattr(payload, "draftId", None)
+    draft_id = _validate_draft_id(raw_draft_id)
+    if draft_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "draft_id_required",
+                "message": (
+                    "TRON broadcast requires a fresh draftId issued "
+                    "by /send/draft. Re-draft and retry."
+                ),
+            },
+        )
+    draft_row, load_err = _tron_store.load_draft_readonly(
+        draft_id=draft_id, vault_id=str(vault_id),
+        network_id=NETWORK_TRON_MAINNET,
+    )
+    if draft_row is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": "draft_load_failed",
+                "reason": load_err or "unknown",
+                "message": (
+                    "Cannot broadcast: the referenced draft could not "
+                    "be loaded. Re-draft and retry."
+                ),
+            },
+        )
+    if draft_row.get("consumed"):
+        prior = draft_row.get("broadcast_outcome")
+        if prior in {"submitted", "already_known"}:
+            return {
+                "wallet_engine": "already_submitted",
+                "status": "already_submitted",
+                "network": _TRON_NETWORK_LABEL,
+                "asset": norm,
+                "txHash": draft_row.get("local_txid_hex"),
+            }
+        if prior == "submission_uncertain":
+            return {
+                "wallet_engine": "submission_uncertain",
+                "status": "submission_uncertain",
+                "network": _TRON_NETWORK_LABEL,
+                "asset": norm,
+                "txHash": draft_row.get("local_txid_hex"),
+                "reason": "draft_uncertain_retry_blocked",
+            }
+        if prior == "explicitly_rejected":
+            return {
+                "wallet_engine": "broadcast_rejected",
+                "status": "broadcast_rejected",
+                "network": _TRON_NETWORK_LABEL,
+                "reason": "draft_already_rejected",
+            }
+        return {
+            "wallet_engine": "submission_uncertain",
+            "status": "submission_uncertain",
+            "network": _TRON_NETWORK_LABEL,
+            "asset": norm,
+            "reason": "prior_broadcast_crashed_before_outcome",
+            "txHash": draft_row.get("local_txid_hex"),
+        }
+
+    # Verify txID identity: the signed transaction's txID must
+    # match what we drafted. This is TRON's identity guarantee.
+    signed_txid = ""
+    if isinstance(signed_tx, dict):
+        signed_txid = str(signed_tx.get("txID") or "").lower()
+    server_txid = str(draft_row.get("server_txid_hex") or "").lower()
+    if not signed_txid or signed_txid != server_txid:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "wallet_engine": "signed_tx_id_mismatch",
+                "message": (
+                    "The signed transaction's txID does not match the "
+                    "drafted txID. Re-draft and re-sign."
+                ),
+            },
+        )
+
+    # Expiration check — refuse to consume a draft whose in-network
+    # expiration has already passed. Uses the SAME shared helper as
+    # `_get_tron_draft_expiry` so the client's pre-sign endpoint
+    # check and this broadcast-time guard cannot drift.
+    from crypto_wallet_draft_expiry import (
+        tron_draft_expired_by_expiration_ms,
+    )
+    now_ms = int(_now_secs() * 1000)
+    exp_ms = int(draft_row.get("expiration_ms") or 0)
+    if exp_ms > 0 and tron_draft_expired_by_expiration_ms(
+        now_ms=now_ms, expiration_ms=exp_ms,
+    ):
+        return {
+            "wallet_engine": "draft_expired",
+            "status":        "draft_expired",
+            "network":       _TRON_NETWORK_LABEL,
+            "reason":        "expiration_passed",
+            "message": (
+                "The TRON draft's on-chain expiration has passed. "
+                "Re-draft to obtain fresh ref_block + expiration."
+            ),
+        }
+
+    claim_token, claim_err = _tron_store.claim_draft(
+        draft_id=draft_id, vault_id=str(vault_id),
+        network_id=NETWORK_TRON_MAINNET,
+    )
+    if claim_token is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "wallet_engine": "draft_claim_failed",
+                "reason": claim_err or "unknown",
+                "message": (
+                    "Cannot broadcast: the draft could not be "
+                    "claimed. Another request may be in flight."
+                ),
+            },
+        )
+
     base_url = tron_api_base_url()
     if not base_url:
+        _tron_store.release_claimed_draft(
+            draft_id=draft_id, claim_token=claim_token,
+        )
         return {
             "wallet_engine": "rpc_not_configured",
             "status":        "broadcast_unavailable",
@@ -6188,6 +7014,24 @@ def _tron_broadcast_dispatch(
             ),
         }
 
+    # Consume BEFORE the RPC call so a crash between broadcast and
+    # outcome-record leaves the draft in CONSUMED-outcome-NULL. Next
+    # request classifies as submission_uncertain (never submitted).
+    if not _tron_store.consume_claimed_draft(
+        draft_id=draft_id, claim_token=claim_token,
+        local_txid_hex=signed_txid,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "wallet_engine": "draft_consume_failed",
+                "message": (
+                    "Could not consume the claimed draft. It may have "
+                    "been claimed by another request."
+                ),
+            },
+        )
+
     try:
         txid = tron_broadcast_signed_transaction_at_url(
             base_url, tron_api_key(), signed_tx,
@@ -6196,6 +7040,18 @@ def _tron_broadcast_dispatch(
         logger.warning(
             "[WALLET-ENGINE] tron_broadcast_rpc_error vault=%s reason=%s",
             str(vault_id)[:8] + "…", exc.code,
+        )
+        # Classify the RPC error. Ambiguous transport →
+        # submission_uncertain; explicit rejection →
+        # explicitly_rejected.
+        outcome = "submission_uncertain"
+        if exc.code in (
+            "provider_error", "rpc_error", "broadcast_failed",
+        ):
+            outcome = "explicitly_rejected"
+        _tron_store.record_broadcast_outcome(
+            draft_id=draft_id, claim_token=claim_token,
+            outcome=outcome,
         )
         if exc.code == REASON_INVALID_SIGNED_TX:
             raise HTTPException(
@@ -6208,16 +7064,29 @@ def _tron_broadcast_dispatch(
                     ),
                 },
             )
+        if outcome == "submission_uncertain":
+            return {
+                "wallet_engine": "submission_uncertain",
+                "status":        "submission_uncertain",
+                "network":       _TRON_NETWORK_LABEL,
+                "reason":        exc.code,
+                "txHash":        signed_txid,
+                "message": (
+                    "The TRON broadcast could not be confirmed. "
+                    "Check tx status before re-signing."
+                ),
+            }
         return {
-            "wallet_engine": "broadcast_failed",
-            "status":        "broadcast_failed",
+            "wallet_engine": "broadcast_rejected",
+            "status":        "broadcast_rejected",
             "network":       _TRON_NETWORK_LABEL,
             "reason":        exc.code,
-            "message": (
-                "TRON broadcast failed. Try again."
-            ),
+            "message": "TRON broadcast rejected. Re-draft and retry.",
         }
 
+    _tron_store.record_broadcast_outcome(
+        draft_id=draft_id, claim_token=claim_token, outcome="submitted",
+    )
     envelope = {
         "wallet_engine":  "broadcast_submitted",
         "status":         "submitted",

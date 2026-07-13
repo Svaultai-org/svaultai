@@ -1,7 +1,10 @@
 
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pointycastle/digests/keccak.dart';
 
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
@@ -188,6 +191,13 @@ String mainnetSendConfirmPhrasePromptFor(String asset) {
 }
 const String kEthSendDestinationLabel = 'Destination address';
 const String kEthSendAmountLabel = 'Amount (ETH)';
+const String kEthSendMaxActionLabel = 'Max';
+// 2026-07-14 (Round 8 hardening): ETH Max requires a persisted
+// draft so authoritative feeWei is available. No hardcoded gas
+// reservation fallback exists.
+const String kEthSendMaxRequiresDraftError =
+    'Enter an amount and tap Review first — Max needs the '
+    'server-authorized fee from your current draft.';
 const String kEthSendReviewButtonLabel = 'Review';
 const String kEthSendReviewWarning =
     'Review carefully. Crypto transactions cannot be reversed.';
@@ -215,6 +225,33 @@ const String kEthSendFormValidationBadAmount =
     'Amount must be a positive ETH value.';
 const String kEthSendFormValidationBadAddress =
     'Destination address must be 0x + 40 hex chars.';
+// 2026-07-14 (Round 7 hardening): strict integer-exact amount
+// validation. Rejects excessive decimals, scientific notation,
+// Unicode whitespace / zero-width chars, and uint256 overflow.
+const String kEthSendFormValidationExcessiveDecimalsError =
+    'Amount has more decimal places than this asset supports.';
+const String kEthSendFormValidationScientificNotationError =
+    'Amount must be a plain decimal — scientific notation is not '
+    'accepted.';
+const String kEthSendFormValidationUnicodeWhitespaceError =
+    'Amount contains hidden or unusual whitespace. Retype the '
+    'amount using only plain digits and a period.';
+const String kEthSendFormValidationOverflowError =
+    'Amount is larger than any Ethereum wallet can hold.';
+const String kEthSendFormValidationContractRecipientWarning =
+    'Destination address is a smart contract. Verify it accepts '
+    'direct token transfers before sending.';
+const String kEthSendFormValidationEip681AmountConfirmPrompt =
+    'The scanned QR contains a different amount than what you '
+    'entered. Tap Confirm to replace, or clear the amount field '
+    'first.';
+// 2026-07-14 (Round 6 hardening): EIP-55 checksum + self-send.
+const String kEthSendFormValidationBadChecksum =
+    'Destination address checksum is invalid. Either use the all-'
+    'lowercase form or a correctly EIP-55-checksummed address.';
+const String kEthSendFormValidationSelfSend =
+    'Destination address matches your wallet. Refusing to draft a '
+    'self-send. Enter a different recipient.';
 
 
 enum _Stage {
@@ -346,6 +383,31 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   /// actually opening a browser.
   final Future<bool> Function(String url)? launchUrl;
 
+  /// 2026-07-13 (Round 5 hardening): called once with the local tx
+  /// hash + the exact base-units debit (`valueWei` for ETH,
+  /// `amountBaseUnits` for ERC-20) after the broadcast returns a
+  /// non-rejected outcome (`submitted` / `already_submitted` /
+  /// `submission_uncertain`). The asset-detail page uses this to
+  /// stamp an optimistic pending debit on the balance card before
+  /// the live refresh converges. Optional — omit in tests that
+  /// don't need the callback.
+  final void Function({
+    required String txHash,
+    required BigInt debitBaseUnits,
+  })? onSuccessfulBroadcast;
+
+  /// 2026-07-14 (Round 7 hardening): optional contract detection.
+  /// Returns:
+  ///   * `true`  → destination has code (contract). A soft warning
+  ///               banner is shown in Review. Send is NEVER blocked.
+  ///   * `false` → destination is an EOA. No banner.
+  ///   * `null`  → RPC unavailable or error. The address is NOT
+  ///               labelled as an EOA or contract; no banner is
+  ///               shown; the flow continues. Fail-open by design
+  ///               so a transient RPC hiccup does not add friction
+  ///               to a normal EOA send.
+  final Future<bool?> Function(String address)? isContractDestination;
+
   const CryptoWalletEngineSendPanel({
     super.key,
     required this.authToken,
@@ -368,6 +430,8 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     this.scanRecipientQr,
     this.outgoingTxStore,
     this.launchUrl,
+    this.onSuccessfulBroadcast,
+    this.isContractDestination,
   });
 
   bool get isMainnet => network == kEvmNetworkEthereumMainnet;
@@ -407,6 +471,17 @@ class _CryptoWalletEngineSendPanelState
   
   bool _isKnownRecipient = false;
   bool _recipientCheckRan = false;
+
+  // 2026-07-14 (Round 7 hardening): contract-destination detection
+  // via optional widget hook. `null` = unknown (fail-open) or
+  // check not yet run. Populated during _onReview after passing
+  // shape/checksum/self-send/strict-amount checks.
+  bool? _isContractDest;
+
+  // 2026-07-14 (Round 8 hardening): synchronous draft-in-flight
+  // guard. Set BEFORE the first `await` in `_onReview` so a rapid
+  // double-tap of Review cannot spawn a second draft.
+  bool _draftInFlight = false;
   bool _balanceCheckUnverified = false;
   bool _insufficientGas = false;
 
@@ -481,9 +556,179 @@ class _CryptoWalletEngineSendPanelState
   bool _looksLikeEthAddress(String s) =>
       RegExp(r'^0x[0-9a-fA-F]{40}$').hasMatch(s);
 
+  // 2026-07-14 (Round 6 hardening): the address is well-formed
+  // shape-wise. If it contains at least one uppercase AND at least
+  // one lowercase hex character, then the sender intends an
+  // EIP-55-checksummed address — validate the checksum. All-lower
+  // or all-upper: legal, no checksum enforcement.
+  bool _isMixedCaseAddress(String s) {
+    if (!_looksLikeEthAddress(s)) return false;
+    final body = s.substring(2);
+    final hasUpper = RegExp(r'[A-F]').hasMatch(body);
+    final hasLower = RegExp(r'[a-f]').hasMatch(body);
+    return hasUpper && hasLower;
+  }
+
+  bool _isEip55ChecksumValid(String s) {
+    // EIP-55: hex-nibble is uppercase iff the corresponding nibble
+    // of keccak256(lowercase-address-without-0x) is >= 8.
+    if (!_looksLikeEthAddress(s)) return false;
+    final body = s.substring(2);
+    final lower = body.toLowerCase();
+    final hash = KeccakDigest(256).process(
+      Uint8List.fromList(lower.codeUnits),
+    );
+    // Serialize hash as lowercase hex string once.
+    final hex = hash.map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    for (var i = 0; i < 40; i++) {
+      final c = body[i];
+      final nibble = int.parse(hex[i], radix: 16);
+      final isAlpha = RegExp(r'[a-fA-F]').hasMatch(c);
+      if (!isAlpha) continue;
+      final shouldBeUpper = nibble >= 8;
+      final isUpper = c == c.toUpperCase();
+      if (isUpper != shouldBeUpper) return false;
+    }
+    return true;
+  }
+
+  bool _isSelfSend(String destination) {
+    // Case-insensitive compare so a checksummed vs lowercase pair
+    // still triggers the guard.
+    return destination.toLowerCase() ==
+        widget.fromAddress.toLowerCase();
+  }
+
+  // 2026-07-14 (Round 7 hardening): decimals per asset.
+  int _amountDecimalsForAsset(String asset) {
+    switch (asset) {
+      case 'USDT_ERC20':
+      case 'USDC_ERC20':
+        return 6;
+      default:
+        return 18;
+    }
+  }
+
+  // 2026-07-14 (Round 7 hardening): strict amount validation.
+  // Returns a user-facing error string if the amount fails a
+  // production integrity check; returns null when the amount is
+  // safe to draft.
+  //
+  // Rejected shapes:
+  //   * empty (handled earlier by missing-fields check)
+  //   * scientific notation (e/E)
+  //   * Unicode whitespace / zero-width chars in the middle
+  //   * excessive decimal precision (>18 for ETH, >6 for tokens)
+  //   * value that overflows uint256
+  //
+  // Accepted shapes: plain decimals with at most `decimals` digits
+  // after the point.
+  String? _strictAmountValidation(String amount, int decimals) {
+    if (amount.isEmpty) return kEthSendFormValidationBadAmount;
+    // Reject hidden/unusual whitespace + zero-width chars. NOTE:
+    // we scan the FULL input (including leading/trailing regular
+    // spaces so we can catch Unicode-whitespace) but numeric
+    // parsing uses the ASCII-trimmed body.
+    for (final r in amount.runes) {
+      if (r == 0x0020 || r == 0x0009) continue; // plain space, tab (trimmed anyway)
+      if (r == 0x002E) continue; // '.'
+      if (r >= 0x0030 && r <= 0x0039) continue; // 0-9
+      // Any other whitespace category (NBSP U+00A0, thin space
+      // U+2009, zero-width U+200B, etc.) is rejected.
+      if (r == 0x00A0
+          || r == 0x1680
+          || (r >= 0x2000 && r <= 0x200F)
+          || r == 0x2028
+          || r == 0x2029
+          || r == 0x202F
+          || r == 0x205F
+          || r == 0x3000
+          || r == 0xFEFF) {
+        return kEthSendFormValidationUnicodeWhitespaceError;
+      }
+      // Everything else — including e/E for scientific, minus,
+      // plus, comma — is either handled below or rejected.
+      if (r == 0x0065 || r == 0x0045) {
+        return kEthSendFormValidationScientificNotationError;
+      }
+      if (r == 0x002D || r == 0x002B) {
+        return kEthSendFormValidationBadAmount;
+      }
+      if (r == 0x002C) {
+        // Locale separator like `1,000`. Reject — user must use
+        // plain digits and a period.
+        return kEthSendFormValidationBadAmount;
+      }
+      // Any other character we haven't allowed above.
+      return kEthSendFormValidationBadAmount;
+    }
+    // ASCII-trim to skip leading/trailing regular spaces + tabs
+    // BEFORE the length check — my char-allowlist already accepted
+    // these; the number parse cannot handle them.
+    final numeric = amount.trim();
+    if (numeric.isEmpty) return kEthSendFormValidationBadAmount;
+    final dotIdx = numeric.indexOf('.');
+    if (dotIdx >= 0) {
+      final frac = numeric.substring(dotIdx + 1);
+      if (frac.contains('.')) {
+        return kEthSendFormValidationBadAmount;
+      }
+      if (frac.length > decimals) {
+        return kEthSendFormValidationExcessiveDecimalsError;
+      }
+    }
+    // Compute base units in BigInt and check uint256 bound.
+    try {
+      final baseUnits = _amountToBaseUnitsBigInt(numeric, decimals);
+      if (baseUnits <= BigInt.zero) {
+        return kEthSendFormValidationBadAmount;
+      }
+      final uint256Max = (BigInt.one << 256) - BigInt.one;
+      if (baseUnits > uint256Max) {
+        return kEthSendFormValidationOverflowError;
+      }
+    } on FormatException {
+      return kEthSendFormValidationBadAmount;
+    }
+    return null;
+  }
+
+  BigInt _amountToBaseUnitsBigInt(String amount, int decimals) {
+    final dotIdx = amount.indexOf('.');
+    if (dotIdx < 0) {
+      final v = BigInt.parse(amount);
+      return v * BigInt.from(10).pow(decimals);
+    }
+    final whole = amount.substring(0, dotIdx);
+    var frac = amount.substring(dotIdx + 1);
+    if (frac.length > decimals) frac = frac.substring(0, decimals);
+    frac = frac.padRight(decimals, '0');
+    final wholeBi = whole.isEmpty ? BigInt.zero : BigInt.parse(whole);
+    final fracBi = frac.isEmpty ? BigInt.zero : BigInt.parse(frac);
+    return wholeBi * BigInt.from(10).pow(decimals) + fracBi;
+  }
+
   Future<void> _onReview() async {
-    
-    
+    // 2026-07-14 (Round 8 hardening): SYNCHRONOUS draft-in-flight
+    // guard. Set BEFORE any await so a rapid double-tap does not
+    // spawn a second draft. Backend single-active-draft-per-sender
+    // remains as belt-and-braces but is NOT the primary UX.
+    if (_draftInFlight) return;
+    // Guard against re-drafting after we already have a
+    // review-ready draft — the user must explicitly return to form
+    // to clear it.
+    if (_draft != null && _stage != _Stage.form) return;
+    _draftInFlight = true;
+    try {
+      await _onReviewInner();
+    } finally {
+      _draftInFlight = false;
+    }
+  }
+
+  Future<void> _onReviewInner() async {
     if (widget.isMainnet && !kCryptoWalletEngineMainnetSendEnabled) {
       setState(() => _error = kEthSendMainnetSendDisabledBanner);
       return;
@@ -502,6 +747,35 @@ class _CryptoWalletEngineSendPanelState
     }
     if (!_looksLikeEthAddress(destination)) {
       setState(() => _error = kEthSendFormValidationBadAddress);
+      return;
+    }
+    // 2026-07-14 (Round 6 hardening): if the address is mixed-case,
+    // it MUST pass the EIP-55 checksum. All-lower or all-upper is
+    // permitted (no checksum applied by the sender).
+    if (_isMixedCaseAddress(destination)
+        && !_isEip55ChecksumValid(destination)) {
+      setState(() => _error = kEthSendFormValidationBadChecksum);
+      return;
+    }
+    // 2026-07-14 (Round 6 hardening): self-send guard. ETH/EVM was
+    // missing this; Solana and TRON already have it. Case-
+    // insensitive compare.
+    if (_isSelfSend(destination)) {
+      setState(() => _error = kEthSendFormValidationSelfSend);
+      return;
+    }
+    // 2026-07-14 (Round 7 hardening): strict integer-exact amount
+    // validation. Runs BEFORE the double parse so the double is
+    // never used for anything authorization-related. We validate
+    // against the RAW controller text (not the trimmed copy) so
+    // Unicode whitespace embedded in the input triggers a clear
+    // rejection instead of being silently trimmed to a valid
+    // number.
+    final strictErr = _strictAmountValidation(
+      _amountCtrl.text, _amountDecimalsForAsset(widget.asset),
+    );
+    if (strictErr != null) {
+      setState(() => _error = strictErr);
       return;
     }
     final amountDouble = double.tryParse(amount);
@@ -595,6 +869,19 @@ class _CryptoWalletEngineSendPanelState
         } catch (_) {
           _isKnownRecipient = false;
         }
+      }
+    }
+    // 2026-07-14 (Round 7 hardening): contract detection soft
+    // warning. Fail-open: on error or null → treat as unknown
+    // (no banner). Never blocks a valid ETH transfer.
+    _isContractDest = null;
+    if (widget.isContractDestination != null) {
+      try {
+        _isContractDest = await widget.isContractDestination!(
+          destination,
+        );
+      } catch (_) {
+        _isContractDest = null;
       }
     }
     setState(() {
@@ -924,6 +1211,7 @@ class _CryptoWalletEngineSendPanelState
           LocalOutgoingTxStatus.submitted,
           reason: null,
         );
+        _notifyOptimisticDebit(displayHash);
         setState(() {
           _submittedTxHash = displayHash;
           _broadcastStatus = status;
@@ -939,6 +1227,7 @@ class _CryptoWalletEngineSendPanelState
           LocalOutgoingTxStatus.submissionUncertain,
           reason: reason.isEmpty ? null : reason,
         );
+        _notifyOptimisticDebit(displayHash);
         setState(() {
           _submittedTxHash = displayHash;
           _broadcastStatus = status;
@@ -1169,6 +1458,26 @@ class _CryptoWalletEngineSendPanelState
     store.updateStatus(txHash, status, reason: reason);
   }
 
+  // 2026-07-13 (Round 5 hardening): notify the caller (asset detail
+  // page) that a broadcast succeeded so it can stamp an optimistic
+  // pending debit on the Balance card. Uses the DRAFT-echoed value
+  // in wei / base units — the exact amount the transaction will
+  // debit if it lands.
+  void _notifyOptimisticDebit(String displayHash) {
+    final cb = widget.onSuccessfulBroadcast;
+    final draft = _draft;
+    if (cb == null || draft == null) return;
+    final isToken = widget.asset != 'ETH';
+    BigInt debit;
+    if (isToken) {
+      debit = _tokenAmountToBaseUnits(draft.amount, draft.unit);
+    } else {
+      // ETH send: the pending debit is value + fee.
+      debit = draft.valueWei + draft.gasLimit * draft.gasPrice;
+    }
+    cb(txHash: displayHash, debitBaseUnits: debit);
+  }
+
   void _cancelOutgoingSubmittingRow(String txHash) {
     final store = widget.outgoingTxStore;
     if (store == null) return;
@@ -1367,14 +1676,145 @@ class _CryptoWalletEngineSendPanelState
           textInputAction: TextInputAction.done,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           onSubmitted: (_) => _amountFocus.unfocus(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: kEthSendAmountLabel,
             hintText: '0.01',
             isDense: true,
+            // 2026-07-13 (Round 5 hardening): Max action that
+            // reserves an exact gas floor for ETH sends and copies
+            // the token balance verbatim for ERC-20. Integer BigInt
+            // arithmetic end-to-end — never a `double` conversion.
+            suffixIcon: TextButton(
+              key: const Key('eth_send_panel_max_btn'),
+              onPressed: _onMaxTap,
+              child: const Text(
+                kEthSendMaxActionLabel,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
           ),
+        ),
+        // 2026-07-13 (Round 5 hardening): show the last-known
+        // available balance directly under the amount input so the
+        // user always sees what they can send. Empty when no
+        // balance hook is wired (Sepolia tests).
+        FutureBuilder<double?>(
+          key: const Key('eth_send_panel_available_balance_line'),
+          future: (widget.fetchAvailableBalance != null)
+              ? widget.fetchAvailableBalance!()
+              : Future<double?>.value(null),
+          builder: (context, snap) {
+            final bal = snap.data;
+            if (bal == null) return const SizedBox.shrink();
+            final unit = widget.asset == 'ETH'
+                ? 'ETH'
+                : (widget.asset == 'USDT_ERC20'
+                    ? 'USDT'
+                    : widget.asset == 'USDC_ERC20'
+                        ? 'USDC'
+                        : widget.asset);
+            return Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Available: $bal $unit',
+                key: const Key(
+                    'eth_send_panel_available_balance_text'),
+                style: const TextStyle(
+                  fontSize: 12, color: kWalletTextMuted,
+                ),
+              ),
+            );
+          },
         ),
       ],
     );
+  }
+
+  // 2026-07-14 (Round 8 hardening): Max tap uses AUTHORITATIVE
+  // persisted draft fee. Rewrite of the Round-5 hardcoded-reserve
+  // implementation.
+  //
+  // For ETH: `maxValueWei = verifiedBalanceWei - draft.feeWei`.
+  // If no draft has been created this session, Max fails closed
+  // with `kEthSendMaxRequiresDraftError` — the user must tap
+  // Review first to materialize a server-authorized fee. NEVER a
+  // hard-coded gas reservation.
+  //
+  // For ERC-20: sets the amount to the full token balance. Gas is
+  // paid in ETH (checked separately by the exact-fee gate).
+  Future<void> _onMaxTap() async {
+    // 2026-07-14 (Round 8 hardening): ETH Max uses the AUTHORITATIVE
+    // persisted draft fee. NEVER a hard-coded gas reservation.
+    //
+    //   * ETH:   Max = verifiedBalanceWei - persistedDraft.feeWei
+    //   * ERC-20: Max = verified token base-unit balance
+    //
+    // If no draft has been created yet this session, Max fails
+    // closed with an honest message asking the user to enter an
+    // amount and tap Review first — that materialises a server-
+    // authorized fee via the state-machine draft flow. The
+    // subsequent integer-exact authorization gate re-verifies the
+    // exact fee before signing.
+    final wei = (widget.fetchAvailableBalanceWei != null)
+        ? await widget.fetchAvailableBalanceWei!()
+        : null;
+    if (wei == null || wei <= BigInt.zero) {
+      setState(() {
+        _error = kMainnetSendBalanceUnverifiedError;
+        _balanceCheckUnverified = true;
+      });
+      return;
+    }
+    if (widget.asset == 'ETH') {
+      // Authoritative fee only. NO hard-coded fallback.
+      if (_draft == null || _draft!.feeWei <= BigInt.zero) {
+        setState(() {
+          _error = kEthSendMaxRequiresDraftError;
+        });
+        return;
+      }
+      final BigInt gasReserve = _draft!.feeWei;
+      final BigInt target = wei - gasReserve;
+      if (target <= BigInt.zero) {
+        setState(() {
+          _error = kMainnetSendInsufficientBalanceError;
+        });
+        return;
+      }
+      _amountCtrl.text = _formatMaxWeiAsEth(target);
+    } else {
+      // ERC-20: Max = full verified token base-unit balance.
+      final decimals = (widget.asset == 'USDT_ERC20' ||
+              widget.asset == 'USDC_ERC20')
+          ? 6
+          : 18;
+      _amountCtrl.text = _formatMaxBaseUnits(wei, decimals);
+    }
+    setState(() {});
+  }
+
+  static String _formatMaxWeiAsEth(BigInt wei) {
+    final divisor = BigInt.from(1000000000000000000);
+    final whole = wei ~/ divisor;
+    final frac = wei - (whole * divisor);
+    if (frac == BigInt.zero) return whole.toString();
+    final fracStr = frac.toString().padLeft(18, '0');
+    final trimmed = fracStr.replaceFirst(RegExp(r'0+$'), '');
+    return trimmed.isEmpty ? whole.toString() : '$whole.$trimmed';
+  }
+
+  static String _formatMaxBaseUnits(BigInt v, int decimals) {
+    if (decimals <= 0) return v.toString();
+    final divisor = BigInt.from(10).pow(decimals);
+    final whole = v ~/ divisor;
+    final frac = v - (whole * divisor);
+    if (frac == BigInt.zero) return whole.toString();
+    final fracStr = frac.toString().padLeft(decimals, '0');
+    final trimmed = fracStr.replaceFirst(RegExp(r'0+$'), '');
+    return trimmed.isEmpty ? whole.toString() : '$whole.$trimmed';
   }
 
   Future<void> _handleScanRecipientQr(BuildContext ctx) async {
@@ -1392,9 +1832,94 @@ class _CryptoWalletEngineSendPanelState
             expectedChainId: expectedChainId,
           );
     if (scannedAddress == null || !mounted) return;
+    // 2026-07-14 (Round 7 hardening): EIP-681 amount handling. The
+    // scan sheet returns only a bare address, but if the SAME raw
+    // string is an EIP-681 URI carrying `value=`, we re-parse it
+    // here and:
+    //   * populate the amount ONLY if the amount field is empty
+    //   * otherwise prompt the user to confirm before replacing
+    //   * never silently override
+    BigInt? parsedAmountWei;
+    if (scannedAddress.startsWith('ethereum:')) {
+      final res = RecipientQrParser.parse(
+        raw: scannedAddress,
+        network: RecipientNetwork.ethereum,
+        expectedChainId: expectedChainId,
+      );
+      if (res.ok) {
+        parsedAmountWei = res.parsedAmountBaseUnits;
+      }
+    }
+    // Extract the bare address from the parser result so the
+    // destination field contains an address, never a URI.
+    String destAddress = scannedAddress;
+    if (scannedAddress.startsWith('ethereum:')) {
+      final res = RecipientQrParser.parse(
+        raw: scannedAddress,
+        network: RecipientNetwork.ethereum,
+        expectedChainId: expectedChainId,
+      );
+      if (res.ok && res.address != null) destAddress = res.address!;
+    }
+    if (!mounted) return;
     setState(() {
-      _destCtrl.text = scannedAddress;
+      _destCtrl.text = destAddress;
     });
+    if (parsedAmountWei != null && parsedAmountWei > BigInt.zero) {
+      final ethStr = _weiToEthString(parsedAmountWei);
+      final existing = _amountCtrl.text.trim();
+      if (existing.isEmpty) {
+        setState(() {
+          _amountCtrl.text = ethStr;
+        });
+      } else if (existing != ethStr) {
+        // Prompt for explicit confirmation.
+        // ignore: use_build_context_synchronously
+        final confirm = await showDialog<bool>(
+          context: ctx,
+          barrierDismissible: false,
+          builder: (dialogCtx) => AlertDialog(
+            key: const Key('eth_send_panel_eip681_confirm_dialog'),
+            title: const Text('Replace amount?'),
+            content: Text(
+              kEthSendFormValidationEip681AmountConfirmPrompt
+                  + '\n\nScanned amount: $ethStr ETH',
+            ),
+            actions: [
+              TextButton(
+                key: const Key(
+                  'eth_send_panel_eip681_confirm_cancel_btn',
+                ),
+                onPressed: () => Navigator.of(dialogCtx).pop(false),
+                child: const Text('Keep my amount'),
+              ),
+              ElevatedButton(
+                key: const Key(
+                  'eth_send_panel_eip681_confirm_replace_btn',
+                ),
+                onPressed: () => Navigator.of(dialogCtx).pop(true),
+                child: const Text('Replace'),
+              ),
+            ],
+          ),
+        );
+        if (confirm == true && mounted) {
+          setState(() {
+            _amountCtrl.text = ethStr;
+          });
+        }
+      }
+    }
+  }
+
+  String _weiToEthString(BigInt wei) {
+    final divisor = BigInt.from(10).pow(18);
+    final whole = wei ~/ divisor;
+    final frac = wei - whole * divisor;
+    if (frac == BigInt.zero) return whole.toString();
+    final fracStr = frac.toString().padLeft(18, '0');
+    final trimmed = fracStr.replaceFirst(RegExp(r'0+$'), '');
+    return trimmed.isEmpty ? whole.toString() : '$whole.$trimmed';
   }
 
   Widget _buildFormFooter(BuildContext ctx) {
@@ -1409,7 +1934,9 @@ class _CryptoWalletEngineSendPanelState
         : kEthSendReviewButtonLabel;
     return ElevatedButton(
       key: const Key('eth_send_panel_review_btn'),
-      onPressed: _onReview,
+      // 2026-07-14 (Round 8 hardening): disabled while drafting so
+      // a rapid double-tap does not spawn a second draft.
+      onPressed: _draftInFlight ? null : _onReview,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
@@ -1456,6 +1983,32 @@ class _CryptoWalletEngineSendPanelState
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: _buildNewRecipientBanner(),
+          ),
+        // 2026-07-14 (Round 7 hardening): contract-destination
+        // soft warning. `null` → unknown (fail-open), no banner.
+        if (_isContractDest == true)
+          Padding(
+            key: const Key('eth_send_panel_contract_recipient_warning'),
+            padding: const EdgeInsets.only(top: 4),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: walletWarningPanel(),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                       size: 16, color: kWalletAccentWarning),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      kEthSendFormValidationContractRecipientWarning,
+                      style: TextStyle(
+                        color: kWalletAccentWarning, fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         WalletSendKvRow(label: 'Amount', value: '${d.amount} ${d.unit}'),
         WalletSendKvRow(

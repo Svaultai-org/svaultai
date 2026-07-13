@@ -169,6 +169,27 @@ def sol_get_latest_blockhash_at_url(rpc_url: str) -> dict:
     }
 
 
+def sol_get_block_height_at_url(rpc_url: str) -> int:
+    """Get the current Solana chain block height for authoritative
+    draft-expiry verification (2026-07-14 Round 8 hardening).
+
+    Returns the current `blockHeight` slot number so the caller can
+    compare against a persisted draft's `last_valid_block_height`.
+    Raises SolanaRpcError on any transport / shape error — callers
+    turn that into a `blockheight_unavailable` envelope so the
+    client fails closed rather than allowing an unverified sign.
+    """
+    result = _post_json_rpc(rpc_url, "getBlockHeight")
+    payload = result.get("result")
+    if isinstance(payload, int):
+        return payload
+    if isinstance(payload, dict):
+        v = payload.get("value")
+        if isinstance(v, int):
+            return v
+    raise SolanaRpcError(REASON_RPC_ERROR)
+
+
 REASON_INVALID_SIGNED_TX: str = "invalid_signed_transaction"
 
 

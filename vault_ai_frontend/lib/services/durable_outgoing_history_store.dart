@@ -147,9 +147,55 @@ class DurableOutgoingTx {
       return double.tryParse(s);
     }
 
+    // 2026-07-14 (Round 7 hardening): make the parser polymorphic
+    // across ETH / SOL / TRON. Each backend history endpoint uses
+    // the same overall shape but with network-specific identity /
+    // fee field names. Resolve to the same client-facing
+    // `localTxHash` + `feeWei` slots.
+    //
+    // ETH (Round 4):
+    //   localTxHash, valueWei, gasLimit, gasPrice, feeWei
+    // SOL (Round 6):
+    //   localSignature, amountBaseUnits (lamports), feeLamports,
+    //   recentBlockhash, lastValidBlockHeight
+    // TRON (Round 6):
+    //   localTxIdHex, amountBaseUnits, feeLimitSun,
+    //   tokenContractAddress, expirationMs, serverTxIdHex
+    final networkId = (j['networkId'] ?? '').toString();
+    final isSolana = networkId == 'solana_mainnet';
+    final isTron = networkId == 'tron_mainnet';
+    String localId;
+    BigInt feeVal;
+    BigInt gasLimitVal;
+    BigInt gasPriceVal;
+    BigInt valueVal;
+    String transactionToVal;
+    if (isSolana) {
+      localId = (j['localSignature'] ?? '').toString();
+      feeVal = bi(j['feeLamports']);
+      gasLimitVal = BigInt.zero;
+      gasPriceVal = BigInt.zero;
+      valueVal = bi(j['amountBaseUnits']);
+      transactionToVal = (j['destinationAddress'] ?? '').toString();
+    } else if (isTron) {
+      localId = (j['localTxIdHex'] ?? '').toString();
+      feeVal = bi(j['feeLimitSun']);
+      gasLimitVal = BigInt.zero;
+      gasPriceVal = BigInt.zero;
+      valueVal = BigInt.zero;
+      transactionToVal = (j['tokenContractAddress']
+              ?? j['destinationAddress'] ?? '').toString();
+    } else {
+      localId = (j['localTxHash'] ?? '').toString();
+      feeVal = bi(j['feeWei']);
+      gasLimitVal = bi(j['gasLimit']);
+      gasPriceVal = bi(j['gasPrice']);
+      valueVal = bi(j['valueWei']);
+      transactionToVal = (j['transactionTo'] ?? '').toString();
+    }
     return DurableOutgoingTx(
       draftId: (j['draftId'] ?? '').toString(),
-      networkId: (j['networkId'] ?? '').toString(),
+      networkId: networkId,
       asset: (j['asset'] ?? '').toString(),
       unit: (j['unit'] ?? '').toString(),
       decimals: j['decimals'] is int
@@ -157,17 +203,17 @@ class DurableOutgoingTx {
           : int.tryParse((j['decimals'] ?? '18').toString()) ?? 18,
       fromAddress: (j['fromAddress'] ?? '').toString(),
       destinationAddress: (j['destinationAddress'] ?? '').toString(),
-      transactionTo: (j['transactionTo'] ?? '').toString(),
-      valueWei: bi(j['valueWei']),
+      transactionTo: transactionToVal,
+      valueWei: valueVal,
       amountBaseUnits: maybeBi(j['amountBaseUnits']),
       dataHex: (j['dataHex'] ?? '0x').toString(),
-      gasLimit: bi(j['gasLimit']),
-      gasPrice: bi(j['gasPrice']),
-      feeWei: bi(j['feeWei']),
+      gasLimit: gasLimitVal,
+      gasPrice: gasPriceVal,
+      feeWei: feeVal,
       chainId: j['chainId'] is int
           ? j['chainId'] as int
           : int.tryParse((j['chainId'] ?? '0').toString()) ?? 0,
-      localTxHash: (j['localTxHash'] ?? '').toString(),
+      localTxHash: localId,
       broadcastOutcome:
           j['broadcastOutcome']?.toString(),
       createdAt: maybeDouble(j['createdAt']),

@@ -94,16 +94,23 @@ void main() {
 
     test('_loadAddressAndBalance only calls _loadBalance AFTER a '
         'non-empty address is confirmed', () {
+      // 2026-07-13 (Round 5 hardening): the scope-window heuristic
+      // this test used (`start + 3500`) fell out of alignment when
+      // `_loadAddressAndBalance` grew a raw-integer-balance follow-
+      // up call. Instead, verify the semantic directly by searching
+      // for the exact guard pattern anywhere in `_loadAddressAndBalanceLegacyDefault`
+      // — the intent (never call _loadBalance without a non-empty
+      // addr) has not changed.
       final src = _readLib('ui/crypto_wallet_engine_asset_detail_page.dart');
-      final start = src.indexOf('Future<void> _loadAddressAndBalance');
-      final scope = src.substring(start, start + 3500);
-
-
-
+      final legacyStart = src.indexOf(
+        'Future<void> _loadAddressAndBalanceLegacyDefault',
+      );
+      expect(legacyStart, greaterThan(0),
+        reason: 'legacy loader still expected — that is where the '
+                'network-null path calls _loadBalance directly.');
+      final scope = src.substring(legacyStart, legacyStart + 4000);
       final loadBalanceIdx = scope.indexOf('_loadBalance(addr);');
       expect(loadBalanceIdx, greaterThan(0));
-
-
       final guard = scope.substring(0, loadBalanceIdx);
       expect(
         guard.contains('addr != null && addr.isNotEmpty'),
@@ -320,11 +327,14 @@ void main() {
     });
 
     test('_loadBalance is never scheduled when addr is null/empty', () {
+      // Same 2026-07-13 rescope as above — semantically the guard
+      // lives in `_loadAddressAndBalanceLegacyDefault`.
       final src = _readLib('ui/crypto_wallet_engine_asset_detail_page.dart');
-      final start = src.indexOf('Future<void> _loadAddressAndBalance');
-      final scope = src.substring(start, start + 3500);
-
-
+      final start = src.indexOf(
+        'Future<void> _loadAddressAndBalanceLegacyDefault',
+      );
+      expect(start, greaterThan(0));
+      final scope = src.substring(start, start + 4000);
       final guardIdx = scope.indexOf('if (addr != null && addr.isNotEmpty');
       final balanceCallIdx = scope.indexOf('_loadBalance(addr);');
       expect(guardIdx, greaterThan(0));

@@ -49,6 +49,50 @@ const String kSolanaSendSelfSendCopy =
     'Destination address matches the from address. Refusing to '
     'draft a self-send.';
 
+// 2026-07-14 (Round 7 hardening): integer-exact lamport gate
+// errors + honest post-broadcast result states + expiry.
+const String kSolanaSendExactFeeUnverifiedError =
+    'The exact network fee could not be verified against your SOL '
+    'balance. Try again in a moment.';
+const String kSolanaSendInsufficientLamportsError =
+    'Your SOL balance is not enough to cover the amount plus the '
+    'authorized network fee. Reduce the amount or top up SOL.';
+const String kSolanaSendDraftExpiredError =
+    'The Solana blockhash for this draft has expired. Return to '
+    'form to obtain a fresh draft; recipient and amount are '
+    'preserved.';
+const String kSolanaSendResultHeadingSubmitted =
+    'Transaction submitted';
+const String kSolanaSendResultHeadingUncertain =
+    'Transaction status is uncertain';
+const String kSolanaSendResultHeadingRejected =
+    'Transaction rejected';
+const String kSolanaSendResultHeadingExpired =
+    'Draft expired before broadcast';
+const String kSolanaSendResultBodyUncertain =
+    'The Solana RPC did not confirm inclusion in the visibility '
+    'window. VaultAI will keep checking. Do not re-sign with a new '
+    'blockhash until the status resolves.';
+const String kSolanaSendResultBodyRejected =
+    'The Solana RPC explicitly rejected this transaction. The '
+    'draft was consumed under the single-attempt policy; retrying '
+    'requires a fresh draft.';
+const String kSolanaSendViewActivityLabel = 'View activity';
+const String kSolanaSendCheckStatusLabel = 'Check status';
+const String kSolanaSendReturnFormLabel = 'Start a new send';
+const String kSolanaSendMaxActionLabel = 'Max';
+const String kSolanaSendAvailableBalancePrefix = 'Available:';
+// 2026-07-14 (Round 8 hardening): SOL Max needs a persisted draft
+// so the authoritative feeLamports is available. If none exists
+// yet, we fail closed with a clear next-step message rather than
+// invent a client-side fee estimate.
+const String kSolanaSendMaxRequiresDraftError =
+    'Enter an amount and tap Review first — Max needs the '
+    'server-authorized fee from your current draft.';
+const String kSolanaSendMaxBalanceUnverifiedError =
+    'Your SOL balance is not verified. Try again after the balance '
+    'refreshes.';
+
 
 const String kSolanaSendPanelKey = 'solana_send_panel';
 const String kSolanaSendDestinationInputKey =
@@ -75,7 +119,11 @@ const String kSolanaSendPinConfirmBtnKey =
     'solana_send_panel_pin_confirm_btn';
 
 
-enum _SolanaSendStage { input, review, submitting, submitted }
+// 2026-07-14 (Round 7 hardening): terminal-result outcomes and
+// the expired result state.
+enum _SolanaSendStage {
+  input, review, submitting, submitted, expired, rejected, uncertain,
+}
 
 
 const String kSolanaSendFeeEstimatedLabel = 'Estimated network fee';
@@ -137,6 +185,27 @@ class CryptoWalletEngineSolanaSendPanel extends StatefulWidget {
     int? expectedChainId,
   )? scanRecipientQr;
 
+  /// 2026-07-14 (Round 7 hardening): integer-exact lamport balance.
+  /// When wired, this is the FINAL authorization gate before signing.
+  /// Returns null if RPC is unavailable → hard-gate blocks. Never
+  /// call double arithmetic on the returned value; always use BigInt.
+  final Future<BigInt?> Function()? fetchAvailableLamports;
+
+  /// 2026-07-14 (Round 7 hardening): optional callback fired once
+  /// with the returned signature and lamport debit (value +
+  /// authorized fee) after a non-rejected broadcast outcome. Used
+  /// by the asset detail page to stamp an optimistic pending debit
+  /// on the balance card.
+  final void Function({
+    required String signature,
+    required BigInt debitLamports,
+  })? onSuccessfulBroadcast;
+
+  /// 2026-07-14 (Round 7 hardening): triggered when the user taps
+  /// "View activity" from a submitted / uncertain result screen.
+  /// The caller pops the sheet and scrolls to the activity card.
+  final VoidCallback? onViewActivity;
+
   const CryptoWalletEngineSolanaSendPanel({
     super.key,
     required this.authToken,
@@ -150,6 +219,9 @@ class CryptoWalletEngineSolanaSendPanel extends StatefulWidget {
     this.prefilledAmount,
     this.idempotencyKeyGenerator,
     this.scanRecipientQr,
+    this.fetchAvailableLamports,
+    this.onSuccessfulBroadcast,
+    this.onViewActivity,
   });
 
   @override
@@ -177,6 +249,12 @@ class _CryptoWalletEngineSolanaSendPanelState
   Map<String, dynamic>? _draft;
   Map<String, dynamic>? _submitted;
   bool _broadcastInFlight = false;
+  // 2026-07-14 (Round 8 hardening): synchronous draft-in-flight
+  // guard. Set BEFORE the first `await` in `_onReview` so a
+  // rapid double-tap of the Review button cannot spawn a second
+  // draft. Race is caught client-side, not delegated to backend
+  // single-active-draft-per-sender as normal UX.
+  bool _draftInFlight = false;
   String? _idempotencyKey;
   String? _statusCode;
   int _statusPollCount = 0;
@@ -236,60 +314,84 @@ class _CryptoWalletEngineSolanaSendPanelState
       widget.features?.solanaSendPaused ?? false;
 
   Future<void> _onReview() async {
+    // 2026-07-14 (Round 8 hardening): SYNCHRONOUS draft-in-flight
+    // guard. Set BEFORE any await so a rapid double-tap does not
+    // spawn a second draft. Backend single-active-draft-per-sender
+    // remains as belt-and-braces but is NOT the primary UX.
+    if (_draftInFlight) return;
+    // Also guard against re-drafting after we already have a
+    // review-ready draft — the user must explicitly return to form
+    // (e.g. after `draft_expired`) to clear it.
+    if (_draft != null && _stage != _SolanaSendStage.input) return;
+    _draftInFlight = true;
     setState(() {
       _error = null;
     });
-    final destination = _destinationController.text.trim();
-    if (!isValidSolanaAddress(destination)) {
-      setState(() {
-        _error = kSolanaSendInvalidDestinationCopy;
-      });
-      return;
-    }
-    if (destination == widget.fromAddress.trim()) {
-      setState(() {
-        _error = kSolanaSendSelfSendCopy;
-      });
-      return;
-    }
     try {
-      parseSolAmountToLamports(_amountController.text);
-    } catch (_) {
-      setState(() {
-        _error = kSolanaSendInvalidAmountCopy;
-      });
-      return;
-    }
-    try {
-      final draft = await widget.client.createCryptoWalletSendDraftNetwork(
-        network: kSolanaNetworkId,
-        asset: kSolanaAssetTicker,
-        authToken: widget.authToken,
-        fromAddress: widget.fromAddress,
-        destinationAddress: destination,
-        amountSol: _amountController.text.trim(),
-      );
-      final status = (draft['status'] ?? '').toString();
-      if (status != 'draft_ready') {
+      final destination = _destinationController.text.trim();
+      if (!isValidSolanaAddress(destination)) {
         setState(() {
-          _error = (draft['message'] ??
-              'Solana draft not ready.').toString();
+          _error = kSolanaSendInvalidDestinationCopy;
         });
         return;
       }
-      setState(() {
-        _draft = draft;
-        _stage = _SolanaSendStage.review;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Draft failed: $e';
-      });
+      if (destination == widget.fromAddress.trim()) {
+        setState(() {
+          _error = kSolanaSendSelfSendCopy;
+        });
+        return;
+      }
+      try {
+        parseSolAmountToLamports(_amountController.text);
+      } catch (_) {
+        setState(() {
+          _error = kSolanaSendInvalidAmountCopy;
+        });
+        return;
+      }
+      try {
+        final draft = await widget.client
+            .createCryptoWalletSendDraftNetwork(
+          network: kSolanaNetworkId,
+          asset: kSolanaAssetTicker,
+          authToken: widget.authToken,
+          fromAddress: widget.fromAddress,
+          destinationAddress: destination,
+          amountSol: _amountController.text.trim(),
+        );
+        final status = (draft['status'] ?? '').toString();
+        if (status != 'draft_ready') {
+          setState(() {
+            _error = (draft['message'] ??
+                'Solana draft not ready.').toString();
+          });
+          return;
+        }
+        setState(() {
+          _draft = draft;
+          _stage = _SolanaSendStage.review;
+        });
+      } catch (e) {
+        setState(() {
+          _error = 'Draft failed: $e';
+        });
+      }
+    } finally {
+      _draftInFlight = false;
     }
   }
 
   Future<void> _onConfirmAndSign() async {
+    // 2026-07-14 (Round 7 hardening): every entry gate must be
+    // idempotent. Duplicate Review/PIN/broadcast taps or a browser
+    // back+forward that re-runs this handler MUST be a no-op.
     if (_broadcastInFlight) return;
+    if (_stage == _SolanaSendStage.submitted
+        || _stage == _SolanaSendStage.expired
+        || _stage == _SolanaSendStage.rejected
+        || _stage == _SolanaSendStage.uncertain) {
+      return;
+    }
     if (!widget.isVaultKeyAvailable()) {
       setState(() {
         _error = 'Unlock your vault first.';
@@ -306,6 +408,50 @@ class _CryptoWalletEngineSolanaSendPanelState
       _error = null;
     });
 
+    // 2026-07-14 (Round 8 hardening): full pre-sign gate chain.
+    //
+    //   1. Integer-exact lamport authorization (fail closed on
+    //      missing hook / null balance / malformed persisted
+    //      values / insufficient).
+    //   2. AUTHORITATIVE pre-secret expiry check via the backend
+    //      draft-expiry endpoint (SOL block-height chain
+    //      observation). Fail closed if unverifiable.
+    //   3. Only if BOTH pass does the flow fetch the encrypted
+    //      secret + decrypt + sign.
+    //   4. A SECOND authoritative expiry check runs immediately
+    //      before broadcast (further below).
+    final draftForGate = _draft;
+    if (draftForGate == null) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _SolanaSendStage.review;
+        _error = kSolanaSendExactFeeUnverifiedError;
+      });
+      return;
+    }
+    final gateError = await _verifyExactLamportAuthorization(
+      draft: draftForGate,
+    );
+    if (gateError != null) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _SolanaSendStage.review;
+        _error = gateError;
+      });
+      return;
+    }
+    // Pre-secret expiry check.
+    final preSecretExpiry = await _verifyDraftExpiryFailClosed(
+      draft: draftForGate,
+    );
+    if (preSecretExpiry != null) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _SolanaSendStage.expired;
+        _error = preSecretExpiry;
+      });
+      return;
+    }
 
     _idempotencyKey ??= (widget.idempotencyKeyGenerator != null)
         ? widget.idempotencyKeyGenerator!()
@@ -383,6 +529,29 @@ class _CryptoWalletEngineSolanaSendPanelState
       plaintextSecret64 = null;
       plaintextSeed = null;
 
+      // 2026-07-14 (Round 8 hardening): SECOND authoritative
+      // expiry check IMMEDIATELY before broadcast. Catches drafts
+      // whose lastValidBlockHeight passed between the pre-secret
+      // verify and now (the signing step + secret decrypt may
+      // take hundreds of milliseconds). If this check flags
+      // expired, we do NOT broadcast — the signed transaction is
+      // discarded and the user is told the draft expired.
+      final preBroadcastExpiry = await _verifyDraftExpiryFailClosed(
+        draft: draft,
+      );
+      if (preBroadcastExpiry != null) {
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _SolanaSendStage.expired;
+          _error = preBroadcastExpiry;
+        });
+        return;
+      }
+
+      // 2026-07-14 (Round 7 hardening): draftId echoed to the
+      // backend so the SOL state machine can enforce single-attempt
+      // + record broadcast_outcome per draft.
+      final draftIdEcho = (draft['draftId'] ?? '').toString();
       final broadcastResp = await widget.client
           .broadcastCryptoWalletSignedTransactionNetwork(
         network:           kSolanaNetworkId,
@@ -390,24 +559,58 @@ class _CryptoWalletEngineSolanaSendPanelState
         authToken:         widget.authToken,
         signedTransaction: signed.wireTransaction.base64,
         idempotencyKey:    _idempotencyKey,
+        draftId:           draftIdEcho.isEmpty ? null : draftIdEcho,
       );
       final broadcastStatus =
           (broadcastResp['status'] ?? '').toString();
-      if (broadcastStatus != 'submitted') {
+      // Honest outcome classification. Round-6 backend returns:
+      //   submitted / already_submitted            → success
+      //   submission_uncertain                     → uncertain
+      //   broadcast_rejected / broadcast_failed    → rejected
+      //   draft_expired                            → expired
+      if (broadcastStatus == 'submitted'
+          || broadcastStatus == 'already_submitted') {
+        _notifyOptimisticDebit(
+          signature: (broadcastResp['signature'] ?? '').toString(),
+          draft: draft,
+        );
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _SolanaSendStage.submitted;
+          _submitted = broadcastResp;
+        });
+        _startStatusPolling();
+      } else if (broadcastStatus == 'submission_uncertain') {
+        _notifyOptimisticDebit(
+          signature: (broadcastResp['signature'] ?? '').toString(),
+          draft: draft,
+        );
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _SolanaSendStage.uncertain;
+          _submitted = broadcastResp;
+        });
+      } else if (broadcastStatus == 'broadcast_rejected'
+          || broadcastStatus == 'broadcast_failed') {
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _SolanaSendStage.rejected;
+          _submitted = broadcastResp;
+        });
+      } else if (broadcastStatus == 'draft_expired') {
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _SolanaSendStage.expired;
+          _submitted = broadcastResp;
+        });
+      } else {
         setState(() {
           _broadcastInFlight = false;
           _stage = _SolanaSendStage.review;
           _error = (broadcastResp['message']
               ?? kSolanaSendBroadcastFailedCopy).toString();
         });
-        return;
       }
-      setState(() {
-        _broadcastInFlight = false;
-        _stage = _SolanaSendStage.submitted;
-        _submitted = broadcastResp;
-      });
-      _startStatusPolling();
     } catch (e) {
       if (plaintextSecret64 != null) {
         wipeSecretKey(plaintextSecret64);
@@ -421,6 +624,191 @@ class _CryptoWalletEngineSolanaSendPanelState
         _error = 'Sign/broadcast failed: $e';
       });
     }
+  }
+
+  // 2026-07-14 (Round 8 hardening): integer-exact lamport
+  // authorization gate. FAIL CLOSED.
+  //
+  //   * `fetchAvailableLamports == null`  → block
+  //   * balance fetch throws               → block
+  //   * balance null                       → block
+  //   * malformed persisted lamport/fee    → block
+  //   * value + fee > available            → block
+  //   * exact equality                     → allow
+  //
+  // BigInt end-to-end. Runs AFTER PIN verify, BEFORE encrypted-
+  // secret fetch. Backend gate is additive; it is NOT permission
+  // for this frontend gate to silently skip.
+  Future<String?> _verifyExactLamportAuthorization({
+    required Map<String, dynamic> draft,
+  }) async {
+    if (widget.fetchAvailableLamports == null) {
+      // Production Send paths MUST wire this hook. Tests that omit
+      // it deliberately are broken by design; the correct policy is
+      // to block.
+      return kSolanaSendExactFeeUnverifiedError;
+    }
+    // Prefer the draft-persisted fee (`feeLamports`) over any
+    // client-computed number — this is the SAME figure the backend
+    // wrote to the DB row, so the client authorization exactly
+    // mirrors what the state machine will enforce.
+    final rawValue = (draft['lamports'] ?? '').toString();
+    final rawFee = (draft['feeLamports'] ?? '').toString();
+    if (rawValue.isEmpty || rawFee.isEmpty) {
+      return kSolanaSendExactFeeUnverifiedError;
+    }
+    final BigInt? valueLamports = BigInt.tryParse(rawValue);
+    final BigInt? feeLamports = BigInt.tryParse(rawFee);
+    if (valueLamports == null || feeLamports == null
+        || valueLamports < BigInt.zero || feeLamports < BigInt.zero) {
+      return kSolanaSendExactFeeUnverifiedError;
+    }
+    BigInt? available;
+    try {
+      available = await widget.fetchAvailableLamports!();
+    } catch (_) {
+      available = null;
+    }
+    if (available == null) {
+      return kSolanaSendExactFeeUnverifiedError;
+    }
+    final BigInt required = valueLamports + feeLamports;
+    if (required > available) {
+      return kSolanaSendInsufficientLamportsError;
+    }
+    return null;
+  }
+
+  // 2026-07-14 (Round 8 hardening): SOL Max button.
+  //
+  //   maxLamports = availableLamports - persistedFeeLamports
+  //
+  // BigInt only. Fail-closed on:
+  //   * no `_draft` yet (fee unknown; use Review first)
+  //   * `fetchAvailableLamports` returns null / throws
+  //   * result <= 0 (nothing to send after fee)
+  //
+  // The final draft is still revalidated by
+  // `_verifyExactLamportAuthorization` before signing — Max does
+  // NOT replace the gate.
+  Future<void> _onMaxTap() async {
+    final draft = _draft;
+    if (draft == null) {
+      setState(() {
+        _error = kSolanaSendMaxRequiresDraftError;
+      });
+      return;
+    }
+    final rawFee = (draft['feeLamports'] ?? '').toString();
+    if (rawFee.isEmpty) {
+      setState(() {
+        _error = kSolanaSendMaxRequiresDraftError;
+      });
+      return;
+    }
+    final BigInt? feeLamports = BigInt.tryParse(rawFee);
+    if (feeLamports == null || feeLamports < BigInt.zero) {
+      setState(() {
+        _error = kSolanaSendMaxRequiresDraftError;
+      });
+      return;
+    }
+    if (widget.fetchAvailableLamports == null) {
+      setState(() {
+        _error = kSolanaSendMaxBalanceUnverifiedError;
+      });
+      return;
+    }
+    BigInt? available;
+    try {
+      available = await widget.fetchAvailableLamports!();
+    } catch (_) {
+      available = null;
+    }
+    if (available == null) {
+      setState(() {
+        _error = kSolanaSendMaxBalanceUnverifiedError;
+      });
+      return;
+    }
+    final BigInt target = available - feeLamports;
+    if (target <= BigInt.zero) {
+      setState(() {
+        _error = kSolanaSendInsufficientLamportsError;
+      });
+      return;
+    }
+    _amountController.text = _lamportsToSolString(target);
+    setState(() {
+      _error = null;
+    });
+  }
+
+  static String _lamportsToSolString(BigInt lamports) {
+    final divisor = BigInt.from(10).pow(9);
+    final whole = lamports ~/ divisor;
+    final frac = lamports - whole * divisor;
+    if (frac == BigInt.zero) return whole.toString();
+    final fracStr = frac.toString().padLeft(9, '0');
+    final trimmed = fracStr.replaceFirst(RegExp(r'0+$'), '');
+    return trimmed.isEmpty ? whole.toString() : '$whole.$trimmed';
+  }
+
+  // 2026-07-14 (Round 8 hardening): authoritative pre-sign +
+  // pre-broadcast expiry verification via the backend. Fetches
+  // current chain block height and compares against the persisted
+  // `last_valid_block_height`. FAIL CLOSED on:
+  //
+  //   * missing draftId
+  //   * network error contacting the endpoint
+  //   * `expired: null` in the response (RPC unverifiable)
+  //   * `expired: true`
+  //
+  // Only `expired: false` allows the flow to continue.
+  Future<String?> _verifyDraftExpiryFailClosed({
+    required Map<String, dynamic> draft,
+  }) async {
+    final draftId = (draft['draftId'] ?? '').toString();
+    if (draftId.isEmpty) {
+      return kSolanaSendExactFeeUnverifiedError;
+    }
+    Map<String, dynamic>? resp;
+    try {
+      resp = await widget.client.getCryptoWalletDraftExpiryNetwork(
+        network: kSolanaNetworkId,
+        draftId: draftId,
+        authToken: widget.authToken,
+      );
+    } catch (_) {
+      // Fail-closed on transport error — never assume "not expired"
+      // because the endpoint was unreachable.
+      return kSolanaSendDraftExpiredError;
+    }
+    // Strict fail-closed: ONLY `expired: false` (canonical bool) is
+    // an allow. Anything else — null, missing field, string 'true'/
+    // 'false', numeric 0/1, or any other unexpected shape — is
+    // treated as unverifiable and BLOCKS. This prevents a malformed
+    // backend envelope from becoming a silent green light.
+    final expired = resp['expired'];
+    if (expired is bool && expired == false) {
+      return null;
+    }
+    return kSolanaSendDraftExpiredError;
+  }
+
+  void _notifyOptimisticDebit({
+    required String signature,
+    required Map<String, dynamic> draft,
+  }) {
+    final cb = widget.onSuccessfulBroadcast;
+    if (cb == null) return;
+    final BigInt valueLamports = BigInt.tryParse(
+      (draft['lamports'] ?? '0').toString(),
+    ) ?? BigInt.zero;
+    final BigInt feeLamports = BigInt.tryParse(
+      (draft['feeLamports'] ?? '0').toString(),
+    ) ?? BigInt.zero;
+    cb(signature: signature, debitLamports: valueLamports + feeLamports);
   }
 
   String _defaultIdempotencyKey() {
@@ -595,12 +983,61 @@ class _CryptoWalletEngineSolanaSendPanelState
           body: _buildSubmittingStage(),
         );
       case _SolanaSendStage.submitted:
+      case _SolanaSendStage.uncertain:
+      case _SolanaSendStage.rejected:
+      case _SolanaSendStage.expired:
         return WalletSendScaffold(
           sheetKey: 'solana_send_panel',
           header: header,
-          body: _buildSubmittedStage(),
+          body: _buildResultStage(),
         );
     }
+  }
+
+  // 2026-07-14 (Round 7 hardening): honest result screen. Selects
+  // heading + body copy + action buttons based on the terminal
+  // stage set by the broadcast handler.
+  Widget _buildResultStage() {
+    String heading;
+    String body;
+    bool showViewActivity = true;
+    bool showCheckStatus = false;
+    bool showReturnForm = false;
+    switch (_stage) {
+      case _SolanaSendStage.submitted:
+        heading = kSolanaSendResultHeadingSubmitted;
+        body = kSolanaSendSubmittedBody;
+        break;
+      case _SolanaSendStage.uncertain:
+        heading = kSolanaSendResultHeadingUncertain;
+        body = kSolanaSendResultBodyUncertain;
+        showCheckStatus = true;
+        break;
+      case _SolanaSendStage.rejected:
+        heading = kSolanaSendResultHeadingRejected;
+        body = kSolanaSendResultBodyRejected;
+        showViewActivity = false;
+        showReturnForm = true;
+        break;
+      case _SolanaSendStage.expired:
+        heading = kSolanaSendResultHeadingExpired;
+        body = kSolanaSendDraftExpiredError;
+        showViewActivity = false;
+        showReturnForm = true;
+        break;
+      default:
+        heading = kSolanaSendSubmittedHeading;
+        body = kSolanaSendSubmittedBody;
+    }
+    final sig = (_submitted?['signature'] ?? '').toString();
+    return _buildSubmittedResultCard(
+      heading: heading,
+      body: body,
+      signature: sig,
+      showViewActivity: showViewActivity,
+      showCheckStatus: showCheckStatus,
+      showReturnForm: showReturnForm,
+    );
   }
 
   Widget _buildDisabledBanner() {
@@ -699,9 +1136,25 @@ class _CryptoWalletEngineSolanaSendPanelState
           focusNode: _amountFocus,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _amountFocus.unfocus(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: kSolanaSendAmountLabel,
             isDense: true,
+            // 2026-07-14 (Round 8 hardening): Max button using
+            // authoritative persisted fee lamports from the most
+            // recently drafted transaction. If no draft has been
+            // created this session, Max fails closed with an
+            // honest message. NEVER a hard-coded fee fallback.
+            suffixIcon: TextButton(
+              key: const Key('solana_send_panel_max_btn'),
+              onPressed: _onMaxTap,
+              child: const Text(
+                kSolanaSendMaxActionLabel,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
           ),
           keyboardType: const TextInputType.numberWithOptions(
             decimal: true,
@@ -721,7 +1174,10 @@ class _CryptoWalletEngineSolanaSendPanelState
   Widget _buildInputFooter() {
     return ElevatedButton(
       key: const Key(kSolanaSendReviewButtonKey),
-      onPressed: _onReview,
+      // 2026-07-14 (Round 8 hardening): Review disabled while
+      // drafting so a rapid double-tap cannot spawn a second draft
+      // API call.
+      onPressed: _draftInFlight ? null : _onReview,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
@@ -799,73 +1255,144 @@ class _CryptoWalletEngineSolanaSendPanelState
   }
 
   Widget _buildSubmittedStage() {
-    final resp = _submitted!;
-    final signature = (resp['signature'] ?? '').toString();
+    return _buildSubmittedResultCard(
+      heading: kSolanaSendSubmittedHeading,
+      body: kSolanaSendSubmittedBody,
+      signature: (_submitted?['signature'] ?? '').toString(),
+      showViewActivity: true,
+      showCheckStatus: false,
+      showReturnForm: false,
+    );
+  }
+
+  // 2026-07-14 (Round 7 hardening): honest-result-screen card
+  // shared by submitted / uncertain / rejected / expired.
+  Widget _buildSubmittedResultCard({
+    required String heading,
+    required String body,
+    required String signature,
+    required bool showViewActivity,
+    required bool showCheckStatus,
+    required bool showReturnForm,
+  }) {
+    final isSuccess = _stage == _SolanaSendStage.submitted;
+    final isUncertain = _stage == _SolanaSendStage.uncertain;
+    final headingColor = isSuccess
+        ? kWalletAccentSuccess
+        : (isUncertain
+            ? kWalletAccentWarning
+            : kWalletAccentDanger);
     return Container(
       key: const Key(kSolanaSendSubmittedCardKey),
       padding: const EdgeInsets.all(14),
-      decoration: walletSuccessPanel(),
+      decoration: isSuccess
+          ? walletSuccessPanel()
+          : (isUncertain
+              ? walletWarningPanel()
+              : walletDangerPanel()),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            kSolanaSendSubmittedHeading,
+          Text(
+            heading,
+            key: const Key('solana_send_panel_result_heading'),
             style: TextStyle(
-              color: kWalletAccentSuccess,
+              color: headingColor,
               fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            kSolanaSendSubmittedBody,
-            style: TextStyle(
-              color: kWalletAccentSuccess,
-              fontSize: 13,
-            ),
-          ),
-          const SizedBox(height: 6),
           Text(
-            solanaSendStatusCopyFor(_statusCode),
-            key: const Key('solana_send_panel_status_text'),
+            body,
+            key: const Key('solana_send_panel_result_body'),
             style: TextStyle(
-              color: _statusCode == 'failed'
-                  ? kWalletAccentDanger
-                  : (_statusCode == 'confirmed'
-                      ? kWalletAccentSuccess
-                      : kWalletAccentWarning),
+              color: headingColor,
               fontSize: 13,
-              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 10),
-          SelectableText(
-            signature,
-            key: const Key('solana_send_panel_signature_text'),
-            style: kWalletMonoStyle,
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            key: const Key('solana_send_panel_copy_sig_btn'),
-            onPressed: () async {
-              final copiedLabel =
-                  AppLocalizations.of(context).cryptoSignatureCopied;
-              await Clipboard.setData(
-                ClipboardData(text: signature),
-              );
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(copiedLabel)),
+          if (isSuccess || isUncertain) ...[
+            const SizedBox(height: 6),
+            Text(
+              solanaSendStatusCopyFor(_statusCode),
+              key: const Key('solana_send_panel_status_text'),
+              style: TextStyle(
+                color: _statusCode == 'failed'
+                    ? kWalletAccentDanger
+                    : (_statusCode == 'confirmed'
+                        ? kWalletAccentSuccess
+                        : kWalletAccentWarning),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (signature.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SelectableText(
+              signature,
+              key: const Key('solana_send_panel_signature_text'),
+              style: kWalletMonoStyle,
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              key: const Key('solana_send_panel_copy_sig_btn'),
+              onPressed: () async {
+                final copiedLabel = AppLocalizations.of(context)
+                    .cryptoSignatureCopied;
+                await Clipboard.setData(
+                  ClipboardData(text: signature),
                 );
-              }
-            },
-            icon: const Icon(Icons.copy_rounded, size: 16),
-            label: Text(
-              AppLocalizations.of(context).cryptoCopySignature,
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(copiedLabel)),
+                  );
+                }
+              },
+              icon: const Icon(Icons.copy_rounded, size: 16),
+              label: Text(
+                AppLocalizations.of(context).cryptoCopySignature,
+              ),
+              style: walletGhostButtonStyle(),
             ),
-            style: walletGhostButtonStyle(),
-          ),
+          ],
+          if (showCheckStatus) ...[
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('solana_send_panel_check_status_btn'),
+              onPressed: () {
+                _statusPollActive = false;
+                _startStatusPolling();
+              },
+              style: walletGhostButtonStyle(),
+              child: const Text(kSolanaSendCheckStatusLabel),
+            ),
+          ],
+          if (showViewActivity && widget.onViewActivity != null) ...[
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('solana_send_panel_view_activity_btn'),
+              onPressed: widget.onViewActivity,
+              style: walletGhostButtonStyle(),
+              child: const Text(kSolanaSendViewActivityLabel),
+            ),
+          ],
+          if (showReturnForm) ...[
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('solana_send_panel_return_form_btn'),
+              onPressed: () {
+                setState(() {
+                  _stage = _SolanaSendStage.input;
+                  _submitted = null;
+                  _error = null;
+                });
+              },
+              style: walletGhostButtonStyle(),
+              child: const Text(kSolanaSendReturnFormLabel),
+            ),
+          ],
         ],
       ),
     );

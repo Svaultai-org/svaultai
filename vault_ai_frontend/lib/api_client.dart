@@ -4128,4 +4128,48 @@ Future<Map<String, dynamic>> deleteVaultFile({
     }
     return decoded;
   }
+
+  // 2026-07-14 (Round 8 hardening): authoritative pre-sign +
+  // pre-broadcast draft-expiry verification.
+  //
+  // Response shape:
+  //   {
+  //     "expired": true | false | null,
+  //     "network": "solana_mainnet" | "tron_mainnet" | ...,
+  //     "reason": "...",
+  //     // SOL: "currentBlockHeight", "lastValidBlockHeight"
+  //     // TRON: "nowMs", "expirationMs"
+  //   }
+  //
+  // `expired == null` means the authoritative chain observation
+  // could not be fetched (RPC unavailable). The caller MUST treat
+  // null as a block signal — never as "not expired".
+  Future<Map<String, dynamic>>
+      getCryptoWalletDraftExpiryNetwork({
+    required String network,
+    required String draftId,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/crypto/wallet/network/$network/draft/$draftId/expiry',
+    );
+    final response = await http.get(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: false),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Get draft expiry failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid draft expiry response');
+    }
+    return decoded;
+  }
 }

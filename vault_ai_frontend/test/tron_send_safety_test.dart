@@ -98,6 +98,17 @@ class _SendSpyClient extends VaultAIClient {
     final s = nextStatuses[_statusIdx++];
     return {'transactionStatus': s};
   }
+
+  // 2026-07-14 (Round 8 hardening): default not-expired.
+  @override
+  Future<Map<String, dynamic>>
+      getCryptoWalletDraftExpiryNetwork({
+    required String network,
+    required String draftId,
+    required String authToken,
+  }) async {
+    return const {'expired': false};
+  }
 }
 
 
@@ -157,7 +168,7 @@ Map<String, dynamic> _draftReady({String amount = '5.5'}) {
     'amountBaseUnits':     '5500000',
     'unsignedTransaction': {
       'txID':         _kValidTxId,
-      'raw_data':     {'contract': []},
+      'raw_data':     {'contract': [], 'expiration': 99999999999999},
       'raw_data_hex': '0a0b0c0d',
     },
     'txID':                _kValidTxId,
@@ -168,6 +179,10 @@ Map<String, dynamic> _draftReady({String amount = '5.5'}) {
     'trxBalanceSun':       200000000,
     'trxBalance':          '200',
     'resourceStatus':      'ready',
+    // 2026-07-14 (Round 8): draftId + expirationMs for fail-closed
+    // pre-sign integer gate and expiry verification.
+    'draftId':             'trn-drft-existing',
+    'expirationMs':        99999999999999,
     'feeWarning':          'USDT TRC20 transfers require TRX for TRON '
                             'network fees.',
     'warning':             'Review carefully. TRON transactions '
@@ -371,6 +386,10 @@ void main() {
               decryptForVault: (_) async => '',
               isVaultKeyAvailable: () => true,
               features: _features(),
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));
@@ -407,6 +426,10 @@ void main() {
               decryptForVault: (_) async => '',
               isVaultKeyAvailable: () => true,
               features: _features(),
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));
@@ -444,6 +467,10 @@ void main() {
               decryptForVault: (_) async => '',
               isVaultKeyAvailable: () => true,
               features: _features(),
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));
@@ -463,7 +490,9 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('USDT TRC20'), findsOneWidget);
-        expect(find.text('TRON'), findsOneWidget);
+        // 2026-07-14 (Round 8): the network label was upgraded from
+        // 'TRON' to 'TRON Mainnet' (kTronReviewNetworkValue).
+        expect(find.text('TRON Mainnet'), findsAtLeastNWidgets(1));
         expect(find.text('5.5 USDT'), findsOneWidget);
         expect(
           find.byKey(const Key(kTronSendWarningKey)),
@@ -493,6 +522,10 @@ void main() {
               decryptForVault: (_) async => '',
               isVaultKeyAvailable: () => true,
               features: _features(),
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));
@@ -580,6 +613,12 @@ void main() {
                   _secretJson(wallet.privateKeyHex),
               isVaultKeyAvailable: () => true,
               features: _features(),
+              // 2026-07-14 (Round 8): TRON Send now REQUIRES wired
+              // balance hooks to reach broadcast.
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));
@@ -650,6 +689,12 @@ void main() {
                   _secretJson(wallet.privateKeyHex),
               isVaultKeyAvailable: () => true,
               features: _features(),
+              // 2026-07-14 (Round 8): TRON Send now REQUIRES wired
+              // balance hooks to reach broadcast.
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));
@@ -691,6 +736,12 @@ void main() {
                   _secretJson(wallet.privateKeyHex),
               isVaultKeyAvailable: () => true,
               features: _features(),
+              // 2026-07-14 (Round 8): TRON Send now REQUIRES wired
+              // balance hooks to reach broadcast.
+              fetchAvailableTokenBaseUnits: () async =>
+                  BigInt.from(999999999999),
+              fetchTrxBalanceSun: () async =>
+                  BigInt.from(999999999999999),
             ),
           ),
         ));

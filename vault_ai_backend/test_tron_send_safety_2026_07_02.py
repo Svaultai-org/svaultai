@@ -401,11 +401,35 @@ class TronBroadcastBehaviorTests(unittest.TestCase):
         )
         reset_tron_safety_state_for_tests()
 
-    def _broadcast_payload(self, key: str = "idempo-key-1"):
+    def _broadcast_payload(self, key: str = "idempo-key-1",
+                            signed_tx: dict | None = None,
+                            with_draft: bool = True):
+        # 2026-07-14 (Round 6): TRON broadcast requires a draftId.
+        # Auto-seed a matching draft in the fake store keyed by the
+        # signed tx's txID.
         from routes.crypto_wallet_routes import SendBroadcastPayload
+        tx = signed_tx if signed_tx is not None else _valid_signed_tx()
+        draft_id = None
+        if with_draft:
+            from routes import crypto_wallet_routes as _r
+            draft_id = _r._tron_store.register_draft(
+                vault_id="00000000-0000-0000-0000-000000000000",
+                network_id="tron_mainnet",
+                sender_address=TRON_TEST_FROM_ADDR,
+                asset="USDT_TRC20",
+                destination_address=TRON_TEST_DEST_ADDR,
+                token_contract_address=TRON_USDT_MAINNET,
+                amount_base_units=1_000_000,
+                fee_limit_sun=100_000_000,
+                raw_data_hex=tx.get("raw_data_hex") or "",
+                expiration_ms=99_999_999_999_999,
+                server_txid_hex=tx.get("txID") or "",
+                ttl_secs=600,
+            )
         return SendBroadcastPayload(
-            signedTransaction=_valid_signed_tx(),
+            signedTransaction=tx,
             idempotencyKey=key,
+            draftId=draft_id,
         )
 
     def test_broadcast_disabled_when_send_flag_off(self):
@@ -528,7 +552,7 @@ class TronBroadcastBehaviorTests(unittest.TestCase):
         os.environ["TRON_API_BASE_URL"] = "https://x.example"
         os.environ["TRON_USDT_CONTRACT_ADDRESS"] = TRON_USDT_MAINNET
         from routes.crypto_wallet_routes import (
-            _tron_broadcast_dispatch, SendBroadcastPayload,
+            _tron_broadcast_dispatch,
         )
         principal = {"vault_id": "00000000-0000-0000-0000-000000000000"}
         with mock.patch(
@@ -545,9 +569,8 @@ class TronBroadcastBehaviorTests(unittest.TestCase):
             alt_signed["txID"] = "c" * 64
             second = _tron_broadcast_dispatch(
                 "USDT_TRC20",
-                SendBroadcastPayload(
-                    signedTransaction=alt_signed,
-                    idempotencyKey="k12345678",
+                self._broadcast_payload(
+                    "k12345678", signed_tx=alt_signed,
                 ),
                 principal,
             )
@@ -567,7 +590,7 @@ class TronBroadcastBehaviorTests(unittest.TestCase):
             return_value=_VALID_TXID,
         ):
             from routes.crypto_wallet_routes import (
-                _tron_broadcast_dispatch, SendBroadcastPayload,
+                _tron_broadcast_dispatch,
             )
             principal = {
                 "vault_id":
@@ -575,29 +598,22 @@ class TronBroadcastBehaviorTests(unittest.TestCase):
             }
             _tron_broadcast_dispatch(
                 "USDT_TRC20",
-                SendBroadcastPayload(
-                    signedTransaction=_valid_signed_tx(),
-                    idempotencyKey="k1abcd001",
-                ),
+                self._broadcast_payload("k1abcd001"),
                 principal,
             )
             _tron_broadcast_dispatch(
                 "USDT_TRC20",
-                SendBroadcastPayload(
-                    signedTransaction={
-                        **_valid_signed_tx(), "txID": "d" * 64,
-                    },
-                    idempotencyKey="k1abcd002",
+                self._broadcast_payload(
+                    "k1abcd002",
+                    signed_tx={**_valid_signed_tx(), "txID": "d" * 64},
                 ),
                 principal,
             )
             blocked = _tron_broadcast_dispatch(
                 "USDT_TRC20",
-                SendBroadcastPayload(
-                    signedTransaction={
-                        **_valid_signed_tx(), "txID": "e" * 64,
-                    },
-                    idempotencyKey="k1abcd003",
+                self._broadcast_payload(
+                    "k1abcd003",
+                    signed_tx={**_valid_signed_tx(), "txID": "e" * 64},
                 ),
                 principal,
             )
@@ -801,15 +817,32 @@ class TronBackendLoggingSafetyTests(unittest.TestCase):
                     _tron_broadcast_dispatch,
                     SendBroadcastPayload,
                 )
+                from routes import crypto_wallet_routes as _r
                 principal = {
                     "vault_id":
                     "00000000-0000-0000-0000-000000000000",
                 }
+                signed = _valid_signed_tx()
+                did = _r._tron_store.register_draft(
+                    vault_id=principal["vault_id"],
+                    network_id="tron_mainnet",
+                    sender_address=TRON_TEST_FROM_ADDR,
+                    asset="USDT_TRC20",
+                    destination_address=TRON_TEST_DEST_ADDR,
+                    token_contract_address=TRON_USDT_MAINNET,
+                    amount_base_units=1_000_000,
+                    fee_limit_sun=100_000_000,
+                    raw_data_hex=signed["raw_data_hex"],
+                    expiration_ms=99_999_999_999_999,
+                    server_txid_hex=signed["txID"],
+                    ttl_secs=600,
+                )
                 _tron_broadcast_dispatch(
                     "USDT_TRC20",
                     SendBroadcastPayload(
-                        signedTransaction=_valid_signed_tx(),
+                        signedTransaction=signed,
                         idempotencyKey="k1abcd001",
+                        draftId=did,
                     ),
                     principal,
                 )

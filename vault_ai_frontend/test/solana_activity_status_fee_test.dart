@@ -110,6 +110,18 @@ class _StatusSpyClient extends VaultAIClient {
       'network':            'solana_mainnet',
     };
   }
+
+  // 2026-07-14 (Round 8 hardening): default not-expired so the
+  // existing successful-broadcast path reaches broadcast.
+  @override
+  Future<Map<String, dynamic>>
+      getCryptoWalletDraftExpiryNetwork({
+    required String network,
+    required String draftId,
+    required String authToken,
+  }) async {
+    return const {'expired': false};
+  }
 }
 
 
@@ -352,7 +364,12 @@ void main() {
             },
             {
               'schema':        'crypto_wallet_transaction_v1',
-              'txHash':        _kFakeSignature,
+              // 2026-07-14 (Round 7 hardening): the SOL activity
+              // card now deduplicates by signature via
+              // `_merged()`. Distinct signature ensures the two
+              // status labels ("Confirmed" + "Pending") both
+              // render.
+              'txHash':        '${_kFakeSignature}0',
               'direction':     'unknown',
               'amount':        null,
               'unit':          'SOL',
@@ -435,6 +452,9 @@ void main() {
           'feeLamports':        7500,
           'feeSol':             '0.0000075',
           'feeSource':          'rpc_getFeeForMessage',
+          // 2026-07-14 (Round 8): draftId required for the fail-
+          // closed pre-sign gate.
+          'draftId':            'sol-drft-existing-2',
         };
         client.nextStatuses = ['confirmed'];
 
@@ -459,6 +479,11 @@ void main() {
                 isVaultKeyAvailable: () => true,
                 features: _features(),
                 idempotencyKeyGenerator: () => 'sol-fixed-idem',
+                // 2026-07-14 (Round 8): SOL Send now REQUIRES a
+                // wired fetchAvailableLamports hook to reach
+                // broadcast.
+                fetchAvailableLamports: () async =>
+                    BigInt.from(1000000000000),
               ),
             ),
           ),

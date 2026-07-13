@@ -58,6 +58,54 @@ def _install_fake_mainnet_control_store():
 
 
 @pytest.fixture(autouse=True)
+def _install_fake_solana_control_store():
+    """2026-07-14 (Round 6): mirror of the mainnet fake install for
+    Solana Send safety. Route code should reference
+    `_routes._solana_store` (added alongside the ETH store); the
+    fixture swaps in an in-process FakeSolanaStore so tests can
+    exercise the SOL draft state machine without a live Postgres."""
+    try:
+        from routes import crypto_wallet_routes as _routes
+    except Exception:
+        yield
+        return
+    from _test_fake_solana_store import (
+        get_shared_fake as _sol_get, reset_shared_fake as _sol_reset,
+    )
+    _sol_reset()
+    fake = _sol_get()
+    original = getattr(_routes, "_solana_store", None)
+    _routes._solana_store = fake
+    try:
+        yield fake
+    finally:
+        _routes._solana_store = original
+        _sol_reset()
+
+
+@pytest.fixture(autouse=True)
+def _install_fake_tron_control_store():
+    """2026-07-14 (Round 6): mirror for TRON Send safety."""
+    try:
+        from routes import crypto_wallet_routes as _routes
+    except Exception:
+        yield
+        return
+    from _test_fake_tron_store import (
+        get_shared_fake as _trn_get, reset_shared_fake as _trn_reset,
+    )
+    _trn_reset()
+    fake = _trn_get()
+    original = getattr(_routes, "_tron_store", None)
+    _routes._tron_store = fake
+    try:
+        yield fake
+    finally:
+        _routes._tron_store = original
+        _trn_reset()
+
+
+@pytest.fixture(autouse=True)
 def _restore_session_secret_between_tests():
     """Guarantee every test starts with the process's pinned
     VAULT_SESSION_SECRET and that auth_local's module-level cache is

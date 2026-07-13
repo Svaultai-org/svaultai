@@ -112,7 +112,67 @@ String tronSendStatusCopyFor(String? statusCode) {
 }
 
 
-enum _TronSendStage { input, review, submitting, submitted }
+// 2026-07-14 (Round 7 hardening): terminal-result states for the
+// honest post-broadcast result screen.
+enum _TronSendStage {
+  input, review, submitting, submitted, uncertain, rejected, expired,
+}
+
+
+// 2026-07-14 (Round 7 hardening): TRON-specific gate + result copy.
+const String kTronSendExactFeeUnverifiedError =
+    'The exact TRX resource authorization could not be verified. '
+    'Try again in a moment.';
+const String kTronSendInsufficientTokenError =
+    'Your USDT balance is not enough for this draft. Reduce the '
+    'amount or top up USDT and re-draft.';
+const String kTronSendInsufficientTrxError =
+    'Your TRX balance is not enough to cover the authorized network '
+    'fee for this draft. Top up TRX and re-draft.';
+const String kTronSendDraftExpiredError =
+    'The TRON draft expired before broadcast. Return to form to '
+    'obtain a fresh draft; recipient and amount are preserved.';
+const String kTronSendResultHeadingSubmitted =
+    'Transaction submitted';
+const String kTronSendResultHeadingUncertain =
+    'Transaction status is uncertain';
+const String kTronSendResultHeadingRejected =
+    'Transaction rejected';
+const String kTronSendResultHeadingExpired =
+    'Draft expired before broadcast';
+const String kTronSendResultBodyUncertain =
+    'The TRON provider did not confirm inclusion within the '
+    'visibility window. VaultAI will keep checking. Do not re-sign '
+    'until the status resolves.';
+const String kTronSendResultBodyRejected =
+    'The TRON provider explicitly rejected this transaction. The '
+    'draft was consumed under the single-attempt policy; retrying '
+    'requires a fresh draft.';
+const String kTronSendViewActivityLabel = 'View activity';
+const String kTronSendCheckStatusLabel = 'Check status';
+const String kTronSendReturnFormLabel = 'Start a new send';
+const String kTronSendMaxActionLabel = 'Max';
+// 2026-07-14 (Round 8 hardening): Max fail-closed error strings.
+const String kTronSendMaxBalanceUnverifiedError =
+    'Your USDT balance is not verified. Try again after the balance '
+    'refreshes.';
+
+// 2026-07-14 (Round 8 hardening): TRON review-copy labels for
+// separate token amount / max-authorized fee display.
+const String kTronReviewNetworkLabel = 'Network';
+const String kTronReviewNetworkValue = 'TRON Mainnet';
+const String kTronReviewUsdtAmountLabel = 'USDT amount';
+const String kTronReviewMaxAuthorizedFeeLabel =
+    'Maximum authorized network cost (TRX)';
+const String kTronReviewMaxAuthorizedFeeSunLabel =
+    'Maximum authorized fee (sun)';
+const String kTronReviewMaxAuthorizedFeeCaution =
+    'This is the maximum you authorize the network to charge. The '
+    'actual TRX cost may be lower, but it will never exceed this '
+    'limit.';
+const String kTronReviewExpirationLabel =
+    'This draft expires shortly — sign and broadcast promptly, or '
+    're-draft.';
 
 
 class CryptoWalletEngineTronSendPanel extends StatefulWidget {
@@ -135,6 +195,28 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
     int? expectedChainId,
   )? scanRecipientQr;
 
+  /// 2026-07-14 (Round 7): integer-exact USDT_TRC20 base-units
+  /// balance. Non-null and >= draft base units → allowed.
+  final Future<BigInt?> Function()? fetchAvailableTokenBaseUnits;
+
+  /// 2026-07-14 (Round 7): integer-exact TRX balance in sun.
+  /// Non-null and >= draft fee_limit_sun → allowed.
+  final Future<BigInt?> Function()? fetchTrxBalanceSun;
+
+  /// 2026-07-14 (Round 7): fired with the returned txID + base-unit
+  /// token debit + sun fee debit after a non-rejected broadcast
+  /// outcome. Used by asset detail to stamp an optimistic pending
+  /// debit on the token balance card.
+  final void Function({
+    required String txHash,
+    required BigInt tokenBaseUnitsDebit,
+    required BigInt sunFeeDebit,
+  })? onSuccessfulBroadcast;
+
+  /// 2026-07-14 (Round 7): triggered when the user taps
+  /// "View activity" from a submitted / uncertain result screen.
+  final VoidCallback? onViewActivity;
+
   const CryptoWalletEngineTronSendPanel({
     super.key,
     required this.authToken,
@@ -148,6 +230,10 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
     this.prefilledAmount,
     this.idempotencyKeyGenerator,
     this.scanRecipientQr,
+    this.fetchAvailableTokenBaseUnits,
+    this.fetchTrxBalanceSun,
+    this.onSuccessfulBroadcast,
+    this.onViewActivity,
   });
 
   @override
@@ -175,6 +261,10 @@ class _CryptoWalletEngineTronSendPanelState
   Map<String, dynamic>? _draft;
   Map<String, dynamic>? _submitted;
   bool _broadcastInFlight = false;
+  // 2026-07-14 (Round 8 hardening): synchronous draft-in-flight
+  // guard. Set BEFORE the first `await` in `_onReview` so a rapid
+  // double-tap of Review cannot spawn a second draft.
+  bool _draftInFlight = false;
   String? _idempotencyKey;
   String? _statusCode;
   int _statusPollCount = 0;
@@ -234,60 +324,79 @@ class _CryptoWalletEngineTronSendPanelState
       widget.features?.tronSendPaused ?? false;
 
   Future<void> _onReview() async {
+    // 2026-07-14 (Round 8 hardening): synchronous draft-in-flight
+    // guard. Rapid double-tap → single draft.
+    if (_draftInFlight) return;
+    if (_draft != null && _stage != _TronSendStage.input) return;
+    _draftInFlight = true;
     setState(() {
       _error = null;
     });
-    final destination = _destinationController.text.trim();
-    if (!isValidTronAddress(destination)) {
-      setState(() {
-        _error = kTronSendInvalidDestinationCopy;
-      });
-      return;
-    }
-    if (destination == widget.fromAddress.trim()) {
-      setState(() {
-        _error = kTronSendSelfSendCopy;
-      });
-      return;
-    }
     try {
-      parseUsdtAmountToBaseUnits(_amountController.text);
-    } catch (_) {
-      setState(() {
-        _error = kTronSendInvalidAmountCopy;
-      });
-      return;
-    }
-    try {
-      final draft = await widget.client.createCryptoWalletSendDraftNetwork(
-        network: kTronNetworkId,
-        asset: kTronAssetTicker,
-        authToken: widget.authToken,
-        fromAddress: widget.fromAddress,
-        destinationAddress: destination,
-        amountUsdt: _amountController.text.trim(),
-      );
-      final status = (draft['status'] ?? '').toString();
-      if (status != 'draft_ready') {
+      final destination = _destinationController.text.trim();
+      if (!isValidTronAddress(destination)) {
         setState(() {
-          _error = (draft['message'] ??
-              'USDT TRC20 draft not ready.').toString();
+          _error = kTronSendInvalidDestinationCopy;
         });
         return;
       }
-      setState(() {
-        _draft = draft;
-        _stage = _TronSendStage.review;
-      });
-    } catch (e) {
-      setState(() {
-        _error = 'Draft failed: $e';
-      });
+      if (destination == widget.fromAddress.trim()) {
+        setState(() {
+          _error = kTronSendSelfSendCopy;
+        });
+        return;
+      }
+      try {
+        parseUsdtAmountToBaseUnits(_amountController.text);
+      } catch (_) {
+        setState(() {
+          _error = kTronSendInvalidAmountCopy;
+        });
+        return;
+      }
+      try {
+        final draft = await widget.client
+            .createCryptoWalletSendDraftNetwork(
+          network: kTronNetworkId,
+          asset: kTronAssetTicker,
+          authToken: widget.authToken,
+          fromAddress: widget.fromAddress,
+          destinationAddress: destination,
+          amountUsdt: _amountController.text.trim(),
+        );
+        final status = (draft['status'] ?? '').toString();
+        if (status != 'draft_ready') {
+          setState(() {
+            _error = (draft['message'] ??
+                'USDT TRC20 draft not ready.').toString();
+          });
+          return;
+        }
+        setState(() {
+          _draft = draft;
+          _stage = _TronSendStage.review;
+        });
+      } catch (e) {
+        setState(() {
+          _error = 'Draft failed: $e';
+        });
+      }
+    } finally {
+      _draftInFlight = false;
     }
   }
 
   Future<void> _onConfirmAndSign() async {
+    // 2026-07-14 (Round 7 hardening): idempotent entry. Duplicate
+    // Review/PIN/broadcast taps + browser back+forward must be
+    // no-ops.
     if (_broadcastInFlight) return;
+    if (_stage == _TronSendStage.submitted
+        || _stage == _TronSendStage.uncertain
+        || _stage == _TronSendStage.rejected
+        || _stage == _TronSendStage.expired) {
+      return;
+    }
     if (!widget.isVaultKeyAvailable()) {
       setState(() {
         _error = 'Unlock your vault first.';
@@ -303,6 +412,46 @@ class _CryptoWalletEngineTronSendPanelState
       _stage = _TronSendStage.submitting;
       _error = null;
     });
+
+    // 2026-07-14 (Round 8 hardening): full pre-sign gate chain
+    // for TRON, FAIL CLOSED throughout.
+    //
+    //   1. Integer-exact sun+token authorization.
+    //   2. AUTHORITATIVE pre-secret expiry check via the backend
+    //      draft-expiry endpoint.
+    //   3. Only then encrypted secret + decrypt + sign.
+    //   4. A SECOND expiry check runs immediately before broadcast.
+    final draftForGate = _draft;
+    if (draftForGate == null) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _TronSendStage.review;
+        _error = kTronSendExactFeeUnverifiedError;
+      });
+      return;
+    }
+    final gateError = await _verifyExactSunAuthorization(
+      draft: draftForGate,
+    );
+    if (gateError != null) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _TronSendStage.review;
+        _error = gateError;
+      });
+      return;
+    }
+    final preSecretExpiry = await _verifyDraftExpiryFailClosed(
+      draft: draftForGate,
+    );
+    if (preSecretExpiry != null) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _TronSendStage.expired;
+        _error = preSecretExpiry;
+      });
+      return;
+    }
 
     _idempotencyKey ??= (widget.idempotencyKeyGenerator != null)
         ? widget.idempotencyKeyGenerator!()
@@ -376,6 +525,26 @@ class _CryptoWalletEngineTronSendPanelState
       wipePrivateKeyHex(plaintextPrivateKeyHex);
       plaintextPrivateKeyHex = null;
 
+      // 2026-07-14 (Round 8 hardening): SECOND authoritative
+      // expiry check IMMEDIATELY before broadcast. TRON's on-chain
+      // `expiration` field is enforced by the network; a draft
+      // whose expiration passed between the pre-secret verify and
+      // now MUST NOT be broadcast.
+      final preBroadcastExpiry = await _verifyDraftExpiryFailClosed(
+        draft: draft,
+      );
+      if (preBroadcastExpiry != null) {
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _TronSendStage.expired;
+          _error = preBroadcastExpiry;
+        });
+        return;
+      }
+
+      // 2026-07-14 (Round 7 hardening): draftId echoed so the state
+      // machine can enforce single-attempt + record outcomes.
+      final draftIdEcho = (draft['draftId'] ?? '').toString();
       final broadcastResp = await widget.client
           .broadcastCryptoWalletSignedTransactionNetwork(
         network:           kTronNetworkId,
@@ -383,24 +552,58 @@ class _CryptoWalletEngineTronSendPanelState
         authToken:         widget.authToken,
         signedTransaction: signed,
         idempotencyKey:    _idempotencyKey,
+        draftId:           draftIdEcho.isEmpty ? null : draftIdEcho,
       );
       final broadcastStatus =
           (broadcastResp['status'] ?? '').toString();
-      if (broadcastStatus != 'submitted') {
+      // Honest outcome classification. Round-6 backend returns:
+      //   submitted / already_submitted            → success
+      //   submission_uncertain                     → uncertain
+      //   broadcast_rejected / broadcast_failed    → rejected
+      //   draft_expired                            → expired
+      if (broadcastStatus == 'submitted'
+          || broadcastStatus == 'already_submitted') {
+        _notifyOptimisticDebit(
+          txHash: (broadcastResp['txHash'] ?? '').toString(),
+          draft: draft,
+        );
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _TronSendStage.submitted;
+          _submitted = broadcastResp;
+        });
+        _startStatusPolling();
+      } else if (broadcastStatus == 'submission_uncertain') {
+        _notifyOptimisticDebit(
+          txHash: (broadcastResp['txHash'] ?? '').toString(),
+          draft: draft,
+        );
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _TronSendStage.uncertain;
+          _submitted = broadcastResp;
+        });
+      } else if (broadcastStatus == 'broadcast_rejected'
+          || broadcastStatus == 'broadcast_failed') {
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _TronSendStage.rejected;
+          _submitted = broadcastResp;
+        });
+      } else if (broadcastStatus == 'draft_expired') {
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _TronSendStage.expired;
+          _submitted = broadcastResp;
+        });
+      } else {
         setState(() {
           _broadcastInFlight = false;
           _stage = _TronSendStage.review;
           _error = (broadcastResp['message']
               ?? kTronSendBroadcastFailedCopy).toString();
         });
-        return;
       }
-      setState(() {
-        _broadcastInFlight = false;
-        _stage = _TronSendStage.submitted;
-        _submitted = broadcastResp;
-      });
-      _startStatusPolling();
     } catch (e) {
       if (plaintextPrivateKeyHex != null) {
         wipePrivateKeyHex(plaintextPrivateKeyHex);
@@ -411,6 +614,156 @@ class _CryptoWalletEngineTronSendPanelState
         _error = 'Sign/broadcast failed: $e';
       });
     }
+  }
+
+  // 2026-07-14 (Round 8 hardening): integer-exact TRX+token gate.
+  // FAIL CLOSED.
+  //
+  //   * `fetchAvailableTokenBaseUnits == null`  → block
+  //   * `fetchTrxBalanceSun == null`            → block
+  //   * token balance null / throws             → block
+  //   * TRX balance null / throws               → block
+  //   * malformed persisted token / fee values  → block
+  //   * token 1 base unit short                 → block
+  //   * TRX 1 sun short                         → block
+  //   * exact equality                          → allow
+  Future<String?> _verifyExactSunAuthorization({
+    required Map<String, dynamic> draft,
+  }) async {
+    if (widget.fetchAvailableTokenBaseUnits == null) {
+      return kTronSendExactFeeUnverifiedError;
+    }
+    if (widget.fetchTrxBalanceSun == null) {
+      return kTronSendExactFeeUnverifiedError;
+    }
+    final rawAmount = (draft['amountBaseUnits'] ?? '').toString();
+    final rawFee = (draft['feeLimitSun'] ?? '').toString();
+    if (rawAmount.isEmpty || rawFee.isEmpty) {
+      return kTronSendExactFeeUnverifiedError;
+    }
+    final BigInt? tokenAmount = BigInt.tryParse(rawAmount);
+    final BigInt? feeLimitSun = BigInt.tryParse(rawFee);
+    if (tokenAmount == null || feeLimitSun == null
+        || tokenAmount < BigInt.zero || feeLimitSun < BigInt.zero) {
+      return kTronSendExactFeeUnverifiedError;
+    }
+    BigInt? tokenAvail;
+    try {
+      tokenAvail = await widget.fetchAvailableTokenBaseUnits!();
+    } catch (_) {
+      tokenAvail = null;
+    }
+    if (tokenAvail == null) return kTronSendExactFeeUnverifiedError;
+    if (tokenAmount > tokenAvail) return kTronSendInsufficientTokenError;
+    BigInt? trxSun;
+    try {
+      trxSun = await widget.fetchTrxBalanceSun!();
+    } catch (_) {
+      trxSun = null;
+    }
+    if (trxSun == null) return kTronSendExactFeeUnverifiedError;
+    if (feeLimitSun > trxSun) return kTronSendInsufficientTrxError;
+    return null;
+  }
+
+  // 2026-07-14 (Round 8 hardening): authoritative pre-sign +
+  // pre-broadcast expiry verification via the backend TRON draft
+  // expiry endpoint. FAIL CLOSED on transport error, unknown /
+  // consumed draft, or `expired == null`.
+  Future<String?> _verifyDraftExpiryFailClosed({
+    required Map<String, dynamic> draft,
+  }) async {
+    final draftId = (draft['draftId'] ?? '').toString();
+    if (draftId.isEmpty) {
+      return kTronSendExactFeeUnverifiedError;
+    }
+    Map<String, dynamic>? resp;
+    try {
+      resp = await widget.client.getCryptoWalletDraftExpiryNetwork(
+        network: kTronNetworkId,
+        draftId: draftId,
+        authToken: widget.authToken,
+      );
+    } catch (_) {
+      return kTronSendDraftExpiredError;
+    }
+    // Strict fail-closed: ONLY `expired: false` (canonical bool) is
+    // an allow. Anything else — null, missing field, string 'true'/
+    // 'false', numeric 0/1, or any other unexpected shape — is
+    // treated as unverifiable and BLOCKS.
+    final expired = resp['expired'];
+    if (expired is bool && expired == false) {
+      return null;
+    }
+    return kTronSendDraftExpiredError;
+  }
+
+  // 2026-07-14 (Round 8 hardening): TRON USDT Max button.
+  //
+  //   Max = exact verified USDT base-unit balance
+  //
+  // Never subtracts TRX from USDT. TRX fee authorization is
+  // enforced separately by `_verifyExactSunAuthorization` before
+  // signing.
+  Future<void> _onMaxTap() async {
+    if (widget.fetchAvailableTokenBaseUnits == null) {
+      setState(() {
+        _error = kTronSendMaxBalanceUnverifiedError;
+      });
+      return;
+    }
+    BigInt? tokenAvail;
+    try {
+      tokenAvail = await widget.fetchAvailableTokenBaseUnits!();
+    } catch (_) {
+      tokenAvail = null;
+    }
+    if (tokenAvail == null) {
+      setState(() {
+        _error = kTronSendMaxBalanceUnverifiedError;
+      });
+      return;
+    }
+    if (tokenAvail <= BigInt.zero) {
+      setState(() {
+        _error = kTronSendInsufficientTokenError;
+      });
+      return;
+    }
+    _amountController.text = _usdtBaseUnitsToString(tokenAvail);
+    setState(() {
+      _error = null;
+    });
+  }
+
+  static String _usdtBaseUnitsToString(BigInt base) {
+    // USDT_TRC20 has 6 decimals.
+    final divisor = BigInt.from(10).pow(6);
+    final whole = base ~/ divisor;
+    final frac = base - whole * divisor;
+    if (frac == BigInt.zero) return whole.toString();
+    final fracStr = frac.toString().padLeft(6, '0');
+    final trimmed = fracStr.replaceFirst(RegExp(r'0+$'), '');
+    return trimmed.isEmpty ? whole.toString() : '$whole.$trimmed';
+  }
+
+  void _notifyOptimisticDebit({
+    required String txHash,
+    required Map<String, dynamic> draft,
+  }) {
+    final cb = widget.onSuccessfulBroadcast;
+    if (cb == null) return;
+    final BigInt tokenAmount = BigInt.tryParse(
+      (draft['amountBaseUnits'] ?? '0').toString(),
+    ) ?? BigInt.zero;
+    final BigInt feeLimitSun = BigInt.tryParse(
+      (draft['feeLimitSun'] ?? '0').toString(),
+    ) ?? BigInt.zero;
+    cb(
+      txHash: txHash,
+      tokenBaseUnitsDebit: tokenAmount,
+      sunFeeDebit: feeLimitSun,
+    );
   }
 
   String _defaultIdempotencyKey() {
@@ -587,12 +940,147 @@ class _CryptoWalletEngineTronSendPanelState
           body: _buildSubmittingStage(),
         );
       case _TronSendStage.submitted:
+      case _TronSendStage.uncertain:
+      case _TronSendStage.rejected:
+      case _TronSendStage.expired:
         return WalletSendScaffold(
           sheetKey: 'tron_send_panel',
           header: header,
-          body: _buildSubmittedStage(),
+          body: _buildResultStage(),
         );
     }
+  }
+
+  // 2026-07-14 (Round 7 hardening): honest result screen shared by
+  // submitted / uncertain / rejected / expired.
+  Widget _buildResultStage() {
+    final isSuccess = _stage == _TronSendStage.submitted;
+    final isUncertain = _stage == _TronSendStage.uncertain;
+    final isRejected = _stage == _TronSendStage.rejected;
+    final isExpired = _stage == _TronSendStage.expired;
+    String heading;
+    String body;
+    bool showViewActivity = true;
+    bool showCheckStatus = false;
+    bool showReturnForm = false;
+    if (isSuccess) {
+      heading = kTronSendResultHeadingSubmitted;
+      body = kTronSendSubmittedBody;
+    } else if (isUncertain) {
+      heading = kTronSendResultHeadingUncertain;
+      body = kTronSendResultBodyUncertain;
+      showCheckStatus = true;
+    } else if (isRejected) {
+      heading = kTronSendResultHeadingRejected;
+      body = kTronSendResultBodyRejected;
+      showViewActivity = false;
+      showReturnForm = true;
+    } else if (isExpired) {
+      heading = kTronSendResultHeadingExpired;
+      body = kTronSendDraftExpiredError;
+      showViewActivity = false;
+      showReturnForm = true;
+    } else {
+      heading = kTronSendSubmittedHeading;
+      body = kTronSendSubmittedBody;
+    }
+    final txHash = (_submitted?['txHash'] ?? '').toString();
+    final headingColor = isSuccess
+        ? kWalletAccentSuccess
+        : (isUncertain ? kWalletAccentWarning : kWalletAccentDanger);
+    return Container(
+      key: const Key(kTronSendSubmittedCardKey),
+      padding: const EdgeInsets.all(14),
+      decoration: isSuccess
+          ? walletSuccessPanel()
+          : (isUncertain ? walletWarningPanel() : walletDangerPanel()),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            heading,
+            key: const Key('tron_send_panel_result_heading'),
+            style: TextStyle(
+              color: headingColor, fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            body,
+            key: const Key('tron_send_panel_result_body'),
+            style: TextStyle(color: headingColor, fontSize: 13),
+          ),
+          if (isSuccess || isUncertain) ...[
+            const SizedBox(height: 6),
+            Text(
+              _statusCode == 'confirmed'
+                  ? kTronSendStatusConfirmedCopy
+                  : _statusCode == 'failed'
+                      ? kTronSendStatusFailedCopy
+                      : _statusCode == 'unavailable'
+                          ? kTronSendStatusUnavailableCopy
+                          : kTronSendStatusPendingCopy,
+              key: const Key(kTronSendStatusTextKey),
+              style: TextStyle(
+                color: _statusCode == 'failed'
+                    ? kWalletAccentDanger
+                    : (_statusCode == 'confirmed'
+                        ? kWalletAccentSuccess
+                        : kWalletAccentWarning),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (txHash.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SelectableText(
+              txHash,
+              key: const Key('tron_send_panel_txhash_text'),
+              style: kWalletMonoStyle,
+            ),
+          ],
+          if (showCheckStatus) ...[
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('tron_send_panel_check_status_btn'),
+              onPressed: () {
+                _statusPollActive = false;
+                _startStatusPolling();
+              },
+              style: walletGhostButtonStyle(),
+              child: const Text(kTronSendCheckStatusLabel),
+            ),
+          ],
+          if (showViewActivity && widget.onViewActivity != null) ...[
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('tron_send_panel_view_activity_btn'),
+              onPressed: widget.onViewActivity,
+              style: walletGhostButtonStyle(),
+              child: const Text(kTronSendViewActivityLabel),
+            ),
+          ],
+          if (showReturnForm) ...[
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('tron_send_panel_return_form_btn'),
+              onPressed: () {
+                setState(() {
+                  _stage = _TronSendStage.input;
+                  _submitted = null;
+                  _error = null;
+                });
+              },
+              style: walletGhostButtonStyle(),
+              child: const Text(kTronSendReturnFormLabel),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildDisabledBanner() {
@@ -691,9 +1179,24 @@ class _CryptoWalletEngineTronSendPanelState
           focusNode: _amountFocus,
           textInputAction: TextInputAction.done,
           onSubmitted: (_) => _amountFocus.unfocus(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: kTronSendAmountLabel,
             isDense: true,
+            // 2026-07-14 (Round 8 hardening): Max button. Uses the
+            // full verified token base-unit balance. Never
+            // subtracts TRX — TRX fee authorization is enforced
+            // separately by the exact-sun gate before signing.
+            suffixIcon: TextButton(
+              key: const Key('tron_send_panel_max_btn'),
+              onPressed: _onMaxTap,
+              child: const Text(
+                kTronSendMaxActionLabel,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
           ),
           keyboardType: const TextInputType.numberWithOptions(
             decimal: true,
@@ -713,7 +1216,9 @@ class _CryptoWalletEngineTronSendPanelState
   Widget _buildInputFooter() {
     return ElevatedButton(
       key: const Key(kTronSendReviewButtonKey),
-      onPressed: _onReview,
+      // 2026-07-14 (Round 8 hardening): Review disabled while
+      // drafting so a rapid double-tap cannot spawn a second draft.
+      onPressed: _draftInFlight ? null : _onReview,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
@@ -726,7 +1231,9 @@ class _CryptoWalletEngineTronSendPanelState
     final resourceStatus =
         (draft['resourceStatus'] ?? 'unavailable').toString();
     final feeLimitTrx = (draft['feeLimitTrx'] ?? '').toString();
+    final feeLimitSun = (draft['feeLimitSun'] ?? '').toString();
     final trxBalance = (draft['trxBalance'] ?? '').toString();
+    final expirationMs = (draft['expirationMs'] ?? '').toString();
     return Column(
       key: const Key(kTronSendReviewCardKey),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -734,7 +1241,12 @@ class _CryptoWalletEngineTronSendPanelState
       children: [
         walletSendSectionHeading(kTronSendReviewHeading),
         WalletSendKvRow(label: 'Asset', value: 'USDT TRC20'),
-        WalletSendKvRow(label: 'Network', value: 'TRON'),
+        // 2026-07-14 (Round 8 hardening): explicit network label so
+        // the user knows this is TRON Mainnet at Review time.
+        WalletSendKvRow(
+          label: kTronReviewNetworkLabel,
+          value: kTronReviewNetworkValue,
+        ),
         WalletSendKvRow(
           label: 'From', value: widget.fromAddress, mono: true,
         ),
@@ -743,14 +1255,45 @@ class _CryptoWalletEngineTronSendPanelState
           value: (draft['destinationAddress'] ?? '').toString(),
           mono: true,
         ),
+        // 2026-07-14 (Round 8 hardening): USDT amount labelled
+        // separately from any TRX/fee reference so the user can
+        // read the value at a glance.
         WalletSendKvRow(
-          label: 'Amount',
+          key: const Key('tron_send_panel_review_usdt_amount_row'),
+          label: kTronReviewUsdtAmountLabel,
           value: '${draft['amountUsdt']} USDT',
         ),
+        // 2026-07-14 (Round 8 hardening): TRX MAX AUTHORIZED cost,
+        // explicitly labelled as maximum authorized (not the
+        // guaranteed fee).
         if (feeLimitTrx.isNotEmpty)
           WalletSendKvRow(
-            label: 'Fee limit (max)',
+            key: const Key(
+              'tron_send_panel_review_max_authorized_fee_trx_row',
+            ),
+            label: kTronReviewMaxAuthorizedFeeLabel,
             value: '$feeLimitTrx TRX',
+          ),
+        // Sun-precision figure for auditability. Not shown when the
+        // network cost field is missing.
+        if (feeLimitSun.isNotEmpty)
+          WalletSendKvRow(
+            key: const Key(
+              'tron_send_panel_review_max_authorized_fee_sun_row',
+            ),
+            label: kTronReviewMaxAuthorizedFeeSunLabel,
+            value: '$feeLimitSun sun',
+          ),
+        if (feeLimitTrx.isNotEmpty || feeLimitSun.isNotEmpty)
+          Padding(
+            key: const Key(
+              'tron_send_panel_review_max_authorized_caution',
+            ),
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              kTronReviewMaxAuthorizedFeeCaution,
+              style: kWalletMutedStyle,
+            ),
           ),
         if (trxBalance.isNotEmpty)
           WalletSendKvRow(
@@ -761,6 +1304,17 @@ class _CryptoWalletEngineTronSendPanelState
           label: 'Resource status',
           value: resourceStatus,
         ),
+        if (expirationMs.isNotEmpty && expirationMs != '0')
+          Padding(
+            key: const Key(
+              'tron_send_panel_review_expiration_notice',
+            ),
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              kTronReviewExpirationLabel,
+              style: kWalletMutedStyle,
+            ),
+          ),
         const SizedBox(height: 10),
         const WalletSendWarning(
           key: Key(kTronSendWarningKey),

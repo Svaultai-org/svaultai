@@ -294,11 +294,59 @@ class SolanaBroadcastDispatchTests(unittest.TestCase):
         from routes.crypto_wallet_routes import (
             SendBroadcastPayload, _solana_broadcast_dispatch,
         )
-        payload = SendBroadcastPayload(**kwargs)
-        principal = {"vault_id": "v-broadcast-test"}
-        return _solana_broadcast_dispatch(
-            "SOL", payload, principal,
+        # 2026-07-14 (Round 6): Solana broadcast now requires a
+        # draftId. Auto-seed a matching draft in the fake store if
+        # the test supplies neither a draftId nor `_no_draft=True`.
+        no_draft = kwargs.pop("_no_draft", False)
+        seed_signature = kwargs.pop("_seed_signature", None)
+        # 2026-07-14 (Round 9): the SOL broadcast dispatch now runs
+        # an authoritative pre-broadcast block-height check via
+        # `sol_get_block_height_at_url` — mock it here so pre-Round-9
+        # tests continue to reach the send RPC. Tests that want to
+        # exercise the pre-broadcast expiry gate directly override
+        # `_block_height`.
+        current_bh = kwargs.pop(
+            "_block_height", 1,
         )
+        principal = {"vault_id": "v-broadcast-test"}
+        if not no_draft and "draftId" not in kwargs:
+            from routes import crypto_wallet_routes as _r
+            did = _r._solana_store.register_draft(
+                vault_id=principal["vault_id"],
+                network_id="solana_mainnet",
+                sender_address=_ADDR_A,
+                asset="SOL",
+                destination_address=_ADDR_B,
+                value_lamports=1_000_000,
+                fee_lamports=5000,
+                recent_blockhash="GfVPzKR8Uz2Sa4Pxrw6JHQKtu4LFB1cUKQwT8b9DhP7A",
+                last_valid_block_height=250_000_000,
+                ttl_secs=600,
+            )
+            kwargs["draftId"] = did
+        payload = SendBroadcastPayload(**kwargs)
+        # If seed_signature is set, patch the extractor so the fake
+        # store's consume path sees a deterministic local_signature.
+        patches = []
+        patches.append(mock.patch(
+            "solana_rpc.sol_get_block_height_at_url",
+            return_value=current_bh,
+        ))
+        if seed_signature is not None:
+            patches.append(mock.patch(
+                "routes.crypto_wallet_routes."
+                "_extract_solana_primary_signature",
+                return_value=seed_signature,
+            ))
+        for p in patches:
+            p.start()
+        try:
+            return _solana_broadcast_dispatch(
+                "SOL", payload, principal,
+            )
+        finally:
+            for p in patches:
+                p.stop()
 
     def test_broadcast_disabled_when_solana_off(self):
         result = self._broadcast(signedTransaction="AAAA")
@@ -347,6 +395,7 @@ class SolanaBroadcastDispatchTests(unittest.TestCase):
             result = self._broadcast(
                 signedTransaction="AAAA",
                 idempotencyKey="abc12345678",
+                _seed_signature=fake_sig,
             )
         self.assertEqual(result["status"], "submitted")
         self.assertEqual(result["signature"], fake_sig)
@@ -366,10 +415,12 @@ class SolanaBroadcastDispatchTests(unittest.TestCase):
             first = self._broadcast(
                 signedTransaction="AAAA",
                 idempotencyKey="abc12345678",
+                _seed_signature=fake_sig,
             )
             second = self._broadcast(
                 signedTransaction="AAAA",
                 idempotencyKey="abc12345678",
+                _seed_signature=fake_sig,
             )
         self.assertEqual(first["signature"], second["signature"])
         self.assertEqual(m.call_count, 1)
@@ -389,10 +440,12 @@ class SolanaBroadcastDispatchTests(unittest.TestCase):
             self._broadcast(
                 signedTransaction="AAAA",
                 idempotencyKey="abc12345678",
+                _seed_signature=fake_sig,
             )
             conflict = self._broadcast(
                 signedTransaction="BBBB",
                 idempotencyKey="abc12345678",
+                _seed_signature=fake_sig,
             )
         self.assertEqual(
             conflict["wallet_engine"], "idempotency_conflict",
@@ -416,14 +469,17 @@ class SolanaBroadcastDispatchTests(unittest.TestCase):
             self._broadcast(
                 signedTransaction="AAAA",
                 idempotencyKey="key1abcdef",
+                _seed_signature=fake_sig,
             )
             self._broadcast(
                 signedTransaction="BBBB",
                 idempotencyKey="key2abcdef",
+                _seed_signature=fake_sig,
             )
             third = self._broadcast(
                 signedTransaction="CCCC",
                 idempotencyKey="key3abcdef",
+                _seed_signature=fake_sig,
             )
         self.assertEqual(third["status"], "rate_limited")
 
@@ -432,11 +488,15 @@ class SolanaBroadcastDispatchTests(unittest.TestCase):
         os.environ["VAULTAI_CRYPTO_SOLANA_SEND_ENABLED"] = "true"
         os.environ["SOLANA_RPC_URL"] = "https://leaky.example/xxx"
         from solana_rpc import SolanaRpcError, REASON_RPC_ERROR
+        fake_sig = "A" * 64
         with mock.patch(
             "solana_rpc.sol_send_signed_transaction_at_url",
             side_effect=SolanaRpcError(REASON_RPC_ERROR),
         ):
-            result = self._broadcast(signedTransaction="AAAA")
+            result = self._broadcast(
+                signedTransaction="AAAA",
+                _seed_signature=fake_sig,
+            )
         blob = repr(result)
         self.assertNotIn("leaky.example", blob)
 

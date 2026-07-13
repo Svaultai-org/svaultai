@@ -85,6 +85,19 @@ class _SolanaSendSpyClient extends VaultAIClient {
     });
     return nextBroadcastResponse;
   }
+
+  // 2026-07-14 (Round 8 hardening): expiry endpoint. Default not
+  // expired so existing tests reach broadcast; the fail-closed
+  // tests live in wallet_send_round8_fail_closed_*_test.dart.
+  @override
+  Future<Map<String, dynamic>>
+      getCryptoWalletDraftExpiryNetwork({
+    required String network,
+    required String draftId,
+    required String authToken,
+  }) async {
+    return const {'expired': false};
+  }
 }
 
 
@@ -160,6 +173,13 @@ Future<void> _pump(
           prefilledDestination: prefilledDestination,
           prefilledAmount: prefilledAmount,
           idempotencyKeyGenerator: () => 'sol-fixed-idem',
+          // 2026-07-14 (Round 8 hardening): SOL Send now REQUIRES a
+          // wired `fetchAvailableLamports` hook; without it the
+          // panel fail-closes before broadcast. Existing tests
+          // that exercise the successful-broadcast path must wire
+          // it.
+          fetchAvailableLamports: () async =>
+              BigInt.from(1000000000000),
         ),
       ),
     ),
@@ -369,6 +389,10 @@ void main() {
           'lamports':           '500000000',
           'recentBlockhash':    _kBlockhash,
           'feeSol':             '0.000005',
+          // 2026-07-14 (Round 8): draftId + feeLamports required
+          // for the fail-closed pre-sign integer gate.
+          'draftId':            'sol-drft-existing-1',
+          'feeLamports':        5000,
           'warning': 'Review carefully. Solana transactions cannot be reversed.',
         };
         await _pump(tester, client: client, features: _features());
@@ -448,6 +472,9 @@ void main() {
           'amountSol':          '0.5',
           'lamports':           '500000000',
           'recentBlockhash':    _kBlockhash,
+          // 2026-07-14 (Round 8): fail-closed prerequisites.
+          'draftId':            'sol-drft-double-tap',
+          'feeLamports':        5000,
         };
         await _pump(tester, client: client, features: _features());
         await tester.enterText(

@@ -842,9 +842,28 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         style: const TextStyle(color: kWalletTextPrimary),
         child: IconTheme.merge(
           data: const IconThemeData(color: kWalletTextSecondary),
-          child: SingleChildScrollView(
-            key: const Key('crypto_wallet_engine_page'),
-            padding: EdgeInsets.all(isMobile ? 14 : 22),
+          // 2026-07-14 (Round 7 hardening): pull-to-refresh on the
+          // vault summary/dashboard. Fires every asset's live-state
+          // refresh via the existing callback wire — same source of
+          // truth as the asset-detail Balance card.
+          child: RefreshIndicator(
+            key: const Key('crypto_wallet_engine_page_refresh_indicator'),
+            onRefresh: () async {
+              final cb = onAssetLiveRefreshRequested;
+              if (cb == null) return;
+              for (final asset in kCryptoWalletEngineAssets) {
+                try {
+                  await cb(asset);
+                } catch (_) {
+                  // Fail-open per asset — one asset's RPC hiccup
+                  // must not block the others' refresh.
+                }
+              }
+            },
+            child: SingleChildScrollView(
+              key: const Key('crypto_wallet_engine_page'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.all(isMobile ? 14 : 22),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1100),
@@ -886,6 +905,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                   ],
                 ),
               ),
+            ),
             ),
           ),
         ),

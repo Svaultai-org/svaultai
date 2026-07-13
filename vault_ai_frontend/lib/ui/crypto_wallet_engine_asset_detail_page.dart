@@ -214,6 +214,29 @@ class _CryptoWalletEngineAssetDetailPageState
   String? _balanceReason;
   bool _balanceLoading = false;
 
+  // 2026-07-13 (Round 5 hardening): integer wei / base-units mirror
+  // of the display balance. Sourced from `weiAmount` (ETH) or
+  // `baseUnits` (ERC-20) on the /balance response. Used to feed the
+  // Send panel's exact-fee gate (`fetchAvailableBalanceWei`) so that
+  // the client-side integer authorization actually runs on the
+  // production Send path — previously the asset-detail Send opener
+  // wired NEITHER `fetchAvailableBalance` NOR the wei hook, so the
+  // Round-4 gate never ran in production and only the backend gate
+  // caught misauthorized sends.
+  BigInt? _balanceBaseUnits;
+  BigInt? _ethBalanceWei;      // For ERC-20 sends: parent-ETH gas.
+  DateTime? _balanceUpdatedAt; // For "last updated Ns ago" copy.
+  // Optimistic pending debit stamped locally after a successful
+  // Send. Cleared on the next successful live refresh.
+  BigInt? _pendingDebitWei;
+  BigInt? _pendingDebitBaseUnits;
+
+  // Scroll controller so the Send-sheet close handler can restore a
+  // sensible offset (top of the balance card) instead of leaving the
+  // user stranded mid-scroll.
+  final ScrollController _pageScrollCtrl = ScrollController();
+  final GlobalKey _balanceCardAnchorKey = GlobalKey();
+
 
   MoneroSyncStatus? _moneroScannerStatus;
   MoneroBalanceReading? _moneroBalanceReading;
@@ -285,6 +308,52 @@ class _CryptoWalletEngineAssetDetailPageState
       _loadMoneroScannerState();
       _loadBackendMoneroScannerStatus();
     }
+  }
+
+  @override
+  void dispose() {
+    _pageScrollCtrl.dispose();
+    super.dispose();
+  }
+
+  // 2026-07-13 (Round 5 hardening): scroll the balance card back
+  // into view after the Send sheet closes so the user does not
+  // return to a mid-scroll offset that hides the balance and the
+  // updated activity.
+  void _restoreScrollToBalanceAnchor() {
+    if (!mounted) return;
+    final ctx = _balanceCardAnchorKey.currentContext;
+    if (ctx == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.05,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  // 2026-07-13 (Round 5 hardening): stamp an optimistic pending
+  // debit immediately after a successful Send broadcast so the
+  // Balance card visually reflects the outgoing transaction before
+  // the next chain refresh converges. Not a substitute for the
+  // authoritative live refresh — the live refresh clears the
+  // pending mark on next success.
+  void _applyOptimisticDebit({
+    required BigInt debitBaseUnits,
+    required bool isToken,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      if (isToken) {
+        _pendingDebitBaseUnits = debitBaseUnits;
+      } else {
+        _pendingDebitWei = debitBaseUnits;
+      }
+    });
   }
 
 
@@ -465,10 +534,18 @@ class _CryptoWalletEngineAssetDetailPageState
           _balanceUnit = result.balanceUnit;
           _balanceReason = null;
           _balanceLoading = false;
+          // A successful live refresh clears any prior optimistic
+          // pending debit — the chain has caught up.
+          _pendingDebitWei = null;
+          _pendingDebitBaseUnits = null;
+          _balanceUpdatedAt = DateTime.now();
           break;
         case DashboardAssetLiveStateKind.reason:
-          _balance = null;
-          _balanceUnit = null;
+          // 2026-07-13 (Round 5 hardening): do NOT blank the
+          // previous balance when a live refresh fails. Users must
+          // never see a "0" or empty balance because of an RPC
+          // hiccup. The stale copy persists; a staleness indicator
+          // ("last updated Ns ago") explains why it's not fresh.
           _balanceReason = result.backendReason ?? 'rpc_error';
           _balanceLoading = false;
           break;
@@ -477,12 +554,128 @@ class _CryptoWalletEngineAssetDetailPageState
           _balanceUnit = null;
           _balanceReason = 'no_wallet_yet';
           _balanceLoading = false;
+          _pendingDebitWei = null;
+          _pendingDebitBaseUnits = null;
+          _balanceBaseUnits = null;
+          _ethBalanceWei = null;
           break;
         case DashboardAssetLiveStateKind.loading:
           _balanceLoading = true;
           break;
       }
     });
+    // 2026-07-13 (Round 5 hardening): the shared state loader
+    // returns a formatted display balance but not integer wei /
+    // base-units. Re-hit the balance endpoint here for the raw
+    // integer so the Send panel's exact-fee gate can BigInt-compare
+    // against the drafted `gasLimit * gasPrice + valueWei`.
+    if (result.kind == DashboardAssetLiveStateKind.available &&
+        result.publicAddress != null &&
+        result.publicAddress!.isNotEmpty) {
+      // ignore: discarded_futures
+      _loadRawBalanceIntegers(result.publicAddress!);
+    }
+  }
+
+  // 2026-07-13 (Round 5 hardening): fetch the raw integer balance
+  // (wei for ETH; base units for ERC-20) plus the parent-ETH balance
+  // in wei for ERC-20 sends. Cached on the state so the Send sheet
+  // can wire `fetchAvailableBalanceWei` / `fetchEthBalanceWei` to a
+  // synchronous getter that returns the last-known value.
+  Future<void> _loadRawBalanceIntegers(String address) async {
+    final api = widget.apiClient;
+    final token = widget.authToken;
+    if (api == null || token == null || token.isEmpty) return;
+    if (widget.network == null) return;
+    final asset = widget.asset;
+    try {
+      final body = await api.getCryptoWalletBalanceNetwork(
+        network: widget.effectiveNetwork,
+        asset: asset,
+        authToken: token,
+        address: address,
+      ).timeout(kAssetDetailBalanceTimeout);
+      final status = (body['balanceStatus'] ?? '').toString();
+      if (status != 'available') return;
+      // 2026-07-14 (Round 7 hardening): pick the raw-integer field
+      // matching the asset. ETH: weiAmount. ERC-20: baseUnits.
+      // SOL: lamports OR availableAmount * 1e9. TRON: baseUnits
+      // (token) + trxBalanceSun for the parent-TRX check.
+      BigInt? primary;
+      if (asset == 'ETH') {
+        final w = body['weiAmount'];
+        if (w != null) primary = BigInt.tryParse(w.toString());
+      } else if (asset == 'SOL') {
+        final l = body['lamports'] ?? body['availableBaseUnits'];
+        if (l != null) primary = BigInt.tryParse(l.toString());
+      } else {
+        // ERC-20 tokens, TRON tokens.
+        final b = body['baseUnits'] ?? body['availableBaseUnits'];
+        if (b != null) primary = BigInt.tryParse(b.toString());
+      }
+      if (!mounted) return;
+      setState(() {
+        _balanceBaseUnits = primary;
+      });
+      // ERC-20 sends also need the parent-ETH balance in wei for
+      // the gas hard-gate. Fetch it separately.
+      // 2026-07-14 (Round 7 hardening): USDT_TRC20 needs the
+      // parent-chain TRX balance in sun for the TRON fee gate —
+      // same reuse of the `_ethBalanceWei` slot as parent-chain
+      // integer balance (semantic overload documented here).
+      if (asset == 'USDT_ERC20' || asset == 'USDC_ERC20') {
+        try {
+          final ethBody = await api.getCryptoWalletBalanceNetwork(
+            network: widget.effectiveNetwork,
+            asset: 'ETH',
+            authToken: token,
+            address: address,
+          ).timeout(kAssetDetailBalanceTimeout);
+          final ethStatus =
+              (ethBody['balanceStatus'] ?? '').toString();
+          if (ethStatus == 'available') {
+            final w = ethBody['weiAmount'];
+            if (w != null && mounted) {
+              setState(() {
+                _ethBalanceWei = BigInt.tryParse(w.toString());
+              });
+            }
+          }
+        } catch (_) {
+          // Intentional: the ETH-balance fetch failing does NOT
+          // downgrade the token balance — the Send panel's gate
+          // still refuses to sign in that case (fetchEthBalanceWei
+          // returns null → gate blocks).
+        }
+      } else if (asset == 'USDT_TRC20') {
+        // USDT_TRC20 needs the parent-TRX balance in sun.
+        try {
+          final trxBody = await api.getCryptoWalletBalanceNetwork(
+            network: widget.effectiveNetwork,
+            asset: 'TRX',
+            authToken: token,
+            address: address,
+          ).timeout(kAssetDetailBalanceTimeout);
+          final trxStatus =
+              (trxBody['balanceStatus'] ?? '').toString();
+          if (trxStatus == 'available') {
+            final sun = trxBody['trxBalanceSun']
+                ?? trxBody['baseUnits']
+                ?? trxBody['availableBaseUnits'];
+            if (sun != null && mounted) {
+              setState(() {
+                _ethBalanceWei = BigInt.tryParse(sun.toString());
+              });
+            }
+          }
+        } catch (_) {
+          // Same fail-closed intent: gate blocks on null.
+        }
+      }
+    } catch (_) {
+      // Same intent: transient RPC error leaves the prior integer
+      // balance in place; Send gate blocks if none was ever loaded.
+    }
   }
 
 
@@ -699,6 +892,10 @@ class _CryptoWalletEngineAssetDetailPageState
         return;
       }
       if (!mounted) return;
+      // 2026-07-14 (Round 7 hardening): wire the TRON send panel
+      // with balance hooks + optimistic pending debit + post-Send
+      // refresh, matching the ETH/SOL shape.
+      // ignore: discarded_futures
       showCryptoWalletSheet<void>(
         context: context,
         title: 'Send USDT (TRC20)',
@@ -715,8 +912,27 @@ class _CryptoWalletEngineAssetDetailPageState
           isVaultKeyAvailable: widget.isVaultKeyAvailable!,
           verifyPin: widget.verifyPin,
           features: widget.features,
+          fetchAvailableTokenBaseUnits: () async => _balanceBaseUnits,
+          fetchTrxBalanceSun: () async => _ethBalanceWei,
+          onSuccessfulBroadcast: (
+              {required String txHash,
+               required BigInt tokenBaseUnitsDebit,
+               required BigInt sunFeeDebit}) {
+            _applyOptimisticDebit(
+              debitBaseUnits: tokenBaseUnitsDebit, isToken: true,
+            );
+          },
+          onViewActivity: () {
+            Navigator.of(context).maybePop();
+            _restoreScrollToBalanceAnchor();
+          },
         ),
-      );
+      ).whenComplete(() {
+        if (mounted) {
+          _loadAddressAndBalance();
+          _restoreScrollToBalanceAnchor();
+        }
+      });
       return;
     }
     if (_isSolana) {
@@ -740,6 +956,11 @@ class _CryptoWalletEngineAssetDetailPageState
         return;
       }
       if (!mounted) return;
+      // 2026-07-14 (Round 7 hardening): wire the SOL send panel with
+      // the same shape as ETH — balance hook (lamports), onSuccessful-
+      // Broadcast for optimistic pending debit, post-Send balance
+      // refresh via .whenComplete.
+      // ignore: discarded_futures
       showCryptoWalletSheet<void>(
         context: context,
         title: 'Send SOL',
@@ -756,8 +977,25 @@ class _CryptoWalletEngineAssetDetailPageState
           isVaultKeyAvailable: widget.isVaultKeyAvailable!,
           verifyPin: widget.verifyPin,
           features: widget.features,
+          fetchAvailableLamports: () async => _balanceBaseUnits,
+          onSuccessfulBroadcast: (
+              {required String signature,
+               required BigInt debitLamports}) {
+            _applyOptimisticDebit(
+              debitBaseUnits: debitLamports, isToken: false,
+            );
+          },
+          onViewActivity: () {
+            Navigator.of(context).maybePop();
+            _restoreScrollToBalanceAnchor();
+          },
         ),
-      );
+      ).whenComplete(() {
+        if (mounted) {
+          _loadAddressAndBalance();
+          _restoreScrollToBalanceAnchor();
+        }
+      });
       return;
     }
     if (!_isSupported || !_hasSendWiring) {
@@ -786,6 +1024,18 @@ class _CryptoWalletEngineAssetDetailPageState
       return;
     }
     if (!mounted) return;
+    // 2026-07-13 (Round 5 hardening): thread the last-known live
+    // balances into the Send panel so BOTH the pre-draft coarse
+    // check (`fetchAvailableBalance` double) AND the post-draft
+    // integer-exact fee gate (`fetchAvailableBalanceWei` +
+    // `fetchEthBalanceWei` BigInt) actually run in production.
+    // Previously the asset-detail Send opener wired NEITHER, so the
+    // Round-4 integer-exact gate never fired on the ETH send path
+    // and only the backend gate caught misauthorized attempts.
+    final isToken =
+        widget.asset == 'USDT_ERC20' || widget.asset == 'USDC_ERC20';
+
+    // ignore: discarded_futures
     showCryptoWalletSheet<void>(
       context: context,
       title: 'Send ${_shortAssetLabel(widget.asset)}',
@@ -803,8 +1053,39 @@ class _CryptoWalletEngineAssetDetailPageState
         verifyPin: widget.verifyPin,
         asset: widget.asset,
         network: widget.effectiveNetwork,
+        fetchAvailableBalance: () async {
+          final s = _balance;
+          if (s == null || s.isEmpty) return null;
+          return double.tryParse(s);
+        },
+        fetchAvailableBalanceWei: () async => _balanceBaseUnits,
+        fetchEthBalance: isToken
+            ? () async {
+                final w = _ethBalanceWei;
+                if (w == null) return null;
+                return w / BigInt.from(1000000000000000000);
+              }
+            : null,
+        fetchEthBalanceWei: isToken ? () async => _ethBalanceWei : null,
+        onSuccessfulBroadcast: (
+          {required String txHash,
+           required BigInt debitBaseUnits}) {
+          _applyOptimisticDebit(
+            debitBaseUnits: debitBaseUnits, isToken: isToken,
+          );
+        },
       ),
-    );
+    ).whenComplete(() {
+      // 2026-07-13 (Round 5 hardening): mirror the Receive-sheet
+      // pattern. Sending a transaction always warrants a live
+      // balance refresh — even the "cancelled" case, because the
+      // user may have already triggered a broadcast in a background
+      // browser tab.
+      if (mounted) {
+        _loadAddressAndBalance();
+        _restoreScrollToBalanceAnchor();
+      }
+    });
   }
 
   Future<void> _copyAddress() async {
@@ -829,6 +1110,18 @@ class _CryptoWalletEngineAssetDetailPageState
           surfaceTintColor: kWalletBgBase,
           foregroundColor: kWalletTextPrimary,
           elevation: 0,
+          // 2026-07-13 (Round 5 hardening): visible bottom border on
+          // the app bar so scrolled content doesn't visually merge
+          // with the header on iPhone Safari — the previous
+          // opaque-same-color chrome made the balance card look as
+          // if it started underneath the header, which was the
+          // reported layout bug.
+          shape: const Border(
+            bottom: BorderSide(
+              color: kWalletBorder,
+              width: 1,
+            ),
+          ),
           title: Text(
             label,
             key: const Key('crypto_wallet_engine_asset_detail_title'),
@@ -841,22 +1134,48 @@ class _CryptoWalletEngineAssetDetailPageState
         body: DecoratedBox(
           decoration: walletPageBackground(),
           child: SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(18),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 700),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildHeader(label, network),
-                      const SizedBox(height: 18),
+            // 2026-07-13 (Round 5 hardening): explicit bottom=false
+            // so the SafeArea does not double-reserve iOS home-
+            // indicator inset — the outer scroll view handles its
+            // own bottom padding, and the AppBar reserves top.
+            top: true,
+            bottom: false,
+            child: RefreshIndicator(
+              key: const Key(
+                'crypto_wallet_engine_asset_detail_refresh_indicator',
+              ),
+              onRefresh: () async {
+                if (_isSupported && _hasReceiveWiring) {
+                  await _loadAddressAndBalance();
+                }
+              },
+              child: SingleChildScrollView(
+                controller: _pageScrollCtrl,
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.only(
+                  left: 18,
+                  right: 18,
+                  top: 18,
+                  // Reserve room past the iOS home indicator so the
+                  // last card is fully tappable.
+                  bottom: 18 +
+                      MediaQuery.of(context).viewPadding.bottom,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 700),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildHeader(label, network),
+                        const SizedBox(height: 18),
 
-                      if (!_isSupported)
-                        _buildComingSoonPanel()
-                      else
-                        ..._buildSupportedAssetSections(),
-                    ],
+                        if (!_isSupported)
+                          _buildComingSoonPanel()
+                        else
+                          ..._buildSupportedAssetSections(),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1167,8 +1486,28 @@ class _CryptoWalletEngineAssetDetailPageState
             asset: widget.asset,
             networkKind: networkKind,
           );
+    // 2026-07-13 (Round 5 hardening): humanized "last updated"
+    // staleness copy. Shown when balance has ever loaded successfully
+    // AND we know the timestamp — makes it obvious the number
+    // could be stale after an RPC hiccup instead of pretending it's
+    // fresh.
+    String? staleness;
+    if (balText != null && _balanceUpdatedAt != null) {
+      final secs = DateTime.now()
+          .difference(_balanceUpdatedAt!)
+          .inSeconds;
+      if (secs >= 8) {
+        if (secs < 60) {
+          staleness = 'Updated ${secs}s ago';
+        } else if (secs < 3600) {
+          staleness = 'Updated ${(secs / 60).floor()}m ago';
+        } else {
+          staleness = 'Updated ${(secs / 3600).floor()}h ago';
+        }
+      }
+    }
     return Container(
-      key: const Key('crypto_wallet_engine_asset_detail_balance'),
+      key: _balanceCardAnchorKey,
       padding: const EdgeInsets.all(18),
       decoration: walletDarkCard(),
       child: Column(
@@ -1179,6 +1518,7 @@ class _CryptoWalletEngineAssetDetailPageState
               const Expanded(
                 child: Text(
                   kAssetDetailBalanceHeaderLabel,
+                  key: Key('crypto_wallet_engine_asset_detail_balance'),
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -1204,7 +1544,11 @@ class _CryptoWalletEngineAssetDetailPageState
             ],
           ),
           const SizedBox(height: 8),
-          if (showBalanceLoading)
+          if (showBalanceLoading && balText == null)
+            // Loading + never had a value → show honest "loading"
+            // copy. If we DO already have a value, we render it
+            // below with a refresh-in-progress hint so the number
+            // never blanks to "0" or empty during a refetch.
             Row(
               key: const Key(
                 'crypto_wallet_engine_asset_detail_balance_loading',
@@ -1217,22 +1561,12 @@ class _CryptoWalletEngineAssetDetailPageState
                   color: kWalletTextMuted,
                 ),
                 SizedBox(width: 8),
-                Text(kAssetDetailLoadingBalanceCopy, style: kWalletBodyStyle),
+                Text(kAssetDetailLoadingBalanceCopy,
+                    style: kWalletBodyStyle),
               ],
             )
           else if (balText != null)
-            Text(
-              balText,
-              key: const Key(
-                'crypto_wallet_engine_asset_detail_balance_value',
-              ),
-              style: TextStyle(
-                color: kWalletTextPrimary,
-                fontSize: vrDisplay(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.4,
-              ),
-            )
+            _buildBalanceValueBlock(balText, staleness, showBalanceLoading)
           else if (render != null)
             Text(
               render.message,
@@ -1249,6 +1583,106 @@ class _CryptoWalletEngineAssetDetailPageState
             ),
         ],
       ),
+    );
+  }
+
+  // 2026-07-13 (Round 5 hardening): balance value block. Renders the
+  // number with a `StrutStyle` so display-tier font sizes don't clip
+  // their ascenders on iPhone Safari, plus an inline pending-debit
+  // hint (if a Send just landed but the chain hasn't caught up) and
+  // an "Updated Ns ago" staleness line so users can tell fresh from
+  // stale at a glance.
+  Widget _buildBalanceValueBlock(
+    String balText, String? staleness, bool refreshInFlight,
+  ) {
+    final fontSize = vrDisplay(context);
+    // Optimistic pending debit annotation. Only rendered when we
+    // have a numeric-parseable balance and a pending debit.
+    String? pendingHint;
+    if (_pendingDebitWei != null || _pendingDebitBaseUnits != null) {
+      pendingHint = 'Pending outgoing transaction — balance updates '
+          'when the chain confirms';
+    }
+    return Column(
+      key: const Key(
+        'crypto_wallet_engine_asset_detail_balance_value_block',
+      ),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          balText,
+          key: const Key(
+            'crypto_wallet_engine_asset_detail_balance_value',
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          strutStyle: StrutStyle(
+            fontSize: fontSize,
+            forceStrutHeight: true,
+            leading: 0.2,
+          ),
+          style: TextStyle(
+            color: kWalletTextPrimary,
+            fontSize: fontSize,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.4,
+            height: 1.05,
+          ),
+        ),
+        if (refreshInFlight)
+          const Padding(
+            key: Key(
+              'crypto_wallet_engine_asset_detail_balance_refresh_hint',
+            ),
+            padding: EdgeInsets.only(top: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 10, height: 10,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      kWalletTextMuted,
+                    ),
+                  ),
+                ),
+                SizedBox(width: 6),
+                Text('Refreshing…',
+                    style: TextStyle(
+                      color: kWalletTextMuted, fontSize: 11,
+                    )),
+              ],
+            ),
+          ),
+        if (pendingHint != null)
+          Padding(
+            key: const Key(
+              'crypto_wallet_engine_asset_detail_balance_pending_hint',
+            ),
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              pendingHint,
+              style: const TextStyle(
+                color: kWalletAccentWarning, fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        if (staleness != null)
+          Padding(
+            key: const Key(
+              'crypto_wallet_engine_asset_detail_balance_staleness',
+            ),
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              staleness,
+              style: const TextStyle(
+                color: kWalletTextMuted, fontSize: 11,
+              ),
+            ),
+          ),
+      ],
     );
   }
 

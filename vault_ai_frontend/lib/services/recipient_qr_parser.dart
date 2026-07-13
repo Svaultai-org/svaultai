@@ -66,14 +66,35 @@ class RecipientQrParseResult {
   final String? rejectReason;
   final String? rejectMessage;
 
+  /// 2026-07-14 (Round 7 hardening): optional EIP-681 amount, in
+  /// wei (or asset base units). Null if the QR did not carry one,
+  /// or if the amount was malformed. The caller MUST NOT silently
+  /// overwrite a manually entered amount — it must explicitly
+  /// confirm before replacing.
+  final BigInt? parsedAmountBaseUnits;
+
+  /// 2026-07-14 (Round 7 hardening): the QR's chain ID hint (from
+  /// `@<chain>` in EIP-681). Null when the QR did not carry one.
+  final int? uriChainId;
+
   const RecipientQrParseResult._({
     this.address,
     this.rejectReason,
     this.rejectMessage,
+    this.parsedAmountBaseUnits,
+    this.uriChainId,
   });
 
-  factory RecipientQrParseResult.ok(String address) {
-    return RecipientQrParseResult._(address: address);
+  factory RecipientQrParseResult.ok(
+    String address, {
+    BigInt? parsedAmountBaseUnits,
+    int? uriChainId,
+  }) {
+    return RecipientQrParseResult._(
+      address: address,
+      parsedAmountBaseUnits: parsedAmountBaseUnits,
+      uriChainId: uriChainId,
+    );
   }
 
   factory RecipientQrParseResult.reject(String reason, String message) {
@@ -240,6 +261,7 @@ class RecipientQrParser {
         );
       }
       // Reject `data=` (arbitrary contract-call payload) — safety.
+      BigInt? parsedValueWei;
       if (query != null) {
         final params = _parseQueryParams(query);
         if (params.containsKey('data')) {
@@ -249,11 +271,29 @@ class RecipientQrParser {
             'only accepts a plain recipient address.',
           );
         }
-        // `value=` and `gas=` are optional and ignored by design —
-        // the user enters the amount manually so a malicious QR
-        // cannot silently change the amount they intended to send.
+        // 2026-07-14 (Round 7 hardening): parse `value=` in wei.
+        // The caller MUST NOT silently overwrite a manually entered
+        // amount — it requires explicit user confirmation. The
+        // parser only extracts + surfaces the value; the panel
+        // decides whether to accept it.
+        final rawValue = params['value'];
+        if (rawValue != null && rawValue.isNotEmpty) {
+          try {
+            parsedValueWei = BigInt.parse(rawValue);
+            if (parsedValueWei < BigInt.zero) parsedValueWei = null;
+          } on FormatException {
+            parsedValueWei = null;
+          }
+        }
+        // `gas=` is optional and INTENTIONALLY IGNORED — the server-
+        // issued draft remains authoritative for gas/fee. A QR's
+        // gas hint is never treated as authorization.
       }
-      return RecipientQrParseResult.ok(addressPart);
+      return RecipientQrParseResult.ok(
+        addressPart,
+        parsedAmountBaseUnits: parsedValueWei,
+        uriChainId: uriChainId,
+      );
     }
     // Anything else on the Ethereum screen is not a valid address.
     return RecipientQrParseResult.reject(
