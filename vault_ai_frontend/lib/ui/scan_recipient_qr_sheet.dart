@@ -1,39 +1,61 @@
 // 2026-07-13: Modal sheet that scans OR uploads a recipient QR and
 // returns a validated address (or null if the user cancelled).
 //
-// Production incident recap (fixed here):
+// Production incident recap:
 //
-//   * The previous version wired `MobileScanner.errorBuilder` to
-//     immediately flip the sheet into a dead-end "Camera unavailable"
-//     state. `errorBuilder` fires whenever the controller's transient
-//     state carries any error object — including states that clear
-//     themselves as soon as `start()` resolves. On iPhone Safari the
-//     result was: the browser granted the camera (indicator went
-//     live) but VaultAI painted the failure fallback before the
-//     preview had a chance to render. The user was blocked with only
-//     "Enter address manually" as an escape.
+//   * ROUND 1 fix (this file, earlier revision) removed the false-
+//     positive "Camera unavailable" that `MobileScanner.errorBuilder`
+//     used to trigger on transient controller state.
 //
-//   * The failure fallback also had no way to retry or to upload an
-//     image, both of which the product requires.
+//   * ROUND 2 fix (2026-07-13 iPhone Safari retest): the live camera
+//     still failed with "Camera couldn't start".
+//     Root cause: `_initMobileScanner()` was called synchronously
+//     from `initState()` and immediately awaited
+//     `MobileScannerController.start()`. At that moment the
+//     `MobileScanner` widget was NOT yet in the tree — the body
+//     rendered a plain loading placeholder while `_liveState ==
+//     initializing`. `start()` waits for `_MobileScannerState.
+//     initState()` to call `controller.attach()`; when that never
+//     happens (widget never mounted), the internal
+//     `_isAttachedCompleter.future.timeout(500ms)` fires and
+//     `start()` throws `MobileScannerException(controllerNotAttached)`.
+//     The user saw a vague "Camera couldn't start" (unknown
+//     category) with no reproduction guidance.
 //
-// This rewrite delivers three input methods, always reachable:
-//
-//   1. Live camera preview at the top (started when the sheet
-//      opens; retry-able via the "Try camera again" action).
-//   2. Upload / capture QR image from the device (via
-//      `QrImagePicker` -> local `QrImageDecoder`).
-//   3. Cancel + enter address manually (returns null from the
-//      sheet; the send panel keeps whatever was already in the
-//      destination field).
+//     Fix, per iOS-Safari verified strategy B ("manual startup
+//     after mount"):
+//       1. `autoStart: false` on the controller so the widget's
+//          own `_initializeController()` does NOT call start() —
+//          only we do. There is exactly one start per attempt.
+//       2. The MobileScanner widget is ALWAYS present in the
+//          body while `_liveState != failed` — during
+//          `initializing` we overlay a spinner ON TOP of the
+//          widget rather than replacing it. This guarantees
+//          `attach()` runs before we call `start()`.
+//       3. Start is scheduled via
+//          `WidgetsBinding.instance.addPostFrameCallback` after
+//          the mounting frame renders. This defers start to a
+//          moment where `_isAttachedCompleter` has completed.
+//       4. Facing fallback (rear -> front) rebuilds the controller
+//          under a fresh `ValueKey`, forcing the `MobileScanner`
+//          widget to remount so `attach()` runs on the NEW
+//          controller. The old sheet's "unknown" facing was a
+//          no-op — `mobile_scanner_web`'s delegate maps both
+//          `CameraFacing.back` and `CameraFacing.unknown` to
+//          `'environment'`.
+//       5. Diagnostic code (WEB_START_TIMEOUT, VIDEO_TRACK_NOT_
+//          READY, ...) is now surfaced in the failure UI. This
+//          lets an operator triage a screenshot without exposing
+//          any wallet or QR data.
 //
 // Behavior:
-//   * `errorBuilder` no longer triggers a false-positive failure. A
-//     dedicated `_liveState` machine tracks initialising / running /
-//     failed states based on the controller's actual value stream.
-//   * Rear-camera-first: if the first `start()` fails, the sheet
-//     retries with an unconstrained facing. Only after BOTH attempts
-//     fail does the failure state show — with the actual diagnostic
-//     category and both fallback actions.
+//   * `MobileScanner.errorBuilder` renders a plain black container
+//     so transient controller-value errors during the first frame
+//     never blip the sheet into the failure state.
+//   * A dedicated `_liveState` machine tracks initialising /
+//     running / failed states driven by:
+//       (a) `start()` throwing / resolving, OR
+//       (b) the controller's ValueNotifier reporting `error != null`.
 //   * Live decode + image decode both go through the same
 //     `RecipientQrParser` so network-mismatch, wrong-chain, seed-
 //     phrase, and private-key rejections are identical between
@@ -42,8 +64,8 @@
 //     network from this sheet.
 
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -71,9 +93,44 @@ const String kScanRecipientQrCameraFailedKey =
     'scan_recipient_qr_camera_failed';
 const String kScanRecipientQrCameraLoadingKey =
     'scan_recipient_qr_camera_loading';
+const String kScanRecipientQrDiagnosticCodeKey =
+    'scan_recipient_qr_diagnostic_code';
+const String kScanRecipientQrMobileScannerHostKey =
+    'scan_recipient_qr_mobile_scanner_host';
 
 
 enum _LiveState { initializing, running, failed }
+
+
+/// Testable factory for the exact `MobileScannerController` config
+/// used by the recipient QR sheet in production. Unit tests use this
+/// to lock in the invariants that made iPhone Safari fail before:
+///   * `autoStart: false` — the widget must NEVER call start() on
+///     its own; only the sheet's post-frame path calls start(),
+///     and only once per generation.
+///   * `facing` is either `CameraFacing.back` (initial) or
+///     `CameraFacing.front` (facing fallback). It is NEVER
+///     `CameraFacing.unknown` (which the web delegate maps to the
+///     same `'environment'` string as `back`, making the fallback
+///     a no-op).
+@visibleForTesting
+MobileScannerController buildScanSheetMobileScannerController({
+  required CameraFacing facing,
+}) {
+  assert(
+    facing != CameraFacing.unknown,
+    'unknown is not a valid facing constraint (mobile_scanner_web '
+    'maps it to environment, same as back — makes fallback a no-op)',
+  );
+  return MobileScannerController(
+    formats: const [BarcodeFormat.qrCode],
+    detectionSpeed: DetectionSpeed.normal,
+    detectionTimeoutMs: 1000,
+    facing: facing,
+    torchEnabled: false,
+    autoStart: false,
+  );
+}
 
 
 /// Present the sheet. Returns the parsed recipient address, or null
@@ -139,7 +196,11 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
   StreamSubscription<BarcodeCapture>? _mobileSub;
   bool _busy = false;
   bool _uploadInFlight = false;
-  bool _cameraFacingFallbackTried = false;
+  int _mobileScannerGeneration = 0;
+  bool _mobileStartRequested = false;
+  bool _mobileStartInFlight = false;
+  CameraFacing _currentFacing = CameraFacing.back;
+  bool _rearFallbackTried = false;
   _LiveState _liveState = _LiveState.initializing;
   ScannerInitDiagnostic? _lastInitError;
   String? _errorMessage;
@@ -158,7 +219,14 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
       _injectedScanner = widget.injectedScanner;
       _wireInjectedScanner();
     } else {
-      _initMobileScanner(preferRearCamera: true);
+      // Production path: build the controller synchronously so
+      // build() can immediately render the MobileScanner widget
+      // during the `initializing` state. `start()` is scheduled to
+      // run AFTER the mount frame via `addPostFrameCallback` —
+      // that guarantees the widget's `attach()` handshake has
+      // completed before start() checks `_isAttachedCompleter`.
+      _buildMobileController(preferRearCamera: true);
+      _scheduleMobileStart();
     }
   }
 
@@ -192,19 +260,21 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
     });
   }
 
-  Future<void> _initMobileScanner({required bool preferRearCamera}) async {
-    // Dispose any prior controller before creating a fresh one.
-    await _teardownMobileController();
-    final ctrl = MobileScannerController(
-      formats: const [BarcodeFormat.qrCode],
-      detectionSpeed: DetectionSpeed.normal,
-      detectionTimeoutMs: 1000,
-      facing: preferRearCamera
-          ? CameraFacing.back
-          : CameraFacing.unknown,
-      torchEnabled: false,
+  void _buildMobileController({required bool preferRearCamera}) {
+    _currentFacing = preferRearCamera
+        ? CameraFacing.back
+        : CameraFacing.front;
+    _mobileScannerGeneration += 1;
+    // CRITICAL: `buildScanSheetMobileScannerController` locks
+    // `autoStart: false`. That prevents the double-start race that
+    // was producing MobileScannerException(controllerNotAttached)
+    // on iPhone Safari — only THIS file calls start(), and only
+    // once per generation, only after the widget's attach() has
+    // completed via the post-frame callback.
+    final ctrl = buildScanSheetMobileScannerController(
+      facing: _currentFacing,
     );
-    _mobileScannerController = ctrl;
+    ctrl.addListener(_onControllerValueChanged);
     _mobileSub = ctrl.barcodes.listen((cap) {
       if (_busy || !mounted) return;
       for (final b in cap.barcodes) {
@@ -214,34 +284,98 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
         return;
       }
     });
+    _mobileScannerController = ctrl;
+    _mobileStartRequested = false;
+    _mobileStartInFlight = false;
     if (mounted) {
-      setState(() {
-        _liveState = _LiveState.initializing;
-        _lastInitError = null;
-      });
+      _liveState = _LiveState.initializing;
+      _lastInitError = null;
     }
+  }
+
+  void _scheduleMobileStart() {
+    // Defer the actual `start()` to the first post-frame callback
+    // after the current build. By then the `MobileScanner` widget
+    // that owns this controller has been inserted into the tree
+    // and its `initState()` has called `controller.attach()`,
+    // completing the `_isAttachedCompleter` guarded by `start()`.
+    //
+    // This is Strategy B from the production retest runbook:
+    //   autoStart: false
+    //   mount widget first
+    //   start() from a post-frame callback
+    //   never call start twice
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startMobileScanner();
+    });
+  }
+
+  Future<void> _startMobileScanner() async {
+    if (!mounted) return;
+    final ctrl = _mobileScannerController;
+    if (ctrl == null) return;
+    if (_mobileStartRequested || _mobileStartInFlight) return;
+    _mobileStartRequested = true;
+    _mobileStartInFlight = true;
     try {
       await ctrl.start();
-      if (!mounted) return;
+      // The controller listener updates `_liveState` when
+      // value.isRunning flips true. Nothing else to do here.
+    } catch (e) {
+      if (!mounted) {
+        _mobileStartInFlight = false;
+        return;
+      }
+      await _handleMobileStartFailure(e);
+    } finally {
+      _mobileStartInFlight = false;
+    }
+  }
+
+  void _onControllerValueChanged() {
+    final ctrl = _mobileScannerController;
+    if (ctrl == null || !mounted) return;
+    final v = ctrl.value;
+    if (v.error != null && _liveState != _LiveState.failed) {
+      // Async surface — schedule a microtask so we do not call
+      // setState from inside a ValueNotifier notify cycle.
+      final err = v.error!;
+      scheduleMicrotask(() {
+        if (!mounted) return;
+        _handleMobileStartFailure(err);
+      });
+      return;
+    }
+    if (v.isRunning && _liveState != _LiveState.running) {
       setState(() {
         _liveState = _LiveState.running;
       });
-    } catch (e) {
-      // Facing-fallback: if the rear camera failed once, retry with
-      // no facing constraint before showing a failure. This handles
-      // devices where `environment` doesn't map to anything (iPad
-      // without rear camera, external webcam on desktop Safari, ...).
-      if (preferRearCamera && !_cameraFacingFallbackTried) {
-        _cameraFacingFallbackTried = true;
-        await _initMobileScanner(preferRearCamera: false);
-        return;
-      }
+    }
+  }
+
+  Future<void> _handleMobileStartFailure(Object error) async {
+    // Facing fallback: if the rear camera failed once, retry with
+    // the front camera before showing failure. The previous
+    // implementation swapped to `CameraFacing.unknown` which
+    // `mobile_scanner_web` maps to `'environment'` — the same
+    // constraint as `CameraFacing.back`, so the fallback was a
+    // no-op. Front camera is a genuinely different constraint.
+    if (!_rearFallbackTried
+        && _currentFacing == CameraFacing.back) {
+      _rearFallbackTried = true;
+      await _teardownMobileController();
       if (!mounted) return;
       setState(() {
-        _liveState = _LiveState.failed;
-        _lastInitError = ScannerInitClassifier.classify(e);
+        _buildMobileController(preferRearCamera: false);
       });
+      _scheduleMobileStart();
+      return;
     }
+    if (!mounted) return;
+    setState(() {
+      _liveState = _LiveState.failed;
+      _lastInitError = ScannerInitClassifier.classify(error);
+    });
   }
 
   Future<void> _teardownMobileController() async {
@@ -249,10 +383,18 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
       await _mobileSub?.cancel();
     } catch (_) {}
     _mobileSub = null;
-    try {
-      await _mobileScannerController?.dispose();
-    } catch (_) {}
+    final ctrl = _mobileScannerController;
+    if (ctrl != null) {
+      try {
+        ctrl.removeListener(_onControllerValueChanged);
+      } catch (_) {}
+      try {
+        await ctrl.dispose();
+      } catch (_) {}
+    }
     _mobileScannerController = null;
+    _mobileStartRequested = false;
+    _mobileStartInFlight = false;
   }
 
   Future<void> _onDecode(String raw) async {
@@ -322,8 +464,16 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
       }
       return;
     }
-    _cameraFacingFallbackTried = false;
-    await _initMobileScanner(preferRearCamera: true);
+    // Production path: rebuild a fresh controller from scratch —
+    // resets the rear-facing fallback flag so the user gets a full
+    // rear → front sequence again.
+    _rearFallbackTried = false;
+    await _teardownMobileController();
+    if (!mounted) return;
+    setState(() {
+      _buildMobileController(preferRearCamera: true);
+    });
+    _scheduleMobileStart();
   }
 
   Future<void> _handleUploadImage() async {
@@ -419,7 +569,13 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
           ?.stop()
           .then((_) => _injectedScanner?.dispose());
     } else {
-      _mobileScannerController?.dispose();
+      final ctrl = _mobileScannerController;
+      if (ctrl != null) {
+        try {
+          ctrl.removeListener(_onControllerValueChanged);
+        } catch (_) {}
+        ctrl.dispose();
+      }
     }
     super.dispose();
   }
@@ -529,41 +685,58 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
   }
 
   Widget _buildPreviewOrStateSurface() {
-    switch (_liveState) {
-      case _LiveState.initializing:
-        return Container(
-          key: const Key(kScanRecipientQrCameraLoadingKey),
-          color: Colors.black,
-          child: const Center(
-            child: SizedBox(
-              width: 22, height: 22,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor:
-                    AlwaysStoppedAnimation<Color>(Colors.white70),
+    // 2026-07-13 (v2): the failed surface fully replaces the
+    // camera area; the initializing surface OVERLAYS a spinner
+    // on top of the still-mounted MobileScanner widget so
+    // `attach()` fires before we call `start()`.
+    if (_liveState == _LiveState.failed) {
+      return _buildCameraFailedSurface();
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildLivePreview(),
+        if (_liveState == _LiveState.initializing)
+          Container(
+            key: const Key(kScanRecipientQrCameraLoadingKey),
+            color: Colors.black,
+            child: const Center(
+              child: SizedBox(
+                width: 22, height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(Colors.white70),
+                ),
               ),
             ),
           ),
-        );
-      case _LiveState.failed:
-        return _buildCameraFailedSurface();
-      case _LiveState.running:
-        return _buildLivePreview();
-    }
+      ],
+    );
   }
 
   Widget _buildLivePreview() {
     if (_useInjectedScanner) {
       return Container(color: Colors.black);
     }
+    final ctrl = _mobileScannerController;
+    if (ctrl == null) return Container(color: Colors.black);
     return MobileScanner(
-      controller: _mobileScannerController!,
-      // 2026-07-13 fix: `errorBuilder` receives transient errors
-      // that would otherwise take the sheet into the dead-end fail
-      // state on the very first render. We just render a black
-      // surface for the fault-frame; the actual failure decision is
-      // driven by `start()` throwing, which we handle in
-      // `_initMobileScanner`.
+      // 2026-07-13 (v2): the generation-scoped Key forces a
+      // widget REMOUNT when we swap controllers during facing
+      // fallback. Without the key, the state's `late final
+      // controller` still references the OLD controller and
+      // `attach()` never runs on the NEW one.
+      key: ValueKey(
+        '$kScanRecipientQrMobileScannerHostKey-$_mobileScannerGeneration',
+      ),
+      controller: ctrl,
+      // errorBuilder receives transient errors that could
+      // otherwise take the sheet into the dead-end fail state on
+      // the very first render. We just render a black surface for
+      // the fault-frame; the actual failure decision is driven by
+      // start() throwing OR by the controller's value.error
+      // changing (see `_onControllerValueChanged`).
       errorBuilder: (ctx, error) => Container(color: Colors.black),
       fit: BoxFit.cover,
     );
@@ -607,6 +780,19 @@ class _ScanRecipientQrSheetState extends State<_ScanRecipientQrSheet> {
               color: kWalletTextSecondary,
               fontSize: 12,
               height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            key: const Key(kScanRecipientQrDiagnosticCodeKey),
+            'Camera error: ${diag.userFacingCode}',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: kWalletTextSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.4,
+              fontFeatures: [FontFeature.tabularFigures()],
             ),
           ),
         ],

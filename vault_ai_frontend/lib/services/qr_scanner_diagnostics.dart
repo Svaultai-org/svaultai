@@ -16,6 +16,20 @@
 //   * No user identifiers.
 // It carries a category enum and a short technical hint string
 // (e.g. "OverconstrainedError: environment"); nothing more.
+//
+// 2026-07-13 (v2): after production retest on iPhone Safari, the
+// live camera still failed with the vague "Camera couldn't start"
+// message. Root cause was the sheet calling
+// MobileScannerController.start() BEFORE the MobileScanner widget
+// was in the tree — start() waits for `attach()`, times out after
+// 500 ms, and throws MobileScannerException(controllerNotAttached).
+// This module now:
+//   * classifies that specific error into a new
+//     `webStartTimeout` category with the user-visible code
+//     "WEB_START_TIMEOUT", so an operator seeing the screenshot
+//     can immediately identify the lifecycle bug from the screen;
+//   * exposes `userFacingCode` as a stable machine-readable token
+//     surfaced under the body copy on the failure UI.
 
 /// Categorises why the recipient QR live-camera scanner could not
 /// initialise. Stable string codes so tests match on them.
@@ -43,6 +57,19 @@ enum ScannerInitCategory {
   /// visibly blocked the required resource. Detected only when the
   /// browser reports a CSP violation string.
   cspBlocked,
+
+  /// The MobileScannerController's `attach()` handshake did not
+  /// complete before start() timed out. This means the
+  /// `MobileScanner` widget was not mounted in the tree when
+  /// `controller.start()` was invoked (a Flutter-web lifecycle
+  /// bug in the caller — not a browser/permission problem).
+  webStartTimeout,
+
+  /// getUserMedia resolved with a MediaStream but no live video
+  /// track is present (or the track is immediately in "ended"
+  /// state). Some iPhone Safari builds surface this when the
+  /// camera is claimed by a background PWA or a hardware fault.
+  videoTrackNotReady,
 
   /// Everything else — unrecognised initialisation error.
   unknown,
@@ -77,6 +104,10 @@ class ScannerInitDiagnostic {
         return "QR decoder couldn't load";
       case ScannerInitCategory.cspBlocked:
         return 'Camera blocked by site policy';
+      case ScannerInitCategory.webStartTimeout:
+        return "Camera couldn't start";
+      case ScannerInitCategory.videoTrackNotReady:
+        return 'Camera video track not ready';
       case ScannerInitCategory.unknown:
         return "Camera couldn't start";
     }
@@ -102,9 +133,43 @@ class ScannerInitDiagnostic {
       case ScannerInitCategory.cspBlocked:
         return 'Upload a QR image from your library, or enter the '
             'recipient address manually.';
+      case ScannerInitCategory.webStartTimeout:
+        return 'The camera preview did not attach in time. Tap '
+            '"Try camera again", or upload a QR image, or enter '
+            'the recipient address manually.';
+      case ScannerInitCategory.videoTrackNotReady:
+        return 'Close any other tab using the camera, then tap '
+            '"Try camera again". Or upload a QR image instead.';
       case ScannerInitCategory.unknown:
         return 'Try again, upload a QR image, or enter the '
             'recipient address manually.';
+    }
+  }
+
+  /// Stable machine-readable token, e.g. "WEB_START_TIMEOUT". Shown
+  /// on the failure UI as "Camera error: <code>" so an operator
+  /// looking at a screenshot can immediately identify the failure
+  /// mode without seeing any sensitive detail.
+  String get userFacingCode {
+    switch (category) {
+      case ScannerInitCategory.permissionDenied:
+        return 'PERMISSION_DENIED';
+      case ScannerInitCategory.noCamera:
+        return 'NO_CAMERA';
+      case ScannerInitCategory.cameraInUse:
+        return 'CAMERA_IN_USE';
+      case ScannerInitCategory.unsupportedBrowser:
+        return 'UNSUPPORTED_BROWSER';
+      case ScannerInitCategory.decoderLoadFailed:
+        return 'DECODER_LOAD_FAILED';
+      case ScannerInitCategory.cspBlocked:
+        return 'CSP_BLOCKED';
+      case ScannerInitCategory.webStartTimeout:
+        return 'WEB_START_TIMEOUT';
+      case ScannerInitCategory.videoTrackNotReady:
+        return 'VIDEO_TRACK_NOT_READY';
+      case ScannerInitCategory.unknown:
+        return 'UNKNOWN';
     }
   }
 }
@@ -126,6 +191,29 @@ class ScannerInitClassifier {
       );
     }
     final s = error.toString().toLowerCase();
+    // Order matters: the "not attached" / "controllerNotAttached"
+    // check must run BEFORE the generic "unsupported" check because
+    // MobileScannerErrorCode.controllerNotAttached.message can
+    // contain generic wording that would otherwise be misclassified.
+    if (s.contains('controllernotattached')
+        || s.contains('not attached')
+        || s.contains('attach() was not called')
+        || s.contains('widget was not attached')) {
+      return ScannerInitDiagnostic(
+        category: ScannerInitCategory.webStartTimeout,
+        hint: _short(s),
+      );
+    }
+    if (s.contains('videotracknotready')
+        || s.contains('video track')
+        || s.contains('trackended')
+        || s.contains('track ended')
+        || s.contains('no video track')) {
+      return ScannerInitDiagnostic(
+        category: ScannerInitCategory.videoTrackNotReady,
+        hint: _short(s),
+      );
+    }
     if (s.contains('notallowed')
         || s.contains('permission') && s.contains('denied')
         || s.contains('permission_denied')) {
