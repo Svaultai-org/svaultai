@@ -1,99 +1,124 @@
-# 2026-07-14 (Round 10 — stale-cache fix): canonical VaultAI web
-# release-build script.
+# 2026-07-14 (Round 12): canonical VaultAI web release-build script.
 #
 # What this script does:
 #
-#   1. Resolves the current git commit SHA (7-char short + full).
-#   2. Runs `flutter build web --release` with:
-#        --pwa-strategy=none          # empty service worker, no
-#                                     # offline-first shell cache
-#        --dart-define=APP_RELEASE=<sha> # embed release identifier
-#      plus any additional --dart-define arguments the caller passes.
-#   3. Writes a small `release.json` manifest into `build/web/`:
-#        {
-#          "commit":  "<full sha>",
-#          "commitShort": "<short sha>",
-#          "builtAt": "<iso8601 UTC>"
-#        }
-#   4. Emits the actual bundle path so the caller can rsync/copy
-#      it into place atomically.
-#
-# What this script does NOT do:
-#
-#   * touch production env vars
-#   * touch a live Nginx config
-#   * run alembic migrations
-#   * unpause ETH / SOL / TRON
-#   * copy files onto app.svaultai.com (leave that to the deploy
-#     runbook — see docs/DEPLOYMENT_RUNBOOK.md).
+#   1. Resolves the RELEASE SHA:
+#        - If env var `RELEASE_SHA` is set → use it verbatim (must
+#          match ^[a-f0-9]{40}$).
+#        - Else `git rev-parse HEAD` (must succeed with 40 chars).
+#        - Else fail closed UNLESS `--allow-dev-release` is passed.
+#          Never silently produce a production release with
+#          `APP_RELEASE=dev`.
+#   2. Runs `flutter build web --release --pwa-strategy=none
+#      --dart-define=APP_RELEASE=<full-sha>` (+ passed extras).
+#   3. Overwrites `build/web/flutter_service_worker.js` with the
+#      migration SW body (`scripts/migration-service-worker.js`).
+#   4. Substitutes `__VAULTAI_APP_RELEASE__` in the SW bootstrap
+#      template with the FULL SHA and writes to
+#      `build/web/vaultai-sw-bootstrap.js`.
+#   5. Writes `build/web/release.json`.
 #
 # Usage:
 #
 #   .\scripts\build-web-release.ps1
-#   .\scripts\build-web-release.ps1 --dart-define=BACKEND_BASE_URL=https://api.svaultai.com --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true
+#   $env:RELEASE_SHA = '<full-sha>'; .\scripts\build-web-release.ps1
+#   .\scripts\build-web-release.ps1 --allow-dev-release   # LOCAL only
 
 $ErrorActionPreference = 'Stop'
 
 $flutterProjectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $flutterProjectRoot
 try {
-    # Resolve commit SHA. Fall back to `dev` for tree-only builds.
-    $shaFull = ''
-    $shaShort = ''
-    try {
-        $shaFull = (git rev-parse HEAD 2>$null).Trim()
-        $shaShort = (git rev-parse --short HEAD 2>$null).Trim()
-    } catch {}
-    if (-not $shaFull -or -not $shaShort) {
-        $shaFull = 'dev'
-        $shaShort = 'dev'
-        Write-Host "[vault-release] git SHA not resolvable; using 'dev'." -ForegroundColor Yellow
+    # ---- Resolve RELEASE SHA (fail-closed) ----
+    $allowDev = $false
+    $flutterExtraArgs = @()
+    foreach ($arg in $args) {
+        if ($arg -eq '--allow-dev-release') {
+            $allowDev = $true
+        } else {
+            $flutterExtraArgs += $arg
+        }
     }
 
-    # ISO-8601 UTC. Do not use tz-local — release manifests must be
-    # comparable across build hosts.
-    $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $shaFull = ''
+    if ($env:RELEASE_SHA) {
+        $shaFull = $env:RELEASE_SHA.Trim()
+        Write-Host "[vault-release] using RELEASE_SHA env var" -ForegroundColor Cyan
+    } else {
+        try {
+            $probe = (git rev-parse HEAD 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $probe) {
+                $shaFull = $probe.Trim()
+            }
+        } catch {}
+    }
+
+    if ($shaFull -notmatch '^[a-f0-9]{40}$') {
+        if ($allowDev) {
+            $shaFull = 'dev0000000000000000000000000000000000000dev'
+            Write-Host "[vault-release] WARNING: --allow-dev-release set; using synthetic 'dev' SHA." -ForegroundColor Yellow
+        } else {
+            Write-Error @"
+[vault-release] ERROR: cannot resolve a real 40-char commit SHA.
+  set `$env:RELEASE_SHA = '<full-sha>' (archive host)
+  or pass --allow-dev-release for a local-only build.
+This guard prevents shipping a production release with APP_RELEASE=dev
+(which would permanently show the update banner and never converge).
+"@
+            exit 2
+        }
+    }
+
+    $shaShort = $shaFull.Substring(0, 7)
+    $builtAt = (Get-Date).ToUniversalTime().ToString(
+        "yyyy-MM-ddTHH:mm:ss.fffZ"
+    )
 
     Write-Host "[vault-release] APP_RELEASE=$shaFull" -ForegroundColor Cyan
     Write-Host "[vault-release] (display-only short: $shaShort)" -ForegroundColor Cyan
 
-    # 2026-07-14 (Round 11 — release-ID canonicalization):
-    # ALWAYS embed the full 40-character SHA. The comparison
-    # in AppReleaseController is full-SHA vs `release.json.commit`
-    # (also full SHA). Passing the short SHA here would guarantee
-    # a permanent updateAvailable=true because
-    # `<7 chars> != <40 chars>` is always true. `commitShort` in
-    # release.json is display-only.
+    # ---- Build ----
     $buildArgs = @(
         'build', 'web', '--release',
         '--pwa-strategy=none',
         "--dart-define=APP_RELEASE=$shaFull"
-    ) + $args
+    ) + $flutterExtraArgs
     Write-Host "[vault-release] flutter $($buildArgs -join ' ')" -ForegroundColor Cyan
     flutter @buildArgs
 
-    # Post-build: replace the empty --pwa-strategy=none stub with a
-    # migration service worker that:
-    #   - skipWaiting() on install so it activates ahead of the
-    #     old offline-first SW without waiting for tabs to close;
-    #   - clients.claim() on activate + delete every flutter*
-    #     cache from Cache Storage;
-    #   - forces each currently-controlled tab to navigate once so
-    #     it fetches the new bundle (which contains
-    #     AppReleaseController — that runs every subsequent
-    #     update via /release.json).
-    # See scripts/migration-service-worker.js for the source.
-    $swSourcePath = Join-Path $PSScriptRoot 'migration-service-worker.js'
-    $swDestPath = Join-Path $flutterProjectRoot 'build/web/flutter_service_worker.js'
-    if (Test-Path $swSourcePath) {
-        Copy-Item -Force -Path $swSourcePath -Destination $swDestPath
-        Write-Host "[vault-release] wrote migration SW to $swDestPath" -ForegroundColor Green
-    } else {
-        Write-Host "[vault-release] WARNING: migration-service-worker.js missing; SW stays empty." -ForegroundColor Yellow
+    # ---- Migration SW ----
+    $swSource = Join-Path $PSScriptRoot 'migration-service-worker.js'
+    $swDest = Join-Path $flutterProjectRoot 'build/web/flutter_service_worker.js'
+    if (-not (Test-Path $swSource)) {
+        Write-Error "[vault-release] ERROR: migration-service-worker.js missing at $swSource"
+        exit 3
     }
+    Copy-Item -Force -Path $swSource -Destination $swDest
+    Write-Host "[vault-release] wrote migration SW to $swDest" -ForegroundColor Green
 
-    # Write release.json into build/web so Nginx can serve it as
-    # /release.json with `Cache-Control: no-store`.
+    # ---- SW-registration bootstrap ----
+    $tplSource = Join-Path $flutterProjectRoot 'web/vaultai-sw-bootstrap.template.js'
+    $tplDest = Join-Path $flutterProjectRoot 'build/web/vaultai-sw-bootstrap.js'
+    if (-not (Test-Path $tplSource)) {
+        Write-Error "[vault-release] ERROR: vaultai-sw-bootstrap.template.js missing at $tplSource"
+        exit 4
+    }
+    $tplContent = Get-Content -Raw -Path $tplSource
+    $tplContent = $tplContent.Replace('__VAULTAI_APP_RELEASE__', $shaFull)
+    [System.IO.File]::WriteAllText(
+        $tplDest, $tplContent, [System.Text.UTF8Encoding]::new($false)
+    )
+    if ((Get-Content -Raw -Path $tplDest) -like "*__VAULTAI_APP_RELEASE__*") {
+        Write-Error "[vault-release] ERROR: token substitution failed for $tplDest"
+        exit 5
+    }
+    if ((Get-Content -Raw -Path $tplDest) -notlike "*$shaFull*") {
+        Write-Error "[vault-release] ERROR: full SHA missing from $tplDest"
+        exit 6
+    }
+    Write-Host "[vault-release] wrote SW-registration bootstrap to $tplDest" -ForegroundColor Green
+
+    # ---- release.json ----
     $releaseJson = @{
         commit      = $shaFull
         commitShort = $shaShort

@@ -60,6 +60,18 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <!-- 2026-07-14 (Round 12 — explicit SW retirement bootstrap):
+       Flutter's `--pwa-strategy=none` build does NOT register a
+       service worker. Existing users still controlled by the
+       pre-Round-11 offline-first Flutter SW would therefore never
+       fetch our migration SW body — they'd stay stuck on the
+       stale app shell indefinitely. This bootstrap explicitly
+       registers `/flutter_service_worker.js?v=<full-sha>` at
+       scope `/` on every page load. The `?v=` version is
+       substituted at build time by scripts/build-web-release.*
+       — the raw file with the literal `__VAULTAI_APP_RELEASE__`
+       token short-circuits without registering. -->
+  <script src="vaultai-sw-bootstrap.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
