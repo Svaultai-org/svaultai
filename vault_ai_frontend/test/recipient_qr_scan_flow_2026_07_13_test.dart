@@ -549,12 +549,25 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
+      // The 2026-07-13 rework renamed the failed-camera key and
+      // added the three-way action row. When the camera is
+      // unavailable the sheet now shows the failed-camera surface
+      // PLUS "Try camera again" + "Upload QR image" + "Enter
+      // address manually" as always-visible actions.
       expect(
         find.byKey(
-            const Key(kScanRecipientQrCameraUnavailableKey)),
+            const Key(kScanRecipientQrCameraFailedKey)),
         findsOneWidget,
       );
-      // Manual-entry button still present.
+      // All three fallback actions must be reachable.
+      expect(
+        find.byKey(const Key(kScanRecipientQrRetryBtnKey)),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key(kScanRecipientQrUploadBtnKey)),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const Key(kScanRecipientQrManualBtnKey)),
         findsOneWidget,
