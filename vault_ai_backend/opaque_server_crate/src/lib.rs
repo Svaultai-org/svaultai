@@ -30,22 +30,40 @@ use opaque_ke::{
     Ristretto255,
     ServerLogin,
     ServerLoginParameters,
-    ServerLoginStartParameters,
     ServerLoginStartResult,
     ServerRegistration,
     ServerRegistrationStartResult,
     ServerSetup,
     RegistrationRequest,
-    RegistrationResponse,
     RegistrationUpload,
     CredentialRequest,
-    CredentialResponse,
     CredentialFinalization,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use rand::rngs::OsRng;
+use sha2::Sha512;
+
+// opaque-ke 4.x compatibility notes (for auditors):
+//
+//   * The `CipherSuite` trait in opaque-ke 4.x drops the standalone
+//     `KeGroup` associated type — group selection is now folded into
+//     the `KeyExchange` implementation. We removed `type KeGroup`.
+//
+//   * `TripleDh` is now generic: `TripleDh<G, H>` where G is the
+//     group (Ristretto255) and H is the hash function used inside the
+//     3DH KDF (SHA-512, to match the OPAQUE spec and the serenity-kit
+//     WASM client).
+//
+//   * `ServerLogin::start` and `ServerLogin::finish` both take a
+//     unified `ServerLoginParameters<'_, '_>`; the old
+//     `ServerLoginStartParameters` type is gone.
+//
+// These changes are wire-transparent — the serialized OPAQUE
+// messages exchanged with the @serenity-kit/opaque client are
+// unchanged, and the ciphersuite (Ristretto255-SHA512-Argon2id)
+// remains identical.
 
 /// Ristretto255-SHA512-Argon2id: matches @serenity-kit/opaque default.
 #[derive(Default)]
@@ -53,8 +71,8 @@ struct VaultAiSuite;
 
 impl CipherSuite for VaultAiSuite {
     type OprfCs = Ristretto255;
-    type KeGroup = Ristretto255;
-    type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh;
+    type KeyExchange =
+        opaque_ke::key_exchange::tripledh::TripleDh<Ristretto255, Sha512>;
     type Ksf = argon2::Argon2<'static>;
 }
 
@@ -135,13 +153,18 @@ fn server_login_start(
         CredentialRequest::deserialize(ke1_msg).map_err(py_err)?;
 
     let mut rng = OsRng;
+    // opaque-ke 4.x uses a single, unified `ServerLoginParameters<'_, '_>`
+    // for both start and finish — the old `ServerLoginStartParameters`
+    // type was removed. This is a rename-only change; the default
+    // value is empty context + no identifiers, which is what the
+    // @serenity-kit/opaque WASM client expects.
     let start: ServerLoginStartResult<VaultAiSuite> = ServerLogin::start(
         &mut rng,
         &setup,
         Some(record),
         request,
         credential_id,
-        ServerLoginStartParameters::default(),
+        ServerLoginParameters::default(),
     )
     .map_err(py_err)?;
 

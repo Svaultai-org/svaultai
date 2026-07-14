@@ -16,3 +16,10 @@ argon2 = "0.5"
 rand = "0.8"
 rand_chacha = "0.3"
 generic-array = "0.14"
+# opaque-ke 4.x's TripleDh key-exchange takes explicit generic
+# parameters TripleDh<G, H>. H is the hash function used inside the
+# 3DH KDF. For Ristretto255-SHA-512 wire compatibility with the
+# @serenity-kit/opaque WASM client (same upstream opaque-ke crate),
+# H MUST be sha2::Sha512. Do not change this without a matched
+# client-side change.
+sha2 = "0.10"
