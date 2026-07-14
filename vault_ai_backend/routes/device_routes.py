@@ -39,6 +39,26 @@ def _notify(vault_id: str, kind: str, title: str, body: str,
 
 
     try:
+        from vault_core import is_vault_zk_adopted
+        # ZK/adopted vault: never persist readable device-related
+        # notification title/body. Insert a structural-only shell.
+        if is_vault_zk_adopted(vault_id):
+            conn = get_db()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO notifications
+                        (vault_id, kind, title, body, metadata)
+                    VALUES (%s, %s, NULL, NULL, NULL)
+                    """,
+                    (vault_id, kind),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return
+
         conn = get_db()
         try:
             cur = conn.cursor()

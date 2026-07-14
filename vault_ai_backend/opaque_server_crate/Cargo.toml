@@ -1,0 +1,18 @@
+[package]
+name = "vaultai_opaque_server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "pyo3 wrapper around Meta's audited opaque-ke (RFC 9807) for VaultAI's backend."
+
+[lib]
+name = "vaultai_opaque_server"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+opaque-ke = { version = "4.0", features = ["argon2"] }
+argon2 = "0.5"
+rand = "0.8"
+rand_chacha = "0.3"
+generic-array = "0.14"

@@ -95,6 +95,19 @@ async def upsert_uploaded_file_inline(
 ) -> None:
     if not is_enabled() or not text or kind not in ALLOWED_FILE_KINDS:
         return
+    # ZK/adopted vault: skip the server-side plaintext SHA-256
+    # content_hash entirely. The unlocked client is expected to
+    # compute keyed_content_hash locally (HKDF-derived semantic
+    # lookup subkey the backend never sees) and POST to
+    # /vault/ciphertext/semantic-index. Silent skip is the correct
+    # tradeoff — if the client never finalizes, the row is simply
+    # not embedded, and the readable text never touches the DB.
+    try:
+        from vault_core import is_vault_zk_adopted
+        if is_vault_zk_adopted(vault_id):
+            return
+    except Exception:
+        pass
     vec = await embed_text(openai_client, text)
     if vec is None:
         return
@@ -127,6 +140,12 @@ async def upsert_vault_item_inline(
 ) -> None:
     if not is_enabled() or not text or kind not in ALLOWED_ITEM_KINDS:
         return
+    try:
+        from vault_core import is_vault_zk_adopted
+        if is_vault_zk_adopted(vault_id):
+            return
+    except Exception:
+        pass
     vec = await embed_text(openai_client, text)
     if vec is None:
         return
@@ -155,6 +174,12 @@ async def _run_uploaded_file_embedding(
     try:
         if not is_enabled() or not text or kind not in ALLOWED_FILE_KINDS:
             return
+        try:
+            from vault_core import is_vault_zk_adopted
+            if is_vault_zk_adopted(vault_id):
+                return
+        except Exception:
+            pass
         vec = await embed_text(openai_client, text)
         if vec is None:
             return
@@ -192,6 +217,12 @@ async def _run_vault_item_embedding(
     try:
         if not is_enabled() or not text or kind not in ALLOWED_ITEM_KINDS:
             return
+        try:
+            from vault_core import is_vault_zk_adopted
+            if is_vault_zk_adopted(vault_id):
+                return
+        except Exception:
+            pass
         vec = await embed_text(openai_client, text)
         if vec is None:
             return

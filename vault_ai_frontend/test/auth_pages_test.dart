@@ -32,18 +32,44 @@ void main() {
 
     test('declares the four required form controllers and the '
         'acknowledgement flag', () {
+      // ZK signup contract: SignupPage must collect vault_name +
+      // PIN + confirm PIN and gate submission on an acknowledgement
+      // that VaultAI cannot recover the vault. The variable that
+      // holds that acknowledgement is a boolean checked before the
+      // ZK registration call. We do NOT bind to the specific
+      // variable name (that would be a rename-brittleness trap);
+      // we bind to the structural contract: an `acknowledged` /
+      // `acknowledge` boolean is declared, is set via a Checkbox,
+      // and is enforced (a message about "cannot recover" is
+      // surfaced when it is not set).
       final src = _readLib('main.dart');
       final window = _windowAfter(src, 'class SignupPage', length: 12000);
-      
-      
+
       expect(window, contains('vaultName'),
           reason: 'SignupPage must collect a vault name (vaultName)');
       expect(window, contains('confirmPin'),
           reason: 'PIN confirmation is mandatory (confirmPin)');
-      
-      expect(window, contains('acknowledgedIrrecoverable'),
-          reason: 'Signup must include the acknowledgedIrrecoverable '
-                  'flag for the cannot-recover acknowledgement');
+
+      final ackFlagPattern = RegExp(r'bool\s+acknowledged?\s*=\s*false');
+      expect(
+        ackFlagPattern.hasMatch(window),
+        isTrue,
+        reason: 'SignupPage must declare a boolean acknowledgement '
+                'flag (matches `bool acknowledged = false` or '
+                '`bool acknowledge = false`).',
+      );
+      expect(
+        window,
+        contains('Checkbox('),
+        reason: 'The acknowledgement must be wired to a Checkbox in '
+                'the SignupPage form.',
+      );
+      expect(
+        window,
+        contains('cannot recover your vault'),
+        reason: 'Submitting without acknowledgement must surface the '
+                '"VaultAI cannot recover your vault" enforcement copy.',
+      );
     });
 
     test('shows the irrecoverability warning copy', () {
@@ -60,11 +86,35 @@ void main() {
       );
     });
 
-    test('calls authSignup on submit', () {
+    test('calls ZkAuthService.registerVault on submit '
+        '(ZK-first registration; no plaintext authSignup)', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class SignupPage', length: 9000);
-      expect(window, contains('authSignup'),
-          reason: 'SignupPage must call client.authSignup on submit');
+      final window = _windowAfter(src, 'class SignupPage', length: 12000);
+
+      // The ZK architecture replaces the plaintext authSignup path
+      // with an OPAQUE registration handled by ZkAuthService. The
+      // SignupPage submit handler must dispatch to
+      // ZkAuthService.registerVault; it must NOT re-introduce a
+      // client.authSignup call that would leak the vault_name.
+      expect(
+        window,
+        contains('ZkAuthService('),
+        reason: 'SignupPage must construct a ZkAuthService for '
+                'OPAQUE-backed ZK registration.',
+      );
+      expect(
+        window,
+        contains('.registerVault('),
+        reason: 'SignupPage must invoke ZkAuthService.registerVault '
+                'on submit (the ZK registration entry point).',
+      );
+      expect(
+        window,
+        isNot(contains('client.authSignup(')),
+        reason: 'SignupPage must NOT call the plaintext '
+                'client.authSignup path — it leaks the vault_name to '
+                'the backend and violates the ZK boundary.',
+      );
     });
 
     test('catches RateLimitedException so the 429 message reaches the '

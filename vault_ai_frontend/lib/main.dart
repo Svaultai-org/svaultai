@@ -21,6 +21,15 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'logins_page.dart';
 import 'api_client.dart';
 import 'chunked_aead.dart';
+import 'vault_handle_saved_page.dart';
+import 'services/legacy_adoption.dart' as legacy_adopt;
+import 'services/metadata_migration_client.dart' as mmc;
+import 'services/opaque_client.dart'
+    if (dart.library.io) 'services/opaque_client_stub.dart';
+import 'services/vault_handle.dart' as vh;
+import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/vault_key_hierarchy.dart' as vk_hier;
+import 'services/zk_auth_service.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
 import 'services/content_hash.dart';
@@ -35,6 +44,8 @@ import 'device_id.dart';
 import 'device_pending_page.dart';
 import 'devices_page.dart';
 import 'security_center_page.dart';
+import 'recovery_kit_settings_page.dart';
+import 'inheritance_pairing_page.dart';
 import 'help_center_page.dart' as hc;
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
@@ -1375,6 +1386,30 @@ void applyBackendStats(Map<String, dynamic> stats) {
     } catch (_) {
 
     }
+    // Clear the process-global active MVK BEFORE nulling session
+    // fields. Any downstream write path (crypto send, upload, ZK
+    // memory finalize) that races with logout will see current()
+    // == null and fall through to legacy plaintext-refuse behavior.
+    try {
+      zk_mvk_store.ZkActiveMvk.clear();
+    } catch (_) {}
+    // Wipe the _VaultCrypto key cache slot for the vault we are
+    // leaving. This drops both the derived key and the cached PIN
+    // from process memory. Wiping BEFORE the session is nulled so
+    // any concurrent access sees an empty cache rather than a stale
+    // (vault_id, vault_name) hit.
+    try {
+      final leavingVaultId = vaultId;
+      final leavingVaultName = vaultName;
+      if (leavingVaultId != null && leavingVaultName != null) {
+        _VaultCrypto._keyCache.remove(
+          _VaultCrypto._ck(leavingVaultId, leavingVaultName),
+        );
+        _VaultCrypto._pinCache.remove(
+          _VaultCrypto._ck(leavingVaultId, leavingVaultName),
+        );
+      }
+    } catch (_) {}
     final sp = await SharedPreferences.getInstance();
     sessionToken = null;
     vaultId = null;
@@ -2191,8 +2226,10 @@ class VaultaiApp extends StatelessWidget {
         
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
-        
-        
+        '/recovery-kit': (_) => const RecoveryKitSettingsPage(),
+        '/inheritance-pairing': (_) => const InheritancePairingPage(),
+
+
         '/storage': (_) => const StoragePage(),
       },
       initialRoute: '/',
@@ -2431,6 +2468,338 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
+/// Client-side mirror of the backend's `_default_asset_type_for_upload`.
+///
+/// Returns a stable asset_type slug ('image', 'video', 'audio',
+/// 'pdf', 'docx', 'spreadsheet', 'id_image', 'file') derived from
+/// filename + MIME type. The mapping intentionally mirrors the
+/// backend heuristic so that ZK vault clients — which encrypt this
+/// value locally and POST the ciphertext to
+/// /vault/ciphertext/uploaded-files — produce the same UX as
+/// non-ZK vaults where the backend does the mapping.
+///
+/// Filename-only heuristic: NEVER opens the file body. Safe to run
+/// after a chunked upload finalize returns just a file_id.
+String inferAssetTypeForUpload({
+  required String fileName,
+  required String? contentType,
+}) {
+  final ct = (contentType ?? '').toLowerCase();
+  final name = fileName.toLowerCase();
+
+  if (ct.startsWith('image/') ||
+      name.endsWith('.jpg') ||
+      name.endsWith('.jpeg') ||
+      name.endsWith('.png') ||
+      name.endsWith('.gif') ||
+      name.endsWith('.webp') ||
+      name.endsWith('.heic')) {
+    // Identity documents that arrive as photos still classify as
+    // id_image so the vault UI can group them properly.
+    for (final tok in const [
+      'passport', 'driver license', 'drivers license',
+      "driver's license", 'photo id', 'id card',
+      'identity card', 'national id',
+    ]) {
+      if (name.contains(tok)) return 'id_image';
+    }
+    return 'image';
+  }
+
+  if (ct.startsWith('video/') ||
+      name.endsWith('.mp4') ||
+      name.endsWith('.mov') ||
+      name.endsWith('.webm') ||
+      name.endsWith('.mkv')) {
+    return 'video';
+  }
+
+  if (ct.startsWith('audio/') ||
+      name.endsWith('.mp3') ||
+      name.endsWith('.wav') ||
+      name.endsWith('.m4a') ||
+      name.endsWith('.ogg') ||
+      name.endsWith('.flac')) {
+    return 'audio';
+  }
+
+  if (name.endsWith('.pdf')) return 'pdf';
+  if (name.endsWith('.docx')) return 'docx';
+  if (name.endsWith('.xlsx')) return 'spreadsheet';
+
+  return 'file';
+}
+
+/// Client-side heuristic for detected_type/detected_service.
+/// Returns the pair as (detected_type, detected_service). Both are
+/// null if no confident inference can be made from the filename
+/// alone. NEVER opens the file body.
+({String? detectedType, String? detectedService})
+inferDetectedTypeAndServiceForUpload({
+  required String fileName,
+}) {
+  final name = fileName.toLowerCase();
+  String? dt;
+  String? ds;
+  if (name.contains('passport')) dt = 'passport';
+  if (name.contains('driver license') ||
+      name.contains('drivers license') ||
+      name.contains("driver's license") ||
+      name.contains('driver licence')) {
+    dt = 'driver_license';
+  }
+  if (name.contains('id card') ||
+      name.contains('identity card') ||
+      name.contains('national id')) {
+    dt = 'id_card';
+  }
+  // Filename-based service hints: keep conservative to avoid false
+  // positives. The backend runs richer OCR-based detection; when
+  // that lands as a client-finalized flow, this heuristic will be
+  // superseded.
+  for (final entry in const {
+    'chase': 'chase',
+    'wells fargo': 'wells_fargo',
+    'wellsfargo': 'wells_fargo',
+    'bank of america': 'bank_of_america',
+    'boa': 'bank_of_america',
+    'citi': 'citi',
+    'amex': 'american_express',
+    'american express': 'american_express',
+    'paypal': 'paypal',
+    'venmo': 'venmo',
+    'coinbase': 'coinbase',
+    'binance': 'binance',
+  }.entries) {
+    if (name.contains(entry.key)) {
+      ds = entry.value;
+      break;
+    }
+  }
+  return (detectedType: dt, detectedService: ds);
+}
+
+/// ZK client-finalize of a beneficiary label. Encrypts `label`
+/// locally under the active vault's metadataKey and POSTs the
+/// ciphertext to /vault/ciphertext/beneficiary-links. Returns true
+/// on success, false on any failure (network, crypto, HTTP error).
+///
+/// Non-ZK vaults (no active MVK): returns true and does nothing,
+/// because the label was already persisted in plaintext by the
+/// upstream /beneficiary/create call.
+Future<bool> tryZkFinalizeBeneficiaryLabelCiphertext({
+  required String baseUrl,
+  required String authToken,
+  required int linkId,
+  required String label,
+}) async {
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) return true; // legacy vault → already persisted
+  try {
+    final hierarchy = vk_hier.VaultKeyHierarchy(mvk);
+    final metaKey = await hierarchy.metadataKey();
+    final ct = await vk_hier.aesGcmWrap(metaKey, utf8.encode(label));
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/beneficiary-links');
+    final resp = await http.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'link_id': linkId,
+        'passer_label_ciphertext': vk_hier.b64urlEncode(ct),
+      }),
+    );
+    return resp.statusCode == 200;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Best-effort ZK finalize of the inferred metadata for a
+/// just-uploaded file. Silent no-op when the vault is not
+/// ZK-adopted (legacy vaults get the backend heuristic path). For
+/// ZK vaults, encrypts the inferred values under metadataKey and
+/// POSTs the ciphertext to /vault/ciphertext/uploaded-files.
+///
+/// Fail-closed: if the POST fails, the file remains stored with
+/// NULL metadata — the correct privacy failure mode. No plaintext
+/// fallback ever writes to the DB.
+Future<void> tryZkFinalizeInferredUploadMetadataBestEffort({
+  required String baseUrl,
+  required String authToken,
+  required String fileId,
+  required String fileName,
+  required String? contentType,
+}) async {
+  if (zk_mvk_store.ZkActiveMvk.current() == null) return;
+  try {
+    final at = inferAssetTypeForUpload(
+      fileName: fileName, contentType: contentType,
+    );
+    final det = inferDetectedTypeAndServiceForUpload(fileName: fileName);
+    final client = VaultAIClient(baseUrl: baseUrl);
+    await client.tryZkUploadedFileCiphertextUpdate(
+      baseUrl: baseUrl,
+      authToken: authToken,
+      fileId: fileId,
+      assetType: at,
+      detectedType: det.detectedType,
+      detectedService: det.detectedService,
+    );
+  } catch (_) {
+    // Fail-closed: leave the row with NULL metadata rather than
+    // silently reverting to plaintext. Correct privacy tradeoff.
+  }
+}
+
+/// Banner shown near the vault-file search UI when the active vault
+/// is ZK-adopted. Semantic content search (embeddings-based) is
+/// intentionally unavailable for ZK vaults: the backend refuses to
+/// index encrypted content into a vector store on OpenAI's
+/// embeddings API, and the client-finalized semantic flow is not
+/// yet shipped. This banner tells the user honestly that content
+/// search is unavailable — it must NOT imply indexing succeeded.
+///
+/// Renders as a no-op (SizedBox.shrink) for non-ZK vaults.
+class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
+  const ZkSemanticSearchUnavailableBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (zk_mvk_store.ZkActiveMvk.current() == null) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      key: const Key('zk_semantic_search_unavailable_banner'),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF3B82F6).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: const Color(0xFF3B82F6).withValues(alpha: 0.35),
+        ),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline,
+              size: 18, color: Color(0xFF90CAF9)),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Semantic content search is unavailable for this '
+              'private vault. Your files are encrypted end-to-end, '
+              'and VaultAI cannot read their content to build a '
+              'search index. Filename search still works.',
+              style: TextStyle(
+                color: Color(0xFFCFE2FF),
+                fontSize: 12,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Neutral, kind-only fallback rendering for ZK notifications.
+///
+/// The backend writes `title` and `body` as NULL for ZK/adopted
+/// vaults (per the R3 privacy contract — no user-derived text ever
+/// hits the DB in readable form). The notification bell UI must
+/// still render *something* useful, without reconstructing user
+/// text from server-side context. This function maps the neutral
+/// `kind` slug to a fixed, generic (title, body) pair that:
+///   * tells the user what happened at a categorical level,
+///   * never quotes any user data (no vault_name, no device label,
+///     no beneficiary label, no filename, no counterparty label),
+///   * remains stable across locales' English fallback,
+///   * gracefully covers unknown kinds by treating the kind slug as
+///     the title in a normalized form.
+///
+/// File-scope so the mapping is testable in isolation and cannot
+/// diverge across UI call sites.
+Map<String, String> zkNotificationFallback(String? rawKind) {
+  final kind = (rawKind ?? '').trim();
+  switch (kind) {
+    case 'transfer_requested':
+      return const {
+        'title': 'Beneficiary transfer requested',
+        'body': 'A beneficiary linked to this vault has requested a '
+                'transfer. Open the Inheritance page for details.',
+      };
+    case 'transfer_cancelled':
+      return const {
+        'title': 'Beneficiary transfer cancelled',
+        'body': 'A pending beneficiary transfer for this vault was '
+                'cancelled.',
+      };
+    case 'transfer_completed':
+      return const {
+        'title': 'Beneficiary transfer completed',
+        'body': 'A beneficiary transfer for this vault has '
+                'completed. Open the Inheritance page for details.',
+      };
+    case 'device_approved':
+      return const {
+        'title': 'Device approved',
+        'body': 'A device on this vault was approved. Open the '
+                'Devices page to review.',
+      };
+    case 'device_revoked':
+      return const {
+        'title': 'Device revoked',
+        'body': 'A device on this vault was revoked. Open the '
+                'Devices page to review.',
+      };
+    case 'device_approval_pending':
+      return const {
+        'title': 'Self-approval started on a new device',
+        'body': 'A new device is pending self-approval. Open the '
+                'Devices page to review or cancel.',
+      };
+    case 'device_self_approval_cancelled':
+      return const {
+        'title': 'Self-approval cancelled',
+        'body': 'A device self-approval was cancelled.',
+      };
+    case 'credential_files':
+      return const {
+        'title': 'Saved credential files',
+        'body': 'Files were added to this vault. Open the Vault to '
+                'review.',
+      };
+    case 'upload':
+      return const {
+        'title': 'Upload activity',
+        'body': 'An upload occurred on this vault.',
+      };
+    case '':
+      return const {
+        'title': 'Vault activity',
+        'body': 'An update occurred on this vault.',
+      };
+    default:
+      // Unknown / future kinds: normalize the slug so at least the
+      // category surfaces without any user text.
+      final title = kind
+          .replaceAll('_', ' ')
+          .split(' ')
+          .where((w) => w.isNotEmpty)
+          .map((w) => w[0].toUpperCase() + w.substring(1))
+          .join(' ');
+      return {
+        'title': title.isEmpty ? 'Vault activity' : title,
+        'body': 'An update of type "$kind" occurred on this vault.',
+      };
+  }
+}
+
 class _NotificationBell extends StatelessWidget {
   const _NotificationBell();
 
@@ -2512,6 +2881,29 @@ class _NotificationBell extends StatelessWidget {
                     itemBuilder: (_, i) {
                       final n = a.notifications[i];
                       final isUnread = n['read_at'] == null;
+                      // ZK notifications: title and body are NULL
+                      // (backend refuses to persist user-derived
+                      // text). Fall back to a neutral kind-based
+                      // label without ever reconstructing user
+                      // text server-side. Non-ZK rows still show
+                      // their existing title/body verbatim.
+                      final rawTitle = (n['title'] ?? '').toString();
+                      final rawBody = (n['body'] ?? '').toString();
+                      final needsFallback =
+                          rawTitle.trim().isEmpty &&
+                          rawBody.trim().isEmpty;
+                      final fallback = needsFallback
+                          ? zkNotificationFallback(
+                              n['kind']?.toString(),
+                            )
+                          : const <String, String>{};
+                      final displayTitle = rawTitle.trim().isNotEmpty
+                          ? rawTitle
+                          : (fallback['title'] ?? 'Vault activity');
+                      final displayBody = rawBody.trim().isNotEmpty
+                          ? rawBody
+                          : (fallback['body'] ??
+                              'An update occurred on this vault.');
                       return InkWell(
                         onTap: isUnread
                             ? () => a.markNotificationRead(
@@ -2540,7 +2932,7 @@ class _NotificationBell extends StatelessWidget {
                                     ),
                                   Expanded(
                                     child: Text(
-                                      (n['title'] ?? '').toString(),
+                                      displayTitle,
                                       style: TextStyle(
                                         fontWeight: isUnread
                                             ? FontWeight.w700
@@ -2558,7 +2950,7 @@ class _NotificationBell extends StatelessWidget {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                (n['body'] ?? '').toString(),
+                                displayBody,
                                 style: const TextStyle(
                                     color: Color(0xFFB4B4B4),
                                     fontSize: 12,
@@ -2875,6 +3267,128 @@ Widget _authErrorBox(String text) {
 }
 
 
+Future<Map<String, dynamic>> _zkHttpPost(
+  String path,
+  Map<String, dynamic> body, {
+  String? bearerToken,
+}) async {
+  final uri = Uri.parse('$backendBaseUrl$path');
+  final headers = <String, String>{'Content-Type': 'application/json'};
+  if (bearerToken != null && bearerToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $bearerToken';
+  }
+  final response = await http.post(
+    uri, headers: headers, body: jsonEncode(body),
+  );
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Exception(
+      'ZK POST $path failed ${response.statusCode}: ${response.body}',
+    );
+  }
+  final decoded = jsonDecode(response.body);
+  if (decoded is! Map<String, dynamic>) {
+    throw Exception('ZK POST $path returned non-object body');
+  }
+  return decoded;
+}
+
+Future<Map<String, dynamic>> _zkHttpGet(
+  String path, {
+  String? bearerToken,
+}) async {
+  final uri = Uri.parse('$backendBaseUrl$path');
+  final headers = <String, String>{};
+  if (bearerToken != null && bearerToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $bearerToken';
+  }
+  final response = await http.get(uri, headers: headers);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Exception(
+      'ZK GET $path failed ${response.statusCode}: ${response.body}',
+    );
+  }
+  final decoded = jsonDecode(response.body);
+  if (decoded is! Map<String, dynamic>) {
+    return <String, dynamic>{};
+  }
+  return decoded;
+}
+
+/// Fire-and-forget lazy metadata migration triggered after unlock.
+/// Also publishes the active MVK to `ZkActiveMvk` so downstream
+/// panels (crypto send / upload / chat) can encrypt local metadata
+/// without ambient state passing.
+void _scheduleMetadataMigration({required AppState app}) {
+  final token = app.sessionToken;
+  final vaultName = app.vaultName;
+  final vaultId = app.vaultId;
+  if (token == null || vaultName == null || vaultId == null) return;
+  final key = _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
+  if (key == null) return;
+
+  zk_mvk_store.ZkActiveMvk.set(
+    mvk: key, vaultId: vaultId, vaultHandle: vaultName,
+  );
+
+  unawaited(mmc.runMetadataMigrationBestEffort(
+    mvk: key,
+    sessionToken: token,
+    post: _zkHttpPost,
+    get: _zkHttpGet,
+  ));
+}
+
+/// Best-effort transparent adoption after successful legacy unlock.
+/// A failure never breaks the user's session. Returns true if the
+/// widget already navigated to the save screen (caller must skip its
+/// own navigation), false otherwise.
+Future<bool> _tryLegacyAdoptionBestEffort({
+  required BuildContext context,
+  required AppState app,
+  required String pin,
+}) async {
+  final token = app.sessionToken;
+  final vaultName = app.vaultName;
+  final vaultId = app.vaultId;
+  if (token == null || vaultName == null || vaultId == null) return false;
+  if (!_VaultCrypto.hasKeyFor(vaultId: vaultId, vaultName: vaultName)) {
+    return false;
+  }
+
+  try {
+    final SecretKey? legacyKey =
+        _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
+    if (legacyKey == null) return false;
+
+    final result = await legacy_adopt.tryAdoptLegacyVault(
+      legacyDisplayName: app.displayUsername ?? vaultName,
+      pin: pin,
+      legacyVaultKey: legacyKey,
+      sessionToken: token,
+      post: _zkHttpPost,
+      get: _zkHttpGet,
+    );
+
+    if (result.adopted && result.newVaultHandle != null && context.mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => VaultHandleSavedPage(
+            vaultHandle: result.newVaultHandle!,
+            continueRoute: '/chat',
+            wasAdoption: true,
+          ),
+        ),
+      );
+      return true;
+    }
+    return false;
+  } catch (_) {
+    // Adoption failure is non-fatal: legacy unlock succeeded and the
+    // user's session is intact. The next unlock will retry.
+    return false;
+  }
+}
+
 Future<bool> _deriveKeyAndUnlock({
   required AppState app,
   required String pin,
@@ -2902,9 +3416,10 @@ Future<bool> _deriveKeyAndUnlock({
     iterations: iterations,
   );
   app.markUnlocked();
-  
+
   await app.refreshAvailableVaults();
   await app.refreshNotifications();
+  _scheduleMetadataMigration(app: app);
   return true;
 }
 
@@ -2921,14 +3436,35 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
+  bool _isZkHandleInput = false;
 
-  
+
   bool _showForm = false;
 
   @override
   void initState() {
     super.initState();
     _scheduleGuard('initState');
+    _autofillCachedHandle();
+    vaultNameCtrl.addListener(_maybeMarkZkHandle);
+  }
+
+  void _maybeMarkZkHandle() {
+    final zk = vh.isValidVaultHandleDisplay(vaultNameCtrl.text.trim());
+    if (zk != _isZkHandleInput) {
+      setState(() => _isZkHandleInput = zk);
+    }
+  }
+
+  Future<void> _autofillCachedHandle() async {
+    try {
+      final cached = await legacy_adopt.readCachedVaultHandle();
+      if (!mounted) return;
+      if (cached != null && cached.isNotEmpty && vaultNameCtrl.text.isEmpty) {
+        vaultNameCtrl.text = cached;
+        _maybeMarkZkHandle();
+      }
+    } catch (_) {}
   }
 
   @override
@@ -3010,6 +3546,81 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     });
 
     final app = context.read<AppState>();
+
+    // If the entered identifier is a valid Vault Handle, route
+    // through ZK login. A valid Vault Handle MUST NOT silently fall
+    // back to legacy /auth/login — a wrong PIN here fails safely.
+    if (vh.isValidVaultHandleDisplay(vaultName)) {
+      try {
+        await OpaqueClient.ready();
+        final zk = ZkAuthService(_zkHttpPost);
+        final loginResult = await zk.loginVault(
+          vaultHandle: vaultName,
+          pin: pin,
+        );
+        await app.setSession(
+          token: loginResult.sessionToken,
+          vaultIdValue: loginResult.vaultId,
+          vaultNameValue: loginResult.vaultHandle,
+          displayUsernameValue: loginResult.displayName,
+        );
+        await _registerDeviceBestEffort(loginResult.sessionToken);
+        _VaultCrypto._keyCache[
+          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
+        ] = loginResult.mvk;
+        _VaultCrypto._pinCache[
+          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
+        ] = pin;
+        _VaultCrypto.setActiveVault(
+          vaultId: loginResult.vaultId,
+          vaultName: loginResult.vaultHandle,
+        );
+        app.markUnlocked();
+        try {
+          await app.refreshAvailableVaults();
+        } catch (_) {}
+        try {
+          await app.refreshNotifications();
+        } catch (_) {}
+        _scheduleMetadataMigration(app: app);
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(
+            legacy_adopt.prefsVaultHandleKey, loginResult.vaultHandle,
+          );
+        } catch (_) {}
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/chat');
+        return;
+      } on OpaqueUnavailable catch (e) {
+        if (!mounted) return;
+        setState(() {
+          err = 'Secure login module unavailable: ${e.reason}';
+          loading = false;
+        });
+        return;
+      } on RateLimitedException catch (e) {
+        if (!mounted) return;
+        setState(() {
+          err = e.message;
+          loading = false;
+        });
+        return;
+      } catch (e) {
+        // ZK login failure: do NOT retry via legacy /auth/login. A
+        // valid Vault Handle is a ZK-adopted vault; the wrong PIN
+        // must fail without exposing anything on the legacy path.
+        if (app.handleApiException(e)) return;
+        if (!mounted) return;
+        setState(() {
+          err = 'Vault ID or PIN is incorrect.';
+          loading = false;
+        });
+        return;
+      }
+    }
+
+    // Legacy path — vault_name + PIN. Reserved for un-adopted vaults.
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.authLogin(vaultName: vaultName, pin: pin);
@@ -3031,7 +3642,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       await _deriveKeyAndUnlock(app: app, pin: pin);
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
-      Navigator.pushReplacementNamed(context, '/chat');
+      final adoptedNav = await _tryLegacyAdoptionBestEffort(
+        context: context, app: app, pin: pin,
+      );
+      if (!mounted) return;
+      if (!adoptedNav) {
+        Navigator.pushReplacementNamed(context, '/chat');
+      }
     } on InvalidCredentialsException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -3214,46 +3831,82 @@ class _SignupPageState extends State<SignupPage> {
 
     setState(() => loading = true);
     final app = context.read<AppState>();
+
+    // ZK signup path: mints a fresh Vault Handle, runs OPAQUE
+    // registration, wraps a random MVK. The user's chosen
+    // display_username (or vault_name) is encrypted client-side and
+    // never sent to the server as plaintext.
     try {
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final result = await client.authSignup(
-        vaultName: vaultName,
+      await OpaqueClient.ready();
+
+      final zkChosenDisplay = displayUsername.isEmpty
+          ? vaultName
+          : displayUsername;
+
+      final zk = ZkAuthService(_zkHttpPost);
+      final result = await zk.registerVault(
+        displayName: zkChosenDisplay,
         pin: pin,
-        confirmPin: confirm,
-        displayUsername: displayUsername.isEmpty ? null : displayUsername,
-        acknowledgedIrrecoverable: true,
       );
-      final token = result['session_token']?.toString() ?? '';
-      final vaultId = result['vault_id']?.toString() ?? '';
-      final outName = result['vault_name']?.toString() ?? vaultName;
-      final display = result['display_username']?.toString() ??
-          (displayUsername.isEmpty ? null : displayUsername);
-      if (token.isEmpty || vaultId.isEmpty) {
-        throw Exception('Signup response missing session_token / vault_id');
-      }
+
       await app.setSession(
-        token: token,
-        vaultIdValue: vaultId,
-        vaultNameValue: outName,
-        displayUsernameValue: display,
+        token: result.sessionToken,
+        vaultIdValue: result.vaultId,
+        vaultNameValue: result.vaultHandle,
+        displayUsernameValue: zkChosenDisplay,
       );
-      await _registerDeviceBestEffort(token);
-      await _deriveKeyAndUnlock(app: app, pin: pin);
+      await _registerDeviceBestEffort(result.sessionToken);
+      _VaultCrypto._keyCache[
+        _VaultCrypto._ck(result.vaultId, result.vaultHandle)
+      ] = result.mvk;
+      _VaultCrypto._pinCache[
+        _VaultCrypto._ck(result.vaultId, result.vaultHandle)
+      ] = pin;
+      _VaultCrypto.setActiveVault(
+        vaultId: result.vaultId,
+        vaultName: result.vaultHandle,
+      );
+      app.markUnlocked();
+      try {
+        await app.refreshAvailableVaults();
+      } catch (_) {}
+      try {
+        await app.refreshNotifications();
+      } catch (_) {}
+
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/chat');
-    } on VaultNameTakenException catch (e) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => VaultHandleSavedPage(
+            vaultHandle: result.vaultHandle,
+            continueRoute: '/chat',
+            wasAdoption: false,
+          ),
+        ),
+      );
+      return;
+    } on OpaqueUnavailable catch (e) {
+      // If WASM did not load (rare), inform the user and stop —
+      // silently falling back to legacy signup would produce a
+      // plaintext-vault-name row that the user cannot log into via
+      // their new bundle later. Better to fail loudly.
       if (!mounted) return;
       setState(() {
-        vaultNameErr = e.message;
+        err = 'Secure signup module failed to load: ${e.reason}';
         loading = false;
       });
+      return;
     } on RateLimitedException catch (e) {
       if (!mounted) return;
       setState(() {
         err = e.message;
         loading = false;
       });
+      return;
     } catch (e) {
+      // ZK path failed on the server (409 vault_handle collision
+      // is astronomically unlikely; treat any other failure as an
+      // opportunity to surface an actionable message).
       if (app.handleApiException(e)) return;
       if (!mounted) return;
       setState(() {
@@ -3471,6 +4124,59 @@ class _UnlockPageState extends State<UnlockPage> {
       loading = true;
       err = null;
     });
+
+    // Cached lastVaultName is a valid Vault Handle => ZK path.
+    if (vh.isValidVaultHandleDisplay(name)) {
+      try {
+        await OpaqueClient.ready();
+        final zk = ZkAuthService(_zkHttpPost);
+        final loginResult = await zk.loginVault(vaultHandle: name, pin: pin);
+        await app.setSession(
+          token: loginResult.sessionToken,
+          vaultIdValue: loginResult.vaultId,
+          vaultNameValue: loginResult.vaultHandle,
+          displayUsernameValue: loginResult.displayName,
+        );
+        await _registerDeviceBestEffort(loginResult.sessionToken);
+        _VaultCrypto._keyCache[
+          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
+        ] = loginResult.mvk;
+        _VaultCrypto._pinCache[
+          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
+        ] = pin;
+        _VaultCrypto.setActiveVault(
+          vaultId: loginResult.vaultId,
+          vaultName: loginResult.vaultHandle,
+        );
+        app.markUnlocked();
+        try {
+          await app.refreshAvailableVaults();
+        } catch (_) {}
+        try {
+          await app.refreshNotifications();
+        } catch (_) {}
+        _scheduleMetadataMigration(app: app);
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/chat');
+        return;
+      } on OpaqueUnavailable catch (e) {
+        if (!mounted) return;
+        setState(() {
+          err = 'Secure unlock module unavailable: ${e.reason}';
+          loading = false;
+        });
+        return;
+      } catch (e) {
+        if (app.handleApiException(e)) return;
+        if (!mounted) return;
+        setState(() {
+          err = 'Vault ID or PIN is incorrect.';
+          loading = false;
+        });
+        return;
+      }
+    }
+
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.authLogin(vaultName: name, pin: pin);
@@ -3492,7 +4198,13 @@ class _UnlockPageState extends State<UnlockPage> {
       await _deriveKeyAndUnlock(app: app, pin: pin);
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
-      Navigator.pushReplacementNamed(context, '/chat');
+      final adoptedNav = await _tryLegacyAdoptionBestEffort(
+        context: context, app: app, pin: pin,
+      );
+      if (!mounted) return;
+      if (!adoptedNav) {
+        Navigator.pushReplacementNamed(context, '/chat');
+      }
     } on InvalidCredentialsException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -4311,6 +5023,64 @@ class ChatDashboardPage extends StatefulWidget {
   State<ChatDashboardPage> createState() => _ChatDashboardPageState();
 }
 
+class MemoryProposalStripResult {
+  final String strippedBuffer;
+  final String? jsonPayload;
+  const MemoryProposalStripResult({
+    required this.strippedBuffer,
+    required this.jsonPayload,
+  });
+}
+
+const String kMemoryProposalOpen = '<<VAULTAI_MEMORY_PROPOSAL>>';
+const String kMemoryProposalClose = '<<END>>';
+
+/// Scan `buffer` for the `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>`
+/// sentinel. If a full sentinel is found, returns the JSON payload
+/// and a buffer with the sentinel + one trailing blank line
+/// removed. If only the opening marker is present (mid-chunk), the
+/// buffer is truncated at the marker to keep the sentinel out of
+/// user view until the closing marker arrives. If `alreadyFinalized`
+/// is true, `jsonPayload` is returned as null even when the full
+/// sentinel is present, so the caller does not re-fire the finalize
+/// call — but the buffer is still stripped so repeated observations
+/// across SSE chunks do not leak the sentinel.
+///
+/// File-scope function (not a method) so the sentinel-strip logic
+/// can be tested in isolation without a widget harness.
+MemoryProposalStripResult extractAndStripMemoryProposal({
+  required String buffer,
+  required bool alreadyFinalized,
+}) {
+  final openIdx = buffer.indexOf(kMemoryProposalOpen);
+  if (openIdx < 0) {
+    return MemoryProposalStripResult(
+      strippedBuffer: buffer,
+      jsonPayload: null,
+    );
+  }
+  final closeIdx = buffer.indexOf(
+    kMemoryProposalClose,
+    openIdx + kMemoryProposalOpen.length,
+  );
+  if (closeIdx < 0) {
+    return MemoryProposalStripResult(
+      strippedBuffer: buffer.substring(0, openIdx),
+      jsonPayload: null,
+    );
+  }
+  final jsonStart = openIdx + kMemoryProposalOpen.length;
+  final jsonPayload = buffer.substring(jsonStart, closeIdx);
+  final afterClose = closeIdx + kMemoryProposalClose.length;
+  final tail = buffer.substring(afterClose)
+      .replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
+  final strippedBuffer = buffer.substring(0, openIdx) + tail;
+  return MemoryProposalStripResult(
+    strippedBuffer: strippedBuffer,
+    jsonPayload: alreadyFinalized ? null : jsonPayload,
+  );
+}
+
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
 
@@ -4588,6 +5358,7 @@ Future<void> _startSecureItemDeleteConfirmation(
     final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
     int? assistantIndex;
     String buffer = '';
+    bool memoryProposalFinalized = false;
 
     final stream = client.chatStream(
       encryptedMessage: encryptedMessage,
@@ -4605,6 +5376,22 @@ Future<void> _startSecureItemDeleteConfirmation(
           if (!mounted) return;
           buffer += decryptedChunk;
 
+          // ZK memory-proposal sentinel: strip it BEFORE any
+          // downstream parse/render and fire the ciphertext-first
+          // finalize exactly once. See _send() for the full policy.
+          final _stripped = extractAndStripMemoryProposal(
+            buffer: buffer,
+            alreadyFinalized: memoryProposalFinalized,
+          );
+          buffer = _stripped.strippedBuffer;
+          if (_stripped.jsonPayload != null &&
+              !memoryProposalFinalized) {
+            memoryProposalFinalized = true;
+            unawaited(_finalizeMemoryProposalBestEffort(
+              jsonPayload: _stripped.jsonPayload!,
+              authToken: token,
+            ));
+          }
 
           final structuredNow =
               _tryParseAssistantStructuredMessage(buffer);
@@ -4919,12 +5706,61 @@ Future<void> _showAddBeneficiaryDialog() async {
                               try {
                                 final pin = await _VaultCrypto.currentPinOrThrow();
                                 final client = VaultAIClient(baseUrl: backendBaseUrl);
+                                final labelText = labelCtrl.text.trim();
                                 final result = await client.createBeneficiary(
                                   vaultName: app.vaultName!,
                                   pin: pin,
-                                  label: labelCtrl.text.trim(),
+                                  label: labelText,
                                   authToken: token,
                                 );
+                                // ZK client-finalize: for ZK vaults,
+                                // /beneficiary/create wrote
+                                // passer_label = NULL. Encrypt the
+                                // label locally under metadataKey
+                                // and POST the ciphertext to
+                                // /vault/ciphertext/beneficiary-links
+                                // BEFORE surfacing the pairing code.
+                                // If the finalize fails, do NOT
+                                // silently claim success — refuse
+                                // to hand out the pairing code with
+                                // an unlabelled row (the beneficiary
+                                // list would be unreadable). Show
+                                // the error and let the user retry.
+                                if (zk_mvk_store.ZkActiveMvk.current()
+                                        != null) {
+                                  final linkId =
+                                      (result['link_id'] as num?)
+                                          ?.toInt();
+                                  if (linkId == null) {
+                                    setLocal(() {
+                                      createErr =
+                                          'Could not finalize the '
+                                          'label: missing link_id in '
+                                          'the create response.';
+                                      creating = false;
+                                    });
+                                    return;
+                                  }
+                                  final ok =
+                                      await tryZkFinalizeBeneficiaryLabelCiphertext(
+                                    baseUrl: backendBaseUrl,
+                                    authToken: token,
+                                    linkId: linkId,
+                                    label: labelText,
+                                  );
+                                  if (!ok) {
+                                    setLocal(() {
+                                      createErr =
+                                          'Could not save the '
+                                          'beneficiary label to '
+                                          'your vault. The pairing '
+                                          'code was not generated. '
+                                          'Please try again.';
+                                      creating = false;
+                                    });
+                                    return;
+                                  }
+                                }
                                 setLocal(() {
                                   pairingCode = result['pairing_code']?.toString();
                                   creating = false;
@@ -5934,6 +6770,107 @@ Widget _buildSettingsSection(bool isMobile) {
               const SizedBox(height: 12),
 
               InkWell(
+                key: const Key('settings_inheritance_pairing_tile'),
+                onTap: () => Navigator.of(context)
+                    .pushNamed('/inheritance-pairing'),
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF262626),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.family_restroom_outlined,
+                          color: Color(0xFFB4B4B4)),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Inheritance pairing',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Set up a beneficiary who can '
+                              'inherit this vault. Private (ZK) '
+                              'vaults use a client-side X25519 '
+                              'rewrap ceremony.',
+                              style: TextStyle(
+                                color: Color(0xFFB4B4B4),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          color: Color(0xFFB4B4B4)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              InkWell(
+                key: const Key('settings_recovery_kit_tile'),
+                onTap: () => Navigator.of(context)
+                    .pushNamed('/recovery-kit'),
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF262626),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.enhanced_encryption_outlined,
+                          color: Color(0xFFB4B4B4)),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Recovery Kit',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Opt-in: regain access if you lose '
+                              'your PIN. Seed stays on your '
+                              'device — VaultAI never sees it.',
+                              style: TextStyle(
+                                color: Color(0xFFB4B4B4),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          color: Color(0xFFB4B4B4)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              InkWell(
                 key: const Key('settings_help_and_faq_tile'),
                 onTap: () => openHelpCenter(
                   context, mode: hc.HelpCenterMode.signedIn,
@@ -6896,12 +7833,28 @@ await _loadVaultLogins();
       throw Exception('Upload succeeded but no file_id was returned.');
     }
 
+    // ZK client-finalize of server-inferred document metadata.
+    // For ZK vaults the backend INSERTs uploaded_files rows with
+    // detected_type / detected_service / asset_type = NULL. We
+    // reconstruct these fields locally from the filename + MIME
+    // type, encrypt under metadataKey, and POST the ciphertext to
+    // /vault/ciphertext/uploaded-files. Fire-and-forget: an
+    // upload succeeds even if the metadata finalize fails
+    // (fail-closed — no plaintext fallback).
+    unawaited(tryZkFinalizeInferredUploadMetadataBestEffort(
+      baseUrl: backendBaseUrl,
+      authToken: ctx.authToken,
+      fileId: fileId,
+      fileName: job.name,
+      contentType: job.mimeType,
+    ));
+
     return UploadResult(
       fileId: fileId,
       autoNamed: result['auto_named'] == true,
       message: result['message']?.toString(),
-      
-      
+
+
       renamed: result['renamed'] == true,
       originalSavedName: result['original_saved_name']?.toString(),
     );
@@ -7374,6 +8327,46 @@ await _loadVaultLogins();
       msgs.add(_Msg('assistant', text));
     });
     _scrollToBottom();
+  }
+
+  /// Encrypt the parsed memory proposal locally under the active
+  /// MVK-derived `memoryKey`, compute `memory_lookup_hash` via the
+  /// derived `memoryLookupKey`, and POST to the ciphertext-first
+  /// AI-memory endpoint. Fail-closed on any exception: no user-
+  /// visible error, no fallback plaintext write. The chat reply
+  /// already tells the user the memory was saved; a silent finalize
+  /// failure is the correct privacy failure mode (nothing saved),
+  /// and the user can re-issue the "remember this" instruction on
+  /// the next turn.
+  Future<void> _finalizeMemoryProposalBestEffort({
+    required String jsonPayload,
+    required String authToken,
+  }) async {
+    try {
+      final decoded = jsonDecode(jsonPayload);
+      if (decoded is! Map) return;
+      final mt = decoded['memory_type'];
+      final mk = decoded['memory_key'];
+      final mv = decoded['memory_value'];
+      final md = decoded['memory_event_date'];
+      if (mt is! String || mt.isEmpty) return;
+      if (mk is! String || mk.isEmpty) return;
+      if (mv is! String || mv.isEmpty) return;
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.tryZkFinalizeMemoryProposal(
+        baseUrl: backendBaseUrl,
+        authToken: authToken,
+        memoryType: mt,
+        memoryKey: mk,
+        memoryValue: mv,
+        memoryEventDate:
+            md is String && md.isNotEmpty ? md : null,
+      );
+    } catch (_) {
+      // Fail privacy-safe: never surface the parsed plaintext memory
+      // in an error banner. Silent no-op = memory not saved =
+      // correct ZK failure mode.
+    }
   }
 
   
@@ -9925,6 +10918,12 @@ await _loadVaultLogins();
       _scrollToBottom();
       int? assistantIndex;
       String buffer = '';
+      // Per-send ZK memory-proposal state. The backend emits the
+      // sentinel exactly once per turn, but SSE decoding may deliver
+      // it across chunks — track whether we've already fired the
+      // client finalize so we do not double-POST if the sentinel is
+      // re-observed after buffer growth.
+      bool memoryProposalFinalized = false;
 
       final encryptedMessage = await _VaultCrypto.encrypt(text);
 
@@ -9947,6 +10946,30 @@ await _loadVaultLogins();
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
             if (!mounted) return;
             buffer += decryptedChunk;
+
+            // ZK memory-proposal sentinel: the backend emits
+            // <<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>> at the head
+            // of the reply for ZK vaults. Strip it from the visible
+            // buffer BEFORE any downstream parse/render, and fire
+            // the client-side finalize (encrypt under memoryKey,
+            // compute memory_lookup_hash, POST to
+            // /vault/ciphertext/vault-ai-memory) exactly once. If
+            // finalize fails (network drop, tab close, crypto
+            // error) the memory is not saved — the correct ZK
+            // failure mode. No plaintext ever hits the DB.
+            final _stripped = extractAndStripMemoryProposal(
+              buffer: buffer,
+              alreadyFinalized: memoryProposalFinalized,
+            );
+            buffer = _stripped.strippedBuffer;
+            if (_stripped.jsonPayload != null &&
+                !memoryProposalFinalized) {
+              memoryProposalFinalized = true;
+              unawaited(_finalizeMemoryProposalBestEffort(
+                jsonPayload: _stripped.jsonPayload!,
+                authToken: authToken,
+              ));
+            }
 
 
 
@@ -10558,8 +11581,7 @@ await _loadVaultLogins();
                 ),
               ),
               const SizedBox(height: 16),
-              
-              
+              const ZkSemanticSearchUnavailableBanner(),
               if (_folderTreeData != null)
                 FolderBrowser(
                   treeData: _folderTreeData!,

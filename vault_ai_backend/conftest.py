@@ -8,6 +8,15 @@ import secrets
 import pytest
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "opaque_interop: cross-language OPAQUE wire-interop test; "
+        "requires the vaultai_opaque_server pyo3 wheel and Node runtime. "
+        "Auto-skipped in environments missing either.",
+    )
+
+
 if not os.environ.get("VAULT_SESSION_SECRET", "").strip():
     os.environ["VAULT_SESSION_SECRET"] = secrets.token_urlsafe(48)
 

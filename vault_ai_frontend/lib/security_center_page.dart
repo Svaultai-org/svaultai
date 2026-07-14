@@ -8,6 +8,7 @@ import 'l10n/app_localizations.dart';
 import 'services/app_release_controller.dart' as release;
 import 'ui/responsive.dart';
 import 'main.dart' show AppState, backendBaseUrl;
+import 'services/zk_active_mvk.dart' as zk_mvk_store;
 
 
 class SecurityCenterPage extends StatefulWidget {
@@ -633,7 +634,38 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
             badgeColor: kdfBadgeColor,
           ),
           _kvRow('Chunked file protection', chunked ? 'Active' : 'Inactive'),
-          _kvRow('Semantic search', semantic ? 'Enabled' : 'Disabled'),
+          // For ZK vaults, semantic search is *unavailable regardless
+          // of the toggle* because the backend refuses to index
+          // encrypted content into an embeddings vector store. The
+          // client-finalized semantic flow is not yet shipped —
+          // until it is, ZK users get filename search only. Reflect
+          // this honestly instead of implying indexing succeeded.
+          if (zk_mvk_store.ZkActiveMvk.current() != null)
+            _kvRow(
+              'Semantic search',
+              'Unavailable (private vault)',
+              badge: 'zk',
+              badgeColor: const Color(0xFF3B82F6),
+            )
+          else
+            _kvRow(
+                'Semantic search', semantic ? 'Enabled' : 'Disabled'),
+          if (zk_mvk_store.ZkActiveMvk.current() != null)
+            Padding(
+              key: const Key('zk_semantic_search_unavailable_note'),
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'This is a private (zero-knowledge) vault. VaultAI '
+                'cannot read your files\' content, so it cannot '
+                'build a semantic search index. Filename search '
+                'still works.',
+                style: const TextStyle(
+                  color: Color(0xFF90CAF9),
+                  fontSize: 12,
+                  height: 1.4,
+                ),
+              ),
+            ),
         ],
       ),
     );

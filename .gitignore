@@ -47,6 +47,38 @@ dist/
 build/
 *.egg-info/
 
+# Flutter tool cache
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Flutter Web release output (produced by scripts/build-web-release.sh)
+vault_ai_frontend/build/
+
+# Rust build artefacts (opaque_server_crate is built inside Docker,
+# never checked in as a compiled binary)
+**/target/
+**/*.rs.bk
+
+# pytest / mypy caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Flutter test JSON reporter dumps
+flutter_full_run*.json
+flutter_test_report*.json
+
+# Backend session/ephemeral tool-results (from local shell captures)
+tool-results/
+
+# Archives — never commit tarballs / zips of the working tree
+*.tar.gz
+*.tgz
+*.zip
+
 # Logs
 *.log
 

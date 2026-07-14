@@ -41,6 +41,8 @@ class _FakeMainnetClient extends VaultAIClient {
     required String fromAddress,
     required String destinationAddress,
     required String amountEth,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftSepoliaCount++;
     lastDraftBody = {
@@ -63,6 +65,8 @@ class _FakeMainnetClient extends VaultAIClient {
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftNetworkCount++;
     lastDraftBody = {

@@ -249,6 +249,93 @@ def upsert_memory_safe(
     return result.get("ok", False) if result else False
 
 
+def _update_memory_zk_ciphertext(
+    *,
+    vault_id: str,
+    memory_type: str,
+    lookup_hash: bytes,
+    payload_ciphertext: bytes,
+) -> Optional[dict]:
+    """Ciphertext-first memory write for a ZK/adopted vault.
+
+    Inserts a new memory row with only:
+      * vault_id, memory_type            (structural)
+      * payload_ciphertext               (opaque body)
+      * memory_lookup_hash               (32-byte HMAC for supersede)
+    Every readable legacy column (memory_key, memory_value,
+    memory_normalized_key, event_date, memory_language,
+    memory_script) is NULL from the outset.
+
+    Supersede runs against ``memory_lookup_hash`` — replaces any
+    active row for the same (vault_id, memory_lookup_hash).
+    """
+    if memory_type not in ALLOWED_MEMORY_TYPES:
+        return None
+    try:
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id FROM vault_ai_memory
+                          WHERE vault_id = %s
+                            AND memory_type = %s
+                            AND memory_lookup_hash = %s
+                            AND superseded_at IS NULL""",
+                    (vault_id, memory_type, lookup_hash),
+                )
+                prior = cur.fetchone()
+
+                cur.execute(
+                    """INSERT INTO vault_ai_memory
+                          (vault_id, memory_type,
+                           memory_key, memory_value, event_date,
+                           confidence, source,
+                           memory_language, memory_script,
+                           memory_normalized_key,
+                           payload_ciphertext, memory_lookup_hash)
+                       VALUES (%s, %s,
+                               NULL, NULL, NULL,
+                               1.0, 'chat',
+                               NULL, NULL,
+                               NULL,
+                               %s, %s)
+                       RETURNING id""",
+                    (vault_id, memory_type,
+                     payload_ciphertext, lookup_hash),
+                )
+                new_id = cur.fetchone()[0]
+
+                if prior is not None:
+                    prior_id = prior[0]
+                    cur.execute(
+                        """UPDATE vault_ai_memory
+                              SET superseded_at    = NOW(),
+                                  superseded_by_id = %s
+                            WHERE id = %s""",
+                        (new_id, prior_id),
+                    )
+                    conn.commit()
+                    return {
+                        "ok":     True,
+                        "status": "updated",
+                        "new_id": new_id,
+                    }
+                conn.commit()
+                return {
+                    "ok":     True,
+                    "status": "inserted",
+                    "new_id": new_id,
+                }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(
+            "[AI-MEMORY][ZK] insert failed vault=%s type=%s: %s",
+            vault_id, memory_type, e,
+        )
+        return None
+
+
 def update_memory_safe(
     vault_id: str,
     memory_type: str,
@@ -256,11 +343,31 @@ def update_memory_safe(
     memory_value: str,
     *,
     event_date: Optional[str] = None,
+    # ZK ciphertext-first mode: when both are supplied, the row is
+    # INSERTed with payload_ciphertext + memory_lookup_hash and
+    # every readable legacy column (memory_key, memory_value,
+    # memory_normalized_key) as NULL from the outset. Supersede /
+    # dedup runs against memory_lookup_hash instead of the plaintext
+    # (vault_id, memory_type, memory_key) tuple.
+    zk_lookup_hash: Optional[bytes] = None,
+    zk_payload_ciphertext: Optional[bytes] = None,
 ) -> Optional[dict]:
 
 
     if not is_enabled():
         return None
+    if (zk_lookup_hash is None) != (zk_payload_ciphertext is None):
+        # Mixed shape — refuse.
+        return None
+    if zk_lookup_hash is not None:
+        if len(zk_lookup_hash) != 32:
+            return None
+        return _update_memory_zk_ciphertext(
+            vault_id=vault_id,
+            memory_type=memory_type,
+            lookup_hash=zk_lookup_hash,
+            payload_ciphertext=zk_payload_ciphertext,
+        )
     try:
         if memory_type not in ALLOWED_MEMORY_TYPES:
             return None

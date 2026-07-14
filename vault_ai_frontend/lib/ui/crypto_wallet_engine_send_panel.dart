@@ -1,5 +1,6 @@
 
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,10 @@ import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
 import '../services/ethereum_transaction.dart';
+import '../services/zk_active_mvk.dart' as zk_mvk_store;
+import '../services/zk_outgoing_history_helper.dart'
+    as zk_history_helper;
+import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/evm_networks.dart';
 import '../services/local_outgoing_tx_store.dart';
 import '../services/recipient_qr_parser.dart';
@@ -915,6 +920,15 @@ class _CryptoWalletEngineSendPanelState
       _stage = _Stage.loadingDraft;
     });
     try {
+      // ZK ciphertext-first envelope for unlocked adopted vaults.
+      // Falls through to null (legacy plaintext) on legacy vaults.
+      final zkEnvelope = await zk_draft_helper.buildZkSendDraftEnvelope(
+        activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+        fromAddress: widget.fromAddress,
+        destinationAddress: destination,
+        asset: widget.asset,
+        amountEth: amount,
+      );
       final Map<String, dynamic> body = widget.isMainnet
           ? await widget.client.createCryptoWalletSendDraftNetwork(
               network: widget.network,
@@ -923,6 +937,8 @@ class _CryptoWalletEngineSendPanelState
               fromAddress: widget.fromAddress,
               destinationAddress: destination,
               amountEth: amount,
+              draftPayloadCiphertext: zkEnvelope?.draftPayloadCiphertext,
+              senderAddressLookupHash: zkEnvelope?.senderAddressLookupHash,
             )
           : await widget.client.createCryptoWalletSendDraft(
               asset: widget.asset,
@@ -930,6 +946,8 @@ class _CryptoWalletEngineSendPanelState
               fromAddress: widget.fromAddress,
               destinationAddress: destination,
               amountEth: amount,
+              draftPayloadCiphertext: zkEnvelope?.draftPayloadCiphertext,
+              senderAddressLookupHash: zkEnvelope?.senderAddressLookupHash,
             );
       final status = (body['status'] ?? '').toString();
       final walletEngine = (body['wallet_engine'] ?? '').toString();
@@ -1238,6 +1256,13 @@ class _CryptoWalletEngineSendPanelState
           reason: null,
         );
         _notifyOptimisticDebit(displayHash);
+        // Fire-and-forget ciphertext-first history persist. Failure
+        // NEVER blocks the send-success UI. A missed call is caught
+        // by lazy metadata migration on the next unlock.
+        unawaited(_persistZkOutgoingHistory(
+          signature: displayHash,
+          outcome: status,
+        ));
         setState(() {
           _submittedTxHash = displayHash;
           _broadcastStatus = status;
@@ -1502,6 +1527,38 @@ class _CryptoWalletEngineSendPanelState
       debit = draft.valueWei + draft.gasLimit * draft.gasPrice;
     }
     cb(txHash: displayHash, debitBaseUnits: debit);
+  }
+
+  /// Ciphertext-first outgoing-history persistence for a ZK vault.
+  /// Fires only when an MVK is active. A failure never surfaces as
+  /// a UI error — the row will still get encrypted lazily on next
+  /// unlock by the metadata-migration client.
+  Future<void> _persistZkOutgoingHistory({
+    required String signature,
+    required String outcome,
+  }) async {
+    try {
+      final draft = _draft;
+      if (draft == null || signature.isEmpty) return;
+      final env = await zk_history_helper.buildZkOutgoingHistoryEnvelope(
+        activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+        signature: signature,
+        senderAddress: draft.fromAddress,
+        destinationAddress: draft.destinationAddress,
+        asset: widget.asset,
+        amount: draft.amount,
+        outcome: outcome,
+      );
+      if (env == null) return;
+      await widget.client.postCryptoOutgoingHistoryCiphertext(
+        authToken: widget.authToken,
+        network: widget.isMainnet ? 'mainnet' : 'sepolia',
+        signatureLookupHash: env.signatureLookupHash,
+        outcomePayloadCiphertext: env.outcomePayloadCiphertext,
+      );
+    } catch (_) {
+      // Silently ignored — see method doc.
+    }
   }
 
   void _cancelOutgoingSubmittingRow(String txHash) {

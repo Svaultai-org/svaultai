@@ -10,6 +10,10 @@ import 'package:flutter/services.dart';
 import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
+import '../services/zk_active_mvk.dart' as zk_mvk_store;
+import '../services/zk_outgoing_history_helper.dart'
+    as zk_history_helper;
+import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/crypto_wallet_features.dart';
 import '../services/recipient_qr_parser.dart';
 import '../services/solana_transaction.dart';
@@ -371,6 +375,13 @@ class _CryptoWalletEngineSolanaSendPanelState
         return;
       }
       try {
+        final zkEnvelope = await zk_draft_helper.buildZkSendDraftEnvelope(
+          activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+          fromAddress: widget.fromAddress,
+          destinationAddress: destination,
+          asset: kSolanaAssetTicker,
+          amountSol: _amountController.text.trim(),
+        );
         final draft = await widget.client
             .createCryptoWalletSendDraftNetwork(
           network: kSolanaNetworkId,
@@ -379,6 +390,8 @@ class _CryptoWalletEngineSolanaSendPanelState
           fromAddress: widget.fromAddress,
           destinationAddress: destination,
           amountSol: _amountController.text.trim(),
+          draftPayloadCiphertext: zkEnvelope?.draftPayloadCiphertext,
+          senderAddressLookupHash: zkEnvelope?.senderAddressLookupHash,
         );
         final status = (draft['status'] ?? '').toString();
         if (status != 'draft_ready') {
@@ -595,6 +608,11 @@ class _CryptoWalletEngineSolanaSendPanelState
           signature: (broadcastResp['signature'] ?? '').toString(),
           draft: draft,
         );
+        unawaited(_persistZkOutgoingHistorySol(
+          draft: draft,
+          signature: (broadcastResp['signature'] ?? '').toString(),
+          outcome: broadcastStatus,
+        ));
         setState(() {
           _broadcastInFlight = false;
           _stage = _SolanaSendStage.submitted;
@@ -852,6 +870,33 @@ class _CryptoWalletEngineSolanaSendPanelState
       (draft['feeLamports'] ?? '0').toString(),
     ) ?? BigInt.zero;
     cb(signature: signature, debitLamports: valueLamports + feeLamports);
+  }
+
+  Future<void> _persistZkOutgoingHistorySol({
+    required Map<String, dynamic> draft,
+    required String signature,
+    required String outcome,
+  }) async {
+    try {
+      if (signature.isEmpty) return;
+      final env = await zk_history_helper.buildZkOutgoingHistoryEnvelope(
+        activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+        signature: signature,
+        senderAddress: widget.fromAddress,
+        destinationAddress:
+            (draft['destinationAddress'] ?? '').toString(),
+        asset: kSolanaAssetTicker,
+        amount: (draft['amountSol'] ?? draft['lamports'] ?? '').toString(),
+        outcome: outcome,
+      );
+      if (env == null) return;
+      await widget.client.postCryptoOutgoingHistoryCiphertext(
+        authToken: widget.authToken,
+        network: 'solana',
+        signatureLookupHash: env.signatureLookupHash,
+        outcomePayloadCiphertext: env.outcomePayloadCiphertext,
+      );
+    } catch (_) {}
   }
 
   String _defaultIdempotencyKey() {

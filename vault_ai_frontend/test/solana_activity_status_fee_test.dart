@@ -64,6 +64,8 @@ class _StatusSpyClient extends VaultAIClient {
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     return nextDraftResponse;
   }

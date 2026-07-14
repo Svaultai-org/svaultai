@@ -123,6 +123,100 @@ def register_draft(
         conn.close()
 
 
+def register_draft_ciphertext_first(
+    *,
+    vault_id: str,
+    network_id: str,
+    sender_address_lookup_hash: bytes,
+    draft_payload_ciphertext: bytes,
+    expiration_ms: int,
+    server_txid_hex: str,
+    ttl_secs: int = 60,
+) -> Optional[str]:
+    """Ciphertext-first TRON draft creation.
+
+    Persists ONLY:
+      * draft_id, vault_id, network_id (structural)
+      * expiration_ms (TRON transaction expiration — protocol-required
+        for the transaction to remain valid on chain; carries no
+        user identity beyond the timing window)
+      * server_txid_hex (TRON's canonical txID — a SHA-256 of the
+        raw transaction body; retained for chain-dedup and
+        broadcast idempotency; opaque to any DB reader without the
+        raw transaction)
+      * expires_at (draft-state-machine)
+      * sender_address_lookup_hash (keyed opaque wallet-lock key)
+      * draft_payload_ciphertext (sender_address, destination,
+        asset, token_contract_address, amount_base_units,
+        fee_limit_sun, raw_data_hex — AES-GCM under vault metadata
+        subkey)
+
+    Duplicate-draft check runs against sender_address_lookup_hash.
+    """
+    lock_seed = (
+        "tron:draft:ct:" + network_id + ":" +
+        sender_address_lookup_hash.hex()
+    )
+    draft_id = secrets.token_urlsafe(_DRAFT_ID_LEN_BYTES)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (lock_seed,),
+        )
+        cur.execute(
+            """
+            SELECT draft_id
+              FROM crypto_tron_drafts
+             WHERE network_id = %s
+               AND draft_payload_ciphertext IS NOT NULL
+               AND sender_address IS NULL
+               AND consumed_at IS NULL
+               AND expires_at > NOW()
+               AND vault_id = %s
+             LIMIT 1
+            """,
+            (network_id, str(vault_id)),
+        )
+        if cur.fetchone() is not None:
+            conn.rollback()
+            return None
+        cur.execute(
+            """
+            INSERT INTO crypto_tron_drafts (
+                draft_id, vault_id, network_id,
+                sender_address, asset,
+                destination_address, token_contract_address,
+                amount_base_units_str, fee_limit_sun_str,
+                raw_data_hex, expiration_ms, server_txid_hex,
+                expires_at,
+                draft_payload_ciphertext
+            ) VALUES (
+                %s, %s, %s,
+                NULL, NULL,
+                NULL, NULL,
+                NULL, NULL,
+                NULL, %s, %s,
+                NOW() + (INTERVAL '1 second' * %s),
+                %s
+            )
+            """,
+            (
+                draft_id, str(vault_id), network_id,
+                int(expiration_ms), server_txid_hex,
+                int(ttl_secs), draft_payload_ciphertext,
+            ),
+        )
+        conn.commit()
+        return draft_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def load_draft_readonly(
     *, draft_id: str, vault_id: str, network_id: str,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:

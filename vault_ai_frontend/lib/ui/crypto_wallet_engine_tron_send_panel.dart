@@ -10,6 +10,10 @@ import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
 import '../services/crypto_wallet_features.dart';
+import '../services/zk_active_mvk.dart' as zk_mvk_store;
+import '../services/zk_outgoing_history_helper.dart'
+    as zk_history_helper;
+import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/recipient_qr_parser.dart';
 import '../services/tron_transaction.dart';
 import '../services/tron_wallet.dart';
@@ -368,6 +372,13 @@ class _CryptoWalletEngineTronSendPanelState
         return;
       }
       try {
+        final zkEnvelope = await zk_draft_helper.buildZkSendDraftEnvelope(
+          activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+          fromAddress: widget.fromAddress,
+          destinationAddress: destination,
+          asset: kTronAssetTicker,
+          amountUsdt: _amountController.text.trim(),
+        );
         final draft = await widget.client
             .createCryptoWalletSendDraftNetwork(
           network: kTronNetworkId,
@@ -376,6 +387,8 @@ class _CryptoWalletEngineTronSendPanelState
           fromAddress: widget.fromAddress,
           destinationAddress: destination,
           amountUsdt: _amountController.text.trim(),
+          draftPayloadCiphertext: zkEnvelope?.draftPayloadCiphertext,
+          senderAddressLookupHash: zkEnvelope?.senderAddressLookupHash,
         );
         final status = (draft['status'] ?? '').toString();
         if (status != 'draft_ready') {
@@ -580,6 +593,11 @@ class _CryptoWalletEngineTronSendPanelState
           txHash: (broadcastResp['txHash'] ?? '').toString(),
           draft: draft,
         );
+        unawaited(_persistZkOutgoingHistoryTron(
+          draft: draft,
+          txHash: (broadcastResp['txHash'] ?? '').toString(),
+          outcome: broadcastStatus,
+        ));
         setState(() {
           _broadcastInFlight = false;
           _stage = _TronSendStage.submitted;
@@ -777,6 +795,34 @@ class _CryptoWalletEngineTronSendPanelState
       tokenBaseUnitsDebit: tokenAmount,
       sunFeeDebit: feeLimitSun,
     );
+  }
+
+  Future<void> _persistZkOutgoingHistoryTron({
+    required Map<String, dynamic> draft,
+    required String txHash,
+    required String outcome,
+  }) async {
+    try {
+      if (txHash.isEmpty) return;
+      final env = await zk_history_helper.buildZkOutgoingHistoryEnvelope(
+        activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+        signature: txHash,
+        senderAddress: widget.fromAddress,
+        destinationAddress:
+            (draft['destinationAddress'] ?? '').toString(),
+        asset: kTronAssetTicker,
+        amount: (draft['amountUsdt']
+            ?? draft['amountBaseUnits'] ?? '').toString(),
+        outcome: outcome,
+      );
+      if (env == null) return;
+      await widget.client.postCryptoOutgoingHistoryCiphertext(
+        authToken: widget.authToken,
+        network: 'tron',
+        signatureLookupHash: env.signatureLookupHash,
+        outcomePayloadCiphertext: env.outcomePayloadCiphertext,
+      );
+    } catch (_) {}
   }
 
   String _defaultIdempotencyKey() {

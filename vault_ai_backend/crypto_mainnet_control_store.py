@@ -182,6 +182,104 @@ def register_draft(
         conn.close()
 
 
+def register_draft_ciphertext_first(
+    *,
+    vault_id: str,
+    network_id: str,
+    sender_address_lookup_hash: bytes,
+    draft_payload_ciphertext: bytes,
+    nonce: int,
+    gas_limit: int,
+    gas_price: int,
+    chain_id: int,
+    ttl_secs: int = 300,
+) -> Optional[str]:
+    """Ciphertext-first mainnet (EVM) draft creation.
+
+    Persists ONLY:
+      * draft_id, vault_id, network_id (structural)
+      * nonce, gas_limit, gas_price_str, chain_id (protocol-required
+        for signed transaction correctness; carry no user identity)
+      * expires_at (state-machine)
+      * sender_address_lookup_hash (keyed opaque lookup for
+        wallet-lock + duplicate-draft detection)
+      * draft_payload_ciphertext (sender_address, destination,
+        asset, value_wei, transaction_to, data_hex — AES-GCM under
+        vault metadata subkey)
+
+    Duplicate check runs against sender_address_lookup_hash instead
+    of the plaintext lower-cased address. Advisory lock keyed on
+    the hash so single-flight semantics are preserved. `nonce`,
+    `gas_limit`, `gas_price`, `chain_id` remain readable because
+    they are protocol-required for the state machine and reveal no
+    user identity (nonce is a per-account counter derivable from
+    RPC; gas is derivable from network conditions; chain_id is a
+    public network constant).
+    """
+    lock_seed = (
+        "mainnet:draft:ct:" + network_id + ":" +
+        sender_address_lookup_hash.hex()
+    )
+    draft_id = secrets.token_urlsafe(_DRAFT_ID_LEN_BYTES)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (lock_seed,),
+        )
+        cur.execute(
+            """
+            SELECT draft_id
+              FROM crypto_mainnet_drafts
+             WHERE network_id = %s
+               AND draft_payload_ciphertext IS NOT NULL
+               AND sender_address_lower IS NULL
+               AND consumed_at IS NULL
+               AND expires_at > NOW()
+               AND vault_id = %s
+             LIMIT 1
+            """,
+            (network_id, str(vault_id)),
+        )
+        if cur.fetchone() is not None:
+            conn.rollback()
+            return None
+        cur.execute(
+            """
+            INSERT INTO crypto_mainnet_drafts (
+                draft_id, vault_id, network_id,
+                sender_address_lower, asset,
+                destination_address, value_wei_str, data_hex,
+                nonce, gas_limit, gas_price_str, chain_id,
+                transaction_to, expires_at,
+                draft_payload_ciphertext
+            ) VALUES (
+                %s, %s, %s,
+                NULL, NULL,
+                NULL, NULL, NULL,
+                %s, %s, %s, %s,
+                NULL,
+                NOW() + (INTERVAL '1 second' * %s),
+                %s
+            )
+            """,
+            (
+                draft_id, str(vault_id), network_id,
+                int(nonce), int(gas_limit),
+                str(int(gas_price)), int(chain_id),
+                int(ttl_secs), draft_payload_ciphertext,
+            ),
+        )
+        conn.commit()
+        return draft_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def load_draft_readonly(
     *, draft_id: str, vault_id: str, network_id: str,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:

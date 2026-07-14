@@ -258,6 +258,33 @@ def get_vault_id_for_name(vault_name: str) -> Optional[str]:
         conn.close()
 
 
+def is_vault_zk_adopted(vault_id: str) -> bool:
+    """Return True iff the vault has completed ZK adoption (has a
+    Vault Handle + wrapped MVK on file). ZK-adopted vaults must not
+    receive server-side plaintext persistence for user-derived
+    metadata: the client is expected to encrypt and finalize.
+
+    Safe: reads only structural columns (`vault_handle IS NOT NULL`).
+    Does not derive any Vault key material.
+    """
+    if not vault_id:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT (vault_handle IS NOT NULL)
+                 FROM vaults WHERE vault_id = %s LIMIT 1""",
+            (vault_id,),
+        )
+        row = cur.fetchone()
+        return bool(row[0]) if row is not None else False
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def verify_vault_pin(vault_id: str, pin: str) -> bytes:
 
 

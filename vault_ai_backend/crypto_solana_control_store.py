@@ -146,6 +146,102 @@ def register_draft(
         conn.close()
 
 
+def register_draft_ciphertext_first(
+    *,
+    vault_id: str,
+    network_id: str,
+    sender_address_lookup_hash: bytes,
+    draft_payload_ciphertext: bytes,
+    recent_blockhash: str,
+    last_valid_block_height: int,
+    ttl_secs: int = 60,
+) -> Optional[str]:
+    """Ciphertext-first Solana draft creation.
+
+    Persists ONLY:
+      * draft_id, vault_id, network_id (structural)
+      * recent_blockhash, last_valid_block_height (protocol-required
+        for the transaction to remain valid on the current fork)
+      * expires_at (state-machine)
+      * sender_address_lookup_hash (keyed lookup for wallet-lock +
+        duplicate-draft detection; opaque to any DB reader without
+        the vault key)
+      * draft_payload_ciphertext (destination / asset / value / fee,
+        AES-GCM under the vault's metadata subkey)
+
+    No readable user metadata. Duplicate-draft check runs against
+    sender_address_lookup_hash instead of the plaintext address.
+    Advisory lock keyed on the hash bytes.
+
+    The plaintext sender_address / destination_address / value /
+    fee / asset that the server used to construct the transaction
+    live only in the request handler's local variables for the
+    duration of the draft-create call and are discarded at
+    end-of-request.
+    """
+    lock_seed = (
+        "solana:draft:ct:" + network_id + ":" +
+        sender_address_lookup_hash.hex()
+    )
+    draft_id = secrets.token_urlsafe(_DRAFT_ID_LEN_BYTES)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (lock_seed,),
+        )
+        cur.execute(
+            """
+            SELECT draft_id
+              FROM crypto_solana_drafts
+             WHERE network_id = %s
+               AND draft_payload_ciphertext IS NOT NULL
+               AND sender_address IS NULL
+               AND consumed_at IS NULL
+               AND expires_at > NOW()
+               AND vault_id = %s
+             LIMIT 1
+            """,
+            (network_id, str(vault_id)),
+        )
+        if cur.fetchone() is not None:
+            conn.rollback()
+            return None
+        cur.execute(
+            """
+            INSERT INTO crypto_solana_drafts (
+                draft_id, vault_id, network_id,
+                sender_address, asset,
+                destination_address, value_lamports_str,
+                fee_lamports_str,
+                recent_blockhash, last_valid_block_height,
+                expires_at,
+                draft_payload_ciphertext
+            ) VALUES (
+                %s, %s, %s,
+                NULL, NULL,
+                NULL, NULL, NULL,
+                %s, %s,
+                NOW() + (INTERVAL '1 second' * %s),
+                %s
+            )
+            """,
+            (
+                draft_id, str(vault_id), network_id,
+                recent_blockhash, int(last_valid_block_height),
+                int(ttl_secs), draft_payload_ciphertext,
+            ),
+        )
+        conn.commit()
+        return draft_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def load_draft_readonly(
     *, draft_id: str, vault_id: str, network_id: str,
 ) -> tuple[Optional[dict[str, Any]], Optional[str]]:

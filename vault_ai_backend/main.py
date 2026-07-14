@@ -36,8 +36,15 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from routes.auth_routes import router as auth_router
+from routes.auth_zk_routes import router as auth_zk_router
 from routes.login_routes import router as login_router
 from routes.vault_manage_routes import router as vault_manage_router
+from routes.vault_metadata_migration_routes import (
+    router as vault_metadata_migration_router,
+)
+from routes.vault_ciphertext_write_routes import (
+    router as vault_ciphertext_write_router,
+)
 from vault_chat_memory import (
     get_memory,
     remember_service,
@@ -381,6 +388,9 @@ app = FastAPI(title="VaultAI Backend", lifespan=lifespan)
                                                                         
                                                                          
 app.include_router(auth_router)
+app.include_router(auth_zk_router)
+app.include_router(vault_metadata_migration_router)
+app.include_router(vault_ciphertext_write_router)
 app.include_router(login_router)
 app.include_router(vault_manage_router, prefix="/manage")
 
@@ -6866,10 +6876,19 @@ def save_uploaded_file(
     auto_save_login_credentials: bool = False,
     relative_path: Optional[str] = None,
     import_id: Optional[str] = None,
-                                                                  
-                                                              
+
+
     content_sha256: Optional[str] = None,
     duplicate_action: str = "prompt",
+    # ZK ciphertext-first mode: when both ciphertext blobs are
+    # supplied, the row is INSERTed with legacy readable columns
+    # (file_name, content_type, detected_type, detected_service,
+    # saved_name, asset_type) as NULL. Plaintext `file_name` /
+    # `content_type` still travel in RAM inside this handler for
+    # OCR/classification/sanitize helpers, but never touch the DB
+    # on the ZK path.
+    filename_ciphertext_bytes: Optional[bytes] = None,
+    content_type_ciphertext_bytes: Optional[bytes] = None,
 ):
 
 
@@ -7216,44 +7235,93 @@ def save_uploaded_file(
         stored_extracted_text = None
         extracted_text_encrypted = False
 
+    is_zk_upload = filename_ciphertext_bytes is not None
+
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            """
-            INSERT INTO uploaded_files (
-                id, vault_id, file_name, content_type,
-                file_size, encrypted_file_data, extracted_text,
-                extracted_text_encrypted,
-                detected_type, detected_service, autosaved_secret,
-                saved_name, asset_type, needs_naming, relative_path,
-                import_id, content_sha256, duplicate_of_file_id,
-                version_number
+        if is_zk_upload:
+            # ZK ciphertext-first: readable legacy columns are NULL
+            # from the initial INSERT. Server-inferred fields
+            # (detected_type, detected_service, asset_type) that
+            # would normally come from `classification` are also
+            # left NULL — document understanding runs later in
+            # the request and its output (if any) is encrypted and
+            # persisted via /vault/ciphertext/uploaded-files.
+            cursor.execute(
+                """
+                INSERT INTO uploaded_files (
+                    id, vault_id, file_name, content_type,
+                    file_size, encrypted_file_data, extracted_text,
+                    extracted_text_encrypted,
+                    detected_type, detected_service, autosaved_secret,
+                    saved_name, asset_type, needs_naming, relative_path,
+                    import_id, content_sha256, duplicate_of_file_id,
+                    version_number,
+                    file_name_ciphertext, content_type_ciphertext
+                )
+                VALUES (%s, %s, NULL, NULL,
+                        %s, %s, %s, %s,
+                        NULL, NULL, %s,
+                        NULL, NULL, %s, %s,
+                        %s, %s, %s,
+                        %s,
+                        %s, %s)
+                """,
+                (
+                    file_id,
+                    vault_id,
+                    file_size,
+                    encrypted_file_data,
+                    stored_extracted_text,
+                    extracted_text_encrypted,
+                    autosaved_secret,
+                    needs_naming,
+                    relative_path,
+                    import_id,
+                    safe_hash,
+                    duplicate_of_file_id,
+                    version_number,
+                    filename_ciphertext_bytes,
+                    content_type_ciphertext_bytes,
+                ),
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                file_id,
-                vault_id,
-                file_name,
-                content_type,
-                file_size,
-                encrypted_file_data,
-                stored_extracted_text,
-                extracted_text_encrypted,
-                classification["detected_type"],
-                classification["detected_service"],
-                autosaved_secret,
-                default_saved_name,
-                asset_type,
-                needs_naming,
-                relative_path,
-                import_id,
-                safe_hash,
-                duplicate_of_file_id,
-                version_number,
-            ),
-        )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO uploaded_files (
+                    id, vault_id, file_name, content_type,
+                    file_size, encrypted_file_data, extracted_text,
+                    extracted_text_encrypted,
+                    detected_type, detected_service, autosaved_secret,
+                    saved_name, asset_type, needs_naming, relative_path,
+                    import_id, content_sha256, duplicate_of_file_id,
+                    version_number
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    file_id,
+                    vault_id,
+                    file_name,
+                    content_type,
+                    file_size,
+                    encrypted_file_data,
+                    stored_extracted_text,
+                    extracted_text_encrypted,
+                    classification["detected_type"],
+                    classification["detected_service"],
+                    autosaved_secret,
+                    default_saved_name,
+                    asset_type,
+                    needs_naming,
+                    relative_path,
+                    import_id,
+                    safe_hash,
+                    duplicate_of_file_id,
+                    version_number,
+                ),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -8457,6 +8525,38 @@ def _create_notification(
 
 
     try:
+        from vault_core import is_vault_zk_adopted
+        # ZK/adopted vault: the backend must NOT persist readable
+        # notification title / body / user-derived metadata. Only
+        # the structural `kind` enum is readable. The next unlock
+        # of the client will encrypt any queued notification payload
+        # locally and POST to /vault/ciphertext/notifications.
+        # If no client finalization ever happens, the notification
+        # is silently dropped — the correct privacy tradeoff for a
+        # ZK vault whose user has not returned yet.
+        if is_vault_zk_adopted(vault_id):
+            conn = get_db()
+            try:
+                cursor = conn.cursor()
+                # Insert a shell row with structural `kind` only.
+                # The client's lazy-migration loop will pick this
+                # row up on next unlock, encrypt the queued
+                # server-side proposal, and finalize ciphertext.
+                # Until then, the plaintext title/body do NOT touch
+                # the DB.
+                cursor.execute(
+                    """
+                    INSERT INTO notifications
+                        (vault_id, kind, title, body, metadata)
+                    VALUES (%s, %s, NULL, NULL, NULL)
+                    """,
+                    (vault_id, kind),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            return
+
         conn = get_db()
         try:
             cursor = conn.cursor()
@@ -8685,6 +8785,16 @@ async def beneficiary_create_endpoint(
     wrapped = encrypt_bytes(passer_vault_key, wrap_key)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=PAIRING_CODE_TTL_MINUTES)
 
+    # ZK/adopted vault: never persist the readable passer_label.
+    # Client is expected to POST the ciphertext label to
+    # /vault/ciphertext/beneficiary-links immediately after
+    # /beneficiary/create returns. Until finalized the row has
+    # passer_label = NULL. Legacy un-adopted vaults keep the
+    # plaintext write.
+    from vault_core import is_vault_zk_adopted
+    _zk = is_vault_zk_adopted(vault_id)
+    _stored_label = None if _zk else label
+
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -8697,7 +8807,7 @@ async def beneficiary_create_endpoint(
             VALUES (%s, %s, %s, %s, %s, 'pairing_pending')
             RETURNING id
             """,
-            (vault_id, label, code_hash, expires_at, wrapped),
+            (vault_id, _stored_label, code_hash, expires_at, wrapped),
         )
         row = cursor.fetchone()
         conn.commit()
@@ -9754,6 +9864,11 @@ async def upload_file_endpoint(
                                                                    
     content_sha256: Optional[str] = Form(None),
     duplicate_action: Optional[str] = Form(None),
+    # ZK ciphertext-first mode. When supplied, save_uploaded_file
+    # writes the row with readable metadata columns NULL from the
+    # initial INSERT (no cleanup dependency).
+    filename_ciphertext: Optional[str] = Form(None),
+    content_type_ciphertext: Optional[str] = Form(None),
     file: UploadFile = File(...),
     principal = Depends(verify_trusted_device),
 ):
@@ -9765,12 +9880,28 @@ async def upload_file_endpoint(
         file_bytes = await file.read()
         resolved_content_type = content_type or file.content_type
 
-                                                                  
         auto_save_login_credentials = _user_requested_login_extraction(
             accompanying_text,
         )
 
         safe_relative_path = _sanitize_relative_path(relative_path)
+
+        # Decode ZK ciphertext fields (base64url) — HTTP 400 on
+        # malformed input; skipping cleanly when both are absent.
+        import base64 as _b64
+        import binascii as _binascii
+        def _b64u(val: Optional[str]) -> Optional[bytes]:
+            if not val:
+                return None
+            try:
+                return _b64.urlsafe_b64decode(val + "=" * (-len(val) % 4))
+            except (_binascii.Error, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="ciphertext must be base64url",
+                )
+        _fname_ct_bytes = _b64u(filename_ciphertext)
+        _ctype_ct_bytes = _b64u(content_type_ciphertext)
 
         result = save_uploaded_file(
             vault_id=vault_id,
@@ -9785,6 +9916,8 @@ async def upload_file_endpoint(
             import_id=import_id,
             content_sha256=content_sha256,
             duplicate_action=duplicate_action or "prompt",
+            filename_ciphertext_bytes=_fname_ct_bytes,
+            content_type_ciphertext_bytes=_ctype_ct_bytes,
         )
 
                                                                        
@@ -11251,6 +11384,7 @@ def _handle_remember_fact(
         slugify_memory_key, update_memory_safe,
     )
     from memory_recall import label_for_type
+    from vault_core import is_vault_zk_adopted
     if not is_enabled():
         return None
     mt = (memory_type or "").strip().lower()
@@ -11260,12 +11394,39 @@ def _handle_remember_fact(
     if not val:
         return None
     if is_forbidden_memory_value(val):
-                                                                   
+
         return ("I shouldn't remember secret-looking data. "
                 "Please save secrets via the vault instead.")
     key = slugify_memory_key(memory_key) or slugify_memory_key(val)
     if not key:
         return None
+
+    # ZK/adopted-vault boundary: the backend MUST NOT persist
+    # readable memory_key / memory_value for a ZK vault. Emit a
+    # ``memory_proposal`` sentinel prefix that the Flutter chat
+    # SSE handler recognizes, encrypts client-side under memoryKey,
+    # computes memory_lookup_hash locally, and POSTs to
+    # /vault/ciphertext/vault-ai-memory. If the client fails to
+    # finalize (network drop, tab close), the memory is not saved
+    # — the correct privacy tradeoff. No server-side plaintext
+    # persistence fallback.
+    if is_vault_zk_adopted(vault_id):
+        _proposal_json = json.dumps(
+            {
+                "memory_type": mt,
+                "memory_key": key,
+                "memory_value": val,
+                "memory_event_date": memory_event_date,
+            },
+            separators=(",", ":"),
+        )
+        label = label_for_type(mt)
+        return (
+            f"<<VAULTAI_MEMORY_PROPOSAL>>{_proposal_json}<<END>>\n\n"
+            f"Got it.\n\n{label}: {val}\n\n"
+            "I'll remember that for this vault (encrypted locally)."
+        )
+
     result = update_memory_safe(
         vault_id, mt, key, val,
         event_date=memory_event_date,

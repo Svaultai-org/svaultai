@@ -60,6 +60,8 @@ class _TrackingClient extends VaultAIClient {
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftNetworkCalls++;
     return draftResponse ?? const {'status': 'draft_unavailable'};
@@ -72,6 +74,8 @@ class _TrackingClient extends VaultAIClient {
     required String fromAddress,
     required String destinationAddress,
     required String amountEth,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftLegacyCalls++;
     return draftResponse ?? const {'status': 'draft_unavailable'};

@@ -42,15 +42,22 @@ class ChunkInitRequest(BaseModel):
     total_bytes: int
     chunk_size: int
     content_sha256: Optional[str] = None
-                                                                   
-                                                                    
+
+
     is_batch_upload: bool = False
-                                                             
-                                                                   
+
+
     relative_path: Optional[str] = None
-                                                                       
-                                                                    
+
+
     import_id: Optional[str] = None
+    # ZK ciphertext-first mode. When present, uploaded_files row is
+    # created with the ciphertext columns populated and the legacy
+    # plaintext columns as NULL from the outset. `filename` above
+    # remains transiently in request memory only (needed by
+    # sanitize/normalize helpers) and is not written to the DB.
+    filename_ciphertext: Optional[str] = None
+    content_type_ciphertext: Optional[str] = None
 
 
 class ChunkFinalizeRequest(BaseModel):
@@ -271,36 +278,93 @@ async def upload_file_init(
             conn.rollback()
             raise
 
-        cur.execute(
-            """
-            INSERT INTO uploaded_files (
-                id, vault_id, file_name, content_type, file_size,
-                encrypted_file_data, extracted_text, extracted_text_encrypted,
-                detected_type, detected_service, autosaved_secret,
-                saved_name, asset_type, needs_naming,
-                storage_mode, chunk_size, chunk_count, upload_status,
-                relative_path, import_id
-            ) VALUES (
-                %s, %s, %s, %s, %s,
-                NULL, NULL, FALSE,
-                %s, %s, FALSE,
-                %s, %s, %s,
-                'chunks', %s, %s, 'uploading',
-                %s, %s
+        # ZK ciphertext-first insert. When the client supplies
+        # ciphertext for the readable metadata fields, the row is
+        # created with the *_ciphertext columns populated and the
+        # legacy plaintext columns NULL. Server never persists the
+        # plaintext even transiently. The `payload.filename` (and
+        # `payload.content_type`) are still available in request
+        # memory for name-sanitization / audit only; they never
+        # reach the DB when ZK ciphertext is present.
+        import base64 as _b64
+        import binascii as _binascii
+        def _b64u_decode(val: Optional[str]) -> Optional[bytes]:
+            if not val:
+                return None
+            try:
+                return _b64.urlsafe_b64decode(val + "=" * (-len(val) % 4))
+            except (_binascii.Error, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="ciphertext must be base64url",
+                )
+
+        filename_ct = _b64u_decode(payload.filename_ciphertext)
+        content_type_ct = _b64u_decode(payload.content_type_ciphertext)
+        is_zk_upload = filename_ct is not None
+
+        if is_zk_upload:
+            cur.execute(
+                """
+                INSERT INTO uploaded_files (
+                    id, vault_id, file_name, content_type, file_size,
+                    encrypted_file_data, extracted_text,
+                    extracted_text_encrypted,
+                    detected_type, detected_service, autosaved_secret,
+                    saved_name, asset_type, needs_naming,
+                    storage_mode, chunk_size, chunk_count, upload_status,
+                    relative_path, import_id,
+                    file_name_ciphertext, content_type_ciphertext
+                ) VALUES (
+                    %s, %s, NULL, NULL, %s,
+                    NULL, NULL, FALSE,
+                    NULL, NULL, FALSE,
+                    NULL, NULL, %s,
+                    'chunks', %s, %s, 'uploading',
+                    %s, %s,
+                    %s, %s
+                )
+                """,
+                (
+                    file_id, vault_id, payload.total_bytes,
+                    needs_naming_default,
+                    payload.chunk_size, chunk_count,
+                    safe_relative_path,
+                    payload.import_id,
+                    filename_ct, content_type_ct,
+                ),
             )
-            """,
-            (
-                file_id, vault_id, payload.filename,
-                payload.content_type, payload.total_bytes,
-                "file", "general",
-                default_saved_name,
-                "file",
-                needs_naming_default,
-                payload.chunk_size, chunk_count,
-                safe_relative_path,
-                payload.import_id,
-            ),
-        )
+        else:
+            cur.execute(
+                """
+                INSERT INTO uploaded_files (
+                    id, vault_id, file_name, content_type, file_size,
+                    encrypted_file_data, extracted_text, extracted_text_encrypted,
+                    detected_type, detected_service, autosaved_secret,
+                    saved_name, asset_type, needs_naming,
+                    storage_mode, chunk_size, chunk_count, upload_status,
+                    relative_path, import_id
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    NULL, NULL, FALSE,
+                    %s, %s, FALSE,
+                    %s, %s, %s,
+                    'chunks', %s, %s, 'uploading',
+                    %s, %s
+                )
+                """,
+                (
+                    file_id, vault_id, payload.filename,
+                    payload.content_type, payload.total_bytes,
+                    "file", "general",
+                    default_saved_name,
+                    "file",
+                    needs_naming_default,
+                    payload.chunk_size, chunk_count,
+                    safe_relative_path,
+                    payload.import_id,
+                ),
+            )
 
                                                                             
         try:

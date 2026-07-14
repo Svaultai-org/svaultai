@@ -43,6 +43,8 @@ class _SolanaSendSpyClient extends VaultAIClient {
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftBodies.add({
       'network':            network,

@@ -37,18 +37,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
         gcc \
+        curl \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 
 
+# Rust toolchain (pinned) — required to build the pyo3 wrapper around
+# Meta's audited opaque-ke crate (RFC 9807). No custom crypto lives
+# in the container; the wrapper is a thin byte-in/byte-out shim.
+ENV RUST_VERSION=1.97.0
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain "${RUST_VERSION}" \
+    && rustc --version \
+    && cargo --version
+
+
+
 RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV PATH="/opt/venv/bin:$PATH:/usr/local/cargo/bin"
 
 
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir maturin>=1.14 \
     && pip install --no-cache-dir -r requirements.txt
+
+
+
+# Build and install the pyo3 opaque-ke wrapper wheel.
+# Source is under vault_ai_backend/opaque_server_crate/. Building it
+# inside the container avoids WDAC / MSVC issues on Windows dev boxes
+# and ensures the shipped wheel matches the production Linux runtime.
+COPY opaque_server_crate/ ./opaque_server_crate/
+RUN cd opaque_server_crate \
+    && maturin build --release --interpreter /opt/venv/bin/python \
+    && /opt/venv/bin/pip install --no-cache-dir --force-reinstall \
+        target/wheels/vaultai_opaque_server-*.whl \
+    && /opt/venv/bin/python -c "import vaultai_opaque_server; \
+         setup = vaultai_opaque_server.server_setup_new(); \
+         assert len(setup) > 0; \
+         print('[BUILDER] vaultai_opaque_server smoke test OK bytes=' + str(len(setup)))"
 
 
 

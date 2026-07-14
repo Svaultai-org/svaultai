@@ -84,6 +84,8 @@ class _FakeCanaryClient extends VaultAIClient {
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftCallCount++;
     return draftResponse;
@@ -96,6 +98,8 @@ class _FakeCanaryClient extends VaultAIClient {
     required String fromAddress,
     required String destinationAddress,
     required String amountEth,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftCallCount++;
     return draftResponse;

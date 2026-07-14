@@ -5,6 +5,9 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
+import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
+import 'services/zk_active_mvk.dart' as zk_mvk_store;
+
 
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
@@ -2134,6 +2137,23 @@ class VaultAIClient {
     String? note,
     String? title,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final zkResp = await tryZkVaultItemCiphertextUpsert(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        itemType: 'wallet_account',
+        service: 'crypto:$asset',
+        payload: <String, dynamic>{
+          'asset':         asset,
+          'walletLabel':   walletLabel,
+          'publicAddress': publicAddress,
+          if (network != null && network.isNotEmpty) 'network': network,
+          if (note != null && note.isNotEmpty) 'note': note,
+          if (title != null && title.isNotEmpty) 'title': title,
+        },
+      );
+      if (zkResp != null) return zkResp;
+    }
     final uri = Uri.parse('$baseUrl/crypto/save-wallet-profile');
     final body = <String, dynamic>{
       'pin':           pin,
@@ -2182,6 +2202,25 @@ class VaultAIClient {
     String? note,
     String? title,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final zkResp = await tryZkVaultItemCiphertextUpsert(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        itemType: 'crypto_sensitive_backup',
+        service: 'crypto:${asset ?? "unknown"}',
+        payload: <String, dynamic>{
+          'walletLabel':      walletLabel,
+          'secretType':       secretType,
+          'secretValue':      secretValue,
+          'warningConfirmed': warningConfirmed,
+          if (asset != null && asset.isNotEmpty) 'asset': asset,
+          if (network != null && network.isNotEmpty) 'network': network,
+          if (note != null && note.isNotEmpty) 'note': note,
+          if (title != null && title.isNotEmpty) 'title': title,
+        },
+      );
+      if (zkResp != null) return zkResp;
+    }
     final uri = Uri.parse('$baseUrl/crypto/save-sensitive-backup');
     final body = <String, dynamic>{
       'pin':              pin,
@@ -2233,6 +2272,28 @@ class VaultAIClient {
     String? amountText,
     String? dateText,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final zkResp = await tryZkVaultItemCiphertextUpsert(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        itemType: 'crypto_note',
+        service: 'crypto:${asset ?? "note"}',
+        payload: <String, dynamic>{
+          'title':      title,
+          'note':       note,
+          'noteType':   noteType,
+          if (asset != null && asset.isNotEmpty) 'asset': asset,
+          if (network != null && network.isNotEmpty) 'network': network,
+          if (walletLabel != null && walletLabel.isNotEmpty)
+            'walletLabel': walletLabel,
+          if (txHash != null && txHash.isNotEmpty) 'txHash': txHash,
+          if (amountText != null && amountText.isNotEmpty)
+            'amountText': amountText,
+          if (dateText != null && dateText.isNotEmpty) 'dateText': dateText,
+        },
+      );
+      if (zkResp != null) return zkResp;
+    }
     final uri = Uri.parse('$baseUrl/crypto/save-note');
     final body = <String, dynamic>{
       'pin':      pin,
@@ -2362,7 +2423,29 @@ class VaultAIClient {
       request.fields['duplicate_action'] = duplicateAction;
     }
 
-    
+    // ZK ciphertext-first mode. Encrypt filename + content_type
+    // BEFORE the multipart POST and add them as form fields. The
+    // server INSERTs the row with legacy readable columns NULL
+    // from the initial write — no cleanup dependency.
+    final inlineMvk = zk_mvk_store.ZkActiveMvk.current();
+    if (inlineMvk != null) {
+      final hierarchy =
+          vault_key_hierarchy.VaultKeyHierarchy(inlineMvk);
+      final metaKey = await hierarchy.metadataKey();
+      final fnCt = await vault_key_hierarchy.aesGcmWrap(
+        metaKey, utf8.encode(filename),
+      );
+      request.fields['filename_ciphertext'] =
+          vault_key_hierarchy.b64urlEncode(fnCt);
+      if (contentType != null && contentType.isNotEmpty) {
+        final ctCt = await vault_key_hierarchy.aesGcmWrap(
+          metaKey, utf8.encode(contentType),
+        );
+        request.fields['content_type_ciphertext'] =
+            vault_key_hierarchy.b64urlEncode(ctCt);
+      }
+    }
+
     if (accompanyingText != null && accompanyingText.isNotEmpty) {
       request.fields['accompanying_text'] = accompanyingText;
     }
@@ -2423,11 +2506,9 @@ class VaultAIClient {
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid upload response format from backend');
     }
-
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> listFolder({
     required String authToken,
     String? path,
@@ -2640,6 +2721,40 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    // ZK ciphertext-first fast path. Encrypts saved_name under the
+    // vault's metadata subkey and POSTs to
+    // /vault/ciphertext/uploaded-files so no readable saved_name
+    // touches persistent server storage for an adopted vault.
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk != null) {
+      final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+      final metaKey = await hierarchy.metadataKey();
+      final savedNameCt = await vault_key_hierarchy.aesGcmWrap(
+        metaKey, utf8.encode(savedName),
+      );
+      final zkUri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
+      final zkResp = await http.post(
+        zkUri,
+        headers: <String, String>{
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $authToken',
+        },
+        body: jsonEncode(<String, dynamic>{
+          'file_id': fileId,
+          'saved_name_ciphertext':
+              vault_key_hierarchy.b64urlEncode(savedNameCt),
+        }),
+      );
+      if (zkResp.statusCode != 200) {
+        throw Exception(
+          'ZK ciphertext saved_name write failed '
+          '(${zkResp.statusCode})',
+        );
+      }
+      final decoded = jsonDecode(zkResp.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      throw Exception('Invalid /vault/ciphertext/uploaded-files response');
+    }
     final uri = Uri.parse('$baseUrl/name-file');
 
     final request = http.MultipartRequest('POST', uri);
@@ -2815,6 +2930,29 @@ class VaultAIClient {
         'import_id': importId,
     };
 
+    // ZK ciphertext-first mode: encrypt filename + content_type
+    // BEFORE the initial request. The backend INSERTs the row with
+    // the *_ciphertext columns populated and the legacy plaintext
+    // columns as NULL from the start. No transient plaintext
+    // persistence, no post-write cleanup needed.
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk != null) {
+      final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+      final metaKey = await hierarchy.metadataKey();
+      final fnCt = await vault_key_hierarchy.aesGcmWrap(
+        metaKey, utf8.encode(filename),
+      );
+      body['filename_ciphertext'] =
+          vault_key_hierarchy.b64urlEncode(fnCt);
+      if (contentType != null && contentType.isNotEmpty) {
+        final ctCt = await vault_key_hierarchy.aesGcmWrap(
+          metaKey, utf8.encode(contentType),
+        );
+        body['content_type_ciphertext'] =
+            vault_key_hierarchy.b64urlEncode(ctCt);
+      }
+    }
+
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -2822,7 +2960,7 @@ class VaultAIClient {
     );
 
     if (response.statusCode == 404) {
-      
+
       throw const ChunkedUploadNotAvailableException();
     }
     if (response.statusCode != 200) {
@@ -3146,6 +3284,30 @@ Future<Map<String, dynamic>> updateVaultSecureItem({
   String? newService,
   Map<String, dynamic>? fields,
 }) async {
+  // ZK ciphertext-first fast path. When an unlocked MVK is active
+  // (i.e. this is a ZK/adopted vault), the item is written to
+  // /vault/ciphertext/vault-items instead of /update-secure-item —
+  // no readable item_type / service / payload leaves the client.
+  if (zk_mvk_store.ZkActiveMvk.current() != null) {
+    final zkResp = await tryZkVaultItemCiphertextUpsert(
+      baseUrl: baseUrl,
+      authToken: authToken,
+      itemType: itemType,
+      service: (newService != null && newService.trim().isNotEmpty)
+          ? newService.trim()
+          : oldService,
+      payload: <String, dynamic>{
+        'old_service': oldService,
+        if (newService != null && newService.trim().isNotEmpty)
+          'new_service': newService.trim(),
+        if (fields != null) 'fields': fields,
+      },
+    );
+    if (zkResp != null) {
+      return zkResp;
+    }
+  }
+
   final uri = Uri.parse('$baseUrl/update-secure-item');
   final body = <String, dynamic>{
     'vault_name':  vaultName,
@@ -3178,6 +3340,186 @@ Future<Map<String, dynamic>> updateVaultSecureItem({
   }
 
   return jsonDecode(response.body) as Map<String, dynamic>;
+}
+
+
+/// ZK ciphertext-first vault-item upsert helper. Called by
+/// updateVaultSecureItem / saveCryptoWalletProfile / etc when an
+/// unlocked MVK is available. Encrypts item_type + service + full
+/// payload JSON under the vault's metadata subkey and POSTs to
+/// /vault/ciphertext/vault-items. Returns null when no MVK is
+/// active (caller falls through to legacy plaintext endpoint).
+///
+/// This function is intentionally file-scope (not a method on
+/// VaultAIClient) so it can be reused by any write path that
+/// converges on a `(item_type, service, payload_json)` triple.
+/// ZK ciphertext-first AI-memory finalize.
+///
+/// Called by the chat SSE handler when the backend emits a
+/// `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>` sentinel. Derives
+/// `memoryKey` + `memoryLookupKey` from the active MVK, encrypts
+/// the full memory proposal payload, computes the keyed lookup
+/// hash locally, and POSTs to /vault/ciphertext/vault-ai-memory.
+/// The backend accepts only ciphertext + hash; the user's memory
+/// key/value never touches server storage in readable form.
+///
+/// Returns true iff the finalize POST succeeded. False (with the
+/// exception swallowed by the caller) means the memory was NOT
+/// saved — correct privacy tradeoff on network/crypto failure.
+Future<bool> tryZkFinalizeMemoryProposal({
+  required String baseUrl,
+  required String authToken,
+  required String memoryType,
+  required String memoryKey,
+  required String memoryValue,
+  String? memoryEventDate,
+}) async {
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) return false;
+  final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+  final memoryK = await hierarchy.memoryKey();
+  final memoryLookup = await hierarchy.memoryLookupKey();
+
+  final payloadJson = jsonEncode(<String, dynamic>{
+    'memory_key': memoryKey,
+    'memory_value': memoryValue,
+    if (memoryEventDate != null && memoryEventDate.isNotEmpty)
+      'memory_event_date': memoryEventDate,
+  });
+  final payloadCt = await vault_key_hierarchy.aesGcmWrap(
+    memoryK, utf8.encode(payloadJson),
+  );
+  final lookupHash = await vault_key_hierarchy.keyedLookupHash(
+    memoryLookup, utf8.encode(memoryKey),
+  );
+
+  final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+  final resp = await http.post(
+    uri,
+    headers: <String, String>{
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $authToken',
+    },
+    body: jsonEncode(<String, dynamic>{
+      'memory_type': memoryType,
+      'memory_lookup_hash':
+          vault_key_hierarchy.b64urlEncode(lookupHash),
+      'payload_ciphertext':
+          vault_key_hierarchy.b64urlEncode(payloadCt),
+    }),
+  );
+  return resp.statusCode == 200;
+}
+
+
+/// ZK ciphertext-first uploaded_files metadata write. Called right
+/// after an upload path returns a file_id; encrypts every readable
+/// metadata field under the vault's metadata subkey and POSTs the
+/// ciphertext to /vault/ciphertext/uploaded-files. That endpoint
+/// writes the ciphertext columns AND NULLs the corresponding legacy
+/// plaintext columns atomically. Fails-closed on ZK path.
+Future<void> tryZkUploadedFileCiphertextUpdate({
+  required String baseUrl,
+  required String authToken,
+  required String fileId,
+  String? fileName,
+  String? savedName,
+  String? contentType,
+  String? detectedType,
+  String? detectedService,
+  String? assetType,
+}) async {
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) return;
+  final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+  final metaKey = await hierarchy.metadataKey();
+  Future<String?> ct(String? plaintext) async {
+    if (plaintext == null || plaintext.isEmpty) return null;
+    final bytes = await vault_key_hierarchy.aesGcmWrap(
+      metaKey, utf8.encode(plaintext),
+    );
+    return vault_key_hierarchy.b64urlEncode(bytes);
+  }
+  final body = <String, dynamic>{'file_id': fileId};
+  final fnCt = await ct(fileName);
+  if (fnCt != null) body['file_name_ciphertext'] = fnCt;
+  final snCt = await ct(savedName);
+  if (snCt != null) body['saved_name_ciphertext'] = snCt;
+  final ctypeCt = await ct(contentType);
+  if (ctypeCt != null) body['content_type_ciphertext'] = ctypeCt;
+  final dtCt = await ct(detectedType);
+  if (dtCt != null) body['detected_type_ciphertext'] = dtCt;
+  final dsCt = await ct(detectedService);
+  if (dsCt != null) body['detected_service_ciphertext'] = dsCt;
+  final atCt = await ct(assetType);
+  if (atCt != null) body['asset_type_ciphertext'] = atCt;
+  if (body.length == 1) return; // nothing to encrypt
+  final uri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
+  final resp = await http.post(
+    uri,
+    headers: <String, String>{
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $authToken',
+    },
+    body: jsonEncode(body),
+  );
+  if (resp.statusCode != 200) {
+    throw Exception(
+      'ZK ciphertext uploaded_files metadata write failed '
+      '(${resp.statusCode})',
+    );
+  }
+}
+
+
+Future<Map<String, dynamic>?> tryZkVaultItemCiphertextUpsert({
+  required String baseUrl,
+  required String authToken,
+  int? existingItemId,
+  required String itemType,
+  required String service,
+  required Map<String, dynamic> payload,
+}) async {
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) return null;
+  final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+  final metaKey = await hierarchy.metadataKey();
+  final itCt = await vault_key_hierarchy.aesGcmWrap(
+    metaKey, utf8.encode(itemType),
+  );
+  final svcCt = await vault_key_hierarchy.aesGcmWrap(
+    metaKey, utf8.encode(service),
+  );
+  final pyCt = await vault_key_hierarchy.aesGcmWrap(
+    metaKey, utf8.encode(jsonEncode(payload)),
+  );
+  final body = <String, dynamic>{
+    if (existingItemId != null) 'item_id': existingItemId,
+    'item_type_ciphertext': vault_key_hierarchy.b64urlEncode(itCt),
+    'service_ciphertext': vault_key_hierarchy.b64urlEncode(svcCt),
+    'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
+  };
+  final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
+  final resp = await http.post(
+    uri,
+    headers: <String, String>{
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $authToken',
+    },
+    body: jsonEncode(body),
+  );
+  if (resp.statusCode != 200) {
+    // Fail closed for ZK — a broken ciphertext write must NOT
+    // silently fall back to plaintext.
+    throw Exception(
+      'ZK ciphertext vault-item write failed (${resp.statusCode})',
+    );
+  }
+  final decoded = jsonDecode(resp.body);
+  if (decoded is! Map<String, dynamic>) {
+    throw Exception('Invalid /vault/ciphertext/vault-items response');
+  }
+  return decoded;
 }
 
 
@@ -3509,22 +3851,70 @@ Future<Map<String, dynamic>> deleteVaultFile({
   }
 
   
+  /// ZK ciphertext-first outgoing-history persistence. Fire-and-
+  /// forget from the panel; a failure never blocks the send-success
+  /// UI.
+  Future<Map<String, dynamic>> postCryptoOutgoingHistoryCiphertext({
+    required String authToken,
+    required String network,
+    required String signatureLookupHash,
+    required String outcomePayloadCiphertext,
+  }) async {
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/crypto-history');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'network': network,
+        'signature_lookup_hash': signatureLookupHash,
+        'outcome_payload_ciphertext': outcomePayloadCiphertext,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(_formatBackendError(
+        prefix: 'Crypto history ciphertext-write failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid crypto history response');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> createCryptoWalletSendDraft({
     required String asset,
     required String authToken,
     required String fromAddress,
     required String destinationAddress,
     required String amountEth,
+    // ZK ciphertext-first mode. When both fields are supplied the
+    // backend persists an opaque draft (no readable sender /
+    // destination / value / fee / asset columns). The plaintext
+    // address / amount fields above are still transmitted so the
+    // server can compute gas / nonce / RPC-side validation but are
+    // NOT persisted.
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset/send/draft');
+    final body = <String, dynamic>{
+      'fromAddress':        fromAddress,
+      'destinationAddress': destinationAddress,
+      'amountEth':          amountEth,
+    };
+    if (draftPayloadCiphertext != null) {
+      body['draftPayloadCiphertext'] = draftPayloadCiphertext;
+    }
+    if (senderAddressLookupHash != null) {
+      body['senderAddressLookupHash'] = senderAddressLookupHash;
+    }
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'fromAddress':        fromAddress,
-        'destinationAddress': destinationAddress,
-        'amountEth':          amountEth,
-      }),
+      body: jsonEncode(body),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -3801,6 +4191,10 @@ Future<Map<String, dynamic>> deleteVaultFile({
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    // ZK ciphertext-first mode; see the twin on the single-asset
+    // sibling method above.
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/send/draft',
@@ -3812,6 +4206,12 @@ Future<Map<String, dynamic>> deleteVaultFile({
     if (amountEth != null) body['amountEth'] = amountEth;
     if (amountSol != null) body['amountSol'] = amountSol;
     if (amountUsdt != null) body['amountUsdt'] = amountUsdt;
+    if (draftPayloadCiphertext != null) {
+      body['draftPayloadCiphertext'] = draftPayloadCiphertext;
+    }
+    if (senderAddressLookupHash != null) {
+      body['senderAddressLookupHash'] = senderAddressLookupHash;
+    }
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),

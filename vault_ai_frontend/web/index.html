@@ -72,6 +72,12 @@
        — the raw file with the literal `__VAULTAI_APP_RELEASE__`
        token short-circuits without registering. -->
   <script src="vaultai-sw-bootstrap.js"></script>
+  <!-- 2026-07-14 (ZK Phase 2): serenity-kit @serenity-kit/opaque@1.1.0
+       vendored under /assets/opaque/. The ESM bundle contains the
+       audited RFC 9807 opaque-ke Rust core as WebAssembly. The init
+       loader awaits WASM instantiation and exposes only the CLIENT
+       half to `globalThis.vaultaiOpaqueClient` for Dart interop. -->
+  <script type="module" src="assets/opaque/vaultai-opaque-init.js"></script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

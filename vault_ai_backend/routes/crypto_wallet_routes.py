@@ -267,6 +267,7 @@ def _register_mainnet_draft(
     value_wei: int,
     data_hex: str,
     nonce: int,
+    ciphertext_first_pair: Optional[tuple[bytes, bytes]] = None,
     gas_limit: int,
     gas_price: int,
     chain_id: int,
@@ -284,6 +285,19 @@ def _register_mainnet_draft(
     returns 500. A silent None (draft-conflict) is never emitted
     for a DB error.
     """
+    if ciphertext_first_pair is not None:
+        payload_ct, sender_lh = ciphertext_first_pair
+        return _mainnet_store.register_draft_ciphertext_first(
+            vault_id=str(vault_id),
+            network_id=network_id,
+            sender_address_lookup_hash=sender_lh,
+            draft_payload_ciphertext=payload_ct,
+            nonce=int(nonce),
+            gas_limit=int(gas_limit),
+            gas_price=int(gas_price),
+            chain_id=int(chain_id),
+            ttl_secs=_MAINNET_DRAFT_TTL_SECS,
+        )
     return _mainnet_store.register_draft(
         vault_id=str(vault_id),
         network_id=network_id,
@@ -672,8 +686,88 @@ class SendDraftPayload(BaseModel):
     amountEth:          Optional[str] = None
     amountSol:          Optional[str] = None
     amountUsdt:         Optional[str] = None
+    # ZK / ciphertext-first mode: when BOTH fields are supplied, the
+    # server will persist the draft via register_draft_ciphertext_first
+    # and no readable sender/destination/asset/amount/fee columns are
+    # written. The server still receives the plaintext transaction
+    # details transiently in-request (from the fields above) to run
+    # gas / nonce / blockhash / RPC-side validation, but discards
+    # them at end-of-request.
+    draftPayloadCiphertext:      Optional[str] = None
+    senderAddressLookupHash:     Optional[str] = None
 
     model_config = {"extra": "forbid"}
+
+    def is_ciphertext_first(self) -> bool:
+        return bool(
+            self.draftPayloadCiphertext and self.senderAddressLookupHash
+        )
+
+    def reject_mixed_shape(self) -> None:
+        one_present = bool(
+            self.draftPayloadCiphertext or self.senderAddressLookupHash
+        )
+        both_present = self.is_ciphertext_first()
+        if one_present and not both_present:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "wallet_engine": "mixed_ciphertext_request",
+                    "message": (
+                        "Ciphertext-first mode requires BOTH "
+                        "draftPayloadCiphertext and "
+                        "senderAddressLookupHash. Supply both or "
+                        "neither."
+                    ),
+                },
+            )
+
+
+def _decode_ciphertext_first_fields(
+    payload: SendDraftPayload,
+) -> Optional[tuple[bytes, bytes]]:
+    """Return (draft_payload_ciphertext_bytes, sender_lookup_hash_bytes)
+    when the payload is ciphertext-first; None otherwise. Raises
+    HTTP 400 on malformed base64url or wrong-length hash.
+    """
+    if not payload.is_ciphertext_first():
+        return None
+    import base64 as _b64
+    import binascii as _binascii
+    try:
+        pad_ct = payload.draftPayloadCiphertext + "=" * (
+            -len(payload.draftPayloadCiphertext) % 4
+        )
+        pad_lh = payload.senderAddressLookupHash + "=" * (
+            -len(payload.senderAddressLookupHash) % 4
+        )
+        ct = _b64.urlsafe_b64decode(pad_ct)
+        lh = _b64.urlsafe_b64decode(pad_lh)
+    except (_binascii.Error, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": "invalid_ciphertext_encoding",
+                "message": "ciphertext / hash must be base64url",
+            },
+        )
+    if len(lh) != 32:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": "invalid_sender_lookup_hash",
+                "message": "sender_address_lookup_hash must be 32 bytes",
+            },
+        )
+    if len(ct) < 1 or len(ct) > 64 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "wallet_engine": "invalid_draft_payload_ciphertext",
+                "message": "draft_payload_ciphertext length out of range",
+            },
+        )
+    return (ct, lh)
 
 
 # 2026-07-14 (Round 10 — Max UX): payload for the fee-estimate
@@ -1629,6 +1723,7 @@ def create_send_draft(
 
 
     _refuse_plaintext_keys(payload)
+    payload.reject_mixed_shape()
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()
     norm = _normalize_asset(asset)
@@ -3257,6 +3352,7 @@ def _create_mainnet_send_draft(
         value_wei=value_wei,
         data_hex=data_hex,
         nonce=nonce,
+        ciphertext_first_pair=_decode_ciphertext_first_fields(payload),
         gas_limit=gas_limit,
         gas_price=gas_price,
         chain_id=int(mainnet_chain_id or 0),
@@ -5698,18 +5794,31 @@ def _solana_send_dispatch(
         blockhash_result.get("lastValidBlockHeight") or 0
     )
     try:
-        draft_id = _solana_store.register_draft(
-            vault_id=str(principal["vault_id"]),
-            network_id=NETWORK_SOLANA_MAINNET,
-            sender_address=from_addr,
-            asset=norm,
-            destination_address=dest_addr,
-            value_lamports=int(lamports),
-            fee_lamports=int(fee_lamports),
-            recent_blockhash=str(blockhash_result["blockhash"]),
-            last_valid_block_height=int(last_valid_block_height),
-            ttl_secs=60,
-        )
+        _sol_ct_pair = _decode_ciphertext_first_fields(payload)
+        if _sol_ct_pair is not None:
+            _payload_ct, _sender_lh = _sol_ct_pair
+            draft_id = _solana_store.register_draft_ciphertext_first(
+                vault_id=str(principal["vault_id"]),
+                network_id=NETWORK_SOLANA_MAINNET,
+                sender_address_lookup_hash=_sender_lh,
+                draft_payload_ciphertext=_payload_ct,
+                recent_blockhash=str(blockhash_result["blockhash"]),
+                last_valid_block_height=int(last_valid_block_height),
+                ttl_secs=60,
+            )
+        else:
+            draft_id = _solana_store.register_draft(
+                vault_id=str(principal["vault_id"]),
+                network_id=NETWORK_SOLANA_MAINNET,
+                sender_address=from_addr,
+                asset=norm,
+                destination_address=dest_addr,
+                value_lamports=int(lamports),
+                fee_lamports=int(fee_lamports),
+                recent_blockhash=str(blockhash_result["blockhash"]),
+                last_valid_block_height=int(last_valid_block_height),
+                ttl_secs=60,
+            )
     except Exception:
         logger.exception(
             "[WALLET-ENGINE] solana_draft_register_failed vault=%s",
@@ -6995,20 +7104,33 @@ def _tron_send_dispatch(
     expiration_ms = int(raw_data.get("expiration") or 0)
     contract_address = tron_usdt_contract_address()
     try:
-        draft_id = _tron_store.register_draft(
-            vault_id=str(principal["vault_id"]),
-            network_id=NETWORK_TRON_MAINNET,
-            sender_address=from_addr,
-            asset=norm,
-            destination_address=dest_addr,
-            token_contract_address=contract_address,
-            amount_base_units=int(base_units),
-            fee_limit_sun=int(fee_limit_sun),
-            raw_data_hex=str(draft.get("rawDataHex") or ""),
-            expiration_ms=expiration_ms,
-            server_txid_hex=str(draft.get("txID") or ""),
-            ttl_secs=45,
-        )
+        _tron_ct_pair = _decode_ciphertext_first_fields(payload)
+        if _tron_ct_pair is not None:
+            _payload_ct, _sender_lh = _tron_ct_pair
+            draft_id = _tron_store.register_draft_ciphertext_first(
+                vault_id=str(principal["vault_id"]),
+                network_id=NETWORK_TRON_MAINNET,
+                sender_address_lookup_hash=_sender_lh,
+                draft_payload_ciphertext=_payload_ct,
+                expiration_ms=expiration_ms,
+                server_txid_hex=str(draft.get("txID") or ""),
+                ttl_secs=45,
+            )
+        else:
+            draft_id = _tron_store.register_draft(
+                vault_id=str(principal["vault_id"]),
+                network_id=NETWORK_TRON_MAINNET,
+                sender_address=from_addr,
+                asset=norm,
+                destination_address=dest_addr,
+                token_contract_address=contract_address,
+                amount_base_units=int(base_units),
+                fee_limit_sun=int(fee_limit_sun),
+                raw_data_hex=str(draft.get("rawDataHex") or ""),
+                expiration_ms=expiration_ms,
+                server_txid_hex=str(draft.get("txID") or ""),
+                ttl_secs=45,
+            )
     except Exception:
         logger.exception(
             "[WALLET-ENGINE] tron_draft_register_failed vault=%s",

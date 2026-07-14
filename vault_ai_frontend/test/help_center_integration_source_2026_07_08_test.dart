@@ -195,10 +195,28 @@ void main() {
   group('LoginPage renders TopNavBar (so Help button is visible)', () {
     test('LoginPage.build uses TopNavBar with default showActions',
         () {
+      // Structural scan: read the entire LoginPage class body (from
+      // the class marker to the start of the *next* top-level class),
+      // instead of a fixed-length window. The ZK login branch grew
+      // _LoginPageState._submit substantially; a fixed 5000-char
+      // window is too small and would miss build(). This structural
+      // approach is rename- and length-agnostic.
       final src = _readMain();
-      final window = _window(src, 'class LoginPage extends StatefulWidget',
-          length: 5000);
+      final startIdx = src.indexOf('class LoginPage extends StatefulWidget');
+      expect(startIdx, greaterThan(-1),
+          reason: 'LoginPage class must be declared in main.dart');
 
+      // The LoginPage widget and its _LoginPageState state class are
+      // adjacent; the next class we care about is SignupPage. Scan
+      // from LoginPage to `class SignupPage` (the following auth
+      // page) so we cover BOTH LoginPage and _LoginPageState.
+      final nextClassIdx = src.indexOf(
+        'class SignupPage extends StatefulWidget', startIdx,
+      );
+      final endIdx = nextClassIdx > startIdx
+          ? nextClassIdx
+          : src.length;
+      final window = src.substring(startIdx, endIdx);
 
       expect(
         window.contains('TopNavBar(isMobile:'),

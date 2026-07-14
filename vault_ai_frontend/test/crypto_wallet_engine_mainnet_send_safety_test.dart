@@ -36,6 +36,8 @@ class _FakeSafetyClient extends VaultAIClient {
     String? amountEth,
     String? amountSol,
     String? amountUsdt,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftNetworkCount++;
     return draftResponse;
@@ -48,6 +50,8 @@ class _FakeSafetyClient extends VaultAIClient {
     required String fromAddress,
     required String destinationAddress,
     required String amountEth,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     return draftResponse;
   }

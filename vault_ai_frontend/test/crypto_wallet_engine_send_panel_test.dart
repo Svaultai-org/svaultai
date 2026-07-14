@@ -41,6 +41,8 @@ class _FakeSendClient extends VaultAIClient {
     required String fromAddress,
     required String destinationAddress,
     required String amountEth,
+    String? draftPayloadCiphertext,
+    String? senderAddressLookupHash,
   }) async {
     draftCallCount++;
     lastDraftBody = {

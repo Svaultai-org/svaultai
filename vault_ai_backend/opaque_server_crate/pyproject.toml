@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.14,<2"]
+build-backend = "maturin"
+
+[project]
+name = "vaultai_opaque_server"
+version = "0.1.0"
+description = "pyo3 wrapper around Meta's audited opaque-ke (RFC 9807) for VaultAI's backend. Contains no custom cryptography."
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+module-name = "vaultai_opaque_server"
+features = ["pyo3/extension-module"]
