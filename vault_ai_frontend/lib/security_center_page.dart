@@ -31,7 +31,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   @override
   void initState() {
     super.initState();
-    _client = const VaultAIClient(baseUrl: backendBaseUrl);
+    _client = VaultAIClient(baseUrl: backendBaseUrl);
     _refresh();
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }

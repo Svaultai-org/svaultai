@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Privacy Manifest for VaultAI. Required by Apple since May 2024.
+	Uploads without this file are rejected with ITMS-91053 /
+	ITMS-91056 for touching "required-reason APIs" (UserDefaults,
+	file timestamp, disk space, boot time).
+
+	Declarations must match reality:
+	  * NSPrivacyTracking = false — VaultAI does NOT track users
+	    across other apps or websites. No ad SDKs are linked.
+	  * NSPrivacyTrackingDomains empty for the same reason.
+	  * NSPrivacyCollectedDataTypes lists what the backend receives.
+	    Vault contents (files, notes, wallet addresses, chat) are
+	    encrypted client-side (ZK model) before upload, so they are
+	    declared as NOT LINKED to user identity.
+	  * NSPrivacyAccessedAPITypes declares each required-reason API
+	    with an approved reason string per Apple's list.
+-->
+<plist version="1.0">
+<dict>
+
+	<key>NSPrivacyTracking</key>
+	<false/>
+
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!--
+		Data VaultAI's backend receives directly from the app.
+		Encrypted vault payloads are NOT included here because the
+		server sees only ciphertext + non-identifying metadata.
+	-->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+
+		<!-- Email — the vault_name at signup is an email-shaped
+		     identifier used to sign in. Linked to identity because
+		     the same value logs in every session. Not used for
+		     tracking. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+				<string>NSPrivacyCollectedDataTypePurposeAuthentication</string>
+			</array>
+		</dict>
+
+		<!-- Other User Content — encrypted vault payloads (files,
+		     notes, chat). Ciphertext only; the server cannot read
+		     it. Declared as NOT LINKED because the encrypted blobs
+		     alone cannot be tied back to a user's identity, and
+		     NOT USED FOR TRACKING. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Diagnostics — crash logs uploaded via App Store Connect
+		     when the user opts in. Non-identifying. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeCrashData</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+	</array>
+
+	<!--
+		Required-Reason APIs. Every entry below is triggered by a
+		plugin we ship. `CA92.1` and `C617.1` cover the "app
+		functionality" bucket for UserDefaults and file timestamps
+		respectively — the common Flutter / shared_preferences /
+		file_picker use.
+	-->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+
+		<!-- shared_preferences → NSUserDefaults -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+
+		<!-- file_picker + record → NSFileManager creationDate /
+		     modificationDate on temp files -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+
+		<!-- Disk-space check used by upload flow to warn before
+		     large downloads / recordings -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+			</array>
+		</dict>
+
+	</array>
+
+</dict>
+</plist>

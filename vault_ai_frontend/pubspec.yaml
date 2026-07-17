@@ -1,7 +1,10 @@
 name: vault_ai_frontend
-description: Vault AI front-end (vault_name + PIN → Vault → Chat)
+description: VaultAI — private encrypted digital vault (mobile + web client).
 publish_to: 'none'
-version: 0.1.0+1
+# Store-facing marketing version + build number. Bump the +N build
+# number for EVERY submission (App Store Connect + Play Console
+# reject a duplicate build number for the same marketing version).
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -78,7 +81,69 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
 
+  # Store-submission asset generators (Phase-A release hardening).
+  # Both are dev-only: they run at build-time via
+  #   dart run flutter_launcher_icons
+  #   dart run flutter_native_splash:create
+  # and write PNG/XML assets into android/app/src/main/res/ and
+  # ios/Runner/Assets.xcassets/. Neither ships in the runtime bundle.
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash:  ^2.4.7
+
 flutter:
   uses-material-design: true
   # UX1.5 - enables `flutter gen-l10n` generation from lib/l10n/*.arb.
   generate: true
+  assets:
+    # Branding master used by flutter_launcher_icons +
+    # flutter_native_splash. Copied from
+    # ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png
+    # into a canonical location so the asset generators have a
+    # stable path across future icon iterations.
+    - assets/branding/
+
+
+# ---- flutter_launcher_icons config -----------------------------------
+# Generates:
+#   android/app/src/main/res/mipmap-*/ic_launcher.png (all densities)
+#   android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml (adaptive)
+#   android/app/src/main/res/drawable/ic_launcher_foreground.png
+#   android/app/src/main/res/values/colors.xml (adaptive background)
+#   ios/Runner/Assets.xcassets/AppIcon.appiconset/* (every iOS size)
+# Run:  dart run flutter_launcher_icons
+# ----------------------------------------------------------------------
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/branding/vaultai-icon-1024.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#0F1115"
+  adaptive_icon_foreground: "assets/branding/vaultai-icon-1024.png"
+  web:
+    generate: false
+  windows:
+    generate: false
+  macos:
+    generate: false
+
+
+# ---- flutter_native_splash config ------------------------------------
+# Generates a dark splash matching the web manifest background_color
+# (#0F1115) for both Android (drawable + values styles) and iOS
+# (LaunchScreen.storyboard + LaunchImage asset set). Run:
+#   dart run flutter_native_splash:create
+# ----------------------------------------------------------------------
+flutter_native_splash:
+  color:            "#0F1115"
+  color_dark:       "#0F1115"
+  image:            "assets/branding/vaultai-icon-1024.png"
+  image_dark:       "assets/branding/vaultai-icon-1024.png"
+  android_12:
+    icon_background_color:      "#0F1115"
+    icon_background_color_dark: "#0F1115"
+    image:                      "assets/branding/vaultai-icon-1024.png"
+    image_dark:                 "assets/branding/vaultai-icon-1024.png"
+  android: true
+  ios: true
+  web: false

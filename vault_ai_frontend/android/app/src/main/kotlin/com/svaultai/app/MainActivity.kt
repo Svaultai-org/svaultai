@@ -1,4 +1,4 @@
-package com.example.vault_ai_frontend
+package com.svaultai.app
 
 import io.flutter.embedding.android.FlutterActivity
 

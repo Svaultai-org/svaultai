@@ -87,10 +87,46 @@ import 'l10n/app_localizations.dart';
 import 'i18n/language_registry.dart';
 
 
-const backendBaseUrl = String.fromEnvironment(
+// Whether the build was invoked with an explicit
+//   --dart-define=BACKEND_BASE_URL=...
+// Compile-time constant per Dart's bool.hasEnvironment contract.
+const bool _kHasBackendBaseUrlOverride =
+    bool.hasEnvironment('BACKEND_BASE_URL');
+
+// Compile-time BACKEND_BASE_URL. If the build passed
+//   --dart-define=BACKEND_BASE_URL=https://foo
+// this holds "https://foo"; otherwise it holds the documented
+// dev-fallback default 'http://localhost:8000'. The presence of
+// the defaultValue string here is asserted by
+// test/production_deployment_readiness_test.dart (R3) so dev
+// builds keep working without --dart-define.
+const String _kBackendBaseUrlFromEnv = String.fromEnvironment(
   'BACKEND_BASE_URL',
   defaultValue: 'http://localhost:8000',
 );
+
+// Production mobile API host, baked in so a plain
+//   flutter build appbundle --release
+// cannot ship a build that silently talks to the dev fallback. The
+// mobile release-mode guard in main() also asserts
+// backendBaseUrl.startsWith('https://').
+const String _kMobileProductionBaseUrl = 'https://api.svaultai.com';
+
+/// Resolves at first access; called from every network path.
+///
+/// Precedence:
+///   1. If the build passed `--dart-define=BACKEND_BASE_URL=…`, use
+///      it verbatim (web release CI does this).
+///   2. Else, on mobile release builds (kReleaseMode && !kIsWeb),
+///      use the production API host `https://api.svaultai.com`.
+///      This is the release-safety net enforced by R3.
+///   3. Else, use the compile-time default (dev/debug + local
+///      `flutter run` + web without an override).
+String get backendBaseUrl {
+  if (_kHasBackendBaseUrlOverride) return _kBackendBaseUrlFromEnv;
+  if (kReleaseMode && !kIsWeb) return _kMobileProductionBaseUrl;
+  return _kBackendBaseUrlFromEnv;
+}
 
 
 const int kVaultStorageLimitBytes = 1024 * 1024 * 1024;
@@ -688,7 +724,7 @@ Future<void> main() async {
       runApp(
         ChangeNotifierProvider.value(
           value: appState,
-          child: const AppReleaseControllerScope(
+          child: AppReleaseControllerScope(
             baseUrl: backendBaseUrl,
             child: VaultaiApp(),
           ),
@@ -6964,82 +7000,89 @@ Widget _buildSettingsSection(bool isMobile) {
 
               const SizedBox(height: 24),
 
-              
-              InkWell(
-                onTap: () => Navigator.pushNamed(
-                  context, '/storage',
-                  arguments: const {'autoOpenPicker': true},
-                ),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF10A37F).withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: const Color(0xFF10A37F).withValues(alpha: 0.30),
-                    ),
+              // Buy-More-Storage promotional card is WEB-ONLY.
+              // Rationale: App Store 3.1.1 + Google Play Payments
+              // Policy require in-app digital-goods purchases to use
+              // StoreKit / Play Billing. Mobile users still upgrade
+              // via the web at app.svaultai.com; hiding this
+              // promotional entry point keeps the mobile store
+              // submission compliant without touching web behavior.
+              if (kIsWeb) ...[
+                InkWell(
+                  onTap: () => Navigator.pushNamed(
+                    context, '/storage',
+                    arguments: const {'autoOpenPicker': true},
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: const [
-                          Icon(Icons.cloud_upload_outlined,
-                              color: Color(0xFF10A37F)),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Buy More Storage',
-                                  style: TextStyle(
-                                    fontSize: 18, fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                SizedBox(height: 4),
-                                Text(
-                                  'Add storage in 50 GB blocks. Your '
-                                  'limit updates automatically after '
-                                  'payment.',
-                                  style: TextStyle(
-                                    color: Color(0xFFB4B4B4), height: 1.45,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10A37F).withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: const Color(0xFF10A37F).withValues(alpha: 0.30),
                       ),
-                      const SizedBox(height: 14),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: ElevatedButton.icon(
-                          onPressed: () => Navigator.pushNamed(
-                            context, '/storage',
-                            arguments: const {'autoOpenPicker': true},
-                          ),
-                          icon: const Icon(Icons.add, size: 18),
-                          label: Text(
-                            AppLocalizations.of(context).filesChooseStorage,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF10A37F),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18, vertical: 12,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: const [
+                            Icon(Icons.cloud_upload_outlined,
+                                color: Color(0xFF10A37F)),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Buy More Storage',
+                                    style: TextStyle(
+                                      fontSize: 18, fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(height: 4),
+                                  Text(
+                                    'Add storage in 50 GB blocks. Your '
+                                    'limit updates automatically after '
+                                    'payment.',
+                                    style: TextStyle(
+                                      color: Color(0xFFB4B4B4), height: 1.45,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: ElevatedButton.icon(
+                            onPressed: () => Navigator.pushNamed(
+                              context, '/storage',
+                              arguments: const {'autoOpenPicker': true},
+                            ),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: Text(
+                              AppLocalizations.of(context).filesChooseStorage,
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10A37F),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18, vertical: 12,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
+              ],
 
               _DeleteVaultSettingsTile(),
 

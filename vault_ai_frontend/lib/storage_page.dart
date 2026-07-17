@@ -69,7 +69,7 @@ class _StoragePageState extends State<StoragePage> {
   @override
   void initState() {
     super.initState();
-    _client = const VaultAIClient(baseUrl: backendBaseUrl);
+    _client = VaultAIClient(baseUrl: backendBaseUrl);
     _refresh();
   }
 
@@ -227,6 +227,10 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   void _maybeAutoOpenPicker() {
+    // Mobile release policy: no Stripe entry points — never fire the
+    // storage-purchase picker even if a deep-link tries to auto-open
+    // it. Web keeps the existing behavior.
+    if (!kIsWeb) return;
     if (!_autoOpenPickerRequested) return;
     if (_autoOpenPickerFired) return;
     if (_loading || _error != null || _data == null) return;
@@ -551,11 +555,17 @@ class _StoragePageState extends State<StoragePage> {
         ),
       );
     }
+    // Mobile builds intentionally do NOT surface Stripe checkout or
+    // the Stripe customer portal — Apple App Store guideline 3.1.1
+    // and Google Play Payments Policy require digital-goods
+    // subscriptions to use StoreKit / Play Billing when sold in-app.
+    // The web build continues to accept payments; mobile users still
+    // see their storage usage and account facts here.
     return StorageBody(
       data: data,
       busy: _busyPurchase,
-      onBuyStorage: _onBuyStorage,
-      onManageSubscription: _onManageSubscription,
+      onBuyStorage: kIsWeb ? _onBuyStorage : null,
+      onManageSubscription: kIsWeb ? _onManageSubscription : null,
     );
   }
 }

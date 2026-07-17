@@ -1,6 +1,47 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Runtime permissions VaultAI actually uses. Keep this list
+        MINIMAL — every added permission triggers Google Play policy
+        questions in the Data Safety form.
+
+        INTERNET     — required, backend session + chat SSE.
+        CAMERA       — used by mobile_scanner (crypto-recipient QR
+                       scanning). Runtime-requested by the plugin
+                       the first time the user opens the scanner.
+        RECORD_AUDIO — used by record + speech_to_text (voice input
+                       + dictation). Runtime-requested by the plugin.
+
+        Optional / considered but NOT declared here:
+          USE_BIOMETRIC          — only needed if flutter_secure_storage
+                                   is configured with an
+                                   authenticationRequired: true slot,
+                                   which we don't ship in v1.0.
+          POST_NOTIFICATIONS     — not currently used; add before
+                                   shipping any push feature.
+          READ_MEDIA_IMAGES/etc  — file_picker on Android 13+ uses
+                                   the system picker via
+                                   ACTION_OPEN_DOCUMENT, which does
+                                   NOT require this permission.
+    -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
+    <!--
+        Hardware feature hints. `required="false"` so Play does NOT
+        exclude devices that lack the feature (e.g. Wear devices with
+        no camera).
+    -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false"/>
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false"/>
+
     <application
-        android:label="vault_ai_frontend"
+        android:label="VaultAI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

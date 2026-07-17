@@ -1,0 +1,27 @@
+# Template for android/key.properties. Copy to `key.properties`,
+# fill in the fields below, and NEVER commit the filled copy —
+# the real key.properties is listed in .gitignore.
+#
+# Generate the upload keystore ONCE with:
+#
+#   keytool -genkey -v \
+#     -keystore ~/.vaultai/vaultai-upload.jks \
+#     -keyalg RSA -keysize 4096 -validity 10000 \
+#     -alias vaultai
+#
+# Then answer keytool's prompts (CN, OU, O, L, ST, C — arbitrary but
+# stable across the lifetime of the upload key).
+#
+# The keystore file MUST NOT live inside the repo. Store it under
+# ~/.vaultai/ (or your team's secrets manager) and reference it here
+# via an absolute path.
+#
+# When you first upload the .aab to Google Play Console, opt into
+# Play App Signing. Google then holds the true production signing
+# key; this upload keystore only authenticates uploads and can be
+# rotated later without invalidating installs.
+
+storePassword=REPLACE_ME_WITH_KEYSTORE_PASSWORD
+keyPassword=REPLACE_ME_WITH_KEY_PASSWORD
+keyAlias=vaultai
+storeFile=/absolute/path/to/vaultai-upload.jks
