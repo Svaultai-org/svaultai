@@ -728,6 +728,34 @@ class AppLocalizationsKo extends AppLocalizations {
       '실시간 고객 지원은 아직 제공되지 않습니다. 이 도움말 센터를 사용하거나 VaultAI Chat 에 질문하세요.';
 
   @override
+  String get helpContactSupportTitle => '지원팀에 문의';
+
+  @override
+  String get helpContactSupportBody =>
+      'VaultAI 에 도움이 필요하신가요? 지원팀에 문의하세요.';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return '$email 로 VaultAI 지원팀에 이메일 보내기';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return '이메일 앱을 열 수 없습니다. 대신 이 주소를 복사하세요: $email';
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => '이메일 주소 복사';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return 'VaultAI 지원 이메일 $email 을(를) 클립보드에 복사';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied => '이메일이 클립보드에 복사되었습니다';
+
+  @override
   String get helpCenterPublicHint =>
       '공개 도움말 센터를 보고 있습니다. VaultAI 에 질문하고 계정 세부 정보를 보려면 로그인하세요.';
 

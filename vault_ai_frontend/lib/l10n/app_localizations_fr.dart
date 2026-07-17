@@ -752,6 +752,35 @@ class AppLocalizationsFr extends AppLocalizations {
       'Le support client en direct n\'est pas encore disponible. Utilisez le centre d\'aide ou demandez à VaultAI Chat.';
 
   @override
+  String get helpContactSupportTitle => 'Contacter le support';
+
+  @override
+  String get helpContactSupportBody =>
+      'Besoin d\'aide avec VaultAI ? Contactez notre équipe de support.';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return 'Envoyer un e-mail au support VaultAI à $email';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return 'Impossible d\'ouvrir votre application de messagerie. Copiez cette adresse à la place : $email';
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => 'Copier l\'adresse e-mail';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return 'Copier l\'e-mail du support VaultAI $email dans le presse-papiers';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied =>
+      'E-mail copié dans le presse-papiers';
+
+  @override
   String get helpCenterPublicHint =>
       'Vous consultez le centre d\'aide public. Connectez-vous pour interroger VaultAI et voir les détails du compte.';
 

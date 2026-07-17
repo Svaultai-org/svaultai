@@ -740,6 +740,34 @@ class AppLocalizationsAr extends AppLocalizations {
       'الدعم البشري المباشر غير متاح بعد. استخدم مركز المساعدة أو اسأل VaultAI Chat.';
 
   @override
+  String get helpContactSupportTitle => 'التواصل مع الدعم';
+
+  @override
+  String get helpContactSupportBody =>
+      'هل تحتاج مساعدة في VaultAI؟ تواصل مع فريق الدعم.';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return 'أرسل بريدًا إلى دعم VaultAI على $email';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return 'تعذّر فتح تطبيق البريد. انسخ هذا العنوان بدلًا من ذلك: $email';
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => 'نسخ عنوان البريد';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return 'نسخ بريد دعم VaultAI $email إلى الحافظة';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied => 'تم نسخ البريد إلى الحافظة';
+
+  @override
   String get helpCenterPublicHint =>
       'أنت في مركز المساعدة العام. سجّل الدخول لسؤال VaultAI ورؤية تفاصيل الحساب.';
 

@@ -726,6 +726,35 @@ class AppLocalizationsJa extends AppLocalizations {
       'ライブカスタマーサポートはまだ提供されていません。このヘルプセンターまたは VaultAI Chat をご利用ください。';
 
   @override
+  String get helpContactSupportTitle => 'サポートに問い合わせ';
+
+  @override
+  String get helpContactSupportBody =>
+      'VaultAI についてサポートが必要ですか?サポートチームにお問い合わせください。';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return '$email 宛に VaultAI サポートへメール送信';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return 'メールアプリを開けませんでした。代わりにこのアドレスをコピーしてください: $email';
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => 'メールアドレスをコピー';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return 'VaultAI サポートのメールアドレス $email をクリップボードにコピー';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied =>
+      'メールアドレスをクリップボードにコピーしました';
+
+  @override
   String get helpCenterPublicHint =>
       '公開ヘルプセンターを表示しています。VaultAI に質問しアカウント詳細を見るにはサインインしてください。';
 

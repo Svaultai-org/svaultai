@@ -743,6 +743,34 @@ class AppLocalizationsEn extends AppLocalizations {
       'Live customer support is not available yet. Use this Help Center or ask VaultAI Chat for help.';
 
   @override
+  String get helpContactSupportTitle => 'Contact Support';
+
+  @override
+  String get helpContactSupportBody =>
+      'Need help with VaultAI? Contact our support team.';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return 'Email VaultAI support at $email';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return "Couldn't open your email app. Copy this address instead: $email";
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => 'Copy email address';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return 'Copy VaultAI support email $email to clipboard';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied => 'Email copied to clipboard';
+
+  @override
   String get helpCenterPublicHint =>
       'You\'re viewing the public Help Center. Sign in to ask VaultAI and see account details.';
 

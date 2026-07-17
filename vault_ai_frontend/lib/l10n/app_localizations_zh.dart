@@ -722,6 +722,33 @@ class AppLocalizationsZh extends AppLocalizations {
   String get helpCenterSupportNote => '尚未提供实时客户支持。请使用此帮助中心或询问 VaultAI Chat。';
 
   @override
+  String get helpContactSupportTitle => '联系支持';
+
+  @override
+  String get helpContactSupportBody => '在 VaultAI 中需要帮助?请联系我们的支持团队。';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return '向 $email 发送 VaultAI 支持邮件';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return '无法打开你的邮件应用。请改为复制此地址:$email';
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => '复制邮箱地址';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return '将 VaultAI 支持邮箱 $email 复制到剪贴板';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied => '邮箱地址已复制到剪贴板';
+
+  @override
   String get helpCenterPublicHint => '你正在查看公开帮助中心。登录以询问 VaultAI 并查看账户详情。';
 
   @override

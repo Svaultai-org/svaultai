@@ -1,5 +1,7 @@
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'help_center_content.dart';
 import 'help_center_content_i18n.dart' as faq_i18n;
@@ -10,6 +12,12 @@ import 'ui/responsive.dart';
 enum HelpCenterMode { public, signedIn }
 
 
+typedef HelpLaunchMailFn = Future<bool> Function(Uri uri);
+typedef HelpClipboardWriteFn = Future<void> Function(String text);
+
+
+Future<void> _defaultClipboardWrite(String text) =>
+    Clipboard.setData(ClipboardData(text: text));
 
 
 const String kHelpCenterTitle    = 'Help & FAQ';
@@ -27,6 +35,15 @@ const String kHelpCenterSupportNote =
 const String kHelpCenterPublicHint =
     "You're viewing the public Help Center. Sign in to ask "
     'VaultAI and see account details.';
+
+const String kHelpContactSupportEmail = 'vaultai@svaultai.com';
+const String kHelpContactSupportMailtoUrl =
+    'mailto:vaultai@svaultai.com'
+    '?subject=VaultAI%20Support'
+    '&body=Please%20describe%20your%20issue%20below.'
+    '%0A%0ADevice:%20'
+    '%0APlatform:%20Android/iPhone/Web/Desktop'
+    '%0AApp%20Version:%20';
 
 
 
@@ -58,12 +75,20 @@ class HelpCenterPage extends StatefulWidget {
 
   final VoidCallback? onClose;
 
+
+  final HelpLaunchMailFn? launchMailOverride;
+
+
+  final HelpClipboardWriteFn? clipboardWriteOverride;
+
   const HelpCenterPage({
     super.key,
     this.mode = HelpCenterMode.signedIn,
     this.onAskAssistant,
     this.onRequireSignIn,
     this.onClose,
+    this.launchMailOverride,
+    this.clipboardWriteOverride,
   });
 
   @override
@@ -150,6 +175,11 @@ class _HelpCenterPageState extends State<HelpCenterPage> {
                     )),
               const SizedBox(height: 24),
               const _HelpSupportNote(),
+              const SizedBox(height: 12),
+              _HelpContactSupport(
+                launchMailOverride: widget.launchMailOverride,
+                clipboardWriteOverride: widget.clipboardWriteOverride,
+              ),
             ],
           ),
         ),
@@ -497,6 +527,180 @@ class _HelpEmptyState extends StatelessWidget {
             style: const TextStyle(
               color: Color(0xFFB4B4B4),
               fontSize: 13, height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _HelpContactSupport extends StatelessWidget {
+  final HelpLaunchMailFn? launchMailOverride;
+  final HelpClipboardWriteFn? clipboardWriteOverride;
+  const _HelpContactSupport({
+    this.launchMailOverride,
+    this.clipboardWriteOverride,
+  });
+
+  Future<void> _openMail(BuildContext context) async {
+    final l = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final uri = Uri.parse(kHelpContactSupportMailtoUrl);
+    bool ok = false;
+    try {
+      final launcher = launchMailOverride ?? launchUrl;
+      ok = await launcher(uri);
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok && messenger != null && context.mounted) {
+      messenger.showSnackBar(
+        SnackBar(
+          key: const Key('help_contact_support_snackbar'),
+          content: Text(
+            l.helpContactSupportEmailOpenFailed(
+              kHelpContactSupportEmail,
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _copyEmail(BuildContext context) async {
+    final l = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final writer = clipboardWriteOverride ?? _defaultClipboardWrite;
+    try {
+      await writer(kHelpContactSupportEmail);
+    } catch (_) {
+
+      return;
+    }
+    if (messenger != null && context.mounted) {
+      messenger.showSnackBar(
+        SnackBar(
+          key: const Key('help_contact_support_copy_snackbar'),
+          content: Text(l.helpContactSupportEmailCopied),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return Container(
+      key: const Key('help_center_contact_support'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F1F1F),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l.helpContactSupportTitle,
+            key: const Key('help_contact_support_title'),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            l.helpContactSupportBody,
+            key: const Key('help_contact_support_body'),
+            style: const TextStyle(
+              color: Color(0xFFB4B4B4),
+              fontSize: 13,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Semantics(
+            button: true,
+            label: l.helpContactSupportEmailA11yLabel(
+              kHelpContactSupportEmail,
+            ),
+            child: InkWell(
+              key: const Key('help_contact_support_email_link'),
+              onTap: () => _openMail(context),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    vertical: 8, horizontal: 4),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.mail_outline,
+                      size: 18,
+                      color: Color(0xFF10A37F),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        kHelpContactSupportEmail,
+                        key: const Key(
+                          'help_contact_support_email_text',
+                        ),
+                        style: const TextStyle(
+                          color: Color(0xFF10A37F),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.underline,
+                          decorationColor: Color(0xFF10A37F),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Semantics(
+            button: true,
+            label: l.helpContactSupportCopyEmailA11yLabel(
+              kHelpContactSupportEmail,
+            ),
+            child: InkWell(
+              key: const Key('help_contact_support_copy_email_button'),
+              onTap: () => _copyEmail(context),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    vertical: 8, horizontal: 4),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.copy_rounded,
+                      size: 16,
+                      color: Color(0xFFB4B4B4),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        l.helpContactSupportCopyEmailLabel,
+                        key: const Key(
+                          'help_contact_support_copy_email_text',
+                        ),
+                        style: const TextStyle(
+                          color: Color(0xFFB4B4B4),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],

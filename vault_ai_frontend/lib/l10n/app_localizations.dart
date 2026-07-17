@@ -1446,6 +1446,48 @@ abstract class AppLocalizations {
   /// **'Live customer support is not available yet. Use this Help Center or ask VaultAI Chat for help.'**
   String get helpCenterSupportNote;
 
+  /// No description provided for @helpContactSupportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact Support'**
+  String get helpContactSupportTitle;
+
+  /// No description provided for @helpContactSupportBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Need help with VaultAI? Contact our support team.'**
+  String get helpContactSupportBody;
+
+  /// No description provided for @helpContactSupportEmailA11yLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Email VaultAI support at {email}'**
+  String helpContactSupportEmailA11yLabel(String email);
+
+  /// No description provided for @helpContactSupportEmailOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open your email app. Copy this address instead: {email}'**
+  String helpContactSupportEmailOpenFailed(String email);
+
+  /// No description provided for @helpContactSupportCopyEmailLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy email address'**
+  String get helpContactSupportCopyEmailLabel;
+
+  /// No description provided for @helpContactSupportCopyEmailA11yLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy VaultAI support email {email} to clipboard'**
+  String helpContactSupportCopyEmailA11yLabel(String email);
+
+  /// No description provided for @helpContactSupportEmailCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Email copied to clipboard'**
+  String get helpContactSupportEmailCopied;
+
   /// No description provided for @helpCenterPublicHint.
   ///
   /// In en, this message translates to:

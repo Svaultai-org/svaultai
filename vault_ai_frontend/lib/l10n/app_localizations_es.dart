@@ -750,6 +750,34 @@ class AppLocalizationsEs extends AppLocalizations {
       'El soporte al cliente en vivo aún no está disponible. Usa el centro de ayuda o pregunta a VaultAI Chat.';
 
   @override
+  String get helpContactSupportTitle => 'Contactar soporte';
+
+  @override
+  String get helpContactSupportBody =>
+      '¿Necesitas ayuda con VaultAI? Contacta a nuestro equipo de soporte.';
+
+  @override
+  String helpContactSupportEmailA11yLabel(String email) {
+    return 'Enviar correo al soporte de VaultAI a $email';
+  }
+
+  @override
+  String helpContactSupportEmailOpenFailed(String email) {
+    return 'No se pudo abrir tu aplicación de correo. Copia esta dirección en su lugar: $email';
+  }
+
+  @override
+  String get helpContactSupportCopyEmailLabel => 'Copiar dirección de correo';
+
+  @override
+  String helpContactSupportCopyEmailA11yLabel(String email) {
+    return 'Copiar el correo de soporte de VaultAI $email al portapapeles';
+  }
+
+  @override
+  String get helpContactSupportEmailCopied => 'Correo copiado al portapapeles';
+
+  @override
   String get helpCenterPublicHint =>
       'Estás viendo el centro de ayuda público. Inicia sesión para preguntar a VaultAI y ver detalles de la cuenta.';
 
