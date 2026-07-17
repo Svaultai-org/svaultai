@@ -3,6 +3,11 @@
 # IDE
 .idea/
 .vscode/
+# IntelliJ/Android Studio per-module project files. Belongs in the
+# per-developer .idea/ config, not tracked. Older checkouts had
+# `vault_ai_frontend/vault_ai_frontend.iml` at the module root; this
+# pattern keeps it out for good.
+*.iml
 
 # Platform-specific
 android/.gradle/
