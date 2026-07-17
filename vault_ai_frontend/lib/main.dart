@@ -105,26 +105,34 @@ const String _kBackendBaseUrlFromEnv = String.fromEnvironment(
   defaultValue: 'http://localhost:8000',
 );
 
-// Production mobile API host, baked in so a plain
-//   flutter build appbundle --release
+// Production API host, baked in so a plain
+//   flutter build web    --release          (web  release)
+//   flutter build appbundle --release       (mobile release)
 // cannot ship a build that silently talks to the dev fallback. The
-// mobile release-mode guard in main() also asserts
-// backendBaseUrl.startsWith('https://').
-const String _kMobileProductionBaseUrl = 'https://api.svaultai.com';
+// release-mode guard in main() asserts backendBaseUrl.startsWith(
+// 'https://'). Web AND mobile release both hit the same FastAPI host
+// today (https://api.svaultai.com); if they ever need to diverge,
+// introduce a separate `_kWebProductionBaseUrl` and re-gate on
+// `kIsWeb` — do NOT reintroduce a `kIsWeb` gate that leaves web
+// release resolving to the localhost fallback, which trips the
+// startup HTTPS guard and crashes app.svaultai.com with a black
+// screen.
+const String _kProductionApiBaseUrl = 'https://api.svaultai.com';
 
 /// Resolves at first access; called from every network path.
 ///
 /// Precedence:
 ///   1. If the build passed `--dart-define=BACKEND_BASE_URL=…`, use
-///      it verbatim (web release CI does this).
-///   2. Else, on mobile release builds (kReleaseMode && !kIsWeb),
-///      use the production API host `https://api.svaultai.com`.
-///      This is the release-safety net enforced by R3.
+///      it verbatim (staging / preview / CI overrides).
+///   2. Else, on ANY release build (mobile or web), use the
+///      production API host `https://api.svaultai.com`. This is the
+///      release-safety net enforced by R3 and by the HTTPS guard at
+///      the top of `main()`.
 ///   3. Else, use the compile-time default (dev/debug + local
 ///      `flutter run` + web without an override).
 String get backendBaseUrl {
   if (_kHasBackendBaseUrlOverride) return _kBackendBaseUrlFromEnv;
-  if (kReleaseMode && !kIsWeb) return _kMobileProductionBaseUrl;
+  if (kReleaseMode) return _kProductionApiBaseUrl;
   return _kBackendBaseUrlFromEnv;
 }
 
