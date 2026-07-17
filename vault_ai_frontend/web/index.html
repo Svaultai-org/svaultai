@@ -58,8 +58,170 @@
   <link rel="icon" type="image/png" href="favicon.png"/>
 
   <link rel="manifest" href="manifest.json">
+
+  <!--
+    2026-07-17 (Round 14 — branded startup loader):
+    Renders immediately on first paint so the tab is never blank
+    while main.dart.js downloads + parses. Removed the moment
+    Flutter dispatches `flutter-first-frame`, with a MutationObserver
+    fallback that fires as soon as `<flutter-view>` / `<flt-glass-pane>`
+    appears, and a poll-based hard cap so a missed event never
+    leaves the loader on top. Pure inline CSS + inline SVG icon —
+    no remote assets, no external fonts, matches CSP `default-src 'self'`.
+  -->
+  <style>
+    #vaultai-startup-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      background: #0F1115;
+      color: #FFFFFF;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      transition: opacity 220ms ease-out;
+    }
+    #vaultai-startup-loader.vaultai-loader-hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .vaultai-loader-wordmark {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: clamp(22px, 5vw, 28px);
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #FFFFFF;
+    }
+    .vaultai-loader-icon {
+      display: inline-block;
+      width: 36px;
+      height: 36px;
+      color: #10A37F;
+      flex-shrink: 0;
+    }
+    .vaultai-loader-spinner {
+      margin-top: 22px;
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #10A37F;
+      border-radius: 50%;
+      animation: vaultai-loader-spin 900ms linear infinite;
+    }
+    .vaultai-loader-caption {
+      margin-top: 18px;
+      font-size: 14px;
+      color: #B4B4B4;
+      letter-spacing: 0.2px;
+    }
+    @keyframes vaultai-loader-spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .vaultai-loader-spinner {
+        animation: none;
+        border-top-color: rgba(255, 255, 255, 0.4);
+      }
+      #vaultai-startup-loader {
+        transition: none;
+      }
+    }
+  </style>
 </head>
 <body>
+  <div id="vaultai-startup-loader"
+       role="status"
+       aria-live="polite"
+       aria-label="Loading VaultAI">
+    <div class="vaultai-loader-wordmark" aria-hidden="true">
+      <svg class="vaultai-loader-icon"
+           viewBox="0 0 24 24"
+           fill="none">
+        <path d="M12 2 3 6v6c0 5 3.8 8.9 9 10 5.2-1.1 9-5 9-10V6l-9-4Z"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linejoin="round"/>
+        <circle cx="12" cy="12" r="2.4" fill="currentColor"/>
+        <path d="M12 14.4V17"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"/>
+      </svg>
+      <span>VaultAI</span>
+    </div>
+    <div class="vaultai-loader-spinner" aria-hidden="true"></div>
+    <div class="vaultai-loader-caption">Loading VaultAI&hellip;</div>
+  </div>
+  <script>
+    (function () {
+      var el = document.getElementById('vaultai-startup-loader');
+      if (!el) return;
+      var removed = false;
+      function removeLoader() {
+        if (removed) return;
+        removed = true;
+        try { el.classList.add('vaultai-loader-hidden'); } catch (_) {}
+        setTimeout(function () {
+          try {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          } catch (_) {}
+        }, 260);
+      }
+      // 1. Primary signal: Flutter dispatches `flutter-first-frame`
+      //    on `window` once its first frame has been rasterized.
+      try {
+        window.addEventListener('flutter-first-frame', removeLoader,
+                                { once: true });
+      } catch (_) {
+        try {
+          window.addEventListener('flutter-first-frame', removeLoader);
+        } catch (_) {}
+      }
+      // 2. Fallback A: MutationObserver — remove the loader the moment
+      //    the Flutter root element appears in the DOM.
+      function flutterRootMounted() {
+        return !!(document.querySelector('flutter-view') ||
+                  document.querySelector('flt-glass-pane') ||
+                  document.querySelector('flt-scene-host'));
+      }
+      if (typeof MutationObserver !== 'undefined') {
+        var obs = new MutationObserver(function () {
+          if (flutterRootMounted()) {
+            try { obs.disconnect(); } catch (_) {}
+            removeLoader();
+          }
+        });
+        try {
+          obs.observe(document.body, { childList: true, subtree: true });
+        } catch (_) {}
+      }
+      // 3. Fallback B: interval poll — a safety net so a missed
+      //    first-frame event NEVER leaves the loader covering the
+      //    running app. Ticks every 500ms; hides the loader as soon
+      //    as Flutter's canvas is present, and has a 60s absolute
+      //    hard cap so the user sees SOMETHING even on a broken load.
+      var pollTicks = 0;
+      var pollHandle = setInterval(function () {
+        pollTicks += 1;
+        if (flutterRootMounted()) {
+          clearInterval(pollHandle);
+          removeLoader();
+        } else if (pollTicks >= 120) {
+          clearInterval(pollHandle);
+          removeLoader();
+        }
+      }, 500);
+    })();
+  </script>
   <!-- 2026-07-14 (Round 12 — explicit SW retirement bootstrap):
        Flutter's `--pwa-strategy=none` build does NOT register a
        service worker. Existing users still controlled by the
@@ -72,12 +234,53 @@
        — the raw file with the literal `__VAULTAI_APP_RELEASE__`
        token short-circuits without registering. -->
   <script src="vaultai-sw-bootstrap.js"></script>
-  <!-- 2026-07-14 (ZK Phase 2): serenity-kit @serenity-kit/opaque@1.1.0
-       vendored under /assets/opaque/. The ESM bundle contains the
-       audited RFC 9807 opaque-ke Rust core as WebAssembly. The init
-       loader awaits WASM instantiation and exposes only the CLIENT
-       half to `globalThis.vaultaiOpaqueClient` for Dart interop. -->
-  <script type="module" src="assets/opaque/vaultai-opaque-init.js"></script>
+  <!-- 2026-07-17 (Round 15 — lazy OPAQUE):
+       The 428 KB `@serenity-kit/opaque@1.1.0` ESM bundle + WASM used
+       to be imported unconditionally at page load via a
+       `<script type="module" src="assets/opaque/vaultai-opaque-init.js">`
+       tag. That added ~450 KB of parse + WASM instantiation to the
+       cold-start critical path for every visitor — including anyone
+       just reading the public Help Center.
+
+       This block replaces the eager tag with a lazy loader:
+       `globalThis.vaultaiEnsureOpaqueReady()` dynamic-imports the
+       vendored ESM the FIRST time an auth flow (register / login /
+       unlock / recovery) actually needs OPAQUE, then caches the
+       resolving Promise on `loadingPromise` so every subsequent call
+       returns the same Promise — the module is fetched, parsed, and
+       WASM-instantiated exactly once per page. `vaultai-opaque-init.js`
+       still sets `globalThis.vaultaiOpaqueReady` and
+       `globalThis.vaultaiOpaqueClient` as top-level side effects when
+       the dynamic import evaluates, so the Dart interop shape is
+       unchanged. Nothing about the cryptography moves. -->
+  <script>
+    (function () {
+      var loadingPromise = null;
+      globalThis.vaultaiEnsureOpaqueReady = function () {
+        if (loadingPromise) return loadingPromise;
+        loadingPromise = import('./assets/opaque/vaultai-opaque-init.js')
+          .then(function () {
+            var readyPromise = globalThis.vaultaiOpaqueReady;
+            if (!readyPromise) {
+              throw new Error(
+                '[vaultai-opaque] vaultaiOpaqueReady missing after ' +
+                'dynamic import of the init module — the vendored ' +
+                'bundle failed to expose its ready promise.'
+              );
+            }
+            return readyPromise;
+          })
+          .catch(function (err) {
+            // Surface the error to Dart so the auth UI can react, and
+            // drop the cached Promise so the next call retries cleanly
+            // instead of resolving with a stale rejection forever.
+            loadingPromise = null;
+            throw err;
+          });
+        return loadingPromise;
+      };
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
