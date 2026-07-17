@@ -2,19 +2,11 @@
 // ESM bundle. The WASM implementation is the audited RFC 9807
 // opaque-ke Rust crate; nothing here does cryptography.
 //
-// Runtime contract (Round 15 — lazy loader):
-//   * index.html exposes ``globalThis.vaultaiEnsureOpaqueReady()`` —
-//     an idempotent, dynamic-import-backed loader that triggers the
-//     ESM + WASM fetch only the FIRST time it's called (i.e. only
-//     when an auth flow actually needs OPAQUE) and returns the same
-//     cached Promise on every subsequent call.
-//   * Once that dynamic import evaluates, ``vaultai-opaque-init.js``
-//     sets ``globalThis.vaultaiOpaqueReady`` and, when WASM has
-//     instantiated, ``globalThis.vaultaiOpaqueClient`` — same shape
-//     as the pre-Round-15 eager path, so the downstream JS interop
-//     is unchanged.
-//   * Every call in this file first awaits ``ready()``, which
-//     invokes ``vaultaiEnsureOpaqueReady`` on first use.
+// Runtime contract:
+//   * vaultai-opaque-init.js (loaded from index.html) sets
+//     ``globalThis.vaultaiOpaqueReady`` and, once WASM has
+//     instantiated, ``globalThis.vaultaiOpaqueClient``.
+//   * Every call in this file first awaits ``ready()``.
 //
 // Non-web platforms (Flutter mobile/desktop) throw
 // ``UnsupportedError`` — Phase 1's directive gates mobile release on
@@ -22,9 +14,6 @@
 
 import 'dart:async';
 import 'dart:js_interop';
-
-@JS('vaultaiEnsureOpaqueReady')
-external JSFunction? get _vaultaiEnsureOpaqueReadyFn;
 
 @JS('vaultaiOpaqueReady')
 external JSPromise<JSAny?>? get _vaultaiOpaqueReady;
@@ -74,43 +63,21 @@ class OpaqueUnavailable implements Exception {
 
 class OpaqueClient {
   /// Await this before any client call. Idempotent.
-  ///
-  /// Round 15 (lazy loader): calls ``vaultaiEnsureOpaqueReady()`` on
-  /// first invocation, which dynamic-imports the vendored ESM + WASM
-  /// bundle. Subsequent calls return the same cached Promise, so the
-  /// module is fetched, parsed, and WASM-instantiated exactly once
-  /// per page. If the lazy shim is missing (e.g. cached pre-Round-15
-  /// index.html), fall back to the eager ``vaultaiOpaqueReady``
-  /// global so already-deployed clients keep working.
   static Future<void> ready() async {
-    JSPromise<JSAny?>? promise;
-    final ensure = _vaultaiEnsureOpaqueReadyFn;
-    if (ensure != null) {
-      final result = ensure.callAsFunction();
-      if (result == null) {
-        throw OpaqueUnavailable(
-          'vaultaiEnsureOpaqueReady() returned null; expected a '
-          'Promise resolving once WASM instantiation completes.',
-        );
-      }
-      promise = result as JSPromise<JSAny?>;
-    } else {
-      promise = _vaultaiOpaqueReady;
-    }
+    final promise = _vaultaiOpaqueReady;
     if (promise == null) {
       throw OpaqueUnavailable(
-        'Neither vaultaiEnsureOpaqueReady nor vaultaiOpaqueReady is '
-        'defined on globalThis. The Round-15 lazy OPAQUE loader block '
-        'in index.html did not run, or a browser CSP is blocking the '
-        'vendored WASM module.',
+        'vaultaiOpaqueReady is missing on window. The '
+        '<script type="module" src="assets/opaque/vaultai-opaque-init.js">'
+        ' tag in index.html did not load, or a browser CSP is blocking '
+        'the vendored WASM module.',
       );
     }
     await promise.toDart;
     if (_vaultaiOpaqueClient == null) {
       throw OpaqueUnavailable(
         'vaultaiOpaqueClient was not attached to globalThis after '
-        'the OPAQUE ready Promise resolved; the WASM init did not '
-        'complete.',
+        'vaultaiOpaqueReady resolved; the WASM init did not complete.',
       );
     }
   }
