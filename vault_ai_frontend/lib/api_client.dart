@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
+import 'services/session_termination.dart' as st;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 
@@ -235,6 +236,26 @@ class AuthExpiredException implements Exception {
 }
 
 
+/// Coded 401 from the backend's session-revocation layer (Step B.3).
+///
+/// Raised only when `detail.code` is one of the four session codes:
+/// `session_superseded`, `session_expired`, `session_revoked`, or
+/// `invalid_session`. The message is the fixed user-facing string
+/// from [st.userMessageFor]; the raw backend body is NOT surfaced
+/// so token ids, hashes, or vault ids never reach the UI or logs.
+class SessionTerminatedException implements Exception {
+  final st.SessionTerminationCode code;
+  final String message;
+  const SessionTerminatedException({
+    required this.code,
+    required this.message,
+  });
+  @override
+  String toString() =>
+      'SessionTerminatedException(code: $code)';
+}
+
+
 class InvalidVaultUnlockException implements Exception {
   final String message;
   const InvalidVaultUnlockException({
@@ -317,6 +338,19 @@ class VaultAIClient {
     bool json = false,
     bool sse = false,
   }) {
+    // Fail fast if a caller tries to attach a bearer after local
+    // termination — no wire hit, no accidental retry with a token
+    // the backend has already revoked. Public (unauthenticated)
+    // calls remain usable.
+    if (authToken != null &&
+        authToken.isNotEmpty &&
+        st.SessionTermination.instance.isTerminated) {
+      throw const SessionTerminatedException(
+        code: st.SessionTerminationCode.invalid,
+        message:
+            'Your session is no longer valid. Sign in again.',
+      );
+    }
     final headers = <String, String>{};
 
     if (json) {
@@ -1908,7 +1942,46 @@ class VaultAIClient {
   
   void _throwIfAuthExpired(int statusCode, String body) {
     if (statusCode != 401) return;
+    // If the backend supplied a coded 401 (Step B.3), classify it
+    // and throw the code-carrying exception. The api_client never
+    // decides what user message to render — that's the
+    // application's job — but it does canonicalise the code so
+    // upper layers do not have to re-parse detail.
+    final code = _extractSessionTerminationCode(body);
+    if (code != null) {
+      final exc = SessionTerminatedException(
+        code: code,
+        message: st.userMessageFor(code),
+      );
+      // Route through the singleton so a coded 401 always feeds the
+      // central termination flow, even on paths that call the api
+      // helper without going through the app's error boundary
+      // (e.g. background pollers, SSE reconnect loops).
+      // ignore: discarded_futures
+      st.SessionTermination.instance.handle(code);
+      throw exc;
+    }
     throw const AuthExpiredException();
+  }
+
+  /// Parse a FastAPI 401 body of the shape
+  /// `{"detail": {"code": "<one_of_four>", "message": "..."}}`.
+  /// Returns null if the body doesn't decode to that exact shape or
+  /// the code isn't one of the four session codes. Never throws.
+  static st.SessionTerminationCode? _extractSessionTerminationCode(
+      String body) {
+    if (body.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) return null;
+      final detail = decoded['detail'];
+      if (detail is! Map) return null;
+      final raw = detail['code'];
+      if (raw is! String) return null;
+      return st.parseSessionTerminationCode(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   

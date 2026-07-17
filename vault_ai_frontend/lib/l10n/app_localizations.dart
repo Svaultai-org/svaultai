@@ -1296,6 +1296,36 @@ abstract class AppLocalizations {
   /// **'VaultAI Chat will reply in {name}. The app interface is still shown in English while translation is in progress.'**
   String settingsLanguagePartialNotice(String name);
 
+  /// No description provided for @settingsLanguagePopular.
+  ///
+  /// In en, this message translates to:
+  /// **'Popular'**
+  String get settingsLanguagePopular;
+
+  /// No description provided for @settingsLanguageAllLanguages.
+  ///
+  /// In en, this message translates to:
+  /// **'All languages'**
+  String get settingsLanguageAllLanguages;
+
+  /// No description provided for @settingsLanguageShowAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Show all languages ({count} more)'**
+  String settingsLanguageShowAll(int count);
+
+  /// No description provided for @settingsLanguageShowFewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Show fewer'**
+  String get settingsLanguageShowFewer;
+
+  /// No description provided for @settingsLanguageNoMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No languages match \"{query}\"'**
+  String settingsLanguageNoMatches(String query);
+
   /// No description provided for @settingsCurrentPlan.
   ///
   /// In en, this message translates to:

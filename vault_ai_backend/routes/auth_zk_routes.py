@@ -58,6 +58,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import (
     SessionPrincipal,
     issue_session_token,
+    normalize_client_label,
     verify_session_token,
 )
 from opaque_server_module import (
@@ -287,7 +288,7 @@ async def zk_register_finalize(
                   %s, %s,
                   encode(gen_random_bytes(16),'hex')
                 )
-                RETURNING vault_id
+                RETURNING vault_id, vault_name
                 """,
                 (
                     handle_bytes, record,
@@ -303,7 +304,9 @@ async def zk_register_finalize(
                 status_code=409,
                 detail="vault_handle already in use",
             ) from exc
-        vault_id = str(cur.fetchone()["vault_id"])
+        _new_vault_row = cur.fetchone()
+        vault_id = str(_new_vault_row["vault_id"])
+        vault_name = _new_vault_row["vault_name"]
 
         cur.execute(
             """
@@ -326,13 +329,15 @@ async def zk_register_finalize(
 
     token = issue_session_token(
         vault_id=vault_id,
+        vault_name=vault_name,
         device_id=payload.device_id,
+        client_label=normalize_client_label(request.headers.get("user-agent")),
     )
 
     return ZkRegisterFinalizeResponse(
         vault_id=vault_id,
         vault_handle=to_display(handle_bytes),
-        session_token=token,
+        session_token=token["token"],
     )
 
 
@@ -491,7 +496,7 @@ async def zk_login_finalize(
                   last_any_activity_at = NOW(),
                   failed_pin_attempts  = 0
               WHERE vault_id = %s
-              RETURNING vault_id, wrapped_mvk, wrapped_sk_vault,
+              RETURNING vault_id, vault_name, wrapped_mvk, wrapped_sk_vault,
                         display_name_ciphertext
             """,
             (row["vault_id"],),
@@ -508,12 +513,14 @@ async def zk_login_finalize(
 
     token = issue_session_token(
         vault_id=str(vault_row["vault_id"]),
+        vault_name=vault_row["vault_name"],
         device_id=payload.device_id,
+        client_label=normalize_client_label(request.headers.get("user-agent")),
     )
 
     return ZkLoginFinalizeResponse(
         vault_id=str(vault_row["vault_id"]),
-        session_token=token,
+        session_token=token["token"],
         wrapped_mvk=_b64url_encode(bytes(vault_row["wrapped_mvk"])),
         wrapped_sk_vault=_b64url_encode(bytes(vault_row["wrapped_sk_vault"])),
         display_name_ciphertext=_b64url_encode(

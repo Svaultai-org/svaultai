@@ -16,6 +16,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import (
     SessionPrincipal,
     issue_session_token,
+    normalize_client_label,
     revoke_session_token,
     verify_session_token,
 )
@@ -358,6 +359,7 @@ def signup(payload: SignupRequest, request: Request) -> AuthResponse:
         vault_id=vault_id,
         vault_name=vault_name,
         device_id=device_id,
+        client_label=normalize_client_label(request.headers.get("user-agent")),
     )
     return _build_response(
         issued,
@@ -526,6 +528,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         vault_id=vault_id,
         vault_name=row["vault_name"],
         device_id=device_id,
+        client_label=normalize_client_label(request.headers.get("user-agent")),
     )
     return _build_response(
         issued,

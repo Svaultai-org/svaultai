@@ -1,6 +1,6 @@
 // 2026-07-14 (Round 12 — explicit SW retirement bootstrap): this
 // file is the TEMPLATE. Build scripts substitute the literal
-// `__VAULTAI_APP_RELEASE__` token below with the full 40-char
+// `506563a45abe7434625841698b1d981f22f126ff` token below with the full 40-char
 // commit SHA at release time, then copy the result to
 // `build/web/vaultai-sw-bootstrap.js`. `web/index.html` loads
 // this file synchronously BEFORE `flutter_bootstrap.js` so the
@@ -45,7 +45,7 @@
 (function () {
   'use strict';
 
-  var RELEASE = '__VAULTAI_APP_RELEASE__';
+  var RELEASE = '506563a45abe7434625841698b1d981f22f126ff';
   // If the template substitution didn't happen (e.g. someone tried
   // to load this file raw), bail — never register with the literal
   // token in the URL.

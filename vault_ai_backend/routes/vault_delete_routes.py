@@ -110,6 +110,11 @@ def _hmac_secret() -> bytes:
     return _get_secret()
 
 
+# HMAC-SHA256 produces a fixed 32-byte digest; this constant is the
+# authoritative sig length used by both sign and verify.
+_CHALLENGE_SIG_BYTES = 32
+
+
 def _sign_challenge(vault_id: str, expires_at_ts: int) -> str:
 
     payload = f"{vault_id}|{expires_at_ts}".encode("utf-8")
@@ -130,9 +135,21 @@ def _verify_challenge(
         raw = _b64url_decode(request_token.strip())
     except Exception:
         return False
-    if b"." not in raw:
+    # The sign layout is: payload_bytes + b"." + sig(32 bytes).
+    # sig is raw HMAC-SHA256 output (arbitrary bytes) and contains
+    # a b"." byte with ~12% probability; earlier versions of this
+    # parser used raw.rsplit(b".", 1) and silently mis-split those
+    # tokens, rejecting ~1-in-8 legitimate in-window challenges.
+    # Split from the end by the known sig length instead — payload
+    # and sig are unambiguously separated regardless of which bytes
+    # HMAC happens to emit. The b"." byte in position -33 is still
+    # asserted as a format sanity check.
+    if len(raw) < _CHALLENGE_SIG_BYTES + 2:
         return False
-    payload, provided_sig = raw.rsplit(b".", 1)
+    provided_sig = raw[-_CHALLENGE_SIG_BYTES:]
+    if raw[-(_CHALLENGE_SIG_BYTES + 1):-_CHALLENGE_SIG_BYTES] != b".":
+        return False
+    payload = raw[:-(_CHALLENGE_SIG_BYTES + 1)]
     expected_sig = hmac.new(
         _hmac_secret(), payload, "sha256",
     ).digest()

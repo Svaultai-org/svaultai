@@ -642,6 +642,25 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get settingsLanguagePopular => '常用';
+
+  @override
+  String get settingsLanguageAllLanguages => '所有语言';
+
+  @override
+  String settingsLanguageShowAll(int count) {
+    return '显示所有语言 (还有 $count 种)';
+  }
+
+  @override
+  String get settingsLanguageShowFewer => '收起';
+
+  @override
+  String settingsLanguageNoMatches(String query) {
+    return '没有语言匹配「$query」';
+  }
+
+  @override
   String get settingsCurrentPlan => '当前套餐';
 
   @override

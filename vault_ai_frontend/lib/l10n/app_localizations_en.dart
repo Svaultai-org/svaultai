@@ -660,6 +660,25 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsLanguagePopular => 'Popular';
+
+  @override
+  String get settingsLanguageAllLanguages => 'All languages';
+
+  @override
+  String settingsLanguageShowAll(int count) {
+    return 'Show all languages ($count more)';
+  }
+
+  @override
+  String get settingsLanguageShowFewer => 'Show fewer';
+
+  @override
+  String settingsLanguageNoMatches(String query) {
+    return 'No languages match \"$query\"';
+  }
+
+  @override
   String get settingsCurrentPlan => 'Current plan';
 
   @override

@@ -646,6 +646,25 @@ class AppLocalizationsKo extends AppLocalizations {
   }
 
   @override
+  String get settingsLanguagePopular => '주요 언어';
+
+  @override
+  String get settingsLanguageAllLanguages => '모든 언어';
+
+  @override
+  String settingsLanguageShowAll(int count) {
+    return '모든 언어 표시 ($count개 더)';
+  }
+
+  @override
+  String get settingsLanguageShowFewer => '간단히 보기';
+
+  @override
+  String settingsLanguageNoMatches(String query) {
+    return '「$query」와 일치하는 언어가 없습니다';
+  }
+
+  @override
   String get settingsCurrentPlan => '현재 플랜';
 
   @override

@@ -657,6 +657,25 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get settingsLanguagePopular => 'الشائعة';
+
+  @override
+  String get settingsLanguageAllLanguages => 'جميع اللغات';
+
+  @override
+  String settingsLanguageShowAll(int count) {
+    return 'عرض جميع اللغات ($count أخرى)';
+  }
+
+  @override
+  String get settingsLanguageShowFewer => 'عرض أقل';
+
+  @override
+  String settingsLanguageNoMatches(String query) {
+    return 'لا توجد لغات مطابقة لـ \"$query\"';
+  }
+
+  @override
   String get settingsCurrentPlan => 'الخطة الحالية';
 
   @override

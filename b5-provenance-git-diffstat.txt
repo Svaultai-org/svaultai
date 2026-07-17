@@ -1,0 +1,11 @@
+warning: in the working copy of 'vault_ai_backend/routes/vault_delete_routes.py', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'vault_ai_frontend/lib/api_client.dart', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'vault_ai_frontend/lib/main.dart', CRLF will be replaced by LF the next time Git touches it
+ vault_ai_backend/auth_local.py                     | 400 ++++++++++++++++++---
+ vault_ai_backend/routes/auth_routes.py             |   3 +
+ vault_ai_backend/routes/auth_zk_routes.py          |  17 +-
+ vault_ai_backend/routes/vault_delete_routes.py     |  21 +-
+ ...t_vault_delete_session_revocation_2026_07_09.py |  73 +++-
+ vault_ai_frontend/lib/api_client.dart              |  73 ++++
+ vault_ai_frontend/lib/main.dart                    |  60 +++-
+ 7 files changed, 578 insertions(+), 69 deletions(-)

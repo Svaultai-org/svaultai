@@ -1,0 +1,41 @@
+VaultAI B.5 validation archive — frozen provenance.
+====================================================
+
+Captured at archive-build time on the Windows dev host that
+produced this bundle. The runtime script `b5-linux-gate.sh` reads
+the machine-parseable fields below and does NOT invoke git;
+extracting this archive on a machine without a git repository is
+supported and expected.
+
+Machine-parseable fields (one value per line — do not edit):
+
+git_head_full             = 506563a45abe7434625841698b1d981f22f126ff
+git_head_short            = 506563a
+git_dirty_line_count      = 15
+migration_0025_sha256     = e32613f6c86c941631a6b26fb7b2596fef26009099083c7c134e3a2636e4f986
+auth_local_sha256         = bb2ec4a0b3ed86728bf27988c480d9a084cc8024a157621fbff1e0f189a9bd22
+vault_delete_routes_sha256 = 9d92ffd99a3afb130a65e90b1fad1b4b662419c0bb36899c9dd15941b8e0d287
+
+Human-readable notes
+--------------------
+
+Working-tree state: `git_head_full` above is the last committed
+SHA (subject: "Fix OPAQUE wrapper for opaque-ke 4.x API", authored
+by VaultAI on 2026-07-15 06:31:41 +0800). The tree has 15
+uncommitted lines on top of that, per your standing "do not
+commit" constraint through the B.1 -> B.4 work.
+
+Because the working tree contains uncommitted changes, the
+`git_head_full` SHA does NOT uniquely identify these bytes.
+Use the ARCHIVE SHA-256 (returned on delivery and re-hashable
+after extraction) as the authoritative identifier for this exact
+bundle. See also `b5-provenance-git-status.txt` and
+`b5-provenance-git-diffstat.txt` in this archive for a static
+snapshot of `git status --short` and `git diff --stat HEAD` at
+archive-build time.
+
+Spot-check invariant: the three file SHAs above have been stable
+since your B.2 acceptance point (`migration_0025_sha256`) and
+since the pool-abstraction fix in B.3 (`auth_local_sha256`,
+`vault_delete_routes_sha256`). If any diverge on extraction the
+gate aborts before Docker or Postgres is touched.

@@ -667,6 +667,25 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get settingsLanguagePopular => 'Populares';
+
+  @override
+  String get settingsLanguageAllLanguages => 'Todos los idiomas';
+
+  @override
+  String settingsLanguageShowAll(int count) {
+    return 'Mostrar todos los idiomas ($count más)';
+  }
+
+  @override
+  String get settingsLanguageShowFewer => 'Mostrar menos';
+
+  @override
+  String settingsLanguageNoMatches(String query) {
+    return 'Ningún idioma coincide con «$query»';
+  }
+
+  @override
   String get settingsCurrentPlan => 'Plan actual';
 
   @override

@@ -645,6 +645,25 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
+  String get settingsLanguagePopular => 'よく使う言語';
+
+  @override
+  String get settingsLanguageAllLanguages => 'すべての言語';
+
+  @override
+  String settingsLanguageShowAll(int count) {
+    return 'すべての言語を表示 (他$count件)';
+  }
+
+  @override
+  String get settingsLanguageShowFewer => '折りたたむ';
+
+  @override
+  String settingsLanguageNoMatches(String query) {
+    return '「$query」に一致する言語はありません';
+  }
+
+  @override
   String get settingsCurrentPlan => '現在のプラン';
 
   @override

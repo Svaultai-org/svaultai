@@ -24,6 +24,7 @@ import 'chunked_aead.dart';
 import 'vault_handle_saved_page.dart';
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
+import 'services/session_termination.dart' as st;
 import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_stub.dart';
 import 'services/vault_handle.dart' as vh;
@@ -654,6 +655,34 @@ Future<void> main() async {
 
       appState = AppState();
       appStateReady = true;
+
+      // Register ONE app-wide session-termination handler before
+      // hydration so any coded 401 raised inside `hydrate()`'s
+      // startup `/auth/me` call routes through this exact flow.
+      // Idempotence lives in SessionTermination.instance itself;
+      // this handler only knows how to clear state and navigate.
+      st.SessionTermination.instance.setHandler((event) async {
+        try {
+          if (appState.vaultId != null) {
+            _VaultCrypto.clearCache(appState.vaultId!);
+          }
+        } catch (_) {}
+        await appState.clearSession(keepLastVaultName: true);
+        try {
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          rootScaffoldMessengerKey.currentState?.showSnackBar(
+            SnackBar(content: Text(event.userMessage)),
+          );
+        } catch (_) {}
+        try {
+          rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+            appState.lastVaultName != null ? '/unlock' : '/login',
+            (_) => false,
+          );
+        } catch (_) {}
+      });
+      st.SessionTermination.instance.enablePeerTabListener();
+
       await appState.hydrate();
 
       runApp(
@@ -1133,8 +1162,8 @@ class AppState extends ChangeNotifier {
       return true;
     }
     if (error is AuthExpiredException) {
-      
-      
+
+
       if (!authed && !unlocked) {
         return false;
       }
@@ -1142,19 +1171,32 @@ class AppState extends ChangeNotifier {
       unlocked = false;
       authed = false;
       if (vaultId != null) _VaultCrypto.clearCache(vaultId!);
-      
-      
+
+
       clearSession(keepLastVaultName: true);
       notifyListeners();
       rootScaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(content: Text(error.message)),
       );
       rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-        
-        
+
+
         lastVaultName != null ? '/unlock' : '/login',
         (_) => false,
       );
+      return true;
+    }
+
+    // Coded 401 from the backend's session-revocation layer
+    // (Step B.3/B.4). Note: api_client already funnelled the code
+    // into SessionTermination.instance.handle() before throwing, so
+    // reaching here means the app-registered handler (installed in
+    // main()) is doing the actual clearSession + navigation. This
+    // branch exists so any caller that catches the exception via
+    // handleApiException also returns `true` (handled), and to be
+    // idempotent if a stray SessionTerminatedException surfaces
+    // outside the api layer.
+    if (error is SessionTerminatedException) {
       return true;
     }
     
@@ -1361,6 +1403,12 @@ void applyBackendStats(Map<String, dynamic> stats) {
     required String vaultNameValue,
     String? displayUsernameValue,
   }) async {
+    // A successful login clears the "terminated" flag so the api
+    // layer stops short-circuiting authenticated requests. The
+    // generation counter is NOT rewound — any late responses from
+    // the pre-termination session still evaluate as stale to any
+    // caller comparing generations.
+    st.SessionTermination.instance.reset();
     final sp = await SharedPreferences.getInstance();
     sessionToken = token;
     vaultId = vaultIdValue;
@@ -6578,7 +6626,7 @@ Widget _buildSettingsSection(bool isMobile) {
                 ),
               ),
               const SizedBox(height: 24),
-              const _LanguageCard(),
+              const LanguageCard(),
               const SizedBox(height: 24),
 
               const Text(
@@ -12568,22 +12616,52 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
 }
 
 
-class _LanguageCard extends StatefulWidget {
-  const _LanguageCard();
+// Exposed to widget tests via @visibleForTesting so the a11y +
+// viewport-overflow suite in test/language_card_viewport_2026_07_17_test.dart
+// can mount the card in isolation. Not part of the app's public API
+// beyond that annotation.
+@visibleForTesting
+class LanguageCard extends StatefulWidget {
+  const LanguageCard({super.key});
 
   @override
-  State<_LanguageCard> createState() => _LanguageCardState();
+  State<LanguageCard> createState() => _LanguageCardState();
 }
 
 
-class _LanguageCardState extends State<_LanguageCard> {
+class _LanguageCardState extends State<LanguageCard> {
   final TextEditingController _searchCtrl = TextEditingController();
   String _query = '';
+  bool _expanded = false;
+  bool _appliedInitialExpansion = false;
 
   @override
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  // If the user's currently-selected locale is not in the Popular
+  // shortlist, auto-expand the "All languages" section on the
+  // first build so the selection is always visible without the
+  // user having to discover the toggle. Fires once per mount;
+  // subsequent user interactions with the toggle are respected.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_appliedInitialExpansion) return;
+    _appliedInitialExpansion = true;
+    final current = context.read<AppState>().appLocale;
+    if (current != null && !_isPopular(current.languageCode)) {
+      _expanded = true;
+    }
+  }
+
+  bool _isPopular(String code) {
+    for (final l in kPopularLanguages) {
+      if (l.code == code) return true;
+    }
+    return false;
   }
 
   @override
@@ -12751,66 +12829,126 @@ class _LanguageCardState extends State<_LanguageCard> {
           const SizedBox(height: 12),
 
 
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: visibleLangs.map((info) {
-              final selected = current != null &&
-                  current.languageCode == info.code;
-              return InkWell(
-                key: Key('settings_language_chip_${info.code}'),
-                onTap: () => app.setAppLocale(Locale(info.code)),
-                borderRadius: BorderRadius.circular(999),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? const Color(0xFF10A37F).withValues(alpha: 0.18)
-                        : const Color(0xFF2A2A2A),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: selected
-                          ? const Color(0xFF10A37F).withValues(alpha: 0.45)
-                          : Colors.white12,
+          // 2026-07-17 UX redesign — replace the wall of chips with a
+          // sectioned selectable list (iOS/Android Settings pattern).
+          // Non-search state: a small Popular list + a "Show all
+          // languages" toggle. Search state: a flat filtered list
+          // with no section headers, matching the ChatGPT / Notion
+          // search-clears-the-navigation UX.
+          if (_query.trim().isNotEmpty) ...[
+            if (visibleLangs.isEmpty)
+              Padding(
+                key: const Key('settings_language_no_matches'),
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Center(
+                  child: Text(
+                    l.settingsLanguageNoMatches(_query.trim()),
+                    style: const TextStyle(
+                      color: Color(0xFF8E8E8E), fontSize: 13,
                     ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        info.nativeName,
-                        style: TextStyle(
-                          color: selected
-                              ? Colors.white
-                              : const Color(0xFFC7C7C7),
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.w500,
+                ),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final info in visibleLangs)
+                    _LanguageListRow(
+                      info: info,
+                      selected: current != null &&
+                          current.languageCode == info.code,
+                      onTap: () => app.setAppLocale(Locale(info.code)),
+                    ),
+                ],
+              ),
+          ] else ...[
+            _LanguageSectionHeader(label: l.settingsLanguagePopular),
+            const SizedBox(height: 4),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final info in kPopularLanguages)
+                  _LanguageListRow(
+                    info: info,
+                    selected: current != null &&
+                        current.languageCode == info.code,
+                    onTap: () => app.setAppLocale(Locale(info.code)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            InkWell(
+              key: const Key('settings_language_show_all'),
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: BorderRadius.circular(10),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                constraints: const BoxConstraints(minHeight: 44),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.02),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _expanded
+                            ? l.settingsLanguageShowFewer
+                            : l.settingsLanguageShowAll(
+                                kSupportedLanguages.length -
+                                    kPopularLanguages.length),
+                        style: const TextStyle(
+                          color: Color(0xFFC7C7C7),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                      if (info.englishName != info.nativeName) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          '· ${info.englishName}',
-                          style: const TextStyle(
-                            color: Color(0xFF8E8E8E),
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                      if (selected) ...[
-                        const SizedBox(width: 6),
-                        const Icon(Icons.check,
-                            size: 14, color: Color(0xFF10A37F)),
-                      ],
-                    ],
-                  ),
+                    ),
+                    AnimatedRotation(
+                      duration: const Duration(milliseconds: 180),
+                      turns: _expanded ? 0.5 : 0.0,
+                      child: const Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 20, color: Color(0xFFC7C7C7),
+                      ),
+                    ),
+                  ],
                 ),
-              );
-            }).toList(),
-          ),
+              ),
+            ),
+            ClipRect(
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: _expanded
+                    ? Column(
+                        key: const Key('settings_language_all_expanded'),
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 10),
+                          _LanguageSectionHeader(
+                              label: l.settingsLanguageAllLanguages),
+                          const SizedBox(height: 4),
+                          for (final info in kSupportedLanguages)
+                            if (!_isPopular(info.code))
+                              _LanguageListRow(
+                                info: info,
+                                selected: current != null &&
+                                    current.languageCode == info.code,
+                                onTap: () => app.setAppLocale(
+                                    Locale(info.code)),
+                              ),
+                        ],
+                      )
+                    : const SizedBox(width: double.infinity),
+              ),
+            ),
+          ],
 
 
           if (currentInfo != null && !currentInfo.fullyLocalised) ...[
@@ -12851,6 +12989,135 @@ class _LanguageCardState extends State<_LanguageCard> {
     );
   }
 }
+
+
+// Small uppercase caption used above the Popular / All-Languages
+// groups on the Language card. Matches the iOS/Android Settings
+// language-picker treatment (dim, wide-tracked, uppercase).
+class _LanguageSectionHeader extends StatelessWidget {
+  final String label;
+  const _LanguageSectionHeader({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: 2, left: 4),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF8E8E8E),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.7,
+        ),
+      ),
+    );
+  }
+}
+
+
+// Full-width selectable language row. Replaces the previous chip
+// treatment so the list scales to arbitrarily many languages
+// without stretching the Settings page and keeps the 48-pt tap
+// target iOS accessibility guidelines call for.
+class _LanguageListRow extends StatelessWidget {
+  final LanguageInfo info;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _LanguageListRow({
+    required this.info,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final showEnglish = info.englishName != info.nativeName;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: showEnglish
+          ? '${info.nativeName}, ${info.englishName}'
+          : info.nativeName,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            key: Key('settings_language_row_${info.code}'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              constraints: const BoxConstraints(minHeight: 48),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: selected
+                    ? const Color(0xFF10A37F).withValues(alpha: 0.16)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: selected
+                      ? const Color(0xFF10A37F).withValues(alpha: 0.45)
+                      : Colors.white10,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          info.nativeName,
+                          style: TextStyle(
+                            color: selected
+                                ? Colors.white
+                                : const Color(0xFFEAEAEA),
+                            fontSize: 14,
+                            fontWeight: selected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            height: 1.2,
+                          ),
+                        ),
+                        if (showEnglish) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            info.englishName,
+                            style: const TextStyle(
+                              color: Color(0xFF8E8E8E),
+                              fontSize: 11,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (selected)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 10),
+                      child: Icon(
+                        Icons.check,
+                        size: 18, color: Color(0xFF10A37F),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 class _OverviewCard extends StatelessWidget {
   final _OverviewCardData data;

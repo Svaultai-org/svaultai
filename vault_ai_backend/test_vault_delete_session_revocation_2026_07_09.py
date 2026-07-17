@@ -159,10 +159,15 @@ class TestOldSessionIsUseless(unittest.TestCase):
         self.assertIn("SET revoked_at", sql)
         self.assertIn("WHERE vault_id", sql)
         self.assertIn("revoked_at IS NULL", sql)
+        # Step B.3 wire-up: revoke_all_sessions_for_vault now writes
+        # revoked_reason so the events UI can label bulk revokes.
+        self.assertIn("revoked_reason", sql)
 
-
+        # SQL parameters are (reason, vault_id) — reason first because the
+        # UPDATE ... SET revoked_reason = %s ... WHERE vault_id = %s
+        # clause is emitted in that order.
         params = fake_cur.execute.call_args[0][1]
-        self.assertEqual(params, (TEST_VAULT_ID,))
+        self.assertEqual(params, ("vault-delete", TEST_VAULT_ID))
         fake_conn.commit.assert_called_once()
 
     def test_load_principal_gates_on_revoked_at_and_vault_join(self):
@@ -450,6 +455,70 @@ class TestDeleteServiceNeverBroadcastsCrypto(unittest.TestCase):
             doc,
             msg="the no-broadcast invariant must remain documented "
                 "so future readers cannot regress it accidentally",
+        )
+
+
+class TestChallengeParserAcceptsDotInSignature(unittest.TestCase):
+    """Regression pin for the ``_verify_challenge`` fix (2026-07-17).
+
+    The token wire format is ``payload + b"." + sig(32 bytes)`` after
+    base64url. Signatures are raw HMAC-SHA256 output, which contains
+    a b"." byte with ~12% probability. An earlier parser used
+    ``raw.rsplit(b".", 1)`` and misparsed those tokens whenever the
+    last dot inside the sig came after the true payload/sig
+    separator, silently rejecting one-in-eight legitimate in-window
+    challenges. The current parser splits from the end by the known
+    32-byte sig length, so the outcome no longer depends on which
+    bytes HMAC happens to emit. This test guards against a
+    regression that reintroduces content-based splitting.
+    """
+
+    def test_dot_containing_signature_round_trips(self) -> None:
+        from routes.vault_delete_routes import (
+            _sign_challenge, _verify_challenge, _b64url_decode,
+        )
+        vid = "vault-parser-regression-2026-07-17"
+        base = int(time.time()) + 3600
+        for offset in range(2000):
+            ts = base + offset
+            token = _sign_challenge(vid, ts)
+            raw = _b64url_decode(token)
+            sig = raw[-32:]
+            if b"." in sig:
+                self.assertTrue(
+                    _verify_challenge(token, vid, now_ts=ts - 10),
+                    msg=(
+                        f"regression: token with b'.' at sig position "
+                        f"{sig.index(b'.')} must verify — the parser "
+                        f"must split by fixed sig length, not by "
+                        f"content-based rsplit(b'.', 1)."
+                    ),
+                )
+                return
+        self.skipTest(
+            "no dot-in-sig token generated in 2000 tries — the "
+            "regression case cannot be exercised (very unlikely; "
+            "expected within ~10 iterations at 12% per-token rate)."
+        )
+
+    def test_bulk_verify_never_flakes(self) -> None:
+        from routes.vault_delete_routes import (
+            _sign_challenge, _verify_challenge,
+        )
+        vid = "vault-parser-bulk-2026-07-17"
+        n = 500
+        base = int(time.time()) + 3600
+        fails = [
+            ts for ts in range(base, base + n)
+            if not _verify_challenge(_sign_challenge(vid, ts), vid,
+                                     now_ts=ts - 10)
+        ]
+        self.assertEqual(
+            fails, [],
+            msg=(
+                f"{len(fails)}/{n} freshly-signed tokens failed to "
+                f"verify — parser must be content-independent."
+            ),
         )
 
 

@@ -26,6 +26,12 @@ class LanguageInfo {
 
   final bool rtl;
 
+  // Whether this language surfaces in the Settings "Popular"
+  // shortlist above the collapsible "All languages" section. Six
+  // entries max — see the sanity assertion in
+  // `kPopularLanguages` below if you flip a seventh flag.
+  final bool popular;
+
   final List<String> aliases;
 
   const LanguageInfo({
@@ -34,6 +40,7 @@ class LanguageInfo {
     required this.englishName,
     required this.fullyLocalised,
     required this.rtl,
+    this.popular = false,
     this.aliases = const <String>[],
   });
 
@@ -62,6 +69,7 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
     englishName: 'English',
     fullyLocalised: true,
     rtl: false,
+    popular: true,
   ),
   LanguageInfo(
     code: 'ar',
@@ -69,6 +77,7 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
     englishName: 'Arabic',
     fullyLocalised: true,
     rtl: true,
+    popular: true,
     aliases: <String>['arabic', 'arabe', 'ar'],
   ),
   LanguageInfo(
@@ -77,6 +86,7 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
     englishName: 'French',
     fullyLocalised: true,
     rtl: false,
+    popular: true,
     aliases: <String>['francais', 'french'],
   ),
   LanguageInfo(
@@ -85,6 +95,7 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
     englishName: 'Spanish',
     fullyLocalised: true,
     rtl: false,
+    popular: true,
     aliases: <String>['espanol', 'spanish', 'castellano'],
   ),
   LanguageInfo(
@@ -109,6 +120,7 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
     englishName: 'Chinese',
     fullyLocalised: true,
     rtl: false,
+    popular: true,
     aliases: <String>['chinese', 'mandarin', 'simplified'],
   ),
 
@@ -127,6 +139,7 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
     englishName: 'German',
     fullyLocalised: false,
     rtl: false,
+    popular: true,
     aliases: <String>['german', 'deutsch', 'de'],
   ),
   LanguageInfo(
@@ -251,6 +264,15 @@ const List<LanguageInfo> kSupportedLanguages = <LanguageInfo>[
   ),
 ];
 
+
+
+// Compact recommended set surfaced above the collapsible "All
+// languages" section on the Settings language card. Derived from
+// the `popular` flag on each `LanguageInfo` so the shortlist has
+// one source of truth. Order follows the registry order.
+final List<LanguageInfo> kPopularLanguages = List<LanguageInfo>.unmodifiable(
+  kSupportedLanguages.where((info) => info.popular),
+);
 
 
 const Set<String> kFullyLocalisedCodes = <String>{
