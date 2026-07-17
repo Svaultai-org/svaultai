@@ -326,11 +326,25 @@ void main() {
     });
 
     test('source: main.dart wraps VaultaiApp with '
-         'AppReleaseControllerScope(baseUrl: backendBaseUrl, ...)',
-        () {
+         'AppReleaseControllerScope(baseUrl: kIsWeb ? Uri.base.origin '
+         ': backendBaseUrl, ...)', () {
       final src = _readLib('main.dart');
       expect(src.contains('AppReleaseControllerScope'), true);
-      expect(src.contains('baseUrl: backendBaseUrl'), true);
+      // 2026-07-18 (release-URL fix): on web we must resolve
+      // `/release.json` against the frontend origin (app.svaultai.com),
+      // NOT the API host (api.svaultai.com) which does not host this
+      // manifest. Mobile/desktop still uses backendBaseUrl because
+      // `Uri.base.origin` is undefined there.
+      expect(
+        RegExp(r'baseUrl:\s*kIsWeb\s*\?\s*Uri\.base\.origin\s*'
+               r':\s*backendBaseUrl').hasMatch(src),
+        isTrue,
+        reason:
+            'main.dart must wire the release scope with '
+            '`baseUrl: kIsWeb ? Uri.base.origin : backendBaseUrl`, '
+            'not the raw backendBaseUrl (which would 404 on '
+            'https://api.svaultai.com/release.json).',
+      );
       expect(src.contains('child: VaultaiApp()'), true,
           reason: 'The scope must wrap the top-level app widget so '
                   'every descendant can see it.');

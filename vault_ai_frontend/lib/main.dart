@@ -725,7 +725,14 @@ Future<void> main() async {
         ChangeNotifierProvider.value(
           value: appState,
           child: AppReleaseControllerScope(
-            baseUrl: backendBaseUrl,
+            // The release manifest (/release.json) is emitted by
+            // scripts/build-web-release.* into build/web/ and served
+            // from the SAME origin the web app itself was loaded from,
+            // i.e. https://app.svaultai.com — NOT from the FastAPI
+            // backend at https://api.svaultai.com. On web we resolve
+            // against the current window origin; on mobile/desktop
+            // Uri.base.origin is undefined so we keep backendBaseUrl.
+            baseUrl: kIsWeb ? Uri.base.origin : backendBaseUrl,
             child: VaultaiApp(),
           ),
         ),
