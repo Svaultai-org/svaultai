@@ -6,7 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/services/vault_chat_router.dart' as vcr;
+import 'package:vault_ai_frontend/ui/responsive.dart';
 import 'package:vault_ai_frontend/ui/vault_chat_cards.dart';
+
+import '_helpers/responsive_harness.dart';
 
 
 
@@ -18,6 +21,74 @@ Widget _wrap(Widget child) => MaterialApp(
       locale: const Locale('en'),
       home: Scaffold(body: child),
     );
+
+
+class _InheritanceHarness extends StatelessWidget {
+  const _InheritanceHarness();
+
+  @override
+  Widget build(BuildContext context) {
+    final vr = VaultResponsive.of(context);
+    return SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: vr.pageHorizontalPadding,
+          vertical: vr.sectionSpacing,
+        ),
+        child: Container(
+          padding: EdgeInsets.all(vr.cardInsetPadding),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2A2A2A),
+            borderRadius: BorderRadius.circular(vr.isMobile ? 16 : 20),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Same shape as _buildInheritanceSection's "Vaults I'll
+              // inherit" card after the fix — ResponsiveActionBar
+              // instead of a raw Row, so the heading is never squeezed
+              // into a one-char-per-line column.
+              ResponsiveActionBar(
+                heading: const Text(
+                  'Vaults I\'ll inherit',
+                  key: Key('inheritance_vaults_ill_inherit_heading'),
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+                actions: [
+                  OutlinedButton.icon(
+                    key: const Key(
+                        'inheritance_refresh_inheritances_button'),
+                    onPressed: () {},
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Refresh'),
+                  ),
+                  FilledButton.icon(
+                    key: const Key(
+                        'inheritance_enter_code_button'),
+                    onPressed: () {},
+                    icon: const Icon(Icons.vpn_key),
+                    label: const Text('Enter code'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'No inheritances. Use "Enter code" if someone shared '
+                'a pairing code with you.',
+                style:
+                    TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
 
 
 Map<String, dynamic> _cryptoShowVaultEnv({
@@ -48,6 +119,76 @@ Map<String, dynamic> _cryptoShowVaultEnv({
 }
 
 void main() {
+
+
+  group('Bug 1 — Inheritance page ResponsiveActionBar', () {
+    for (final d in const [
+      DeviceProfiles.iphoneSE,
+      DeviceProfiles.iphone12,
+      DeviceProfiles.iphone14ProMax,
+    ]) {
+      testWidgets(
+          '"Vaults I\'ll inherit" heading stays legible @ ${d.name} '
+          '(${d.width.toInt()}dp)', (t) async {
+        await pumpAtDevice(t, _wrap(const _InheritanceHarness()),
+            device: d);
+        final heading = find.byKey(
+            const Key('inheritance_vaults_ill_inherit_heading'));
+        expect(heading, findsOneWidget);
+
+        final box = t.renderObject<RenderBox>(heading);
+        expect(box.size.width, greaterThan(50.0),
+            reason: 'heading width was ${box.size.width}dp on '
+                '${d.name} — pre-fix regression: raw Row squeezed the '
+                'Expanded to <10dp so "Vaults I\'ll inherit" wrapped '
+                'one character per line');
+        expectNoOverflow(t, context: d.name);
+      });
+    }
+
+    testWidgets('both action buttons still tappable at 320dp',
+        (t) async {
+      await pumpAtDevice(t, _wrap(const _InheritanceHarness()),
+          device: DeviceProfiles.iphoneSE);
+      expect(
+        find.byKey(const Key(
+            'inheritance_refresh_inheritances_button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key(
+            'inheritance_enter_code_button')),
+        findsOneWidget,
+      );
+
+      final refreshBtn = t.renderObject<RenderBox>(find.byKey(
+          const Key(
+              'inheritance_refresh_inheritances_button')));
+      expect(refreshBtn.size.height, greaterThanOrEqualTo(32.0));
+    });
+
+    testWidgets(
+        'production _buildInheritanceSection still uses '
+        'ResponsiveActionBar (source guard)', (t) async {
+      final src = File('lib/main.dart').readAsStringSync();
+      final headingIdx = src.indexOf(
+          "'inheritance_vaults_ill_inherit_heading'");
+      expect(headingIdx, greaterThan(-1),
+          reason: 'the production Inheritance section must still '
+              'expose the heading key the widget test targets');
+      final windowStart = (headingIdx - 800).clamp(0, src.length);
+      final windowEnd = (headingIdx + 800).clamp(0, src.length);
+      final window = src.substring(windowStart, windowEnd);
+      expect(window.contains('ResponsiveActionBar'), isTrue,
+          reason:
+              'the "Vaults I\'ll inherit" heading MUST live inside a '
+              'ResponsiveActionBar in production, not a raw Row — '
+              'otherwise 320dp regresses to the one-char-per-line bug');
+      expect(window.contains('inheritance_refresh_inheritances_button'),
+          isTrue);
+      expect(window.contains('inheritance_enter_code_button'), isTrue);
+    });
+  });
 
 
   group('Bug 2 — Crypto Vault chat entitlement gate', () {

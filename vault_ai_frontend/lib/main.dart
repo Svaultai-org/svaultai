@@ -45,7 +45,6 @@ import 'device_id.dart';
 import 'device_pending_page.dart';
 import 'devices_page.dart';
 import 'security_center_page.dart';
-import 'inheritance_pairing_page.dart';
 import 'help_center_page.dart' as hc;
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
@@ -381,6 +380,7 @@ enum _DashboardSection {
   expiry,
   memory,
   relationships,
+  inheritance,
   settings,
 }
 
@@ -2323,7 +2323,6 @@ class VaultaiApp extends StatelessWidget {
         
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
-        '/inheritance-pairing': (_) => const InheritancePairingPage(),
 
 
         '/storage': (_) => const StoragePage(),
@@ -5633,6 +5632,1005 @@ List<VaultLoginItem> vaultLogins = [];
 _DashboardSection selectedSection = _DashboardSection.chat;
 
 
+List<Map<String, dynamic>> beneficiaries = [];
+List<Map<String, dynamic>> inheritances = [];
+bool loadingBeneficiaries = false;
+bool loadingInheritances = false;
+bool _inheritanceLoadedOnce = false;
+
+Future<void> _loadBeneficiaries() async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null || app.vaultName == null) return;
+
+  setState(() => loadingBeneficiaries = true);
+  try {
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    final result = await client.listBeneficiaries(
+      vaultName: app.vaultName!,
+      pin: pin,
+      authToken: token,
+    );
+    final raw = result['beneficiaries'];
+    if (!mounted) return;
+    setState(() {
+      beneficiaries = raw is List
+          ? raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
+          : <Map<String, dynamic>>[];
+    });
+  } catch (e) {
+    if (app.handleApiException(e)) return;
+    _showSnack('Could not load beneficiaries: $e');
+  } finally {
+    if (mounted) setState(() => loadingBeneficiaries = false);
+  }
+}
+
+Future<void> _loadInheritances() async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null || app.vaultName == null) return;
+
+  setState(() => loadingInheritances = true);
+  try {
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    final result = await client.listInheritances(
+      vaultName: app.vaultName!,
+      pin: pin,
+      authToken: token,
+    );
+    final raw = result['inheritances'];
+    if (!mounted) return;
+    setState(() {
+      inheritances = raw is List
+          ? raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
+          : <Map<String, dynamic>>[];
+    });
+  } catch (e) {
+    if (app.handleApiException(e)) return;
+    _showSnack('Could not load inheritances: $e');
+  } finally {
+    if (mounted) setState(() => loadingInheritances = false);
+  }
+}
+
+Future<void> _showAddBeneficiaryDialog() async {
+  final labelCtrl = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  String? pairingCode;
+  String? createErr;
+  bool creating = false;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogCtx) {
+      return StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF2F2F2F),
+            title: Text(
+              pairingCode == null
+                  ? AppLocalizations.of(dialogCtx).inheritanceAddBeneficiary
+                  : 'Pairing code',
+            ),
+            content: pairingCode == null
+                ? Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Give this beneficiary a label only you will see, '
+                          'like "Son - John". You\'ll get a one-time code to '
+                          'share with them out-of-band.',
+                          style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: labelCtrl,
+                          maxLength: 60,
+                          decoration: const InputDecoration(
+                            counterText: '',
+                            hintText: 'Label (e.g. Son - John)',
+                          ),
+                          validator: (v) =>
+                              (v == null || v.trim().isEmpty) ? 'Required' : null,
+                        ),
+                        if (createErr != null) ...[
+                          const SizedBox(height: 10),
+                          Text(createErr!, style: const TextStyle(color: Colors.redAccent)),
+                        ],
+                      ],
+                    ),
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Share this code with your beneficiary out-of-band '
+                        '(Signal, in person, paper). It works once and '
+                        'expires in 60 minutes.',
+                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10A37F).withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: SelectableText(
+                          pairingCode!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 2,
+                            color: Color(0xFF10A37F),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+            actions: pairingCode == null
+                ? [
+                    TextButton(
+                      onPressed: creating ? null : () => Navigator.pop(dialogCtx),
+                      child: Text(AppLocalizations.of(context).commonCancel),
+                    ),
+                    FilledButton.icon(
+                      onPressed: creating
+                          ? null
+                          : () async {
+                              if (formKey.currentState?.validate() != true) return;
+                              final app = context.read<AppState>();
+                              final token = app.sessionToken;
+                              if (token == null || app.vaultName == null) {
+                                setLocal(() => createErr = 'Session expired.');
+                                return;
+                              }
+                              setLocal(() {
+                                creating = true;
+                                createErr = null;
+                              });
+                              try {
+                                final pin = await _VaultCrypto.currentPinOrThrow();
+                                final client = VaultAIClient(baseUrl: backendBaseUrl);
+                                final labelText = labelCtrl.text.trim();
+                                final result = await client.createBeneficiary(
+                                  vaultName: app.vaultName!,
+                                  pin: pin,
+                                  label: labelText,
+                                  authToken: token,
+                                );
+                                // ZK client-finalize: for ZK vaults,
+                                // /beneficiary/create wrote
+                                // passer_label = NULL. Encrypt the
+                                // label locally under metadataKey
+                                // and POST the ciphertext to
+                                // /vault/ciphertext/beneficiary-links
+                                // BEFORE surfacing the pairing code.
+                                // If the finalize fails, do NOT
+                                // silently claim success — refuse
+                                // to hand out the pairing code with
+                                // an unlabelled row (the beneficiary
+                                // list would be unreadable). Show
+                                // the error and let the user retry.
+                                if (zk_mvk_store.ZkActiveMvk.current()
+                                        != null) {
+                                  final linkId =
+                                      (result['link_id'] as num?)
+                                          ?.toInt();
+                                  if (linkId == null) {
+                                    setLocal(() {
+                                      createErr =
+                                          'Could not finalize the '
+                                          'label: missing link_id in '
+                                          'the create response.';
+                                      creating = false;
+                                    });
+                                    return;
+                                  }
+                                  final ok =
+                                      await tryZkFinalizeBeneficiaryLabelCiphertext(
+                                    baseUrl: backendBaseUrl,
+                                    authToken: token,
+                                    linkId: linkId,
+                                    label: labelText,
+                                  );
+                                  if (!ok) {
+                                    setLocal(() {
+                                      createErr =
+                                          'Could not save the '
+                                          'beneficiary label to '
+                                          'your vault. The pairing '
+                                          'code was not generated. '
+                                          'Please try again.';
+                                      creating = false;
+                                    });
+                                    return;
+                                  }
+                                }
+                                setLocal(() {
+                                  pairingCode = result['pairing_code']?.toString();
+                                  creating = false;
+                                });
+                                await _loadBeneficiaries();
+                              } catch (e) {
+                                if (app.handleApiException(e)) return;
+                                setLocal(() {
+                                  createErr = e.toString().replaceFirst('Exception: ', '');
+                                  creating = false;
+                                });
+                              }
+                            },
+                      icon: creating
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.qr_code_2),
+                      label: Text(creating ? 'Generating…' : 'Generate code'),
+                    ),
+                  ]
+                : [
+                    FilledButton.icon(
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: pairingCode!));
+                        _showSnack('Copied to clipboard');
+                      },
+                      icon: const Icon(Icons.copy_all_outlined),
+                      label: Text(
+                        AppLocalizations.of(dialogCtx).commonCopyCode,
+                      ),
+                    ),
+                    OutlinedButton(
+                      onPressed: () => Navigator.pop(dialogCtx),
+                      child: const Text('Done'),
+                    ),
+                  ],
+          );
+        },
+      );
+    },
+  );
+}
+
+Future<void> _showEnterPairingCodeDialog() async {
+  final codeCtrl = TextEditingController();
+  String? linkErr;
+  String? linkedLabel;
+  bool linking = false;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogCtx) {
+      return StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF2F2F2F),
+            title: Text(linkedLabel == null ? 'Enter inheritance code' : 'Linked!'),
+            content: linkedLabel == null
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Type the pairing code your benefactor gave you. '
+                        'Once linked, you\'ll be able to request transfer '
+                        'whenever you need to.',
+                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: codeCtrl,
+                        autocorrect: false,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          hintText: 'XXX-XXXX-XXXX',
+                        ),
+                      ),
+                      if (linkErr != null) ...[
+                        const SizedBox(height: 10),
+                        Text(linkErr!, style: const TextStyle(color: Colors.redAccent)),
+                      ],
+                    ],
+                  )
+                : Text(
+                    'You are now linked as a beneficiary of "$linkedLabel". '
+                    'You can request transfer from the Inheritance page at any time.',
+                    style: const TextStyle(color: Color(0xFFECECEC), fontSize: 13),
+                  ),
+            actions: linkedLabel == null
+                ? [
+                    TextButton(
+                      onPressed: linking ? null : () => Navigator.pop(dialogCtx),
+                      child: Text(AppLocalizations.of(context).commonCancel),
+                    ),
+                    FilledButton.icon(
+                      onPressed: linking
+                          ? null
+                          : () async {
+                              final code = codeCtrl.text.trim();
+                              if (code.isEmpty) {
+                                setLocal(() => linkErr = 'Enter the code.');
+                                return;
+                              }
+                              final app = context.read<AppState>();
+                              final token = app.sessionToken;
+                              if (token == null || app.vaultName == null) {
+                                setLocal(() => linkErr = 'Session expired.');
+                                return;
+                              }
+                              setLocal(() {
+                                linking = true;
+                                linkErr = null;
+                              });
+                              try {
+                                final pin = await _VaultCrypto.currentPinOrThrow();
+                                final client = VaultAIClient(baseUrl: backendBaseUrl);
+                                final result = await client.linkBeneficiary(
+                                  vaultName: app.vaultName!,
+                                  pin: pin,
+                                  pairingCode: code,
+                                  authToken: token,
+                                );
+                                setLocal(() {
+                                  linkedLabel = result['passer_label']?.toString() ?? 'vault';
+                                  linking = false;
+                                });
+                                await _loadInheritances();
+                              } catch (e) {
+                                if (app.handleApiException(e)) return;
+                                setLocal(() {
+                                  linkErr = e.toString().replaceFirst('Exception: ', '');
+                                  linking = false;
+                                });
+                              }
+                            },
+                      icon: linking
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.link),
+                      label: Text(linking ? 'Linking…' : 'Link to vault'),
+                    ),
+                  ]
+                : [
+                    FilledButton(
+                      onPressed: () => Navigator.pop(dialogCtx),
+                      child: const Text('Done'),
+                    ),
+                  ],
+          );
+        },
+      );
+    },
+  );
+}
+
+Future<void> _cancelTransfer(int linkId, String label) async {
+  final app = context.read<AppState>();
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text(
+        AppLocalizations.of(dialogCtx)
+            .inheritanceCancelPendingTransferTitle(label),
+      ),
+      content: const Text(
+        'The 30-day countdown will be cleared. The beneficiary will be '
+        'emailed about the cancellation. They can request again later.',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Keep')),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogCtx, true),
+          child: Text(
+            AppLocalizations.of(dialogCtx).inheritanceCancelTransfer,
+          ),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+
+  final token = app.sessionToken;
+  if (token == null || app.vaultName == null) return;
+
+  try {
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    await client.cancelTransfer(
+      linkId: linkId,
+      vaultName: app.vaultName!,
+      pin: pin,
+      authToken: token,
+    );
+    _showSnack('Transfer cancelled');
+    await _loadBeneficiaries();
+  } catch (e) {
+    if (app.handleApiException(e)) return;
+    _showSnack('Could not cancel transfer: $e');
+  }
+}
+
+Future<void> _claimInheritance(int linkId, String label) async {
+  final inheritedNameCtrl = TextEditingController(text: '$label (inherited)');
+  String? err;
+  bool claiming = false;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogCtx) {
+      return StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF2F2F2F),
+            title: Text(
+              AppLocalizations.of(dialogCtx).inheritanceClaimTitle(label),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'A new vault will be created on your account containing '
+                  'all of the inherited data, encrypted under your PIN. '
+                  'The original vault is then frozen for 90 days.',
+                  style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: inheritedNameCtrl,
+                  maxLength: 60,
+                  decoration: const InputDecoration(
+                    counterText: '',
+                    hintText: 'Name for the inherited vault',
+                  ),
+                ),
+                if (err != null) ...[
+                  const SizedBox(height: 10),
+                  Text(err!, style: const TextStyle(color: Colors.redAccent)),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: claiming ? null : () => Navigator.pop(dialogCtx),
+                child: Text(AppLocalizations.of(dialogCtx).commonCancel),
+              ),
+              FilledButton.icon(
+                onPressed: claiming
+                    ? null
+                    : () async {
+                        final newName = inheritedNameCtrl.text.trim();
+                        if (newName.isEmpty) {
+                          setLocal(() => err = 'Pick a name for the new vault.');
+                          return;
+                        }
+                        final app = context.read<AppState>();
+                        final token = app.sessionToken;
+                        if (token == null || app.vaultName == null) {
+                          setLocal(() => err = 'Session expired.');
+                          return;
+                        }
+                        setLocal(() {
+                          claiming = true;
+                          err = null;
+                        });
+                        try {
+                          final pin = await _VaultCrypto.currentPinOrThrow();
+                          final client = VaultAIClient(baseUrl: backendBaseUrl);
+                          final result = await client.claimTransfer(
+                            linkId: linkId,
+                            vaultName: app.vaultName!,
+                            pin: pin,
+                            inheritedVaultName: newName,
+                            authToken: token,
+                          );
+                          final inheritedName = result['inherited_vault_name']?.toString() ?? newName;
+                          if (!context.mounted) return;
+                          Navigator.pop(dialogCtx);
+                          _showSnack(
+                              'Claimed! New vault "$inheritedName" is available in your vault list.');
+                          await _loadInheritances();
+                          await app.refreshAvailableVaults();
+                        } catch (e) {
+                          if (app.handleApiException(e)) return;
+                          setLocal(() {
+                            err = e.toString().replaceFirst('Exception: ', '');
+                            claiming = false;
+                          });
+                        }
+                      },
+                icon: claiming
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.move_to_inbox),
+                label: Text(claiming ? 'Claiming…' : 'Claim'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
+Future<void> _requestTransfer(int linkId, String label) async {
+  final app = context.read<AppState>();
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text(
+        AppLocalizations.of(dialogCtx)
+            .inheritanceRequestTransferTitle(label),
+      ),
+      content: const Text(
+        'A 30-day countdown will start. The vault owner will be emailed and '
+        'can cancel during that window. After 30 days, you can claim the '
+        'inherited vault on your account.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogCtx, false),
+          child: Text(AppLocalizations.of(dialogCtx).commonNotYet),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogCtx, true),
+          child: Text(
+            AppLocalizations.of(dialogCtx).inheritanceStartCountdown,
+          ),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+
+  final token = app.sessionToken;
+  if (token == null || app.vaultName == null) return;
+
+  try {
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    await client.requestTransfer(
+      linkId: linkId,
+      vaultName: app.vaultName!,
+      pin: pin,
+      authToken: token,
+    );
+    _showSnack('Transfer requested — owner has been notified');
+    await _loadInheritances();
+  } catch (e) {
+    if (app.handleApiException(e)) return;
+    _showSnack('Could not request transfer: $e');
+  }
+}
+
+String _formatCountdown(String? isoExecutesAt) {
+  if (isoExecutesAt == null) return '';
+  try {
+    final executes = DateTime.parse(isoExecutesAt).toLocal();
+    final remaining = executes.difference(DateTime.now());
+    if (remaining.isNegative) return 'Ready to claim';
+    final days = remaining.inDays;
+    final hours = remaining.inHours % 24;
+    if (days >= 1) return '$days day${days == 1 ? '' : 's'}, $hours hr remaining';
+    final minutes = remaining.inMinutes % 60;
+    return '${remaining.inHours} hr $minutes min remaining';
+  } catch (_) {
+    return '';
+  }
+}
+
+Future<void> _deleteBeneficiary(int linkId, String label) async {
+  final app = context.read<AppState>();
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text(
+        AppLocalizations.of(dialogCtx).inheritanceRemoveTitle(label),
+      ),
+      content: const Text(
+        'They will no longer be able to inherit this vault. They can be re-added later with a new code.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogCtx, false),
+          child: Text(AppLocalizations.of(dialogCtx).commonCancel),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+          onPressed: () => Navigator.pop(dialogCtx, true),
+          child: Text(AppLocalizations.of(dialogCtx).commonRemove),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+
+  final token = app.sessionToken;
+  if (token == null || app.vaultName == null) return;
+
+  try {
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    await client.deleteBeneficiary(
+      linkId: linkId,
+      vaultName: app.vaultName!,
+      pin: pin,
+      authToken: token,
+    );
+    _showSnack('Removed $label');
+    await _loadBeneficiaries();
+  } catch (e) {
+    if (app.handleApiException(e)) return;
+    _showSnack('Could not remove beneficiary: $e');
+  }
+}
+
+Widget _buildInheritanceSection(bool isMobile) {
+  if (!_inheritanceLoadedOnce) {
+    _inheritanceLoadedOnce = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadBeneficiaries();
+      _loadInheritances();
+    });
+  }
+
+  String statusLabel(Map<String, dynamic> row) {
+    final status = (row['status'] ?? '').toString();
+    switch (status) {
+      case 'pairing_pending':
+        return 'Awaiting beneficiary';
+      case 'linked':
+        return 'Linked';
+      case 'transfer_pending':
+        return 'Transfer pending (30-day countdown)';
+      case 'transferred':
+        return 'Transferred';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return status;
+    }
+  }
+
+  Color statusColor(String status) {
+    switch (status) {
+      case 'pairing_pending':
+        return Colors.amber;
+      case 'linked':
+        return const Color(0xFF10A37F);
+      case 'transfer_pending':
+        return Colors.orange;
+      case 'transferred':
+        return Colors.blueAccent;
+      default:
+        return const Color(0xFFB4B4B4);
+    }
+  }
+
+  final _vrInh = VaultResponsive.of(context);
+  return SingleChildScrollView(
+    padding: EdgeInsets.all(_vrInh.pageHorizontalPadding),
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1000),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+
+            Container(
+              padding: EdgeInsets.all(_vrInh.isMobile ? 16 : 24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2F2F2F),
+                borderRadius: BorderRadius.circular(_vrInh.isMobile ? 18 : 24),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(AppLocalizations.of(context).inheritanceTitle,
+                      style: TextStyle(
+                        fontSize: _vrInh.headingXlSize,
+                        fontWeight: FontWeight.w800,
+                      )),
+                  SizedBox(height: _vrInh.isMobile ? 6 : 8),
+                  Text(
+                    'Designate who can inherit this vault if you can no longer access '
+                    'it, and view vaults you\'re set up to inherit.',
+                    style: TextStyle(
+                      color: const Color(0xFFB4B4B4),
+                      fontSize: _vrInh.isMobile ? 13 : 15,
+                      height: 1.5,
+                    ),
+                  ),
+                  if (context.watch<AppState>().availableVaults.length > 1) ...[
+                    SizedBox(height: _vrInh.isMobile ? 10 : 14),
+                    _VaultSwitcher(),
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(height: _vrInh.sectionSpacing),
+
+
+            Container(
+              padding: EdgeInsets.all(_vrInh.cardInsetPadding),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ResponsiveActionBar(
+                    heading: const Text(
+                      'People I\'ve added',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                    actions: [
+                      OutlinedButton.icon(
+                        key: const Key('inheritance_refresh_button'),
+                        onPressed: _loadBeneficiaries,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: Text(
+                          AppLocalizations.of(context).commonRefresh,
+                        ),
+                      ),
+                      FilledButton.icon(
+                        key: const Key('inheritance_add_beneficiary_button'),
+                        onPressed: _showAddBeneficiaryDialog,
+                        icon: const Icon(Icons.person_add_alt_1, size: 18),
+                        label: Text(
+                          AppLocalizations.of(context)
+                              .inheritanceAddBeneficiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  if (loadingBeneficiaries)
+                    const Center(child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: CircularProgressIndicator(),
+                    ))
+                  else if (beneficiaries.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        'No beneficiaries yet. Click "Add beneficiary" to generate a pairing code.',
+                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+                      ),
+                    )
+                  else
+                    ...beneficiaries.map((b) {
+                      final label = (b['label'] ?? 'Unnamed').toString();
+                      final status = (b['status'] ?? '').toString();
+                      final id = (b['id'] as num?)?.toInt() ?? 0;
+                      final executesAt = b['transfer_executes_at']?.toString();
+                      final isTransferPending = status == 'transfer_pending';
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: isTransferPending
+                              ? Colors.orange.withValues(alpha: 0.08)
+                              : const Color(0xFF222222),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                              color: isTransferPending ? Colors.orange : Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(label,
+                                      style: const TextStyle(
+                                          fontSize: 15, fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    statusLabel(b),
+                                    style: TextStyle(color: statusColor(status), fontSize: 12),
+                                  ),
+                                  if (isTransferPending && executesAt != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _formatCountdown(executesAt),
+                                      style: const TextStyle(color: Colors.orange, fontSize: 11),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            if (isTransferPending)
+                              FilledButton.icon(
+                                onPressed: () => _cancelTransfer(id, label),
+                                style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+                                icon: const Icon(Icons.cancel_outlined, size: 18),
+                                label: Text(
+                                  AppLocalizations.of(context)
+                                      .inheritanceCancelTransfer,
+                                ),
+                              ),
+                            IconButton(
+                              tooltip: 'Remove',
+                              onPressed: () => _deleteBeneficiary(id, label),
+                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            
+            Container(
+              padding: EdgeInsets.all(_vrInh.cardInsetPadding),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.circular(
+                    _vrInh.isMobile ? 16 : 20),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Same responsive pattern as "People I've added" above.
+                  // On < 600dp the heading renders full-width and the
+                  // buttons wrap below, so "Vaults I'll inherit" never gets
+                  // squeezed into a one-char-per-line column.
+                  ResponsiveActionBar(
+                    heading: const Text(
+                      'Vaults I\'ll inherit',
+                      key: Key('inheritance_vaults_ill_inherit_heading'),
+                      style: TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                    actions: [
+                      OutlinedButton.icon(
+                        key: const Key(
+                            'inheritance_refresh_inheritances_button'),
+                        onPressed: _loadInheritances,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: Text(
+                          AppLocalizations.of(context).commonRefresh,
+                        ),
+                      ),
+                      FilledButton.icon(
+                        key: const Key(
+                            'inheritance_enter_code_button'),
+                        onPressed: _showEnterPairingCodeDialog,
+                        icon: const Icon(Icons.vpn_key),
+                        label: Text(
+                          AppLocalizations.of(context).inheritanceEnterCode,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  if (loadingInheritances)
+                    const Center(child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: CircularProgressIndicator(),
+                    ))
+                  else if (inheritances.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        'No inheritances. Use "Enter code" if someone shared a pairing code with you.',
+                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+                      ),
+                    )
+                  else
+                    ...inheritances.map((i) {
+                      final label = (i['passer_label'] ?? 'Unknown').toString();
+                      final status = (i['status'] ?? '').toString();
+                      final id = (i['id'] as num?)?.toInt() ?? 0;
+                      final executesAt = i['transfer_executes_at']?.toString();
+                      final isLinked = status == 'linked';
+                      final isPending = status == 'transfer_pending';
+                      final readyToClaim = isPending &&
+                          executesAt != null &&
+                          DateTime.tryParse(executesAt)?.isBefore(DateTime.now()) == true;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: readyToClaim
+                              ? const Color(0xFF10A37F).withValues(alpha: 0.08)
+                              : isPending
+                                  ? Colors.orange.withValues(alpha: 0.06)
+                                  : const Color(0xFF222222),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                              color: readyToClaim
+                                  ? const Color(0xFF10A37F)
+                                  : isPending
+                                      ? Colors.orange
+                                      : Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(label,
+                                      style: const TextStyle(
+                                          fontSize: 15, fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    statusLabel(i),
+                                    style: TextStyle(color: statusColor(status), fontSize: 12),
+                                  ),
+                                  if (isPending && executesAt != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _formatCountdown(executesAt),
+                                      style: TextStyle(
+                                          color: readyToClaim
+                                              ? const Color(0xFF10A37F)
+                                              : Colors.orange,
+                                          fontSize: 11),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            if (isLinked)
+                              FilledButton.icon(
+                                onPressed: () => _requestTransfer(id, label),
+                                icon: const Icon(Icons.av_timer, size: 18),
+                                label: Text(
+                                  AppLocalizations.of(context)
+                                      .inheritanceRequestTransfer,
+                                ),
+                              ),
+                            if (readyToClaim)
+                              FilledButton.icon(
+                                onPressed: () => _claimInheritance(id, label),
+                                icon: const Icon(Icons.move_to_inbox, size: 18),
+                                label: const Text('Claim'),
+                              ),
+                          ],
+                        ),
+                      );
+                    }),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 Widget _buildSettingsSection(bool isMobile) {
   final app = context.watch<AppState>();
   final l = AppLocalizations.of(context);
@@ -5860,57 +6858,6 @@ Widget _buildSettingsSection(bool isMobile) {
                         ),
                       ),
                       Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              InkWell(
-                key: const Key('settings_inheritance_pairing_tile'),
-                onTap: () => Navigator.of(context)
-                    .pushNamed('/inheritance-pairing'),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Row(
-                    children: const [
-                      Icon(Icons.family_restroom_outlined,
-                          color: Color(0xFFB4B4B4)),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Inheritance pairing',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Set up a beneficiary who can '
-                              'inherit this vault. Private (ZK) '
-                              'vaults use a client-side X25519 '
-                              'rewrap ceremony.',
-                              style: TextStyle(
-                                color: Color(0xFFB4B4B4),
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right,
-                          color: Color(0xFFB4B4B4)),
                     ],
                   ),
                 ),
@@ -11103,6 +12050,7 @@ await _loadVaultLogins();
                     tile(_DashboardSection.expiry,        Icons.event_busy_outlined,     AppLocalizations.of(context).sidebarExpiry,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
                     tile(_DashboardSection.memory,        Icons.auto_stories_outlined,   AppLocalizations.of(context).sidebarMemory,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
                     tile(_DashboardSection.relationships, Icons.hub_outlined,            AppLocalizations.of(context).sidebarRelationships,  compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.inheritance,   Icons.diversity_3,             AppLocalizations.of(context).sidebarInheritance,    compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
                     tile(_DashboardSection.settings,      Icons.settings_outlined,       AppLocalizations.of(context).sidebarSettings,       compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
 
                     SizedBox(
@@ -11188,6 +12136,9 @@ return LoginsPage(
 
       case _DashboardSection.relationships:
         return _buildRelationshipsSection(isMobile);
+
+      case _DashboardSection.inheritance:
+        return _buildInheritanceSection(isMobile);
 
       case _DashboardSection.settings:
   return _buildSettingsSection(isMobile);
@@ -11418,6 +12369,9 @@ return LoginsPage(
           Navigator.pushNamed(context, '/security-center'),
       onOpenExpiry: () => setState(
         () => selectedSection = _DashboardSection.expiry,
+      ),
+      onOpenInheritance: () => setState(
+        () => selectedSection = _DashboardSection.inheritance,
       ),
     );
   }
@@ -12180,6 +13134,58 @@ class _OverviewCard extends StatelessWidget {
   }
 }
 
+class _VaultSwitcher extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final vaults = app.availableVaults;
+    final current = app.vaultName;
+    if (vaults.length <= 1 || current == null) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.swap_horiz, size: 18, color: Color(0xFFB4B4B4)),
+          const SizedBox(width: 8),
+          Text(
+            AppLocalizations.of(context).dashboardActiveVault,
+            style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: DropdownButton<String>(
+              value: current,
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              dropdownColor: const Color(0xFF2F2F2F),
+              items: vaults.map((v) {
+                final name = (v['vault_name'] ?? '').toString();
+                final inheritedFrom = v['inherited_from_label']?.toString();
+                final label = inheritedFrom == null
+                    ? name
+                    : '$name  (inherited from $inheritedFrom)';
+                return DropdownMenuItem<String>(
+                  value: name,
+                  child: Text(label, overflow: TextOverflow.ellipsis),
+                );
+              }).toList(),
+              onChanged: (newName) {
+                if (newName == null || newName == current) return;
+                app.requestSwitchVault(newName, context);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 
 class _VaultCrypto {

@@ -152,6 +152,8 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get sidebarRelationships => '关系';
 
+  @override
+  String get sidebarInheritance => '继承';
 
   @override
   String get sidebarSettings => '设置';
@@ -283,6 +285,8 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get conciergePostureExpiring => '即将到期';
 
+  @override
+  String get conciergePostureInheritance => '继承';
 
   @override
   String get conciergePostureScoreHint => '点击查看安全中心';
@@ -296,8 +300,14 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => '全部宽裕';
 
+  @override
+  String get conciergePostureFrozen => '保险库已冻结';
 
+  @override
+  String get conciergePostureConfigured => '已配置配对';
 
+  @override
+  String get conciergePostureUnset => '尚未设置受益人';
 
   @override
   String get conciergePostureScoreNoData => '无数据';
@@ -332,8 +342,14 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get conciergeItems => '项';
 
+  @override
+  String get conciergeInheritanceFrozen => '已冻结';
 
+  @override
+  String get conciergeInheritanceConfigured => '已配置';
 
+  @override
+  String get conciergeInheritanceUnset => '未设置';
 
   @override
   String get expiryTitle => '到期';

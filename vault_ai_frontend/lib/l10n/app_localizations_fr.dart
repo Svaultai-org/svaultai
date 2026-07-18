@@ -152,6 +152,8 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get sidebarRelationships => 'Relations';
 
+  @override
+  String get sidebarInheritance => 'Héritage';
 
   @override
   String get sidebarSettings => 'Paramètres';
@@ -296,6 +298,8 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get conciergePostureExpiring => 'Expirations';
 
+  @override
+  String get conciergePostureInheritance => 'Héritage';
 
   @override
   String get conciergePostureScoreHint =>
@@ -311,8 +315,14 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => 'Tout confortablement futur';
 
+  @override
+  String get conciergePostureFrozen => 'Coffre gelé';
 
+  @override
+  String get conciergePostureConfigured => 'Jumelage configuré';
 
+  @override
+  String get conciergePostureUnset => 'Aucun bénéficiaire';
 
   @override
   String get conciergePostureScoreNoData => 'aucune donnée';
@@ -347,8 +357,14 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get conciergeItems => 'éléments';
 
+  @override
+  String get conciergeInheritanceFrozen => 'gelé';
 
+  @override
+  String get conciergeInheritanceConfigured => 'configuré';
 
+  @override
+  String get conciergeInheritanceUnset => 'non configuré';
 
   @override
   String get expiryTitle => 'Expirations';

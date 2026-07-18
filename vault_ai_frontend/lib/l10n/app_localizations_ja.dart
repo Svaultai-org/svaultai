@@ -152,6 +152,8 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get sidebarRelationships => '関連';
 
+  @override
+  String get sidebarInheritance => '継承';
 
   @override
   String get sidebarSettings => '設定';
@@ -284,6 +286,8 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get conciergePostureExpiring => '失効';
 
+  @override
+  String get conciergePostureInheritance => '継承';
 
   @override
   String get conciergePostureScoreHint => 'タップしてセキュリティセンターを表示';
@@ -297,8 +301,14 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => 'すべて余裕あり';
 
+  @override
+  String get conciergePostureFrozen => '保管庫は凍結中';
 
+  @override
+  String get conciergePostureConfigured => 'ペアリング設定済み';
 
+  @override
+  String get conciergePostureUnset => '受益者未設定';
 
   @override
   String get conciergePostureScoreNoData => 'データなし';
@@ -333,8 +343,14 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get conciergeItems => '件';
 
+  @override
+  String get conciergeInheritanceFrozen => '凍結中';
 
+  @override
+  String get conciergeInheritanceConfigured => '設定済み';
 
+  @override
+  String get conciergeInheritanceUnset => '未設定';
 
   @override
   String get expiryTitle => '有効期限';

@@ -396,6 +396,11 @@ abstract class AppLocalizations {
   /// **'Relationships'**
   String get sidebarRelationships;
 
+  /// No description provided for @sidebarInheritance.
+  ///
+  /// In en, this message translates to:
+  /// **'Inheritance'**
+  String get sidebarInheritance;
 
   /// No description provided for @sidebarSettings.
   ///
@@ -649,6 +654,11 @@ abstract class AppLocalizations {
   /// **'Expiring'**
   String get conciergePostureExpiring;
 
+  /// No description provided for @conciergePostureInheritance.
+  ///
+  /// In en, this message translates to:
+  /// **'Inheritance'**
+  String get conciergePostureInheritance;
 
   /// No description provided for @conciergePostureScoreHint.
   ///
@@ -674,8 +684,23 @@ abstract class AppLocalizations {
   /// **'All comfortably future'**
   String get conciergePostureAllFuture;
 
+  /// No description provided for @conciergePostureFrozen.
+  ///
+  /// In en, this message translates to:
+  /// **'Vault is frozen'**
+  String get conciergePostureFrozen;
 
+  /// No description provided for @conciergePostureConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'Pairing configured'**
+  String get conciergePostureConfigured;
 
+  /// No description provided for @conciergePostureUnset.
+  ///
+  /// In en, this message translates to:
+  /// **'No beneficiary yet'**
+  String get conciergePostureUnset;
 
   /// No description provided for @conciergePostureScoreNoData.
   ///
@@ -743,8 +768,23 @@ abstract class AppLocalizations {
   /// **'items'**
   String get conciergeItems;
 
+  /// No description provided for @conciergeInheritanceFrozen.
+  ///
+  /// In en, this message translates to:
+  /// **'frozen'**
+  String get conciergeInheritanceFrozen;
 
+  /// No description provided for @conciergeInheritanceConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'configured'**
+  String get conciergeInheritanceConfigured;
 
+  /// No description provided for @conciergeInheritanceUnset.
+  ///
+  /// In en, this message translates to:
+  /// **'unset'**
+  String get conciergeInheritanceUnset;
 
   /// No description provided for @expiryTitle.
   ///

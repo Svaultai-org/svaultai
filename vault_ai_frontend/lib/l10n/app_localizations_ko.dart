@@ -152,6 +152,8 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get sidebarRelationships => '관계';
 
+  @override
+  String get sidebarInheritance => '상속';
 
   @override
   String get sidebarSettings => '설정';
@@ -284,6 +286,8 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get conciergePostureExpiring => '만료';
 
+  @override
+  String get conciergePostureInheritance => '상속';
 
   @override
   String get conciergePostureScoreHint => '눌러서 보안 센터 보기';
@@ -297,8 +301,14 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => '모두 여유가 있음';
 
+  @override
+  String get conciergePostureFrozen => '보관소 동결됨';
 
+  @override
+  String get conciergePostureConfigured => '페어링 구성됨';
 
+  @override
+  String get conciergePostureUnset => '수혜자 미설정';
 
   @override
   String get conciergePostureScoreNoData => '데이터 없음';
@@ -333,8 +343,14 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get conciergeItems => '건';
 
+  @override
+  String get conciergeInheritanceFrozen => '동결됨';
 
+  @override
+  String get conciergeInheritanceConfigured => '구성됨';
 
+  @override
+  String get conciergeInheritanceUnset => '미설정';
 
   @override
   String get expiryTitle => '만료';

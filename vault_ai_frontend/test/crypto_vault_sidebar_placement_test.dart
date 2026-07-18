@@ -109,6 +109,8 @@ void main() {
         final cryptoIdx  = src.indexOf('tile(_DashboardSection.cryptoVault');
         final loginsIdx  = src.indexOf('tile(_DashboardSection.logins');
         final memoryIdx  = src.indexOf('tile(_DashboardSection.memory');
+        final inheritanceIdx =
+            src.indexOf('tile(_DashboardSection.inheritance');
         expect(cryptoIdx, greaterThan(-1));
         expect(loginsIdx, greaterThan(-1));
         expect(
@@ -118,8 +120,8 @@ void main() {
               'Crypto Vault tile must come AFTER Logins or AFTER '
               'Memory in the sidebar per operator placement rule',
         );
-
-
+        
+        
         final settingsIdx =
             src.indexOf('tile(_DashboardSection.settings');
         if (settingsIdx > -1) {
@@ -129,6 +131,17 @@ void main() {
             reason:
                 'Crypto Vault tile must appear above the Settings '
                 'tile in the sidebar',
+          );
+        }
+        
+        
+        if (inheritanceIdx > -1) {
+          expect(
+            cryptoIdx < inheritanceIdx,
+            isTrue,
+            reason:
+                'Crypto Vault tile should appear above '
+                'Inheritance in the sidebar',
           );
         }
       },

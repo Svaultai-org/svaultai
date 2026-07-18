@@ -376,6 +376,31 @@ void main() {
         reason: 'drawer padding must respect vr.bottomSafeInset');
     });
 
+    test('inheritance page uses ResponsiveActionBar for the '
+         '"People I\'ve added" heading (no more collapsing Row)', () {
+      final src = _mainSrc();
+
+
+
+
+      final peopleIdx = src.indexOf("People I\\'ve added");
+      expect(peopleIdx, greaterThan(0),
+        reason: 'the heading text must still be present in main.dart');
+
+      final windowStart = (peopleIdx - 500).clamp(0, src.length);
+      final windowEnd   = (peopleIdx + 1500).clamp(0, src.length);
+      final window = src.substring(windowStart, windowEnd);
+      expect(window.contains('ResponsiveActionBar('), isTrue,
+        reason: 'the People-I\'ve-added heading must be wrapped by '
+                'ResponsiveActionBar (no more collapsing Row)');
+
+
+      expect(window.contains("key: const Key('inheritance_refresh_button')"),
+             isTrue);
+      expect(window.contains("key: const Key('inheritance_add_beneficiary_button')"),
+             isTrue);
+    });
+
     test('composer uses circular send button (Semantics + Material), '
          'not a wide FilledButton.icon with a Send label on mobile', () {
       final src = _mainSrc();

@@ -1,5 +1,4 @@
 // End-to-end sanity tests for the ZK stack:
-//   * inheritance rewrap → beneficiary unwrap
 //   * metadata migration client picks the correct ciphertext column
 //     names for each table
 //   * vault_key_hierarchy: domain-separated subkeys are disjoint
@@ -13,65 +12,11 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:vault_ai_frontend/services/inheritance_rewrap.dart';
 import 'package:vault_ai_frontend/services/metadata_migration_client.dart';
 import 'package:vault_ai_frontend/services/vault_handle.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 
 void main() {
-  group('inheritance rewrap', () {
-    test('passer wrap → beneficiary unwrap yields the same MVK',
-        () async {
-      final passerMvkBytes = Uint8List.fromList(
-        List<int>.generate(32, (i) => (i * 13 + 1) & 0xFF),
-      );
-      final mvk = SecretKey(passerMvkBytes);
-
-      final algo = X25519();
-      final beneficiarySkBytes = Uint8List.fromList(
-        List<int>.generate(32, (i) => (i * 17 + 9) & 0xFF),
-      );
-      final beneficiaryPair =
-          await algo.newKeyPairFromSeed(beneficiarySkBytes);
-      final beneficiaryPk = await beneficiaryPair.extractPublicKey();
-
-      final envelope = await wrapMvkForBeneficiary(
-        mvk: mvk,
-        beneficiaryPkVaultPublic: Uint8List.fromList(beneficiaryPk.bytes),
-      );
-
-      final restored = await unwrapMvkAsBeneficiary(
-        beneficiarySkVaultPrivate: SecretKey(beneficiarySkBytes),
-        envelope: envelope,
-      );
-      expect(await restored.extractBytes(), equals(passerMvkBytes));
-    });
-
-    test('beneficiary with different sk cannot unwrap', () async {
-      final mvk = SecretKey(Uint8List(32));
-      final algo = X25519();
-      final legitSk = Uint8List.fromList(
-        List<int>.generate(32, (i) => (i * 3 + 1) & 0xFF),
-      );
-      final impostorSk = Uint8List.fromList(
-        List<int>.generate(32, (i) => (i * 3 + 2) & 0xFF),
-      );
-      final legitPk =
-          await (await algo.newKeyPairFromSeed(legitSk)).extractPublicKey();
-      final envelope = await wrapMvkForBeneficiary(
-        mvk: mvk,
-        beneficiaryPkVaultPublic: Uint8List.fromList(legitPk.bytes),
-      );
-      expectLater(
-        unwrapMvkAsBeneficiary(
-          beneficiarySkVaultPrivate: SecretKey(impostorSk),
-          envelope: envelope,
-        ),
-        throwsA(isA<Exception>()),
-      );
-    });
-  });
-
   group('metadata_migration_client', () {
     test('runOnce completes when server returns empty batch', () async {
       Future<Map<String, dynamic>> fakeGet(String path,

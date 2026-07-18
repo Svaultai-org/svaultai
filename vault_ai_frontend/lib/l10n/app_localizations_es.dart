@@ -152,6 +152,8 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get sidebarRelationships => 'Relaciones';
 
+  @override
+  String get sidebarInheritance => 'Herencia';
 
   @override
   String get sidebarSettings => 'Ajustes';
@@ -295,6 +297,8 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get conciergePostureExpiring => 'Vencen';
 
+  @override
+  String get conciergePostureInheritance => 'Herencia';
 
   @override
   String get conciergePostureScoreHint =>
@@ -309,8 +313,14 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => 'Todo cómodamente futuro';
 
+  @override
+  String get conciergePostureFrozen => 'Bóveda congelada';
 
+  @override
+  String get conciergePostureConfigured => 'Emparejamiento configurado';
 
+  @override
+  String get conciergePostureUnset => 'Sin beneficiario aún';
 
   @override
   String get conciergePostureScoreNoData => 'sin datos';
@@ -345,8 +355,14 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get conciergeItems => 'elementos';
 
+  @override
+  String get conciergeInheritanceFrozen => 'congelado';
 
+  @override
+  String get conciergeInheritanceConfigured => 'configurado';
 
+  @override
+  String get conciergeInheritanceUnset => 'sin configurar';
 
   @override
   String get expiryTitle => 'Vencimientos';
