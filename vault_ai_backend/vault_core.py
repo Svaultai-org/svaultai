@@ -172,6 +172,40 @@ def generate_pin_salt() -> str:
     return base64.b64encode(secrets.token_bytes(16)).decode()
 
 
+PAIRING_CODE_TTL_MINUTES = int(os.getenv("PAIRING_CODE_TTL_MINUTES", "60"))
+
+                                                                
+_PAIRING_CODE_SALT_B64 = base64.b64encode(b"vaultai-pairing-fixed-salt-v1").decode()
+
+                                                                      
+_PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _canonicalize_pairing_code(code: str) -> str:
+    return (code or "").replace("-", "").replace(" ", "").upper().strip()
+
+
+def generate_pairing_code() -> str:
+
+    parts = ["".join(secrets.choice(_PAIRING_CODE_ALPHABET) for _ in range(n))
+             for n in (3, 4, 4)]
+    return "-".join(parts)
+
+
+def hash_pairing_code(pairing_code: str) -> str:
+
+
+    canonical = _canonicalize_pairing_code(pairing_code)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def derive_pairing_wrap_key(pairing_code: str) -> bytes:
+
+
+    canonical = _canonicalize_pairing_code(pairing_code)
+    return derive_key(canonical, _PAIRING_CODE_SALT_B64, iterations=KDF_TARGET_ITERATIONS)
+
+
 def encrypt_message(message: str, key: bytes) -> str:
     aesgcm = AESGCM(key)
     nonce = os.urandom(12)
@@ -265,7 +299,7 @@ def verify_vault_pin(vault_id: str, pin: str) -> bytes:
         cursor.execute(
             """
             SELECT pin_salt, pin_verifier, locked_until, kdf_iterations,
-                   failed_pin_attempts
+                   must_reset, failed_pin_attempts
             FROM vaults
             WHERE vault_id = %s
             LIMIT 1
@@ -276,6 +310,15 @@ def verify_vault_pin(vault_id: str, pin: str) -> bytes:
 
         if not row:
             raise HTTPException(status_code=404, detail="Vault not found")
+
+        if row.get("must_reset"):
+            raise HTTPException(
+                status_code=423,
+                detail={
+                    "code": "vault_frozen",
+                    "message": "This vault has been frozen and cannot be unlocked.",
+                },
+            )
 
         cursor.execute("SELECT NOW() AS now")
         now_row = cursor.fetchone() or {}

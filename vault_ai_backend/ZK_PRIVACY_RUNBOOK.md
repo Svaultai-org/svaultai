@@ -119,7 +119,8 @@ old process is still serving traffic.
   - Adds nullable columns on `vaults`: `vault_handle`,
     `opaque_registration_record`, `wrapped_mvk`, `wrapped_sk_vault`,
     `pk_vault_public`, `display_name_ciphertext`,
-    `legacy_vault_name_cleared_at`.
+    `legacy_vault_name_cleared_at`, `wrapped_mvk_by_recovery`,
+    `opaque_recovery_record`.
   - Adds partial unique index on `vault_handle`.
   - Adds a consistency check across the ZK column trio.
   - Creates `vault_zk_login_slots` (transient login state, 90-second
@@ -130,7 +131,7 @@ old process is still serving traffic.
     `uploaded_files`, `vault_items`, `vault_document_metadata`,
     `vault_ai_memory` (with unique index on non-superseded
     `memory_lookup_hash`), `semantic_index`, `notifications`,
-    `crypto_*_drafts`, `crypto_*_wallet_locks`.
+    `beneficiary_links`, `crypto_*_drafts`, `crypto_*_wallet_locks`.
   - Best-effort adds columns to `crypto_*_outgoing_history` where
     the table exists.
   - Creates `vault_metadata_migration_state` (per-vault cursor

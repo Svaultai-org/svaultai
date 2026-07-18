@@ -37,6 +37,7 @@ FORBIDDEN_LEGACY_PLAINTEXT_ASSIGNMENTS = {
     "notification_body": r"\bbody\s*=\s*%s",
     "memory_key": r"\bmemory_key\s*=\s*%s",
     "memory_value": r"\bmemory_value\s*=\s*%s",
+    "passer_label": r"\bpasser_label\s*=\s*%s",
     "sender_address": r"\bsender_address\s*=\s*%s",
     "destination_address": r"\bdestination_address\s*=\s*%s",
     "content_hash_placeholder": r"decode\('',\s*'hex'\)",
@@ -144,7 +145,7 @@ def test_all_migration_0024_tables_have_nullable_legacy_columns() -> None:
     )
     expected_null_drops = [
         "vault_items", "uploaded_files", "notifications",
-        "vault_ai_memory", "semantic_index",
+        "vault_ai_memory", "beneficiary_links", "semantic_index",
     ]
     for table in expected_null_drops:
         assert re.search(
@@ -171,6 +172,7 @@ def test_no_ciphertext_endpoint_accepts_paired_plaintext() -> None:
         UploadedFileMetadataRequest,
         NotificationCiphertextRequest,
         AiMemoryCiphertextRequest,
+        BeneficiaryLabelCiphertextRequest,
     )
     for model, forbidden in [
         (VaultItemUpsertRequest,
@@ -181,6 +183,7 @@ def test_no_ciphertext_endpoint_accepts_paired_plaintext() -> None:
         (NotificationCiphertextRequest, {"title", "body", "metadata"}),
         (AiMemoryCiphertextRequest,
             {"memory_key", "memory_value", "memory_normalized_key"}),
+        (BeneficiaryLabelCiphertextRequest, {"passer_label"}),
     ]:
         fields = set(model.model_fields.keys())
         missing = forbidden - fields

@@ -218,6 +218,7 @@
 
   "filesTitle":              "파일",
   "loginsTitle":             "로그인",
+  "inheritanceTitle":        "상속",
   "dashboardTitle":          "대시보드",
 
   "priorityHigh":            "높음",
@@ -357,6 +358,15 @@
   "confirmEraseTitle":        "복구 불가능한 데이터를 지울까요?",
   "confirmEraseButton":       "지우고 계속",
 
+  "inheritanceCancelPendingTransferTitle": "\"{label}\" 로의 대기 중인 이전을 취소할까요?",
+  "inheritanceCancelTransfer":       "이전 취소",
+  "inheritanceClaimTitle":           "\"{label}\" 청구",
+  "inheritanceRequestTransferTitle": "\"{label}\" 의 이전을 요청할까요?",
+  "inheritanceRemoveTitle":          "\"{label}\" 을 제거할까요?",
+  "inheritanceStartCountdown":       "30일 카운트다운 시작",
+  "inheritanceAddBeneficiary":       "수혜자 추가",
+  "inheritanceEnterCode":            "코드 입력",
+  "inheritanceRequestTransfer":      "이전 요청",
 
   "filesChooseStorage":       "업로드 원본 선택",
   "filesUploadFile":          "파일 업로드",

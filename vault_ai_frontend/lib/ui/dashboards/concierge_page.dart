@@ -549,6 +549,7 @@ class _AlertActionRow extends StatelessWidget {
       case 'tax':            return Icons.account_balance_outlined;
       case 'contract':       return Icons.handshake_outlined;
       case 'subscription':   return Icons.autorenew;
+      case 'inheritance':    return Icons.family_restroom_outlined;
       default:               return Icons.event_outlined;
     }
   }
@@ -620,6 +621,7 @@ class _RecommendationRow extends StatelessWidget {
       case 'pending_device':       return Icons.devices_other;
       case 'pending_self_approval': return Icons.hourglass_top;
       case 'inactive_devices':     return Icons.device_unknown_outlined;
+      case 'enable_inheritance':   return Icons.family_restroom_outlined;
       case 'unanalyzed_passwords': return Icons.analytics_outlined;
       default:                     return Icons.lightbulb_outline;
     }
@@ -909,6 +911,7 @@ class _RenewalTimeline extends StatelessWidget {
       case 'tax':            return Icons.account_balance_outlined;
       case 'contract':       return Icons.handshake_outlined;
       case 'subscription':   return Icons.autorenew;
+      case 'inheritance':    return Icons.family_restroom_outlined;
       default:               return Icons.event_outlined;
     }
   }

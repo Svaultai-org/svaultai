@@ -218,6 +218,7 @@
 
   "filesTitle":              "文件",
   "loginsTitle":             "登录",
+  "inheritanceTitle":        "继承",
   "dashboardTitle":          "仪表板",
 
   "priorityHigh":            "高",
@@ -357,6 +358,15 @@
   "confirmEraseTitle":        "抹掉不可恢复的数据?",
   "confirmEraseButton":       "抹掉并继续",
 
+  "inheritanceCancelPendingTransferTitle": "取消向「{label}」的待处理转移?",
+  "inheritanceCancelTransfer":       "取消转移",
+  "inheritanceClaimTitle":           "认领「{label}」",
+  "inheritanceRequestTransferTitle": "请求转移「{label}」?",
+  "inheritanceRemoveTitle":          "移除「{label}」?",
+  "inheritanceStartCountdown":       "开始 30 天倒计时",
+  "inheritanceAddBeneficiary":       "添加受益人",
+  "inheritanceEnterCode":            "输入代码",
+  "inheritanceRequestTransfer":      "请求转移",
 
   "filesChooseStorage":       "选择来源",
   "filesUploadFile":          "上传文件",

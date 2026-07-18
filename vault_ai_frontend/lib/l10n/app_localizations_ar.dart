@@ -690,6 +690,8 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get loginsTitle => 'تسجيلات الدخول';
 
+  @override
+  String get inheritanceTitle => 'الميراث';
 
   @override
   String get dashboardTitle => 'لوحة التحكم';
@@ -1074,14 +1076,40 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get confirmEraseButton => 'امسح وتابع';
 
+  @override
+  String inheritanceCancelPendingTransferTitle(String label) {
+    return 'إلغاء التحويل المعلّق إلى \"$label\"؟';
+  }
 
+  @override
+  String get inheritanceCancelTransfer => 'إلغاء التحويل';
 
+  @override
+  String inheritanceClaimTitle(String label) {
+    return 'المطالبة بـ \"$label\"';
+  }
 
+  @override
+  String inheritanceRequestTransferTitle(String label) {
+    return 'طلب تحويل \"$label\"؟';
+  }
 
+  @override
+  String inheritanceRemoveTitle(String label) {
+    return 'إزالة \"$label\"؟';
+  }
 
+  @override
+  String get inheritanceStartCountdown => 'بدء العدّ التنازلي 30 يومًا';
 
+  @override
+  String get inheritanceAddBeneficiary => 'إضافة مستفيد';
 
+  @override
+  String get inheritanceEnterCode => 'إدخال الرمز';
 
+  @override
+  String get inheritanceRequestTransfer => 'طلب تحويل';
 
   @override
   String get filesChooseStorage => 'اختر مصدر الملف';

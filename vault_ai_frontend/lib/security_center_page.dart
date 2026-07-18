@@ -671,6 +671,38 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     );
   }
 
+  Widget _inheritanceSection(Map<String, dynamic> s) {
+    final inh = (s['inheritance'] ?? const {}) as Map;
+    final configured = (inh['configured'] ?? false) as bool;
+    final frozen = (inh['frozen'] ?? false) as bool;
+    return _card(
+      'RECOVERY & INHERITANCE',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            configured
+                ? 'Inheritance configured.'
+                : 'Inheritance not configured.',
+            style: TextStyle(
+              color: configured
+                  ? const Color(0xFF66BB6A)
+                  : const Color(0xFFB4B4B4),
+              fontSize: 13,
+            ),
+          ),
+          if (frozen) ...[
+            const SizedBox(height: 4),
+            const Text(
+              'Vault is in a soft-freeze window.',
+              style: TextStyle(color: Color(0xFFFFA726), fontSize: 13),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _recommendationsSection(Map<String, dynamic> s) {
     final recs = (s['recommendations'] as List?) ?? const [];
     if (recs.isEmpty) {
@@ -812,6 +844,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                               _passwordSection(_summary!),
                               _vaultSection(_summary!),
                               _storageSection(_summary!),
+                              _inheritanceSection(_summary!),
                               _recommendationsSection(_summary!),
                               _buildDiagnosticsSection(),
                             ],

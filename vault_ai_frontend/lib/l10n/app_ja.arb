@@ -218,6 +218,7 @@
 
   "filesTitle":              "ファイル",
   "loginsTitle":             "ログイン",
+  "inheritanceTitle":        "継承",
   "dashboardTitle":          "ダッシュボード",
 
   "priorityHigh":            "高",
@@ -357,6 +358,15 @@
   "confirmEraseTitle":        "復元できないデータを消去しますか?",
   "confirmEraseButton":       "消去して続行",
 
+  "inheritanceCancelPendingTransferTitle": "「{label}」への保留中の譲渡を取り消しますか?",
+  "inheritanceCancelTransfer":       "譲渡を取り消す",
+  "inheritanceClaimTitle":           "「{label}」を請求",
+  "inheritanceRequestTransferTitle": "「{label}」の譲渡を要求しますか?",
+  "inheritanceRemoveTitle":          "「{label}」を削除しますか?",
+  "inheritanceStartCountdown":       "30 日間のカウントダウンを開始",
+  "inheritanceAddBeneficiary":       "受益者を追加",
+  "inheritanceEnterCode":            "コードを入力",
+  "inheritanceRequestTransfer":      "譲渡を要求",
 
   "filesChooseStorage":       "アップロード元を選択",
   "filesUploadFile":          "ファイルをアップロード",

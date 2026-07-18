@@ -190,7 +190,7 @@ void main() {
               ElevatedButton(
                 key: bKey,
                 onPressed: () {},
-                child: const Text('Add item'),
+                child: const Text('Add beneficiary'),
               ),
             ],
           ),
@@ -235,7 +235,7 @@ void main() {
               ),
               ElevatedButton(
                 onPressed: () {},
-                child: const Text('Add item'),
+                child: const Text('Add beneficiary'),
               ),
             ],
           ),
@@ -277,7 +277,7 @@ void main() {
                 FilledButton.icon(
                   onPressed: () {},
                   icon: const Icon(Icons.person_add_alt_1, size: 18),
-                  label: const Text('Add item'),
+                  label: const Text('Add beneficiary'),
                 ),
               ],
             ),
@@ -309,7 +309,7 @@ void main() {
               FilledButton.icon(
                 onPressed: () {},
                 icon: const Icon(Icons.person_add_alt_1, size: 18),
-                label: const Text('Add item'),
+                label: const Text('Add beneficiary'),
               ),
             ],
           ),
@@ -336,7 +336,7 @@ void main() {
               FilledButton.icon(
                 onPressed: () {},
                 icon: const Icon(Icons.person_add_alt_1, size: 18),
-                label: const Text('Add item'),
+                label: const Text('Add beneficiary'),
               ),
             ],
           ),

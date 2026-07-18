@@ -83,6 +83,7 @@ def _build_score(
     all_active: bool,
     no_pending_self_approval: bool,
     modern_kdf: bool,
+    inheritance_configured: bool,
     audited_count: int,
     strong_count: int,
     generated_count: int,
@@ -101,8 +102,10 @@ def _build_score(
         s += 5
     if modern_kdf:
         s += 15
+    if inheritance_configured:
+        s += 10
     if audited_count == 0:
-        s += 25 + 10 + 10
+        s += 25 + 10 + 10                           
     else:
         s += int(round(25 * (strong_count / audited_count)))
         s += int(round(10 * (generated_count / audited_count)))
@@ -117,6 +120,7 @@ def _build_recommendations(
     pending_devices: int,
     inactive_trusted: int,
     pending_self_approval: int,
+    inheritance_configured: bool,
     unanalyzed_count: int,
 ) -> list[dict]:
     recs: list[dict] = []
@@ -157,6 +161,13 @@ def _build_recommendations(
             ),
             "route": "/devices",
         })
+    if not inheritance_configured:
+        recs.append({
+            "id": "enable_inheritance",
+            "priority": "low",
+            "message": "Enable inheritance pairing.",
+            "route": None,
+        })
     if unanalyzed_count > 0:
         recs.append({
             "id": "unanalyzed_passwords",
@@ -195,6 +206,8 @@ def _empty_security_center_summary(vault_id: Optional[str] = None) -> dict:
         "encryption": {"kdf_iterations": 0, "kdf_strength": "unknown",
                        "chunked_upload_enabled": False,
                        "semantic_search_enabled": False},
+        "inheritance": {"configured": False, "frozen": False,
+                        "vault_frozen_until": None},
         "recommendations": [],
         "engine": "empty",
     }
@@ -329,7 +342,7 @@ async def _security_center_summary_inner(vault_id: str) -> dict:
                                                                        
         cur.execute(
             """
-            SELECT kdf_iterations, total_bytes
+            SELECT kdf_iterations, total_bytes, frozen_until
             FROM vaults WHERE vault_id = %s LIMIT 1
             """,
             (vault_id,),
@@ -338,8 +351,9 @@ async def _security_center_summary_inner(vault_id: str) -> dict:
         kdf_iter = int(vn.get("kdf_iterations") or 0)
         kdf_strength = "modern" if kdf_iter >= MODERN_KDF_THRESHOLD else "legacy"
         used_bytes = int(vn.get("total_bytes") or 0)
+        frozen_until = vn.get("frozen_until")
 
-
+                                          
         cur.execute(
             """
             SELECT COALESCE(SUM(file_size), 0) AS n FROM uploaded_files
@@ -348,6 +362,17 @@ async def _security_center_summary_inner(vault_id: str) -> dict:
             (vault_id,),
         )
         pending_bytes = int((cur.fetchone() or {"n": 0})["n"])
+
+                                                                              
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n FROM beneficiary_links
+            WHERE passer_vault_id = %s
+              AND status NOT IN ('cancelled', 'transferred')
+            """,
+            (vault_id,),
+        )
+        inheritance_configured = int((cur.fetchone() or {"n": 0})["n"]) > 0
     finally:
         conn.close()
 
@@ -364,6 +389,7 @@ async def _security_center_summary_inner(vault_id: str) -> dict:
         all_active=all_active,
         no_pending_self_approval=no_pending_self_approval,
         modern_kdf=modern_kdf,
+        inheritance_configured=inheritance_configured,
         audited_count=audited,
         strong_count=strong,
         generated_count=generated,
@@ -375,6 +401,7 @@ async def _security_center_summary_inner(vault_id: str) -> dict:
         pending_devices=int(d.get("pending", 0)),
         inactive_trusted=int(d.get("inactive_trusted", 0)),
         pending_self_approval=int(d.get("pending_self_approval", 0)),
+        inheritance_configured=inheritance_configured,
         unanalyzed_count=unanalyzed,
     )
 
@@ -417,6 +444,11 @@ async def _security_center_summary_inner(vault_id: str) -> dict:
                 os.getenv("VAULTAI_CHUNKED_UPLOADS", "false").lower() == "true",
             "semantic_search_enabled":
                 os.getenv("VAULTAI_SEMANTIC_SEARCH_ENABLED", "false").lower() == "true",
+        },
+        "inheritance": {
+            "configured": inheritance_configured,
+            "frozen": frozen_until is not None,
+            "vault_frozen_until": frozen_until.isoformat() if frozen_until else None,
         },
         "recommendations": recs,
         "generated_at": datetime.now(timezone.utc).isoformat(),

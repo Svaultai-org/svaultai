@@ -112,6 +112,12 @@ def test_no_admin_route_lists_users_or_decrypts_content() -> None:
     )
 
 
+def test_ciphertext_write_router_registers_inheritance_rewrap() -> None:
+    from routes.vault_ciphertext_write_routes import router
+    paths = {getattr(r, "path", None) for r in router.routes}
+    assert "/vault/ciphertext/inheritance-rewrap" in paths
+
+
 def test_zk_routes_never_accept_vault_name_field() -> None:
     """The ZK request models must not have a `vault_name` field. Only
     `vault_handle` should be accepted so that the plaintext human-

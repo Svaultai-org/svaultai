@@ -28,6 +28,7 @@ def test_router_registers_all_ciphertext_write_paths() -> None:
         "/vault/ciphertext/uploaded-files",
         "/vault/ciphertext/notifications",
         "/vault/ciphertext/vault-ai-memory",
+        "/vault/ciphertext/beneficiary-links",
         "/vault/ciphertext/semantic-index",
         "/vault/ciphertext/crypto-drafts",
         "/vault/ciphertext/crypto-history",

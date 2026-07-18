@@ -218,6 +218,7 @@
 
   "filesTitle":              "الملفات",
   "loginsTitle":             "تسجيلات الدخول",
+  "inheritanceTitle":        "الميراث",
   "dashboardTitle":          "لوحة التحكم",
 
   "priorityHigh":            "عالٍ",
@@ -357,6 +358,15 @@
   "confirmEraseTitle":        "مسح بيانات لا يمكن استردادها؟",
   "confirmEraseButton":       "امسح وتابع",
 
+  "inheritanceCancelPendingTransferTitle": "إلغاء التحويل المعلّق إلى \"{label}\"؟",
+  "inheritanceCancelTransfer":       "إلغاء التحويل",
+  "inheritanceClaimTitle":           "المطالبة بـ \"{label}\"",
+  "inheritanceRequestTransferTitle": "طلب تحويل \"{label}\"؟",
+  "inheritanceRemoveTitle":          "إزالة \"{label}\"؟",
+  "inheritanceStartCountdown":       "بدء العدّ التنازلي 30 يومًا",
+  "inheritanceAddBeneficiary":       "إضافة مستفيد",
+  "inheritanceEnterCode":            "إدخال الرمز",
+  "inheritanceRequestTransfer":      "طلب تحويل",
 
   "filesChooseStorage":       "اختر مصدر الملف",
   "filesUploadFile":          "رفع ملف",

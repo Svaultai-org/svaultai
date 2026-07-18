@@ -679,6 +679,8 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get loginsTitle => '로그인';
 
+  @override
+  String get inheritanceTitle => '상속';
 
   @override
   String get dashboardTitle => '대시보드';
@@ -1056,14 +1058,40 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get confirmEraseButton => '지우고 계속';
 
+  @override
+  String inheritanceCancelPendingTransferTitle(String label) {
+    return '\"$label\" 로의 대기 중인 이전을 취소할까요?';
+  }
 
+  @override
+  String get inheritanceCancelTransfer => '이전 취소';
 
+  @override
+  String inheritanceClaimTitle(String label) {
+    return '\"$label\" 청구';
+  }
 
+  @override
+  String inheritanceRequestTransferTitle(String label) {
+    return '\"$label\" 의 이전을 요청할까요?';
+  }
 
+  @override
+  String inheritanceRemoveTitle(String label) {
+    return '\"$label\" 을 제거할까요?';
+  }
 
+  @override
+  String get inheritanceStartCountdown => '30일 카운트다운 시작';
 
+  @override
+  String get inheritanceAddBeneficiary => '수혜자 추가';
 
+  @override
+  String get inheritanceEnterCode => '코드 입력';
 
+  @override
+  String get inheritanceRequestTransfer => '이전 요청';
 
   @override
   String get filesChooseStorage => '업로드 원본 선택';

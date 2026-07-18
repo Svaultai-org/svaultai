@@ -231,6 +231,7 @@
 
   "filesTitle":              "Files",
   "loginsTitle":             "Logins",
+  "inheritanceTitle":        "Inheritance",
   "dashboardTitle":          "Dashboard",
 
   "priorityHigh":            "HIGH",
@@ -373,6 +374,19 @@
   "confirmEraseTitle":        "Erase unrecoverable data?",
   "confirmEraseButton":       "Erase and continue",
 
+  "inheritanceCancelPendingTransferTitle": "Cancel pending transfer to \"{label}\"?",
+  "@inheritanceCancelPendingTransferTitle": { "placeholders": { "label": { "type": "String" } } },
+  "inheritanceCancelTransfer":       "Cancel transfer",
+  "inheritanceClaimTitle":           "Claim \"{label}\"",
+  "@inheritanceClaimTitle":          { "placeholders": { "label": { "type": "String" } } },
+  "inheritanceRequestTransferTitle": "Request transfer of \"{label}\"?",
+  "@inheritanceRequestTransferTitle":{ "placeholders": { "label": { "type": "String" } } },
+  "inheritanceRemoveTitle":          "Remove \"{label}\"?",
+  "@inheritanceRemoveTitle":         { "placeholders": { "label": { "type": "String" } } },
+  "inheritanceStartCountdown":       "Start 30-day countdown",
+  "inheritanceAddBeneficiary":       "Add beneficiary",
+  "inheritanceEnterCode":            "Enter code",
+  "inheritanceRequestTransfer":      "Request transfer",
 
   "filesChooseStorage":       "Choose Storage",
   "filesUploadFile":          "Upload file",

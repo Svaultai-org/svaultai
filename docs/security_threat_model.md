@@ -34,6 +34,7 @@ Ranked roughly by blast radius if compromised.
 | Session tokens | `auth_sessions` + HMAC of token_id | Session hijack risk |
 | Trusted devices | `trusted_devices` | Bypass sensitive-action gates |
 | Billing / subscription state | `account_subscriptions`, `stripe_customers` | Fraud + subscription bypass |
+| Beneficiary / inheritance links | `beneficiary_links` | Vault transfer manipulation |
 | Deletion tombstones | `vault_deletion_tombstones` (anonymized) | Audit-only; no user data |
 
 ---
@@ -50,6 +51,7 @@ Ranked roughly by blast radius if compromised.
 | Ransomware-style mass actor | Destroy or hold user data hostage | Has a session; wants to mass-upload or mass-delete |
 | Webhook spoofing attacker | Grant themselves paid entitlement | Can POST arbitrary bytes to `/billing/stripe/webhook` |
 | Provider abuse attacker | Exhaust upstream (RPC / OCR / LLM) quotas | Wants to run up cost or cause outage |
+| Beneficiary / inheritance abuser | Take over someone else's vault | Has pairing code or vault-name hint |
 
 ---
 

@@ -693,6 +693,8 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get loginsTitle => 'Logins';
 
+  @override
+  String get inheritanceTitle => 'Inheritance';
 
   @override
   String get dashboardTitle => 'Dashboard';
@@ -1082,14 +1084,40 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get confirmEraseButton => 'Erase and continue';
 
+  @override
+  String inheritanceCancelPendingTransferTitle(String label) {
+    return 'Cancel pending transfer to \"$label\"?';
+  }
 
+  @override
+  String get inheritanceCancelTransfer => 'Cancel transfer';
 
+  @override
+  String inheritanceClaimTitle(String label) {
+    return 'Claim \"$label\"';
+  }
 
+  @override
+  String inheritanceRequestTransferTitle(String label) {
+    return 'Request transfer of \"$label\"?';
+  }
 
+  @override
+  String inheritanceRemoveTitle(String label) {
+    return 'Remove \"$label\"?';
+  }
 
+  @override
+  String get inheritanceStartCountdown => 'Start 30-day countdown';
 
+  @override
+  String get inheritanceAddBeneficiary => 'Add beneficiary';
 
+  @override
+  String get inheritanceEnterCode => 'Enter code';
 
+  @override
+  String get inheritanceRequestTransfer => 'Request transfer';
 
   @override
   String get filesChooseStorage => 'Choose Storage';

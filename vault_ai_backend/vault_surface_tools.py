@@ -339,7 +339,7 @@ def get_vault_status(*, vault_id: str, key: bytes) -> str:
             cur.execute(
                 """
                 SELECT vault_name, total_bytes, locked_until,
-                       created_at, updated_at
+                       frozen_until, created_at, updated_at
                 FROM vaults
                 WHERE vault_id = %s
                 LIMIT 1
@@ -405,6 +405,7 @@ def get_vault_status(*, vault_id: str, key: bytes) -> str:
         "total_bytes":             int(vrow.get("total_bytes") or 0),
         "vault_created_at_iso":    _iso(vrow.get("created_at")),
         "vault_updated_at_iso":    _iso(vrow.get("updated_at")),
+        "frozen_until_iso":        _iso(vrow.get("frozen_until")),
         "locked_until_iso":        _iso(locked_until),
         "analysis_coverage":       coverage,
     }, ensure_ascii=False)

@@ -245,7 +245,7 @@ For each threat, what stops it in the recommended architecture.
 - **Logs leaking addresses or txids.** All XMR log lines pass through the same log-line audit tests we already run for ETH / SOL / TRON (see `test_solana_engine_slice_2026_07_02.py::SolanaLoggingRestrictionsTests`). The XMR tests must extend that audit for XMR-specific fields.
 - **Fake balance risk.** No balance is displayed unless a real scanner has returned a real number. The wallet is `syncing` (with real block heights) or `unavailable`, never a fake zero.
 - **Restore failure.** The `restoreHeight` is stored and the encrypted wallet secret contains the seed material. As long as the user has their PIN, they can restore. The restore path is documented in the runbook alongside [BACKUP_AND_RECOVERY.md](../vault_ai_backend/BACKUP_AND_RECOVERY.md).
-- **User losing PIN / vault key.** VaultAI is zero-knowledge and non-custodial: if the user loses their PIN there is no recovery path, and the encrypted wallet secret is unrecoverable. This is a feature (non-custodial has costs) but must be surfaced to the user before wallet creation.
+- **User losing PIN / vault key.** Standard VaultAI recovery flow — inheritance path, recovery codes. If the user loses the vault key with no recovery configured, the encrypted wallet secret is unrecoverable and so is the wallet. This is a feature (non-custodial has costs) but must be surfaced to the user before wallet creation.
 - **Sync taking long time.** UI shows real block heights, real progress, and never fakes "up to date." A user with a wallet whose restore height is years old sees a multi-hour sync and knows why.
 
 ---

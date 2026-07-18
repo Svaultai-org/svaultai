@@ -114,11 +114,19 @@ for privacy, not bugs.
    ZK users see the "I'll remember that" acknowledgment but the
    memory is not actually saved. The correct privacy tradeoff:
    nothing readable ever hits the DB.
-4. **Server-inferred document metadata**: for a ZK vault upload,
+4. **Beneficiary label**: for a ZK vault, `/beneficiary/create`
+   writes `passer_label = NULL`. The client is expected to POST
+   the ciphertext label to `/vault/ciphertext/beneficiary-links`
+   immediately after create returns.
+5. **Server-inferred document metadata**: for a ZK vault upload,
    `detected_type` / `detected_service` / `asset_type` are NULL
    at INSERT. Document understanding still runs transiently in
    the request; its outputs are returned to the client for
    encryption (when the client-side finalize path ships).
+6. **Recovery Kit + Inheritance**: opt-in features whose backend
+   endpoints accept only opaque wrapped bytes. UI shipping is
+   pending; the ZK privacy guarantee holds regardless (the
+   endpoints refuse any plaintext).
 
 ## Verification Gates
 

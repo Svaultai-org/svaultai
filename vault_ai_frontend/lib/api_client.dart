@@ -101,6 +101,14 @@ class OrphanDataException implements Exception {
 }
 
 
+class VaultFrozenException implements Exception {
+  final String message;
+  const VaultFrozenException({required this.message});
+  @override
+  String toString() => 'VaultFrozenException(message: $message)';
+}
+
+
 class VaultLockedException implements Exception {
   final String message;
   final String? lockedUntil;
@@ -498,6 +506,7 @@ class VaultAIClient {
       throw _rateLimitedFromBody(response.body);
     }
     if (response.statusCode == 423) {
+      String code = '';
       String message = '';
       String? lockedUntil;
       try {
@@ -505,11 +514,15 @@ class VaultAIClient {
         if (decoded is Map<String, dynamic>) {
           final detail = decoded['detail'];
           if (detail is Map<String, dynamic>) {
+            code = (detail['code'] ?? '').toString();
             message = (detail['message'] ?? '').toString();
             lockedUntil = detail['locked_until']?.toString();
           }
         }
       } catch (_) {}
+      if (code == 'vault_frozen') {
+        throw VaultFrozenException(message: message.isEmpty ? 'Vault frozen' : message);
+      }
       throw VaultLockedException(
         message: message.isEmpty ? 'Vault is temporarily locked' : message,
         lockedUntil: lockedUntil,
@@ -1134,7 +1147,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Request self-approval failed',
         statusCode: response.statusCode,
@@ -1163,7 +1176,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Finalize self-approval failed',
         statusCode: response.statusCode,
@@ -1275,7 +1288,7 @@ class VaultAIClient {
       });
       _throwIfAuthExpired(response.statusCode, errorBody);
       _throwIfDeviceNotTrusted(response.statusCode, errorBody);
-      _throwIfLocked(response.statusCode, errorBody);
+      _throwIfLockOrFrozen(response.statusCode, errorBody);
       _throwIfInvalidVaultUnlock(response.statusCode, errorBody);
       throw Exception(_formatBackendError(
         prefix: 'Chat failed',
@@ -1312,7 +1325,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Vault name check failed',
         statusCode: response.statusCode,
@@ -1351,7 +1364,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Get my vault failed',
         statusCode: response.statusCode,
@@ -1422,7 +1435,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Verify PIN failed',
         statusCode: response.statusCode,
@@ -1459,7 +1472,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Deep Answer start failed',
         statusCode: response.statusCode,
@@ -1491,7 +1504,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Deep Answer poll failed',
         statusCode: response.statusCode,
@@ -1522,7 +1535,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Get vault meta failed',
         statusCode: response.statusCode,
@@ -1563,7 +1576,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Get/Create vault meta failed',
         statusCode: response.statusCode,
@@ -1579,6 +1592,139 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> createBeneficiary({
+    required String vaultName,
+    required String pin,
+    required String label,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/create'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'pin': pin,
+        'label': label,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Create beneficiary failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> linkBeneficiary({
+    required String vaultName,
+    required String pin,
+    required String pairingCode,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/link'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'pin': pin,
+        'pairing_code': pairingCode,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Link beneficiary failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> listBeneficiaries({
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/list-mine'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'List beneficiaries failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> listInheritances({
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/list-inheritances'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'List inheritances failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> claimTransfer({
+    required int linkId,
+    required String vaultName,
+    required String pin,
+    String? inheritedVaultName,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/claim-transfer'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'link_id': linkId,
+        'vault_name': vaultName,
+        'pin': pin,
+        if (inheritedVaultName != null && inheritedVaultName.isNotEmpty)
+          'inherited_vault_name': inheritedVaultName,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Claim transfer failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> listMyVaults({
     required String authToken,
   }) async {
@@ -1589,9 +1735,93 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'List vaults failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> requestTransfer({
+    required int linkId,
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/request-transfer'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'link_id': linkId,
+        'vault_name': vaultName,
+        'pin': pin,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Request transfer failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> cancelTransfer({
+    required int linkId,
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/cancel-transfer'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'link_id': linkId,
+        'vault_name': vaultName,
+        'pin': pin,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Cancel transfer failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteBeneficiary({
+    required int linkId,
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/beneficiary/delete'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'link_id': linkId,
+        'vault_name': vaultName,
+        'pin': pin,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Delete beneficiary failed',
         statusCode: response.statusCode,
         responseBody: response.body,
       ));
@@ -1609,7 +1839,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'List notifications failed',
         statusCode: response.statusCode,
@@ -1633,7 +1863,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Mark notification read failed',
         statusCode: response.statusCode,
@@ -1662,7 +1892,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Rotate vault KDF failed',
         statusCode: response.statusCode,
@@ -1693,7 +1923,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Wipe orphan data failed',
         statusCode: response.statusCode,
@@ -1814,7 +2044,7 @@ class VaultAIClient {
   }
 
   
-  void _throwIfLocked(int statusCode, String body) {
+  void _throwIfLockOrFrozen(int statusCode, String body) {
     if (statusCode != 423) return;
     Map<String, dynamic>? detail;
     try {
@@ -1829,6 +2059,11 @@ class VaultAIClient {
     if (detail == null) return;
     final code = detail['code']?.toString();
     final message = (detail['message']?.toString() ?? '').trim();
+    if (code == 'vault_frozen') {
+      throw VaultFrozenException(
+        message: message.isEmpty ? 'This vault has been frozen.' : message,
+      );
+    }
     if (code == 'pin_locked') {
       throw VaultLockedException(
         message: message.isEmpty
@@ -1872,7 +2107,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'List logins failed',
         statusCode: response.statusCode,
@@ -1908,7 +2143,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'List secure items failed',
         statusCode: response.statusCode,
@@ -1948,7 +2183,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Get secure item failed',
         statusCode: response.statusCode,
@@ -2012,7 +2247,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Save crypto wallet failed',
         statusCode: response.statusCode,
@@ -2081,7 +2316,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Save crypto sensitive backup failed',
         statusCode: response.statusCode,
@@ -2155,7 +2390,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Save crypto note failed',
         statusCode: response.statusCode,
@@ -2193,7 +2428,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       
       
       throw Exception(_formatBackendError(
@@ -2332,7 +2567,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, responseBody);
       _throwIfDeviceNotTrusted(response.statusCode, responseBody);
-      _throwIfLocked(response.statusCode, responseBody);
+      _throwIfLockOrFrozen(response.statusCode, responseBody);
       throw Exception(_formatBackendError(
         prefix: 'File upload failed',
         statusCode: response.statusCode,
@@ -2363,7 +2598,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'List folder failed',
         statusCode: response.statusCode,
@@ -2408,7 +2643,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Start import failed',
         statusCode: response.statusCode,
@@ -2437,7 +2672,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Get import failed',
         statusCode: response.statusCode,
@@ -2474,7 +2709,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Cancel import failed',
         statusCode: response.statusCode,
@@ -2515,7 +2750,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Complete import failed',
         statusCode: response.statusCode,
@@ -2611,7 +2846,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, responseBody);
       _throwIfDeviceNotTrusted(response.statusCode, responseBody);
-      _throwIfLocked(response.statusCode, responseBody);
+      _throwIfLockOrFrozen(response.statusCode, responseBody);
       throw Exception(_formatBackendError(
         prefix: 'Name file failed',
         statusCode: response.statusCode,
@@ -2646,7 +2881,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'List files failed',
         statusCode: response.statusCode,
@@ -2681,7 +2916,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Vault stats failed',
         statusCode: response.statusCode,
@@ -2718,7 +2953,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Download file failed',
         statusCode: response.statusCode,
@@ -2804,7 +3039,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Init chunked upload failed',
         statusCode: response.statusCode,
@@ -2846,7 +3081,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, responseBody);
       _throwIfDeviceNotTrusted(response.statusCode, responseBody);
-      _throwIfLocked(response.statusCode, responseBody);
+      _throwIfLockOrFrozen(response.statusCode, responseBody);
       throw Exception(_formatBackendError(
         prefix: 'Upload chunk failed',
         statusCode: response.statusCode,
@@ -2883,7 +3118,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Finalize chunked upload failed',
         statusCode: response.statusCode,
@@ -2920,7 +3155,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Abort chunked upload failed',
         statusCode: response.statusCode,
@@ -2957,7 +3192,7 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Get download manifest failed',
         statusCode: response.statusCode,
@@ -2995,7 +3230,7 @@ class VaultAIClient {
       final body = utf8.decode(response.bodyBytes, allowMalformed: true);
       _throwIfAuthExpired(response.statusCode, body);
       _throwIfDeviceNotTrusted(response.statusCode, body);
-      _throwIfLocked(response.statusCode, body);
+      _throwIfLockOrFrozen(response.statusCode, body);
       throw Exception(_formatBackendError(
         prefix: 'Download chunk failed',
         statusCode: response.statusCode,
@@ -3025,7 +3260,7 @@ class VaultAIClient {
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'List full logins failed',
       statusCode: response.statusCode,
@@ -3069,7 +3304,7 @@ Future<Map<String, dynamic>> updateLogin({
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'Update login failed',
       statusCode: response.statusCode,
@@ -3101,7 +3336,7 @@ Future<Map<String, dynamic>> deleteLogin({
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'Delete login failed',
       statusCode: response.statusCode,
@@ -3169,7 +3404,7 @@ Future<Map<String, dynamic>> updateVaultSecureItem({
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'Could not update saved item',
       statusCode: response.statusCode,
@@ -3384,7 +3619,7 @@ Future<Map<String, dynamic>> deleteVaultSecureItem({
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'Could not delete saved item',
       statusCode: response.statusCode,
@@ -3418,7 +3653,7 @@ Future<Map<String, dynamic>> updateVaultFileName({
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'Update file failed',
       statusCode: response.statusCode,
@@ -3450,7 +3685,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
   if (response.statusCode != 200) {
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLocked(response.statusCode, response.body);
+    _throwIfLockOrFrozen(response.statusCode, response.body);
     throw Exception(_formatBackendError(
       prefix: 'Delete file failed',
       statusCode: response.statusCode,
@@ -3531,7 +3766,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      _throwIfLocked(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Show related files failed',
         statusCode: response.statusCode,

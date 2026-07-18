@@ -1346,6 +1346,11 @@ abstract class AppLocalizations {
   /// **'Logins'**
   String get loginsTitle;
 
+  /// No description provided for @inheritanceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Inheritance'**
+  String get inheritanceTitle;
 
   /// No description provided for @dashboardTitle.
   ///
@@ -2061,14 +2066,59 @@ abstract class AppLocalizations {
   /// **'Erase and continue'**
   String get confirmEraseButton;
 
+  /// No description provided for @inheritanceCancelPendingTransferTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel pending transfer to \"{label}\"?'**
+  String inheritanceCancelPendingTransferTitle(String label);
 
+  /// No description provided for @inheritanceCancelTransfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel transfer'**
+  String get inheritanceCancelTransfer;
 
+  /// No description provided for @inheritanceClaimTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Claim \"{label}\"'**
+  String inheritanceClaimTitle(String label);
 
+  /// No description provided for @inheritanceRequestTransferTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request transfer of \"{label}\"?'**
+  String inheritanceRequestTransferTitle(String label);
 
+  /// No description provided for @inheritanceRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove \"{label}\"?'**
+  String inheritanceRemoveTitle(String label);
 
+  /// No description provided for @inheritanceStartCountdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Start 30-day countdown'**
+  String get inheritanceStartCountdown;
 
+  /// No description provided for @inheritanceAddBeneficiary.
+  ///
+  /// In en, this message translates to:
+  /// **'Add beneficiary'**
+  String get inheritanceAddBeneficiary;
 
+  /// No description provided for @inheritanceEnterCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter code'**
+  String get inheritanceEnterCode;
 
+  /// No description provided for @inheritanceRequestTransfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Request transfer'**
+  String get inheritanceRequestTransfer;
 
   /// No description provided for @filesChooseStorage.
   ///

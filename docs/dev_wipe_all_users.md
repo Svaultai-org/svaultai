@@ -88,7 +88,7 @@ The destructive run:
      relationships, expiry alerts, intelligence summary, content chunks,
      file understanding/embeddings, analysis jobs, agent memories/tasks/
      audit, import batches, file relationships, sessions, trusted
-     devices, notifications).
+     devices, notifications, beneficiary links).
    - Best-effort Stripe subscription cancellation for the vault's
      account. Failures are swallowed and only the hashed vault-id
      prefix is logged.

@@ -49,6 +49,7 @@ Map<String, dynamic> _cryptoShowVaultEnv({
 
 void main() {
 
+
   group('Bug 2 — Crypto Vault chat entitlement gate', () {
     testWidgets(
       'non-entitled user sees Upgrade required — not Open Crypto '

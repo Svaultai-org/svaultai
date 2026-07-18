@@ -409,7 +409,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         cur.execute(
             """
             SELECT vault_id, vault_name, pin_salt, pin_verifier, kdf_iterations,
-                   failed_pin_attempts, locked_until, display_username
+                   failed_pin_attempts, locked_until, must_reset, display_username
             FROM vaults
             WHERE vault_name = %s
             LIMIT 1
@@ -472,6 +472,15 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
             conn.commit()
             raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
 
+                                                               
+        if row.get("must_reset"):
+            raise HTTPException(
+                status_code=423,
+                detail={
+                    "code":    "vault_frozen",
+                    "message": "This vault has been frozen and cannot be unlocked.",
+                },
+            )
 
         cur.execute("SELECT NOW() AS now")
         now_row = cur.fetchone() or {}

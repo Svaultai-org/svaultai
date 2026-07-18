@@ -218,6 +218,7 @@
 
   "filesTitle":              "Fichiers",
   "loginsTitle":             "Identifiants",
+  "inheritanceTitle":        "Héritage",
   "dashboardTitle":          "Tableau de bord",
 
   "priorityHigh":            "ÉLEVÉ",
@@ -357,6 +358,15 @@
   "confirmEraseTitle":        "Effacer des données non récupérables ?",
   "confirmEraseButton":       "Effacer et continuer",
 
+  "inheritanceCancelPendingTransferTitle": "Annuler le transfert en attente vers « {label} » ?",
+  "inheritanceCancelTransfer":       "Annuler le transfert",
+  "inheritanceClaimTitle":           "Réclamer « {label} »",
+  "inheritanceRequestTransferTitle": "Demander le transfert de « {label} » ?",
+  "inheritanceRemoveTitle":          "Retirer « {label} » ?",
+  "inheritanceStartCountdown":       "Démarrer le compte à rebours de 30 jours",
+  "inheritanceAddBeneficiary":       "Ajouter un bénéficiaire",
+  "inheritanceEnterCode":            "Entrer le code",
+  "inheritanceRequestTransfer":      "Demander le transfert",
 
   "filesChooseStorage":       "Choisir la source",
   "filesUploadFile":          "Téléverser un fichier",

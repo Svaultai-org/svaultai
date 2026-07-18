@@ -83,6 +83,7 @@ _COUNT_TABLES: Tuple[Tuple[str, str], ...] = (
     ("uploaded_files",             "files"),
     ("uploaded_file_chunks",       "file_chunks"),
     ("vault_items",                "secure_items_all_kinds"),
+    ("beneficiary_links",          "beneficiary_links"),
     ("notifications",              "notifications"),
     ("account_subscriptions",      "subscriptions_local"),
     ("account_storage_totals",     "account_storage_totals"),

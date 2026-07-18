@@ -45,6 +45,7 @@ import 'device_id.dart';
 import 'device_pending_page.dart';
 import 'devices_page.dart';
 import 'security_center_page.dart';
+import 'inheritance_pairing_page.dart';
 import 'help_center_page.dart' as hc;
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
@@ -1170,6 +1171,17 @@ class AppState extends ChangeNotifier {
 
   
   bool handleApiException(Object error) {
+    if (error is VaultFrozenException) {
+      lockMessage = error.message;
+      unlocked = false;
+      if (vaultId != null) _VaultCrypto.clearCache(vaultId!);
+      notifyListeners();
+      rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+        '/vault-frozen',
+        (_) => false,
+      );
+      return true;
+    }
     if (error is VaultLockedException) {
       lockMessage = error.message;
       unlocked = false;
@@ -2301,6 +2313,7 @@ class VaultaiApp extends StatelessWidget {
         '/signup': (_) => const SignupPage(),
         '/unlock': (_) => const UnlockPage(),
         '/pin': (_) => const PinGatePage(),
+        '/vault-frozen': (_) => const VaultFrozenPage(),
         '/recover': (_) => const VaultRecoveryPage(),
         '/chat': (_) => const ChatDashboardPage(),
         
@@ -2310,6 +2323,7 @@ class VaultaiApp extends StatelessWidget {
         
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
+        '/inheritance-pairing': (_) => const InheritancePairingPage(),
 
 
         '/storage': (_) => const StoragePage(),
@@ -2661,6 +2675,44 @@ inferDetectedTypeAndServiceForUpload({
   return (detectedType: dt, detectedService: ds);
 }
 
+/// ZK client-finalize of a beneficiary label. Encrypts `label`
+/// locally under the active vault's metadataKey and POSTs the
+/// ciphertext to /vault/ciphertext/beneficiary-links. Returns true
+/// on success, false on any failure (network, crypto, HTTP error).
+///
+/// Non-ZK vaults (no active MVK): returns true and does nothing,
+/// because the label was already persisted in plaintext by the
+/// upstream /beneficiary/create call.
+Future<bool> tryZkFinalizeBeneficiaryLabelCiphertext({
+  required String baseUrl,
+  required String authToken,
+  required int linkId,
+  required String label,
+}) async {
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) return true; // legacy vault → already persisted
+  try {
+    final hierarchy = vk_hier.VaultKeyHierarchy(mvk);
+    final metaKey = await hierarchy.metadataKey();
+    final ct = await vk_hier.aesGcmWrap(metaKey, utf8.encode(label));
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/beneficiary-links');
+    final resp = await http.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'link_id': linkId,
+        'passer_label_ciphertext': vk_hier.b64urlEncode(ct),
+      }),
+    );
+    return resp.statusCode == 200;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// Best-effort ZK finalize of the inferred metadata for a
 /// just-uploaded file. Silent no-op when the vault is not
 /// ZK-adopted (legacy vaults get the backend heuristic path). For
@@ -2761,7 +2813,7 @@ class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
 /// `kind` slug to a fixed, generic (title, body) pair that:
 ///   * tells the user what happened at a categorical level,
 ///   * never quotes any user data (no vault_name, no device label,
-///     no filename, no counterparty label),
+///     no beneficiary label, no filename, no counterparty label),
 ///   * remains stable across locales' English fallback,
 ///   * gracefully covers unknown kinds by treating the kind slug as
 ///     the title in a normalized form.
@@ -2771,6 +2823,24 @@ class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
 Map<String, String> zkNotificationFallback(String? rawKind) {
   final kind = (rawKind ?? '').trim();
   switch (kind) {
+    case 'transfer_requested':
+      return const {
+        'title': 'Beneficiary transfer requested',
+        'body': 'A beneficiary linked to this vault has requested a '
+                'transfer. Open the Inheritance page for details.',
+      };
+    case 'transfer_cancelled':
+      return const {
+        'title': 'Beneficiary transfer cancelled',
+        'body': 'A pending beneficiary transfer for this vault was '
+                'cancelled.',
+      };
+    case 'transfer_completed':
+      return const {
+        'title': 'Beneficiary transfer completed',
+        'body': 'A beneficiary transfer for this vault has '
+                'completed. Open the Inheritance page for details.',
+      };
     case 'device_approved':
       return const {
         'title': 'Device approved',
@@ -3687,6 +3757,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         err = e.message;
         loading = false;
       });
+    } on VaultFrozenException {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/vault-frozen');
     } on VaultLockedException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -4240,6 +4313,9 @@ class _UnlockPageState extends State<UnlockPage> {
         err = e.message;
         loading = false;
       });
+    } on VaultFrozenException {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/vault-frozen');
     } on VaultLockedException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -4402,12 +4478,14 @@ Future<void> _decide() async {
 
     final hasVault = result['has_vault'] == true;
     final isOrphaned = result['is_orphaned'] == true;
+    final mustReset = result['must_reset'] == true;
     final backendVaultName = result['vault_name']?.toString();
 
     vlog('pin.mode.backend', {
       'has_vault': hasVault,
       'vault_name': backendVaultName,
       'is_orphaned': isOrphaned,
+      'must_reset': mustReset,
     });
 
     if (isOrphaned) {
@@ -4418,6 +4496,12 @@ Future<void> _decide() async {
       );
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/recover');
+      return;
+    }
+
+    if (mustReset) {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/vault-frozen');
       return;
     }
 
@@ -4762,6 +4846,73 @@ Future<void> _decide() async {
                       AppLocalizations.of(context).authLogInAnotherVault,
                     ),
                   ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class VaultFrozenPage extends StatelessWidget {
+  const VaultFrozenPage({super.key});
+
+  Future<void> _signOut(BuildContext context) async {
+    final app = context.read<AppState>();
+    await app.signOutEverywhere();
+    if (!context.mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+    final isMobile = w < 760;
+
+    return Scaffold(
+      appBar: TopNavBar(showActions: false, isMobile: isMobile),
+      body: Center(
+        child: SizedBox(
+          width: w < 480 ? w - 24 : 460,
+          child: Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2F2F2F),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.ac_unit, color: Colors.amber, size: 28),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Vault frozen',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'This vault has been frozen because an inheritance transfer '
+                  'completed. Its contents have already been moved to the '
+                  'beneficiary\'s account, and the original vault can no '
+                  'longer be unlocked.',
+                  style: TextStyle(color: Color(0xFFECECEC), fontSize: 14, height: 1.5),
+                ),
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: () => _signOut(context),
+                  icon: const Icon(Icons.logout),
+                  label: Text(AppLocalizations.of(context).commonSignOut),
+                ),
               ],
             ),
           ),
@@ -5481,6 +5632,7 @@ List<VaultLoginItem> vaultLogins = [];
 
 _DashboardSection selectedSection = _DashboardSection.chat;
 
+
 Widget _buildSettingsSection(bool isMobile) {
   final app = context.watch<AppState>();
   final l = AppLocalizations.of(context);
@@ -5708,6 +5860,57 @@ Widget _buildSettingsSection(bool isMobile) {
                         ),
                       ),
                       Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              InkWell(
+                key: const Key('settings_inheritance_pairing_tile'),
+                onTap: () => Navigator.of(context)
+                    .pushNamed('/inheritance-pairing'),
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF262626),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.family_restroom_outlined,
+                          color: Color(0xFFB4B4B4)),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Inheritance pairing',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Set up a beneficiary who can '
+                              'inherit this vault. Private (ZK) '
+                              'vaults use a client-side X25519 '
+                              'rewrap ceremony.',
+                              style: TextStyle(
+                                color: Color(0xFFB4B4B4),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right,
+                          color: Color(0xFFB4B4B4)),
                     ],
                   ),
                 ),
@@ -11976,6 +12179,8 @@ class _OverviewCard extends StatelessWidget {
     );
   }
 }
+
+
 
 class _VaultCrypto {
   

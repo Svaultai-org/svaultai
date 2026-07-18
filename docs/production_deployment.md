@@ -180,7 +180,7 @@ shipping a "localhost:8000" build to production.
 
 The app uses in-memory Navigator routes (`/auth`, `/login`,
 `/signup`, `/unlock`, `/chat`, `/storage`, `/security-center`,
-`/devices`, `/recover`, `/device-pending`, `/pin`).
+`/devices`, `/vault-frozen`, `/recover`, `/device-pending`, `/pin`).
 Every one of them must resolve to `index.html` at the static host
 so a page refresh does not 404.
 

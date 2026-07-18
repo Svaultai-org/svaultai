@@ -65,7 +65,7 @@ to `index.html`, not 404. Known routes:
 
 ```
 /         /auth        /login       /signup      /unlock
-/pin      /recover     /chat        /device-pending
+/pin      /vault-frozen/recover     /chat        /device-pending
 /devices  /security-center          /storage
 ```
 

@@ -218,6 +218,7 @@
 
   "filesTitle":              "Archivos",
   "loginsTitle":             "Accesos",
+  "inheritanceTitle":        "Herencia",
   "dashboardTitle":          "Panel",
 
   "priorityHigh":            "ALTA",
@@ -357,6 +358,15 @@
   "confirmEraseTitle":        "¿Borrar datos irrecuperables?",
   "confirmEraseButton":       "Borrar y continuar",
 
+  "inheritanceCancelPendingTransferTitle": "¿Cancelar la transferencia pendiente a «{label}»?",
+  "inheritanceCancelTransfer":       "Cancelar transferencia",
+  "inheritanceClaimTitle":           "Reclamar «{label}»",
+  "inheritanceRequestTransferTitle": "¿Solicitar transferencia de «{label}»?",
+  "inheritanceRemoveTitle":          "¿Quitar «{label}»?",
+  "inheritanceStartCountdown":       "Iniciar cuenta regresiva de 30 días",
+  "inheritanceAddBeneficiary":       "Agregar beneficiario",
+  "inheritanceEnterCode":            "Ingresar código",
+  "inheritanceRequestTransfer":      "Solicitar transferencia",
 
   "filesChooseStorage":       "Elegir origen",
   "filesUploadFile":          "Subir archivo",

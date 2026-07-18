@@ -700,6 +700,8 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get loginsTitle => 'Accesos';
 
+  @override
+  String get inheritanceTitle => 'Herencia';
 
   @override
   String get dashboardTitle => 'Panel';
@@ -1090,14 +1092,40 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get confirmEraseButton => 'Borrar y continuar';
 
+  @override
+  String inheritanceCancelPendingTransferTitle(String label) {
+    return '¿Cancelar la transferencia pendiente a «$label»?';
+  }
 
+  @override
+  String get inheritanceCancelTransfer => 'Cancelar transferencia';
 
+  @override
+  String inheritanceClaimTitle(String label) {
+    return 'Reclamar «$label»';
+  }
 
+  @override
+  String inheritanceRequestTransferTitle(String label) {
+    return '¿Solicitar transferencia de «$label»?';
+  }
 
+  @override
+  String inheritanceRemoveTitle(String label) {
+    return '¿Quitar «$label»?';
+  }
 
+  @override
+  String get inheritanceStartCountdown => 'Iniciar cuenta regresiva de 30 días';
 
+  @override
+  String get inheritanceAddBeneficiary => 'Agregar beneficiario';
 
+  @override
+  String get inheritanceEnterCode => 'Ingresar código';
 
+  @override
+  String get inheritanceRequestTransfer => 'Solicitar transferencia';
 
   @override
   String get filesChooseStorage => 'Elegir origen';
