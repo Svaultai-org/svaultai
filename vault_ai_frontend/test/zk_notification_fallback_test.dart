@@ -10,9 +10,6 @@ void main() {
   group('ZK notification fallback — kind→label mapping', () {
     test('every known kind returns a non-empty title and body', () {
       const kinds = <String>[
-        'transfer_requested',
-        'transfer_cancelled',
-        'transfer_completed',
         'device_approved',
         'device_revoked',
         'device_approval_pending',
@@ -57,13 +54,9 @@ void main() {
         r'$', // no interpolation at all
         'vault_name',
         'device_label',
-        'beneficiary_label',
         'file_name',
       ];
       const kinds = <String>[
-        'transfer_requested',
-        'transfer_cancelled',
-        'transfer_completed',
         'device_approved',
         'device_revoked',
         'device_approval_pending',

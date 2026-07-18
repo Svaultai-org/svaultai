@@ -17,7 +17,6 @@ class ConciergePage extends StatefulWidget {
   final void Function(String prompt)? onAskVaultAI;
   final VoidCallback? onOpenSecurityCenter;
   final VoidCallback? onOpenExpiry;
-  final VoidCallback? onOpenInheritance;
 
   const ConciergePage({
     super.key,
@@ -28,7 +27,6 @@ class ConciergePage extends StatefulWidget {
     this.onAskVaultAI,
     this.onOpenSecurityCenter,
     this.onOpenExpiry,
-    this.onOpenInheritance,
   });
 
   @override
@@ -324,11 +322,6 @@ class _PostureRow extends StatelessWidget {
     final crit = (counts['critical'] is int) ? counts['critical'] as int : 0;
     final warn = (counts['warning'] is int) ? counts['warning'] as int : 0;
     final total = (counts['total'] is int) ? counts['total'] as int : 0;
-    final inheritance = (security?['inheritance'] is Map)
-        ? (security!['inheritance'] as Map).cast<String, dynamic>()
-        : const <String, dynamic>{};
-    final inhConfigured = inheritance['configured'] == true;
-    final inhFrozen = inheritance['frozen'] == true;
 
     final cards = <Widget>[
       _PostureCard(
@@ -350,25 +343,6 @@ class _PostureRow extends StatelessWidget {
         icon: Icons.event_busy_outlined,
         footer: _expiryFooter(l, crit, warn, total),
         onTap: onOpenExpiry,
-      ),
-      _PostureCard(
-        title: l.conciergePostureInheritance,
-        value: inhConfigured ? 'On' : 'Off',
-        unit: inhFrozen
-            ? l.conciergeInheritanceFrozen
-            : (inhConfigured
-                ? l.conciergeInheritanceConfigured
-                : l.conciergeInheritanceUnset),
-        accent: inhFrozen
-            ? VaultColors.severityWarn
-            : (inhConfigured ? VaultColors.accentBright : VaultColors.textTertiary),
-        icon: Icons.family_restroom_outlined,
-        footer: inhFrozen
-            ? l.conciergePostureFrozen
-            : (inhConfigured
-                ? l.conciergePostureConfigured
-                : l.conciergePostureUnset),
-        onTap: null,
       ),
     ];
 
@@ -575,7 +549,6 @@ class _AlertActionRow extends StatelessWidget {
       case 'tax':            return Icons.account_balance_outlined;
       case 'contract':       return Icons.handshake_outlined;
       case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
       default:               return Icons.event_outlined;
     }
   }
@@ -647,7 +620,6 @@ class _RecommendationRow extends StatelessWidget {
       case 'pending_device':       return Icons.devices_other;
       case 'pending_self_approval': return Icons.hourglass_top;
       case 'inactive_devices':     return Icons.device_unknown_outlined;
-      case 'enable_inheritance':   return Icons.family_restroom_outlined;
       case 'unanalyzed_passwords': return Icons.analytics_outlined;
       default:                     return Icons.lightbulb_outline;
     }
@@ -937,7 +909,6 @@ class _RenewalTimeline extends StatelessWidget {
       case 'tax':            return Icons.account_balance_outlined;
       case 'contract':       return Icons.handshake_outlined;
       case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
       default:               return Icons.event_outlined;
     }
   }

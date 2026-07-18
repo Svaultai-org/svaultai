@@ -152,8 +152,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get sidebarRelationships => 'العلاقات';
 
-  @override
-  String get sidebarInheritance => 'الميراث';
 
   @override
   String get sidebarSettings => 'الإعدادات';
@@ -291,8 +289,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get conciergePostureExpiring => 'ينتهي';
 
-  @override
-  String get conciergePostureInheritance => 'الميراث';
 
   @override
   String get conciergePostureScoreHint => 'اضغط لعرض مركز الأمان';
@@ -306,14 +302,8 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => 'كل شيء بعيد بصورة مريحة';
 
-  @override
-  String get conciergePostureFrozen => 'الخزينة مجمّدة';
 
-  @override
-  String get conciergePostureConfigured => 'تم تكوين الإقران';
 
-  @override
-  String get conciergePostureUnset => 'لا يوجد مستفيد بعد';
 
   @override
   String get conciergePostureScoreNoData => 'لا توجد بيانات';
@@ -348,14 +338,8 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get conciergeItems => 'عناصر';
 
-  @override
-  String get conciergeInheritanceFrozen => 'مجمّد';
 
-  @override
-  String get conciergeInheritanceConfigured => 'مُكوَّن';
 
-  @override
-  String get conciergeInheritanceUnset => 'غير مُكوَّن';
 
   @override
   String get expiryTitle => 'تواريخ الانتهاء';
@@ -706,8 +690,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get loginsTitle => 'تسجيلات الدخول';
 
-  @override
-  String get inheritanceTitle => 'الميراث';
 
   @override
   String get dashboardTitle => 'لوحة التحكم';
@@ -1092,40 +1074,14 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get confirmEraseButton => 'امسح وتابع';
 
-  @override
-  String inheritanceCancelPendingTransferTitle(String label) {
-    return 'إلغاء التحويل المعلّق إلى \"$label\"؟';
-  }
 
-  @override
-  String get inheritanceCancelTransfer => 'إلغاء التحويل';
 
-  @override
-  String inheritanceClaimTitle(String label) {
-    return 'المطالبة بـ \"$label\"';
-  }
 
-  @override
-  String inheritanceRequestTransferTitle(String label) {
-    return 'طلب تحويل \"$label\"؟';
-  }
 
-  @override
-  String inheritanceRemoveTitle(String label) {
-    return 'إزالة \"$label\"؟';
-  }
 
-  @override
-  String get inheritanceStartCountdown => 'بدء العدّ التنازلي 30 يومًا';
 
-  @override
-  String get inheritanceAddBeneficiary => 'إضافة مستفيد';
 
-  @override
-  String get inheritanceEnterCode => 'إدخال الرمز';
 
-  @override
-  String get inheritanceRequestTransfer => 'طلب تحويل';
 
   @override
   String get filesChooseStorage => 'اختر مصدر الملف';

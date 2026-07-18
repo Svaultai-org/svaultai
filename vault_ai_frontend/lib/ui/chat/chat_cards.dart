@@ -1063,7 +1063,6 @@ class ConciergeCard extends StatelessWidget {
     switch (hint) {
       case 'travel':      return Icons.flight_takeoff;
       case 'tax':         return Icons.account_balance_outlined;
-      case 'inheritance': return Icons.family_restroom_outlined;
       case 'security':    return Icons.shield_outlined;
       case 'identity':    return Icons.badge_outlined;
       case 'finance':     return Icons.payments_outlined;
@@ -1227,7 +1226,6 @@ class _ExpiryRow extends StatelessWidget {
       case 'tax':            return Icons.account_balance_outlined;
       case 'contract':       return Icons.handshake_outlined;
       case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
       default:               return Icons.event_outlined;
     }
   }

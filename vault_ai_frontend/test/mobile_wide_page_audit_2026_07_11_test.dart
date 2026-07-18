@@ -97,12 +97,6 @@ void main() {
   });
 
 
-  // VaultFrozenPage skipped: transitively imports TopNavBar which spawns a
-  // notifications polling Timer. Not currently mockable in isolation without
-  // extracting the notification badge widget. Covered by inline overflow
-  // review — see final report.
-
-
   group('DevicePendingPage (default state)', () {
     _forEachPhone('renders without overflow', (tester, device) async {
       final app = await _hydratedAppState();

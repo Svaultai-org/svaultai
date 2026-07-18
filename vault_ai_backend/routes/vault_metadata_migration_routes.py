@@ -19,9 +19,9 @@ Design invariants:
 
 Only ``uploaded_files``, ``vault_items``, ``notifications``, and
 ``vault_ai_memory`` are wired into the batch loop this turn.
-``vault_document_metadata``, ``beneficiary_links``,
-``crypto_*_drafts`` and the wallet-lock hash follow the same shape
-and can be added by extending ``_TABLES`` without new endpoints.
+``vault_document_metadata``, ``crypto_*_drafts`` and the wallet-lock
+hash follow the same shape and can be added by extending ``_TABLES``
+without new endpoints.
 """
 
 from __future__ import annotations

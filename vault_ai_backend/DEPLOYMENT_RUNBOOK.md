@@ -287,7 +287,7 @@ echo "$VAULTAI_RATE_LIMIT_BACKEND"
 ## 12. Compliance and policy boundaries
 
 - **No admin** has access to decrypted vault contents. The PIN unlock derives the AES key per-request; the key is never persisted server-side.
-- **No support process** that recovers a vault from a forgotten PIN. The recovery flow (inheritance pairing, beneficiary claim) is documented in `project_vaultai_inheritance.md` in the memory store; it never bypasses the PIN.
+- **No support process** that recovers a vault from a forgotten PIN. A forgotten PIN is unrecoverable; there is no server-side backdoor.
 - **Logs are redaction-pinned** — see `test_production_release_hardening_2026_06_30.py::P2/P6/P7/P8` for the source-level guards.
 
 ---

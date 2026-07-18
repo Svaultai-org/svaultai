@@ -51,7 +51,6 @@
   "sidebarExpiry":        "Expirations",
   "sidebarMemory":        "Mémoire",
   "sidebarRelationships": "Relations",
-  "sidebarInheritance":   "Héritage",
   "sidebarSettings":      "Paramètres",
 
   "chatComposerHint": "Posez une question sur votre coffre ou téléversez un fichier...",
@@ -98,14 +97,10 @@
   "conciergeAllClearSub":      "Rien d'urgent aujourd'hui. VaultAI surveille vos documents et fera remonter toute nouveauté ici.",
   "conciergePostureSecurity":  "Sécurité",
   "conciergePostureExpiring":  "Expirations",
-  "conciergePostureInheritance":"Héritage",
   "conciergePostureScoreHint":"Touchez pour ouvrir le centre de sécurité",
   "conciergePostureNoData":    "aucune donnée",
   "conciergePostureNothingTracked":"Rien n'est suivi pour l'instant",
   "conciergePostureAllFuture": "Tout confortablement futur",
-  "conciergePostureFrozen":    "Coffre gelé",
-  "conciergePostureConfigured":"Jumelage configuré",
-  "conciergePostureUnset":     "Aucun bénéficiaire",
   "conciergePostureScoreNoData":"aucune donnée",
   "conciergeAskTravel":        "Suis-je prêt à voyager ?",
   "conciergePassport":         "Passeport",
@@ -117,9 +112,6 @@
   "conciergeComfortable":      "Confortable",
   "conciergeItem":             "élément",
   "conciergeItems":            "éléments",
-  "conciergeInheritanceFrozen":"gelé",
-  "conciergeInheritanceConfigured":"configuré",
-  "conciergeInheritanceUnset": "non configuré",
 
   "expiryTitle":          "Expirations",
   "expirySubtitle":       "Documents et obligations qui expirent bientôt",
@@ -226,7 +218,6 @@
 
   "filesTitle":              "Fichiers",
   "loginsTitle":             "Identifiants",
-  "inheritanceTitle":        "Héritage",
   "dashboardTitle":          "Tableau de bord",
 
   "priorityHigh":            "ÉLEVÉ",
@@ -366,15 +357,6 @@
   "confirmEraseTitle":        "Effacer des données non récupérables ?",
   "confirmEraseButton":       "Effacer et continuer",
 
-  "inheritanceCancelPendingTransferTitle": "Annuler le transfert en attente vers « {label} » ?",
-  "inheritanceCancelTransfer":       "Annuler le transfert",
-  "inheritanceClaimTitle":           "Réclamer « {label} »",
-  "inheritanceRequestTransferTitle": "Demander le transfert de « {label} » ?",
-  "inheritanceRemoveTitle":          "Retirer « {label} » ?",
-  "inheritanceStartCountdown":       "Démarrer le compte à rebours de 30 jours",
-  "inheritanceAddBeneficiary":       "Ajouter un bénéficiaire",
-  "inheritanceEnterCode":            "Entrer le code",
-  "inheritanceRequestTransfer":      "Demander le transfert",
 
   "filesChooseStorage":       "Choisir la source",
   "filesUploadFile":          "Téléverser un fichier",

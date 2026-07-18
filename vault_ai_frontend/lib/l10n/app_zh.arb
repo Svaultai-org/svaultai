@@ -51,7 +51,6 @@
   "sidebarExpiry":        "到期",
   "sidebarMemory":        "记忆",
   "sidebarRelationships": "关系",
-  "sidebarInheritance":   "继承",
   "sidebarSettings":      "设置",
 
   "chatComposerHint": "询问你的保险库或上传文件...",
@@ -98,14 +97,10 @@
   "conciergeAllClearSub":      "今天没有紧急事项。VaultAI 会关注你的文件,有任何新情况会在此显示。",
   "conciergePostureSecurity":  "安全",
   "conciergePostureExpiring":  "即将到期",
-  "conciergePostureInheritance":"继承",
   "conciergePostureScoreHint":"点击查看安全中心",
   "conciergePostureNoData":    "无数据",
   "conciergePostureNothingTracked":"尚未追踪任何内容",
   "conciergePostureAllFuture": "全部宽裕",
-  "conciergePostureFrozen":    "保险库已冻结",
-  "conciergePostureConfigured":"已配置配对",
-  "conciergePostureUnset":     "尚未设置受益人",
   "conciergePostureScoreNoData":"无数据",
   "conciergeAskTravel":        "我可以出行吗?",
   "conciergePassport":         "护照",
@@ -117,9 +112,6 @@
   "conciergeComfortable":      "宽裕",
   "conciergeItem":             "项",
   "conciergeItems":            "项",
-  "conciergeInheritanceFrozen":"已冻结",
-  "conciergeInheritanceConfigured":"已配置",
-  "conciergeInheritanceUnset": "未设置",
 
   "expiryTitle":          "到期",
   "expirySubtitle":       "即将到期的文件和事项",
@@ -226,7 +218,6 @@
 
   "filesTitle":              "文件",
   "loginsTitle":             "登录",
-  "inheritanceTitle":        "继承",
   "dashboardTitle":          "仪表板",
 
   "priorityHigh":            "高",
@@ -366,15 +357,6 @@
   "confirmEraseTitle":        "抹掉不可恢复的数据?",
   "confirmEraseButton":       "抹掉并继续",
 
-  "inheritanceCancelPendingTransferTitle": "取消向「{label}」的待处理转移?",
-  "inheritanceCancelTransfer":       "取消转移",
-  "inheritanceClaimTitle":           "认领「{label}」",
-  "inheritanceRequestTransferTitle": "请求转移「{label}」?",
-  "inheritanceRemoveTitle":          "移除「{label}」?",
-  "inheritanceStartCountdown":       "开始 30 天倒计时",
-  "inheritanceAddBeneficiary":       "添加受益人",
-  "inheritanceEnterCode":            "输入代码",
-  "inheritanceRequestTransfer":      "请求转移",
 
   "filesChooseStorage":       "选择来源",
   "filesUploadFile":          "上传文件",

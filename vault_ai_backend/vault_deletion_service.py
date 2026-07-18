@@ -18,7 +18,7 @@ migration 0001. Cascade covers:
     vault_ai_memory, vault_preferences, vault_relationships,
     vault_expiry_alerts, vault_intelligence_summary
   * auth_sessions, trusted_devices, notifications
-  * account_members, beneficiary_links (passer side)
+  * account_members
   * vault_content_chunks, vault_file_understanding,
     vault_file_embeddings, vault_analysis_jobs,
     vault_agent_memories/_tasks/_audit, import_batches,

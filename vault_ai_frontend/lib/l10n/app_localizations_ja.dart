@@ -152,8 +152,6 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get sidebarRelationships => '関連';
 
-  @override
-  String get sidebarInheritance => '継承';
 
   @override
   String get sidebarSettings => '設定';
@@ -286,8 +284,6 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get conciergePostureExpiring => '失効';
 
-  @override
-  String get conciergePostureInheritance => '継承';
 
   @override
   String get conciergePostureScoreHint => 'タップしてセキュリティセンターを表示';
@@ -301,14 +297,8 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => 'すべて余裕あり';
 
-  @override
-  String get conciergePostureFrozen => '保管庫は凍結中';
 
-  @override
-  String get conciergePostureConfigured => 'ペアリング設定済み';
 
-  @override
-  String get conciergePostureUnset => '受益者未設定';
 
   @override
   String get conciergePostureScoreNoData => 'データなし';
@@ -343,14 +333,8 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get conciergeItems => '件';
 
-  @override
-  String get conciergeInheritanceFrozen => '凍結中';
 
-  @override
-  String get conciergeInheritanceConfigured => '設定済み';
 
-  @override
-  String get conciergeInheritanceUnset => '未設定';
 
   @override
   String get expiryTitle => '有効期限';
@@ -693,8 +677,6 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get loginsTitle => 'ログイン';
 
-  @override
-  String get inheritanceTitle => '継承';
 
   @override
   String get dashboardTitle => 'ダッシュボード';
@@ -1073,40 +1055,14 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get confirmEraseButton => '消去して続行';
 
-  @override
-  String inheritanceCancelPendingTransferTitle(String label) {
-    return '「$label」への保留中の譲渡を取り消しますか?';
-  }
 
-  @override
-  String get inheritanceCancelTransfer => '譲渡を取り消す';
 
-  @override
-  String inheritanceClaimTitle(String label) {
-    return '「$label」を請求';
-  }
 
-  @override
-  String inheritanceRequestTransferTitle(String label) {
-    return '「$label」の譲渡を要求しますか?';
-  }
 
-  @override
-  String inheritanceRemoveTitle(String label) {
-    return '「$label」を削除しますか?';
-  }
 
-  @override
-  String get inheritanceStartCountdown => '30 日間のカウントダウンを開始';
 
-  @override
-  String get inheritanceAddBeneficiary => '受益者を追加';
 
-  @override
-  String get inheritanceEnterCode => 'コードを入力';
 
-  @override
-  String get inheritanceRequestTransfer => '譲渡を要求';
 
   @override
   String get filesChooseStorage => 'アップロード元を選択';

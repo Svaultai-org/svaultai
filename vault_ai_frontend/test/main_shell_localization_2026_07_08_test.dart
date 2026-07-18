@@ -45,12 +45,6 @@ void main() {
       'confirmEraseTitle':        (l) => l.confirmEraseTitle,
       'confirmEraseButton':       (l) => l.confirmEraseButton,
 
-      'inheritanceCancelTransfer':  (l) => l.inheritanceCancelTransfer,
-      'inheritanceStartCountdown':  (l) => l.inheritanceStartCountdown,
-      'inheritanceAddBeneficiary':  (l) => l.inheritanceAddBeneficiary,
-      'inheritanceEnterCode':       (l) => l.inheritanceEnterCode,
-      'inheritanceRequestTransfer': (l) => l.inheritanceRequestTransfer,
-
       'filesChooseStorage':       (l) => l.filesChooseStorage,
       'filesUploadFile':          (l) => l.filesUploadFile,
       'filesUploadPhoto':         (l) => l.filesUploadPhoto,
@@ -85,7 +79,6 @@ void main() {
         'authDontHaveVault',
         'snackDeviceTrusted',
         'confirmEraseTitle',
-        'inheritanceAddBeneficiary',
         'filesUploadFile',
         'dashboardActiveVault',
       ];
@@ -96,71 +89,6 @@ void main() {
               reason: '$lang: $key should differ from English');
         }
       }
-    });
-  });
-
-
-  group('inheritance placeholder titles interpolate the beneficiary '
-      'label correctly', () {
-    test('English cancel-pending-transfer template inserts the label',
-        () async {
-      final l = await _load('en');
-      final got = l.inheritanceCancelPendingTransferTitle('Ali');
-      expect(got, contains('Ali'));
-      expect(got, contains('Cancel pending transfer'));
-    });
-
-    test('English claim-title template inserts the label', () async {
-      final l = await _load('en');
-      final got = l.inheritanceClaimTitle('Grandma\'s vault');
-      expect(got, contains("Grandma's vault"));
-    });
-
-    test('English request-transfer-title template inserts the label',
-        () async {
-      final l = await _load('en');
-      final got = l.inheritanceRequestTransferTitle('Rebecca');
-      expect(got, contains('Rebecca'));
-      expect(got, contains('Request transfer'));
-    });
-
-    test('English remove-title template inserts the label', () async {
-      final l = await _load('en');
-      final got = l.inheritanceRemoveTitle('Old beneficiary');
-      expect(got, contains('Old beneficiary'));
-      expect(got, contains('Remove'));
-    });
-
-    test('Korean cancel-pending-transfer template preserves the label',
-        () async {
-      final l = await _load('ko');
-      final got = l.inheritanceCancelPendingTransferTitle('민수');
-      expect(got, contains('민수'));
-
-      expect(RegExp(r'[가-힣]').hasMatch(got), isTrue);
-    });
-
-    test('Arabic remove-title template preserves the label', () async {
-      final l = await _load('ar');
-      final got = l.inheritanceRemoveTitle('محمد');
-      expect(got, contains('محمد'));
-
-      expect(
-          RegExp(r'[؀-ۿ]').hasMatch(got), isTrue,
-          reason: 'Arabic remove-title must be in Arabic script');
-    });
-
-    test('Chinese claim-title template preserves the label', () async {
-      final l = await _load('zh');
-      final got = l.inheritanceClaimTitle('祖父的保险库');
-      expect(got, contains('祖父的保险库'));
-    });
-
-    test('Japanese request-transfer-title preserves the label',
-        () async {
-      final l = await _load('ja');
-      final got = l.inheritanceRequestTransferTitle('田中');
-      expect(got, contains('田中'));
     });
   });
 
@@ -200,10 +128,6 @@ void main() {
           l.authUseAnotherVault, l.authLogInAnotherVault,
           l.snackDeviceTrusted,
           l.confirmEraseTitle, l.confirmEraseButton,
-          l.inheritanceCancelTransfer,
-          l.inheritanceStartCountdown,
-          l.inheritanceAddBeneficiary,
-          l.inheritanceEnterCode, l.inheritanceRequestTransfer,
           l.filesChooseStorage,
           l.filesUploadFile, l.filesUploadPhoto,
           l.filesUploadVideo, l.filesUploadAudio,
@@ -221,24 +145,6 @@ void main() {
       }
     });
 
-    test('no template title reveals PIN/seed/private-key content', () {
-
-      const bad = <String>[
-        'reveal seed',
-        'reveal pin',
-        'expose private key',
-      ];
-      for (final t in const <String>[
-        'Cancel pending transfer to "Ali"?',
-        'Claim "Ali"',
-        'Request transfer of "Ali"?',
-        'Remove "Ali"?',
-      ]) {
-        for (final b in bad) {
-          expect(t.toLowerCase(), isNot(contains(b)));
-        }
-      }
-    });
   });
 
 
@@ -284,15 +190,6 @@ void main() {
                     Text(l.snackDeviceTrusted),
                     Text(l.confirmEraseTitle),
                     Text(l.confirmEraseButton),
-                    Text(l.inheritanceCancelPendingTransferTitle('X')),
-                    Text(l.inheritanceCancelTransfer),
-                    Text(l.inheritanceClaimTitle('X')),
-                    Text(l.inheritanceRequestTransferTitle('X')),
-                    Text(l.inheritanceRemoveTitle('X')),
-                    Text(l.inheritanceStartCountdown),
-                    Text(l.inheritanceAddBeneficiary),
-                    Text(l.inheritanceEnterCode),
-                    Text(l.inheritanceRequestTransfer),
                     Text(l.filesChooseStorage),
                     Text(l.filesUploadFile),
                     Text(l.filesUploadPhoto),
@@ -374,7 +271,7 @@ void main() {
         for (final s in <String>[
           l.notificationsTitle, l.landingHowItWorks,
           l.authDontHaveVault, l.confirmEraseTitle,
-          l.inheritanceAddBeneficiary, l.filesUploadFile,
+          l.filesUploadFile,
           l.dashboardActiveVault,
         ]) {
           expect(s.contains('Aisha'), isFalse,

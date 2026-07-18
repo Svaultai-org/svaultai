@@ -227,26 +227,15 @@ This section governs what an operator can do for a user who has lost their PIN. 
 - **Reset a PIN on behalf of a user.** The PIN is the only thing that proves the user, not VaultAI, holds the key.
 - **View the contents of a secure item, note, file, or sensitive backup.** All `decrypt_message` calls require a key derived from the live PIN; the key is never persisted server-side.
 
-### 5.3 If the user has set up inheritance
-
-The inheritance flow (`project_vaultai_inheritance.md` memory) allows a designated beneficiary to claim a vault after a 30-day cooldown. Operator role:
-
-- Confirm the pairing code came from a valid recipient (out-of-band identity check).
-- Trigger the claim only AFTER the 30-day cooldown has elapsed.
-- The claim creates a NEW vault on the beneficiary's account. The passer's vault is soft-frozen for 90 days, then purged.
-
-No operator can short-circuit the 30-day cooldown.
-
-### 5.4 If the user has forgotten the PIN with no inheritance set up
+### 5.3 If the user has forgotten the PIN
 
 The only recourse is account deletion + restart. State this plainly:
 
 > "We cannot recover a forgotten PIN. The PIN you set is the only key
-> that can decrypt your vault. If you have lost it and have no
-> beneficiary configured, the encrypted contents cannot be read by
-> anyone — including VaultAI. We can delete the account so you can
-> create a fresh one, but the existing contents will be permanently
-> unreadable."
+> that can decrypt your vault. If you have lost it, the encrypted
+> contents cannot be read by anyone — including VaultAI. We can
+> delete the account so you can create a fresh one, but the existing
+> contents will be permanently unreadable."
 
 ---
 

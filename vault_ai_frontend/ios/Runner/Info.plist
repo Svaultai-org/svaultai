@@ -60,8 +60,6 @@
 		<string>VaultAI converts your dictation to text on-device so you can talk to VaultAI Chat without typing.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>VaultAI needs photo-library access when you choose to upload existing images into your encrypted vault.</string>
-		<key>NSPhotoLibraryAddUsageDescription</key>
-		<string>VaultAI can save your Recovery Kit QR image to your photo library so you can print it later.</string>
 		<key>NSFaceIDUsageDescription</key>
 		<string>VaultAI can use Face ID to unlock biometric-protected vault entries instead of asking for your PIN each time.</string>
 		<!--

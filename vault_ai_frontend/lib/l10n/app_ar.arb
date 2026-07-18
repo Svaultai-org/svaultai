@@ -51,7 +51,6 @@
   "sidebarExpiry":        "تواريخ الانتهاء",
   "sidebarMemory":        "الذاكرة",
   "sidebarRelationships": "العلاقات",
-  "sidebarInheritance":   "الميراث",
   "sidebarSettings":      "الإعدادات",
 
   "chatComposerHint": "اسأل عن خزينتك أو ارفع ملفًا...",
@@ -98,14 +97,10 @@
   "conciergeAllClearSub":      "لا شيء عاجل اليوم. VaultAI يراقب مستنداتك وسيظهر أي جديد هنا.",
   "conciergePostureSecurity":  "الأمان",
   "conciergePostureExpiring":  "ينتهي",
-  "conciergePostureInheritance":"الميراث",
   "conciergePostureScoreHint":"اضغط لعرض مركز الأمان",
   "conciergePostureNoData":    "لا توجد بيانات",
   "conciergePostureNothingTracked":"لا شيء يُتابع بعد",
   "conciergePostureAllFuture": "كل شيء بعيد بصورة مريحة",
-  "conciergePostureFrozen":    "الخزينة مجمّدة",
-  "conciergePostureConfigured":"تم تكوين الإقران",
-  "conciergePostureUnset":     "لا يوجد مستفيد بعد",
   "conciergePostureScoreNoData":"لا توجد بيانات",
   "conciergeAskTravel":        "هل أنا جاهز للسفر؟",
   "conciergePassport":         "جواز السفر",
@@ -117,9 +112,6 @@
   "conciergeComfortable":      "مريح",
   "conciergeItem":             "عنصر",
   "conciergeItems":            "عناصر",
-  "conciergeInheritanceFrozen":"مجمّد",
-  "conciergeInheritanceConfigured":"مُكوَّن",
-  "conciergeInheritanceUnset": "غير مُكوَّن",
 
   "expiryTitle":          "تواريخ الانتهاء",
   "expirySubtitle":       "المستندات والالتزامات التي تنتهي صلاحيتها قريبًا",
@@ -226,7 +218,6 @@
 
   "filesTitle":              "الملفات",
   "loginsTitle":             "تسجيلات الدخول",
-  "inheritanceTitle":        "الميراث",
   "dashboardTitle":          "لوحة التحكم",
 
   "priorityHigh":            "عالٍ",
@@ -366,15 +357,6 @@
   "confirmEraseTitle":        "مسح بيانات لا يمكن استردادها؟",
   "confirmEraseButton":       "امسح وتابع",
 
-  "inheritanceCancelPendingTransferTitle": "إلغاء التحويل المعلّق إلى \"{label}\"؟",
-  "inheritanceCancelTransfer":       "إلغاء التحويل",
-  "inheritanceClaimTitle":           "المطالبة بـ \"{label}\"",
-  "inheritanceRequestTransferTitle": "طلب تحويل \"{label}\"؟",
-  "inheritanceRemoveTitle":          "إزالة \"{label}\"؟",
-  "inheritanceStartCountdown":       "بدء العدّ التنازلي 30 يومًا",
-  "inheritanceAddBeneficiary":       "إضافة مستفيد",
-  "inheritanceEnterCode":            "إدخال الرمز",
-  "inheritanceRequestTransfer":      "طلب تحويل",
 
   "filesChooseStorage":       "اختر مصدر الملف",
   "filesUploadFile":          "رفع ملف",

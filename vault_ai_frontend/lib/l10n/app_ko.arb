@@ -51,7 +51,6 @@
   "sidebarExpiry":        "만료",
   "sidebarMemory":        "메모리",
   "sidebarRelationships": "관계",
-  "sidebarInheritance":   "상속",
   "sidebarSettings":      "설정",
 
   "chatComposerHint": "보관소에 대해 묻거나 파일을 업로드하세요...",
@@ -98,14 +97,10 @@
   "conciergeAllClearSub":      "오늘 급한 일은 없습니다. VaultAI 가 문서를 지켜보며 새로운 사항이 생기면 여기 표시합니다.",
   "conciergePostureSecurity":  "보안",
   "conciergePostureExpiring":  "만료",
-  "conciergePostureInheritance":"상속",
   "conciergePostureScoreHint":"눌러서 보안 센터 보기",
   "conciergePostureNoData":    "데이터 없음",
   "conciergePostureNothingTracked":"아직 추적 중인 항목 없음",
   "conciergePostureAllFuture": "모두 여유가 있음",
-  "conciergePostureFrozen":    "보관소 동결됨",
-  "conciergePostureConfigured":"페어링 구성됨",
-  "conciergePostureUnset":     "수혜자 미설정",
   "conciergePostureScoreNoData":"데이터 없음",
   "conciergeAskTravel":        "여행 준비가 되었나요?",
   "conciergePassport":         "여권",
@@ -117,9 +112,6 @@
   "conciergeComfortable":      "여유 있음",
   "conciergeItem":             "건",
   "conciergeItems":            "건",
-  "conciergeInheritanceFrozen":"동결됨",
-  "conciergeInheritanceConfigured":"구성됨",
-  "conciergeInheritanceUnset": "미설정",
 
   "expiryTitle":          "만료",
   "expirySubtitle":       "곧 만료되는 문서 및 의무",
@@ -226,7 +218,6 @@
 
   "filesTitle":              "파일",
   "loginsTitle":             "로그인",
-  "inheritanceTitle":        "상속",
   "dashboardTitle":          "대시보드",
 
   "priorityHigh":            "높음",
@@ -366,15 +357,6 @@
   "confirmEraseTitle":        "복구 불가능한 데이터를 지울까요?",
   "confirmEraseButton":       "지우고 계속",
 
-  "inheritanceCancelPendingTransferTitle": "\"{label}\" 로의 대기 중인 이전을 취소할까요?",
-  "inheritanceCancelTransfer":       "이전 취소",
-  "inheritanceClaimTitle":           "\"{label}\" 청구",
-  "inheritanceRequestTransferTitle": "\"{label}\" 의 이전을 요청할까요?",
-  "inheritanceRemoveTitle":          "\"{label}\" 을 제거할까요?",
-  "inheritanceStartCountdown":       "30일 카운트다운 시작",
-  "inheritanceAddBeneficiary":       "수혜자 추가",
-  "inheritanceEnterCode":            "코드 입력",
-  "inheritanceRequestTransfer":      "이전 요청",
 
   "filesChooseStorage":       "업로드 원본 선택",
   "filesUploadFile":          "파일 업로드",

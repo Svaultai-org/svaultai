@@ -152,8 +152,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get sidebarRelationships => 'Relationships';
 
-  @override
-  String get sidebarInheritance => 'Inheritance';
 
   @override
   String get sidebarSettings => 'Settings';
@@ -292,8 +290,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get conciergePostureExpiring => 'Expiring';
 
-  @override
-  String get conciergePostureInheritance => 'Inheritance';
 
   @override
   String get conciergePostureScoreHint => 'Tap to view security center';
@@ -307,14 +303,8 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => 'All comfortably future';
 
-  @override
-  String get conciergePostureFrozen => 'Vault is frozen';
 
-  @override
-  String get conciergePostureConfigured => 'Pairing configured';
 
-  @override
-  String get conciergePostureUnset => 'No beneficiary yet';
 
   @override
   String get conciergePostureScoreNoData => 'no data';
@@ -349,14 +339,8 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get conciergeItems => 'items';
 
-  @override
-  String get conciergeInheritanceFrozen => 'frozen';
 
-  @override
-  String get conciergeInheritanceConfigured => 'configured';
 
-  @override
-  String get conciergeInheritanceUnset => 'unset';
 
   @override
   String get expiryTitle => 'Expiry';
@@ -709,8 +693,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get loginsTitle => 'Logins';
 
-  @override
-  String get inheritanceTitle => 'Inheritance';
 
   @override
   String get dashboardTitle => 'Dashboard';
@@ -1100,40 +1082,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get confirmEraseButton => 'Erase and continue';
 
-  @override
-  String inheritanceCancelPendingTransferTitle(String label) {
-    return 'Cancel pending transfer to \"$label\"?';
-  }
 
-  @override
-  String get inheritanceCancelTransfer => 'Cancel transfer';
 
-  @override
-  String inheritanceClaimTitle(String label) {
-    return 'Claim \"$label\"';
-  }
 
-  @override
-  String inheritanceRequestTransferTitle(String label) {
-    return 'Request transfer of \"$label\"?';
-  }
 
-  @override
-  String inheritanceRemoveTitle(String label) {
-    return 'Remove \"$label\"?';
-  }
 
-  @override
-  String get inheritanceStartCountdown => 'Start 30-day countdown';
 
-  @override
-  String get inheritanceAddBeneficiary => 'Add beneficiary';
 
-  @override
-  String get inheritanceEnterCode => 'Enter code';
 
-  @override
-  String get inheritanceRequestTransfer => 'Request transfer';
 
   @override
   String get filesChooseStorage => 'Choose Storage';

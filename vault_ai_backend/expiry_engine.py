@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_EXPIRY_TYPES: tuple[str, ...] = (
     "passport", "visa", "id_card", "driver_license", "insurance",
-    "tax", "contract", "subscription", "inheritance", "custom",
+    "tax", "contract", "subscription", "custom",
 )
 ALLOWED_SEVERITIES: tuple[str, ...] = ("info", "warning", "critical")
 ALLOWED_STATUSES: tuple[str, ...] = (
     "active", "dismissed", "expired", "resolved",
 )
 ALLOWED_SOURCE_KINDS: tuple[str, ...] = (
-    "uploaded_file", "vault_item", "inheritance", "memory",
+    "uploaded_file", "vault_item", "memory",
 )
 
 
@@ -37,7 +37,6 @@ WINDOW_SPECS: dict[str, tuple[int, ...]] = {
     "contract":         (120, 60, 30),
     "subscription":     (60, 30, 7),
     "tax":              (90, 30, 7),
-    "inheritance":      (30, 14, 7),
     "custom":           (60, 30, 7),
 }
 
@@ -227,45 +226,6 @@ def detect_tax_deadlines(file_id: str, metadata: dict) -> list[AlertSpec]:
     iso = metadata.get("due_date")
     spec = _make_alert_for("uploaded_file", file_id, None, "tax", iso) if iso else None
     return [spec] if spec else []
-
-
-def detect_inheritance_windows(
-    vault_id: str,
-) -> list[AlertSpec]:
-
-
-    out: list[AlertSpec] = []
-    try:
-        conn = get_db()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT id, transfer_executes_at
-                       FROM beneficiary_links
-                       WHERE passer_vault_id=%s
-                         AND status='transfer_pending'
-                         AND transfer_executes_at IS NOT NULL""",
-                    (vault_id,),
-                )
-                rows = cur.fetchall() or []
-        finally:
-            conn.close()
-        for (_link_id, exec_at) in rows:
-            iso = (exec_at.date() if hasattr(exec_at, "date") else exec_at)
-            if not iso:
-                continue
-            iso_str = iso.isoformat() if hasattr(iso, "isoformat") else str(iso)
-            spec = _make_alert_for(
-                "inheritance", None, None, "inheritance", iso_str,
-            )
-            if spec:
-                out.append(spec)
-    except Exception as e:
-        logger.warning(
-            "detect_inheritance_windows failed vault=%s: %s",
-            vault_id, e,
-        )
-    return out
 
 
 def detect_memory_dates(
@@ -520,31 +480,6 @@ def build_expiry_alerts_for_memory_safe(
         )
 
 
-def build_expiry_alerts_for_inheritance_safe(
-    vault_id: str,
-) -> None:
-
-
-    try:
-        if not is_enabled():
-            return
-        specs = detect_inheritance_windows(vault_id)
-        conn = get_db()
-        try:
-            with conn.cursor() as cur:
-                _delete_alerts_for_kind(cur, vault_id, "inheritance")
-                for spec in specs:
-                    safe_upsert_alert(cur, vault_id, spec)
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning(
-            "build_expiry_alerts_for_inheritance_safe failed vault=%s: %s",
-            vault_id, e,
-        )
-
-
 def rebuild_expiry_alerts_safe(
     vault_id: str,
 ) -> None:
@@ -586,10 +521,7 @@ def rebuild_expiry_alerts_safe(
         except Exception as e:
             logger.warning("rebuild: doc walk failed: %s", e)
 
-                                   
-        all_specs += detect_inheritance_windows(vault_id)
 
-                                         
         all_specs += detect_memory_dates(vault_id)
 
                           

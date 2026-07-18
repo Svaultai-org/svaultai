@@ -51,7 +51,6 @@
   "sidebarExpiry":        "Vencimientos",
   "sidebarMemory":        "Memoria",
   "sidebarRelationships": "Relaciones",
-  "sidebarInheritance":   "Herencia",
   "sidebarSettings":      "Ajustes",
 
   "chatComposerHint": "Pregunta sobre tu bóveda o sube un archivo...",
@@ -98,14 +97,10 @@
   "conciergeAllClearSub":      "Nada urgente hoy. VaultAI vigila tus documentos y aparecerá aquí cualquier novedad.",
   "conciergePostureSecurity":  "Seguridad",
   "conciergePostureExpiring":  "Vencen",
-  "conciergePostureInheritance":"Herencia",
   "conciergePostureScoreHint":"Toca para ver el centro de seguridad",
   "conciergePostureNoData":    "sin datos",
   "conciergePostureNothingTracked":"Nada en seguimiento aún",
   "conciergePostureAllFuture": "Todo cómodamente futuro",
-  "conciergePostureFrozen":    "Bóveda congelada",
-  "conciergePostureConfigured":"Emparejamiento configurado",
-  "conciergePostureUnset":     "Sin beneficiario aún",
   "conciergePostureScoreNoData":"sin datos",
   "conciergeAskTravel":        "¿Estoy listo para viajar?",
   "conciergePassport":         "Pasaporte",
@@ -117,9 +112,6 @@
   "conciergeComfortable":      "Cómodo",
   "conciergeItem":             "elemento",
   "conciergeItems":            "elementos",
-  "conciergeInheritanceFrozen":"congelado",
-  "conciergeInheritanceConfigured":"configurado",
-  "conciergeInheritanceUnset": "sin configurar",
 
   "expiryTitle":          "Vencimientos",
   "expirySubtitle":       "Documentos y obligaciones que vencen pronto",
@@ -226,7 +218,6 @@
 
   "filesTitle":              "Archivos",
   "loginsTitle":             "Accesos",
-  "inheritanceTitle":        "Herencia",
   "dashboardTitle":          "Panel",
 
   "priorityHigh":            "ALTA",
@@ -366,15 +357,6 @@
   "confirmEraseTitle":        "¿Borrar datos irrecuperables?",
   "confirmEraseButton":       "Borrar y continuar",
 
-  "inheritanceCancelPendingTransferTitle": "¿Cancelar la transferencia pendiente a «{label}»?",
-  "inheritanceCancelTransfer":       "Cancelar transferencia",
-  "inheritanceClaimTitle":           "Reclamar «{label}»",
-  "inheritanceRequestTransferTitle": "¿Solicitar transferencia de «{label}»?",
-  "inheritanceRemoveTitle":          "¿Quitar «{label}»?",
-  "inheritanceStartCountdown":       "Iniciar cuenta regresiva de 30 días",
-  "inheritanceAddBeneficiary":       "Agregar beneficiario",
-  "inheritanceEnterCode":            "Ingresar código",
-  "inheritanceRequestTransfer":      "Solicitar transferencia",
 
   "filesChooseStorage":       "Elegir origen",
   "filesUploadFile":          "Subir archivo",

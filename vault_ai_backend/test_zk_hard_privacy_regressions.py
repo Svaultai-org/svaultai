@@ -121,7 +121,6 @@ def test_ciphertext_first_endpoints_have_no_plaintext_fallback() -> None:
         "title = %s", "body = %s", "metadata = %s",
         "memory_key = %s", "memory_value = %s",
         "memory_normalized_key = %s",
-        "passer_label = %s",
     )
     offenders = [b for b in banned_column_writes if b in folded]
     assert offenders == [], (
@@ -159,14 +158,12 @@ def test_ciphertext_write_endpoints_reject_paired_plaintext_shape() -> None:
         UploadedFileMetadataRequest,
         NotificationCiphertextRequest,
         AiMemoryCiphertextRequest,
-        BeneficiaryLabelCiphertextRequest,
     )
     for model, plaintext_fields in [
         (VaultItemUpsertRequest, ("item_type", "service", "encrypted_data")),
         (UploadedFileMetadataRequest, ("file_name", "saved_name", "content_type", "detected_type", "detected_service", "asset_type")),
         (NotificationCiphertextRequest, ("title", "body", "metadata")),
         (AiMemoryCiphertextRequest, ("memory_key", "memory_value", "memory_normalized_key")),
-        (BeneficiaryLabelCiphertextRequest, ("passer_label",)),
     ]:
         for f in plaintext_fields:
             assert f in model.model_fields, (

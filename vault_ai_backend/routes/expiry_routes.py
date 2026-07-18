@@ -62,7 +62,6 @@ _EXPIRY_TYPE_PRETTY = {
     "tax":              "Tax",
     "contract":         "Contract",
     "subscription":     "Subscription",
-    "inheritance":      "Inheritance cooldown",
     "custom":           "Reminder",
 }
 
@@ -159,8 +158,6 @@ def _resolve_label(
                 label_cache[ck] = pretty
         return label_cache[ck] or pretty
 
-    if kind == "inheritance":
-        return "Inheritance cooldown"
     if kind == "memory":
         return "Reminder"
     return pretty

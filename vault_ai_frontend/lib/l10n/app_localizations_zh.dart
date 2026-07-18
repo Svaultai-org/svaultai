@@ -152,8 +152,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get sidebarRelationships => '关系';
 
-  @override
-  String get sidebarInheritance => '继承';
 
   @override
   String get sidebarSettings => '设置';
@@ -285,8 +283,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get conciergePostureExpiring => '即将到期';
 
-  @override
-  String get conciergePostureInheritance => '继承';
 
   @override
   String get conciergePostureScoreHint => '点击查看安全中心';
@@ -300,14 +296,8 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get conciergePostureAllFuture => '全部宽裕';
 
-  @override
-  String get conciergePostureFrozen => '保险库已冻结';
 
-  @override
-  String get conciergePostureConfigured => '已配置配对';
 
-  @override
-  String get conciergePostureUnset => '尚未设置受益人';
 
   @override
   String get conciergePostureScoreNoData => '无数据';
@@ -342,14 +332,8 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get conciergeItems => '项';
 
-  @override
-  String get conciergeInheritanceFrozen => '已冻结';
 
-  @override
-  String get conciergeInheritanceConfigured => '已配置';
 
-  @override
-  String get conciergeInheritanceUnset => '未设置';
 
   @override
   String get expiryTitle => '到期';
@@ -690,8 +674,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get loginsTitle => '登录';
 
-  @override
-  String get inheritanceTitle => '继承';
 
   @override
   String get dashboardTitle => '仪表板';
@@ -1065,40 +1047,14 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get confirmEraseButton => '抹掉并继续';
 
-  @override
-  String inheritanceCancelPendingTransferTitle(String label) {
-    return '取消向「$label」的待处理转移?';
-  }
 
-  @override
-  String get inheritanceCancelTransfer => '取消转移';
 
-  @override
-  String inheritanceClaimTitle(String label) {
-    return '认领「$label」';
-  }
 
-  @override
-  String inheritanceRequestTransferTitle(String label) {
-    return '请求转移「$label」?';
-  }
 
-  @override
-  String inheritanceRemoveTitle(String label) {
-    return '移除「$label」?';
-  }
 
-  @override
-  String get inheritanceStartCountdown => '开始 30 天倒计时';
 
-  @override
-  String get inheritanceAddBeneficiary => '添加受益人';
 
-  @override
-  String get inheritanceEnterCode => '输入代码';
 
-  @override
-  String get inheritanceRequestTransfer => '请求转移';
 
   @override
   String get filesChooseStorage => '选择来源';

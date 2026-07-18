@@ -24,7 +24,6 @@ never sees your raw records.
 - [Crypto Vault](#crypto-vault) — non-custodial, receive-first
 - [Trust model](#trust-model) — what we guarantee, what we don't
 - [Cryptography summary](#cryptography-summary)
-- [Inheritance](#inheritance)
 - [Deleting your vault](#deleting-your-vault)
 - [Languages](#languages)
 - [Architecture](#architecture)
@@ -162,7 +161,6 @@ More detail:
 | Session tokens | HMAC-SHA256 with `VAULT_SESSION_SECRET` |
 | Delete-vault challenge | HMAC-signed, 10-minute TTL, vault-bound |
 | At-rest chunks | Chunked AEAD; each chunk has its own nonce |
-| Pairing codes (inheritance) | PBKDF2 + AES-GCM wrap of the recovery envelope |
 
 The KDF iteration count is enforced at the schema layer
 (`kdf_iterations >= 100000`). Sessions carry no vault plaintext;
@@ -170,28 +168,6 @@ their only claim is "this token id maps to this vault id". The
 delete-vault challenge is short-lived and bound to the specific
 vault so a captured challenge can't be replayed against another
 account.
-
----
-
-## Inheritance
-
-VaultAI supports **beneficiary pairing** so a vault can be passed
-to a named person on a defined schedule.
-
-1. The vault owner shares a **pairing code** with a beneficiary.
-2. The beneficiary redeems the code; the two vaults become
-   **linked**, with a **30-day cooldown** before a claim can be
-   made.
-3. If the owner does not disclaim during the cooldown, the
-   beneficiary can **claim**. The claim creates a **fresh vault on
-   the beneficiary's account**, with the recovery envelope
-   unwrapped using their PIN — the beneficiary chooses their own
-   PIN; they do not learn the passer's PIN.
-4. The passer's vault is soft-frozen for 90 days after a successful
-   claim.
-
-The recovery envelope carries no plaintext material and the
-backend never learns either PIN.
 
 ---
 
@@ -456,8 +432,7 @@ Related runbooks:
   assistant.
 - **Not an unrecoverable-by-design "seed phrase" wallet in the
   crypto sense.** The vault is unrecoverable if you forget your
-  PIN; if you also lose beneficiary pairing, there is no reset.
-  This is intentional. There is no server-side backdoor.
+  PIN. This is intentional. There is no server-side backdoor.
 
 ---
 

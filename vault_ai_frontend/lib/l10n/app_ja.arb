@@ -51,7 +51,6 @@
   "sidebarExpiry":        "有効期限",
   "sidebarMemory":        "メモリ",
   "sidebarRelationships": "関連",
-  "sidebarInheritance":   "継承",
   "sidebarSettings":      "設定",
 
   "chatComposerHint": "あなたの保管庫について質問するか、ファイルをアップロードしてください...",
@@ -98,14 +97,10 @@
   "conciergeAllClearSub":      "本日急ぎはありません。VaultAI は書類を監視し、新しい事項があればここに表示します。",
   "conciergePostureSecurity":  "セキュリティ",
   "conciergePostureExpiring":  "失効",
-  "conciergePostureInheritance":"継承",
   "conciergePostureScoreHint":"タップしてセキュリティセンターを表示",
   "conciergePostureNoData":    "データなし",
   "conciergePostureNothingTracked":"追跡対象なし",
   "conciergePostureAllFuture": "すべて余裕あり",
-  "conciergePostureFrozen":    "保管庫は凍結中",
-  "conciergePostureConfigured":"ペアリング設定済み",
-  "conciergePostureUnset":     "受益者未設定",
   "conciergePostureScoreNoData":"データなし",
   "conciergeAskTravel":        "渡航準備はできていますか?",
   "conciergePassport":         "パスポート",
@@ -117,9 +112,6 @@
   "conciergeComfortable":      "余裕あり",
   "conciergeItem":             "件",
   "conciergeItems":            "件",
-  "conciergeInheritanceFrozen":"凍結中",
-  "conciergeInheritanceConfigured":"設定済み",
-  "conciergeInheritanceUnset": "未設定",
 
   "expiryTitle":          "有効期限",
   "expirySubtitle":       "もうすぐ失効する書類と義務",
@@ -226,7 +218,6 @@
 
   "filesTitle":              "ファイル",
   "loginsTitle":             "ログイン",
-  "inheritanceTitle":        "継承",
   "dashboardTitle":          "ダッシュボード",
 
   "priorityHigh":            "高",
@@ -366,15 +357,6 @@
   "confirmEraseTitle":        "復元できないデータを消去しますか?",
   "confirmEraseButton":       "消去して続行",
 
-  "inheritanceCancelPendingTransferTitle": "「{label}」への保留中の譲渡を取り消しますか?",
-  "inheritanceCancelTransfer":       "譲渡を取り消す",
-  "inheritanceClaimTitle":           "「{label}」を請求",
-  "inheritanceRequestTransferTitle": "「{label}」の譲渡を要求しますか?",
-  "inheritanceRemoveTitle":          "「{label}」を削除しますか?",
-  "inheritanceStartCountdown":       "30 日間のカウントダウンを開始",
-  "inheritanceAddBeneficiary":       "受益者を追加",
-  "inheritanceEnterCode":            "コードを入力",
-  "inheritanceRequestTransfer":      "譲渡を要求",
 
   "filesChooseStorage":       "アップロード元を選択",
   "filesUploadFile":          "ファイルをアップロード",

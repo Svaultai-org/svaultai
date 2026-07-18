@@ -27,7 +27,6 @@ Coverage:
   * POST /vault/ciphertext/uploaded-files      metadata-only update
   * POST /vault/ciphertext/notifications       create
   * POST /vault/ciphertext/vault-ai-memory     upsert-with-lookup-hash
-  * POST /vault/ciphertext/beneficiary-links   update passer_label
   * POST /vault/ciphertext/semantic-index      write keyed hash
 
 Wallet-account records use vault_items with item_type_ciphertext
@@ -451,50 +450,6 @@ def ai_memory_ciphertext_upsert(
     )
 
 
-class BeneficiaryLabelCiphertextRequest(BaseModel):
-    link_id: int
-    passer_label_ciphertext: str = Field(..., min_length=1)
-    passer_label: Optional[str] = None
-
-
-@router.post(
-    "/vault/ciphertext/beneficiary-links",
-    response_model=dict,
-)
-def beneficiary_label_ciphertext_update(
-    payload: BeneficiaryLabelCiphertextRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
-) -> dict:
-    _reject_plaintext_leak(payload, ("passer_label",))
-
-    label_ct = _b64url_decode(
-        payload.passer_label_ciphertext, name="passer_label_ciphertext",
-        max_bytes=MAX_CIPHERTEXT_BYTES,
-    )
-
-    conn = get_db()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            UPDATE beneficiary_links
-               SET passer_label_ciphertext = %s,
-                   passer_label = NULL
-             WHERE id = %s
-               AND passer_vault_id = %s
-            """,
-            (label_ct, payload.link_id, principal.vault_id),
-        )
-        if cur.rowcount != 1:
-            conn.rollback()
-            raise HTTPException(status_code=404, detail="link not found")
-        conn.commit()
-    finally:
-        conn.close()
-
-    return {"status": "ok", "link_id": payload.link_id}
-
-
 class SemanticIndexKeyedHashRequest(BaseModel):
     source_kind: str = Field(..., min_length=1, max_length=32)
     uploaded_file_id: Optional[str] = None
@@ -581,97 +536,6 @@ def semantic_index_keyed_hash_upsert(
     finally:
         conn.close()
 
-    return {"status": "ok"}
-
-
-class RecoveryKitEnableRequest(BaseModel):
-    wrapped_mvk_by_recovery: str = Field(..., min_length=1)
-    recovery_salt: str = Field(..., min_length=1)
-
-
-@router.post(
-    "/vault/ciphertext/recovery-kit",
-    response_model=dict,
-)
-def recovery_kit_enable(
-    payload: RecoveryKitEnableRequest,
-    principal: SessionPrincipal = Depends(verify_session_token),
-) -> dict:
-    """User opts in to a Recovery Kit. Stores the wrapped MVK and
-    the recovery salt on the ``vaults`` row. The seed itself never
-    reaches the server. The wrapped MVK is opaque without the seed.
-    """
-    wrapped = _b64url_decode(
-        payload.wrapped_mvk_by_recovery,
-        name="wrapped_mvk_by_recovery",
-        max_bytes=MAX_CIPHERTEXT_BYTES,
-    )
-    salt = _b64url_decode(
-        payload.recovery_salt, name="recovery_salt", max_bytes=64,
-    )
-    if len(salt) < 8 or len(salt) > 64:
-        raise HTTPException(
-            status_code=400, detail="recovery_salt must be 8-64 bytes",
-        )
-    conn = get_db()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            UPDATE vaults
-               SET wrapped_mvk_by_recovery = %s
-             WHERE vault_id = %s
-            """,
-            (wrapped, principal.vault_id),
-        )
-        if cur.rowcount != 1:
-            conn.rollback()
-            raise HTTPException(status_code=404, detail="vault not found")
-        conn.commit()
-    finally:
-        conn.close()
-    return {"status": "enabled"}
-
-
-class InheritanceRewrapUpload(BaseModel):
-    link_id: int
-    wrapped_vault_key: str = Field(..., min_length=1)
-
-
-@router.post(
-    "/vault/ciphertext/inheritance-rewrap",
-    response_model=dict,
-)
-def inheritance_rewrap_upload(
-    payload: InheritanceRewrapUpload,
-    principal: SessionPrincipal = Depends(verify_session_token),
-) -> dict:
-    """Passer's client uploads the beneficiary-wrapped MVK envelope
-    at pairing time. Server persists the opaque bytes only. Server
-    never learns MVK or the passer/beneficiary private keys.
-    """
-    wrapped = _b64url_decode(
-        payload.wrapped_vault_key,
-        name="wrapped_vault_key", max_bytes=MAX_CIPHERTEXT_BYTES,
-    )
-    conn = get_db()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            UPDATE beneficiary_links
-               SET wrapped_vault_key = %s
-             WHERE id = %s
-               AND passer_vault_id = %s
-            """,
-            (wrapped.hex(), payload.link_id, principal.vault_id),
-        )
-        if cur.rowcount != 1:
-            conn.rollback()
-            raise HTTPException(status_code=404, detail="link not found")
-        conn.commit()
-    finally:
-        conn.close()
     return {"status": "ok"}
 
 

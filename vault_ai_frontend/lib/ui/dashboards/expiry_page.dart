@@ -430,7 +430,6 @@ class _ExpiryRowCard extends StatelessWidget {
       case 'tax':            return Icons.account_balance_outlined;
       case 'contract':       return Icons.handshake_outlined;
       case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
       case 'custom':         return Icons.bookmark_border;
       default:               return Icons.event_outlined;
     }
