@@ -24,7 +24,7 @@ const _fakeClient = VaultAIClient(baseUrl: 'https://unreachable.test.invalid');
 Future<AppState> _hydratedAppState({
   bool authed = false,
   String? vaultName,
-  String? displayUsername,
+  String? displayName,
   bool locked = true,
 }) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -37,7 +37,7 @@ Future<AppState> _hydratedAppState({
     app.sessionToken = 'sess';
     app.vaultId = 'vault-1';
     app.vaultName = vaultName ?? 'MyVault';
-    app.displayUsername = displayUsername ?? 'Alice';
+    app.displayName = displayName ?? 'Alice';
     app.authed = true;
     app.unlocked = !locked;
   }

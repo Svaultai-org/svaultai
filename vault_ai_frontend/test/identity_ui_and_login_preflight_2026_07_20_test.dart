@@ -29,121 +29,90 @@ String _readLib(String path) => File('lib/$path').readAsStringSync();
 void main() {
   group('UI never surfaces the internal VLT vault handle', () {
     test(
-        'dashboard "Welcome to …" reads canonicalUsername (badge) first, '
-        'falling back through displayUsername (nickname), never vaultName', () {
+        'dashboard "Welcome to …" reads vaultName (product identity) '
+        'first, falling back to displayName, never the VLT handle', () {
       final src = _readLib('main.dart');
-      // 2026-07-20 correction: the 2026-07-19 build painted the
-      // display name (nickname) even when the user had a canonical
-      // username, which produced "Welcome to show" instead of
-      // "Welcome to Alexa" — that is now fixed by preferring
-      // canonicalUsername with displayUsername as a fallback for
-      // pre-fix accounts that never captured a canonical value.
+      // 2026-07-20 (corrected): vault_name IS the product identity
+      // used for both signing in and as the vault AI's name. The
+      // dashboard welcome reads it directly (falling back to
+      // displayName for legacy accounts without a captured value).
       expect(
         src.contains(
-          "'Welcome to \${app.canonicalUsername ?? app.displayUsername ?? 'your vault'}'",
+          "'Welcome to \${app.vaultName ?? app.displayName ?? 'your vault'}'",
         ),
         isTrue,
-        reason: 'dashboard greeting must show the canonical username '
-            'first (the badge), fall back to the nickname if any, '
-            'and never surface the VLT handle',
-      );
-      expect(
-        src.contains("'Welcome to \${app.vaultName"),
-        isFalse,
-        reason: 'dashboard greeting must not read vaultName — that '
-            'value is the VLT handle for ZK accounts',
+        reason: 'dashboard greeting must show the vault name — '
+            'the user-chosen product identity',
       );
     });
 
-    test('drawer header primary label is displayUsername', () {
+    test('drawer header reads vaultName (product) with displayName '
+        'fallback, never the raw handle field', () {
       final src = _readLib('main.dart');
-      // Find the drawer header block by anchoring on the tile list
-      // that follows it, then verify the header does not read
-      // ``app.vaultName``.
       final drawerIdx = src.indexOf("'vault_drawer_menu_list'");
       expect(drawerIdx, greaterThan(-1));
-      // Look back ~1500 chars — the header text is within a few
-      // Column children right above the tile list.
       final windowStart = (drawerIdx - 1500).clamp(0, src.length);
       final window = src.substring(windowStart, drawerIdx);
+      // The drawer header now uses vaultName ?? displayName ??
+      // 'Vault' since vault_name IS the product identity.
       expect(
-        window.contains('app.vaultName ?? '),
-        isFalse,
-        reason: 'drawer header must not paint the VLT vault handle',
-      );
-      expect(
-        window.contains('app.displayUsername ??'),
+        window.contains('app.vaultName ?? app.displayName ??'),
         isTrue,
-        reason: 'drawer header must surface the friendly username',
       );
+      // Retired identifier — must not resurface.
+      expect(window.contains('app.canonicalUsername'), isFalse);
     });
   });
 
   group('AppState identity contract', () {
     test('vaultHandle is a distinct field from vaultName', () {
       final src = _readLib('main.dart');
-      // The AppState class declares vaultHandle as its own field —
-      // it is NOT an alias for vaultName. Overloading vaultName with
-      // both meanings is the root cause of the UI leak.
-      expect(src.contains('String? vaultHandle;'), isTrue,
-          reason: 'AppState must expose vaultHandle separately from '
-              'vaultName so UI/lookup/cache-key concerns can be '
-              'reasoned about independently');
+      expect(src.contains('String? vaultHandle;'), isTrue);
     });
 
-    test('setSession accepts vaultHandleValue and displayUsernameValue', () {
+    test('setSession accepts vaultHandleValue and displayNameValue', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> setSession(');
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 2000).clamp(0, src.length));
-      expect(window.contains('String? vaultHandleValue'), isTrue,
-          reason: 'setSession must accept the deterministic handle '
-              'so it can be recovered without another OPAQUE '
-              'round-trip');
-      expect(window.contains('String? displayUsernameValue'), isTrue);
+      expect(window.contains('String? vaultHandleValue'), isTrue);
+      expect(window.contains('String? displayNameValue'), isTrue);
       expect(
-        window.contains("sp.setString('last_display_username'"),
+        window.contains("sp.setString('last_display_name'"),
         isTrue,
-        reason: 'the friendly name must persist so hydrate() can '
-            'paint it before /auth/me returns',
+        reason: 'displayName must persist so hydrate() can paint '
+            'the profile menu before /auth/me returns',
       );
     });
 
-    test('hydrate reads last_display_username BEFORE calling /auth/me', () {
+    test('hydrate consults the new SharedPreferences keys AND the '
+         'legacy fallbacks so existing users\' names survive', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> hydrate(');
       expect(idx, greaterThan(-1));
-      final window = src.substring(idx, (idx + 2500).clamp(0, src.length));
-      final restoreIdx =
-          window.indexOf("sp.getString('last_display_username')");
+      final window = src.substring(idx, (idx + 3500).clamp(0, src.length));
+      final restoreIdx = window.indexOf("sp.getString('last_display_name')");
+      final legacyIdx = window.indexOf("sp.getString('last_display_username')");
       final authMeIdx = window.indexOf('client.authMe(');
       expect(restoreIdx, greaterThan(-1),
-          reason: 'hydrate must restore the persisted friendly name '
-              'from SharedPreferences on launch');
+          reason: 'hydrate must restore the new displayName key');
+      expect(legacyIdx, greaterThan(-1),
+          reason: 'legacy last_display_username key must be readable '
+              'as a fallback for one-time migration');
       expect(authMeIdx, greaterThan(-1));
       expect(restoreIdx, lessThan(authMeIdx),
-          reason: 'the friendly name must be painted BEFORE /auth/me '
-              '— otherwise the first frame flashes the fallback '
-              'label until the network round-trip completes');
+          reason: 'friendly-name paint must precede the /auth/me '
+              'round-trip');
     });
 
-    test('hydrate never clobbers displayUsername with vault_name', () {
+    test('hydrate never clobbers displayName with vault_name', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> hydrate(');
-      final window = src.substring(idx, (idx + 2500).clamp(0, src.length));
-      // The old bug: hydrate assigned vault_name to vaultName AND
-      // treated display_username as optional; a null response would
-      // leave the UI painting vault_name (the VLT handle for ZK).
-      // The fix must NOT contain
-      //   displayUsername = name.trim();
-      // or any pattern that binds the display username to the
-      // vault_name response value.
-      expect(
-        window.contains('displayUsername = name.trim();'),
-        isFalse,
-        reason: 'hydrate must not overload vault_name into '
-            'displayUsername — those are distinct concepts',
-      );
+      final window = src.substring(idx, (idx + 3500).clamp(0, src.length));
+      // The retired vault_name-clobbers-display pattern must be
+      // gone; displayName is only assigned from display_username
+      // (legacy) or the persisted key.
+      expect(window.contains('displayName = name.trim();'), isFalse);
     });
 
     test('clearSession(keepLastVaultName: false) wipes friendly-name hints',

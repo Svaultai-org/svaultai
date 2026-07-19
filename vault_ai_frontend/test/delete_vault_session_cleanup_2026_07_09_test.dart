@@ -67,7 +67,7 @@ void _primeAuthedVault(AppState app, {
   app.sessionToken = token;
   app.vaultId = vaultId;
   app.vaultName = vaultName;
-  app.displayUsername = display;
+  app.displayName = display;
   app.authed = true;
   app.unlocked = true;
   app.availableVaults = [
@@ -108,7 +108,7 @@ void main() {
           reason: 'persisted session_token must be removed');
     });
 
-    test('clears vaultId, vaultName, displayUsername, authed, unlocked',
+    test('clears vaultId, vaultName, displayName, authed, unlocked',
         () async {
       final app = await _hydratedAppState(sessionToken: 'sess-abc');
       _primeAuthedVault(app);
@@ -117,7 +117,7 @@ void main() {
 
       expect(app.vaultId, isNull);
       expect(app.vaultName, isNull);
-      expect(app.displayUsername, isNull);
+      expect(app.displayName, isNull);
       expect(app.authed, isFalse);
       expect(app.unlocked, isFalse);
     });

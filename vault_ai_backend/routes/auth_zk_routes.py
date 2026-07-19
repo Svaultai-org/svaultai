@@ -317,6 +317,15 @@ class ZkRegisterFinalizeRequest(BaseModel):
     username_lookup: Optional[str] = Field(
         default=None, min_length=1, max_length=200,
     )
+    # User-chosen vault name (product-facing identity for BOTH the
+    # vault and the AI keeper). Stored plaintext in
+    # vaults.vault_name after server-side normalization. Optional
+    # so a stale client can still register — the row is created
+    # with vault_name = NULL and the fixed client's next login
+    # backfills it.
+    vault_name: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+    )
 
     @field_validator("acknowledged_irrecoverable")
     @classmethod
@@ -399,6 +408,17 @@ async def zk_register_finalize(
     if payload.username_lookup is not None:
         lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
 
+    # Normalize the user-chosen vault name. Before migration 0031
+    # this INSERT wrote encode(gen_random_bytes(16),'hex') to satisfy
+    # the NOT NULL UNIQUE constraint on vault_name — that produced
+    # the 32-hex placeholder that leaked into the typing indicator
+    # as "b21e31c5b59abdc8067ff6b23643b254 is thinking...". 0031
+    # dropped NOT NULL and repurposed the column as the user-chosen
+    # identity for both the vault and its AI keeper. We now insert
+    # the client-supplied name (normalized) or NULL.
+    from tools import normalize_vault_name
+    stored_vault_name: Optional[str] = normalize_vault_name(payload.vault_name)
+
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -429,7 +449,7 @@ async def zk_register_finalize(
                   %s, %s, %s,
                   %s,
                   %s, %s,
-                  encode(gen_random_bytes(16),'hex'),
+                  %s,
                   %s
                 )
                 RETURNING vault_id, vault_name
@@ -441,6 +461,7 @@ async def zk_register_finalize(
                     wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                     display_name_ciphertext,
                     account_id, payload.acknowledged_irrecoverable,
+                    stored_vault_name,
                     lookup_bytes,
                 ),
             )
@@ -470,7 +491,14 @@ async def zk_register_finalize(
             ) from exc
         _new_vault_row = cur.fetchone()
         vault_id = str(_new_vault_row["vault_id"])
-        vault_name = _new_vault_row["vault_name"]
+        # RETURNING can bring back NULL now that vault_name is
+        # nullable — that is the correct outcome when the client
+        # didn't supply a vault_name yet. The session token embeds
+        # an empty string in that slot (honest: the vault has no
+        # name until the user picks one). Every prompt and every UI
+        # surface reads vault_name from the vaults row directly, so
+        # the session-token slot is not the identity source.
+        row_vault_name: Optional[str] = _new_vault_row["vault_name"]
 
         cur.execute(
             """
@@ -493,7 +521,7 @@ async def zk_register_finalize(
 
     token = issue_session_token(
         vault_id=vault_id,
-        vault_name=vault_name,
+        vault_name=row_vault_name or "",
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
@@ -713,6 +741,19 @@ class ZkLoginFinalizeRequest(BaseModel):
     slot_id: str = Field(..., min_length=1, max_length=128)
     ke3: str = Field(..., min_length=1)
     device_id: Optional[str] = Field(default=None, max_length=128)
+    # Opportunistic backfill of vault_name for accounts that predate
+    # migration 0031_vault_name_repurpose. The user's typed name is
+    # already stored client-side (that same string drives their
+    # username_lookup_v1); if the vaults row still has NULL
+    # vault_name — a leftover of the pre-0031 random-hex placeholder
+    # having been NULLed by the backfill migration — we populate it
+    # from this field on successful login, provided the value does
+    # not collide with an existing vault_name. Never overwrites a
+    # non-NULL value; conflicts are silently skipped and logged for
+    # operator review, so the login itself still succeeds.
+    vault_name: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+    )
 
 
 class ZkLoginFinalizeResponse(BaseModel):
@@ -721,6 +762,12 @@ class ZkLoginFinalizeResponse(BaseModel):
     wrapped_mvk: str
     wrapped_sk_vault: str
     display_name_ciphertext: str
+    # Server-authoritative user-chosen vault name (product-facing
+    # identity for both vault and AI keeper). May be null on
+    # accounts whose column was NULLed by migration 0031 and
+    # haven't been backfilled yet — the client falls back to its
+    # locally-typed value or the neutral "VaultAI" literal.
+    vault_name: Optional[str] = None
 
 
 @router.post("/auth/zk-login-finalize", response_model=ZkLoginFinalizeResponse)
@@ -786,6 +833,61 @@ async def zk_login_finalize(
             (row["vault_id"],),
         )
         vault_row = cur.fetchone()
+
+        # Opportunistic vault_name backfill for existing accounts
+        # whose column is still NULL after migration 0031. See the
+        # comment on ZkLoginFinalizeRequest.vault_name. Silently
+        # skipped on any conflict — login itself never fails on
+        # this write.
+        if (
+            vault_row is not None
+            and vault_row.get("vault_name") is None
+            and payload.vault_name is not None
+        ):
+            from tools import normalize_vault_name
+            candidate = normalize_vault_name(payload.vault_name)
+            if candidate is not None:
+                try:
+                    cur.execute(
+                        """
+                        UPDATE vaults
+                           SET vault_name = %s
+                         WHERE vault_id = %s
+                           AND vault_name IS NULL
+                        RETURNING vault_name
+                        """,
+                        (candidate, row["vault_id"]),
+                    )
+                    updated = cur.fetchone()
+                    if updated is not None:
+                        vault_row["vault_name"] = updated["vault_name"]
+                        logger.info(
+                            "[ZK-LOGIN-FINALIZE] vault_name backfilled "
+                            "vault_id=%s",
+                            row["vault_id"],
+                        )
+                except pg_errors.UniqueViolation:
+                    conn.rollback()
+                    # Re-issue the successful-login UPDATE so the
+                    # last_login_at bookkeeping is not lost, then
+                    # log the collision. Login still succeeds.
+                    cur.execute(
+                        """
+                        UPDATE vaults
+                          SET last_login_at        = NOW(),
+                              last_vault_unlock_at = NOW(),
+                              last_any_activity_at = NOW(),
+                              failed_pin_attempts  = 0
+                          WHERE vault_id = %s
+                        """,
+                        (row["vault_id"],),
+                    )
+                    logger.warning(
+                        "[ZK-LOGIN-FINALIZE] vault_name backfill conflict "
+                        "vault_id=%s (name already claimed by another vault); "
+                        "row keeps NULL until operator adjudicates",
+                        row["vault_id"],
+                    )
         conn.commit()
     finally:
         conn.close()
@@ -797,7 +899,11 @@ async def zk_login_finalize(
 
     token = issue_session_token(
         vault_id=str(vault_row["vault_id"]),
-        vault_name=vault_row["vault_name"],
+        # vault_name is nullable after migration 0031. The session
+        # token embeds an empty string in that slot when the row
+        # has no name yet; every prompt and every UI surface reads
+        # the authoritative value from the vaults row on demand.
+        vault_name=vault_row.get("vault_name") or "",
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
@@ -810,6 +916,7 @@ async def zk_login_finalize(
         display_name_ciphertext=_b64url_encode(
             bytes(vault_row["display_name_ciphertext"]),
         ),
+        vault_name=vault_row.get("vault_name"),
     )
 
 

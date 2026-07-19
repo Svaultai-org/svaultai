@@ -118,30 +118,59 @@ def test_ciphertext_write_router_registers_inheritance_rewrap() -> None:
     assert "/vault/ciphertext/inheritance-rewrap" in paths
 
 
-def test_zk_routes_never_accept_vault_name_field() -> None:
-    """The ZK request models must not have a `vault_name` field. Only
-    `vault_handle` should be accepted so that the plaintext human-
-    readable name never transits during ZK login/signup.
+def test_zk_routes_privacy_surface() -> None:
+    """Fixed 2026-07-20 (corrected). The privacy contract:
+
+    * ``vault_name`` (the user-chosen identity for both signing in
+      AND the vault AI) IS product-facing server-visible metadata
+      per the 2026-07-20 product-model clarification. The register-
+      finalize + login-finalize endpoints accept it so the server
+      can store it in ``vaults.vault_name`` and inject it
+      authoritatively into the LLM prompt.
+    * ``display_name`` must NEVER appear as a plaintext request
+      field — the ZK design encrypts it into
+      ``display_name_ciphertext`` client-side.
+    * ``display_username`` (a retired legacy field name) must
+      never resurface.
+
+    Endpoints that DO NOT store vault_name (init variants + adopt)
+    must not accept it either.
     """
     import routes.auth_zk_routes as zk
 
-    request_models = [
+    # Endpoints that legitimately need vault_name for the plaintext
+    # store: register-finalize (initial write) and login-finalize
+    # (opportunistic backfill for post-migration-0031 accounts).
+    vault_name_writers = {
+        zk.ZkRegisterFinalizeRequest,
+        zk.ZkLoginFinalizeRequest,
+    }
+    all_zk_models = {
         zk.ZkRegisterInitRequest,
         zk.ZkRegisterFinalizeRequest,
         zk.ZkLoginInitRequest,
         zk.ZkLoginFinalizeRequest,
         zk.ZkAdoptRequest,
-    ]
-    for model in request_models:
+    }
+
+    for model in all_zk_models:
         fields = set(model.model_fields.keys())
-        assert "vault_name" not in fields, (
-            f"{model.__name__} accepts vault_name — ZK auth must "
-            "only accept vault_handle"
-        )
+        if model in vault_name_writers:
+            assert "vault_name" in fields, (
+                f"{model.__name__} must accept vault_name — the "
+                "server needs it to populate vaults.vault_name for "
+                "prompt injection"
+            )
+        else:
+            assert "vault_name" not in fields, (
+                f"{model.__name__} accepts vault_name but must not "
+                "— only the finalize endpoints write vault_name"
+            )
+        # Plaintext display fields are always forbidden.
         assert "display_username" not in fields, (
-            f"{model.__name__} accepts display_username — must not"
+            f"{model.__name__} accepts display_username — retired"
         )
         assert "display_name" not in fields, (
-            f"{model.__name__} accepts display_name — must be "
-            "display_name_ciphertext only, not plaintext"
+            f"{model.__name__} accepts plaintext display_name — must "
+            "be display_name_ciphertext only, decrypted client-side"
         )

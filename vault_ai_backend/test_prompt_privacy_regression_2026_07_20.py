@@ -35,10 +35,10 @@ CANARY_VAULT_ID = "d3b07384-d9a8-4b6f-8e2e-7c1234567890"
 CANARY_DISPLAY_NAME = "Canary Display Name 2026 07 20"
 
 
-def _assemble_prompt_context(vault_ai_name=None) -> str:
+def _assemble_prompt_context(vault_name=None) -> str:
     from tools import STATIC_VAULT_SYSTEM_PROMPT, build_vault_runtime_context
     runtime = build_vault_runtime_context(
-        vault_ai_name=vault_ai_name,
+        vault_name=vault_name,
         vault_state="unlocked",
         locale="auto",
         enabled_features="files, credentials, inheritance",
@@ -57,17 +57,17 @@ def _dev_env(monkeypatch):
 
 class TestPromptDoesNotLeakIdentifiers:
     def test_no_canonical_username_in_prompt(self):
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         assert CANARY_CANONICAL_USERNAME not in prompt
         assert "canary_alexa" not in prompt.lower()
 
     def test_no_username_lookup_v1_in_prompt(self):
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         assert CANARY_USERNAME_LOOKUP_V1_B64 not in prompt
         assert CANARY_USERNAME_LOOKUP_V1_HEX not in prompt
 
     def test_no_vault_id_uuid_in_prompt(self):
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         assert CANARY_VAULT_ID not in prompt
 
     def test_no_32_char_hex_substring_in_prompt(self):
@@ -76,11 +76,11 @@ class TestPromptDoesNotLeakIdentifiers:
         through, or a lookup identifier serialized in place. Both
         are leaks.
         """
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         assert re.search(r"[0-9a-fA-F]{32}", prompt) is None
 
     def test_no_vlt_display_handle_in_prompt(self):
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         assert re.search(r"VLT-[0-9A-HJKMNP-TV-Z]{4}", prompt) is None
 
     def test_no_display_name_leak_in_prompt(self):
@@ -89,11 +89,11 @@ class TestPromptDoesNotLeakIdentifiers:
         Positive check: even if a caller passed it, the prompt
         builder has no slot for it and it must not appear.
         """
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         assert CANARY_DISPLAY_NAME not in prompt
 
     def test_no_unresolved_template_token_in_prompt(self):
-        prompt = _assemble_prompt_context(vault_ai_name="Nova")
+        prompt = _assemble_prompt_context(vault_name="Nova")
         # Must find NO occurrence of ``{IDENT}`` where IDENT is a
         # valid template variable name.
         assert re.search(r"\{[A-Z][A-Z0-9_]*\}", prompt) is None
@@ -103,8 +103,8 @@ class TestPromptDoesNotLeakIdentifiers:
         must be "VaultAI" — never a hash, handle, UUID, or template
         token.
         """
-        prompt = _assemble_prompt_context(vault_ai_name=None)
-        assert "Vault AI name        : VaultAI" in prompt
+        prompt = _assemble_prompt_context(vault_name=None)
+        assert "Vault name           : VaultAI" in prompt
         # And still no forbidden shapes.
         assert re.search(r"[0-9a-fA-F]{32}", prompt) is None
         assert re.search(r"VLT-[0-9A-HJKMNP-TV-Z]{4}", prompt) is None
@@ -129,5 +129,9 @@ class TestSourceLevelPrivacyContract:
         import inspect
         from main import _build_chat_prompt_context
         src = inspect.getsource(_build_chat_prompt_context)
-        assert '"VAULT_AI_NAME"' in src
-        assert '"VAULT_NAME"' not in src
+        assert '"VAULT_NAME"' in src
+        # The interim "VAULT_AI_NAME" key from edf366b was reverted
+        # when the vault_name concept was unified — the prompt
+        # context must never re-introduce two keys for the same
+        # concept.
+        assert '"VAULT_AI_NAME"' not in src

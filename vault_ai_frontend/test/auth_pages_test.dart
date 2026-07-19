@@ -373,15 +373,15 @@ void main() {
   });
 
   
-  group('Post-auth account labels never fall back to vault_name', () {
-    test('TopNavBar account labels use displayUsername ?? "Account", '
-        'never vaultName or vaultAiName', () {
-      // 2026-07-20 update: the profile menu now uses the neutral
-      // "Account" fallback (not "VaultAI User") to keep the human
-      // profile surface visually distinct from the vault AI
-      // identity surface. displayUsername is the sole primary
-      // source; nothing else — canonicalUsername, vaultAiName,
-      // vaultName, vaultHandle, or any hash — may appear here.
+  group('Post-auth account labels use displayName only', () {
+    test('TopNavBar account labels use displayName ?? "Account", '
+        'never vaultName or any handle', () {
+      // 2026-07-20 (corrected): the top-right profile menu is the
+      // HUMAN PROFILE surface. It reads displayName only. The
+      // interim vaultAiName concept from edf366b was folded back
+      // into vaultName (the product identity for BOTH vault and
+      // AI keeper); vaultName belongs in the typing indicator +
+      // prompt, not in the profile menu.
       final src = _readLib('main.dart');
       final classIdx = src.indexOf('class TopNavBar');
       expect(classIdx, greaterThan(-1));
@@ -393,21 +393,20 @@ void main() {
 
       expect(
         window,
-        contains("app.displayUsername ?? 'Account'"),
-        reason: 'TopNavBar must read displayUsername with a '
+        contains("app.displayName ?? 'Account'"),
+        reason: 'TopNavBar must read displayName with a '
                 'neutral "Account" fallback',
       );
       expect(
         window,
         isNot(contains("'VaultAI User'")),
-        reason: 'the pre-2026-07-20 "VaultAI User" fallback '
-                'conflates the human profile with the product name',
       );
       expect(
         window,
-        isNot(contains('displayUsername ?? app.vaultName')),
-        reason: 'TopNavBar must not fall back to vault_name in '
-                'account labels — vault_name is the login handle',
+        isNot(contains('app.vaultName ?? ')),
+        reason: 'the profile menu must never render vault_name — '
+                'vault_name is the vault identity (typing indicator '
+                '+ prompt), not the human profile',
       );
       expect(
         window,
@@ -486,12 +485,12 @@ void main() {
   
   group('AppState auth fields', () {
     test('declares sessionToken, vaultId, vaultName, lastVaultName, '
-        'displayUsername', () {
+        'displayName', () {
       final src = _readLib('main.dart');
       expect(src, contains('String? sessionToken'));
       expect(src, contains('String? vaultId'));
       expect(src, contains('lastVaultName'));
-      expect(src, contains('displayUsername'));
+      expect(src, contains('displayName'));
     });
 
     test('does NOT carry a top-level email field', () {
@@ -600,35 +599,34 @@ void main() {
       expect(
         window,
         contains("result['display_username']"),
-        reason: 'LoginPage must read display_username off the response',
+        reason: 'LoginPage must read display_username off the '
+                'legacy auth response — the backend still returns '
+                'this response-key for legacy vaults',
       );
       expect(
         window,
-        contains('displayUsernameValue:'),
-        reason: 'LoginPage must forward it through setSession',
+        contains('displayNameValue:'),
+        reason: 'LoginPage must forward it through setSession via '
+                'the displayNameValue param',
       );
     });
 
     test('UnlockPage reads display_username from the auth response', () {
       final src = _readLib('main.dart');
-      // 15k covers the UnlockPage class + submit body + build body
-      // after the 2026-07-21 diagnostic instrumentation.
       final window = _windowAfter(src, 'class UnlockPage', length: 15000);
       expect(window, contains("result['display_username']"));
-      expect(window, contains('displayUsernameValue:'));
+      expect(window, contains('displayNameValue:'));
     });
 
-    test('AppState.setSession persists displayUsername when present', () {
-      
-      
+    test('AppState.setSession persists displayName when present', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> setSession(');
       expect(idx, greaterThan(-1));
       final body = src.substring(idx, (idx + 2500).clamp(0, src.length));
       expect(
         body,
-        contains('displayUsername = displayUsernameValue'),
-        reason: 'setSession must assign the new displayUsername',
+        contains('displayName = displayNameValue'),
+        reason: 'setSession must assign the new displayName',
       );
     });
   });

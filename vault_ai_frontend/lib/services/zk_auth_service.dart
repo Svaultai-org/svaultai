@@ -98,6 +98,14 @@ class LoginResult {
   final SecretKey mvk;
   final SecretKey skVaultPrivate;
   final String displayName;
+
+  /// Server-authoritative user-chosen vault name (product-facing
+  /// identity for both the vault and the AI keeper). Null when
+  /// the vaults row is not yet backfilled after migration 0031;
+  /// the caller falls back to the user's locally-typed value or,
+  /// failing that, the neutral "VaultAI" fallback rendered by
+  /// downstream UI + prompt sites.
+  final String? vaultName;
   LoginResult({
     required this.vaultId,
     required this.vaultHandle,
@@ -105,6 +113,7 @@ class LoginResult {
     required this.mvk,
     required this.skVaultPrivate,
     required this.displayName,
+    this.vaultName,
   });
 }
 
@@ -237,24 +246,24 @@ class ZkAuthService {
   }
 
   Future<RegisterResult> registerVault({
-    required String username,
+    required String vaultName,
     required String displayName,
     required String pin,
   }) async {
     await OpaqueClient.ready();
 
-    // Deterministic handle from the username. Same username on any
-    // device -> same handle -> the DB's UNIQUE index on vault_handle
-    // rejects duplicates without ever seeing the username plaintext.
-    final handleBytes = deriveVaultHandleFromUsername(username);
+    // Deterministic handle from the vault name. Same vault name on
+    // any device -> same handle -> the DB's UNIQUE index on
+    // vault_handle rejects duplicates.
+    final handleBytes = deriveVaultHandleFromUsername(vaultName);
     final handleDisplay = vaultHandleToDisplay(handleBytes);
 
     // Client-derived 32-byte lookup identifier. Sent as base64url
     // so the backend can enforce derivation-version-independent
-    // uniqueness (partial UNIQUE on vaults.username_lookup_v1)
-    // WITHOUT ever seeing the raw username on the wire. See
-    // vault_handle.dart::deriveUsernameLookupV1 and migration 0030.
-    final lookupV1 = deriveUsernameLookupV1(username);
+    // uniqueness (partial UNIQUE on vaults.username_lookup_v1).
+    // See vault_handle.dart::deriveUsernameLookupV1 and
+    // migration 0030.
+    final lookupV1 = deriveUsernameLookupV1(vaultName);
     final lookupV1B64 = vaultHandleB64Url(lookupV1);
 
     final startResult = OpaqueClient.startRegistration(password: pin);
@@ -311,6 +320,14 @@ class ZkAuthService {
 
     final legacyPin = await _deriveLegacyPinVerifier(pin);
 
+    // Send the user-typed vault_name plaintext so the backend can
+    // store it authoritatively in vaults.vault_name for LLM prompt
+    // injection + /auth/me responses. Server normalizes on
+    // receive; no random-hex placeholder is generated anymore.
+    // Privacy classification per 2026-07-20 clarification: this
+    // value is server-visible product metadata (not a private
+    // credential); the private login lookup remains
+    // username_lookup (32 opaque bytes).
     final finalizeResponse = await _post(
       '/auth/zk-register-finalize',
       {
@@ -325,6 +342,7 @@ class ZkAuthService {
         'pin_verifier': legacyPin.pinVerifier,
         'kdf_iterations': legacyPin.kdfIterations,
         'username_lookup': lookupV1B64,
+        'vault_name': vaultName,
       },
     );
 
@@ -355,7 +373,7 @@ class ZkAuthService {
   /// (last-completed + 1). No PIN, ciphertext, or session material
   /// ever crosses this boundary; only short static step tags.
   Future<LoginResult> loginVault({
-    String? username,
+    String? vaultName,
     String? vaultHandle,
     required String pin,
     void Function(String stepDone)? onStep,
@@ -380,14 +398,14 @@ class ZkAuthService {
 
     final Uint8List handleBytes;
     String? usernameLookupB64;
-    if (username != null && username.isNotEmpty) {
-      usernameLookupB64 = vaultHandleB64Url(deriveUsernameLookupV1(username));
-      handleBytes = deriveVaultHandleFromUsername(username);
+    if (vaultName != null && vaultName.isNotEmpty) {
+      usernameLookupB64 = vaultHandleB64Url(deriveUsernameLookupV1(vaultName));
+      handleBytes = deriveVaultHandleFromUsername(vaultName);
     } else if (vaultHandle != null && vaultHandle.isNotEmpty) {
       handleBytes = vaultHandleFromDisplay(vaultHandle);
     } else {
       throw ArgumentError(
-        'loginVault requires either username or vaultHandle',
+        'loginVault requires either vaultName or vaultHandle',
       );
     }
     step('derive_handle');
@@ -430,11 +448,19 @@ class ZkAuthService {
     );
     step('opaque_finish_login');
 
+    // Opportunistic backfill: for accounts registered before
+    // migration 0031 whose vaults.vault_name was NULLed by the
+    // backfill migration (they used to hold a random-hex
+    // placeholder), send the user's typed vault_name so the server
+    // can populate the column. The server silently skips the write
+    // if the row already has a non-NULL value or if the value
+    // would collide with another vault — login still succeeds.
     final finalizeResponse = await _post(
       '/auth/zk-login-finalize',
       {
         'slot_id': slotId,
         'ke3': finish.finishLoginRequest,
+        if (vaultName != null && vaultName.isNotEmpty) 'vault_name': vaultName,
       },
     );
     step('post_login_finalize');
@@ -466,6 +492,7 @@ class ZkAuthService {
       mvk: mvk,
       skVaultPrivate: skVault,
       displayName: displayName,
+      vaultName: finalizeResponse['vault_name'] as String?,
     );
   }
 

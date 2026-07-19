@@ -56,7 +56,7 @@ void _primeAuthed(AppState app,
   app.sessionToken = token;
   app.vaultId = vaultId;
   app.vaultName = 'alice-vault';
-  app.displayUsername = 'Alice';
+  app.displayName = 'Alice';
   app.authed = true;
   app.unlocked = true;
 }

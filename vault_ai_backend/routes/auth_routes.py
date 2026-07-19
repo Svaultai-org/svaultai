@@ -141,13 +141,16 @@ class AuthResponse(BaseModel):
 
 class MeResponse(BaseModel):
     vault_id:         str
-    vault_name:       str
+    # vault_name is the user-chosen identity for the vault AND for
+    # the AI keeper — one string, one concept. Nullable so ZK
+    # accounts that haven't been backfilled since the 0031 migration
+    # can exist as NULL; the frontend + prompt fall back to the
+    # neutral literal "VaultAI" until the row carries a real value.
+    # NEVER a hash, handle, UUID, template token, or random
+    # placeholder. Set via /auth/zk-register-finalize or /auth/zk-
+    # login-finalize (backfill) or PATCH /vault/name.
+    vault_name:       Optional[str] = None
     display_username: Optional[str]
-    # User-chosen product-facing name for the vault's AI keeper
-    # (e.g. "Nova", "Atlas"). Nullable — the frontend falls back to
-    # the neutral literal "VaultAI" when absent. NEVER a hash,
-    # handle, UUID, or template token. Set via PATCH /vault/ai-name.
-    vault_ai_name:    Optional[str] = None
     created_at:       datetime
 
 
@@ -549,8 +552,7 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT vault_id, vault_name, display_username,
-                   vault_ai_name, created_at
+            SELECT vault_id, vault_name, display_username, created_at
             FROM vaults
             WHERE vault_id = %s
             """,
@@ -562,65 +564,75 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
             raise HTTPException(status_code=401, detail="Invalid token")
         return MeResponse(
             vault_id=str(row["vault_id"]),
-            vault_name=row["vault_name"],
+            vault_name=row.get("vault_name"),
             display_username=row.get("display_username"),
-            vault_ai_name=row.get("vault_ai_name"),
             created_at=row["created_at"],
         )
     finally:
         conn.close()
 
 
-class VaultAiNameUpdateRequest(BaseModel):
-    # User-chosen product label for the vault's AI keeper. Not a
-    # credential. Server normalizes (trim + whitespace-collapse +
-    # length 1..60 + no control chars) and stores plaintext. The
-    # SERVER-side prompt builder always reads from vaults.vault_ai_name
-    # for the authenticated vault_id — the client value here is
-    # authenticated by the session cookie but not otherwise trusted
-    # as an identity source.
-    vault_ai_name: Optional[str] = Field(default=None, max_length=200)
+class VaultNameUpdateRequest(BaseModel):
+    # User-chosen identity for both the vault and the AI keeper.
+    # Server normalizes (trim + whitespace-collapse + length 1..60
+    # + no control chars) and stores plaintext in vaults.vault_name.
+    # The server-side prompt builder always reads from
+    # vaults.vault_name for the authenticated vault_id — the client
+    # value here is authenticated by the session cookie but is only
+    # used to WRITE the row; it is not otherwise trusted as an
+    # identity source.
+    vault_name: Optional[str] = Field(default=None, max_length=200)
 
 
-class VaultAiNameResponse(BaseModel):
-    vault_ai_name: Optional[str]
+class VaultNameResponse(BaseModel):
+    vault_name: Optional[str]
 
 
-@router.patch("/vault/ai-name", response_model=VaultAiNameResponse)
-def set_vault_ai_name(
-    payload: VaultAiNameUpdateRequest,
+@router.patch("/vault/name", response_model=VaultNameResponse)
+def set_vault_name(
+    payload: VaultNameUpdateRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
-) -> VaultAiNameResponse:
-    """Set or clear the user-chosen vault AI name for the caller's
+) -> VaultNameResponse:
+    """Set or clear the user-chosen vault name for the caller's
     authenticated vault.
 
-    Passing ``vault_ai_name: null`` (or a value that normalizes to
-    empty) clears the column; the server prompt builder then falls
-    back to the neutral ``VaultAI`` literal.
+    Passing ``vault_name: null`` (or a value that normalizes to
+    empty) clears the column; the prompt builder then falls back
+    to the neutral ``VaultAI`` literal.
 
     The endpoint touches ONLY the row for ``principal["vault_id"]``.
     """
-    from tools import normalize_vault_ai_name
-    normalized: Optional[str] = normalize_vault_ai_name(payload.vault_ai_name)
+    from tools import normalize_vault_name
+    normalized: Optional[str] = normalize_vault_name(payload.vault_name)
     # Explicit clear semantics: the request supplied a value but it
     # normalized away (e.g. all whitespace or all control chars).
     # Treat that as "clear the column" rather than 400 — the user
-    # is asking for no name, and the fallback path is exactly what
-    # we want.
+    # is asking for no name, and the fallback path is what we want.
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "UPDATE vaults SET vault_ai_name = %s WHERE vault_id = %s",
-            (normalized, principal["vault_id"]),
-        )
+        try:
+            cur.execute(
+                "UPDATE vaults SET vault_name = %s WHERE vault_id = %s",
+                (normalized, principal["vault_id"]),
+            )
+        except pg_errors.UniqueViolation as exc:
+            conn.rollback()
+            # The vault_name column carries a UNIQUE index inherited
+            # from the legacy login-lookup era. NULL doesn't collide,
+            # but two accounts trying to claim the same non-NULL
+            # value do. Surface a clean 409.
+            raise HTTPException(
+                status_code=409,
+                detail="That vault name is already in use.",
+            ) from exc
         if cur.rowcount != 1:
             conn.rollback()
             raise HTTPException(status_code=404, detail="vault not found")
         conn.commit()
     finally:
         conn.close()
-    return VaultAiNameResponse(vault_ai_name=normalized)
+    return VaultNameResponse(vault_name=normalized)
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)

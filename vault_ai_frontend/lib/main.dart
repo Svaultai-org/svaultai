@@ -938,43 +938,22 @@ class AppState extends ChangeNotifier {
 
   String? vaultId;
 
-  /// The canonical username — the badge/identity the user typed at
-  /// signup (e.g. "Alexa"). Preserved as-typed on the local device
-  /// for UI display, but only its RFC-normalized form ever leaves
-  /// the client (and even then only long enough for the server to
-  /// compute a blind index; the raw normalized string is never
-  /// persisted server-side). Restored on next launch from
-  /// ``last_canonical_username`` in SharedPreferences. This is the
-  /// PRIMARY label shown in the dashboard welcome, drawer header,
-  /// and account menu. ``displayUsername`` is a secondary optional
-  /// nickname; it must NOT replace this field anywhere.
-  String? canonicalUsername;
-
-  /// Optional profile nickname the user set separately at signup.
-  /// Shown ONLY as a secondary label where explicitly marked
-  /// "Nickname" — never as the primary account identity, never as
-  /// the login-form prefill, never as an authentication material.
-  String? displayUsername;
-
-  /// The user-chosen product-facing name for their vault's AI
-  /// keeper (e.g. "Nova", "Atlas"). Populated from /auth/me
-  /// server-authoritatively; persisted as ``last_vault_ai_name`` so
-  /// hydrate() can paint it before the network round-trip returns.
+  /// The human owner's visible name — an optional, human-facing
+  /// label for the person who owns this vault (e.g. "Chosen
+  /// Abdullahi"). Persisted as ``last_display_name`` in
+  /// SharedPreferences. Shown in the profile / account menu.
   ///
-  /// This value is EXCLUSIVELY used to render the chat-side AI
-  /// identity (typing indicator, chat surface). It MUST NOT be
-  /// substituted anywhere for the canonical username, the display
-  /// name, the vault handle, the vault_id, or any hash — those are
-  /// four separate concepts. When null, every rendering site falls
-  /// back to the literal ``VaultAI`` string, never to an
-  /// identifier.
-  String? vaultAiName;
+  /// This is NOT the vault name and NOT the AI's name — those are
+  /// carried by [vaultName]. If missing at render time, UI
+  /// surfaces use a neutral human-facing fallback like "Account".
+  String? displayName;
 
-  /// Deterministic hidden vault_handle (``VLT-XXXX-...``) — the ZK
-  /// backend lookup identifier. Populated at signup + login. Used by
-  /// unlock-flow re-derivation and by inheritance / crypto-cache
-  /// operations that need the stable internal identity. NEVER shown
-  /// to the user.
+  /// Deterministic hidden vault handle (``VLT-XXXX-...``) — the ZK
+  /// backend lookup identifier. Populated at signup + login. Used
+  /// by unlock-flow re-derivation and by inheritance / crypto-cache
+  /// operations that need the stable internal identity. NEVER
+  /// shown to the user. Distinct from [vaultName], which is the
+  /// product-facing identity.
   String? vaultHandle;
 
   String? lastVaultName;
@@ -1359,21 +1338,37 @@ class AppState extends ChangeNotifier {
     final sp = await SharedPreferences.getInstance();
     sessionToken = sp.getString('session_token');
     lastVaultName = sp.getString('last_vault_name');
-    // Restore the user-facing username hint FIRST so any UI that
+    // Restore the friendly identity fields FIRST so any UI that
     // paints before /auth/me returns (or if /auth/me never returns)
-    // already shows the friendly name instead of the internal handle.
-    final persistedDisplay = sp.getString('last_display_username');
+    // shows the user's chosen name and their display name rather
+    // than an internal identifier.
+    //
+    // Back-compat: legacy SharedPreferences keys (`last_display_username`,
+    // `last_canonical_username`, `last_vault_ai_name`) may still be
+    // populated on devices that ran the pre-2026-07-20 build. Read
+    // them as a one-time fallback and migrate the values into the
+    // new keys.
+    final persistedDisplay = sp.getString('last_display_name') ??
+        sp.getString('last_display_username');
     if (persistedDisplay != null && persistedDisplay.isNotEmpty) {
-      displayUsername = persistedDisplay;
+      displayName = persistedDisplay;
+      await sp.setString('last_display_name', persistedDisplay);
     }
-    final persistedCanonical = sp.getString('last_canonical_username');
-    if (persistedCanonical != null && persistedCanonical.isNotEmpty) {
-      canonicalUsername = persistedCanonical;
+    final persistedName = sp.getString('last_vault_name') ??
+        sp.getString('last_canonical_username') ??
+        sp.getString('last_vault_ai_name');
+    if (persistedName != null && persistedName.isNotEmpty) {
+      vaultName = persistedName;
+      await sp.setString('last_vault_name', persistedName);
     }
-    final persistedVaultAiName = sp.getString('last_vault_ai_name');
-    if (persistedVaultAiName != null && persistedVaultAiName.isNotEmpty) {
-      vaultAiName = persistedVaultAiName;
-    }
+    // Drop the retired keys once we've migrated their values so
+    // subsequent hydrates go straight to the new ones. Best-effort;
+    // do not fail hydrate on a remove() error.
+    try {
+      await sp.remove('last_display_username');
+      await sp.remove('last_canonical_username');
+      await sp.remove('last_vault_ai_name');
+    } catch (_) {}
     final persistedHandle = sp.getString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
@@ -1385,38 +1380,31 @@ class AppState extends ChangeNotifier {
         final client = VaultAIClient(baseUrl: backendBaseUrl);
         final me = await client.authMe(authToken: sessionToken!);
         vaultId = me['vault_id']?.toString();
-        final name = me['vault_name']?.toString();
-        if (name != null && name.trim().isNotEmpty) {
-          vaultName = name.trim();
-          lastVaultName = name.trim();
-          await sp.setString('last_vault_name', name.trim());
+        // /auth/me returns the SERVER-authoritative vault_name (the
+        // user-chosen identity for both the vault and its AI keeper).
+        // It may be null on existing ZK accounts whose random-hex
+        // placeholder was NULLed by migration 0031 — in that case
+        // KEEP whatever hydrate restored from SharedPreferences (the
+        // user's typed name is safe on-device) rather than clobber it.
+        final rawName = me['vault_name'];
+        if (rawName != null) {
+          final name = rawName.toString().trim();
+          if (name.isNotEmpty) {
+            vaultName = name;
+            lastVaultName = name;
+            await sp.setString('last_vault_name', name);
+          }
         }
-        // Backend /auth/me returns the plaintext display_username ONLY
-        // for legacy vaults; ZK vaults leave the column NULL because
-        // the human-readable name is encrypted client-side. If the
-        // response omits it, KEEP whatever we restored from
-        // last_display_username above — never clobber with null and
-        // never silently substitute vault_name (which is either the
-        // random hex or the VLT handle).
+        // /auth/me currently returns display_username for legacy
+        // vaults (the plaintext DB column) — ZK vaults leave it
+        // NULL because the human display name lives in the
+        // client-decrypted display_name_ciphertext. Keep the
+        // response-key stability but write to the new AppState
+        // field name.
         final display = me['display_username']?.toString();
         if (display != null && display.isNotEmpty) {
-          displayUsername = display;
-          await sp.setString('last_display_username', display);
-        }
-        // vault_ai_name is server-authoritative (set via PATCH
-        // /vault/ai-name). If /auth/me returns it, that value
-        // overrides whatever hydrate restored from SharedPreferences.
-        // If /auth/me returns null but SharedPreferences had a
-        // value, KEEP the persisted value — the row may just not
-        // have caught up on this device yet. Never substitute a
-        // hash, handle, or identifier.
-        final rawAiName = me['vault_ai_name'];
-        if (rawAiName != null) {
-          final aiName = rawAiName.toString();
-          if (aiName.isNotEmpty) {
-            vaultAiName = aiName;
-            await sp.setString('last_vault_ai_name', aiName);
-          }
+          displayName = display;
+          await sp.setString('last_display_name', display);
         }
       } catch (_) {
         sessionToken = null;
@@ -1434,9 +1422,8 @@ class AppState extends ChangeNotifier {
     required String token,
     required String vaultIdValue,
     required String vaultNameValue,
-    String? displayUsernameValue,
+    String? displayNameValue,
     String? vaultHandleValue,
-    String? canonicalUsernameValue,
   }) async {
     // A successful login clears the "terminated" flag so the api
     // layer stops short-circuiting authenticated requests. The
@@ -1453,16 +1440,11 @@ class AppState extends ChangeNotifier {
       vaultHandle = vaultHandleValue;
       await sp.setString('last_vault_handle', vaultHandleValue);
     }
-    if (displayUsernameValue != null && displayUsernameValue.isNotEmpty) {
-      displayUsername = displayUsernameValue;
+    if (displayNameValue != null && displayNameValue.isNotEmpty) {
+      displayName = displayNameValue;
       // Persist the friendly name so the next launch's hydrate() can
-      // paint it BEFORE /auth/me returns (or if it fails). Without
-      // this the UI would fall back to the VLT handle for one frame.
-      await sp.setString('last_display_username', displayUsernameValue);
-    }
-    if (canonicalUsernameValue != null && canonicalUsernameValue.isNotEmpty) {
-      canonicalUsername = canonicalUsernameValue;
-      await sp.setString('last_canonical_username', canonicalUsernameValue);
+      // paint it BEFORE /auth/me returns (or if it fails).
+      await sp.setString('last_display_name', displayNameValue);
     }
     authed = true;
     await sp.setString('session_token', token);
@@ -1508,9 +1490,7 @@ class AppState extends ChangeNotifier {
     vaultId = null;
     vaultName = null;
     vaultHandle = null;
-    displayUsername = null;
-    canonicalUsername = null;
-    vaultAiName = null;
+    displayName = null;
     authed = false;
     unlocked = false;
     await sp.remove('session_token');
@@ -1519,9 +1499,12 @@ class AppState extends ChangeNotifier {
       await sp.remove('last_vault_name');
       // "Use another vault" — drop everything about the previous
       // account so the /login page starts clean. Preserving these
-      // would either pre-fill the wrong username or paint the wrong
-      // name during the fresh session's hydrate.
+      // would either pre-fill the wrong vault name or paint the
+      // wrong display name during the fresh session's hydrate.
       await sp.remove('last_vault_handle');
+      await sp.remove('last_display_name');
+      // Legacy keys — retired 2026-07-20 but cleared here too in
+      // case a fresh install imported them before hydrate() ran.
       await sp.remove('last_display_username');
       await sp.remove('last_canonical_username');
       await sp.remove('last_vault_ai_name');
@@ -1619,7 +1602,7 @@ class AppState extends ChangeNotifier {
         token: newToken,
         vaultIdValue: newVaultId,
         vaultNameValue: newVaultName,
-        displayUsernameValue: newDisplay,
+        displayNameValue: newDisplay,
       );
 
       lockMessage = null;
@@ -2384,7 +2367,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 220),
                           child: Text(
-                            app.displayUsername ?? 'Account',
+                            app.displayName ?? 'Account',
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -2448,7 +2431,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
-                              app.displayUsername ?? 'Account',
+                              app.displayName ?? 'Account',
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 14,
@@ -3411,7 +3394,7 @@ Future<bool> _tryLegacyAdoptionBestEffort({
     if (legacyKey == null) return false;
 
     final result = await legacy_adopt.tryAdoptLegacyVault(
-      legacyDisplayName: app.displayUsername ?? vaultName,
+      legacyDisplayName: app.displayName ?? vaultName,
       pin: pin,
       legacyVaultKey: legacyKey,
       sessionToken: token,
@@ -3501,20 +3484,27 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   }
 
   Future<void> _autofillCachedHandle() async {
-    // Prefer the persisted USERNAME (last_display_username) — it's
-    // what the user actually types. Fall back to the cached VLT
-    // handle only if we don't have a username yet (an adopted-legacy
-    // account whose signup happened before we started persisting
-    // display_username). We never overwrite whatever the user has
-    // already started typing.
+    // Prefer the persisted vault name (last_vault_name) — that's
+    // what the user actually types to sign in. Fall back to the
+    // cached VLT handle only if we don't have a vault name yet
+    // (e.g. an adopted-legacy account whose signup happened before
+    // we started persisting it). We never overwrite whatever the
+    // user has already started typing.
+    //
+    // Back-compat: read the legacy pre-2026-07-20 keys
+    // (last_canonical_username / last_display_username) if the new
+    // key isn't populated yet — hydrate() migrates them into the
+    // new key on next launch.
     try {
       final sp = await SharedPreferences.getInstance();
-      final persistedUsername = sp.getString('last_display_username');
+      final persistedName = sp.getString('last_vault_name') ??
+          sp.getString('last_canonical_username') ??
+          sp.getString('last_display_username');
       if (!mounted) return;
-      if (persistedUsername != null &&
-          persistedUsername.isNotEmpty &&
+      if (persistedName != null &&
+          persistedName.isNotEmpty &&
           vaultNameCtrl.text.isEmpty) {
-        vaultNameCtrl.text = persistedUsername;
+        vaultNameCtrl.text = persistedName;
         _maybeMarkZkHandle();
         return;
       }
@@ -3700,18 +3690,24 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         loginLastStep = 'page_opaque_ready';
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
-          username: entryIsHandle ? null : vaultName,
+          vaultName: entryIsHandle ? null : vaultName,
           vaultHandle: entryIsHandle ? vaultName : null,
           pin: pin,
           onStep: (s) => loginLastStep = s,
         );
         loginLastStep = 'page_zk_login_returned';
+        // Product-name resolution priority: server-authoritative
+        // (backfilled vault_name) > user-typed (when entry was a
+        // vault name) > displayName (legacy fallback). Never the
+        // VLT handle.
+        final resolvedVaultName = loginResult.vaultName ??
+            (entryIsHandle ? loginResult.displayName : vaultName);
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
-          vaultNameValue: loginResult.vaultHandle,
+          vaultNameValue: resolvedVaultName,
           vaultHandleValue: loginResult.vaultHandle,
-          displayUsernameValue: loginResult.displayName,
+          displayNameValue: loginResult.displayName,
         );
         await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
@@ -3883,7 +3879,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         token: token,
         vaultIdValue: vaultId,
         vaultNameValue: outName,
-        displayUsernameValue: display,
+        displayNameValue: display,
       );
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
@@ -4043,7 +4039,7 @@ class SignupPage extends StatefulWidget {
 
 class _SignupPageState extends State<SignupPage> {
   final vaultNameCtrl = TextEditingController();
-  final displayUsernameCtrl = TextEditingController();
+  final displayNameCtrl = TextEditingController();
   final pinCtrl = TextEditingController();
   final confirmPinCtrl = TextEditingController();
   bool acknowledged = false;
@@ -4056,7 +4052,7 @@ class _SignupPageState extends State<SignupPage> {
 
   Future<void> _submit() async {
     final vaultName = vaultNameCtrl.text.trim();
-    final displayUsername = displayUsernameCtrl.text.trim();
+    final displayName = displayNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
     final confirm = confirmPinCtrl.text.trim();
 
@@ -4102,47 +4098,42 @@ class _SignupPageState extends State<SignupPage> {
     try {
       await OpaqueClient.ready();
 
-      // Identity separation contract (2026-07-20):
-      //   vaultName          = canonical username (badge, primary
-      //                        UI label, sole authentication input)
-      //   displayUsername    = optional nickname; NEVER replaces
-      //                        the canonical name in the UI, NEVER
-      //                        used as authentication material
-      // The old code overwrote both with the display name if the
-      // display field was set, which is how "Alexa" disappeared from
-      // the dashboard and was replaced by "show".
-      final nickname = displayUsername;
-      // Encrypted server-side ``display_name`` slot holds the
-      // canonical username by default so a re-install can still
-      // paint SOMETHING before hydration; when the user set a
-      // nickname explicitly, that goes in the slot instead.
-      final encryptedDisplayName = nickname.isEmpty ? vaultName : nickname;
+      // Identity contract (2026-07-20 corrected):
+      //   vaultName    = user-chosen identity used both for signing
+      //                  into the vault AND as the vault AI's name.
+      //                  ONE string with ONE meaning. Preserved
+      //                  as-typed for UI + prompt injection; used
+      //                  as the sole authentication input.
+      //   displayName  = optional human owner's visible name.
+      //                  Rendered in the profile menu only. Never
+      //                  substituted for vaultName anywhere.
+      final displayNameForEncrypt =
+          displayName.isEmpty ? vaultName : displayName;
 
       final zk = ZkAuthService(_zkHttpPost);
       final result = await zk.registerVault(
-        // The username field the user typed becomes the deterministic
-        // lookup key. Normalization + SHA-256 truncation happen inside
-        // ZkAuthService.registerVault; the plaintext username never
-        // leaves the device (only its handle-derived form does).
-        username: vaultName,
-        displayName: encryptedDisplayName,
+        // The vaultName the user typed drives BOTH the deterministic
+        // lookup derivation (SHA-256 for username_lookup_v1 sent to
+        // server) AND the server-side plaintext vault_name column
+        // (needed authoritatively for LLM prompt injection). See the
+        // 2026-07-20 privacy clarification: vault_name is
+        // product-facing server-visible metadata, not a private
+        // credential.
+        vaultName: vaultName,
+        displayName: displayNameForEncrypt,
         pin: pin,
       );
 
       await app.setSession(
         token: result.sessionToken,
         vaultIdValue: result.vaultId,
-        // vaultNameValue stays == vault_handle for backend calls
-        // that still take vault_name as a session identifier (legacy
-        // endpoints not yet migrated).
-        vaultNameValue: result.vaultHandle,
+        // vaultNameValue is the USER-CHOSEN name — the same string
+        // the user typed. Never the VLT handle, never a random hex.
+        vaultNameValue: vaultName,
         vaultHandleValue: result.vaultHandle,
-        // Canonical username is what the user typed at signup —
-        // preserved as-typed for UI display. This is the badge.
-        canonicalUsernameValue: vaultName,
-        // Nickname only when the user set it explicitly; otherwise
-        // leave the slot empty so no secondary chip appears.
-        displayUsernameValue: nickname.isEmpty ? null : nickname,
+        // Optional display name — only when the user set it
+        // explicitly.
+        displayNameValue: displayName.isEmpty ? null : displayName,
       );
       await _registerDeviceBestEffort(result.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
@@ -4302,7 +4293,7 @@ class _SignupPageState extends State<SignupPage> {
                   ),
                   const SizedBox(height: 10),
                   TextField(
-                    controller: displayUsernameCtrl,
+                    controller: displayNameCtrl,
                     enabled: !loading,
                     decoration: const InputDecoration(
                       labelText: 'Display name (optional)',
@@ -4459,12 +4450,19 @@ class _UnlockPageState extends State<UnlockPage> {
           onStep: (s) => unlockLastStep = s,
         );
         unlockLastStep = 'page_zk_login_returned';
+        // Unlock enters via a saved VLT handle only (the user did
+        // not re-type their vault name). Take the server-
+        // authoritative vault_name from the response; fall back to
+        // whatever hydrate() had (via app.vaultName) or, worst
+        // case, the decrypted displayName. Never the VLT handle.
+        final resolvedVaultName =
+            loginResult.vaultName ?? app.vaultName ?? loginResult.displayName;
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
-          vaultNameValue: loginResult.vaultHandle,
+          vaultNameValue: resolvedVaultName,
           vaultHandleValue: loginResult.vaultHandle,
-          displayUsernameValue: loginResult.displayName,
+          displayNameValue: loginResult.displayName,
         );
         await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
@@ -4571,7 +4569,7 @@ class _UnlockPageState extends State<UnlockPage> {
         token: token,
         vaultIdValue: vaultId,
         vaultNameValue: outName,
-        displayUsernameValue: display,
+        displayNameValue: display,
       );
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
@@ -12036,8 +12034,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// injected vault-AI identity context.
   bool _tryDirectAccountUsernameReply(String text, AppState app) {
     if (!_accountUsernameQueryRe.hasMatch(text)) return false;
-    final canonical = app.canonicalUsername;
-    final nickname = app.displayUsername;
+    final canonical = app.vaultName;
+    final nickname = app.displayName;
     final String reply;
     if (canonical != null && canonical.isNotEmpty) {
       reply = 'Your username is $canonical.';
@@ -12605,11 +12603,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               vertical: isMobile ? 8 : 12,
             ),
             scrollController: _scrollController,
-            // Typing indicator identity: the user-chosen vault AI
-            // name only. Never app.vaultName (VLT handle / random
-            // hex), never app.canonicalUsername, never
-            // app.displayUsername, never any hash.
-            vaultAiName: app.vaultAiName,
+            // Typing indicator identity: the user-chosen vault name
+            // (product-facing identity for BOTH vault and AI keeper).
+            // Falls back to the neutral "VaultAI is thinking..."
+            // literal when null. Never a VLT handle, never a random
+            // hex placeholder, never the display name, never any
+            // hash.
+            vaultName: app.vaultName,
             // Per-file in-flight state, watched from AppState so the
             // whole chat rebuilds when any file starts / finishes a
             // view or download. Individual cards render their own
@@ -13050,7 +13050,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       // VLT-* handle is never surfaced. If neither
                       // identity has hydrated yet, show a generic
                       // label rather than exposing the handle.
-                      'Welcome to ${app.canonicalUsername ?? app.displayUsername ?? 'your vault'}',
+                      'Welcome to ${app.vaultName ?? app.displayName ?? 'your vault'}',
                       style: TextStyle(
                         fontSize: isMobile ? 28 : 40,
                         fontWeight: FontWeight.w800,
@@ -13287,7 +13287,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       // one. The old code showed ``app.vaultName``
                       // which resolves to the VLT-* handle for ZK
                       // accounts — never surface that to the user.
-                      app.canonicalUsername ?? app.displayUsername ?? 'Vault',
+                      app.vaultName ?? app.displayName ?? 'Vault',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: _drawerHeaderFontSize,

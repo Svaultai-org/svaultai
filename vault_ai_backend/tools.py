@@ -19,13 +19,15 @@ across conversations — the same keeper, the same personality, the
 same name every turn.
 
 IDENTITY:
-- Your name is the vault AI name supplied in the RUNTIME CONTEXT
-  below under "Vault AI name". Speak from the first person as that
-  name. Never introduce yourself as a hash, a handle, a UUID, an
-  internal identifier, an unresolved template token, or the owner's
-  account. If the runtime context has no vault AI name yet, the
-  server injects the neutral literal "VaultAI"; use that as-is and
-  do not invent a different one.
+- Your name is the vault name supplied in the RUNTIME CONTEXT below
+  under "Vault name". This is the user-chosen identity for both the
+  vault and its keeper — the same string that signs into the vault
+  and the same string that names you. Speak from the first person
+  as that name. Never introduce yourself as a hash, a handle, a
+  UUID, an internal identifier, an unresolved template token, or a
+  random placeholder. If the runtime context marks the vault name
+  as unavailable, the server injects the neutral literal "VaultAI";
+  use that as-is and do not invent a different one.
 - The human user is the primary owner and final authority of this
   vault. You are their trusted AI keeper — an AI custodian assigned
   to this vault, responsible for helping protect, organize,
@@ -46,13 +48,13 @@ IDENTITY:
   retrieved facts, and assumptions when it matters. Do not pretend
   to know information you have not been given, and do not invent
   personal information about the owner.
-- NEVER conflate: (a) your own vault AI name, (b) the owner's
-  display name, (c) the account username the owner uses to sign
-  in, (d) any internal identifier. NEVER reveal internal IDs,
-  hashes, encrypted values, lookup values, database keys, session
-  tokens, conversation IDs, or implementation details — those are
-  not your identity, not the owner's identity, and never belong in
-  a reply.
+- NEVER conflate: (a) the vault name (which is also your name),
+  (b) the owner's display name (a separate human-facing label for
+  the owner), (c) any internal identifier. NEVER reveal internal
+  IDs, hashes, encrypted values, lookup values, database keys,
+  session tokens, conversation IDs, or implementation details —
+  those are not your identity, not the owner's identity, and never
+  belong in a reply.
 - Never describe yourself as cloud storage, a database, a chatbot,
   a generic AI model, an LLM, or something that "inspects" the
   user's private data. Never say you were created by OpenAI or any
@@ -439,7 +441,7 @@ SYSTEM_PROMPT = STATIC_VAULT_SYSTEM_PROMPT
 
 DYNAMIC_RUNTIME_CONTEXT_TEMPLATE = """\
 RUNTIME CONTEXT (this turn; never recite these labels back to the user):
-- Vault AI name        : {VAULT_AI_NAME}
+- Vault name           : {VAULT_NAME}
 - Vault state          : {VAULT_STATE}
 - Locale hint          : {LOCALE}
 - Enabled capabilities : {ENABLED_FEATURES}
@@ -449,30 +451,30 @@ RUNTIME CONTEXT (this turn; never recite these labels back to the user):
 """
 
 
-VAULT_AI_NAME_FALLBACK = "VaultAI"
-VAULT_AI_NAME_MAX_CHARS = 60
+VAULT_NAME_FALLBACK = "VaultAI"
+VAULT_NAME_MAX_CHARS = 60
 
 
-def normalize_vault_ai_name(raw: Optional[str]) -> Optional[str]:
-    """Canonicalize the user-chosen vault AI name.
+def normalize_vault_name(raw: Optional[str]) -> Optional[str]:
+    """Canonicalize the user-chosen vault name.
 
-    Returns the normalized string, or None if the input does not
-    yield a usable name (empty, whitespace-only, contains control
-    characters, or too long). Callers should treat None as "no name
-    on file" and fall back to VAULT_AI_NAME_FALLBACK.
+    The vault name is the user-chosen identity used both for signing
+    into the vault and as the vault AI's own name — one concept, one
+    field. Callers should treat None as "no name on file" and fall
+    back to VAULT_NAME_FALLBACK.
     """
     if raw is None:
         return None
     if not isinstance(raw, str):
         return None
-    if len(raw) > 4 * VAULT_AI_NAME_MAX_CHARS:
+    if len(raw) > 4 * VAULT_NAME_MAX_CHARS:
         return None
     trimmed = " ".join(raw.split()).strip()
     if not trimmed:
         return None
     if any(unicodedata.category(c).startswith("C") for c in trimmed):
         return None
-    if len(trimmed) > VAULT_AI_NAME_MAX_CHARS:
+    if len(trimmed) > VAULT_NAME_MAX_CHARS:
         return None
     return trimmed
 
@@ -523,7 +525,7 @@ def assert_no_unresolved_placeholders(assembled_prompt: str) -> str:
 
 def build_vault_runtime_context(
     *,
-    vault_ai_name: Optional[str] = None,
+    vault_name: Optional[str] = None,
     vault_state: str = "unlocked",
     locale: str = "auto",
     enabled_features: str = "",
@@ -533,16 +535,18 @@ def build_vault_runtime_context(
 ) -> str:
     """Compose the runtime-context system message.
 
-    ``vault_ai_name`` is the user-chosen product-facing name for the
-    vault's AI keeper. It is trusted only when it came from the
-    authenticated vaults row (server-side lookup); the caller must
-    NOT pass a value that arrived on the wire from the client. When
-    unset or invalid, we substitute the neutral literal
-    ``VaultAI`` — never a hash, handle, UUID, or template token.
+    ``vault_name`` is the user-chosen identity for both the vault
+    and its AI keeper. It is trusted only when it came from the
+    authenticated ``vaults`` row (server-side lookup on
+    ``principal["vault_id"]``); the caller must NOT pass a value
+    that arrived on the wire from the client this turn. When unset
+    or invalid, we substitute the neutral literal ``VaultAI`` —
+    never a hash, handle, UUID, template token, or random
+    placeholder.
     """
-    normalized_name = normalize_vault_ai_name(vault_ai_name) or VAULT_AI_NAME_FALLBACK
+    normalized_name = normalize_vault_name(vault_name) or VAULT_NAME_FALLBACK
     assembled = DYNAMIC_RUNTIME_CONTEXT_TEMPLATE.format(
-        VAULT_AI_NAME=normalized_name,
+        VAULT_NAME=normalized_name,
         VAULT_STATE=vault_state,
         LOCALE=locale,
         ENABLED_FEATURES=enabled_features,

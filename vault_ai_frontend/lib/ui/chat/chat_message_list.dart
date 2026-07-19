@@ -16,13 +16,14 @@ class ChatMessageList extends StatefulWidget {
   final EdgeInsets padding;
   final ScrollController? scrollController;
 
-  /// User-chosen name for the vault's AI keeper (e.g. "Nova").
-  /// Used ONLY to compose the typing indicator label. Null when
-  /// no name has been set on this device — the typing indicator
-  /// then falls back to the neutral "VaultAI is thinking..."
-  /// literal. This MUST NOT be substituted with the canonical
-  /// username, display name, VLT handle, vault_id, or any hash.
-  final String? vaultAiName;
+  /// User-chosen vault name — the product-facing identity for
+  /// both the vault and its AI keeper. Composes the typing
+  /// indicator label. Null when no name has been set on this
+  /// device — the typing indicator then falls back to the neutral
+  /// "VaultAI is thinking..." literal. MUST NOT be substituted
+  /// with the display name, VLT handle, vault_id, random
+  /// placeholder, or any hash.
+  final String? vaultName;
   final void Function(ChatMessage msg)? onOpenVaultFile;
 
   /// Real download callback — distinct from onOpenVaultFile.
@@ -96,7 +97,7 @@ class ChatMessageList extends StatefulWidget {
       vertical: VaultSpacing.md,
     ),
     this.scrollController,
-    this.vaultAiName,
+    this.vaultName,
     this.onOpenVaultFile,
     this.onDownloadVaultFile,
     this.viewInFlightFileIds = const <String>{},
@@ -189,16 +190,20 @@ class _ChatMessageListState extends State<ChatMessageList> {
       itemBuilder: (context, index) {
         if (widget.thinking && index == msgs.length) {
           final l = AppLocalizations.of(context);
-          // Typing indicator label source is the USER-CHOSEN vault
-          // AI name only. Prior to 2026-07-20 this widget read
-          // ``app.vaultName``, which for ZK vaults is a VLT-* handle
-          // or a 32-character random hex placeholder — the leak
-          // that produced "b21e31c5b59abdc8067ff6b23643b254 is
-          // thinking..." in production. Never use vault_id,
-          // vaultName, canonicalUsername, displayUsername, or any
-          // hash here — always the vault AI name or the neutral
-          // "VaultAI is thinking..." fallback.
-          final name = widget.vaultAiName?.trim();
+          // Typing indicator label source is the user-chosen
+          // vault name (the same string the user typed to sign
+          // in). Before migration 0031, the ZK signup path wrote
+          // ``encode(gen_random_bytes(16),'hex')`` into
+          // ``vaults.vault_name`` as a placeholder to satisfy
+          // NOT NULL UNIQUE — that hex string then leaked into
+          // production as
+          // "b21e31c5b59abdc8067ff6b23643b254 is thinking...".
+          // Migration 0031 dropped the placeholder path; this
+          // widget now reads the real product name, and falls
+          // back to the neutral "VaultAI is thinking..." literal
+          // when the row is unset. Never use vault_id, display
+          // name, VLT handle, or any hash here.
+          final name = widget.vaultName?.trim();
           final label = (name != null && name.isNotEmpty)
               ? l.chatThinkingWithName(name)
               : l.chatThinking;

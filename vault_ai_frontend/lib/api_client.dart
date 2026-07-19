@@ -536,27 +536,34 @@ class VaultAIClient {
     return decoded;
   }
 
-  /// Set (or clear, when [vaultAiName] is null) the caller's
-  /// user-chosen vault AI name via ``PATCH /vault/ai-name``.
+  /// Set (or clear, when [vaultName] is null) the caller's
+  /// user-chosen vault name via ``PATCH /vault/name``.
   ///
-  /// The value the server persists is the returned
-  /// ``vault_ai_name`` field — after server-side normalization
-  /// (trim + whitespace-collapse + length cap + control-char
-  /// reject). Callers should update ``AppState.vaultAiName`` and
-  /// the persisted ``last_vault_ai_name`` from that returned value,
-  /// not from what they originally submitted.
-  Future<String?> setVaultAiName({
+  /// ``vault_name`` is the user-chosen identity for both signing
+  /// into the vault AND for the vault AI's name — one string, one
+  /// concept. The value the server persists is the returned
+  /// ``vault_name`` field, AFTER server-side normalization
+  /// (trim + whitespace-collapse + length cap 1..60 + reject
+  /// control chars). Callers should update ``AppState.vaultName``
+  /// and the persisted ``last_vault_name`` from what the server
+  /// returned, not from what they originally submitted.
+  ///
+  /// 409 is surfaced as an [Exception] with the endpoint's
+  /// "That vault name is already in use." message — vault_name
+  /// is UNIQUE, so two accounts cannot share the same non-NULL
+  /// value.
+  Future<String?> setVaultName({
     required String authToken,
-    required String? vaultAiName,
+    required String? vaultName,
   }) async {
-    final uri = Uri.parse('$baseUrl/vault/ai-name');
+    final uri = Uri.parse('$baseUrl/vault/name');
     final response = await _runWithNetLog(
-      'vault.ai_name.set',
+      'vault.name.set',
       uri,
       () => http.patch(
         uri,
         headers: _defaultHeaders(authToken: authToken),
-        body: jsonEncode({'vault_ai_name': vaultAiName}),
+        body: jsonEncode({'vault_name': vaultName}),
       ),
     );
     if (response.statusCode == 401) {
@@ -564,16 +571,16 @@ class VaultAIClient {
     }
     if (response.statusCode != 200) {
       throw Exception(_formatBackendError(
-        prefix: 'vault/ai-name failed',
+        prefix: 'vault/name failed',
         statusCode: response.statusCode,
         responseBody: response.body,
       ));
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid /vault/ai-name response format');
+      throw Exception('Invalid /vault/name response format');
     }
-    final stored = decoded['vault_ai_name'];
+    final stored = decoded['vault_name'];
     return stored is String && stored.isNotEmpty ? stored : null;
   }
 
