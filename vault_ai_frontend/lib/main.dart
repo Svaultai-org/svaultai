@@ -3329,7 +3329,60 @@ Future<void> _registerDeviceBestEffort(String authToken) async {
       label: currentDeviceLabel(),
     );
   } catch (_) {
-    
+
+  }
+}
+
+/// Decide whether a failed consume call should keep the pending
+/// token around for a later login attempt.
+///
+/// Only ``INH-DEV-004`` (the caller's current session is not the
+/// inherited owner) means "we may still succeed on a subsequent
+/// login to a different account". Every other error — expired,
+/// replayed, wrong device, revoked release, missing session — makes
+/// the token permanently useless, so we clear it and let the user
+/// go through the reveal → authorize flow again if they need to.
+///
+/// Exposed as a top-level function for unit tests.
+bool shouldPreservePendingInheritanceToken(String errorText) {
+  return errorText.contains('INH-DEV-004');
+}
+
+/// Best-effort consume of any pending inheritance device-enrollment
+/// token immediately after a successful login. If the token matches
+/// the account the caller just logged in to (and the current device),
+/// the backend flips the device row to ``trusted`` and returns 200 —
+/// no second manual step is required.
+///
+/// If no token is pending (the vast majority of logins), this is a
+/// silent no-op so normal login behaviour is unchanged for every
+/// non-inheritance user.
+Future<void> _autoConsumeInheritanceTokenIfPresent(
+  String authToken,
+  AppState app,
+) async {
+  final token = app.pendingInheritanceDeviceToken;
+  if (token == null || token.isEmpty) return;
+  try {
+    await VaultAIClient(baseUrl: backendBaseUrl)
+        .consumeInheritanceDeviceAuthorization(
+      token: token, authToken: authToken,
+    );
+    // Success: this device is trusted on the inherited account
+    // and the one-time token is now consumed server-side. Clear it
+    // so a re-login doesn't try to replay.
+    app.pendingInheritanceDeviceToken = null;
+    _notifyNewDeviceTrustedIfNeeded(true);
+  } catch (e) {
+    final msg = e.toString();
+    if (shouldPreservePendingInheritanceToken(msg)) {
+      // Wrong account — the caller might log in as the inherited
+      // owner on the next attempt.
+      vlog('inheritance.consume.wrong_account', const {});
+      return;
+    }
+    vlog('inheritance.consume.exhausted', {'error': msg});
+    app.pendingInheritanceDeviceToken = null;
   }
 }
 
@@ -3670,6 +3723,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           displayUsernameValue: loginResult.displayName,
         );
         await _registerDeviceBestEffort(loginResult.sessionToken);
+        await _autoConsumeInheritanceTokenIfPresent(
+          loginResult.sessionToken, app,
+        );
         _VaultCrypto._keyCache[
           _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
         ] = loginResult.mvk;
@@ -3751,6 +3807,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         displayUsernameValue: display,
       );
       await _registerDeviceBestEffort(token);
+      await _autoConsumeInheritanceTokenIfPresent(token, app);
       await _deriveKeyAndUnlock(app: app, pin: pin);
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
@@ -3968,6 +4025,9 @@ class _SignupPageState extends State<SignupPage> {
         displayUsernameValue: zkChosenDisplay,
       );
       await _registerDeviceBestEffort(result.sessionToken);
+      await _autoConsumeInheritanceTokenIfPresent(
+        result.sessionToken, app,
+      );
       _VaultCrypto._keyCache[
         _VaultCrypto._ck(result.vaultId, result.vaultHandle)
       ] = result.mvk;
@@ -4250,6 +4310,9 @@ class _UnlockPageState extends State<UnlockPage> {
           displayUsernameValue: loginResult.displayName,
         );
         await _registerDeviceBestEffort(loginResult.sessionToken);
+        await _autoConsumeInheritanceTokenIfPresent(
+          loginResult.sessionToken, app,
+        );
         _VaultCrypto._keyCache[
           _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
         ] = loginResult.mvk;
@@ -4314,6 +4377,7 @@ class _UnlockPageState extends State<UnlockPage> {
         displayUsernameValue: display,
       );
       await _registerDeviceBestEffort(token);
+      await _autoConsumeInheritanceTokenIfPresent(token, app);
       await _deriveKeyAndUnlock(app: app, pin: pin);
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
@@ -7093,9 +7157,12 @@ Future<void> _beneficiaryContinueToInheritedAccount({
   required String authToken,
 }) async {
   // Fire a one-time inheritance-scoped device enrollment token so
-  // the beneficiary's next login on the inherited account can
-  // convert this device from pending → trusted without waiting for
-  // an approval from a device the owner will never touch again.
+  // the very next login on the inherited account can convert this
+  // device from pending → trusted automatically. The token is
+  // held in ``AppState.pendingInheritanceDeviceToken`` and consumed
+  // by ``_autoConsumeInheritanceTokenIfPresent`` immediately after
+  // the next successful login (see the register+consume pair at
+  // every login site).
   try {
     final resp = await VaultAIClient(baseUrl: backendBaseUrl)
         .authorizeInheritanceDevice(
@@ -7103,9 +7170,6 @@ Future<void> _beneficiaryContinueToInheritedAccount({
     );
     final token = resp['token']?.toString();
     if (token != null && token.isNotEmpty) {
-      // Store on the AppState so the next login flow can present it.
-      // (Full wiring lands in the follow-up sign-in flow — see the
-      // Phase 2 report's "unresolved" section.)
       final app = context.read<AppState>();
       app.pendingInheritanceDeviceToken = token;
     }
@@ -7113,7 +7177,8 @@ Future<void> _beneficiaryContinueToInheritedAccount({
     vlog('inheritance.device.authorize.failed', {'error': e.toString()});
   }
   _showSnack(
-    'Sign out and sign back in with the inherited username and PIN.',
+    'Sign in with the inherited username and PIN — this device '
+    'will be enrolled automatically.',
   );
 }
 
