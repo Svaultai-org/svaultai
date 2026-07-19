@@ -307,11 +307,14 @@ async def zk_register_finalize(
                 ),
             )
         except pg_errors.UniqueViolation as exc:
+            # The vaults INSERT sits in the same implicit transaction
+            # as the accounts INSERT above; rollback here undoes both,
+            # so no orphan ``accounts`` row is left behind.
             conn.rollback()
             logger.warning("[ZK-REGISTER] vault_handle collision")
             raise HTTPException(
                 status_code=409,
-                detail="vault_handle already in use",
+                detail="Username already taken. Please choose another.",
             ) from exc
         _new_vault_row = cur.fetchone()
         vault_id = str(_new_vault_row["vault_id"])
@@ -595,7 +598,7 @@ async def zk_adopt(
             FROM vaults
             WHERE vault_id = %s
             """,
-            (principal.vault_id,),
+            (principal["vault_id"],),
         )
         row = cur.fetchone()
         if row is None:
@@ -630,7 +633,7 @@ async def zk_adopt(
                     handle_bytes, record,
                     wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                     display_name_ciphertext,
-                    principal.vault_id,
+                    principal["vault_id"],
                 ),
             )
         except pg_errors.UniqueViolation as exc:

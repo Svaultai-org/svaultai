@@ -3700,15 +3700,21 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
 
     final app = context.read<AppState>();
 
-    // If the entered identifier is a valid Vault Handle, route
-    // through ZK login. A valid Vault Handle MUST NOT silently fall
-    // back to legacy /auth/login — a wrong PIN here fails safely.
-    if (vh.isValidVaultHandleDisplay(vaultName)) {
+    // Post-2026-07-19 primary login path: derive the vault_handle
+    // from the entered username and hit /auth/zk-login-init.
+    // A legacy VLT-XXXX handle typed by an adopted user is also
+    // accepted — routed via the handle branch of loginVault.
+    // If the ZK lookup 401s (unknown handle), fall through to the
+    // pre-ZK legacy /auth/login below for true-legacy accounts.
+    final bool entryIsHandle = vh.isValidVaultHandleDisplay(vaultName);
+    bool zkLoginNotFound = false;
+    {
       try {
         await OpaqueClient.ready();
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
-          vaultHandle: vaultName,
+          username: entryIsHandle ? null : vaultName,
+          vaultHandle: entryIsHandle ? vaultName : null,
           pin: pin,
         );
         await app.setSession(
@@ -3770,20 +3776,44 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         });
         return;
       } catch (e) {
-        // ZK login failure: do NOT retry via legacy /auth/login. A
-        // valid Vault Handle is a ZK-adopted vault; the wrong PIN
-        // must fail without exposing anything on the legacy path.
         if (app.handleApiException(e)) return;
-        if (!mounted) return;
-        setState(() {
-          err = 'Vault ID or PIN is incorrect.';
-          loading = false;
-        });
-        return;
+        final msg = e.toString();
+        // Two ZK failure modes:
+        //   * 401 "vault_handle or PIN is incorrect" — either the
+        //     account is pre-ZK (no vault_handle row) OR the PIN is
+        //     wrong. Only in the first case is the legacy fallback
+        //     safe. We can't tell the difference from the error
+        //     alone, so we let the fallback run; it will 401 again
+        //     with the correct "Wrong username or PIN" copy for the
+        //     pre-ZK-but-wrong-PIN case.
+        //   * anything else — hard error, surface immediately.
+        if (msg.contains('HTTP 401') ||
+            msg.contains('vault_handle or PIN is incorrect')) {
+          zkLoginNotFound = true;
+        } else {
+          if (!mounted) return;
+          setState(() {
+            err = 'Login failed. ${msg.replaceFirst("Exception: ", "")}';
+            loading = false;
+          });
+          return;
+        }
       }
     }
 
-    // Legacy path — vault_name + PIN. Reserved for un-adopted vaults.
+    // A typed VLT- handle never falls back to legacy — a wrong PIN
+    // must fail closed on the ZK side.
+    if (entryIsHandle && zkLoginNotFound) {
+      if (!mounted) return;
+      setState(() {
+        err = 'Wrong username or PIN.';
+        loading = false;
+      });
+      return;
+    }
+
+    // Legacy path — vault_name + PIN. Reserved for un-adopted vaults
+    // that predate the ZK rollout.
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.authLogin(vaultName: vaultName, pin: pin);
@@ -4009,6 +4039,11 @@ class _SignupPageState extends State<SignupPage> {
 
       final zk = ZkAuthService(_zkHttpPost);
       final result = await zk.registerVault(
+        // The username field the user typed becomes the deterministic
+        // lookup key. Normalization + SHA-256 truncation happen inside
+        // ZkAuthService.registerVault; the plaintext username never
+        // leaves the device (only its handle-derived form does).
+        username: vaultName,
         displayName: zkChosenDisplay,
         pin: pin,
       );

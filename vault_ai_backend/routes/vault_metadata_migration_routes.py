@@ -15,7 +15,7 @@ Design invariants:
     is a no-op because the WHERE clause requires plaintext-not-null.
   * The server never reveals the plaintext (or lack thereof) of any
     other vault. Every SELECT is filtered by ``vault_id =
-    principal.vault_id``.
+    principal["vault_id"]``.
 
 Only ``uploaded_files``, ``vault_items``, ``notifications``, and
 ``vault_ai_memory`` are wired into the batch loop this turn.
@@ -191,10 +191,10 @@ def next_batch(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        _ensure_state_row(cur, principal.vault_id)
+        _ensure_state_row(cur, principal["vault_id"])
         cur.execute(
             "SELECT * FROM vault_metadata_migration_state WHERE vault_id = %s",
-            (principal.vault_id,),
+            (principal["vault_id"],),
         )
         state = cur.fetchone() or {}
 
@@ -220,7 +220,7 @@ def next_batch(
                     AND ({plaintext_filter})
                   LIMIT %s
                 """,
-                (principal.vault_id, limit),
+                (principal["vault_id"], limit),
             )
             rows_raw = cur.fetchall() or []
 
@@ -232,7 +232,7 @@ def next_batch(
                            updated_at = NOW()
                      WHERE vault_id = %s
                     """,
-                    (principal.vault_id,),
+                    (principal["vault_id"],),
                 )
                 conn.commit()
                 completed.append(name)
@@ -245,7 +245,7 @@ def next_batch(
                   WHERE vault_id = %s
                     AND ({plaintext_filter})
                 """,
-                (principal.vault_id,),
+                (principal["vault_id"],),
             )
             remaining = int((cur.fetchone() or {}).get("n") or 0)
 
@@ -274,7 +274,7 @@ def next_batch(
                    updated_at = NOW()
              WHERE vault_id = %s
             """,
-            (principal.vault_id,),
+            (principal["vault_id"],),
         )
         conn.commit()
 
@@ -339,7 +339,7 @@ def apply_batch(
 
             params: list[Any] = [
                 *ct_map.values(),
-                row.row_id, principal.vault_id,
+                row.row_id, principal["vault_id"],
             ]
             cur.execute(
                 f"""
@@ -373,10 +373,10 @@ def status(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        _ensure_state_row(cur, principal.vault_id)
+        _ensure_state_row(cur, principal["vault_id"])
         cur.execute(
             "SELECT * FROM vault_metadata_migration_state WHERE vault_id = %s",
-            (principal.vault_id,),
+            (principal["vault_id"],),
         )
         state = cur.fetchone() or {}
         conn.commit()

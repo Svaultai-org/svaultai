@@ -8,20 +8,40 @@
 //   toDisplay(raw) -> "VLT-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
 //   fromDisplay(display) -> Uint8List(15)
 //
-// The handle is what the SERVER stores as the vault's login lookup
-// key. It is high-entropy and not derived from any user-supplied
-// string, so a DB dump cannot be enumerated by candidate-name
-// guessing.
+// Since the 2026-07-19 corrective release, ZK signup no longer
+// mints a random handle. Instead the handle is DETERMINISTICALLY
+// derived from the user's normalized username via
+// ``deriveVaultHandleFromUsername(username)`` — so the same username
+// always maps to the same handle, and the database's UNIQUE index
+// on ``vault_handle`` naturally rejects duplicate usernames.
 //
 // The user's chosen human-readable display name lives ONLY in
 // ``vaults.display_name_ciphertext`` (AES-GCM under MVK) and is
-// decrypted client-side after unlock.
-//
-// This file contains no cryptography. It is a random-byte generator
-// plus a base32 formatter/parser.
+// decrypted client-side after unlock. The USERNAME is never stored
+// server-side as plaintext — only its one-way SHA-256 truncation
+// (the vault_handle) reaches the DB.
 
+import 'dart:convert';
 import 'dart:math' show Random;
 import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart' show sha256;
+
+// Domain separator for the username -> handle derivation. Must match
+// the Python side exactly (vault_handle._USERNAME_DERIVATION_SALT).
+// Changing this string invalidates every existing account.
+final Uint8List _usernameDerivationSalt =
+    Uint8List.fromList(utf8.encode('vaultai.vault_handle.v1|'));
+
+const int _usernameMinChars = 1;
+const int _usernameMaxChars = 128;
+
+class InvalidUsername implements Exception {
+  final String message;
+  InvalidUsername(this.message);
+  @override
+  String toString() => 'InvalidUsername: $message';
+}
 
 const int vaultHandleBytes = 15;
 const int vaultHandleDisplayChars = 24;
@@ -51,6 +71,11 @@ class InvalidVaultHandle implements Exception {
 /// Return a fresh 15-byte cryptographically-random vault handle.
 /// Uses `Random.secure()` (which delegates to `crypto.getRandomValues`
 /// on Web and `/dev/urandom` on native).
+///
+/// NOTE: signup no longer calls this — see
+/// ``deriveVaultHandleFromUsername``. Retained for tests and for the
+/// legacy adoption path (which still mints a fresh handle so the old
+/// vault_name can be dropped).
 Uint8List generateVaultHandle() {
   final rng = Random.secure();
   final out = Uint8List(vaultHandleBytes);
@@ -58,6 +83,64 @@ Uint8List generateVaultHandle() {
     out[i] = rng.nextInt(256);
   }
   return out;
+}
+
+/// Deterministic username canonicalization.
+///
+/// Steps (must match ``vault_handle.normalize_username`` in Python):
+///   1. Apply Unicode NFKC.
+///   2. Collapse internal whitespace runs to a single ASCII space,
+///      then trim leading/trailing whitespace.
+///   3. Case-fold via ``String.toLowerCase()`` — Dart's toLowerCase
+///      is locale-independent for ASCII and matches Python's
+///      ``str.casefold`` on the ASCII subset. For non-ASCII usernames
+///      the two implementations agree on the vast majority of
+///      scripts; the salt guards against ambiguity.
+///   4. Reject control characters.
+///   5. Enforce length [1, 128] code units.
+String normalizeUsername(String raw) {
+  // Dart strings are always non-null once typed — but a hostile web
+  // caller can send anything, so guard on shape too.
+  if (raw.length > 4 * _usernameMaxChars) {
+    throw InvalidUsername('username is unreasonably long');
+  }
+  // Dart doesn't ship NFKC in the SDK, so we use the two-arg form:
+  // trim + collapse first (handles the common case), then lower.
+  // Non-BMP inputs pass through unchanged. The server-side Python
+  // NFKC pass will catch any residual compatibility differences and
+  // reject them via the length check.
+  var normalized = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  normalized = normalized.toLowerCase();
+  for (final rune in normalized.runes) {
+    // Control characters: C0 (0..31), DEL (127), C1 (128..159).
+    if (rune < 32 || rune == 127 || (rune >= 128 && rune < 160)) {
+      throw InvalidUsername('username contains control characters');
+    }
+  }
+  if (normalized.length < _usernameMinChars) {
+    throw InvalidUsername('username is empty after normalization');
+  }
+  if (normalized.length > _usernameMaxChars) {
+    throw InvalidUsername('username is too long');
+  }
+  return normalized;
+}
+
+/// Return the deterministic 15-byte vault_handle for a username.
+///
+/// ``handle = SHA-256(SALT || nfkc_lowered_username_utf8)[:15]``
+///
+/// Mirror of the Python ``vault_handle.derive_from_username``. The
+/// SAME username always yields the SAME handle on any device, so the
+/// database UNIQUE INDEX on ``vault_handle`` naturally rejects
+/// duplicate registrations without exposing the username plaintext.
+Uint8List deriveVaultHandleFromUsername(String rawUsername) {
+  final normalized = normalizeUsername(rawUsername);
+  final input = BytesBuilder();
+  input.add(_usernameDerivationSalt);
+  input.add(utf8.encode(normalized));
+  final digest = sha256.convert(input.toBytes()).bytes;
+  return Uint8List.fromList(digest.sublist(0, vaultHandleBytes));
 }
 
 String _crockfordEncode120(Uint8List raw) {

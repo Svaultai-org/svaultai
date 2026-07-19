@@ -238,12 +238,16 @@ class ZkAuthService {
   }
 
   Future<RegisterResult> registerVault({
+    required String username,
     required String displayName,
     required String pin,
   }) async {
     await OpaqueClient.ready();
 
-    final handleBytes = generateVaultHandle();
+    // Deterministic handle from the username. Same username on any
+    // device -> same handle -> the DB's UNIQUE index on vault_handle
+    // rejects duplicates without ever seeing the username plaintext.
+    final handleBytes = deriveVaultHandleFromUsername(username);
     final handleDisplay = vaultHandleToDisplay(handleBytes);
     final credentialId = vaultHandleCredentialId(handleBytes);
 
@@ -312,13 +316,31 @@ class ZkAuthService {
     );
   }
 
+  /// Log in by username (post-2026-07-19 corrective release) OR by
+  /// raw vault handle (legacy path). ``username`` takes precedence.
+  ///
+  /// Rationale: the deterministic derivation makes ``username`` the
+  /// only credential the user needs to type. The ``vaultHandle``
+  /// argument stays because a handful of internal call sites still
+  /// pass a saved handle (e.g. adopted legacy accounts that persisted
+  /// their handle in SharedPreferences).
   Future<LoginResult> loginVault({
-    required String vaultHandle,
+    String? username,
+    String? vaultHandle,
     required String pin,
   }) async {
     await OpaqueClient.ready();
 
-    final handleBytes = vaultHandleFromDisplay(vaultHandle);
+    final Uint8List handleBytes;
+    if (username != null && username.isNotEmpty) {
+      handleBytes = deriveVaultHandleFromUsername(username);
+    } else if (vaultHandle != null && vaultHandle.isNotEmpty) {
+      handleBytes = vaultHandleFromDisplay(vaultHandle);
+    } else {
+      throw ArgumentError(
+        'loginVault requires either username or vaultHandle',
+      );
+    }
     final handleDisplay = vaultHandleToDisplay(handleBytes);
     final credentialId = vaultHandleCredentialId(handleBytes);
 

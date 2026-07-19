@@ -43,12 +43,30 @@ performed elsewhere.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
+import unicodedata
 from typing import Final
 
 
 VAULT_HANDLE_BYTES: Final[int] = 15
+
+# Domain separator for username-to-handle derivation. Must match
+# the Dart side (services/vault_handle.dart:_usernameDerivationSalt).
+# Changing this string invalidates every existing account's handle.
+_USERNAME_DERIVATION_SALT: Final[bytes] = b"vaultai.vault_handle.v1|"
+
+# Username shape limits — the outermost guard so a hostile client
+# cannot bomb the derivation with a 1MB string.
+_USERNAME_MIN_CHARS: Final[int] = 1
+_USERNAME_MAX_CHARS: Final[int] = 128
+
+
+class InvalidUsername(ValueError):
+    """Raised when a username cannot be normalized (empty after
+    normalization, too long, forbidden control chars, …).
+    """
 VAULT_HANDLE_DISPLAY_CHARS: Final[int] = 24
 VAULT_HANDLE_PREFIX: Final[str] = "VLT-"
 
@@ -80,6 +98,61 @@ def generate() -> bytes:
     generate their own).
     """
     return secrets.token_bytes(VAULT_HANDLE_BYTES)
+
+
+def normalize_username(raw: str) -> str:
+    """Deterministic username canonicalization.
+
+    Steps:
+      1. Reject non-strings.
+      2. Apply Unicode NFKC (so precomposed vs decomposed forms map
+         together, and compatibility variants collapse).
+      3. Strip leading/trailing whitespace, collapse internal runs of
+         whitespace to a single ASCII space.
+      4. Case-fold with ``str.casefold()`` (more aggressive than lower()
+         for non-ASCII scripts, e.g. German ß -> "ss").
+      5. Reject control characters — they can't be typed reliably.
+      6. Length-check: [1, 128] code points after normalization.
+
+    Same behavior as the Dart mirror in
+    ``services/vault_handle.dart::normalizeUsername``. If the two ever
+    drift, users who register on one client can't log in on another.
+    """
+    if not isinstance(raw, str):
+        raise InvalidUsername("username must be a string")
+    normalized = unicodedata.normalize("NFKC", raw)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = normalized.casefold()
+    if any(unicodedata.category(ch).startswith("C") for ch in normalized):
+        raise InvalidUsername("username contains control characters")
+    if len(normalized) < _USERNAME_MIN_CHARS:
+        raise InvalidUsername("username is empty after normalization")
+    if len(normalized) > _USERNAME_MAX_CHARS:
+        raise InvalidUsername("username is too long")
+    return normalized
+
+
+def derive_from_username(raw: str) -> bytes:
+    """Return the deterministic 15-byte vault_handle for a username.
+
+    ``handle = SHA-256(SALT || nfkc_casefolded_username_utf8)[:15]``
+
+    * One-way: an operator with the DB dump cannot recover the
+      username without a dictionary attack; usernames are the user's
+      choice so brute-force offline is expected — this derivation
+      is a lookup key, not a password verifier.
+    * Deterministic: the same normalized username always produces the
+      same 15 bytes, so the client can look up the account by
+      re-deriving from the login form's username field.
+    * Domain-separated: the salt keeps this derivation orthogonal to
+      any other username-keyed hash the codebase might introduce
+      later (e.g. for search indexes).
+    """
+    normalized = normalize_username(raw)
+    digest = hashlib.sha256(
+        _USERNAME_DERIVATION_SALT + normalized.encode("utf-8"),
+    ).digest()
+    return digest[:VAULT_HANDLE_BYTES]
 
 
 def _crockford_encode_120(raw: bytes) -> str:
@@ -154,9 +227,12 @@ __all__ = [
     "VAULT_HANDLE_BYTES",
     "VAULT_HANDLE_DISPLAY_CHARS",
     "VAULT_HANDLE_PREFIX",
+    "InvalidUsername",
     "InvalidVaultHandle",
-    "generate",
-    "to_display",
+    "derive_from_username",
     "from_display",
+    "generate",
     "is_valid_display",
+    "normalize_username",
+    "to_display",
 ]
