@@ -143,6 +143,34 @@ Uint8List deriveVaultHandleFromUsername(String rawUsername) {
   return Uint8List.fromList(digest.sublist(0, vaultHandleBytes));
 }
 
+// Domain separator for the derivation-version-independent username
+// lookup identifier. Different salt from _usernameDerivationSalt on
+// purpose so that a future change to either derivation does not
+// invalidate accounts on the other. Must byte-match the Python
+// mirror ``vault_handle._USERNAME_LOOKUP_V1_SALT``.
+final Uint8List _usernameLookupV1Salt =
+    Uint8List.fromList(utf8.encode('vaultai.username_lookup.v1|'));
+
+const int usernameLookupV1Bytes = 32;
+
+/// Return the 32-byte client-derived username lookup identifier.
+///
+///   ``lookup_v1 = SHA-256(SALT || nfkc_casefolded_utf8_username)``
+///
+/// This is what the client sends to the server on register-init,
+/// register-finalize, and login-init to enable derivation-version-
+/// independent uniqueness enforcement WITHOUT ever transmitting the
+/// raw username. The server sees only 32 opaque bytes with the same
+/// visibility properties as ``vault_handle`` today.
+Uint8List deriveUsernameLookupV1(String rawUsername) {
+  final normalized = normalizeUsername(rawUsername);
+  final input = BytesBuilder();
+  input.add(_usernameLookupV1Salt);
+  input.add(utf8.encode(normalized));
+  final digest = sha256.convert(input.toBytes()).bytes;
+  return Uint8List.fromList(digest);
+}
+
 String _crockfordEncode120(Uint8List raw) {
   if (raw.length != vaultHandleBytes) {
     throw InvalidVaultHandle(

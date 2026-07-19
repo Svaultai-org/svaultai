@@ -879,7 +879,36 @@ class AppState extends ChangeNotifier {
   }
 
   bool _unlocked = false;
-  bool get unlocked => _unlocked;
+
+  /// Return true only when the app state carries EVERY component of
+  /// a valid unlock context for the current vault:
+  ///   * a persisted ``_unlocked`` flag from a successful PIN
+  ///     verification or ZK login
+  ///   * an authenticated session (``authed == true``)
+  ///   * a concrete ``vaultId`` and ``vaultName`` (so we know which
+  ///     vault the unlock applies to)
+  ///   * a live entry in the process-local key cache for that
+  ///     exact (``vaultId``, ``vaultName``) pair (so a subsequent
+  ///     chat encrypt can succeed)
+  ///
+  /// The 2026-07-20 desync had ``_unlocked == true`` while the key
+  /// cache had already been cleared (or was keyed under a stale
+  /// ``vaultName``): every chat request then tripped
+  /// ``InvalidVaultUnlockException`` on the backend but the UI still
+  /// showed "unlocked". This getter closes that gap by refusing to
+  /// report unlocked when the invariant is violated. Any code that
+  /// clears the key cache no longer needs to remember to also flip
+  /// ``_unlocked`` — the getter derives the truth.
+  bool get unlocked {
+    if (!_unlocked) return false;
+    if (!authed) return false;
+    final vId = vaultId;
+    final vName = _vaultName;
+    if (vId == null || vName == null) return false;
+    if (!_VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName)) return false;
+    return true;
+  }
+
   set unlocked(bool value) {
     if (_unlocked == value) return;
     _unlocked = value;
@@ -11943,6 +11972,49 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
   }
 
+  /// Regex covering the account-identity intent set. Matches only
+  /// exact-form questions so casual chat like "my vault name is a
+  /// mess" doesn't get intercepted. Anchored + case-insensitive.
+  static final RegExp _accountIdentityQueryRe = RegExp(
+    r"^\s*(?:"
+    r"what(?:'s|s|\s+is)?\s+(?:my\s+)?(?:vault\s*name|username|account\s*name)"
+    r"|which\s+vault\s+am\s+i\s+in"
+    r"|who\s+am\s+i"
+    r")\s*[.?!]?\s*$",
+    caseSensitive: false,
+  );
+
+  /// Return true iff [text] matches the account-identity intent
+  /// AND we produced a direct reply from local state. Never hits
+  /// the LLM path, never sends the raw canonical username to the
+  /// backend, never surfaces the VLT handle / UUID / exception.
+  bool _tryDirectAccountIdentityReply(String text, AppState app) {
+    if (!_accountIdentityQueryRe.hasMatch(text)) return false;
+    final canonical = app.canonicalUsername;
+    final nickname = app.displayUsername;
+    final String reply;
+    if (canonical != null && canonical.isNotEmpty) {
+      reply = 'Your vault name is $canonical.';
+    } else if (nickname != null && nickname.isNotEmpty) {
+      // Fallback for legacy accounts where the canonical name was
+      // never captured on this device. Deliberately labels the
+      // string as a nickname so we do NOT mislead the user into
+      // treating the display name as their identity.
+      reply = 'You haven\'t saved a vault name on this device. '
+          'Your nickname here is $nickname.';
+    } else {
+      reply = 'You haven\'t saved a vault name on this device yet. '
+          'Enter your username on the sign-in screen.';
+    }
+    if (!mounted) return true;
+    setState(() {
+      msgs.add(_Msg('user', text));
+      msgs.add(_Msg('assistant', reply));
+    });
+    _scrollToBottom();
+    return true;
+  }
+
   Future<void> _send() async {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
@@ -11986,6 +12058,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'vaultName': vaultName,
       });
       app.handleApiException(const InvalidVaultUnlockException());
+      return;
+    }
+
+    // Deterministic account-identity intent. "What is my vault
+    // name" / "What is my username" / "Which vault am I in" /
+    // "Who am I" is answered directly from authenticated local
+    // state, without hitting the LLM path (which would echo the
+    // VLT-* handle or return document-retrieval noise) and without
+    // sending the raw canonical username to the backend. Never
+    // surfaces a raw exception, VLT handle, UUID, or display name
+    // as the vault name.
+    if (attachments.isEmpty && _tryDirectAccountIdentityReply(text, app)) {
+      input.clear();
       return;
     }
 

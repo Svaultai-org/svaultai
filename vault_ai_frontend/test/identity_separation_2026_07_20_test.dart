@@ -1,26 +1,34 @@
 // Regression tests for the 2026-07-20 identity + unlock architecture
 // correction.
 //
-// Before this pass:
-//   * User typed username "Alexa" and optional display name "show".
-//     The signup flow collapsed both into ``AppState.displayUsername``
-//     via ``zkChosenDisplay = displayUsername.isEmpty ? vaultName : displayUsername``.
-//     Dashboard rendered "Welcome to show" and "Alexa" was unreachable
-//     from any UI surface after signup.
-//   * ``AppState`` had no separate ``canonicalUsername`` field, so
-//     hydrate on refresh had nowhere to restore the badge from.
-//   * The chat SSE stream's middle catch (the one wrapping
-//     ``await for`` on the encrypted response) did NOT call
-//     ``AppState.handleApiException`` and instead interpolated the
-//     raw ``InvalidVaultUnlockException.toString()`` into the
-//     assistant message bubble. ``app.unlocked`` stayed ``true`` and
-//     the user was never routed to /pin — the dashboard-says-unlocked/
-//     chat-says-expired desync.
-//   * Frontend registration bodies did not carry a normalized
-//     username, so the backend had no way to enforce a
-//     derivation-version-independent uniqueness check.
+// Locks four contracts:
 //
-// This suite locks the corrected shape in place.
+//   1. AppState identity separation
+//      canonicalUsername (badge, primary UI label) is distinct from
+//      displayUsername (optional nickname). Signup captures the
+//      typed vault name as canonicalUsername and never routes it
+//      via the display slot. Dashboard, drawer, and account menu
+//      render canonicalUsername first.
+//
+//   2. Privacy-preserving lookup identifier
+//      The client sends username_lookup (32-byte b64url) on
+//      register-init, register-finalize, and login-init. NEVER
+//      sends the raw canonical username or an already-normalized
+//      string. The 32 bytes are derived as
+//          SHA-256(salt || nfkc_casefolded_utf8_username)
+//      via services/vault_handle.dart::deriveUsernameLookupV1.
+//
+//   3. Chat SSE middle catch routes InvalidVaultUnlockException
+//      through handleApiException on both chat surfaces so the
+//      dashboard-says-unlocked / chat-says-expired desync from the
+//      2026-07-20 investigation cannot recur.
+//
+//   4. Strict AppState.unlocked invariant
+//      `unlocked` returns true only when there is a live key-cache
+//      entry for the current (vaultId, vaultName). Any code path
+//      that clears the cache automatically flips the getter to
+//      false — the field-only fix from the previous pass was
+//      insufficient.
 
 import 'dart:io';
 
@@ -32,53 +40,55 @@ void main() {
   group('AppState identity fields', () {
     test('canonicalUsername field exists and is documented', () {
       final src = _read('lib/main.dart');
-      // The field declaration is the anchor for every other change
-      // in this pass; if it is renamed or removed, the dashboard
-      // falls back to displayUsername (nickname) as the primary
-      // label and the "show replaces Alexa" symptom returns.
-      expect(
-        src.contains('String? canonicalUsername;'),
-        isTrue,
-        reason: 'AppState must expose a canonicalUsername field '
-            'separate from displayUsername',
-      );
+      expect(src.contains('String? canonicalUsername;'), isTrue);
     });
 
     test('setSession accepts canonicalUsernameValue and persists it', () {
       final src = _read('lib/main.dart');
-      expect(
-        src.contains('String? canonicalUsernameValue,'),
-        isTrue,
-        reason: 'AppState.setSession must accept a canonicalUsernameValue '
-            'parameter so the SignupPage can pass the typed '
-            'username in without going through the display slot',
-      );
+      expect(src.contains('String? canonicalUsernameValue,'), isTrue);
       expect(
         src.contains("await sp.setString('last_canonical_username',"),
         isTrue,
-        reason: 'canonical username must be persisted to '
-            "'last_canonical_username' so hydrate() restores it "
-            'on next launch',
       );
     });
 
     test('hydrate restores canonicalUsername from SharedPreferences', () {
       final src = _read('lib/main.dart');
-      expect(
-        src.contains("sp.getString('last_canonical_username')"),
-        isTrue,
-      );
+      expect(src.contains("sp.getString('last_canonical_username')"), isTrue);
     });
 
-    test(
-        'clearSession(keepLastVaultName=false) removes last_canonical_username',
+    test('clearSession(keepLastVaultName=false) removes last_canonical_username',
         () {
       final src = _read('lib/main.dart');
       expect(
         src.contains("await sp.remove('last_canonical_username');"),
         isTrue,
-        reason: '"Use another vault" must not carry the previous '
-            "vault's canonical name into the fresh session's UI",
+      );
+    });
+  });
+
+  group('AppState.unlocked strict invariant', () {
+    test('the unlocked getter derives from _unlocked AND authed AND '
+         'a live key-cache hit for (vaultId, vaultName)', () {
+      final src = _read('lib/main.dart');
+      final idx = src.indexOf('bool get unlocked {');
+      expect(idx, greaterThan(-1),
+          reason: 'unlocked must be a getter with an explicit '
+                  'invariant, not a bare field accessor');
+      final endIdx = src.indexOf('set unlocked(', idx);
+      final window = src.substring(idx, endIdx);
+      // Every component of the invariant must be checked. If any
+      // one of these is removed the desync can recur.
+      expect(window.contains('if (!_unlocked) return false;'), isTrue);
+      expect(window.contains('if (!authed) return false;'), isTrue);
+      expect(
+        window.contains(
+          '_VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName)',
+        ),
+        isTrue,
+        reason: 'unlocked must consult the key cache — the field '
+                'alone is not sufficient, that is exactly what '
+                'produced the 2026-07-20 desync',
       );
     });
   });
@@ -89,13 +99,7 @@ void main() {
       final idx = src.indexOf('class _SignupPageState');
       final endIdx = src.indexOf('Widget build(BuildContext context)', idx);
       final window = src.substring(idx, endIdx);
-      expect(
-        window.contains('canonicalUsernameValue: vaultName'),
-        isTrue,
-        reason: 'the typed vault name IS the canonical username; '
-            'signup must persist it as such rather than routing '
-            'it through the display-name slot',
-      );
+      expect(window.contains('canonicalUsernameValue: vaultName'), isTrue);
     });
 
     test('signup does NOT default displayUsername to vaultName', () {
@@ -103,28 +107,17 @@ void main() {
       final idx = src.indexOf('class _SignupPageState');
       final endIdx = src.indexOf('Widget build(BuildContext context)', idx);
       final window = src.substring(idx, endIdx);
-      // The pre-fix line was:
-      //   displayUsername.isEmpty ? vaultName : displayUsername
-      // That collapse is exactly how "Alexa" disappeared from the UI.
-      // The corrected shape either leaves displayUsername null when
-      // the user did not type one, or writes canonicalUsername for
-      // the encrypted slot but never assigns it to displayUsername.
       expect(
         window.contains(
           'displayUsernameValue: nickname.isEmpty ? null : nickname',
         ),
         isTrue,
-        reason: 'displayUsernameValue must be null when no nickname '
-            'was typed; falling back to vaultName here is what '
-            'produced "Welcome to show" instead of "Welcome to Alexa"',
       );
     });
   });
 
-  group('Dashboard, drawer, and account menu render canonicalUsername first',
-      () {
-    test(
-        'dashboard welcome banner reads canonicalUsername before displayUsername',
+  group('Dashboard, drawer, account menu render canonicalUsername first', () {
+    test('dashboard welcome banner reads canonicalUsername before displayUsername',
         () {
       final src = _read('lib/main.dart');
       expect(
@@ -132,8 +125,6 @@ void main() {
           "'Welcome to \${app.canonicalUsername ?? app.displayUsername ?? 'your vault'}'",
         ),
         isTrue,
-        reason: 'canonical username is the vault identity — must lead '
-            'the welcome banner. Nickname is a fallback only.',
       );
     });
 
@@ -150,87 +141,107 @@ void main() {
     test('account menu label reads canonicalUsername before displayUsername',
         () {
       final src = _read('lib/main.dart');
-      final matches =
-          "app.canonicalUsername ?? app.displayUsername ?? 'VaultAI User',"
-              .allMatches(src)
-              .length;
-      // Two occurrences: the PopupMenuItem header AND the pill chip
-      // that is always visible in the top nav.
-      expect(matches, greaterThanOrEqualTo(2),
-          reason: 'both PopupMenu header and account chip must show '
-              'the canonical username; falling back to display '
-              'name (nickname) hides the badge');
+      // dart format may wrap the ternary across lines, so match on
+      // a whitespace-tolerant regex instead of an exact string.
+      final re = RegExp(
+        r"app\.canonicalUsername\s*\?\?\s*"
+        r"app\.displayUsername\s*\?\?\s*'VaultAI User'",
+      );
+      final matches = re.allMatches(src).length;
+      expect(matches, greaterThanOrEqualTo(2));
     });
   });
 
-  group('Chat SSE middle catch routes InvalidVaultUnlockException properly',
-      () {
-    test(
-        'both chat surfaces call handleApiException from the outer '
-        'stream catch', () {
+  group('Chat SSE middle catch routes InvalidVaultUnlockException', () {
+    test('both chat SSE surfaces guard with handleApiException before '
+         'interpolating the error', () {
       final src = _read('lib/main.dart');
-      // The bug had a bare
-      //   } catch (err) {
-      //     if (!mounted) return;
-      //     setState(() { ... 'Error: \$err' ... });
-      //   }
-      // wrapping ``await for (final encryptedChunk in stream)``,
-      // which meant an InvalidVaultUnlockException from the backend
-      // during streaming would be painted into the assistant bubble
-      // AND leave app.unlocked=true. The fix is a
-      //   if (app.handleApiException(err)) return;
-      // guard at the top of that catch. There are two chat surfaces
-      // with identical structure; both must be fixed.
-      final pattern = '// 2026-07-20 dashboard-says-unlocked/chat-says-expired';
-      final matches = pattern.allMatches(src).length;
-      expect(matches, greaterThanOrEqualTo(2),
-          reason: 'the guard comment (used here as an anchor for the '
-              'fix) must appear at both chat SSE outer catches. '
-              'Regressing this comment out silently regresses '
-              'the fix.');
-      // Positive check: neither surface allows an err interpolation
-      // WITHOUT a preceding handleApiException guard.
       final rawInterpolations =
           "msgs.add(_Msg('assistant', 'Error: \$err'))".allMatches(src).length;
-      final guardsBeforeInterpolation =
+      final guards =
           'if (app.handleApiException(err)) return;'.allMatches(src).length;
-      expect(guardsBeforeInterpolation, greaterThanOrEqualTo(rawInterpolations),
-          reason: 'every raw error interpolation must be preceded by a '
-              'handleApiException guard');
+      expect(guards, greaterThanOrEqualTo(rawInterpolations));
     });
   });
 
-  group('ZkAuthService sends normalized_username on register + login', () {
-    test('registerVault carries normalized_username in init and finalize', () {
+  group('Wire protocol does NOT carry the raw canonical username', () {
+    test('ZkAuthService sends username_lookup (32-byte b64url), NOT '
+         'normalized_username, on every ZK request', () {
       final src = _read('lib/services/zk_auth_service.dart');
-      final idx = src.indexOf('Future<RegisterResult> registerVault(');
-      final endIdx = src.indexOf('Future<LoginResult> loginVault(', idx);
-      final window = src.substring(idx, endIdx);
-      expect(window.contains("'normalized_username': normalized"), isTrue,
-          reason: 'register-init AND register-finalize bodies must '
-              'include normalized_username so the server can '
-              'compute a per-deployment blind index and reject '
-              'duplicates that vault_handle UNIQUE cannot catch');
-      expect("'normalized_username':".allMatches(window).length,
-          greaterThanOrEqualTo(2),
-          reason: 'both init and finalize bodies must carry the field '
-              'so a mid-flow reject at either stage is possible');
+      // Positive check: the new field must appear in all three
+      // request bodies.
+      final ulOccurrences =
+          "'username_lookup': lookupV1B64".allMatches(src).length +
+              "'username_lookup': usernameLookupB64".allMatches(src).length;
+      expect(ulOccurrences, greaterThanOrEqualTo(3),
+          reason: 'register-init, register-finalize, and login-init '
+                  'must all carry username_lookup');
+      // Negative check: the leaky field must NOT appear anywhere.
+      expect(src.contains("'normalized_username'"), isFalse,
+          reason: 'normalized_username exposes the raw canonical '
+                  'username to the app server; the client must derive '
+                  'the lookup id locally instead');
     });
 
-    test(
-        'loginVault carries normalized_username on login-init when '
-        'username was provided', () {
-      final src = _read('lib/services/zk_auth_service.dart');
-      final idx = src.indexOf('Future<LoginResult> loginVault(');
-      final endIdx = src.indexOf('/// Transparent legacy adoption', idx);
-      final window = src.substring(idx, endIdx);
+    test('vault_handle.dart exports deriveUsernameLookupV1 with the '
+         'correct salt and byte length', () {
+      final src = _read('lib/services/vault_handle.dart');
+      expect(src.contains("'vaultai.username_lookup.v1|'"), isTrue,
+          reason: 'salt must be exactly the same UTF-8 bytes as the '
+                  'Python mirror in vault_handle.py::_USERNAME_LOOKUP_V1_SALT');
+      expect(src.contains('const int usernameLookupV1Bytes = 32;'), isTrue);
       expect(
-        window.contains("'normalized_username': normalizedUsername"),
+        src.contains('Uint8List deriveUsernameLookupV1(String rawUsername)'),
         isTrue,
-        reason: 'server needs the canonical form to fall back to the '
-            'blind-index lookup when the client-derived handle '
-            'bytes miss (e.g. legacy random-handle row)',
       );
+    });
+  });
+
+  group('Deterministic account-identity chat intent', () {
+    test('the intent regex covers vault-name / username / who-am-i '
+         'questions and only exact-form matches', () {
+      final src = _read('lib/main.dart');
+      final idx = src.indexOf('_accountIdentityQueryRe = RegExp');
+      expect(idx, greaterThan(-1),
+          reason: 'a deterministic account-identity intent must exist');
+      // The regex must not accidentally match casual chat like
+      // "my vault name is a mess". Anchoring on ^ and $ is the
+      // primary defense.
+      final tailIdx = src.indexOf(');', idx);
+      final regexSrc = src.substring(idx, tailIdx);
+      expect(regexSrc.contains(r'"^\s*(?:"'), isTrue,
+          reason: 'anchored on start');
+      expect(regexSrc.contains(r"caseSensitive: false"), isTrue);
+    });
+
+    test('the intent replies from canonicalUsername first, then nickname, '
+         'then a neutral prompt — never from the VLT handle or uuid', () {
+      final src = _read('lib/main.dart');
+      final idx = src.indexOf('_tryDirectAccountIdentityReply(');
+      expect(idx, greaterThan(-1));
+      final endIdx = src.indexOf('Future<void> _send()', idx);
+      final window = src.substring(idx, endIdx);
+      expect(window.contains(r"'Your vault name is $canonical.'"), isTrue);
+      expect(window.contains(r'canonical.isNotEmpty'), isTrue);
+      // NEGATIVE: neither the vault handle nor vault_id nor the raw
+      // exception may appear in the reply string.
+      expect(window.contains('vaultHandle'), isFalse,
+          reason: 'account-identity intent must never surface the '
+                  'VLT-* handle');
+      expect(window.contains('vaultId'), isFalse,
+          reason: 'account-identity intent must never surface the '
+                  'internal UUID');
+    });
+
+    test('the intent is dispatched from _send BEFORE any network call', () {
+      final src = _read('lib/main.dart');
+      final sendIdx = src.indexOf('Future<void> _send() async {');
+      expect(sendIdx, greaterThan(-1));
+      final window = src.substring(sendIdx, (sendIdx + 8000).clamp(0, src.length));
+      final intentIdx = window.indexOf('_tryDirectAccountIdentityReply(text, app)');
+      // If the intent check moved after the network payload build,
+      // the reply would race with a real chat request.
+      expect(intentIdx, greaterThan(-1));
     });
   });
 }

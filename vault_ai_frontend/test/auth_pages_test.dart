@@ -43,7 +43,7 @@ void main() {
       // and is enforced (a message about "cannot recover" is
       // surfaced when it is not set).
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class SignupPage', length: 12000);
+      final window = _windowAfter(src, 'class SignupPage', length: 20000);
 
       expect(window, contains('vaultName'),
           reason: 'SignupPage must collect a vault name (vaultName)');
@@ -89,7 +89,7 @@ void main() {
     test('calls ZkAuthService.registerVault on submit '
         '(ZK-first registration; no plaintext authSignup)', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class SignupPage', length: 12000);
+      final window = _windowAfter(src, 'class SignupPage', length: 20000);
 
       // The ZK architecture replaces the plaintext authSignup path
       // with an OPAQUE registration handled by ZkAuthService. The
@@ -122,7 +122,7 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class SignupPage', length: 12000);
+      final window = _windowAfter(src, 'class SignupPage', length: 20000);
       expect(
         window,
         contains('RateLimitedException'),

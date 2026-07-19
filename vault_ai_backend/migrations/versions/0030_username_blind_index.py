@@ -1,44 +1,57 @@
-"""Username blind-index for derivation-version-independent uniqueness.
+"""Client-derived stable username lookup identifier (v1).
 
-The 2026-07-19 corrective release changed the client-side vault_handle
-derivation from CSPRNG to SHA-256(salt||normalized_username). Rows
-written under the old algorithm carry a RANDOM 15-byte handle; rows
-written under the new algorithm carry a DETERMINISTIC handle. The
-partial UNIQUE on ``vaults.vault_handle`` cannot detect the two
-representations of the SAME human username as a collision, and so a
-user whose pre-fix registration was orphaned (they could never log in)
-was able to re-register under the same username and end up with two
-rows in the vaults table. See 2026-07-20 incident report.
+Version note (2026-07-20): a first draft of this migration used a
+server-side HMAC blind index keyed by an env pepper. That leaked the
+raw username to the application server on every register/login (which
+was the point of the review that produced this rewrite). The final
+design is a CLIENT-derived deterministic 32-byte identifier that
+never reveals the raw username to the backend, matching the same
+threat surface as ``vault_handle`` today.
 
-This migration adds a derivation-version-independent lookup token.
+Wire + storage
+--------------
+    lookup_id_v1 = SHA-256(
+        b"vaultai.username_lookup.v1|"
+        || nfkc_casefolded_utf8_username
+    )                                                    -- 32 bytes
 
-``vaults.username_blind_index`` is the server-computed value
+* Client computes this alongside ``vault_handle`` and sends
+  base64url(lookup_id_v1) as the ``username_lookup`` request field.
+* Server stores the raw 32 bytes in ``vaults.username_lookup_v1``.
+* Partial UNIQUE index on the non-NULL subset enforces one row per
+  canonical username in a derivation-version-independent way (this
+  identifier is separate from ``vault_handle``; if a future change
+  to normalization requires a v2, a new column is added and both
+  are populated during transition).
 
-    HMAC-SHA256(env['VAULTAI_USERNAME_BLIND_INDEX_PEPPER'], normalized)
+Threat model
+------------
+Backend sees only 32 opaque bytes. A DB dump alone reveals nothing
+recoverable. A DB dump + source (which contains the salt string)
+enables an offline dictionary attack against common usernames — the
+same risk that already applies to ``vault_handle``. Rate limits on
+register + login are the primary online defense. A future OPRF-
+based lookup identifier is documented as the preferred long-term
+mitigation.
 
-where ``normalized`` is the RFC-compatible NFKC+casefold+trim+collapse
-form of the raw username supplied by the client on registration and
-login. The server never persists the raw username. The pepper is a
-per-deployment secret held only in the process env; a database dump
-without the pepper does not enable offline enumeration of usernames.
-
-Uniqueness
-----------
-The partial UNIQUE ``vaults_username_blind_index_uniq`` fires as soon
-as a second row would carry the same blind index — irrespective of
-whether the ``vault_handle`` bytes match. This is what stops the
-cross-algorithm-collision duplicate documented above.
-
-Rows written before this migration have ``username_blind_index = NULL``
-and do not participate in uniqueness (the partial index excludes NULL).
-Operators must run a one-time backfill / audit AFTER users log in with
-the fixed client (which will supply the raw normalized_username);
-duplicates surfaced by that backfill require operator adjudication —
-this migration itself never deletes or merges a row.
+Legacy row compatibility
+------------------------
+Rows created before this migration carry ``username_lookup_v1 =
+NULL`` and do NOT participate in the partial UNIQUE. The gap is
+cryptographically fundamental — the server never stored the raw
+username, so there is no way to compute lookup_id_v1 for a legacy
+row without the user's device. The fixed client backfills these
+rows at login, WITH conflict detection: if the computed
+lookup_id_v1 is already claimed by a different row, the found row
+is NOT backfilled; a
+``username_lookup_conflict_events`` audit row is written for
+operator review; login still proceeds. Silent merging never
+happens.
 
 Rollback
 --------
-Downgrade drops the index and column; no other schema is touched.
+Downgrade drops the events table + partial index + column; every
+other table is untouched.
 """
 
 from __future__ import annotations
@@ -58,33 +71,67 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE vaults
-            ADD COLUMN IF NOT EXISTS username_blind_index BYTEA
+            ADD COLUMN IF NOT EXISTS username_lookup_v1 BYTEA
         """,
     )
     op.execute(
         """
         ALTER TABLE vaults
-            ADD CONSTRAINT vaults_username_blind_index_len_ck CHECK (
-                username_blind_index IS NULL
-                OR length(username_blind_index) = 32
+            ADD CONSTRAINT vaults_username_lookup_v1_len_ck CHECK (
+                username_lookup_v1 IS NULL
+                OR length(username_lookup_v1) = 32
             )
         """,
     )
     op.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS vaults_username_blind_index_uniq
-            ON vaults (username_blind_index)
-            WHERE username_blind_index IS NOT NULL
+        CREATE UNIQUE INDEX IF NOT EXISTS vaults_username_lookup_v1_uniq
+            ON vaults (username_lookup_v1)
+            WHERE username_lookup_v1 IS NOT NULL
+        """,
+    )
+    # Audit trail for legacy backfill conflicts. Written by
+    # zk_login_init when the fixed client presents a lookup_id_v1
+    # that would collide with an existing (different) row's
+    # already-populated lookup_id_v1. The row is NOT backfilled;
+    # login still succeeds; an operator reviews via the query in
+    # audit_username_lookup_conflicts.sql.
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS username_lookup_conflict_events (
+            id                          BIGSERIAL   PRIMARY KEY,
+            observed_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            login_vault_id              UUID        NOT NULL
+                REFERENCES vaults(vault_id) ON DELETE CASCADE,
+            other_vault_id              UUID        NOT NULL
+                REFERENCES vaults(vault_id) ON DELETE CASCADE,
+            username_lookup_v1_fpr      TEXT        NOT NULL,
+            resolved_at                 TIMESTAMPTZ,
+            resolution_note             TEXT
+        )
+        """,
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS username_lookup_conflict_events_unresolved
+            ON username_lookup_conflict_events (observed_at DESC)
+            WHERE resolved_at IS NULL
         """,
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS vaults_username_blind_index_uniq")
     op.execute(
-        "ALTER TABLE vaults DROP CONSTRAINT IF EXISTS "
-        "vaults_username_blind_index_len_ck",
+        "DROP INDEX IF EXISTS username_lookup_conflict_events_unresolved",
     )
     op.execute(
-        "ALTER TABLE vaults DROP COLUMN IF EXISTS username_blind_index",
+        "DROP TABLE IF EXISTS username_lookup_conflict_events",
+    )
+    op.execute("DROP INDEX IF EXISTS vaults_username_lookup_v1_uniq")
+    op.execute(
+        "ALTER TABLE vaults DROP CONSTRAINT IF EXISTS "
+        "vaults_username_lookup_v1_len_ck",
+    )
+    op.execute(
+        "ALTER TABLE vaults DROP COLUMN IF EXISTS username_lookup_v1",
     )

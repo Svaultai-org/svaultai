@@ -163,19 +163,29 @@ void main() {
 
     test('shutdown hooks run BEFORE session token is cleared so '
         'cancelAll sees a still-valid identity', () async {
-      
-      
+      // 2026-07-20: this test previously asserted app.unlocked was
+      // true at hook time, but the strict AppState.unlocked getter
+      // now requires a live key-cache entry that the mock cannot
+      // populate. What the test actually cares about is that the
+      // session token is still present when hooks fire — assert
+      // that directly.
       final app = _UnlockedAppState();
-      bool unlockedAtHookTime = false;
+      app.sessionToken = 'test-session-token';
+      String? tokenAtHookTime;
       app.registerShutdownHook(() {
-        unlockedAtHookTime = app.unlocked;
+        tokenAtHookTime = app.sessionToken;
       });
       await app.clearSession();
       expect(
-        unlockedAtHookTime,
-        isTrue,
-        reason: 'hooks must fire while session is still alive — '
-                'otherwise cancelAll would race the lock',
+        tokenAtHookTime,
+        'test-session-token',
+        reason: 'hooks must fire while session token is still '
+            'available — otherwise cancelAll would race the lock',
+      );
+      expect(
+        app.sessionToken,
+        isNull,
+        reason: 'sessionToken must be cleared AFTER hooks complete',
       );
     });
   });

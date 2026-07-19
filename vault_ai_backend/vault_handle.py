@@ -132,6 +132,34 @@ def normalize_username(raw: str) -> str:
     return normalized
 
 
+# Domain separator for the derivation-version-independent username
+# lookup identifier. Different from the vault_handle salt on purpose:
+# if we later change vault_handle derivation, this column keeps
+# working; likewise a v2 of this identifier can coexist during
+# migration. See migration 0030 for storage details.
+_USERNAME_LOOKUP_V1_SALT: Final[bytes] = b"vaultai.username_lookup.v1|"
+USERNAME_LOOKUP_V1_BYTES: Final[int] = 32
+
+
+def derive_username_lookup_v1(raw: str) -> bytes:
+    """Return the 32-byte client-derived username lookup identifier.
+
+    ``lookup_v1 = SHA-256(SALT || nfkc_casefolded_username_utf8)``
+
+    This is the value the client sends to the server for
+    duplicate-registration detection and legacy-account fallback
+    lookup. The raw username is NEVER sent to the server. Same
+    offline-enumeration risk as ``derive_from_username`` (deterministic
+    across restarts, salt is a public constant), documented in
+    migration 0030 and mitigated by rate limits on register + login.
+    """
+    normalized = normalize_username(raw)
+    digest = hashlib.sha256(
+        _USERNAME_LOOKUP_V1_SALT + normalized.encode("utf-8"),
+    ).digest()
+    return digest
+
+
 def derive_from_username(raw: str) -> bytes:
     """Return the deterministic 15-byte vault_handle for a username.
 
@@ -224,12 +252,14 @@ def is_valid_display(text: str) -> bool:
 
 
 __all__ = [
+    "USERNAME_LOOKUP_V1_BYTES",
     "VAULT_HANDLE_BYTES",
     "VAULT_HANDLE_DISPLAY_CHARS",
     "VAULT_HANDLE_PREFIX",
     "InvalidUsername",
     "InvalidVaultHandle",
     "derive_from_username",
+    "derive_username_lookup_v1",
     "from_display",
     "generate",
     "is_valid_display",

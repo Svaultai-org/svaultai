@@ -246,25 +246,25 @@ class ZkAuthService {
     // Deterministic handle from the username. Same username on any
     // device -> same handle -> the DB's UNIQUE index on vault_handle
     // rejects duplicates without ever seeing the username plaintext.
-    final normalized = normalizeUsername(username);
     final handleBytes = deriveVaultHandleFromUsername(username);
     final handleDisplay = vaultHandleToDisplay(handleBytes);
 
+    // Client-derived 32-byte lookup identifier. Sent as base64url
+    // so the backend can enforce derivation-version-independent
+    // uniqueness (partial UNIQUE on vaults.username_lookup_v1)
+    // WITHOUT ever seeing the raw username on the wire. See
+    // vault_handle.dart::deriveUsernameLookupV1 and migration 0030.
+    final lookupV1 = deriveUsernameLookupV1(username);
+    final lookupV1B64 = vaultHandleB64Url(lookupV1);
+
     final startResult = OpaqueClient.startRegistration(password: pin);
 
-    // ``normalized_username`` is sent so the server can compute a
-    // per-deployment HMAC blind index and reject duplicates that the
-    // vault_handle UNIQUE alone can't catch (e.g. a pre-fix account
-    // still living in the DB under a random handle). The server never
-    // persists the raw username; only the HMAC bytes land in
-    // vaults.username_blind_index. This crosses the same TLS pipe as
-    // the OPAQUE request the client is about to send anyway.
     final initResponse = await _post(
       '/auth/zk-register-init',
       {
         'vault_handle': handleDisplay,
         'ke1': startResult.registrationRequest,
-        'normalized_username': normalized,
+        'username_lookup': lookupV1B64,
       },
     );
     final ke2 = initResponse['ke2'] as String;
@@ -324,7 +324,7 @@ class ZkAuthService {
         'pin_salt': legacyPin.pinSalt,
         'pin_verifier': legacyPin.pinVerifier,
         'kdf_iterations': legacyPin.kdfIterations,
-        'normalized_username': normalized,
+        'username_lookup': lookupV1B64,
       },
     );
 
@@ -379,9 +379,9 @@ class ZkAuthService {
     step('opaque_ready');
 
     final Uint8List handleBytes;
-    String? normalizedUsername;
+    String? usernameLookupB64;
     if (username != null && username.isNotEmpty) {
-      normalizedUsername = normalizeUsername(username);
+      usernameLookupB64 = vaultHandleB64Url(deriveUsernameLookupV1(username));
       handleBytes = deriveVaultHandleFromUsername(username);
     } else if (vaultHandle != null && vaultHandle.isNotEmpty) {
       handleBytes = vaultHandleFromDisplay(vaultHandle);
@@ -398,18 +398,19 @@ class ZkAuthService {
     final start = OpaqueClient.startLogin(password: pin);
     step('opaque_start_login');
 
-    // Include ``normalized_username`` when we have it: the server
-    // uses it as a fallback lookup key if the deterministic handle
-    // bytes don't hit a row, and opportunistically backfills the
-    // blind index for legacy rows that were registered before this
-    // column existed.
+    // Include ``username_lookup`` (32-byte client-derived id) when
+    // we have it: the server uses it as a fallback lookup key when
+    // the deterministic handle bytes don't hit a row, and, with
+    // conflict detection, opportunistically backfills the
+    // username_lookup_v1 column on legacy rows so subsequent
+    // duplicate registrations collide on the partial UNIQUE index.
+    // The raw username is NEVER sent to the server.
     final initResponse = await _post(
       '/auth/zk-login-init',
       {
         'vault_handle': handleDisplay,
         'ke1': start.startLoginRequest,
-        if (normalizedUsername != null)
-          'normalized_username': normalizedUsername,
+        if (usernameLookupB64 != null) 'username_lookup': usernameLookupB64,
       },
     );
     step('post_login_init');
