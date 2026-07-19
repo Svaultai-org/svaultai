@@ -416,6 +416,15 @@ from routes.relationship_routes import router as relationship_router
 app.include_router(memory_router)
 app.include_router(relationship_router)
 
+
+# Inheritance credential escrow (Phase 1).
+from routes.inheritance_credential_routes import (
+    router as inheritance_credential_router,
+)
+from inheritance_error_codes import install_inheritance_redaction
+install_inheritance_redaction()
+app.include_router(inheritance_credential_router)
+
                                                                       
 from routes.billing_routes import router as billing_router
 app.include_router(billing_router)
@@ -8918,16 +8927,35 @@ async def beneficiary_list_mine_endpoint(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # LEFT JOIN inheritance_credentials so a row appears with
+        # ``credentials_saved = False`` when no active package
+        # exists — the client uses this to decide whether to show
+        # "Add credentials" or "Update / Delete credentials".
+        # ``pairing_state`` is the operator-visible state
+        # introduced in migration 0028; back-compat default is
+        # ``paired_no_credentials`` for rows that predate the
+        # migration.
         cursor.execute(
             """
-            SELECT id, passer_label, status,
-                   beneficiary_vault_id IS NOT NULL AS is_linked,
-                   pairing_expires_at,
-                   transfer_requested_at, transfer_executes_at,
-                   created_at
-            FROM beneficiary_links
-            WHERE passer_vault_id = %s
-            ORDER BY created_at DESC
+            SELECT bl.id,
+                   bl.passer_label,
+                   bl.status,
+                   bl.beneficiary_vault_id IS NOT NULL AS is_linked,
+                   bl.pairing_expires_at,
+                   bl.transfer_requested_at,
+                   bl.transfer_executes_at,
+                   bl.created_at,
+                   COALESCE(bl.pairing_state, 'paired_no_credentials')
+                       AS pairing_state,
+                   (ic.id IS NOT NULL) AS credentials_saved,
+                   ic.crypto_version   AS credential_crypto_version,
+                   ic.updated_at       AS credential_updated_at
+              FROM beneficiary_links bl
+              LEFT JOIN inheritance_credentials ic
+                     ON ic.beneficiary_link_id = bl.id
+                    AND ic.deleted_at IS NULL
+             WHERE bl.passer_vault_id = %s
+             ORDER BY bl.created_at DESC
             """,
             (vault_id,),
         )
@@ -8944,11 +8972,19 @@ async def beneficiary_list_mine_endpoint(
                 "id": r["id"],
                 "label": r["passer_label"],
                 "status": r["status"],
+                "pairing_state": r.get("pairing_state") or "paired_no_credentials",
                 "is_linked": bool(r["is_linked"]),
                 "pairing_expires_at": iso(r["pairing_expires_at"]),
                 "transfer_requested_at": iso(r["transfer_requested_at"]),
                 "transfer_executes_at": iso(r["transfer_executes_at"]),
                 "created_at": iso(r["created_at"]),
+                "credentials_saved": bool(r.get("credentials_saved")),
+                "credential_crypto_version": (
+                    int(r["credential_crypto_version"])
+                    if r.get("credential_crypto_version") is not None
+                    else None
+                ),
+                "credential_updated_at": iso(r.get("credential_updated_at")),
             }
             for r in rows
         ]

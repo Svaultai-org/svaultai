@@ -22,6 +22,7 @@ import 'logins_page.dart';
 import 'api_client.dart';
 import 'chunked_aead.dart';
 import 'vault_handle_saved_page.dart';
+import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/session_termination.dart' as st;
@@ -5844,13 +5845,19 @@ Future<void> _showAddBeneficiaryDialog() async {
                                     label: labelText,
                                   );
                                   if (!ok) {
+                                    // Full detail is captured by
+                                    // the network log inside
+                                    // tryZkFinalizeBeneficiaryLabelCiphertext;
+                                    // surface only a safe reference
+                                    // to the user so we never leak
+                                    // an SQL trace or an internal
+                                    // field name.
                                     setLocal(() {
                                       createErr =
-                                          'Could not save the '
-                                          'beneficiary label to '
-                                          'your vault. The pairing '
-                                          'code was not generated. '
-                                          'Please try again.';
+                                          'Could not generate the '
+                                          'pairing code. Please try '
+                                          'again.\nReference: '
+                                          'INH-PAIR-004';
                                       creating = false;
                                     });
                                     return;
@@ -5863,8 +5870,18 @@ Future<void> _showAddBeneficiaryDialog() async {
                                 await _loadBeneficiaries();
                               } catch (e) {
                                 if (app.handleApiException(e)) return;
+                                // Log the raw exception for support;
+                                // show the safe reference to the
+                                // user so no stack / SQL text leaks.
+                                vlog('inheritance.pair.create.failed', {
+                                  'error': e.toString(),
+                                });
                                 setLocal(() {
-                                  createErr = e.toString().replaceFirst('Exception: ', '');
+                                  createErr =
+                                      'Could not generate the '
+                                      'pairing code. Please try '
+                                      'again.\nReference: '
+                                      'INH-PAIR-001';
                                   creating = false;
                                 });
                               }
@@ -6286,6 +6303,284 @@ Future<void> _deleteBeneficiary(int linkId, String label) async {
   }
 }
 
+// ---------------------------------------------------------------------
+// Inheritance credential escrow — owner side (Phase 1).
+//
+// Encrypts {version, username, pin, created_at} client-side against
+// the beneficiary's stored X25519 public key and POSTs only the
+// wrapped bytes to /inheritance/credentials/{save,replace,delete}.
+// The username field is autofilled from the authenticated vault
+// name to reduce typos; the owner can still edit it.
+// ---------------------------------------------------------------------
+
+String _shortDateFromIso(String? iso) {
+  if (iso == null || iso.isEmpty) return '';
+  try {
+    final dt = DateTime.parse(iso).toLocal();
+    // "Jan 3" style — locale-neutral short date without a year.
+    const months = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec',
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  } catch (_) {
+    return iso;
+  }
+}
+
+Future<void> _showInheritanceCredentialsDialog({
+  required int linkId,
+  required String beneficiaryLabel,
+  required bool isUpdate,
+}) async {
+  final app = context.read<AppState>();
+  final autofilledUsername = app.vaultName ?? '';
+  final usernameCtrl = TextEditingController(text: autofilledUsername);
+  final pinCtrl = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  bool saving = false;
+  String? errRef;
+
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogCtx) => StatefulBuilder(
+      builder: (ctx, setLocal) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text(
+          isUpdate
+              ? 'Update credentials for $beneficiaryLabel'
+              : 'Credentials to inherit',
+        ),
+        content: SingleChildScrollView(
+          child: Form(
+            key: formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'These are the VaultAI login credentials this '
+                  'beneficiary will inherit. VaultAI can never read '
+                  'them — they are encrypted on this device and '
+                  'released only after your approval or the 30-day '
+                  'cooldown.',
+                  style: TextStyle(
+                      color: Color(0xFFB4B4B4), fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'VaultAI username',
+                  style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                ),
+                TextFormField(
+                  key: const Key('inheritance_cred_username_field'),
+                  controller: usernameCtrl,
+                  autofillHints: const [AutofillHints.username],
+                  decoration: const InputDecoration(
+                    hintText: 'Autofilled from your account',
+                    isDense: true,
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Username is required'
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'VaultAI PIN',
+                  style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                ),
+                TextFormField(
+                  key: const Key('inheritance_cred_pin_field'),
+                  controller: pinCtrl,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    hintText: 'Enter the PIN to escrow',
+                    isDense: true,
+                  ),
+                  validator: (v) {
+                    final s = (v ?? '').trim();
+                    if (s.isEmpty) return 'PIN is required';
+                    if (s.length < 4) return 'PIN is too short';
+                    return null;
+                  },
+                ),
+                if (errRef != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    errRef!,
+                    style: const TextStyle(
+                        color: Color(0xFFE57373), fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: saving
+                ? null
+                : () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            key: const Key('inheritance_cred_save_button'),
+            onPressed: saving
+                ? null
+                : () async {
+                    if (!(formKey.currentState?.validate() ?? false)) {
+                      return;
+                    }
+                    setLocal(() {
+                      saving = true;
+                      errRef = null;
+                    });
+                    final ok = await _submitInheritanceCredentials(
+                      linkId: linkId,
+                      username: usernameCtrl.text.trim(),
+                      pin: pinCtrl.text.trim(),
+                      isUpdate: isUpdate,
+                    );
+                    if (ok) {
+                      // Wipe the plaintext from the widget's memory
+                      // as soon as we no longer need it.
+                      usernameCtrl.text = '';
+                      pinCtrl.text = '';
+                      if (dialogCtx.mounted) {
+                        Navigator.pop(dialogCtx, true);
+                      }
+                    } else {
+                      setLocal(() {
+                        saving = false;
+                        errRef =
+                            'Could not save credentials. Please try '
+                            'again.\nReference: INH-CRED-004';
+                      });
+                    }
+                  },
+            icon: saving
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.lock_outline),
+            label: Text(saving ? 'Saving…' : 'Save securely'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  // Best-effort clear of the controllers after the dialog closes.
+  usernameCtrl.dispose();
+  pinCtrl.dispose();
+  await _loadBeneficiaries();
+}
+
+Future<bool> _submitInheritanceCredentials({
+  required int linkId,
+  required String username,
+  required String pin,
+  required bool isUpdate,
+}) async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return false;
+  try {
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+
+    // 1. Fetch the beneficiary's X25519 public key.
+    final pkResp = await client.getInheritanceBeneficiaryPubKey(
+      linkId: linkId, authToken: token,
+    );
+    final pkB64 = pkResp['pk_vault_public_b64url']?.toString();
+    if (pkB64 == null || pkB64.isEmpty) {
+      vlog('inheritance.cred.save.no_pk', {'link_id': linkId});
+      return false;
+    }
+    // Base64url decode with padding forgiveness.
+    final padded = pkB64 + '=' * ((4 - pkB64.length % 4) % 4);
+    final pk = base64Url.decode(padded);
+
+    // 2. Encrypt the credential package client-side.
+    final pkg = await inh_cred.encryptInheritanceCredentials(
+      username: username,
+      pin: pin,
+      beneficiaryPkVaultPublic: pk,
+    );
+
+    // 3. POST wrapped material.
+    final body = pkg.toRequestBody(beneficiaryLinkId: linkId);
+    if (isUpdate) {
+      await client.replaceInheritanceCredentials(
+          body: body, authToken: token);
+    } else {
+      await client.saveInheritanceCredentials(
+          body: body, authToken: token);
+    }
+    _showSnack(isUpdate
+        ? 'Credentials updated'
+        : 'Credentials saved');
+    return true;
+  } catch (e) {
+    vlog('inheritance.cred.save.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return false;
+    return false;
+  }
+}
+
+Future<void> _deleteInheritanceCredentials({
+  required int linkId,
+  required String beneficiaryLabel,
+}) async {
+  final app = context.read<AppState>();
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text(
+        'Delete credentials for $beneficiaryLabel?',
+      ),
+      content: const Text(
+        'The encrypted username and PIN will be permanently removed. '
+        'They can be re-added later.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogCtx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+          onPressed: () => Navigator.pop(dialogCtx, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  final token = app.sessionToken;
+  if (token == null) return;
+  try {
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    await client.deleteInheritanceCredentials(
+      linkId: linkId, authToken: token,
+    );
+    _showSnack('Credentials deleted');
+    await _loadBeneficiaries();
+  } catch (e) {
+    vlog('inheritance.cred.delete.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack(
+      'Could not delete credentials.\nReference: INH-CRED-006',
+    );
+  }
+}
+
 Widget _buildInheritanceSection(bool isMobile) {
   if (!_inheritanceLoadedOnce) {
     _inheritanceLoadedOnce = true;
@@ -6429,6 +6724,11 @@ Widget _buildInheritanceSection(bool isMobile) {
                       final id = (b['id'] as num?)?.toInt() ?? 0;
                       final executesAt = b['transfer_executes_at']?.toString();
                       final isTransferPending = status == 'transfer_pending';
+                      final isLinked = b['is_linked'] == true;
+                      final credentialsSaved =
+                          b['credentials_saved'] == true;
+                      final credentialUpdatedAt =
+                          b['credential_updated_at']?.toString();
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(14),
@@ -6440,45 +6740,166 @@ Widget _buildInheritanceSection(bool isMobile) {
                           border: Border.all(
                               color: isTransferPending ? Colors.orange : Colors.white10),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(label,
-                                      style: const TextStyle(
-                                          fontSize: 15, fontWeight: FontWeight.w700)),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    statusLabel(b),
-                                    style: TextStyle(color: statusColor(status), fontSize: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(label,
+                                          style: const TextStyle(
+                                              fontSize: 15, fontWeight: FontWeight.w700)),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        statusLabel(b),
+                                        style: TextStyle(color: statusColor(status), fontSize: 12),
+                                      ),
+                                      if (isTransferPending && executesAt != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _formatCountdown(executesAt),
+                                          style: const TextStyle(color: Colors.orange, fontSize: 11),
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  if (isTransferPending && executesAt != null) ...[
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _formatCountdown(executesAt),
-                                      style: const TextStyle(color: Colors.orange, fontSize: 11),
+                                ),
+                                if (isTransferPending)
+                                  FilledButton.icon(
+                                    onPressed: () => _cancelTransfer(id, label),
+                                    style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+                                    icon: const Icon(Icons.cancel_outlined, size: 18),
+                                    label: Text(
+                                      AppLocalizations.of(context)
+                                          .inheritanceCancelTransfer,
                                     ),
-                                  ],
-                                ],
-                              ),
+                                  ),
+                                IconButton(
+                                  tooltip: 'Remove',
+                                  onPressed: () => _deleteBeneficiary(id, label),
+                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                                ),
+                              ],
                             ),
-                            if (isTransferPending)
-                              FilledButton.icon(
-                                onPressed: () => _cancelTransfer(id, label),
-                                style: FilledButton.styleFrom(backgroundColor: Colors.orange),
-                                icon: const Icon(Icons.cancel_outlined, size: 18),
-                                label: Text(
-                                  AppLocalizations.of(context)
-                                      .inheritanceCancelTransfer,
+                            if (isLinked) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                key: Key(
+                                    'inheritance_credentials_row_$id'),
+                                padding:
+                                    const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1E1E1E),
+                                  borderRadius:
+                                      BorderRadius.circular(10),
+                                  border: Border.all(
+                                      color: Colors.white10),
+                                ),
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  crossAxisAlignment:
+                                      WrapCrossAlignment.center,
+                                  children: [
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          credentialsSaved
+                                              ? Icons.lock_outline
+                                              : Icons.lock_open_outlined,
+                                          size: 16,
+                                          color: credentialsSaved
+                                              ? const Color(0xFF66BB6A)
+                                              : const Color(0xFFB4B4B4),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          credentialsSaved
+                                              ? 'Inheritance credentials: Saved'
+                                              : 'Inheritance credentials: Not saved',
+                                          style: TextStyle(
+                                            color: credentialsSaved
+                                                ? const Color(0xFF66BB6A)
+                                                : const Color(0xFFB4B4B4),
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        if (credentialsSaved &&
+                                            credentialUpdatedAt !=
+                                                null &&
+                                            credentialUpdatedAt
+                                                .isNotEmpty) ...[
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            '• Updated ${_shortDateFromIso(credentialUpdatedAt)}',
+                                            style: const TextStyle(
+                                              color: Color(0xFF8A8A8A),
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    if (!credentialsSaved)
+                                      FilledButton.icon(
+                                        key: Key(
+                                            'inheritance_add_credentials_$id'),
+                                        onPressed: () =>
+                                            _showInheritanceCredentialsDialog(
+                                          linkId: id,
+                                          beneficiaryLabel: label,
+                                          isUpdate: false,
+                                        ),
+                                        icon: const Icon(
+                                            Icons.add_moderator_outlined,
+                                            size: 18),
+                                        label: const Text(
+                                            'Add credentials'),
+                                      )
+                                    else ...[
+                                      OutlinedButton.icon(
+                                        key: Key(
+                                            'inheritance_update_credentials_$id'),
+                                        onPressed: () =>
+                                            _showInheritanceCredentialsDialog(
+                                          linkId: id,
+                                          beneficiaryLabel: label,
+                                          isUpdate: true,
+                                        ),
+                                        icon: const Icon(
+                                            Icons.edit_outlined,
+                                            size: 18),
+                                        label: const Text(
+                                            'Update credentials'),
+                                      ),
+                                      OutlinedButton.icon(
+                                        key: Key(
+                                            'inheritance_delete_credentials_$id'),
+                                        onPressed: () =>
+                                            _deleteInheritanceCredentials(
+                                          linkId: id,
+                                          beneficiaryLabel: label,
+                                        ),
+                                        icon: const Icon(
+                                            Icons.lock_open_outlined,
+                                            size: 18,
+                                            color: Colors.redAccent),
+                                        label: const Text(
+                                          'Delete credentials',
+                                          style: TextStyle(
+                                              color: Colors.redAccent),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
-                            IconButton(
-                              tooltip: 'Remove',
-                              onPressed: () => _deleteBeneficiary(id, label),
-                              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                            ),
+                            ],
                           ],
                         ),
                       );

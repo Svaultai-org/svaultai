@@ -1849,6 +1849,101 @@ class VaultAIClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  // ------------------------------------------------------------------
+  // Inheritance credential escrow (Phase 1).
+  //
+  // All five endpoints require a session bearer token. The server
+  // never sees decrypted credential material.
+  // ------------------------------------------------------------------
+
+  Future<Map<String, dynamic>> getInheritanceBeneficiaryPubKey({
+    required int linkId,
+    required String authToken,
+  }) async {
+    final response = await http.get(
+      Uri.parse(
+          '$baseUrl/inheritance/beneficiary/$linkId/pubkey'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Get beneficiary pubkey failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> saveInheritanceCredentials({
+    required Map<String, dynamic> body,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/inheritance/credentials/save'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Save inheritance credentials failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> replaceInheritanceCredentials({
+    required Map<String, dynamic> body,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/inheritance/credentials/replace'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Replace inheritance credentials failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteInheritanceCredentials({
+    required int linkId,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/inheritance/credentials/delete'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({'beneficiary_link_id': linkId}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Delete inheritance credentials failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> markNotificationRead({
     int? notificationId,
     required String authToken,
