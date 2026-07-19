@@ -7,7 +7,7 @@ import 'dart:math' as math;
 import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
-show kIsWeb, kReleaseMode, kDebugMode, visibleForTesting, debugPrint;
+    show kIsWeb, kReleaseMode, kDebugMode, visibleForTesting, debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart' as web_plugins;
@@ -85,7 +85,6 @@ import 'ui/crypto_receive_panel.dart';
 import 'l10n/app_localizations.dart';
 import 'i18n/language_registry.dart';
 
-
 // Whether the build was invoked with an explicit
 //   --dart-define=BACKEND_BASE_URL=...
 // Compile-time constant per Dart's bool.hasEnvironment contract.
@@ -135,30 +134,24 @@ String get backendBaseUrl {
   return _kBackendBaseUrlFromEnv;
 }
 
-
 const int kVaultStorageLimitBytes = 1024 * 1024 * 1024;
 
-
 enum BillingLoadState { initial, loading, loaded, error }
-
 
 const int kChunkedUploadThresholdBytes = int.fromEnvironment(
   'CHUNKED_UPLOAD_THRESHOLD_BYTES',
   defaultValue: 4 * 1024 * 1024,
 );
 
-
 const int kChunkedUploadChunkBytes = int.fromEnvironment(
   'CHUNKED_UPLOAD_CHUNK_BYTES',
   defaultValue: 4 * 1024 * 1024,
 );
 
-
 const bool kCryptoWalletEngineEnabled = bool.fromEnvironment(
   'CRYPTO_WALLET_ENGINE_ENABLED',
   defaultValue: true,
 );
-
 
 const List<String> kAcceptedAudioExtensions = [
   'mp3',
@@ -167,7 +160,6 @@ const List<String> kAcceptedAudioExtensions = [
   'aac',
   'ogg',
 ];
-
 
 String generateVoiceRecordingFilename({
   required DateTime now,
@@ -180,20 +172,16 @@ String generateVoiceRecordingFilename({
   return 'Voice recording - $date $time.$extension';
 }
 
-
 class UploadCancelledException implements Exception {
   const UploadCancelledException();
   @override
   String toString() => 'UploadCancelledException';
 }
 
-
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
-
 
 final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
-
 
 Future<void> openHelpCenter(
   BuildContext context, {
@@ -236,7 +224,6 @@ Future<void> openHelpCenter(
   );
 }
 
-
 String? _guessMimeTypeFromName(String name) {
   final lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
@@ -267,9 +254,12 @@ String? _guessMimeTypeFromName(String name) {
   return 'application/octet-stream';
 }
 
-bool _isImageMime(String? mime) => (mime ?? '').toLowerCase().startsWith('image/');
-bool _isVideoMime(String? mime) => (mime ?? '').toLowerCase().startsWith('video/');
-bool _isAudioMime(String? mime) => (mime ?? '').toLowerCase().startsWith('audio/');
+bool _isImageMime(String? mime) =>
+    (mime ?? '').toLowerCase().startsWith('image/');
+bool _isVideoMime(String? mime) =>
+    (mime ?? '').toLowerCase().startsWith('video/');
+bool _isAudioMime(String? mime) =>
+    (mime ?? '').toLowerCase().startsWith('audio/');
 
 bool _isTextPreviewable(String? mime, String filename) {
   final m = (mime ?? '').toLowerCase();
@@ -281,10 +271,7 @@ bool _isTextPreviewable(String? mime, String filename) {
       lower.endsWith('.json');
 }
 
-
 class _BillingLoadingCard extends StatelessWidget {
-  
-  
   final String label;
   const _BillingLoadingCard({required this.label});
 
@@ -294,7 +281,8 @@ class _BillingLoadingCard extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(
-          width: 18, height: 18,
+          width: 18,
+          height: 18,
           child: CircularProgressIndicator(
             strokeWidth: 2,
             color: Color(0xFFB4B4B4),
@@ -312,7 +300,6 @@ class _BillingLoadingCard extends StatelessWidget {
     );
   }
 }
-
 
 class _BillingErrorCard extends StatelessWidget {
   final VoidCallback onRetry;
@@ -368,14 +355,12 @@ String _formatBytes(int bytes) {
   return '$bytes B';
 }
 
-
 enum _DashboardSection {
   dashboard,
   chat,
   files,
   logins,
-  
-  
+
   cryptoVault,
   concierge,
   expiry,
@@ -385,25 +370,17 @@ enum _DashboardSection {
   settings,
 }
 
-
 typedef _Msg = ChatMessage;
 
-
 class ChatAttachmentPanel extends StatelessWidget {
-  
-  
   final int count;
 
-  
   final Widget Function(BuildContext context, int index) itemBuilder;
 
-  
   final VoidCallback? onClear;
 
-  
   final bool isMobile;
 
-  
   static const double maxHeightDesktop = 240;
   static const double maxHeightMobile = 180;
 
@@ -429,8 +406,6 @@ class ChatAttachmentPanel extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          
-          
           ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxHeight),
             child: Scrollbar(
@@ -442,14 +417,13 @@ class ChatAttachmentPanel extends StatelessWidget {
               ),
             ),
           ),
-          
-          
           Row(
             children: [
               Expanded(
                 child: Text(
                   '$count attachment(s) ready',
-                  style: const TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                  style:
+                      const TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
                 ),
               ),
               IconButton(
@@ -465,7 +439,6 @@ class ChatAttachmentPanel extends StatelessWidget {
   }
 }
 
-
 class _UploadContext {
   final VaultAIClient client;
   final String vaultName;
@@ -476,7 +449,6 @@ class _UploadContext {
   final bool isBatchUpload;
   final int uploadSafetyCapBytes;
 
-  
   final String? importId;
 
   const _UploadContext({
@@ -492,9 +464,7 @@ class _UploadContext {
   });
 }
 
-
 final Random _attachmentIdRand = Random();
-
 
 String _newAttachmentId() {
   final t = DateTime.now().microsecondsSinceEpoch;
@@ -502,22 +472,17 @@ String _newAttachmentId() {
   return 'att_${t}_$r';
 }
 
-
 class _Attachment {
-  
   final String id;
   final String name;
   final String kind;
   final String? mimeType;
   final int size;
 
-  
   final Future<Uint8List> Function() readBytes;
 
-  
   final String? relativePath;
 
-  
   String? importId;
 
   String? uploadedFileId;
@@ -551,7 +516,6 @@ class _Attachment {
     );
   }
 }
-
 
 class _UploadAttachmentsOutcome {
   final List<String> uploadedIds;
@@ -611,7 +575,6 @@ class _VaultStoredFile {
   final int fileSize;
   final bool needsNaming;
 
-  
   final String? relativePath;
 
   const _VaultStoredFile({
@@ -639,19 +602,16 @@ class _VaultStoredFile {
   }
 }
 
-
 void vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
       ? ''
       : data.entries.map((e) => '${e.key}=${e.value}').join(' ');
-  
+
   print('[vault-debug] $tag $payload');
 }
 
 Future<void> main() async {
-  
-  
   if (kReleaseMode && !backendBaseUrl.startsWith('https://')) {
     throw StateError(
       'BACKEND_BASE_URL must use https:// in release builds. '
@@ -660,25 +620,20 @@ Future<void> main() async {
     );
   }
 
-  
   if (kIsWeb) {
     web_plugins.setUrlStrategy(web_plugins.PathUrlStrategy());
   }
 
-  
   late final AppState appState;
   var appStateReady = false;
 
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      
-      
+
       String? webOrigin;
       try {
         if (kIsWeb) {
-          
-          
           webOrigin = Uri.base.origin;
         }
       } catch (_) {
@@ -691,10 +646,12 @@ Future<void> main() async {
         'webOrigin': webOrigin ?? '-',
       });
 
-      
       final deviceId = await getOrCreateDeviceId();
       setApiClientDeviceId(deviceId);
-      vlog('device-id-set', {'len': deviceId.length, 'first8': deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId});
+      vlog('device-id-set', {
+        'len': deviceId.length,
+        'first8': deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId
+      });
 
       appState = AppState();
       appStateReady = true;
@@ -746,8 +703,6 @@ Future<void> main() async {
       );
     },
     (error, stack) {
-      
-      
       if (appStateReady && appState.handleApiException(error)) return;
       FlutterError.reportError(
         FlutterErrorDetails(exception: error, stack: stack),
@@ -758,7 +713,6 @@ Future<void> main() async {
 
 const String _kAppLocaleStorageKeyV1 = 'app_locale';
 const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
-
 
 class AppState extends ChangeNotifier {
   bool authed = false;
@@ -772,13 +726,11 @@ class AppState extends ChangeNotifier {
   final Set<String> _viewInFlight = <String>{};
   final Set<String> _downloadInFlight = <String>{};
 
-  bool isFileViewInFlight(String fileId) =>
-      _viewInFlight.contains(fileId);
+  bool isFileViewInFlight(String fileId) => _viewInFlight.contains(fileId);
   bool isFileDownloadInFlight(String fileId) =>
       _downloadInFlight.contains(fileId);
   bool isFileBusy(String fileId) =>
-      _viewInFlight.contains(fileId) ||
-      _downloadInFlight.contains(fileId);
+      _viewInFlight.contains(fileId) || _downloadInFlight.contains(fileId);
 
   /// Read-only snapshots of the current in-flight file ids, so
   /// widgets can pass them down without exposing mutable state.
@@ -843,30 +795,22 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-
   bool _hydrated = false;
   bool get hydrated => _hydrated;
 
   Locale? _appLocale;
   Locale? get appLocale => _appLocale;
 
-
-
-
   static String Function() deviceLanguageCodeResolver =
       _defaultDeviceLanguageCode;
 
   static String _defaultDeviceLanguageCode() {
     try {
-      return WidgetsBinding.instance
-          .platformDispatcher.locale.languageCode;
+      return WidgetsBinding.instance.platformDispatcher.locale.languageCode;
     } catch (_) {
       return 'en';
     }
   }
-
-
-
 
   Locale? get shellLocale {
     if (_appLocale == null) return null;
@@ -875,10 +819,6 @@ class AppState extends ChangeNotifier {
     }
     return const Locale('en');
   }
-
-
-
-
 
   String get effectiveLanguageCode {
     final manual = _appLocale?.languageCode;
@@ -897,14 +837,10 @@ class AppState extends ChangeNotifier {
     return 'en';
   }
 
-
-
-
   String get chatReplyLanguageCode => effectiveLanguageCode;
 
   Future<void> setAppLocale(Locale? value) async {
     if (value != null && !isSupportedLanguageCode(value.languageCode)) {
-
       return;
     }
     _appLocale = value;
@@ -912,9 +848,7 @@ class AppState extends ChangeNotifier {
     if (value == null) {
       await sp.remove(_kAppLocaleStorageKeyV2);
     } else {
-
-      await sp.setString(
-          _kAppLocaleStorageKeyV2, value.languageCode);
+      await sp.setString(_kAppLocaleStorageKeyV2, value.languageCode);
     }
     notifyListeners();
   }
@@ -923,9 +857,6 @@ class AppState extends ChangeNotifier {
     try {
       final sp = await SharedPreferences.getInstance();
 
-
-
-
       if (sp.containsKey(_kAppLocaleStorageKeyV1)) {
         await sp.remove(_kAppLocaleStorageKeyV1);
       }
@@ -933,13 +864,11 @@ class AppState extends ChangeNotifier {
       final tag = sp.getString(_kAppLocaleStorageKeyV2);
       if (tag != null && tag.isNotEmpty) {
         final parts = tag.split('-');
-        final loc = parts.length == 1
-            ? Locale(parts[0])
-            : Locale(parts[0], parts[1]);
+        final loc =
+            parts.length == 1 ? Locale(parts[0]) : Locale(parts[0], parts[1]);
         if (isSupportedLanguageCode(loc.languageCode)) {
           _appLocale = loc;
         } else {
-
           await sp.remove(_kAppLocaleStorageKeyV2);
           _appLocale = null;
         }
@@ -949,7 +878,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  
   bool _unlocked = false;
   bool get unlocked => _unlocked;
   set unlocked(bool value) {
@@ -962,18 +890,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  
   static const Duration _kInactivityTimeout = Duration(minutes: 10);
   Timer? _inactivityTimer;
   DateTime _lastActivityAt = DateTime.now();
 
-  
   final List<bool Function()> _keepAliveProbes = [];
 
-  
   final List<void Function()> _shutdownHooks = [];
 
-  
   String? sessionToken;
 
   /// One-time inheritance device-enrollment token minted after
@@ -983,23 +907,31 @@ class AppState extends ChangeNotifier {
   /// without waiting for another approver.
   String? pendingInheritanceDeviceToken;
 
-  
   String? vaultId;
 
-  
+  /// User-facing account name shown in the UI (dashboard welcome,
+  /// drawer header, account menu). Populated at signup + login from
+  /// the ZK-encrypted display_name blob, restored on next launch
+  /// from ``last_display_username`` in SharedPreferences. The VLT-*
+  /// vault handle MUST NEVER be substituted here.
   String? displayUsername;
 
-  
+  /// Deterministic hidden vault_handle (``VLT-XXXX-...``) — the ZK
+  /// backend lookup identifier. Populated at signup + login. Used by
+  /// unlock-flow re-derivation and by inheritance / crypto-cache
+  /// operations that need the stable internal identity. NEVER shown
+  /// to the user.
+  String? vaultHandle;
+
   String? lastVaultName;
 
-  
   String? _vaultName;
   String? get vaultName => _vaultName;
   set vaultName(String? value) {
     final prev = _vaultName;
     _vaultName = value;
     final currentVaultId = vaultId;
-    
+
     vlog('appstate.vaultName.set', {
       'prev': prev,
       'next': value,
@@ -1008,8 +940,6 @@ class AppState extends ChangeNotifier {
     });
     if (currentVaultId == null) return;
     if (prev != null && prev != value) {
-      
-      
       vlog('appstate.vaultName.rebind-clears-cache', {
         'vault_id': currentVaultId,
         'prev': prev,
@@ -1018,8 +948,6 @@ class AppState extends ChangeNotifier {
       _VaultCrypto.clearCache(currentVaultId);
     }
     if (value != null) {
-      
-      
       _VaultCrypto.setActiveVault(vaultId: currentVaultId, vaultName: value);
     }
   }
@@ -1035,56 +963,41 @@ class AppState extends ChangeNotifier {
 
   int storageUsedBytes = 0;
   int storageLimitBytes = kVaultStorageLimitBytes;
-  
-  
+
   int storagePendingBytes = 0;
 
-  
   int billingEffectiveLimitBytes = 0;
   int billingBlockCount = 0;
   int billingPurchasedBytes = 0;
   int billingIncludedBytes = 0;
 
-
   BillingLoadState billingLoadState = BillingLoadState.initial;
 
-
   String? billingLoadError;
-
-
-
 
   int _billingRefreshSeq = 0;
   int _billingRefreshLatestApplied = 0;
 
-  
-  bool get isBillingLoaded =>
-      billingLoadState == BillingLoadState.loaded;
+  bool get isBillingLoaded => billingLoadState == BillingLoadState.loaded;
 
-  
   bool get isBillingLoading =>
-      billingLoadState == BillingLoadState.initial
-      || billingLoadState == BillingLoadState.loading;
+      billingLoadState == BillingLoadState.initial ||
+      billingLoadState == BillingLoadState.loading;
 
-  
-  bool get isBillingError =>
-      billingLoadState == BillingLoadState.error;
+  bool get isBillingError => billingLoadState == BillingLoadState.error;
 
-  
   int get effectiveStorageLimitBytes {
     if (billingEffectiveLimitBytes > 0) return billingEffectiveLimitBytes;
     if (storageLimitBytes > 0) return storageLimitBytes;
     return kVaultStorageLimitBytes;
   }
 
-  
   String get planLabel {
     if (billingBlockCount > 0 && billingPurchasedBytes > 0) {
       return '${formatBytes(billingPurchasedBytes)} Storage Plan';
     }
     return 'Free Vault Plan';
   }
-
 
   /// Crypto Vault is a paid-tier feature. The same rule is applied on
   /// the backend (`user_tier=="upgraded"` in
@@ -1095,15 +1008,12 @@ class AppState extends ChangeNotifier {
   bool get isCryptoEntitled =>
       billingBlockCount > 0 && billingPurchasedBytes > 0;
 
-  
   int uploadSafetyCapBytes = 100 * 1024 * 1024;
 
   VaultRecoveryInfo? recoveryInfo;
 
-  
   List<Map<String, dynamic>> availableVaults = [];
 
-  
   List<Map<String, dynamic>> notifications = [];
   int unreadNotificationCount = 0;
 
@@ -1115,13 +1025,14 @@ class AppState extends ChangeNotifier {
       final result = await client.listNotifications(authToken: token);
       final raw = result['notifications'];
       notifications = raw is List
-          ? raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
+          ? raw
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList()
           : <Map<String, dynamic>>[];
       unreadNotificationCount = (result['unread_count'] as num?)?.toInt() ?? 0;
       notifyListeners();
-    } catch (_) {
-      
-    }
+    } catch (_) {}
   }
 
   Future<void> markNotificationRead(int? notificationId) async {
@@ -1153,12 +1064,11 @@ class AppState extends ChangeNotifier {
         availableVaults = [];
       }
       notifyListeners();
-    } catch (_) {
-      
-    }
+    } catch (_) {}
   }
 
-  Future<void> requestSwitchVault(String newVaultName, BuildContext context) async {
+  Future<void> requestSwitchVault(
+      String newVaultName, BuildContext context) async {
     final currentVaultId = vaultId;
     if (currentVaultId == null) return;
     if (newVaultName == vaultName) return;
@@ -1177,7 +1087,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  
   bool handleApiException(Object error) {
     if (error is VaultFrozenException) {
       lockMessage = error.message;
@@ -1201,8 +1110,7 @@ class AppState extends ChangeNotifier {
       );
       return true;
     }
-    
-    
+
     if (error is InvalidVaultUnlockException) {
       lockMessage = error.message;
       unlocked = false;
@@ -1219,8 +1127,6 @@ class AppState extends ChangeNotifier {
       return true;
     }
     if (error is AuthExpiredException) {
-
-
       if (!authed && !unlocked) {
         return false;
       }
@@ -1229,15 +1135,12 @@ class AppState extends ChangeNotifier {
       authed = false;
       if (vaultId != null) _VaultCrypto.clearCache(vaultId!);
 
-
       clearSession(keepLastVaultName: true);
       notifyListeners();
       rootScaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(content: Text(error.message)),
       );
       rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-
-
         lastVaultName != null ? '/unlock' : '/login',
         (_) => false,
       );
@@ -1256,11 +1159,8 @@ class AppState extends ChangeNotifier {
     if (error is SessionTerminatedException) {
       return true;
     }
-    
-    
+
     if (error is DeviceNotTrustedException) {
-      
-      
       final activeDeviceId = apiClientDeviceId() ?? '';
       final activeDeviceIdPrefix = activeDeviceId.length >= 8
           ? activeDeviceId.substring(0, 8)
@@ -1293,7 +1193,6 @@ class AppState extends ChangeNotifier {
     return false;
   }
 
-  
   void resetInactivityTimer() {
     if (!_unlocked) return;
     final now = DateTime.now();
@@ -1314,18 +1213,15 @@ class AppState extends ChangeNotifier {
     _inactivityTimer = null;
   }
 
-  
   void registerKeepAliveProbe(bool Function() probe) {
     if (_keepAliveProbes.contains(probe)) return;
     _keepAliveProbes.add(probe);
   }
 
-  
   void unregisterKeepAliveProbe(bool Function() probe) {
     _keepAliveProbes.remove(probe);
   }
 
-  
   void registerShutdownHook(void Function() hook) {
     if (_shutdownHooks.contains(hook)) return;
     _shutdownHooks.add(hook);
@@ -1339,27 +1235,19 @@ class AppState extends ChangeNotifier {
     for (final probe in _keepAliveProbes) {
       try {
         if (probe()) return true;
-      } catch (_) {
-        
-        
-      }
+      } catch (_) {}
     }
     return false;
   }
 
   void _runShutdownHooks() {
-    
-    
     for (final hook in [..._shutdownHooks]) {
       try {
         hook();
-      } catch (_) {
-        
-      }
+      } catch (_) {}
     }
   }
 
-  
   @visibleForTesting
   bool shouldLockOnInactivityExpiry() {
     if (!_unlocked) return false;
@@ -1367,12 +1255,9 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
-  
   void _onInactivityExpired() {
     if (!_unlocked) return;
     if (_hasActiveKeepAlive()) {
-      
-      
       _inactivityTimer?.cancel();
       _inactivityTimer = Timer(_kInactivityTimeout, _onInactivityExpired);
       return;
@@ -1382,18 +1267,13 @@ class AppState extends ChangeNotifier {
     unlocked = false;
     notifyListeners();
 
-
-
-
     final messengerState = rootScaffoldMessengerKey.currentState;
     String localised = 'Vault locked due to inactivity.';
     final ctx = messengerState?.context;
     if (ctx != null) {
       try {
         localised = AppLocalizations.of(ctx).errorInactivityLocked;
-      } catch (_) {
-
-      }
+      } catch (_) {}
     }
     messengerState?.showSnackBar(
       SnackBar(content: Text(localised)),
@@ -1404,28 +1284,40 @@ class AppState extends ChangeNotifier {
     );
   }
 
-void applyBackendStats(Map<String, dynamic> stats) {
-  loginCount = (stats['login_count'] as num?)?.toInt() ?? loginCount;
-  cardCount = (stats['card_count'] as num?)?.toInt() ?? cardCount;
-  idCount = (stats['id_count'] as num?)?.toInt() ?? idCount;
-  fileCount = (stats['file_count'] as num?)?.toInt() ?? fileCount;
-  storageUsedBytes =
-      (stats['storage_used_bytes'] as num?)?.toInt() ?? storageUsedBytes;
-  storageLimitBytes =
-      (stats['storage_limit_bytes'] as num?)?.toInt() ?? storageLimitBytes;
-  storagePendingBytes =
-      (stats['storage_pending_bytes'] as num?)?.toInt() ?? 0;
-  uploadSafetyCapBytes =
-      (stats['upload_safety_cap_bytes'] as num?)?.toInt() ?? uploadSafetyCapBytes;
-  notifyListeners();
-}
+  void applyBackendStats(Map<String, dynamic> stats) {
+    loginCount = (stats['login_count'] as num?)?.toInt() ?? loginCount;
+    cardCount = (stats['card_count'] as num?)?.toInt() ?? cardCount;
+    idCount = (stats['id_count'] as num?)?.toInt() ?? idCount;
+    fileCount = (stats['file_count'] as num?)?.toInt() ?? fileCount;
+    storageUsedBytes =
+        (stats['storage_used_bytes'] as num?)?.toInt() ?? storageUsedBytes;
+    storageLimitBytes =
+        (stats['storage_limit_bytes'] as num?)?.toInt() ?? storageLimitBytes;
+    storagePendingBytes =
+        (stats['storage_pending_bytes'] as num?)?.toInt() ?? 0;
+    uploadSafetyCapBytes =
+        (stats['upload_safety_cap_bytes'] as num?)?.toInt() ??
+            uploadSafetyCapBytes;
+    notifyListeners();
+  }
+
   Future<void> hydrate() async {
     final sp = await SharedPreferences.getInstance();
     sessionToken = sp.getString('session_token');
     lastVaultName = sp.getString('last_vault_name');
+    // Restore the user-facing username hint FIRST so any UI that
+    // paints before /auth/me returns (or if /auth/me never returns)
+    // already shows the friendly name instead of the internal handle.
+    final persistedDisplay = sp.getString('last_display_username');
+    if (persistedDisplay != null && persistedDisplay.isNotEmpty) {
+      displayUsername = persistedDisplay;
+    }
+    final persistedHandle = sp.getString('last_vault_handle');
+    if (persistedHandle != null && persistedHandle.isNotEmpty) {
+      vaultHandle = persistedHandle;
+    }
     await _loadAppLocale();
 
-    
     if (sessionToken != null && sessionToken!.isNotEmpty) {
       try {
         final client = VaultAIClient(baseUrl: backendBaseUrl);
@@ -1437,9 +1329,17 @@ void applyBackendStats(Map<String, dynamic> stats) {
           lastVaultName = name.trim();
           await sp.setString('last_vault_name', name.trim());
         }
+        // Backend /auth/me returns the plaintext display_username ONLY
+        // for legacy vaults; ZK vaults leave the column NULL because
+        // the human-readable name is encrypted client-side. If the
+        // response omits it, KEEP whatever we restored from
+        // last_display_username above — never clobber with null and
+        // never silently substitute vault_name (which is either the
+        // random hex or the VLT handle).
         final display = me['display_username']?.toString();
         if (display != null && display.isNotEmpty) {
           displayUsername = display;
+          await sp.setString('last_display_username', display);
         }
       } catch (_) {
         sessionToken = null;
@@ -1453,12 +1353,12 @@ void applyBackendStats(Map<String, dynamic> stats) {
     notifyListeners();
   }
 
-  
   Future<void> setSession({
     required String token,
     required String vaultIdValue,
     required String vaultNameValue,
     String? displayUsernameValue,
+    String? vaultHandleValue,
   }) async {
     // A successful login clears the "terminated" flag so the api
     // layer stops short-circuiting authenticated requests. The
@@ -1471,8 +1371,16 @@ void applyBackendStats(Map<String, dynamic> stats) {
     vaultId = vaultIdValue;
     vaultName = vaultNameValue;
     lastVaultName = vaultNameValue;
+    if (vaultHandleValue != null && vaultHandleValue.isNotEmpty) {
+      vaultHandle = vaultHandleValue;
+      await sp.setString('last_vault_handle', vaultHandleValue);
+    }
     if (displayUsernameValue != null && displayUsernameValue.isNotEmpty) {
       displayUsername = displayUsernameValue;
+      // Persist the friendly name so the next launch's hydrate() can
+      // paint it BEFORE /auth/me returns (or if it fails). Without
+      // this the UI would fall back to the VLT handle for one frame.
+      await sp.setString('last_display_username', displayUsernameValue);
     }
     authed = true;
     await sp.setString('session_token', token);
@@ -1480,7 +1388,6 @@ void applyBackendStats(Map<String, dynamic> stats) {
     notifyListeners();
   }
 
-  
   Future<void> clearSession({bool keepLastVaultName = true}) async {
     _runShutdownHooks();
 
@@ -1488,9 +1395,7 @@ void applyBackendStats(Map<String, dynamic> stats) {
 
     try {
       CryptoChatLiveCache.instance.clear();
-    } catch (_) {
-
-    }
+    } catch (_) {}
     // Clear the process-global active MVK BEFORE nulling session
     // fields. Any downstream write path (crypto send, upload, ZK
     // memory finalize) that races with logout will see current()
@@ -1520,6 +1425,7 @@ void applyBackendStats(Map<String, dynamic> stats) {
     sessionToken = null;
     vaultId = null;
     vaultName = null;
+    vaultHandle = null;
     displayUsername = null;
     authed = false;
     unlocked = false;
@@ -1527,11 +1433,16 @@ void applyBackendStats(Map<String, dynamic> stats) {
     if (!keepLastVaultName) {
       lastVaultName = null;
       await sp.remove('last_vault_name');
+      // "Use another vault" — drop everything about the previous
+      // account so the /login page starts clean. Preserving these
+      // would either pre-fill the wrong username or paint the wrong
+      // name during the fresh session's hydrate.
+      await sp.remove('last_vault_handle');
+      await sp.remove('last_display_username');
     }
     notifyListeners();
   }
 
-  
   void markUnlocked() {
     unlocked = true;
     pinAttempts = 0;
@@ -1539,7 +1450,6 @@ void applyBackendStats(Map<String, dynamic> stats) {
     notifyListeners();
   }
 
-  
   Future<void> wipeOrphanDataAndClear() async {
     final token = sessionToken;
     if (token == null) {
@@ -1551,16 +1461,13 @@ void applyBackendStats(Map<String, dynamic> stats) {
     notifyListeners();
   }
 
-  
   Future<void> signOut() async {
     final token = sessionToken;
     if (token != null) {
       try {
-        await VaultAIClient(baseUrl: backendBaseUrl).authLogout(authToken: token);
-      } catch (_) {
-        
-        
-      }
+        await VaultAIClient(baseUrl: backendBaseUrl)
+            .authLogout(authToken: token);
+      } catch (_) {}
     }
     final currentVaultId = vaultId;
     if (currentVaultId != null) {
@@ -1569,185 +1476,174 @@ void applyBackendStats(Map<String, dynamic> stats) {
     await clearSession(keepLastVaultName: true);
   }
 
+  Future<bool> verifyPin(String pin) async {
+    final knownVaultName = vaultName ?? lastVaultName;
+    if (knownVaultName == null) return false;
 
-Future<bool> verifyPin(String pin) async {
-  final knownVaultName = vaultName ?? lastVaultName;
-  if (knownVaultName == null) return false;
+    vlog('pin.verify.start', {
+      'vaultName': knownVaultName,
+      'vaultNameLen': knownVaultName.length,
+      'pinLen': pin.length,
+    });
 
-  vlog('pin.verify.start', {
-    'vaultName': knownVaultName,
-    'vaultNameLen': knownVaultName.length,
-    'pinLen': pin.length,
-  });
+    if (lockoutUntil != null && DateTime.now().isBefore(lockoutUntil!)) {
+      throw Exception('Too many attempts. Wait ${_getLockoutSeconds()}s');
+    }
 
-  if (lockoutUntil != null && DateTime.now().isBefore(lockoutUntil!)) {
-    throw Exception('Too many attempts. Wait ${_getLockoutSeconds()}s');
-  }
+    final tTotal0 = DateTime.now();
+    int tPrev = tTotal0.millisecondsSinceEpoch;
+    int tick() {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final delta = now - tPrev;
+      tPrev = now;
+      return delta;
+    }
 
-  
-  final tTotal0 = DateTime.now();
-  int tPrev = tTotal0.millisecondsSinceEpoch;
-  int tick() {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final delta = now - tPrev;
-    tPrev = now;
-    return delta;
-  }
-
-  try {
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-
-    
-    final Map<String, dynamic> loginResult;
     try {
-      loginResult = await client.authLogin(
-        vaultName: knownVaultName,
-        pin: pin,
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+
+      final Map<String, dynamic> loginResult;
+      try {
+        loginResult = await client.authLogin(
+          vaultName: knownVaultName,
+          pin: pin,
+        );
+      } on InvalidCredentialsException catch (e) {
+        lockMessage = e.message;
+        pinAttempts++;
+        vlog('pin.verify.result', {
+          'result': 'failure',
+          'code': 'invalid_credentials',
+        });
+        notifyListeners();
+        return false;
+      }
+      vlog('pin.timing.auth_login', {'elapsed_ms': tick()});
+
+      final newToken = loginResult['session_token']?.toString();
+      final newVaultId = loginResult['vault_id']?.toString();
+      final newVaultName =
+          loginResult['vault_name']?.toString() ?? knownVaultName;
+      final newDisplay = loginResult['display_username']?.toString();
+      if (newToken == null || newToken.isEmpty || newVaultId == null) {
+        throw Exception('Login response missing session_token or vault_id');
+      }
+
+      await setSession(
+        token: newToken,
+        vaultIdValue: newVaultId,
+        vaultNameValue: newVaultName,
+        displayUsernameValue: newDisplay,
       );
-    } on InvalidCredentialsException catch (e) {
-      lockMessage = e.message;
+
+      lockMessage = null;
+
+      final activeDeviceId = apiClientDeviceId() ?? '';
+      final activeDeviceIdPrefix = activeDeviceId.length >= 8
+          ? activeDeviceId.substring(0, 8)
+          : activeDeviceId;
+      vlog('pin.verify.result', {
+        'result': 'success',
+        'vaultName': newVaultName,
+        'next_call': '/vault-meta',
+        'device_id_prefix': activeDeviceIdPrefix,
+        'device_id_present': activeDeviceId.isNotEmpty,
+      });
+
+      final vaultMeta = await _API.getVaultMeta(
+        vaultName: newVaultName,
+        authToken: newToken,
+      );
+      vlog('pin.timing.vault_meta', {'elapsed_ms': tick()});
+      vlog('pin.post_verify.vault_meta_ok', {
+        'vaultName': newVaultName,
+        'device_id_prefix': activeDeviceIdPrefix,
+      });
+
+      final pinSalt = vaultMeta['pin_salt']?.toString();
+      if (pinSalt == null || pinSalt.isEmpty) {
+        throw Exception('Backend did not return pin salt');
+      }
+      final iterations =
+          (vaultMeta['kdf_iterations'] as num?)?.toInt() ?? 100000;
+
+      await _VaultCrypto.deriveAndCacheKey(
+        pin: pin,
+        vaultId: newVaultId,
+        vaultName: newVaultName,
+        pinSaltBase64: pinSalt,
+        iterations: iterations,
+      );
+      vlog('pin.timing.derive_key', {
+        'elapsed_ms': tick(),
+        'iterations': iterations,
+      });
+
+      try {
+        final rotateResult = await client.rotateVaultKdf(
+          vaultName: newVaultName,
+          pin: pin,
+          authToken: newToken,
+        );
+        if (rotateResult['rotated'] == true) {
+          final newSalt = rotateResult['pin_salt']?.toString();
+          final newIter = (rotateResult['kdf_iterations'] as num?)?.toInt();
+          if (newSalt != null && newSalt.isNotEmpty && newIter != null) {
+            await _VaultCrypto.deriveAndCacheKey(
+              pin: pin,
+              vaultId: newVaultId,
+              vaultName: newVaultName,
+              pinSaltBase64: newSalt,
+              iterations: newIter,
+            );
+          }
+        }
+      } catch (_) {}
+      vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
+
+      pinAttempts = 0;
+      lockoutUntil = null;
+      unlocked = true;
+      notifyListeners();
+      vlog('pin.post_verify.unlocked', {
+        'vaultName': newVaultName,
+        'device_id_prefix': activeDeviceIdPrefix,
+        'route_target': '/chat',
+      });
+
+      await refreshAvailableVaults();
+
+      await refreshNotifications();
+      vlog('pin.timing.refresh_fan', {'elapsed_ms': tick()});
+
+      vlog('pin.timing.verify_pin_total', {
+        'elapsed_ms': DateTime.now().difference(tTotal0).inMilliseconds,
+      });
+      return true;
+    } on DeviceNotTrustedException catch (e) {
+      vlog('pin.verify.result', {
+        'result': 'device_not_trusted',
+        'status': e.status,
+      });
+      lockMessage = null;
+      rethrow;
+    } catch (e) {
       pinAttempts++;
       vlog('pin.verify.result', {
         'result': 'failure',
-        'code': 'invalid_credentials',
+        'reason': 'exception',
+        'error': e.toString(),
       });
       notifyListeners();
       return false;
     }
-    vlog('pin.timing.auth_login', {'elapsed_ms': tick()});
-
-    final newToken = loginResult['session_token']?.toString();
-    final newVaultId = loginResult['vault_id']?.toString();
-    final newVaultName = loginResult['vault_name']?.toString() ?? knownVaultName;
-    final newDisplay = loginResult['display_username']?.toString();
-    if (newToken == null || newToken.isEmpty || newVaultId == null) {
-      throw Exception('Login response missing session_token or vault_id');
-    }
-
-    await setSession(
-      token: newToken,
-      vaultIdValue: newVaultId,
-      vaultNameValue: newVaultName,
-      displayUsernameValue: newDisplay,
-    );
-
-    lockMessage = null;
-    
-    
-    final activeDeviceId = apiClientDeviceId() ?? '';
-    final activeDeviceIdPrefix = activeDeviceId.length >= 8
-        ? activeDeviceId.substring(0, 8)
-        : activeDeviceId;
-    vlog('pin.verify.result', {
-      'result': 'success',
-      'vaultName': newVaultName,
-      'next_call': '/vault-meta',
-      'device_id_prefix': activeDeviceIdPrefix,
-      'device_id_present': activeDeviceId.isNotEmpty,
-    });
-
-    final vaultMeta = await _API.getVaultMeta(
-      vaultName: newVaultName,
-      authToken: newToken,
-    );
-    vlog('pin.timing.vault_meta', {'elapsed_ms': tick()});
-    vlog('pin.post_verify.vault_meta_ok', {
-      'vaultName': newVaultName,
-      'device_id_prefix': activeDeviceIdPrefix,
-    });
-
-    final pinSalt = vaultMeta['pin_salt']?.toString();
-    if (pinSalt == null || pinSalt.isEmpty) {
-      throw Exception('Backend did not return pin salt');
-    }
-    final iterations = (vaultMeta['kdf_iterations'] as num?)?.toInt() ?? 100000;
-
-    await _VaultCrypto.deriveAndCacheKey(
-      pin: pin,
-      vaultId: newVaultId,
-      vaultName: newVaultName,
-      pinSaltBase64: pinSalt,
-      iterations: iterations,
-    );
-    vlog('pin.timing.derive_key', {
-      'elapsed_ms': tick(),
-      'iterations': iterations,
-    });
-
-    
-    try {
-      final rotateResult = await client.rotateVaultKdf(
-        vaultName: newVaultName,
-        pin: pin,
-        authToken: newToken,
-      );
-      if (rotateResult['rotated'] == true) {
-        final newSalt = rotateResult['pin_salt']?.toString();
-        final newIter = (rotateResult['kdf_iterations'] as num?)?.toInt();
-        if (newSalt != null && newSalt.isNotEmpty && newIter != null) {
-          await _VaultCrypto.deriveAndCacheKey(
-            pin: pin,
-            vaultId: newVaultId,
-            vaultName: newVaultName,
-            pinSaltBase64: newSalt,
-            iterations: newIter,
-          );
-        }
-      }
-    } catch (_) {
-      
-      
-    }
-    vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
-
-    pinAttempts = 0;
-    lockoutUntil = null;
-    unlocked = true;
-    notifyListeners();
-    vlog('pin.post_verify.unlocked', {
-      'vaultName': newVaultName,
-      'device_id_prefix': activeDeviceIdPrefix,
-      'route_target': '/chat',
-    });
-
-    
-    await refreshAvailableVaults();
-    
-    await refreshNotifications();
-    vlog('pin.timing.refresh_fan', {'elapsed_ms': tick()});
-
-    vlog('pin.timing.verify_pin_total', {
-      'elapsed_ms': DateTime.now()
-          .difference(tTotal0)
-          .inMilliseconds,
-    });
-    return true;
-  } on DeviceNotTrustedException catch (e) {
-    
-    
-    vlog('pin.verify.result', {
-      'result': 'device_not_trusted',
-      'status': e.status,
-    });
-    lockMessage = null;
-    rethrow;
-  } catch (e) {
-    pinAttempts++;
-    vlog('pin.verify.result', {
-      'result': 'failure',
-      'reason': 'exception',
-      'error': e.toString(),
-    });
-    notifyListeners();
-    return false;
   }
-}
 
-int _getLockoutSeconds() {
-  if (lockoutUntil == null) return 0;
-  final diff = lockoutUntil!.difference(DateTime.now()).inSeconds;
-  return diff < 0 ? 0 : diff;
-}
+  int _getLockoutSeconds() {
+    if (lockoutUntil == null) return 0;
+    final diff = lockoutUntil!.difference(DateTime.now()).inSeconds;
+    return diff < 0 ? 0 : diff;
+  }
 
   Future<bool> hasPin() async {
     final token = sessionToken;
@@ -1763,8 +1659,9 @@ int _getLockoutSeconds() {
       vlog('pin.hasPin', {
         'currentAppVaultName': vaultName,
         'backendVaultName': backendVaultName,
-        'differs':
-            vaultName != null && backendVaultName != null && vaultName != backendVaultName,
+        'differs': vaultName != null &&
+            backendVaultName != null &&
+            vaultName != backendVaultName,
         'has_pin': result['has_pin'],
       });
       if (backendVaultName != null && backendVaultName.trim().isNotEmpty) {
@@ -1785,7 +1682,6 @@ int _getLockoutSeconds() {
     final token = sessionToken;
     final localVaultName = lastVaultName;
 
-    
     if (token == null) {
       if (localVaultName != null && localVaultName.trim().isNotEmpty) {
         vaultName = localVaultName.trim();
@@ -1849,7 +1745,7 @@ int _getLockoutSeconds() {
     try {
       pin = await _VaultCrypto.currentPinOrThrow();
     } catch (_) {
-      return; 
+      return;
     }
 
     try {
@@ -1861,20 +1757,15 @@ int _getLockoutSeconds() {
       applyBackendStats(stats);
     } catch (_) {}
 
-    
     await refreshBilling();
   }
 
-  
   Future<void> refreshBilling() async {
     final token = sessionToken;
     if (token == null) {
       _logDevBillingMeStarted(reason: 'no_session_token', seq: -1);
       return;
     }
-
-
-
 
     final seq = ++_billingRefreshSeq;
 
@@ -1891,7 +1782,6 @@ int _getLockoutSeconds() {
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
-
       final ent = await client.getBillingMe(authToken: token).timeout(
         const Duration(seconds: 12),
         onTimeout: () {
@@ -1902,19 +1792,12 @@ int _getLockoutSeconds() {
         },
       );
 
-
-
       _logDevBillingMeShape(ent, seq: seq);
 
-
-
-      final parsedOk = ent.isNotEmpty
-          && (ent['included_bytes'] != null
-              || ent['effective_limit_bytes'] != null
-              || ent['status'] != null);
-
-
-
+      final parsedOk = ent.isNotEmpty &&
+          (ent['included_bytes'] != null ||
+              ent['effective_limit_bytes'] != null ||
+              ent['status'] != null);
 
       if (seq < _billingRefreshLatestApplied) {
         _logDevBillingMe(
@@ -1930,16 +1813,14 @@ int _getLockoutSeconds() {
       _billingRefreshLatestApplied = seq;
 
       billingEffectiveLimitBytes =
-          (ent['effective_limit_bytes'] as num?)?.toInt() ?? billingEffectiveLimitBytes;
+          (ent['effective_limit_bytes'] as num?)?.toInt() ??
+              billingEffectiveLimitBytes;
       billingBlockCount =
           (ent['block_count'] as num?)?.toInt() ?? billingBlockCount;
       billingPurchasedBytes =
           (ent['purchased_bytes'] as num?)?.toInt() ?? billingPurchasedBytes;
       billingIncludedBytes =
           (ent['included_bytes'] as num?)?.toInt() ?? billingIncludedBytes;
-
-
-
 
       billingLoadState = BillingLoadState.loaded;
       billingLoadError = null;
@@ -1960,10 +1841,6 @@ int _getLockoutSeconds() {
       final classified = classifyBillingMeError(e);
       final safeCopy = billingBannerCopyForCode(classified.errorCode);
 
-
-
-
-
       if (seq < _billingRefreshLatestApplied) {
         _logDevBillingMe(
           status: classified.statusLabel,
@@ -1979,10 +1856,6 @@ int _getLockoutSeconds() {
 
       String stateAfter;
       if (hadPriorSuccess) {
-
-
-
-
         billingLoadError = safeCopy;
         stateAfter = 'loaded';
       } else {
@@ -2009,9 +1882,6 @@ int _getLockoutSeconds() {
     developer.log('$label=$ms${error ? ' error' : ''}', name: 'CryptoVault');
   }
 
-
-
-
   void _logDevBillingMe({
     required String status,
     required String errorCode,
@@ -2033,9 +1903,6 @@ int _getLockoutSeconds() {
     );
   }
 
-
-
-
   void _logDevBillingMeStarted({required String reason, required int seq}) {
     if (!kDebugMode) return;
     developer.log(
@@ -2047,14 +1914,8 @@ int _getLockoutSeconds() {
     );
   }
 
-
-
-
   void _logDevBillingMeShape(Map<String, dynamic> ent, {required int seq}) {
     if (!kDebugMode) return;
-
-
-
 
     final keys = ent.keys.toList()..sort();
     final billingStateVal = ent['billing_state']?.toString() ?? '<absent>';
@@ -2075,9 +1936,6 @@ int _getLockoutSeconds() {
     );
   }
 
-
-
-
   void _logDevBillingMeStateAfterSuccess() {
     if (!kDebugMode) return;
     developer.log(
@@ -2090,13 +1948,12 @@ int _getLockoutSeconds() {
     );
   }
 
-  
   Future<void> retryBilling() => refreshBilling();
 
-  
   void applyBillingPayload(Map<String, dynamic> ent) {
     billingEffectiveLimitBytes =
-        (ent['effective_limit_bytes'] as num?)?.toInt() ?? billingEffectiveLimitBytes;
+        (ent['effective_limit_bytes'] as num?)?.toInt() ??
+            billingEffectiveLimitBytes;
     billingBlockCount =
         (ent['block_count'] as num?)?.toInt() ?? billingBlockCount;
     billingPurchasedBytes =
@@ -2108,7 +1965,6 @@ int _getLockoutSeconds() {
     notifyListeners();
   }
 
-  
   Future<void> signOutEverywhere() async {
     final currentVaultId = vaultId;
     if (currentVaultId != null) {
@@ -2130,16 +1986,8 @@ int _getLockoutSeconds() {
     notifyListeners();
   }
 
-
-
-
-
-
   Future<void> handleVaultDeleted() async {
     final deletedVaultId = vaultId;
-
-
-
 
     if (deletedVaultId != null) {
       try {
@@ -2147,13 +1995,7 @@ int _getLockoutSeconds() {
       } catch (_) {}
     }
 
-
-
-
     await clearSession(keepLastVaultName: false);
-
-
-
 
     pinAttempts = 0;
     lockoutUntil = null;
@@ -2174,16 +2016,10 @@ int _getLockoutSeconds() {
 
     notifyListeners();
 
-
-
-
     rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
       '/auth',
       (_) => false,
     );
-
-
-
 
     final messengerState = rootScaffoldMessengerKey.currentState;
     String message = 'Your vault has been deleted.';
@@ -2207,8 +2043,7 @@ int _getLockoutSeconds() {
     if (currentVaultId != null) {
       _VaultCrypto.clearCache(currentVaultId);
     }
-    
-    
+
     await clearSession(keepLastVaultName: false);
     pinAttempts = 0;
     lockoutUntil = null;
@@ -2253,11 +2088,6 @@ class _API {
   }
 }
 
-
-
-
-
-
 Locale resolveShellLocale(
   List<Locale>? preferred,
   Iterable<Locale> supported,
@@ -2265,9 +2095,8 @@ Locale resolveShellLocale(
   final supportedList = supported.toList(growable: false);
   final english = supportedList.firstWhere(
     (l) => l.languageCode == 'en',
-    orElse: () => supportedList.isEmpty
-        ? const Locale('en')
-        : supportedList.first,
+    orElse: () =>
+        supportedList.isEmpty ? const Locale('en') : supportedList.first,
   );
   if (preferred == null || preferred.isEmpty) return english;
   for (final want in preferred) {
@@ -2280,20 +2109,15 @@ Locale resolveShellLocale(
   return english;
 }
 
-
 class VaultaiApp extends StatelessWidget {
   const VaultaiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    
-    
     final app = context.watch<AppState>();
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       scaffoldMessengerKey: rootScaffoldMessengerKey,
-      
-      
       navigatorObservers: [appRouteObserver],
       builder: (context, child) {
         if (child == null) return const SizedBox.shrink();
@@ -2301,22 +2125,13 @@ class VaultaiApp extends StatelessWidget {
       },
       debugShowCheckedModeBanner: false,
       title: 'VaultAI',
-      
-      
       locale: app.shellLocale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-
-
-
-
-
       localeListResolutionCallback: resolveShellLocale,
       theme: VaultTheme.dark(),
       routes: {
         '/': (_) => const LandingPage(),
-        
-        
         '/auth': (_) => const LoginPage(),
         '/login': (_) => const LoginPage(),
         '/signup': (_) => const SignupPage(),
@@ -2325,22 +2140,15 @@ class VaultaiApp extends StatelessWidget {
         '/vault-frozen': (_) => const VaultFrozenPage(),
         '/recover': (_) => const VaultRecoveryPage(),
         '/chat': (_) => const ChatDashboardPage(),
-        
-        
         '/device-pending': (_) => const DevicePendingPage(),
-        
-        
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
-
-
         '/storage': (_) => const StoragePage(),
       },
       initialRoute: '/',
     );
   }
 }
-
 
 class _ActivityWrapper extends StatefulWidget {
   final Widget child;
@@ -2365,11 +2173,10 @@ class _ActivityWrapperState extends State<_ActivityWrapper> {
 
   bool _onKey(KeyEvent event) {
     if (event is KeyDownEvent) _bump();
-    return false; 
+    return false;
   }
 
   void _bump() {
-    
     try {
       context.read<AppState>().resetInactivityTimer();
     } catch (_) {}
@@ -2429,9 +2236,11 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
             decoration: BoxDecoration(
               color: const Color(0xFF10A37F).withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF10A37F).withValues(alpha: 0.18)),
+              border: Border.all(
+                  color: const Color(0xFF10A37F).withValues(alpha: 0.18)),
             ),
-            child: const Icon(Icons.shield_rounded, color: Color(0xFF10A37F), size: 22),
+            child: const Icon(Icons.shield_rounded,
+                color: Color(0xFF10A37F), size: 22),
           ),
           const SizedBox(width: 12),
           const Text(
@@ -2452,7 +2261,8 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                   TextButton.icon(
                     key: const Key('top_nav_help_and_faq_public'),
                     onPressed: () => openHelpCenter(
-                      context, mode: hc.HelpCenterMode.public,
+                      context,
+                      mode: hc.HelpCenterMode.public,
                     ),
                     icon: const Icon(Icons.help_outline, size: 16),
                     label: const Text('Help & FAQ'),
@@ -2488,10 +2298,8 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 220),
                           child: Text(
-
-
                             app.displayUsername ?? 'VaultAI User',
-                             overflow: TextOverflow.ellipsis,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
@@ -2537,8 +2345,10 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       }
                     },
                     child: Container(
-                      constraints: BoxConstraints(maxWidth: isMobile ? 180 : 260),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      constraints:
+                          BoxConstraints(maxWidth: isMobile ? 180 : 260),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
                       decoration: BoxDecoration(
                         color: const Color(0xFF262626),
                         borderRadius: BorderRadius.circular(28),
@@ -2547,7 +2357,8 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.account_circle_outlined, size: 22, color: Color(0xFFB4B4B4)),
+                          const Icon(Icons.account_circle_outlined,
+                              size: 22, color: Color(0xFFB4B4B4)),
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
@@ -2601,9 +2412,14 @@ String inferAssetTypeForUpload({
     // Identity documents that arrive as photos still classify as
     // id_image so the vault UI can group them properly.
     for (final tok in const [
-      'passport', 'driver license', 'drivers license',
-      "driver's license", 'photo id', 'id card',
-      'identity card', 'national id',
+      'passport',
+      'driver license',
+      'drivers license',
+      "driver's license",
+      'photo id',
+      'id card',
+      'identity card',
+      'national id',
     ]) {
       if (name.contains(tok)) return 'id_image';
     }
@@ -2639,7 +2455,7 @@ String inferAssetTypeForUpload({
 /// null if no confident inference can be made from the filename
 /// alone. NEVER opens the file body.
 ({String? detectedType, String? detectedService})
-inferDetectedTypeAndServiceForUpload({
+    inferDetectedTypeAndServiceForUpload({
   required String fileName,
 }) {
   final name = fileName.toLowerCase();
@@ -2740,7 +2556,8 @@ Future<void> tryZkFinalizeInferredUploadMetadataBestEffort({
   if (zk_mvk_store.ZkActiveMvk.current() == null) return;
   try {
     final at = inferAssetTypeForUpload(
-      fileName: fileName, contentType: contentType,
+      fileName: fileName,
+      contentType: contentType,
     );
     final det = inferDetectedTypeAndServiceForUpload(fileName: fileName);
     final client = VaultAIClient(baseUrl: baseUrl);
@@ -2789,8 +2606,7 @@ class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
       child: const Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.lock_outline,
-              size: 18, color: Color(0xFF90CAF9)),
+          Icon(Icons.lock_outline, size: 18, color: Color(0xFF90CAF9)),
           SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -2835,37 +2651,37 @@ Map<String, String> zkNotificationFallback(String? rawKind) {
       return const {
         'title': 'Beneficiary transfer requested',
         'body': 'A beneficiary linked to this vault has requested a '
-                'transfer. Open the Inheritance page for details.',
+            'transfer. Open the Inheritance page for details.',
       };
     case 'transfer_cancelled':
       return const {
         'title': 'Beneficiary transfer cancelled',
         'body': 'A pending beneficiary transfer for this vault was '
-                'cancelled.',
+            'cancelled.',
       };
     case 'transfer_completed':
       return const {
         'title': 'Beneficiary transfer completed',
         'body': 'A beneficiary transfer for this vault has '
-                'completed. Open the Inheritance page for details.',
+            'completed. Open the Inheritance page for details.',
       };
     case 'device_approved':
       return const {
         'title': 'Device approved',
         'body': 'A device on this vault was approved. Open the '
-                'Devices page to review.',
+            'Devices page to review.',
       };
     case 'device_revoked':
       return const {
         'title': 'Device revoked',
         'body': 'A device on this vault was revoked. Open the '
-                'Devices page to review.',
+            'Devices page to review.',
       };
     case 'device_approval_pending':
       return const {
         'title': 'Self-approval started on a new device',
         'body': 'A new device is pending self-approval. Open the '
-                'Devices page to review or cancel.',
+            'Devices page to review or cancel.',
       };
     case 'device_self_approval_cancelled':
       return const {
@@ -2876,7 +2692,7 @@ Map<String, String> zkNotificationFallback(String? rawKind) {
       return const {
         'title': 'Saved credential files',
         'body': 'Files were added to this vault. Open the Vault to '
-                'review.',
+            'review.',
       };
     case 'upload':
       return const {
@@ -2935,10 +2751,10 @@ class _NotificationBell extends StatelessWidget {
         final compact = screenSize.width < 400;
         return AlertDialog(
           backgroundColor: const Color(0xFF2F2F2F),
-          insetPadding: const EdgeInsets.symmetric(
-              horizontal: 16, vertical: 24),
-          contentPadding: EdgeInsets.fromLTRB(
-              compact ? 14 : 20, 16, compact ? 14 : 20, 8),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          contentPadding:
+              EdgeInsets.fromLTRB(compact ? 14 : 20, 16, compact ? 14 : 20, 8),
           title: Row(
             children: [
               Expanded(
@@ -2994,8 +2810,7 @@ class _NotificationBell extends StatelessWidget {
                       final rawTitle = (n['title'] ?? '').toString();
                       final rawBody = (n['body'] ?? '').toString();
                       final needsFallback =
-                          rawTitle.trim().isEmpty &&
-                          rawBody.trim().isEmpty;
+                          rawTitle.trim().isEmpty && rawBody.trim().isEmpty;
                       final fallback = needsFallback
                           ? zkNotificationFallback(
                               n['kind']?.toString(),
@@ -3123,7 +2938,6 @@ class _NotificationBell extends StatelessWidget {
   }
 }
 
-
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
 
@@ -3131,10 +2945,7 @@ class LandingPage extends StatefulWidget {
   State<LandingPage> createState() => _LandingPageState();
 }
 
-
 class _LandingPageState extends State<LandingPage> with RouteAware {
-  
-  
   bool _publicVisible = false;
 
   @override
@@ -3146,8 +2957,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    
-    
+
     final route = ModalRoute.of(context);
     if (route != null) {
       appRouteObserver.subscribe(this, route);
@@ -3156,8 +2966,6 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
 
   @override
   void didPopNext() {
-    
-    
     super.didPopNext();
     if (_publicVisible) {
       setState(() {
@@ -3171,8 +2979,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final app = context.read<AppState>();
-      
-      
+
       if (!app.hydrated) {
         debugPrint(
           '[ROUTE-GUARD] landing loaded source=$source '
@@ -3184,7 +2991,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
         return;
       }
       final dest = resolveLandingRedirect(
-        authed:   app.authed,
+        authed: app.authed,
         unlocked: app.unlocked,
       );
       final routeName = ModalRoute.of(context)?.settings.name;
@@ -3196,8 +3003,6 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
         'redirectFired=${dest != null}',
       );
       if (dest != null) {
-        
-        
         Navigator.of(context).pushReplacementNamed(dest);
         return;
       }
@@ -3218,8 +3023,6 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
   @override
   Widget build(BuildContext context) {
     if (!_publicVisible) {
-      
-      
       return const Scaffold();
     }
 
@@ -3232,14 +3035,19 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1100),
           child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: isMobile ? 18 : 28, vertical: isMobile ? 18 : 30),
+            padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 18 : 28, vertical: isMobile ? 18 : 30),
             child: isMobile
                 ? const Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [_HeroText(), SizedBox(height: 20), _HeroCard()],
                   )
                 : const Row(
-                    children: [Expanded(child: _HeroText()), SizedBox(width: 40), Expanded(child: _HeroCard())],
+                    children: [
+                      Expanded(child: _HeroText()),
+                      SizedBox(width: 40),
+                      Expanded(child: _HeroCard())
+                    ],
                   ),
           ),
         ),
@@ -3258,7 +3066,10 @@ class _HeroText extends StatelessWidget {
       children: [
         Text(
           'Your private AI vault.',
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800, height: 1.1),
+          style: Theme.of(context)
+              .textTheme
+              .headlineMedium
+              ?.copyWith(fontWeight: FontWeight.w800, height: 1.1),
         ),
         const SizedBox(height: 14),
         const Text(
@@ -3318,7 +3129,6 @@ class _HeroCard extends StatelessWidget {
   }
 }
 
-
 Future<void> _registerDeviceBestEffort(String authToken) async {
   try {
     final id = currentDeviceId() ?? await getOrCreateDeviceId();
@@ -3327,9 +3137,7 @@ Future<void> _registerDeviceBestEffort(String authToken) async {
       deviceId: id,
       label: currentDeviceLabel(),
     );
-  } catch (_) {
-
-  }
+  } catch (_) {}
 }
 
 /// Decide whether a failed consume call should keep the pending
@@ -3365,7 +3173,8 @@ Future<void> _autoConsumeInheritanceTokenIfPresent(
   try {
     await VaultAIClient(baseUrl: backendBaseUrl)
         .consumeInheritanceDeviceAuthorization(
-      token: token, authToken: authToken,
+      token: token,
+      authToken: authToken,
     );
     // Success: this device is trusted on the inherited account
     // and the one-time token is now consumed server-side. Clear it
@@ -3385,14 +3194,10 @@ Future<void> _autoConsumeInheritanceTokenIfPresent(
   }
 }
 
-
 void _notifyNewDeviceTrustedIfNeeded(bool flag) {
   if (!flag) return;
   final messenger = rootScaffoldMessengerKey.currentState;
   if (messenger == null) return;
-
-
-
 
   final ctx = messenger.context;
   String label = 'New device trusted.';
@@ -3408,7 +3213,6 @@ void _notifyNewDeviceTrustedIfNeeded(bool flag) {
   );
 }
 
-
 Widget _authErrorBox(String text) {
   return Container(
     width: double.infinity,
@@ -3423,7 +3227,6 @@ Widget _authErrorBox(String text) {
   );
 }
 
-
 Future<Map<String, dynamic>> _zkHttpPost(
   String path,
   Map<String, dynamic> body, {
@@ -3435,7 +3238,9 @@ Future<Map<String, dynamic>> _zkHttpPost(
     headers['Authorization'] = 'Bearer $bearerToken';
   }
   final response = await http.post(
-    uri, headers: headers, body: jsonEncode(body),
+    uri,
+    headers: headers,
+    body: jsonEncode(body),
   );
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
@@ -3484,7 +3289,9 @@ void _scheduleMetadataMigration({required AppState app}) {
   if (key == null) return;
 
   zk_mvk_store.ZkActiveMvk.set(
-    mvk: key, vaultId: vaultId, vaultHandle: vaultName,
+    mvk: key,
+    vaultId: vaultId,
+    vaultHandle: vaultName,
   );
 
   unawaited(mmc.runMetadataMigrationBestEffort(
@@ -3576,7 +3383,6 @@ Future<bool> _deriveKeyAndUnlock({
   return true;
 }
 
-
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -3590,7 +3396,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   bool loading = false;
   String? err;
   bool _isZkHandleInput = false;
-
 
   bool _showForm = false;
 
@@ -3610,7 +3415,23 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   }
 
   Future<void> _autofillCachedHandle() async {
+    // Prefer the persisted USERNAME (last_display_username) — it's
+    // what the user actually types. Fall back to the cached VLT
+    // handle only if we don't have a username yet (an adopted-legacy
+    // account whose signup happened before we started persisting
+    // display_username). We never overwrite whatever the user has
+    // already started typing.
     try {
+      final sp = await SharedPreferences.getInstance();
+      final persistedUsername = sp.getString('last_display_username');
+      if (!mounted) return;
+      if (persistedUsername != null &&
+          persistedUsername.isNotEmpty &&
+          vaultNameCtrl.text.isEmpty) {
+        vaultNameCtrl.text = persistedUsername;
+        _maybeMarkZkHandle();
+        return;
+      }
       final cached = await legacy_adopt.readCachedVaultHandle();
       if (!mounted) return;
       if (cached != null && cached.isNotEmpty && vaultNameCtrl.text.isEmpty) {
@@ -3641,8 +3462,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       if (!mounted) return;
       final app = context.read<AppState>();
       if (!app.hydrated) return;
-      
-      
+
       final dest = resolveLandingRedirect(
         authed: app.authed,
         unlocked: app.unlocked,
@@ -3657,8 +3477,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         Navigator.of(context).pushReplacementNamed(dest);
         return;
       }
-      
-      
+
       if (app.lastVaultName != null && app.lastVaultName!.isNotEmpty) {
         Navigator.of(context).pushReplacementNamed('/unlock');
         return;
@@ -3707,9 +3526,56 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     // If the ZK lookup 401s (unknown handle), fall through to the
     // pre-ZK legacy /auth/login below for true-legacy accounts.
     final bool entryIsHandle = vh.isValidVaultHandleDisplay(vaultName);
+
+    // Preflight: verify the entered identifier is derivable BEFORE
+    // touching the network. Any exception (InvalidUsername from a
+    // malformed input, a bang-null somewhere in the derivation
+    // chain) is turned into a controlled error message — never a
+    // raw "Null check operator used on a null value" leaks to the
+    // user. This also produces a diagnostic vlog line so a future
+    // regression can be pinpointed from production logs.
+    try {
+      if (entryIsHandle) {
+        vh.vaultHandleFromDisplay(vaultName);
+      } else {
+        vh.deriveVaultHandleFromUsername(vaultName);
+      }
+      vlog('login.preflight.ok', {
+        'entry_type': entryIsHandle ? 'handle' : 'username',
+        'identifier_len': vaultName.length,
+        'pin_len': pin.length,
+        'auth_path': 'zk_first_then_legacy_fallback',
+      });
+    } on vh.InvalidUsername catch (e) {
+      vlog('login.preflight.invalid_username', {'reason': e.message});
+      setState(() {
+        err = 'Please enter your username.';
+        loading = false;
+      });
+      return;
+    } on vh.InvalidVaultHandle catch (e) {
+      vlog('login.preflight.invalid_handle', {'reason': e.message});
+      setState(() {
+        err = 'Please enter your username.';
+        loading = false;
+      });
+      return;
+    } catch (e) {
+      vlog('login.preflight.derivation_failed',
+          {'error_type': e.runtimeType.toString(), 'error': e.toString()});
+      setState(() {
+        err = 'Login failed. Please check your username and try again.';
+        loading = false;
+      });
+      return;
+    }
+
     bool zkLoginNotFound = false;
     {
       try {
+        vlog('login.zk.attempt', {
+          'entry_type': entryIsHandle ? 'handle' : 'username',
+        });
         await OpaqueClient.ready();
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
@@ -3721,18 +3587,18 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
           vaultNameValue: loginResult.vaultHandle,
+          vaultHandleValue: loginResult.vaultHandle,
           displayUsernameValue: loginResult.displayName,
         );
         await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
-          loginResult.sessionToken, app,
+          loginResult.sessionToken,
+          app,
         );
-        _VaultCrypto._keyCache[
-          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
-        ] = loginResult.mvk;
-        _VaultCrypto._pinCache[
-          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
-        ] = pin;
+        _VaultCrypto._keyCache[_VaultCrypto._ck(
+            loginResult.vaultId, loginResult.vaultHandle)] = loginResult.mvk;
+        _VaultCrypto._pinCache[_VaultCrypto._ck(
+            loginResult.vaultId, loginResult.vaultHandle)] = pin;
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: loginResult.vaultHandle,
@@ -3751,11 +3617,23 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         try {
           await app.refreshNotifications();
         } catch (_) {}
-        _scheduleMetadataMigration(app: app);
+        // Both post-login side-effects below can throw independently
+        // of the authenticated session. If either raises, the user
+        // is ALREADY authenticated — we must not surface a raw
+        // exception ("Null check operator used on a null value") as
+        // if the login itself failed. Swallow-and-log so the user
+        // still lands on /chat.
+        try {
+          _scheduleMetadataMigration(app: app);
+        } catch (e) {
+          vlog('login.post_login_side_effect_failed',
+              {'step': 'schedule_metadata_migration', 'error': e.toString()});
+        }
         try {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString(
-            legacy_adopt.prefsVaultHandleKey, loginResult.vaultHandle,
+            legacy_adopt.prefsVaultHandleKey,
+            loginResult.vaultHandle,
           );
         } catch (_) {}
         if (!mounted) return;
@@ -3778,6 +3656,12 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       } catch (e) {
         if (app.handleApiException(e)) return;
         final msg = e.toString();
+        vlog('login.zk.failed', {
+          'error_type': e.runtimeType.toString(),
+          // Only the first ~120 chars of the message so a stray
+          // ciphertext / long path segment doesn't blow up the log.
+          'error_head': msg.length > 120 ? msg.substring(0, 120) : msg,
+        });
         // Two ZK failure modes:
         //   * 401 "vault_handle or PIN is incorrect" — either the
         //     account is pre-ZK (no vault_handle row) OR the PIN is
@@ -3786,14 +3670,20 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         //     alone, so we let the fallback run; it will 401 again
         //     with the correct "Wrong username or PIN" copy for the
         //     pre-ZK-but-wrong-PIN case.
-        //   * anything else — hard error, surface immediately.
-        if (msg.contains('HTTP 401') ||
-            msg.contains('vault_handle or PIN is incorrect')) {
+        //   * anything else — hard error. NEVER surface the raw Dart
+        //     message ("Null check operator used on a null value" is
+        //     what the pre-2026-07-20 build showed). The controlled
+        //     copy below is human-actionable AND cannot leak internal
+        //     identifiers, ciphertext, or exception structure.
+        final looksLikeAuth401 = msg.contains('HTTP 401') ||
+            msg.contains('failed 401') ||
+            msg.contains('vault_handle or PIN is incorrect');
+        if (looksLikeAuth401) {
           zkLoginNotFound = true;
         } else {
           if (!mounted) return;
           setState(() {
-            err = 'Login failed. ${msg.replaceFirst("Exception: ", "")}';
+            err = 'Login failed. Please try again.';
             loading = false;
           });
           return;
@@ -3814,6 +3704,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
 
     // Legacy path — vault_name + PIN. Reserved for un-adopted vaults
     // that predate the ZK rollout.
+    vlog('login.legacy.attempt', {
+      'reason': entryIsHandle ? 'handle_not_zk' : 'username_not_zk',
+    });
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.authLogin(vaultName: vaultName, pin: pin);
@@ -3837,7 +3730,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
-        context: context, app: app, pin: pin,
+        context: context,
+        app: app,
+        pin: pin,
       );
       if (!mounted) return;
       if (!adoptedNav) {
@@ -3867,8 +3762,15 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     } catch (e) {
       if (app.handleApiException(e)) return;
       if (!mounted) return;
+      vlog('login.legacy.failed', {
+        'error_type': e.runtimeType.toString(),
+      });
       setState(() {
-        err = e.toString().replaceFirst('Exception: ', '');
+        // Controlled copy — never the raw Dart exception. The old
+        // "Null check operator used on a null value" from the pre-
+        // 2026-07-20 build reached this branch when a bang deeper
+        // in the login pipeline blew up.
+        err = 'Login failed. Please try again.';
         loading = false;
       });
     }
@@ -3939,7 +3841,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                 TextButton(
                   onPressed: loading
                       ? null
-                      : () => Navigator.pushReplacementNamed(context, '/signup'),
+                      : () =>
+                          Navigator.pushReplacementNamed(context, '/signup'),
                   child: Text(
                     AppLocalizations.of(context).authDontHaveVault,
                   ),
@@ -3949,8 +3852,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   onPressed: loading
                       ? null
                       : () => openHelpCenter(
-                          context, mode: hc.HelpCenterMode.public,
-                        ),
+                            context,
+                            mode: hc.HelpCenterMode.public,
+                          ),
                   icon: const Icon(Icons.help_outline, size: 16),
                   label: const Text('Help & FAQ'),
                 ),
@@ -3963,7 +3867,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     );
   }
 }
-
 
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
@@ -4033,9 +3936,8 @@ class _SignupPageState extends State<SignupPage> {
     try {
       await OpaqueClient.ready();
 
-      final zkChosenDisplay = displayUsername.isEmpty
-          ? vaultName
-          : displayUsername;
+      final zkChosenDisplay =
+          displayUsername.isEmpty ? vaultName : displayUsername;
 
       final zk = ZkAuthService(_zkHttpPost);
       final result = await zk.registerVault(
@@ -4051,19 +3953,27 @@ class _SignupPageState extends State<SignupPage> {
       await app.setSession(
         token: result.sessionToken,
         vaultIdValue: result.vaultId,
+        // vaultNameValue stays == vault_handle for backend calls
+        // that still take vault_name as a session identifier (legacy
+        // endpoints not yet migrated). The user-facing name is set
+        // via displayUsernameValue below.
         vaultNameValue: result.vaultHandle,
+        vaultHandleValue: result.vaultHandle,
+        // The typed username IS the user-facing display name after
+        // signup — persisted so hydrate() can paint it next launch.
         displayUsernameValue: zkChosenDisplay,
       );
       await _registerDeviceBestEffort(result.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
-        result.sessionToken, app,
+        result.sessionToken,
+        app,
       );
-      _VaultCrypto._keyCache[
-        _VaultCrypto._ck(result.vaultId, result.vaultHandle)
-      ] = result.mvk;
-      _VaultCrypto._pinCache[
-        _VaultCrypto._ck(result.vaultId, result.vaultHandle)
-      ] = pin;
+      _VaultCrypto
+              ._keyCache[_VaultCrypto._ck(result.vaultId, result.vaultHandle)] =
+          result.mvk;
+      _VaultCrypto
+              ._pinCache[_VaultCrypto._ck(result.vaultId, result.vaultHandle)] =
+          pin;
       _VaultCrypto.setActiveVault(
         vaultId: result.vaultId,
         vaultName: result.vaultHandle,
@@ -4240,7 +4150,8 @@ class _SignupPageState extends State<SignupPage> {
                             value: acknowledged,
                             onChanged: loading
                                 ? null
-                                : (v) => setState(() => acknowledged = v ?? false),
+                                : (v) =>
+                                    setState(() => acknowledged = v ?? false),
                           ),
                           const Expanded(
                             child: Padding(
@@ -4269,7 +4180,8 @@ class _SignupPageState extends State<SignupPage> {
                   TextButton(
                     onPressed: loading
                         ? null
-                        : () => Navigator.pushReplacementNamed(context, '/login'),
+                        : () =>
+                            Navigator.pushReplacementNamed(context, '/login'),
                     child: Text(
                       AppLocalizations.of(context).authAlreadyHaveVault,
                     ),
@@ -4284,7 +4196,6 @@ class _SignupPageState extends State<SignupPage> {
     );
   }
 }
-
 
 class UnlockPage extends StatefulWidget {
   const UnlockPage({super.key});
@@ -4334,18 +4245,18 @@ class _UnlockPageState extends State<UnlockPage> {
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
           vaultNameValue: loginResult.vaultHandle,
+          vaultHandleValue: loginResult.vaultHandle,
           displayUsernameValue: loginResult.displayName,
         );
         await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
-          loginResult.sessionToken, app,
+          loginResult.sessionToken,
+          app,
         );
-        _VaultCrypto._keyCache[
-          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
-        ] = loginResult.mvk;
-        _VaultCrypto._pinCache[
-          _VaultCrypto._ck(loginResult.vaultId, loginResult.vaultHandle)
-        ] = pin;
+        _VaultCrypto._keyCache[_VaultCrypto._ck(
+            loginResult.vaultId, loginResult.vaultHandle)] = loginResult.mvk;
+        _VaultCrypto._pinCache[_VaultCrypto._ck(
+            loginResult.vaultId, loginResult.vaultHandle)] = pin;
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: loginResult.vaultHandle,
@@ -4364,7 +4275,15 @@ class _UnlockPageState extends State<UnlockPage> {
         try {
           await app.refreshNotifications();
         } catch (_) {}
-        _scheduleMetadataMigration(app: app);
+        // Post-login side-effects are best-effort; a failure here
+        // must not surface as a raw Dart exception (the old
+        // "Null check operator used on a null value" symptom).
+        try {
+          _scheduleMetadataMigration(app: app);
+        } catch (e) {
+          vlog('unlock.post_login_side_effect_failed',
+              {'step': 'schedule_metadata_migration', 'error': e.toString()});
+        }
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/chat');
         return;
@@ -4377,9 +4296,14 @@ class _UnlockPageState extends State<UnlockPage> {
         return;
       } catch (e) {
         if (app.handleApiException(e)) return;
+        vlog('unlock.zk.failed', {
+          'error_type': e.runtimeType.toString(),
+        });
         if (!mounted) return;
         setState(() {
-          err = 'Vault ID or PIN is incorrect.';
+          // Controlled copy for a wrong-PIN attempt OR any other
+          // failure — never the raw Dart message.
+          err = 'Wrong username or PIN.';
           loading = false;
         });
         return;
@@ -4409,7 +4333,9 @@ class _UnlockPageState extends State<UnlockPage> {
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
-        context: context, app: app, pin: pin,
+        context: context,
+        app: app,
+        pin: pin,
       );
       if (!mounted) return;
       if (!adoptedNav) {
@@ -4438,9 +4364,12 @@ class _UnlockPageState extends State<UnlockPage> {
       });
     } catch (e) {
       if (app.handleApiException(e)) return;
+      vlog('unlock.legacy.failed', {
+        'error_type': e.runtimeType.toString(),
+      });
       if (!mounted) return;
       setState(() {
-        err = e.toString().replaceFirst('Exception: ', '');
+        err = 'Wrong username or PIN.';
         loading = false;
       });
     }
@@ -4456,10 +4385,8 @@ class _UnlockPageState extends State<UnlockPage> {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    
-    
+
     if (app.lastVaultName == null) {
-      
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.pushReplacementNamed(context, '/login');
       });
@@ -4545,18 +4472,13 @@ class PinGatePage extends StatefulWidget {
 }
 
 class _PinGatePageState extends State<PinGatePage> {
-  
-  
   final pinController = TextEditingController();
   String? err;
-  
-  
+
   bool? creating;
 
-  
   bool _submitting = false;
 
-  
   bool _acknowledgedNoRecovery = false;
 
   static const int _minPinLengthCreate = 6;
@@ -4569,90 +4491,85 @@ class _PinGatePageState extends State<PinGatePage> {
     _decide();
   }
 
-Future<void> _decide() async {
-  vlog('pin.mode.loading');
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
+  Future<void> _decide() async {
+    vlog('pin.mode.loading');
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
 
-  
-  if (token == null) {
-    
-    if (mounted) {
-      Navigator.pushReplacementNamed(
-        context,
-        app.lastVaultName != null ? '/unlock' : '/login',
-      );
-    }
-    return;
-  }
-
-  try {
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    final result = await client.getMyVault(authToken: token);
-
-    final hasVault = result['has_vault'] == true;
-    final isOrphaned = result['is_orphaned'] == true;
-    final mustReset = result['must_reset'] == true;
-    final backendVaultName = result['vault_name']?.toString();
-
-    vlog('pin.mode.backend', {
-      'has_vault': hasVault,
-      'vault_name': backendVaultName,
-      'is_orphaned': isOrphaned,
-      'must_reset': mustReset,
-    });
-
-    if (isOrphaned) {
-      app.recoveryInfo = VaultRecoveryInfo.fromMap(
-        result['orphan_data'] is Map<String, dynamic>
-            ? result['orphan_data'] as Map<String, dynamic>
-            : null,
-      );
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/recover');
+    if (token == null) {
+      if (mounted) {
+        Navigator.pushReplacementNamed(
+          context,
+          app.lastVaultName != null ? '/unlock' : '/login',
+        );
+      }
       return;
     }
 
-    if (mustReset) {
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/vault-frozen');
-      return;
-    }
+    try {
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final result = await client.getMyVault(authToken: token);
 
-    app.recoveryInfo = null;
+      final hasVault = result['has_vault'] == true;
+      final isOrphaned = result['is_orphaned'] == true;
+      final mustReset = result['must_reset'] == true;
+      final backendVaultName = result['vault_name']?.toString();
 
-    if (hasVault &&
-        backendVaultName != null &&
-        backendVaultName.trim().isNotEmpty) {
-      app.vaultName = backendVaultName.trim();
-      app.lastVaultName = backendVaultName.trim();
-      final sp = await SharedPreferences.getInstance();
-      await sp.setString('last_vault_name', backendVaultName.trim());
-    }
-
-    if (mounted) {
-      setState(() {
-        
-        
-        creating = false;
+      vlog('pin.mode.backend', {
+        'has_vault': hasVault,
+        'vault_name': backendVaultName,
+        'is_orphaned': isOrphaned,
+        'must_reset': mustReset,
       });
-    }
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    vlog('pin.mode.final', {
-      'mode': 'enter',
-      'reason': 'getMyVault_error',
-      'error': e.toString(),
-    });
-    if (mounted) {
-      setState(() => creating = false);
+
+      if (isOrphaned) {
+        app.recoveryInfo = VaultRecoveryInfo.fromMap(
+          result['orphan_data'] is Map<String, dynamic>
+              ? result['orphan_data'] as Map<String, dynamic>
+              : null,
+        );
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/recover');
+        return;
+      }
+
+      if (mustReset) {
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/vault-frozen');
+        return;
+      }
+
+      app.recoveryInfo = null;
+
+      if (hasVault &&
+          backendVaultName != null &&
+          backendVaultName.trim().isNotEmpty) {
+        app.vaultName = backendVaultName.trim();
+        app.lastVaultName = backendVaultName.trim();
+        final sp = await SharedPreferences.getInstance();
+        await sp.setString('last_vault_name', backendVaultName.trim());
+      }
+
+      if (mounted) {
+        setState(() {
+          creating = false;
+        });
+      }
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      vlog('pin.mode.final', {
+        'mode': 'enter',
+        'reason': 'getMyVault_error',
+        'error': e.toString(),
+      });
+      if (mounted) {
+        setState(() => creating = false);
+      }
     }
   }
-}
 
   String get _pin => pinController.text.trim();
 
-  
   Future<void> _useAnotherVault() async {
     if (_submitting) return;
     final app = context.read<AppState>();
@@ -4662,9 +4579,8 @@ Future<void> _decide() async {
   }
 
   Future<void> _submit() async {
-    if (_submitting) return; 
-    
-    
+    if (_submitting) return;
+
     final mode = creating;
     if (mode == null) return;
     final pin = _pin;
@@ -4708,8 +4624,7 @@ Future<void> _decide() async {
       if (!mounted) return;
       vlog('pin.timing.post_pin_navigate', {
         'mode': 'unlock',
-        'elapsed_ms':
-            DateTime.now().difference(submitStartedAt).inMilliseconds,
+        'elapsed_ms': DateTime.now().difference(submitStartedAt).inMilliseconds,
         'route': '/chat',
       });
       Navigator.pushReplacementNamed(context, '/chat');
@@ -4727,8 +4642,7 @@ Future<void> _decide() async {
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
     final isMobile = w < 760;
-    
-    
+
     final mode = creating;
     if (mode == null) {
       return Scaffold(
@@ -4780,17 +4694,18 @@ Future<void> _decide() async {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                Text(title,
+                    style: const TextStyle(
+                        fontSize: 24, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
                 Text(
                   mode
                       ? 'Create a 6–64 digit PIN.'
                       : 'Enter your 6–64 digit PIN.',
-                  style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                  style:
+                      const TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
                 ),
                 const SizedBox(height: 16),
-                
-                
                 if (mode) ...[
                   Container(
                     width: double.infinity,
@@ -4923,18 +4838,17 @@ Future<void> _decide() async {
                       color: Colors.red.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(err!, style: const TextStyle(color: Colors.redAccent)),
+                    child: Text(err!,
+                        style: const TextStyle(color: Colors.redAccent)),
                   ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
-                    
-                    
-                    onPressed: (_submitting ||
-                            (mode && !_acknowledgedNoRecovery))
-                        ? null
-                        : _submit,
+                    onPressed:
+                        (_submitting || (mode && !_acknowledgedNoRecovery))
+                            ? null
+                            : _submit,
                     child: _submitting
                         ? const SizedBox(
                             height: 18,
@@ -4968,7 +4882,6 @@ Future<void> _decide() async {
     );
   }
 }
-
 
 class VaultFrozenPage extends StatelessWidget {
   const VaultFrozenPage({super.key});
@@ -5008,7 +4921,8 @@ class VaultFrozenPage extends StatelessWidget {
                     Expanded(
                       child: Text(
                         'Vault frozen',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w800),
                       ),
                     ),
                   ],
@@ -5019,7 +4933,8 @@ class VaultFrozenPage extends StatelessWidget {
                   'completed. Its contents have already been moved to the '
                   'beneficiary\'s account, and the original vault can no '
                   'longer be unlocked.',
-                  style: TextStyle(color: Color(0xFFECECEC), fontSize: 14, height: 1.5),
+                  style: TextStyle(
+                      color: Color(0xFFECECEC), fontSize: 14, height: 1.5),
                 ),
                 const SizedBox(height: 20),
                 OutlinedButton.icon(
@@ -5035,7 +4950,6 @@ class VaultFrozenPage extends StatelessWidget {
     );
   }
 }
-
 
 class VaultRecoveryPage extends StatefulWidget {
   const VaultRecoveryPage({super.key});
@@ -5141,12 +5055,14 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
               children: [
                 Row(
                   children: const [
-                    Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 28),
+                    Icon(Icons.warning_amber_rounded,
+                        color: Colors.amber, size: 28),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         'Vault recovery required',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w800),
                       ),
                     ),
                   ],
@@ -5155,11 +5071,12 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
                 Text(
                   info.vaultName != null && info.vaultName!.isNotEmpty
                       ? 'We found encrypted data tied to your account from a previous '
-                        'vault ("${info.vaultName}"), but the vault profile that held '
-                        'the recovery key is missing.'
+                          'vault ("${info.vaultName}"), but the vault profile that held '
+                          'the recovery key is missing.'
                       : 'We found encrypted data tied to your account, but the vault '
-                        'profile that held the recovery key is missing.',
-                  style: const TextStyle(color: Color(0xFFECECEC), fontSize: 14, height: 1.5),
+                          'profile that held the recovery key is missing.',
+                  style: const TextStyle(
+                      color: Color(0xFFECECEC), fontSize: 14, height: 1.5),
                 ),
                 const SizedBox(height: 12),
                 const Text(
@@ -5167,7 +5084,8 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
                   'including you. To protect your account, VaultAI will not let a '
                   'new vault be created on top of it. You must erase the unrecoverable '
                   'data before starting fresh.',
-                  style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13, height: 1.5),
+                  style: TextStyle(
+                      color: Color(0xFFB4B4B4), fontSize: 13, height: 1.5),
                 ),
                 const SizedBox(height: 14),
                 Container(
@@ -5195,18 +5113,21 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
                       color: Colors.red.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(_err!, style: const TextStyle(color: Colors.redAccent)),
+                    child: Text(_err!,
+                        style: const TextStyle(color: Colors.redAccent)),
                   ),
                 ],
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: _wiping ? null : () => _confirmAndWipe(context),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+                  style:
+                      FilledButton.styleFrom(backgroundColor: Colors.redAccent),
                   icon: _wiping
                       ? const SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
                         )
                       : const Icon(Icons.delete_forever_outlined),
                   label: Text(_wiping ? 'Erasing…' : 'Erase and start over'),
@@ -5282,8 +5203,8 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
   final jsonStart = openIdx + kMemoryProposalOpen.length;
   final jsonPayload = buffer.substring(jsonStart, closeIdx);
   final afterClose = closeIdx + kMemoryProposalClose.length;
-  final tail = buffer.substring(afterClose)
-      .replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
+  final tail =
+      buffer.substring(afterClose).replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
   final strippedBuffer = buffer.substring(0, openIdx) + tail;
   return MemoryProposalStripResult(
     strippedBuffer: strippedBuffer,
@@ -5292,380 +5213,368 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
 }
 
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
-
-
-
-
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
 
-
-void _openSecureItemView(String service, String itemType) {
-  final safeTitle = service.trim();
-  setState(() {
-    selectedSection = _DashboardSection.chat;
-  });
-  if (safeTitle.isEmpty) {
-    _sendQuickPrompt('show me');
-  } else {
-    _sendQuickPrompt('show me $safeTitle');
-  }
-}
-
-Future<void> _openSecureItemEditDialog(
-    String service, String itemType,
-    {Map<String, String>? initialFields}) async {
-  final app = context.read<AppState>();
-  
-  
-  Map<String, String> resolved = initialFields ?? const {};
-  if (resolved.isEmpty) {
-    final token = app.sessionToken;
-    if (token != null && app.vaultName != null) {
-      try {
-        final pin = await _VaultCrypto.currentPinOrThrow();
-        final client = VaultAIClient(baseUrl: backendBaseUrl);
-        final fetched = await client.getVaultSecureItem(
-          vaultName: app.vaultName!,
-          service:   service,
-          itemType:  itemType,
-          pin:       pin,
-          authToken: token,
-        );
-        final raw = fetched['fields'];
-        if (raw is Map) {
-          resolved = <String, String>{
-            for (final e in raw.entries)
-              if (e.value is String) e.key.toString(): e.value as String,
-          };
-        }
-      } catch (e) {
-        if (app.handleApiException(e)) return;
-        
-        
-        _showSnack('Could not load saved values; you can still edit.');
-      }
+  void _openSecureItemView(String service, String itemType) {
+    final safeTitle = service.trim();
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+    });
+    if (safeTitle.isEmpty) {
+      _sendQuickPrompt('show me');
+    } else {
+      _sendQuickPrompt('show me $safeTitle');
     }
   }
-  if (!mounted) return;
-  await showSecureItemEditDialog(
-    context,
-    title:    service,
-    itemType: itemType,
-    initialFields: resolved,
-    onSave: ({
-      required String oldTitle,
-      required String itemType,
-      required String newTitle,
-      required Map<String, String> fields,
-    }) async {
+
+  Future<void> _openSecureItemEditDialog(String service, String itemType,
+      {Map<String, String>? initialFields}) async {
+    final app = context.read<AppState>();
+
+    Map<String, String> resolved = initialFields ?? const {};
+    if (resolved.isEmpty) {
       final token = app.sessionToken;
-      if (token == null || app.vaultName == null) {
-        _showSnack('Session expired.');
-        return false;
-      }
-      try {
-        final pin = await _VaultCrypto.currentPinOrThrow();
-        final client = VaultAIClient(baseUrl: backendBaseUrl);
-        await client.updateVaultSecureItem(
-          vaultName:   app.vaultName!,
-          oldService:  oldTitle,
-          itemType:    itemType,
-          newService:  newTitle == oldTitle ? null : newTitle,
-          fields:      fields.isEmpty ? null : fields,
-          pin:         pin,
-          authToken:   token,
-        );
-        
-        
-        final isLogin = itemType == 'login' || itemType == 'credential';
-        _showSnack(isLogin ? 'Updated login' : 'Updated saved item');
-        unawaited(_loadVaultLogins());
-        unawaited(app.refreshVaultStats());
-        return true;
-      } catch (e) {
-        if (app.handleApiException(e)) return false;
-        _showSnack('Could not update saved item: $e');
-        return false;
-      }
-    },
-  );
-}
-
-
-bool _isCryptoItemType(String itemType) {
-  switch (itemType) {
-    case 'crypto_wallet_address':
-    case 'crypto_seed_phrase':
-    case 'crypto_private_key':
-    case 'crypto_recovery_phrase':
-    case 'crypto_note':
-    case 'crypto_transaction_note':
-    case 'crypto_exchange_note':
-    case 'crypto_hardware_wallet_note':
-      return true;
-    default:
-      return false;
-  }
-}
-
-
-String _copyFieldKeyForCryptoType(String itemType) {
-  switch (itemType) {
-    case 'crypto_wallet_address':       return 'wallet_address';
-    case 'crypto_seed_phrase':          return 'seed_phrase';
-    case 'crypto_private_key':          return 'private_key';
-    case 'crypto_recovery_phrase':      return 'recovery_phrase';
-    case 'crypto_note':                 return 'crypto_note';
-    case 'crypto_transaction_note':     return 'transaction_note';
-    case 'crypto_exchange_note':        return 'exchange_note';
-    case 'crypto_hardware_wallet_note': return 'hardware_wallet_note';
-    default:                            return '';
-  }
-}
-
-
-Future<void> _copyCryptoValueToClipboard(
-    String service, String itemType) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  final vaultName = app.vaultName;
-  if (token == null || vaultName == null) {
-    _showSnack('Session expired.');
-    return;
-  }
-  final fieldKey = _copyFieldKeyForCryptoType(itemType);
-  if (fieldKey.isEmpty) {
-    _showSnack("Can't copy this record type.");
-    return;
-  }
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    final fetched = await client.getVaultSecureItem(
-      vaultName: vaultName,
-      service:   service,
-      itemType:  itemType,
-      pin:       pin,
-      authToken: token,
-    );
-    final raw = fetched['fields'];
-    String? value;
-    if (raw is Map && raw[fieldKey] is String) {
-      value = raw[fieldKey] as String;
-    }
-    if (value == null || value.isEmpty) {
-      _showSnack("Couldn't copy — value not found.");
-      return;
-    }
-    await Clipboard.setData(ClipboardData(text: value));
-    _showSnack('Copied to clipboard');
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not copy value.');
-  }
-}
-
-
-Future<void> _openCryptoReceivePanel(
-    String service, String itemType) async {
-  
-  
-  if (itemType != 'crypto_wallet_address') {
-    _showSnack("Receive QR is available only for saved wallet addresses.");
-    return;
-  }
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  final vaultName = app.vaultName;
-  if (token == null || vaultName == null) {
-    _showSnack('Session expired.');
-    return;
-  }
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    final fetched = await client.getVaultSecureItem(
-      vaultName: vaultName,
-      service:   service,
-      itemType:  itemType,
-      pin:       pin,
-      authToken: token,
-    );
-    final raw = fetched['fields'];
-    String? address;
-    String? network;
-    if (raw is Map) {
-      if (raw['wallet_address'] is String) {
-        address = raw['wallet_address'] as String;
-      }
-      if (raw['network'] is String) {
-        network = raw['network'] as String;
-      }
-    }
-    if (address == null || address.isEmpty) {
-      _showSnack("Couldn't open Receive — saved address not found.");
-      return;
-    }
-    if (!mounted) return;
-    await showReceivePanelDialog(
-      context,
-      title: service.isNotEmpty ? service : 'Crypto wallet',
-      address: address,
-      network: network,
-      onCopy: (a) async {
-        await Clipboard.setData(ClipboardData(text: a));
-        _showSnack('Address copied');
-      },
-    );
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not open Receive panel.');
-  }
-}
-
-
-Future<void> _startSecureItemDeleteConfirmation(
-    String service, String itemType) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  final vaultName = app.vaultName;
-  final activeVaultId = app.vaultId;
-  if (token == null || vaultName == null) {
-    _showSnack('Session expired.');
-    return;
-  }
-  if (!app.unlocked) {
-    _showSnack('Your vault is locked. Please enter your PIN again.');
-    return;
-  }
-  if (activeVaultId == null ||
-      !_VaultCrypto.hasKeyFor(vaultId: activeVaultId, vaultName: vaultName)) {
-    app.handleApiException(const InvalidVaultUnlockException());
-    return;
-  }
-
-  final safeService = service.trim().isEmpty ? 'this saved item' : service.trim();
-  final isLogin = itemType == 'login' || itemType == 'credential';
-  final visibleBubble = isLogin
-      ? 'Delete $safeService login from my vault'
-      : (service.trim().isEmpty
-          ? 'Delete this saved item from my vault'
-          : 'Delete $safeService from my vault');
-  final sentinel = '__delete_item:$itemType:$safeService';
-
-  setState(() {
-    selectedSection = _DashboardSection.chat;
-    sending = true;
-    thinking = true;
-    msgs.add(_Msg('user', visibleBubble));
-  });
-  _scrollToBottom();
-
-  final client = VaultAIClient(baseUrl: backendBaseUrl);
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
-    int? assistantIndex;
-    String buffer = '';
-    bool memoryProposalFinalized = false;
-
-    final stream = client.chatStream(
-      encryptedMessage: encryptedMessage,
-      vaultName: vaultName,
-      pin: pin,
-      authToken: token,
-      uploadedFileIds: const <String>[],
-      appLocale: context.read<AppState>().chatReplyLanguageCode,
-    );
-
-    try {
-      await for (final encryptedChunk in stream) {
+      if (token != null && app.vaultName != null) {
         try {
-          final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
-          if (!mounted) return;
-          buffer += decryptedChunk;
-
-          // ZK memory-proposal sentinel: strip it BEFORE any
-          // downstream parse/render and fire the ciphertext-first
-          // finalize exactly once. See _send() for the full policy.
-          final _stripped = extractAndStripMemoryProposal(
-            buffer: buffer,
-            alreadyFinalized: memoryProposalFinalized,
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          final fetched = await client.getVaultSecureItem(
+            vaultName: app.vaultName!,
+            service: service,
+            itemType: itemType,
+            pin: pin,
+            authToken: token,
           );
-          buffer = _stripped.strippedBuffer;
-          if (_stripped.jsonPayload != null &&
-              !memoryProposalFinalized) {
-            memoryProposalFinalized = true;
-            unawaited(_finalizeMemoryProposalBestEffort(
-              jsonPayload: _stripped.jsonPayload!,
-              authToken: token,
-            ));
+          final raw = fetched['fields'];
+          if (raw is Map) {
+            resolved = <String, String>{
+              for (final e in raw.entries)
+                if (e.value is String) e.key.toString(): e.value as String,
+            };
           }
-
-          final structuredNow =
-              _tryParseAssistantStructuredMessage(buffer);
-          final _Msg replacement = structuredNow ??
-              _Msg('assistant', buffer);
-          setState(() {
-            if (assistantIndex == null) {
-              msgs.add(replacement);
-              assistantIndex = msgs.length - 1;
-              thinking = false;
-            } else {
-              msgs[assistantIndex!] = replacement;
-            }
-          });
-          _scrollToBottom();
         } catch (e) {
           if (app.handleApiException(e)) return;
-          if (!mounted) return;
-          setState(() {
-            thinking = false;
-            if (assistantIndex == null) {
-              msgs.add(_Msg('assistant', 'Decrypt error: $e'));
-              assistantIndex = msgs.length - 1;
-            } else {
-              msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e');
-            }
-          });
+
+          _showSnack('Could not load saved values; you can still edit.');
         }
       }
-    } catch (err) {
+    }
+    if (!mounted) return;
+    await showSecureItemEditDialog(
+      context,
+      title: service,
+      itemType: itemType,
+      initialFields: resolved,
+      onSave: ({
+        required String oldTitle,
+        required String itemType,
+        required String newTitle,
+        required Map<String, String> fields,
+      }) async {
+        final token = app.sessionToken;
+        if (token == null || app.vaultName == null) {
+          _showSnack('Session expired.');
+          return false;
+        }
+        try {
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          await client.updateVaultSecureItem(
+            vaultName: app.vaultName!,
+            oldService: oldTitle,
+            itemType: itemType,
+            newService: newTitle == oldTitle ? null : newTitle,
+            fields: fields.isEmpty ? null : fields,
+            pin: pin,
+            authToken: token,
+          );
+
+          final isLogin = itemType == 'login' || itemType == 'credential';
+          _showSnack(isLogin ? 'Updated login' : 'Updated saved item');
+          unawaited(_loadVaultLogins());
+          unawaited(app.refreshVaultStats());
+          return true;
+        } catch (e) {
+          if (app.handleApiException(e)) return false;
+          _showSnack('Could not update saved item: $e');
+          return false;
+        }
+      },
+    );
+  }
+
+  bool _isCryptoItemType(String itemType) {
+    switch (itemType) {
+      case 'crypto_wallet_address':
+      case 'crypto_seed_phrase':
+      case 'crypto_private_key':
+      case 'crypto_recovery_phrase':
+      case 'crypto_note':
+      case 'crypto_transaction_note':
+      case 'crypto_exchange_note':
+      case 'crypto_hardware_wallet_note':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  String _copyFieldKeyForCryptoType(String itemType) {
+    switch (itemType) {
+      case 'crypto_wallet_address':
+        return 'wallet_address';
+      case 'crypto_seed_phrase':
+        return 'seed_phrase';
+      case 'crypto_private_key':
+        return 'private_key';
+      case 'crypto_recovery_phrase':
+        return 'recovery_phrase';
+      case 'crypto_note':
+        return 'crypto_note';
+      case 'crypto_transaction_note':
+        return 'transaction_note';
+      case 'crypto_exchange_note':
+        return 'exchange_note';
+      case 'crypto_hardware_wallet_note':
+        return 'hardware_wallet_note';
+      default:
+        return '';
+    }
+  }
+
+  Future<void> _copyCryptoValueToClipboard(
+      String service, String itemType) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null) {
+      _showSnack('Session expired.');
+      return;
+    }
+    final fieldKey = _copyFieldKeyForCryptoType(itemType);
+    if (fieldKey.isEmpty) {
+      _showSnack("Can't copy this record type.");
+      return;
+    }
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final fetched = await client.getVaultSecureItem(
+        vaultName: vaultName,
+        service: service,
+        itemType: itemType,
+        pin: pin,
+        authToken: token,
+      );
+      final raw = fetched['fields'];
+      String? value;
+      if (raw is Map && raw[fieldKey] is String) {
+        value = raw[fieldKey] as String;
+      }
+      if (value == null || value.isEmpty) {
+        _showSnack("Couldn't copy — value not found.");
+        return;
+      }
+      await Clipboard.setData(ClipboardData(text: value));
+      _showSnack('Copied to clipboard');
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not copy value.');
+    }
+  }
+
+  Future<void> _openCryptoReceivePanel(String service, String itemType) async {
+    if (itemType != 'crypto_wallet_address') {
+      _showSnack("Receive QR is available only for saved wallet addresses.");
+      return;
+    }
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null) {
+      _showSnack('Session expired.');
+      return;
+    }
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final fetched = await client.getVaultSecureItem(
+        vaultName: vaultName,
+        service: service,
+        itemType: itemType,
+        pin: pin,
+        authToken: token,
+      );
+      final raw = fetched['fields'];
+      String? address;
+      String? network;
+      if (raw is Map) {
+        if (raw['wallet_address'] is String) {
+          address = raw['wallet_address'] as String;
+        }
+        if (raw['network'] is String) {
+          network = raw['network'] as String;
+        }
+      }
+      if (address == null || address.isEmpty) {
+        _showSnack("Couldn't open Receive — saved address not found.");
+        return;
+      }
+      if (!mounted) return;
+      await showReceivePanelDialog(
+        context,
+        title: service.isNotEmpty ? service : 'Crypto wallet',
+        address: address,
+        network: network,
+        onCopy: (a) async {
+          await Clipboard.setData(ClipboardData(text: a));
+          _showSnack('Address copied');
+        },
+      );
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not open Receive panel.');
+    }
+  }
+
+  Future<void> _startSecureItemDeleteConfirmation(
+      String service, String itemType) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    final activeVaultId = app.vaultId;
+    if (token == null || vaultName == null) {
+      _showSnack('Session expired.');
+      return;
+    }
+    if (!app.unlocked) {
+      _showSnack('Your vault is locked. Please enter your PIN again.');
+      return;
+    }
+    if (activeVaultId == null ||
+        !_VaultCrypto.hasKeyFor(vaultId: activeVaultId, vaultName: vaultName)) {
+      app.handleApiException(const InvalidVaultUnlockException());
+      return;
+    }
+
+    final safeService =
+        service.trim().isEmpty ? 'this saved item' : service.trim();
+    final isLogin = itemType == 'login' || itemType == 'credential';
+    final visibleBubble = isLogin
+        ? 'Delete $safeService login from my vault'
+        : (service.trim().isEmpty
+            ? 'Delete this saved item from my vault'
+            : 'Delete $safeService from my vault');
+    final sentinel = '__delete_item:$itemType:$safeService';
+
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      sending = true;
+      thinking = true;
+      msgs.add(_Msg('user', visibleBubble));
+    });
+    _scrollToBottom();
+
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
+      int? assistantIndex;
+      String buffer = '';
+      bool memoryProposalFinalized = false;
+
+      final stream = client.chatStream(
+        encryptedMessage: encryptedMessage,
+        vaultName: vaultName,
+        pin: pin,
+        authToken: token,
+        uploadedFileIds: const <String>[],
+        appLocale: context.read<AppState>().chatReplyLanguageCode,
+      );
+
+      try {
+        await for (final encryptedChunk in stream) {
+          try {
+            final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
+            if (!mounted) return;
+            buffer += decryptedChunk;
+
+            // ZK memory-proposal sentinel: strip it BEFORE any
+            // downstream parse/render and fire the ciphertext-first
+            // finalize exactly once. See _send() for the full policy.
+            final _stripped = extractAndStripMemoryProposal(
+              buffer: buffer,
+              alreadyFinalized: memoryProposalFinalized,
+            );
+            buffer = _stripped.strippedBuffer;
+            if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
+              memoryProposalFinalized = true;
+              unawaited(_finalizeMemoryProposalBestEffort(
+                jsonPayload: _stripped.jsonPayload!,
+                authToken: token,
+              ));
+            }
+
+            final structuredNow = _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
+            setState(() {
+              if (assistantIndex == null) {
+                msgs.add(replacement);
+                assistantIndex = msgs.length - 1;
+                thinking = false;
+              } else {
+                msgs[assistantIndex!] = replacement;
+              }
+            });
+            _scrollToBottom();
+          } catch (e) {
+            if (app.handleApiException(e)) return;
+            if (!mounted) return;
+            setState(() {
+              thinking = false;
+              if (assistantIndex == null) {
+                msgs.add(_Msg('assistant', 'Decrypt error: $e'));
+                assistantIndex = msgs.length - 1;
+              } else {
+                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e');
+              }
+            });
+          }
+        }
+      } catch (err) {
+        if (!mounted) return;
+        setState(() {
+          thinking = false;
+          if (assistantIndex == null) {
+            msgs.add(_Msg('assistant', 'Error: $err'));
+            assistantIndex = msgs.length - 1;
+          } else {
+            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
+          }
+        });
+      }
+
+      if (assistantIndex != null && buffer.isNotEmpty) {
+        final structured = _tryParseAssistantStructuredMessage(buffer);
+        if (structured != null && mounted) {
+          setState(() => msgs[assistantIndex!] = structured);
+        }
+      }
+      if (mounted && thinking) setState(() => thinking = false);
+      await app.refreshVaultStats();
+      await _loadVaultLogins();
+    } catch (e) {
+      if (app.handleApiException(e)) return;
       if (!mounted) return;
       setState(() {
         thinking = false;
-        if (assistantIndex == null) {
-          msgs.add(_Msg('assistant', 'Error: $err'));
-          assistantIndex = msgs.length - 1;
-        } else {
-          msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
-        }
+        msgs.add(_Msg('assistant', 'Could not start delete: $e'));
       });
+    } finally {
+      if (mounted) setState(() => sending = false);
     }
-
-
-    if (assistantIndex != null && buffer.isNotEmpty) {
-      final structured = _tryParseAssistantStructuredMessage(buffer);
-      if (structured != null && mounted) {
-        setState(() => msgs[assistantIndex!] = structured);
-      }
-    }
-    if (mounted && thinking) setState(() => thinking = false);
-    await app.refreshVaultStats();
-    await _loadVaultLogins();
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    if (!mounted) return;
-    setState(() {
-      thinking = false;
-      msgs.add(_Msg('assistant', 'Could not start delete: $e'));
-    });
-  } finally {
-    if (mounted) setState(() => sending = false);
   }
-}
-
 
   final input = TextEditingController();
   final List<_Msg> msgs = <_Msg>[];
@@ -5677,745 +5586,768 @@ Future<void> _startSecureItemDeleteConfirmation(
   bool thinking = false;
   bool loadingFiles = false;
   bool loadingLogins = false;
-  
-  
-  bool    hasLoadedSecureItems = false;
+
+  bool hasLoadedSecureItems = false;
   String? secureItemsError;
 
-  
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
   bool _isListening = false;
   String _preMicText = '';
 
-  
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
 
-  
   final VideoRecorder _videoRecorder = VideoRecorder();
   bool _isVideoRecording = false;
   String? _videoPreviewViewType;
 
-  
   late final UploadQueueController _uploadQueue;
 
-  
   _UploadContext? _currentUploadContext;
 
-  
   late final FolderPickerService _folderPicker;
 
-  
   bool Function()? _uploadKeepAliveProbe;
   void Function()? _uploadShutdownHook;
   bool _wasUploadQueueBusy = false;
 
-List<_VaultStoredFile> vaultFiles = [];
+  List<_VaultStoredFile> vaultFiles = [];
 
+  String? activeDeepScanJobId;
+  String? activeDeepScanIntent;
+  String? activeDeepScanQuery;
+  String? activeDeepScanStatus;
+  GlobalKey? activeDeepScanCardKey;
 
-String? activeDeepScanJobId;
-String? activeDeepScanIntent;
-String? activeDeepScanQuery;
-String? activeDeepScanStatus;
-GlobalKey? activeDeepScanCardKey;
-
-
-bool isDeepScanActive({
-  required String intent,
-  required String normalizedQuery,
-}) {
-  if (activeDeepScanJobId == null) return false;
-  if (activeDeepScanStatus != 'scanning') return false;
-  if (activeDeepScanIntent != intent) return false;
-  if (activeDeepScanQuery != normalizedQuery) return false;
-  return true;
-}
-
-
-String normalizeDeepScanQuery(String? query) {
-  if (query == null || query.isEmpty) return '';
-  return query.toLowerCase().trim().split(RegExp(r'\s+')).join(' ');
-}
-
-
-String _currentFolderPath = '';
-FolderTreeData? _folderTreeData;
-String _folderSearchQuery = '';
-List<VaultLoginItem> vaultLogins = [];
-
-_DashboardSection selectedSection = _DashboardSection.chat;
-
-
-List<Map<String, dynamic>> beneficiaries = [];
-List<Map<String, dynamic>> inheritances = [];
-bool loadingBeneficiaries = false;
-bool loadingInheritances = false;
-bool _inheritanceLoadedOnce = false;
-
-Future<void> _loadBeneficiaries() async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null || app.vaultName == null) return;
-
-  setState(() => loadingBeneficiaries = true);
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    final result = await client.listBeneficiaries(
-      vaultName: app.vaultName!,
-      pin: pin,
-      authToken: token,
-    );
-    final raw = result['beneficiaries'];
-    if (!mounted) return;
-    setState(() {
-      beneficiaries = raw is List
-          ? raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
-          : <Map<String, dynamic>>[];
-    });
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not load beneficiaries: $e');
-  } finally {
-    if (mounted) setState(() => loadingBeneficiaries = false);
+  bool isDeepScanActive({
+    required String intent,
+    required String normalizedQuery,
+  }) {
+    if (activeDeepScanJobId == null) return false;
+    if (activeDeepScanStatus != 'scanning') return false;
+    if (activeDeepScanIntent != intent) return false;
+    if (activeDeepScanQuery != normalizedQuery) return false;
+    return true;
   }
-}
 
-Future<void> _loadInheritances() async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null || app.vaultName == null) return;
-
-  setState(() => loadingInheritances = true);
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    final result = await client.listInheritances(
-      vaultName: app.vaultName!,
-      pin: pin,
-      authToken: token,
-    );
-    final raw = result['inheritances'];
-    if (!mounted) return;
-    setState(() {
-      inheritances = raw is List
-          ? raw.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
-          : <Map<String, dynamic>>[];
-    });
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not load inheritances: $e');
-  } finally {
-    if (mounted) setState(() => loadingInheritances = false);
+  String normalizeDeepScanQuery(String? query) {
+    if (query == null || query.isEmpty) return '';
+    return query.toLowerCase().trim().split(RegExp(r'\s+')).join(' ');
   }
-}
 
-Future<void> _showAddBeneficiaryDialog() async {
-  final labelCtrl = TextEditingController();
-  final formKey = GlobalKey<FormState>();
-  String? pairingCode;
-  String? createErr;
-  bool creating = false;
+  String _currentFolderPath = '';
+  FolderTreeData? _folderTreeData;
+  String _folderSearchQuery = '';
+  List<VaultLoginItem> vaultLogins = [];
 
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogCtx) {
-      return StatefulBuilder(
-        builder: (ctx, setLocal) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF2F2F2F),
-            title: Text(
-              pairingCode == null
-                  ? AppLocalizations.of(dialogCtx).inheritanceAddBeneficiary
-                  : 'Pairing code',
-            ),
-            content: pairingCode == null
-                ? Form(
-                    key: formKey,
-                    child: Column(
+  _DashboardSection selectedSection = _DashboardSection.chat;
+
+  List<Map<String, dynamic>> beneficiaries = [];
+  List<Map<String, dynamic>> inheritances = [];
+  bool loadingBeneficiaries = false;
+  bool loadingInheritances = false;
+  bool _inheritanceLoadedOnce = false;
+
+  Future<void> _loadBeneficiaries() async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null || app.vaultName == null) return;
+
+    setState(() => loadingBeneficiaries = true);
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final result = await client.listBeneficiaries(
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+      final raw = result['beneficiaries'];
+      if (!mounted) return;
+      setState(() {
+        beneficiaries = raw is List
+            ? raw
+                .whereType<Map>()
+                .map((m) => Map<String, dynamic>.from(m))
+                .toList()
+            : <Map<String, dynamic>>[];
+      });
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not load beneficiaries: $e');
+    } finally {
+      if (mounted) setState(() => loadingBeneficiaries = false);
+    }
+  }
+
+  Future<void> _loadInheritances() async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null || app.vaultName == null) return;
+
+    setState(() => loadingInheritances = true);
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final result = await client.listInheritances(
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+      final raw = result['inheritances'];
+      if (!mounted) return;
+      setState(() {
+        inheritances = raw is List
+            ? raw
+                .whereType<Map>()
+                .map((m) => Map<String, dynamic>.from(m))
+                .toList()
+            : <Map<String, dynamic>>[];
+      });
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not load inheritances: $e');
+    } finally {
+      if (mounted) setState(() => loadingInheritances = false);
+    }
+  }
+
+  Future<void> _showAddBeneficiaryDialog() async {
+    final labelCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    String? pairingCode;
+    String? createErr;
+    bool creating = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF2F2F2F),
+              title: Text(
+                pairingCode == null
+                    ? AppLocalizations.of(dialogCtx).inheritanceAddBeneficiary
+                    : 'Pairing code',
+              ),
+              content: pairingCode == null
+                  ? Form(
+                      key: formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Text(
+                            'Give this beneficiary a label only you will see, '
+                            'like "Son - John". You\'ll get a one-time code to '
+                            'share with them out-of-band.',
+                            style: TextStyle(
+                                color: Color(0xFFB4B4B4), fontSize: 13),
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: labelCtrl,
+                            maxLength: 60,
+                            decoration: const InputDecoration(
+                              counterText: '',
+                              hintText: 'Label (e.g. Son - John)',
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'Required'
+                                : null,
+                          ),
+                          if (createErr != null) ...[
+                            const SizedBox(height: 10),
+                            Text(createErr!,
+                                style:
+                                    const TextStyle(color: Colors.redAccent)),
+                          ],
+                        ],
+                      ),
+                    )
+                  : Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         const Text(
-                          'Give this beneficiary a label only you will see, '
-                          'like "Son - John". You\'ll get a one-time code to '
-                          'share with them out-of-band.',
-                          style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                          'Share this code with your beneficiary out-of-band '
+                          '(Signal, in person, paper). It works once and '
+                          'expires in 60 minutes.',
+                          style:
+                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
                         ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: labelCtrl,
-                          maxLength: 60,
-                          decoration: const InputDecoration(
-                            counterText: '',
-                            hintText: 'Label (e.g. Son - John)',
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 14, horizontal: 12),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF10A37F).withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          validator: (v) =>
-                              (v == null || v.trim().isEmpty) ? 'Required' : null,
+                          child: SelectableText(
+                            pairingCode!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2,
+                              color: Color(0xFF10A37F),
+                            ),
+                          ),
                         ),
-                        if (createErr != null) ...[
-                          const SizedBox(height: 10),
-                          Text(createErr!, style: const TextStyle(color: Colors.redAccent)),
-                        ],
                       ],
                     ),
-                  )
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        'Share this code with your beneficiary out-of-band '
-                        '(Signal, in person, paper). It works once and '
-                        'expires in 60 minutes.',
-                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+              actions: pairingCode == null
+                  ? [
+                      TextButton(
+                        onPressed:
+                            creating ? null : () => Navigator.pop(dialogCtx),
+                        child: Text(AppLocalizations.of(context).commonCancel),
                       ),
-                      const SizedBox(height: 14),
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF10A37F).withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: SelectableText(
-                          pairingCode!,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 2,
-                            color: Color(0xFF10A37F),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-            actions: pairingCode == null
-                ? [
-                    TextButton(
-                      onPressed: creating ? null : () => Navigator.pop(dialogCtx),
-                      child: Text(AppLocalizations.of(context).commonCancel),
-                    ),
-                    FilledButton.icon(
-                      onPressed: creating
-                          ? null
-                          : () async {
-                              if (formKey.currentState?.validate() != true) return;
-                              final app = context.read<AppState>();
-                              final token = app.sessionToken;
-                              if (token == null || app.vaultName == null) {
-                                setLocal(() => createErr = 'Session expired.');
-                                return;
-                              }
-                              setLocal(() {
-                                creating = true;
-                                createErr = null;
-                              });
-                              try {
-                                final pin = await _VaultCrypto.currentPinOrThrow();
-                                final client = VaultAIClient(baseUrl: backendBaseUrl);
-                                final labelText = labelCtrl.text.trim();
-                                final result = await client.createBeneficiary(
-                                  vaultName: app.vaultName!,
-                                  pin: pin,
-                                  label: labelText,
-                                  authToken: token,
-                                );
-                                // ZK client-finalize: for ZK vaults,
-                                // /beneficiary/create wrote
-                                // passer_label = NULL. Encrypt the
-                                // label locally under metadataKey
-                                // and POST the ciphertext to
-                                // /vault/ciphertext/beneficiary-links
-                                // BEFORE surfacing the pairing code.
-                                // If the finalize fails, do NOT
-                                // silently claim success — refuse
-                                // to hand out the pairing code with
-                                // an unlabelled row (the beneficiary
-                                // list would be unreadable). Show
-                                // the error and let the user retry.
-                                if (zk_mvk_store.ZkActiveMvk.current()
-                                        != null) {
-                                  final linkId =
-                                      (result['link_id'] as num?)
-                                          ?.toInt();
-                                  if (linkId == null) {
-                                    setLocal(() {
-                                      createErr =
-                                          'Could not finalize the '
-                                          'label: missing link_id in '
-                                          'the create response.';
-                                      creating = false;
-                                    });
-                                    return;
-                                  }
-                                  final ok =
-                                      await tryZkFinalizeBeneficiaryLabelCiphertext(
-                                    baseUrl: backendBaseUrl,
-                                    authToken: token,
-                                    linkId: linkId,
-                                    label: labelText,
-                                  );
-                                  if (!ok) {
-                                    // Full detail is captured by
-                                    // the network log inside
-                                    // tryZkFinalizeBeneficiaryLabelCiphertext;
-                                    // surface only a safe reference
-                                    // to the user so we never leak
-                                    // an SQL trace or an internal
-                                    // field name.
-                                    setLocal(() {
-                                      createErr =
-                                          'Could not generate the '
-                                          'pairing code. Please try '
-                                          'again.\nReference: '
-                                          'INH-PAIR-004';
-                                      creating = false;
-                                    });
-                                    return;
-                                  }
+                      FilledButton.icon(
+                        onPressed: creating
+                            ? null
+                            : () async {
+                                if (formKey.currentState?.validate() != true)
+                                  return;
+                                final app = context.read<AppState>();
+                                final token = app.sessionToken;
+                                if (token == null || app.vaultName == null) {
+                                  setLocal(
+                                      () => createErr = 'Session expired.');
+                                  return;
                                 }
                                 setLocal(() {
-                                  pairingCode = result['pairing_code']?.toString();
-                                  creating = false;
+                                  creating = true;
+                                  createErr = null;
                                 });
-                                await _loadBeneficiaries();
-                              } catch (e) {
-                                if (app.handleApiException(e)) return;
-                                // Log the raw exception for support;
-                                // show the safe reference to the
-                                // user so no stack / SQL text leaks.
-                                vlog('inheritance.pair.create.failed', {
-                                  'error': e.toString(),
-                                });
-                                setLocal(() {
-                                  createErr =
-                                      'Could not generate the '
-                                      'pairing code. Please try '
-                                      'again.\nReference: '
-                                      'INH-PAIR-001';
-                                  creating = false;
-                                });
-                              }
-                            },
-                      icon: creating
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.qr_code_2),
-                      label: Text(creating ? 'Generating…' : 'Generate code'),
-                    ),
-                  ]
-                : [
-                    FilledButton.icon(
-                      onPressed: () {
-                        Clipboard.setData(ClipboardData(text: pairingCode!));
-                        _showSnack('Copied to clipboard');
-                      },
-                      icon: const Icon(Icons.copy_all_outlined),
-                      label: Text(
-                        AppLocalizations.of(dialogCtx).commonCopyCode,
+                                try {
+                                  final pin =
+                                      await _VaultCrypto.currentPinOrThrow();
+                                  final client =
+                                      VaultAIClient(baseUrl: backendBaseUrl);
+                                  final labelText = labelCtrl.text.trim();
+                                  final result = await client.createBeneficiary(
+                                    vaultName: app.vaultName!,
+                                    pin: pin,
+                                    label: labelText,
+                                    authToken: token,
+                                  );
+                                  // ZK client-finalize: for ZK vaults,
+                                  // /beneficiary/create wrote
+                                  // passer_label = NULL. Encrypt the
+                                  // label locally under metadataKey
+                                  // and POST the ciphertext to
+                                  // /vault/ciphertext/beneficiary-links
+                                  // BEFORE surfacing the pairing code.
+                                  // If the finalize fails, do NOT
+                                  // silently claim success — refuse
+                                  // to hand out the pairing code with
+                                  // an unlabelled row (the beneficiary
+                                  // list would be unreadable). Show
+                                  // the error and let the user retry.
+                                  if (zk_mvk_store.ZkActiveMvk.current() !=
+                                      null) {
+                                    final linkId =
+                                        (result['link_id'] as num?)?.toInt();
+                                    if (linkId == null) {
+                                      setLocal(() {
+                                        createErr = 'Could not finalize the '
+                                            'label: missing link_id in '
+                                            'the create response.';
+                                        creating = false;
+                                      });
+                                      return;
+                                    }
+                                    final ok =
+                                        await tryZkFinalizeBeneficiaryLabelCiphertext(
+                                      baseUrl: backendBaseUrl,
+                                      authToken: token,
+                                      linkId: linkId,
+                                      label: labelText,
+                                    );
+                                    if (!ok) {
+                                      // Full detail is captured by
+                                      // the network log inside
+                                      // tryZkFinalizeBeneficiaryLabelCiphertext;
+                                      // surface only a safe reference
+                                      // to the user so we never leak
+                                      // an SQL trace or an internal
+                                      // field name.
+                                      setLocal(() {
+                                        createErr = 'Could not generate the '
+                                            'pairing code. Please try '
+                                            'again.\nReference: '
+                                            'INH-PAIR-004';
+                                        creating = false;
+                                      });
+                                      return;
+                                    }
+                                  }
+                                  setLocal(() {
+                                    pairingCode =
+                                        result['pairing_code']?.toString();
+                                    creating = false;
+                                  });
+                                  await _loadBeneficiaries();
+                                } catch (e) {
+                                  if (app.handleApiException(e)) return;
+                                  // Log the raw exception for support;
+                                  // show the safe reference to the
+                                  // user so no stack / SQL text leaks.
+                                  vlog('inheritance.pair.create.failed', {
+                                    'error': e.toString(),
+                                  });
+                                  setLocal(() {
+                                    createErr = 'Could not generate the '
+                                        'pairing code. Please try '
+                                        'again.\nReference: '
+                                        'INH-PAIR-001';
+                                    creating = false;
+                                  });
+                                }
+                              },
+                        icon: creating
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.qr_code_2),
+                        label: Text(creating ? 'Generating…' : 'Generate code'),
                       ),
-                    ),
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(dialogCtx),
-                      child: const Text('Done'),
-                    ),
-                  ],
-          );
-        },
-      );
-    },
-  );
-}
-
-Future<void> _showEnterPairingCodeDialog() async {
-  final codeCtrl = TextEditingController();
-  String? linkErr;
-  String? linkedLabel;
-  bool linking = false;
-
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogCtx) {
-      return StatefulBuilder(
-        builder: (ctx, setLocal) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF2F2F2F),
-            title: Text(linkedLabel == null ? 'Enter inheritance code' : 'Linked!'),
-            content: linkedLabel == null
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        'Type the pairing code your benefactor gave you. '
-                        'Once linked, you\'ll be able to request transfer '
-                        'whenever you need to.',
-                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: codeCtrl,
-                        autocorrect: false,
-                        textCapitalization: TextCapitalization.characters,
-                        decoration: const InputDecoration(
-                          hintText: 'XXX-XXXX-XXXX',
+                    ]
+                  : [
+                      FilledButton.icon(
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: pairingCode!));
+                          _showSnack('Copied to clipboard');
+                        },
+                        icon: const Icon(Icons.copy_all_outlined),
+                        label: Text(
+                          AppLocalizations.of(dialogCtx).commonCopyCode,
                         ),
                       ),
-                      if (linkErr != null) ...[
-                        const SizedBox(height: 10),
-                        Text(linkErr!, style: const TextStyle(color: Colors.redAccent)),
-                      ],
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(dialogCtx),
+                        child: const Text('Done'),
+                      ),
                     ],
-                  )
-                : Text(
-                    'You are now linked as a beneficiary of "$linkedLabel". '
-                    'You can request transfer from the Inheritance page at any time.',
-                    style: const TextStyle(color: Color(0xFFECECEC), fontSize: 13),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showEnterPairingCodeDialog() async {
+    final codeCtrl = TextEditingController();
+    String? linkErr;
+    String? linkedLabel;
+    bool linking = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF2F2F2F),
+              title: Text(
+                  linkedLabel == null ? 'Enter inheritance code' : 'Linked!'),
+              content: linkedLabel == null
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text(
+                          'Type the pairing code your benefactor gave you. '
+                          'Once linked, you\'ll be able to request transfer '
+                          'whenever you need to.',
+                          style:
+                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: codeCtrl,
+                          autocorrect: false,
+                          textCapitalization: TextCapitalization.characters,
+                          decoration: const InputDecoration(
+                            hintText: 'XXX-XXXX-XXXX',
+                          ),
+                        ),
+                        if (linkErr != null) ...[
+                          const SizedBox(height: 10),
+                          Text(linkErr!,
+                              style: const TextStyle(color: Colors.redAccent)),
+                        ],
+                      ],
+                    )
+                  : Text(
+                      'You are now linked as a beneficiary of "$linkedLabel". '
+                      'You can request transfer from the Inheritance page at any time.',
+                      style: const TextStyle(
+                          color: Color(0xFFECECEC), fontSize: 13),
+                    ),
+              actions: linkedLabel == null
+                  ? [
+                      TextButton(
+                        onPressed:
+                            linking ? null : () => Navigator.pop(dialogCtx),
+                        child: Text(AppLocalizations.of(context).commonCancel),
+                      ),
+                      FilledButton.icon(
+                        onPressed: linking
+                            ? null
+                            : () async {
+                                final code = codeCtrl.text.trim();
+                                if (code.isEmpty) {
+                                  setLocal(() => linkErr = 'Enter the code.');
+                                  return;
+                                }
+                                final app = context.read<AppState>();
+                                final token = app.sessionToken;
+                                if (token == null || app.vaultName == null) {
+                                  setLocal(() => linkErr = 'Session expired.');
+                                  return;
+                                }
+                                setLocal(() {
+                                  linking = true;
+                                  linkErr = null;
+                                });
+                                try {
+                                  final pin =
+                                      await _VaultCrypto.currentPinOrThrow();
+                                  final client =
+                                      VaultAIClient(baseUrl: backendBaseUrl);
+                                  final result = await client.linkBeneficiary(
+                                    vaultName: app.vaultName!,
+                                    pin: pin,
+                                    pairingCode: code,
+                                    authToken: token,
+                                  );
+                                  setLocal(() {
+                                    linkedLabel =
+                                        result['passer_label']?.toString() ??
+                                            'vault';
+                                    linking = false;
+                                  });
+                                  await _loadInheritances();
+                                } catch (e) {
+                                  if (app.handleApiException(e)) return;
+                                  setLocal(() {
+                                    linkErr = e
+                                        .toString()
+                                        .replaceFirst('Exception: ', '');
+                                    linking = false;
+                                  });
+                                }
+                              },
+                        icon: linking
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.link),
+                        label: Text(linking ? 'Linking…' : 'Link to vault'),
+                      ),
+                    ]
+                  : [
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialogCtx),
+                        child: const Text('Done'),
+                      ),
+                    ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _cancelTransfer(int linkId, String label) async {
+    final app = context.read<AppState>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text(
+          AppLocalizations.of(dialogCtx)
+              .inheritanceCancelPendingTransferTitle(label),
+        ),
+        content: const Text(
+          'The 30-day countdown will be cleared. The beneficiary will be '
+          'emailed about the cancellation. They can request again later.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Keep')),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(
+              AppLocalizations.of(dialogCtx).inheritanceCancelTransfer,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final token = app.sessionToken;
+    if (token == null || app.vaultName == null) return;
+
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.cancelTransfer(
+        linkId: linkId,
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+      _showSnack('Transfer cancelled');
+      await _loadBeneficiaries();
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not cancel transfer: $e');
+    }
+  }
+
+  Future<void> _claimInheritance(int linkId, String label) async {
+    final inheritedNameCtrl = TextEditingController(text: '$label (inherited)');
+    String? err;
+    bool claiming = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF2F2F2F),
+              title: Text(
+                AppLocalizations.of(dialogCtx).inheritanceClaimTitle(label),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'A new vault will be created on your account containing '
+                    'all of the inherited data, encrypted under your PIN. '
+                    'The original vault is then frozen for 90 days.',
+                    style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
                   ),
-            actions: linkedLabel == null
-                ? [
-                    TextButton(
-                      onPressed: linking ? null : () => Navigator.pop(dialogCtx),
-                      child: Text(AppLocalizations.of(context).commonCancel),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: inheritedNameCtrl,
+                    maxLength: 60,
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      hintText: 'Name for the inherited vault',
                     ),
-                    FilledButton.icon(
-                      onPressed: linking
-                          ? null
-                          : () async {
-                              final code = codeCtrl.text.trim();
-                              if (code.isEmpty) {
-                                setLocal(() => linkErr = 'Enter the code.');
-                                return;
-                              }
-                              final app = context.read<AppState>();
-                              final token = app.sessionToken;
-                              if (token == null || app.vaultName == null) {
-                                setLocal(() => linkErr = 'Session expired.');
-                                return;
-                              }
-                              setLocal(() {
-                                linking = true;
-                                linkErr = null;
-                              });
-                              try {
-                                final pin = await _VaultCrypto.currentPinOrThrow();
-                                final client = VaultAIClient(baseUrl: backendBaseUrl);
-                                final result = await client.linkBeneficiary(
-                                  vaultName: app.vaultName!,
-                                  pin: pin,
-                                  pairingCode: code,
-                                  authToken: token,
-                                );
-                                setLocal(() {
-                                  linkedLabel = result['passer_label']?.toString() ?? 'vault';
-                                  linking = false;
-                                });
-                                await _loadInheritances();
-                              } catch (e) {
-                                if (app.handleApiException(e)) return;
-                                setLocal(() {
-                                  linkErr = e.toString().replaceFirst('Exception: ', '');
-                                  linking = false;
-                                });
-                              }
-                            },
-                      icon: linking
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.link),
-                      label: Text(linking ? 'Linking…' : 'Link to vault'),
-                    ),
-                  ]
-                : [
-                    FilledButton(
-                      onPressed: () => Navigator.pop(dialogCtx),
-                      child: const Text('Done'),
-                    ),
+                  ),
+                  if (err != null) ...[
+                    const SizedBox(height: 10),
+                    Text(err!, style: const TextStyle(color: Colors.redAccent)),
                   ],
-          );
-        },
-      );
-    },
-  );
-}
-
-Future<void> _cancelTransfer(int linkId, String label) async {
-  final app = context.read<AppState>();
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text(
-        AppLocalizations.of(dialogCtx)
-            .inheritanceCancelPendingTransferTitle(label),
-      ),
-      content: const Text(
-        'The 30-day countdown will be cleared. The beneficiary will be '
-        'emailed about the cancellation. They can request again later.',
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(dialogCtx, false), child: const Text('Keep')),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogCtx, true),
-          child: Text(
-            AppLocalizations.of(dialogCtx).inheritanceCancelTransfer,
-          ),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true) return;
-
-  final token = app.sessionToken;
-  if (token == null || app.vaultName == null) return;
-
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    await client.cancelTransfer(
-      linkId: linkId,
-      vaultName: app.vaultName!,
-      pin: pin,
-      authToken: token,
-    );
-    _showSnack('Transfer cancelled');
-    await _loadBeneficiaries();
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not cancel transfer: $e');
-  }
-}
-
-Future<void> _claimInheritance(int linkId, String label) async {
-  final inheritedNameCtrl = TextEditingController(text: '$label (inherited)');
-  String? err;
-  bool claiming = false;
-
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogCtx) {
-      return StatefulBuilder(
-        builder: (ctx, setLocal) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF2F2F2F),
-            title: Text(
-              AppLocalizations.of(dialogCtx).inheritanceClaimTitle(label),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'A new vault will be created on your account containing '
-                  'all of the inherited data, encrypted under your PIN. '
-                  'The original vault is then frozen for 90 days.',
-                  style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: inheritedNameCtrl,
-                  maxLength: 60,
-                  decoration: const InputDecoration(
-                    counterText: '',
-                    hintText: 'Name for the inherited vault',
-                  ),
-                ),
-                if (err != null) ...[
-                  const SizedBox(height: 10),
-                  Text(err!, style: const TextStyle(color: Colors.redAccent)),
                 ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: claiming ? null : () => Navigator.pop(dialogCtx),
-                child: Text(AppLocalizations.of(dialogCtx).commonCancel),
               ),
-              FilledButton.icon(
-                onPressed: claiming
-                    ? null
-                    : () async {
-                        final newName = inheritedNameCtrl.text.trim();
-                        if (newName.isEmpty) {
-                          setLocal(() => err = 'Pick a name for the new vault.');
-                          return;
-                        }
-                        final app = context.read<AppState>();
-                        final token = app.sessionToken;
-                        if (token == null || app.vaultName == null) {
-                          setLocal(() => err = 'Session expired.');
-                          return;
-                        }
-                        setLocal(() {
-                          claiming = true;
-                          err = null;
-                        });
-                        try {
-                          final pin = await _VaultCrypto.currentPinOrThrow();
-                          final client = VaultAIClient(baseUrl: backendBaseUrl);
-                          final result = await client.claimTransfer(
-                            linkId: linkId,
-                            vaultName: app.vaultName!,
-                            pin: pin,
-                            inheritedVaultName: newName,
-                            authToken: token,
-                          );
-                          final inheritedName = result['inherited_vault_name']?.toString() ?? newName;
-                          if (!context.mounted) return;
-                          Navigator.pop(dialogCtx);
-                          _showSnack(
-                              'Claimed! New vault "$inheritedName" is available in your vault list.');
-                          await _loadInheritances();
-                          await app.refreshAvailableVaults();
-                        } catch (e) {
-                          if (app.handleApiException(e)) return;
+              actions: [
+                TextButton(
+                  onPressed: claiming ? null : () => Navigator.pop(dialogCtx),
+                  child: Text(AppLocalizations.of(dialogCtx).commonCancel),
+                ),
+                FilledButton.icon(
+                  onPressed: claiming
+                      ? null
+                      : () async {
+                          final newName = inheritedNameCtrl.text.trim();
+                          if (newName.isEmpty) {
+                            setLocal(
+                                () => err = 'Pick a name for the new vault.');
+                            return;
+                          }
+                          final app = context.read<AppState>();
+                          final token = app.sessionToken;
+                          if (token == null || app.vaultName == null) {
+                            setLocal(() => err = 'Session expired.');
+                            return;
+                          }
                           setLocal(() {
-                            err = e.toString().replaceFirst('Exception: ', '');
-                            claiming = false;
+                            claiming = true;
+                            err = null;
                           });
-                        }
-                      },
-                icon: claiming
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.move_to_inbox),
-                label: Text(claiming ? 'Claiming…' : 'Claim'),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
-}
+                          try {
+                            final pin = await _VaultCrypto.currentPinOrThrow();
+                            final client =
+                                VaultAIClient(baseUrl: backendBaseUrl);
+                            final result = await client.claimTransfer(
+                              linkId: linkId,
+                              vaultName: app.vaultName!,
+                              pin: pin,
+                              inheritedVaultName: newName,
+                              authToken: token,
+                            );
+                            final inheritedName =
+                                result['inherited_vault_name']?.toString() ??
+                                    newName;
+                            if (!context.mounted) return;
+                            Navigator.pop(dialogCtx);
+                            _showSnack(
+                                'Claimed! New vault "$inheritedName" is available in your vault list.');
+                            await _loadInheritances();
+                            await app.refreshAvailableVaults();
+                          } catch (e) {
+                            if (app.handleApiException(e)) return;
+                            setLocal(() {
+                              err =
+                                  e.toString().replaceFirst('Exception: ', '');
+                              claiming = false;
+                            });
+                          }
+                        },
+                  icon: claiming
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.move_to_inbox),
+                  label: Text(claiming ? 'Claiming…' : 'Claim'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
 
-Future<void> _requestTransfer(int linkId, String label) async {
-  final app = context.read<AppState>();
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text(
-        AppLocalizations.of(dialogCtx)
-            .inheritanceRequestTransferTitle(label),
-      ),
-      content: const Text(
-        'A 30-day countdown will start. The vault owner will be emailed and '
-        'can cancel during that window. After 30 days, you can claim the '
-        'inherited vault on your account.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogCtx, false),
-          child: Text(AppLocalizations.of(dialogCtx).commonNotYet),
+  Future<void> _requestTransfer(int linkId, String label) async {
+    final app = context.read<AppState>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text(
+          AppLocalizations.of(dialogCtx).inheritanceRequestTransferTitle(label),
         ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogCtx, true),
-          child: Text(
-            AppLocalizations.of(dialogCtx).inheritanceStartCountdown,
+        content: const Text(
+          'A 30-day countdown will start. The vault owner will be emailed and '
+          'can cancel during that window. After 30 days, you can claim the '
+          'inherited vault on your account.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(AppLocalizations.of(dialogCtx).commonNotYet),
           ),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true) return;
-
-  final token = app.sessionToken;
-  if (token == null || app.vaultName == null) return;
-
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    await client.requestTransfer(
-      linkId: linkId,
-      vaultName: app.vaultName!,
-      pin: pin,
-      authToken: token,
-    );
-    _showSnack('Transfer requested — owner has been notified');
-    await _loadInheritances();
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not request transfer: $e');
-  }
-}
-
-String _formatCountdown(String? isoExecutesAt) {
-  if (isoExecutesAt == null) return '';
-  try {
-    final executes = DateTime.parse(isoExecutesAt).toLocal();
-    final remaining = executes.difference(DateTime.now());
-    if (remaining.isNegative) return 'Ready to claim';
-    final days = remaining.inDays;
-    final hours = remaining.inHours % 24;
-    if (days >= 1) return '$days day${days == 1 ? '' : 's'}, $hours hr remaining';
-    final minutes = remaining.inMinutes % 60;
-    return '${remaining.inHours} hr $minutes min remaining';
-  } catch (_) {
-    return '';
-  }
-}
-
-Future<void> _deleteBeneficiary(int linkId, String label) async {
-  final app = context.read<AppState>();
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text(
-        AppLocalizations.of(dialogCtx).inheritanceRemoveTitle(label),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(
+              AppLocalizations.of(dialogCtx).inheritanceStartCountdown,
+            ),
+          ),
+        ],
       ),
-      content: const Text(
-        'They will no longer be able to inherit this vault. They can be re-added later with a new code.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogCtx, false),
-          child: Text(AppLocalizations.of(dialogCtx).commonCancel),
-        ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-          onPressed: () => Navigator.pop(dialogCtx, true),
-          child: Text(AppLocalizations.of(dialogCtx).commonRemove),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true) return;
-
-  final token = app.sessionToken;
-  if (token == null || app.vaultName == null) return;
-
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    await client.deleteBeneficiary(
-      linkId: linkId,
-      vaultName: app.vaultName!,
-      pin: pin,
-      authToken: token,
     );
-    _showSnack('Removed $label');
-    await _loadBeneficiaries();
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not remove beneficiary: $e');
+    if (confirmed != true) return;
+
+    final token = app.sessionToken;
+    if (token == null || app.vaultName == null) return;
+
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.requestTransfer(
+        linkId: linkId,
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+      _showSnack('Transfer requested — owner has been notified');
+      await _loadInheritances();
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not request transfer: $e');
+    }
   }
-}
+
+  String _formatCountdown(String? isoExecutesAt) {
+    if (isoExecutesAt == null) return '';
+    try {
+      final executes = DateTime.parse(isoExecutesAt).toLocal();
+      final remaining = executes.difference(DateTime.now());
+      if (remaining.isNegative) return 'Ready to claim';
+      final days = remaining.inDays;
+      final hours = remaining.inHours % 24;
+      if (days >= 1)
+        return '$days day${days == 1 ? '' : 's'}, $hours hr remaining';
+      final minutes = remaining.inMinutes % 60;
+      return '${remaining.inHours} hr $minutes min remaining';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  Future<void> _deleteBeneficiary(int linkId, String label) async {
+    final app = context.read<AppState>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text(
+          AppLocalizations.of(dialogCtx).inheritanceRemoveTitle(label),
+        ),
+        content: const Text(
+          'They will no longer be able to inherit this vault. They can be re-added later with a new code.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(AppLocalizations.of(dialogCtx).commonCancel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(AppLocalizations.of(dialogCtx).commonRemove),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final token = app.sessionToken;
+    if (token == null || app.vaultName == null) return;
+
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.deleteBeneficiary(
+        linkId: linkId,
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+      _showSnack('Removed $label');
+      await _loadBeneficiaries();
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not remove beneficiary: $e');
+    }
+  }
 
 // ---------------------------------------------------------------------
 // Inheritance credential escrow — owner side (Phase 1).
@@ -6427,326 +6359,331 @@ Future<void> _deleteBeneficiary(int linkId, String label) async {
 // name to reduce typos; the owner can still edit it.
 // ---------------------------------------------------------------------
 
-String _shortDateFromIso(String? iso) {
-  if (iso == null || iso.isEmpty) return '';
-  try {
-    final dt = DateTime.parse(iso).toLocal();
-    // "Jan 3" style — locale-neutral short date without a year.
-    const months = [
-      'Jan','Feb','Mar','Apr','May','Jun',
-      'Jul','Aug','Sep','Oct','Nov','Dec',
-    ];
-    return '${months[dt.month - 1]} ${dt.day}';
-  } catch (_) {
-    return iso;
+  String _shortDateFromIso(String? iso) {
+    if (iso == null || iso.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      // "Jan 3" style — locale-neutral short date without a year.
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      return '${months[dt.month - 1]} ${dt.day}';
+    } catch (_) {
+      return iso;
+    }
   }
-}
 
-Future<void> _showInheritanceCredentialsDialog({
-  required int linkId,
-  required String beneficiaryLabel,
-  required bool isUpdate,
-}) async {
-  final app = context.read<AppState>();
-  final autofilledUsername = app.vaultName ?? '';
-  final usernameCtrl = TextEditingController(text: autofilledUsername);
-  final pinCtrl = TextEditingController();
-  final formKey = GlobalKey<FormState>();
-  bool saving = false;
-  String? errRef;
+  Future<void> _showInheritanceCredentialsDialog({
+    required int linkId,
+    required String beneficiaryLabel,
+    required bool isUpdate,
+  }) async {
+    final app = context.read<AppState>();
+    final autofilledUsername = app.vaultName ?? '';
+    final usernameCtrl = TextEditingController(text: autofilledUsername);
+    final pinCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    bool saving = false;
+    String? errRef;
 
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogCtx) => StatefulBuilder(
-      builder: (ctx, setLocal) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
-        title: Text(
-          isUpdate
-              ? 'Update credentials for $beneficiaryLabel'
-              : 'Credentials to inherit',
-        ),
-        content: SingleChildScrollView(
-          child: Form(
-            key: formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'These are the VaultAI login credentials this '
-                  'beneficiary will inherit. VaultAI can never read '
-                  'them — they are encrypted on this device and '
-                  'released only after your approval or the 30-day '
-                  'cooldown.',
-                  style: TextStyle(
-                      color: Color(0xFFB4B4B4), fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'VaultAI username',
-                  style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
-                ),
-                TextFormField(
-                  key: const Key('inheritance_cred_username_field'),
-                  controller: usernameCtrl,
-                  autofillHints: const [AutofillHints.username],
-                  decoration: const InputDecoration(
-                    hintText: 'Autofilled from your account',
-                    isDense: true,
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: const Color(0xFF2F2F2F),
+          title: Text(
+            isUpdate
+                ? 'Update credentials for $beneficiaryLabel'
+                : 'Credentials to inherit',
+          ),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'These are the VaultAI login credentials this '
+                    'beneficiary will inherit. VaultAI can never read '
+                    'them — they are encrypted on this device and '
+                    'released only after your approval or the 30-day '
+                    'cooldown.',
+                    style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
                   ),
-                  validator: (v) => (v == null || v.trim().isEmpty)
-                      ? 'Username is required'
-                      : null,
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'VaultAI PIN',
-                  style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
-                ),
-                TextFormField(
-                  key: const Key('inheritance_cred_pin_field'),
-                  controller: pinCtrl,
-                  obscureText: true,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    hintText: 'Enter the PIN to escrow',
-                    isDense: true,
+                  const SizedBox(height: 12),
+                  const Text(
+                    'VaultAI username',
+                    style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
                   ),
-                  validator: (v) {
-                    final s = (v ?? '').trim();
-                    if (s.isEmpty) return 'PIN is required';
-                    if (s.length < 4) return 'PIN is too short';
-                    return null;
-                  },
-                ),
-                if (errRef != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    errRef!,
-                    style: const TextStyle(
-                        color: Color(0xFFE57373), fontSize: 12),
+                  TextFormField(
+                    key: const Key('inheritance_cred_username_field'),
+                    controller: usernameCtrl,
+                    autofillHints: const [AutofillHints.username],
+                    decoration: const InputDecoration(
+                      hintText: 'Autofilled from your account',
+                      isDense: true,
+                    ),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Username is required'
+                        : null,
                   ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'VaultAI PIN',
+                    style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                  ),
+                  TextFormField(
+                    key: const Key('inheritance_cred_pin_field'),
+                    controller: pinCtrl,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      hintText: 'Enter the PIN to escrow',
+                      isDense: true,
+                    ),
+                    validator: (v) {
+                      final s = (v ?? '').trim();
+                      if (s.isEmpty) return 'PIN is required';
+                      if (s.length < 4) return 'PIN is too short';
+                      return null;
+                    },
+                  ),
+                  if (errRef != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errRef!,
+                      style: const TextStyle(
+                          color: Color(0xFFE57373), fontSize: 12),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              key: const Key('inheritance_cred_save_button'),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      if (!(formKey.currentState?.validate() ?? false)) {
+                        return;
+                      }
+                      setLocal(() {
+                        saving = true;
+                        errRef = null;
+                      });
+                      final ok = await _submitInheritanceCredentials(
+                        linkId: linkId,
+                        username: usernameCtrl.text.trim(),
+                        pin: pinCtrl.text.trim(),
+                        isUpdate: isUpdate,
+                      );
+                      if (ok) {
+                        // Wipe the plaintext from the widget's memory
+                        // as soon as we no longer need it.
+                        usernameCtrl.text = '';
+                        pinCtrl.text = '';
+                        if (dialogCtx.mounted) {
+                          Navigator.pop(dialogCtx, true);
+                        }
+                      } else {
+                        setLocal(() {
+                          saving = false;
+                          errRef = 'Could not save credentials. Please try '
+                              'again.\nReference: INH-CRED-004';
+                        });
+                      }
+                    },
+              icon: saving
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.lock_outline),
+              label: Text(saving ? 'Saving…' : 'Save securely'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // Best-effort clear of the controllers after the dialog closes.
+    usernameCtrl.dispose();
+    pinCtrl.dispose();
+    await _loadBeneficiaries();
+  }
+
+  Future<bool> _submitInheritanceCredentials({
+    required int linkId,
+    required String username,
+    required String pin,
+    required bool isUpdate,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return false;
+    try {
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+
+      // 1. Fetch the beneficiary's X25519 public key.
+      final pkResp = await client.getInheritanceBeneficiaryPubKey(
+        linkId: linkId,
+        authToken: token,
+      );
+      final pkB64 = pkResp['pk_vault_public_b64url']?.toString();
+      if (pkB64 == null || pkB64.isEmpty) {
+        vlog('inheritance.cred.save.no_pk', {'link_id': linkId});
+        return false;
+      }
+      // Base64url decode with padding forgiveness.
+      final padded = pkB64 + '=' * ((4 - pkB64.length % 4) % 4);
+      final pk = base64Url.decode(padded);
+
+      // 2. Encrypt the credential package client-side.
+      final pkg = await inh_cred.encryptInheritanceCredentials(
+        username: username,
+        pin: pin,
+        beneficiaryPkVaultPublic: pk,
+      );
+
+      // 3. POST wrapped material.
+      final body = pkg.toRequestBody(beneficiaryLinkId: linkId);
+      if (isUpdate) {
+        await client.replaceInheritanceCredentials(
+            body: body, authToken: token);
+      } else {
+        await client.saveInheritanceCredentials(body: body, authToken: token);
+      }
+      _showSnack(isUpdate ? 'Credentials updated' : 'Credentials saved');
+      return true;
+    } catch (e) {
+      vlog('inheritance.cred.save.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return false;
+      return false;
+    }
+  }
+
+  Future<void> _deleteInheritanceCredentials({
+    required int linkId,
+    required String beneficiaryLabel,
+  }) async {
+    final app = context.read<AppState>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text(
+          'Delete credentials for $beneficiaryLabel?',
+        ),
+        content: const Text(
+          'The encrypted username and PIN will be permanently removed. '
+          'They can be re-added later.',
         ),
         actions: [
           TextButton(
-            onPressed: saving
-                ? null
-                : () => Navigator.pop(dialogCtx, false),
+            onPressed: () => Navigator.pop(dialogCtx, false),
             child: const Text('Cancel'),
           ),
-          FilledButton.icon(
-            key: const Key('inheritance_cred_save_button'),
-            onPressed: saving
-                ? null
-                : () async {
-                    if (!(formKey.currentState?.validate() ?? false)) {
-                      return;
-                    }
-                    setLocal(() {
-                      saving = true;
-                      errRef = null;
-                    });
-                    final ok = await _submitInheritanceCredentials(
-                      linkId: linkId,
-                      username: usernameCtrl.text.trim(),
-                      pin: pinCtrl.text.trim(),
-                      isUpdate: isUpdate,
-                    );
-                    if (ok) {
-                      // Wipe the plaintext from the widget's memory
-                      // as soon as we no longer need it.
-                      usernameCtrl.text = '';
-                      pinCtrl.text = '';
-                      if (dialogCtx.mounted) {
-                        Navigator.pop(dialogCtx, true);
-                      }
-                    } else {
-                      setLocal(() {
-                        saving = false;
-                        errRef =
-                            'Could not save credentials. Please try '
-                            'again.\nReference: INH-CRED-004';
-                      });
-                    }
-                  },
-            icon: saving
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.lock_outline),
-            label: Text(saving ? 'Saving…' : 'Save securely'),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Delete'),
           ),
         ],
       ),
-    ),
-  );
-
-  // Best-effort clear of the controllers after the dialog closes.
-  usernameCtrl.dispose();
-  pinCtrl.dispose();
-  await _loadBeneficiaries();
-}
-
-Future<bool> _submitInheritanceCredentials({
-  required int linkId,
-  required String username,
-  required String pin,
-  required bool isUpdate,
-}) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return false;
-  try {
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-
-    // 1. Fetch the beneficiary's X25519 public key.
-    final pkResp = await client.getInheritanceBeneficiaryPubKey(
-      linkId: linkId, authToken: token,
     );
-    final pkB64 = pkResp['pk_vault_public_b64url']?.toString();
-    if (pkB64 == null || pkB64.isEmpty) {
-      vlog('inheritance.cred.save.no_pk', {'link_id': linkId});
-      return false;
+    if (confirmed != true) return;
+    final token = app.sessionToken;
+    if (token == null) return;
+    try {
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.deleteInheritanceCredentials(
+        linkId: linkId,
+        authToken: token,
+      );
+      _showSnack('Credentials deleted');
+      await _loadBeneficiaries();
+    } catch (e) {
+      vlog('inheritance.cred.delete.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack(
+        'Could not delete credentials.\nReference: INH-CRED-006',
+      );
     }
-    // Base64url decode with padding forgiveness.
-    final padded = pkB64 + '=' * ((4 - pkB64.length % 4) % 4);
-    final pk = base64Url.decode(padded);
+  }
 
-    // 2. Encrypt the credential package client-side.
-    final pkg = await inh_cred.encryptInheritanceCredentials(
-      username: username,
-      pin: pin,
-      beneficiaryPkVaultPublic: pk,
-    );
-
-    // 3. POST wrapped material.
-    final body = pkg.toRequestBody(beneficiaryLinkId: linkId);
-    if (isUpdate) {
-      await client.replaceInheritanceCredentials(
-          body: body, authToken: token);
-    } else {
-      await client.saveInheritanceCredentials(
-          body: body, authToken: token);
+  String _beneficiaryStateLabel({
+    required String pairingState,
+    required bool credentialsSaved,
+    required String legacyStatus,
+  }) {
+    switch (pairingState) {
+      case 'credentials_saved':
+        return 'Credentials secured';
+      case 'cooldown_active':
+        return 'Access requested';
+      case 'claimable':
+        return 'Access available';
+      case 'approved':
+        return 'Access approved';
+      case 'released':
+        return 'Access granted';
+      case 'revoked':
+        return 'Revoked';
+      case 'rejected':
+        return 'Request rejected';
+      case 'paired_no_credentials':
+        if (legacyStatus == 'transfer_pending') return 'Transfer pending';
+        if (legacyStatus == 'linked') return 'Linked';
+        return 'Waiting for credentials';
     }
-    _showSnack(isUpdate
-        ? 'Credentials updated'
-        : 'Credentials saved');
-    return true;
-  } catch (e) {
-    vlog('inheritance.cred.save.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return false;
-    return false;
+    return legacyStatus.isEmpty ? 'Linked' : legacyStatus;
   }
-}
 
-Future<void> _deleteInheritanceCredentials({
-  required int linkId,
-  required String beneficiaryLabel,
-}) async {
-  final app = context.read<AppState>();
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text(
-        'Delete credentials for $beneficiaryLabel?',
-      ),
-      content: const Text(
-        'The encrypted username and PIN will be permanently removed. '
-        'They can be re-added later.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogCtx, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-          onPressed: () => Navigator.pop(dialogCtx, true),
-          child: const Text('Delete'),
-        ),
-      ],
-    ),
-  );
-  if (confirmed != true) return;
-  final token = app.sessionToken;
-  if (token == null) return;
-  try {
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    await client.deleteInheritanceCredentials(
-      linkId: linkId, authToken: token,
-    );
-    _showSnack('Credentials deleted');
-    await _loadBeneficiaries();
-  } catch (e) {
-    vlog('inheritance.cred.delete.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack(
-      'Could not delete credentials.\nReference: INH-CRED-006',
-    );
+  Color _beneficiaryStateColor(String pairingState) {
+    switch (pairingState) {
+      case 'released':
+      case 'approved':
+      case 'claimable':
+        return const Color(0xFF10A37F);
+      case 'cooldown_active':
+        return Colors.orange;
+      case 'revoked':
+      case 'rejected':
+        return Colors.redAccent;
+      default:
+        return const Color(0xFFB4B4B4);
+    }
   }
-}
 
-String _beneficiaryStateLabel({
-  required String pairingState,
-  required bool credentialsSaved,
-  required String legacyStatus,
-}) {
-  switch (pairingState) {
-    case 'credentials_saved':
-      return 'Credentials secured';
-    case 'cooldown_active':
-      return 'Access requested';
-    case 'claimable':
-      return 'Access available';
-    case 'approved':
-      return 'Access approved';
-    case 'released':
-      return 'Access granted';
-    case 'revoked':
-      return 'Revoked';
-    case 'rejected':
-      return 'Request rejected';
-    case 'paired_no_credentials':
-      if (legacyStatus == 'transfer_pending') return 'Transfer pending';
-      if (legacyStatus == 'linked') return 'Linked';
-      return 'Waiting for credentials';
+  bool _constantTimeStringEquals(String a, String b) {
+    if (a.length != b.length) return false;
+    int diff = 0;
+    for (int i = 0; i < a.length; i++) {
+      diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return diff == 0;
   }
-  return legacyStatus.isEmpty ? 'Linked' : legacyStatus;
-}
-
-Color _beneficiaryStateColor(String pairingState) {
-  switch (pairingState) {
-    case 'released':
-    case 'approved':
-    case 'claimable':
-      return const Color(0xFF10A37F);
-    case 'cooldown_active':
-      return Colors.orange;
-    case 'revoked':
-    case 'rejected':
-      return Colors.redAccent;
-    default:
-      return const Color(0xFFB4B4B4);
-  }
-}
-
-bool _constantTimeStringEquals(String a, String b) {
-  if (a.length != b.length) return false;
-  int diff = 0;
-  for (int i = 0; i < a.length; i++) {
-    diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
-  }
-  return diff == 0;
-}
 
 // ---------------------------------------------------------------------
 // Phase 2 — release-flow helpers (approve / reject / request /
@@ -6758,1588 +6695,1606 @@ bool _constantTimeStringEquals(String a, String b) {
 // plaintext credentials on screen.
 // ---------------------------------------------------------------------
 
-Future<void> _ownerApproveInheritance({
-  required int linkId,
-  required String beneficiaryLabel,
-}) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return;
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (dCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text('Approve $beneficiaryLabel?'),
-      content: const Text(
-        'Approving will permanently release the saved VaultAI '
-        'username and PIN to this beneficiary. This cannot be '
-        'undone.',
+  Future<void> _ownerApproveInheritance({
+    required int linkId,
+    required String beneficiaryLabel,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text('Approve $beneficiaryLabel?'),
+        content: const Text(
+          'Approving will permanently release the saved VaultAI '
+          'username and PIN to this beneficiary. This cannot be '
+          'undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('Approve now'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dCtx, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dCtx, true),
-          child: const Text('Approve now'),
-        ),
-      ],
-    ),
-  );
-  if (ok != true) return;
-  try {
-    await VaultAIClient(baseUrl: backendBaseUrl)
-        .approveInheritanceAccess(linkId: linkId, authToken: token);
-    _showSnack('Approved $beneficiaryLabel');
-    await _loadBeneficiaries();
-  } catch (e) {
-    vlog('inheritance.access.approve.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack(
-      'Could not approve the request.\nReference: INH-ACCESS-005',
     );
+    if (ok != true) return;
+    try {
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .approveInheritanceAccess(linkId: linkId, authToken: token);
+      _showSnack('Approved $beneficiaryLabel');
+      await _loadBeneficiaries();
+    } catch (e) {
+      vlog('inheritance.access.approve.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack(
+        'Could not approve the request.\nReference: INH-ACCESS-005',
+      );
+    }
   }
-}
 
-Future<void> _ownerRejectInheritance({
-  required int linkId,
-  required String beneficiaryLabel,
-}) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return;
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (dCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text('Reject request from $beneficiaryLabel?'),
-      content: const Text(
-        'The saved credentials remain safe. The beneficiary can '
-        'request access again.',
+  Future<void> _ownerRejectInheritance({
+    required int linkId,
+    required String beneficiaryLabel,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text('Reject request from $beneficiaryLabel?'),
+        content: const Text(
+          'The saved credentials remain safe. The beneficiary can '
+          'request access again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Keep pending'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('Reject'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dCtx, false),
-          child: const Text('Keep pending'),
-        ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-          onPressed: () => Navigator.pop(dCtx, true),
-          child: const Text('Reject'),
-        ),
-      ],
-    ),
-  );
-  if (ok != true) return;
-  try {
-    await VaultAIClient(baseUrl: backendBaseUrl)
-        .rejectInheritanceAccess(linkId: linkId, authToken: token);
-    _showSnack('Rejected request');
-    await _loadBeneficiaries();
-  } catch (e) {
-    vlog('inheritance.access.reject.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack(
-      'Could not reject the request.\nReference: INH-ACCESS-005',
     );
+    if (ok != true) return;
+    try {
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .rejectInheritanceAccess(linkId: linkId, authToken: token);
+      _showSnack('Rejected request');
+      await _loadBeneficiaries();
+    } catch (e) {
+      vlog('inheritance.access.reject.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack(
+        'Could not reject the request.\nReference: INH-ACCESS-005',
+      );
+    }
   }
-}
 
-Future<void> _beneficiaryRequestAccess({
-  required int linkId,
-  required String passerLabel,
-}) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return;
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (dCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text('Request access to $passerLabel?'),
-      content: const Text(
-        'The owner will be notified and can approve or reject. '
-        'Without a response, access becomes available after 30 '
-        'days.',
+  Future<void> _beneficiaryRequestAccess({
+    required int linkId,
+    required String passerLabel,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text('Request access to $passerLabel?'),
+        content: const Text(
+          'The owner will be notified and can approve or reject. '
+          'Without a response, access becomes available after 30 '
+          'days.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.lock_outline),
+            onPressed: () => Navigator.pop(dCtx, true),
+            label: const Text('Request access'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dCtx, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          icon: const Icon(Icons.lock_outline),
-          onPressed: () => Navigator.pop(dCtx, true),
-          label: const Text('Request access'),
-        ),
-      ],
-    ),
-  );
-  if (ok != true) return;
-  try {
-    await VaultAIClient(baseUrl: backendBaseUrl)
-        .requestInheritanceAccess(linkId: linkId, authToken: token);
-    _showSnack('Access requested');
-    await _loadInheritances();
-  } catch (e) {
-    vlog('inheritance.access.request.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack(
-      'Could not request access.\nReference: INH-ACCESS-003',
     );
+    if (ok != true) return;
+    try {
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .requestInheritanceAccess(linkId: linkId, authToken: token);
+      _showSnack('Access requested');
+      await _loadInheritances();
+    } catch (e) {
+      vlog('inheritance.access.request.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack(
+        'Could not request access.\nReference: INH-ACCESS-003',
+      );
+    }
   }
-}
 
-Future<void> _beneficiaryCancelAccess({
-  required int linkId,
-  required String passerLabel,
-}) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return;
-  try {
-    await VaultAIClient(baseUrl: backendBaseUrl)
-        .cancelInheritanceAccess(linkId: linkId, authToken: token);
-    _showSnack('Request cancelled');
-    await _loadInheritances();
-  } catch (e) {
-    vlog('inheritance.access.cancel.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack('Could not cancel.\nReference: INH-ACCESS-005');
+  Future<void> _beneficiaryCancelAccess({
+    required int linkId,
+    required String passerLabel,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return;
+    try {
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .cancelInheritanceAccess(linkId: linkId, authToken: token);
+      _showSnack('Request cancelled');
+      await _loadInheritances();
+    } catch (e) {
+      vlog('inheritance.access.cancel.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not cancel.\nReference: INH-ACCESS-005');
+    }
   }
-}
 
-Future<void> _beneficiaryClaimAccess({
-  required int linkId,
-  required String passerLabel,
-}) async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return;
-  try {
-    await VaultAIClient(baseUrl: backendBaseUrl)
-        .claimInheritanceAccess(linkId: linkId, authToken: token);
-    await _loadInheritances();
-    // Straight into reveal after successful claim.
-    await _beneficiaryRevealCredentials(
-      linkId: linkId, passerLabel: passerLabel,
-    );
-  } catch (e) {
-    vlog('inheritance.access.claim.failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack(
-      'Could not claim yet — check the countdown.'
-      '\nReference: INH-CLAIM-001',
-    );
+  Future<void> _beneficiaryClaimAccess({
+    required int linkId,
+    required String passerLabel,
+  }) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return;
+    try {
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .claimInheritanceAccess(linkId: linkId, authToken: token);
+      await _loadInheritances();
+      // Straight into reveal after successful claim.
+      await _beneficiaryRevealCredentials(
+        linkId: linkId,
+        passerLabel: passerLabel,
+      );
+    } catch (e) {
+      vlog('inheritance.access.claim.failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack(
+        'Could not claim yet — check the countdown.'
+        '\nReference: INH-CLAIM-001',
+      );
+    }
   }
-}
 
-Future<void> _beneficiaryRevealCredentials({
-  required int linkId,
-  required String passerLabel,
-}) async {
-  // 1. Require the beneficiary's own PIN before showing anything.
-  final pin = await _promptForReauthPin(title: 'Reveal $passerLabel');
-  if (pin == null) return;
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
-  if (token == null) return;
+  Future<void> _beneficiaryRevealCredentials({
+    required int linkId,
+    required String passerLabel,
+  }) async {
+    // 1. Require the beneficiary's own PIN before showing anything.
+    final pin = await _promptForReauthPin(title: 'Reveal $passerLabel');
+    if (pin == null) return;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    if (token == null) return;
 
-  // Verify PIN against the beneficiary's active vault so an
-  // over-the-shoulder attacker cannot bypass the reveal wall.
-  // ``_VaultCrypto.currentPinOrThrow`` returns the PIN cached at
-  // login/unlock time; we compare constant-time-ish.
-  try {
-    final cached = await _VaultCrypto.currentPinOrThrow();
-    if (cached.length != pin.length ||
-        !_constantTimeStringEquals(cached, pin)) {
+    // Verify PIN against the beneficiary's active vault so an
+    // over-the-shoulder attacker cannot bypass the reveal wall.
+    // ``_VaultCrypto.currentPinOrThrow`` returns the PIN cached at
+    // login/unlock time; we compare constant-time-ish.
+    try {
+      final cached = await _VaultCrypto.currentPinOrThrow();
+      if (cached.length != pin.length ||
+          !_constantTimeStringEquals(cached, pin)) {
+        _showSnack('PIN did not match. Try again.');
+        return;
+      }
+    } catch (_) {
       _showSnack('PIN did not match. Try again.');
       return;
     }
-  } catch (_) {
-    _showSnack('PIN did not match. Try again.');
-    return;
-  }
 
-  // 2. Load the wrapped package.
-  Map<String, dynamic> pkg;
-  try {
-    pkg = await VaultAIClient(baseUrl: backendBaseUrl)
-        .retrieveInheritanceCredentials(
-      linkId: linkId, authToken: token,
-    );
-  } catch (e) {
-    vlog('inheritance.reveal.retrieve_failed', {'error': e.toString()});
-    if (app.handleApiException(e)) return;
-    _showSnack(
-      'Could not fetch credentials.\nReference: INH-RETRIEVE-001',
-    );
-    return;
-  }
-
-  // 3. Beneficiary's X25519 private key must be present in the
-  //    in-memory ZK store. If not (e.g. session restored from
-  //    disk without a fresh login), tell the user to log in
-  //    again — never surface the raw error.
-  final sk = zk_sk_store.ZkActiveSkVault.current();
-  if (sk == null) {
-    _showSnack(
-      'Please log out and log back in with your PIN to reveal '
-      'inherited credentials on this device.',
-    );
-    return;
-  }
-  final skBytes = await sk.extractBytes();
-
-  // 4. Decrypt locally.
-  try {
-    final pkgObj = inh_cred.InheritanceCredentialPackage(
-      cryptoVersion: (pkg['crypto_version'] as num).toInt(),
-      encryptedPayloadB64Url: pkg['encrypted_payload'].toString(),
-      payloadNonceB64Url: pkg['payload_nonce'].toString(),
-      wrappedKeyB64Url: pkg['wrapped_key'].toString(),
-      wrappingEphemeralPkB64Url:
-          pkg['wrapping_ephemeral_pk'].toString(),
-      wrappingNonceB64Url: pkg['wrapping_nonce'].toString(),
-    );
-    final decrypted = await inh_cred.decryptInheritanceCredentials(
-      beneficiarySkVaultPrivate: Uint8List.fromList(skBytes),
-      package: pkgObj,
-    );
-    // Wipe the derived skBytes buffer after use.
-    for (var i = 0; i < skBytes.length; i++) {
-      skBytes[i] = 0;
-    }
-
-    if (!mounted) return;
-    await _showRevealedCredentialsDialog(
-      passerLabel: passerLabel,
-      username: decrypted.username,
-      pin: decrypted.pin,
-      linkId: linkId,
-      token: token,
-    );
-    await _loadInheritances();
-  } catch (e) {
-    vlog('inheritance.reveal.decrypt_failed', {'error': e.toString()});
-    _showSnack(
-      'Could not decrypt these credentials on this device.'
-      '\nReference: INH-RETRIEVE-003',
-    );
-  }
-}
-
-Future<String?> _promptForReauthPin({required String title}) async {
-  final ctrl = TextEditingController();
-  final formKey = GlobalKey<FormState>();
-  final result = await showDialog<String>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dCtx) => AlertDialog(
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text(title),
-      content: Form(
-        key: formKey,
-        child: TextFormField(
-          key: const Key('inheritance_reveal_reauth_pin_field'),
-          controller: ctrl,
-          obscureText: true,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            hintText: 'Enter your VaultAI PIN',
-            isDense: true,
-          ),
-          validator: (v) =>
-              (v == null || v.trim().length < 4)
-                  ? 'PIN is too short'
-                  : null,
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dCtx, null),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!(formKey.currentState?.validate() ?? false)) return;
-            Navigator.pop(dCtx, ctrl.text.trim());
-          },
-          child: const Text('Continue'),
-        ),
-      ],
-    ),
-  );
-  ctrl.dispose();
-  return result;
-}
-
-Future<void> _showRevealedCredentialsDialog({
-  required String passerLabel,
-  required String username,
-  required String pin,
-  required int linkId,
-  required String token,
-}) async {
-  await showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dCtx) => AlertDialog(
-      key: const Key('inheritance_revealed_dialog'),
-      backgroundColor: const Color(0xFF2F2F2F),
-      title: Text('Inherited VaultAI login: $passerLabel'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'These credentials provide access to the owner\'s '
-              'original VaultAI account. Keep them private.',
-              style: TextStyle(
-                color: Color(0xFFFFA726),
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Username',
-              style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
-            ),
-            SelectableText(
-              username,
-              key: const Key('inheritance_revealed_username'),
-              style: const TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'PIN',
-              style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
-            ),
-            SelectableText(
-              pin,
-              key: const Key('inheritance_revealed_pin'),
-              style: const TextStyle(
-                  fontSize: 16, fontFeatures: [
-                FontFeature.tabularFigures(),
-              ]),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Clipboard contents may be accessible to other apps. '
-              'Copy carefully.',
-              style: TextStyle(
-                  color: Color(0xFFB4B4B4), fontSize: 11),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        OutlinedButton.icon(
-          key: const Key('inheritance_revealed_copy_username'),
-          onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: username));
-            _showSnack('Username copied');
-          },
-          icon: const Icon(Icons.copy, size: 18),
-          label: const Text('Copy username'),
-        ),
-        OutlinedButton.icon(
-          key: const Key('inheritance_revealed_copy_pin'),
-          onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: pin));
-            _showSnack('PIN copied');
-          },
-          icon: const Icon(Icons.copy, size: 18),
-          label: const Text('Copy PIN'),
-        ),
-        FilledButton.icon(
-          key: const Key('inheritance_revealed_continue'),
-          onPressed: () async {
-            Navigator.pop(dCtx);
-            await _beneficiaryContinueToInheritedAccount(
-              linkId: linkId, authToken: token,
-            );
-          },
-          icon: const Icon(Icons.login),
-          label: const Text('Continue to inherited account'),
-        ),
-      ],
-    ),
-  );
-  // Best-effort: clear the clipboard after 60 s. Not all platforms
-  // honor this; log it and move on. We intentionally do NOT claim
-  // 100% clipboard clearing.
-  Future.delayed(const Duration(seconds: 60), () async {
+    // 2. Load the wrapped package.
+    Map<String, dynamic> pkg;
     try {
-      await Clipboard.setData(const ClipboardData(text: ''));
-    } catch (_) {}
-  });
-}
-
-Future<void> _beneficiaryContinueToInheritedAccount({
-  required int linkId,
-  required String authToken,
-}) async {
-  // Fire a one-time inheritance-scoped device enrollment token so
-  // the very next login on the inherited account can convert this
-  // device from pending → trusted automatically. The token is
-  // held in ``AppState.pendingInheritanceDeviceToken`` and consumed
-  // by ``_autoConsumeInheritanceTokenIfPresent`` immediately after
-  // the next successful login (see the register+consume pair at
-  // every login site).
-  try {
-    final resp = await VaultAIClient(baseUrl: backendBaseUrl)
-        .authorizeInheritanceDevice(
-      linkId: linkId, authToken: authToken,
-    );
-    final token = resp['token']?.toString();
-    if (token != null && token.isNotEmpty) {
-      final app = context.read<AppState>();
-      app.pendingInheritanceDeviceToken = token;
+      pkg = await VaultAIClient(baseUrl: backendBaseUrl)
+          .retrieveInheritanceCredentials(
+        linkId: linkId,
+        authToken: token,
+      );
+    } catch (e) {
+      vlog('inheritance.reveal.retrieve_failed', {'error': e.toString()});
+      if (app.handleApiException(e)) return;
+      _showSnack(
+        'Could not fetch credentials.\nReference: INH-RETRIEVE-001',
+      );
+      return;
     }
-  } catch (e) {
-    vlog('inheritance.device.authorize.failed', {'error': e.toString()});
-  }
-  _showSnack(
-    'Sign in with the inherited username and PIN — this device '
-    'will be enrolled automatically.',
-  );
-}
 
-Widget _buildInheritanceSection(bool isMobile) {
-  if (!_inheritanceLoadedOnce) {
-    _inheritanceLoadedOnce = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadBeneficiaries();
-      _loadInheritances();
+    // 3. Beneficiary's X25519 private key must be present in the
+    //    in-memory ZK store. If not (e.g. session restored from
+    //    disk without a fresh login), tell the user to log in
+    //    again — never surface the raw error.
+    final sk = zk_sk_store.ZkActiveSkVault.current();
+    if (sk == null) {
+      _showSnack(
+        'Please log out and log back in with your PIN to reveal '
+        'inherited credentials on this device.',
+      );
+      return;
+    }
+    final skBytes = await sk.extractBytes();
+
+    // 4. Decrypt locally.
+    try {
+      final pkgObj = inh_cred.InheritanceCredentialPackage(
+        cryptoVersion: (pkg['crypto_version'] as num).toInt(),
+        encryptedPayloadB64Url: pkg['encrypted_payload'].toString(),
+        payloadNonceB64Url: pkg['payload_nonce'].toString(),
+        wrappedKeyB64Url: pkg['wrapped_key'].toString(),
+        wrappingEphemeralPkB64Url: pkg['wrapping_ephemeral_pk'].toString(),
+        wrappingNonceB64Url: pkg['wrapping_nonce'].toString(),
+      );
+      final decrypted = await inh_cred.decryptInheritanceCredentials(
+        beneficiarySkVaultPrivate: Uint8List.fromList(skBytes),
+        package: pkgObj,
+      );
+      // Wipe the derived skBytes buffer after use.
+      for (var i = 0; i < skBytes.length; i++) {
+        skBytes[i] = 0;
+      }
+
+      if (!mounted) return;
+      await _showRevealedCredentialsDialog(
+        passerLabel: passerLabel,
+        username: decrypted.username,
+        pin: decrypted.pin,
+        linkId: linkId,
+        token: token,
+      );
+      await _loadInheritances();
+    } catch (e) {
+      vlog('inheritance.reveal.decrypt_failed', {'error': e.toString()});
+      _showSnack(
+        'Could not decrypt these credentials on this device.'
+        '\nReference: INH-RETRIEVE-003',
+      );
+    }
+  }
+
+  Future<String?> _promptForReauthPin({required String title}) async {
+    final ctrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text(title),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            key: const Key('inheritance_reveal_reauth_pin_field'),
+            controller: ctrl,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              hintText: 'Enter your VaultAI PIN',
+              isDense: true,
+            ),
+            validator: (v) =>
+                (v == null || v.trim().length < 4) ? 'PIN is too short' : null,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, null),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (!(formKey.currentState?.validate() ?? false)) return;
+              Navigator.pop(dCtx, ctrl.text.trim());
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    return result;
+  }
+
+  Future<void> _showRevealedCredentialsDialog({
+    required String passerLabel,
+    required String username,
+    required String pin,
+    required int linkId,
+    required String token,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dCtx) => AlertDialog(
+        key: const Key('inheritance_revealed_dialog'),
+        backgroundColor: const Color(0xFF2F2F2F),
+        title: Text('Inherited VaultAI login: $passerLabel'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'These credentials provide access to the owner\'s '
+                'original VaultAI account. Keep them private.',
+                style: TextStyle(
+                  color: Color(0xFFFFA726),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Username',
+                style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+              ),
+              SelectableText(
+                username,
+                key: const Key('inheritance_revealed_username'),
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'PIN',
+                style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+              ),
+              SelectableText(
+                pin,
+                key: const Key('inheritance_revealed_pin'),
+                style: const TextStyle(fontSize: 16, fontFeatures: [
+                  FontFeature.tabularFigures(),
+                ]),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Clipboard contents may be accessible to other apps. '
+                'Copy carefully.',
+                style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          OutlinedButton.icon(
+            key: const Key('inheritance_revealed_copy_username'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: username));
+              _showSnack('Username copied');
+            },
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('Copy username'),
+          ),
+          OutlinedButton.icon(
+            key: const Key('inheritance_revealed_copy_pin'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: pin));
+              _showSnack('PIN copied');
+            },
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('Copy PIN'),
+          ),
+          FilledButton.icon(
+            key: const Key('inheritance_revealed_continue'),
+            onPressed: () async {
+              Navigator.pop(dCtx);
+              await _beneficiaryContinueToInheritedAccount(
+                linkId: linkId,
+                authToken: token,
+              );
+            },
+            icon: const Icon(Icons.login),
+            label: const Text('Continue to inherited account'),
+          ),
+        ],
+      ),
+    );
+    // Best-effort: clear the clipboard after 60 s. Not all platforms
+    // honor this; log it and move on. We intentionally do NOT claim
+    // 100% clipboard clearing.
+    Future.delayed(const Duration(seconds: 60), () async {
+      try {
+        await Clipboard.setData(const ClipboardData(text: ''));
+      } catch (_) {}
     });
   }
 
-  String statusLabel(Map<String, dynamic> row) {
-    final status = (row['status'] ?? '').toString();
-    switch (status) {
-      case 'pairing_pending':
-        return 'Awaiting beneficiary';
-      case 'linked':
-        return 'Linked';
-      case 'transfer_pending':
-        return 'Transfer pending (30-day countdown)';
-      case 'transferred':
-        return 'Transferred';
-      case 'cancelled':
-        return 'Cancelled';
-      default:
-        return status;
+  Future<void> _beneficiaryContinueToInheritedAccount({
+    required int linkId,
+    required String authToken,
+  }) async {
+    // Fire a one-time inheritance-scoped device enrollment token so
+    // the very next login on the inherited account can convert this
+    // device from pending → trusted automatically. The token is
+    // held in ``AppState.pendingInheritanceDeviceToken`` and consumed
+    // by ``_autoConsumeInheritanceTokenIfPresent`` immediately after
+    // the next successful login (see the register+consume pair at
+    // every login site).
+    try {
+      final resp = await VaultAIClient(baseUrl: backendBaseUrl)
+          .authorizeInheritanceDevice(
+        linkId: linkId,
+        authToken: authToken,
+      );
+      final token = resp['token']?.toString();
+      if (token != null && token.isNotEmpty) {
+        final app = context.read<AppState>();
+        app.pendingInheritanceDeviceToken = token;
+      }
+    } catch (e) {
+      vlog('inheritance.device.authorize.failed', {'error': e.toString()});
     }
+    _showSnack(
+      'Sign in with the inherited username and PIN — this device '
+      'will be enrolled automatically.',
+    );
   }
 
-  Color statusColor(String status) {
-    switch (status) {
-      case 'pairing_pending':
-        return Colors.amber;
-      case 'linked':
-        return const Color(0xFF10A37F);
-      case 'transfer_pending':
-        return Colors.orange;
-      case 'transferred':
-        return Colors.blueAccent;
-      default:
-        return const Color(0xFFB4B4B4);
+  Widget _buildInheritanceSection(bool isMobile) {
+    if (!_inheritanceLoadedOnce) {
+      _inheritanceLoadedOnce = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadBeneficiaries();
+        _loadInheritances();
+      });
     }
-  }
 
-  final _vrInh = VaultResponsive.of(context);
-  return SingleChildScrollView(
-    padding: EdgeInsets.all(_vrInh.pageHorizontalPadding),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1000),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+    String statusLabel(Map<String, dynamic> row) {
+      final status = (row['status'] ?? '').toString();
+      switch (status) {
+        case 'pairing_pending':
+          return 'Awaiting beneficiary';
+        case 'linked':
+          return 'Linked';
+        case 'transfer_pending':
+          return 'Transfer pending (30-day countdown)';
+        case 'transferred':
+          return 'Transferred';
+        case 'cancelled':
+          return 'Cancelled';
+        default:
+          return status;
+      }
+    }
 
-            Container(
-              padding: EdgeInsets.all(_vrInh.isMobile ? 16 : 24),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2F2F2F),
-                borderRadius: BorderRadius.circular(_vrInh.isMobile ? 18 : 24),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(AppLocalizations.of(context).inheritanceTitle,
-                      style: TextStyle(
-                        fontSize: _vrInh.headingXlSize,
-                        fontWeight: FontWeight.w800,
-                      )),
-                  SizedBox(height: _vrInh.isMobile ? 6 : 8),
-                  Text(
-                    'Designate who can inherit this vault if you can no longer access '
-                    'it, and view vaults you\'re set up to inherit.',
-                    style: TextStyle(
-                      color: const Color(0xFFB4B4B4),
-                      fontSize: _vrInh.isMobile ? 13 : 15,
-                      height: 1.5,
-                    ),
-                  ),
-                  if (context.watch<AppState>().availableVaults.length > 1) ...[
-                    SizedBox(height: _vrInh.isMobile ? 10 : 14),
-                    _VaultSwitcher(),
-                  ],
-                ],
-              ),
-            ),
-            SizedBox(height: _vrInh.sectionSpacing),
+    Color statusColor(String status) {
+      switch (status) {
+        case 'pairing_pending':
+          return Colors.amber;
+        case 'linked':
+          return const Color(0xFF10A37F);
+        case 'transfer_pending':
+          return Colors.orange;
+        case 'transferred':
+          return Colors.blueAccent;
+        default:
+          return const Color(0xFFB4B4B4);
+      }
+    }
 
-
-            Container(
-              padding: EdgeInsets.all(_vrInh.cardInsetPadding),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ResponsiveActionBar(
-                    heading: const Text(
-                      'People I\'ve added',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                    ),
-                    actions: [
-                      OutlinedButton.icon(
-                        key: const Key('inheritance_refresh_button'),
-                        onPressed: _loadBeneficiaries,
-                        icon: const Icon(Icons.refresh, size: 18),
-                        label: Text(
-                          AppLocalizations.of(context).commonRefresh,
-                        ),
-                      ),
-                      FilledButton.icon(
-                        key: const Key('inheritance_add_beneficiary_button'),
-                        onPressed: _showAddBeneficiaryDialog,
-                        icon: const Icon(Icons.person_add_alt_1, size: 18),
-                        label: Text(
-                          AppLocalizations.of(context)
-                              .inheritanceAddBeneficiary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  if (loadingBeneficiaries)
-                    const Center(child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator(),
-                    ))
-                  else if (beneficiaries.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Text(
-                        'No beneficiaries yet. Click "Add beneficiary" to generate a pairing code.',
-                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
-                      ),
-                    )
-                  else
-                    ...beneficiaries.map((b) {
-                      final label = (b['label'] ?? 'Unnamed').toString();
-                      final status = (b['status'] ?? '').toString();
-                      final id = (b['id'] as num?)?.toInt() ?? 0;
-                      final executesAt = b['transfer_executes_at']?.toString();
-                      final isTransferPending = status == 'transfer_pending';
-                      final isLinked = b['is_linked'] == true;
-                      final credentialsSaved =
-                          b['credentials_saved'] == true;
-                      final credentialUpdatedAt =
-                          b['credential_updated_at']?.toString();
-                      // Phase 2 release-flow state — authoritative
-                      // source is beneficiary_links.pairing_state
-                      // from the server. The legacy transfer flow
-                      // is hidden once the new escrow has produced
-                      // any release-flow signal.
-                      final pairingState =
-                          (b['pairing_state'] ?? 'paired_no_credentials')
-                              .toString();
-                      final cooldownEndsAt =
-                          b['cooldown_ends_at']?.toString();
-                      final accessRequested =
-                          pairingState == 'cooldown_active' ||
-                              pairingState == 'claimable';
-                      final approved = pairingState == 'approved';
-                      final released = pairingState == 'released';
-                      final hideLegacyTransfer =
-                          credentialsSaved || accessRequested ||
-                              approved || released;
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: isTransferPending
-                              ? Colors.orange.withValues(alpha: 0.08)
-                              : const Color(0xFF222222),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                              color: isTransferPending ? Colors.orange : Colors.white10),
-                        ),
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(label,
-                                          style: const TextStyle(
-                                              fontSize: 15, fontWeight: FontWeight.w700)),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        statusLabel(b),
-                                        style: TextStyle(color: statusColor(status), fontSize: 12),
-                                      ),
-                                      if (isTransferPending && executesAt != null) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _formatCountdown(executesAt),
-                                          style: const TextStyle(color: Colors.orange, fontSize: 11),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                if (isTransferPending && !hideLegacyTransfer)
-                                  FilledButton.icon(
-                                    onPressed: () => _cancelTransfer(id, label),
-                                    style: FilledButton.styleFrom(backgroundColor: Colors.orange),
-                                    icon: const Icon(Icons.cancel_outlined, size: 18),
-                                    label: Text(
-                                      AppLocalizations.of(context)
-                                          .inheritanceCancelTransfer,
-                                    ),
-                                  ),
-                                IconButton(
-                                  tooltip: 'Remove',
-                                  onPressed: () => _deleteBeneficiary(id, label),
-                                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                                ),
-                              ],
-                            ),
-                            if (isLinked) ...[
-                              const SizedBox(height: 10),
-                              Container(
-                                key: Key(
-                                    'inheritance_credentials_row_$id'),
-                                padding:
-                                    const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF1E1E1E),
-                                  borderRadius:
-                                      BorderRadius.circular(10),
-                                  border: Border.all(
-                                      color: Colors.white10),
-                                ),
-                                child: Wrap(
-                                  spacing: 8,
-                                  runSpacing: 6,
-                                  crossAxisAlignment:
-                                      WrapCrossAlignment.center,
-                                  children: [
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          credentialsSaved
-                                              ? Icons.lock_outline
-                                              : Icons.lock_open_outlined,
-                                          size: 16,
-                                          color: credentialsSaved
-                                              ? const Color(0xFF66BB6A)
-                                              : const Color(0xFFB4B4B4),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          credentialsSaved
-                                              ? 'Inheritance credentials: Saved'
-                                              : 'Inheritance credentials: Not saved',
-                                          style: TextStyle(
-                                            color: credentialsSaved
-                                                ? const Color(0xFF66BB6A)
-                                                : const Color(0xFFB4B4B4),
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                        if (credentialsSaved &&
-                                            credentialUpdatedAt !=
-                                                null &&
-                                            credentialUpdatedAt
-                                                .isNotEmpty) ...[
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            '• Updated ${_shortDateFromIso(credentialUpdatedAt)}',
-                                            style: const TextStyle(
-                                              color: Color(0xFF8A8A8A),
-                                              fontSize: 11,
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                    if (!credentialsSaved)
-                                      FilledButton.icon(
-                                        key: Key(
-                                            'inheritance_add_credentials_$id'),
-                                        onPressed: () =>
-                                            _showInheritanceCredentialsDialog(
-                                          linkId: id,
-                                          beneficiaryLabel: label,
-                                          isUpdate: false,
-                                        ),
-                                        icon: const Icon(
-                                            Icons.add_moderator_outlined,
-                                            size: 18),
-                                        label: const Text(
-                                            'Add credentials'),
-                                      )
-                                    else ...[
-                                      OutlinedButton.icon(
-                                        key: Key(
-                                            'inheritance_update_credentials_$id'),
-                                        onPressed: () =>
-                                            _showInheritanceCredentialsDialog(
-                                          linkId: id,
-                                          beneficiaryLabel: label,
-                                          isUpdate: true,
-                                        ),
-                                        icon: const Icon(
-                                            Icons.edit_outlined,
-                                            size: 18),
-                                        label: const Text(
-                                            'Update credentials'),
-                                      ),
-                                      OutlinedButton.icon(
-                                        key: Key(
-                                            'inheritance_delete_credentials_$id'),
-                                        onPressed: () =>
-                                            _deleteInheritanceCredentials(
-                                          linkId: id,
-                                          beneficiaryLabel: label,
-                                        ),
-                                        icon: const Icon(
-                                            Icons.lock_open_outlined,
-                                            size: 18,
-                                            color: Colors.redAccent),
-                                        label: const Text(
-                                          'Delete credentials',
-                                          style: TextStyle(
-                                              color: Colors.redAccent),
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                              // Phase 2: owner-side release actions.
-                              if (accessRequested) ...[
-                                const SizedBox(height: 10),
-                                Container(
-                                  key: Key(
-                                      'inheritance_owner_release_row_$id'),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF2A211E),
-                                    borderRadius:
-                                        BorderRadius.circular(10),
-                                    border: Border.all(
-                                        color: Colors.orange
-                                            .withValues(alpha: 0.4)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Access requested',
-                                        style: TextStyle(
-                                          color: Color(0xFFFFA726),
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      if (cooldownEndsAt != null) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Available automatically in '
-                                          '${_formatCountdown(cooldownEndsAt)}',
-                                          style: const TextStyle(
-                                            color: Color(0xFFB4B4B4),
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                      const SizedBox(height: 8),
-                                      Wrap(
-                                        spacing: 8,
-                                        runSpacing: 6,
-                                        children: [
-                                          FilledButton.icon(
-                                            key: Key(
-                                                'inheritance_owner_approve_$id'),
-                                            onPressed: () =>
-                                                _ownerApproveInheritance(
-                                              linkId: id,
-                                              beneficiaryLabel: label,
-                                            ),
-                                            icon: const Icon(
-                                                Icons.check, size: 18),
-                                            label: const Text('Approve now'),
-                                          ),
-                                          OutlinedButton.icon(
-                                            key: Key(
-                                                'inheritance_owner_reject_$id'),
-                                            onPressed: () =>
-                                                _ownerRejectInheritance(
-                                              linkId: id,
-                                              beneficiaryLabel: label,
-                                            ),
-                                            icon: const Icon(
-                                                Icons.close, size: 18,
-                                                color: Colors.redAccent),
-                                            label: const Text(
-                                              'Reject request',
-                                              style: TextStyle(
-                                                  color: Colors.redAccent),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ] else if (approved || released) ...[
-                                const SizedBox(height: 8),
-                                Text(
-                                  released
-                                      ? 'Access released'
-                                      : 'Access approved',
-                                  key: Key(
-                                      'inheritance_owner_release_state_$id'),
-                                  style: const TextStyle(
-                                    color: Color(0xFF66BB6A),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ],
-                        ),
-                      );
-                    }),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            
-            Container(
-              padding: EdgeInsets.all(_vrInh.cardInsetPadding),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.circular(
-                    _vrInh.isMobile ? 16 : 20),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Same responsive pattern as "People I've added" above.
-                  // On < 600dp the heading renders full-width and the
-                  // buttons wrap below, so "Vaults I'll inherit" never gets
-                  // squeezed into a one-char-per-line column.
-                  ResponsiveActionBar(
-                    heading: const Text(
-                      'Vaults I\'ll inherit',
-                      key: Key('inheritance_vaults_ill_inherit_heading'),
-                      style: TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.w700),
-                    ),
-                    actions: [
-                      OutlinedButton.icon(
-                        key: const Key(
-                            'inheritance_refresh_inheritances_button'),
-                        onPressed: _loadInheritances,
-                        icon: const Icon(Icons.refresh, size: 18),
-                        label: Text(
-                          AppLocalizations.of(context).commonRefresh,
-                        ),
-                      ),
-                      FilledButton.icon(
-                        key: const Key(
-                            'inheritance_enter_code_button'),
-                        onPressed: _showEnterPairingCodeDialog,
-                        icon: const Icon(Icons.vpn_key),
-                        label: Text(
-                          AppLocalizations.of(context).inheritanceEnterCode,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  if (loadingInheritances)
-                    const Center(child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator(),
-                    ))
-                  else if (inheritances.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Text(
-                        'No inheritances. Use "Enter code" if someone shared a pairing code with you.',
-                        style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
-                      ),
-                    )
-                  else
-                    ...inheritances.map((i) {
-                      final label = (i['passer_label'] ?? 'Unknown').toString();
-                      final status = (i['status'] ?? '').toString();
-                      final id = (i['id'] as num?)?.toInt() ?? 0;
-                      final executesAt = i['transfer_executes_at']?.toString();
-                      final isLinked = status == 'linked';
-                      final isPending = status == 'transfer_pending';
-                      final readyToClaim = isPending &&
-                          executesAt != null &&
-                          DateTime.tryParse(executesAt)?.isBefore(DateTime.now()) == true;
-
-                      // Phase 2 escrow-flow state — authoritative
-                      // source is the server's ``pairing_state``.
-                      final pairingState =
-                          (i['pairing_state'] ?? 'paired_no_credentials')
-                              .toString();
-                      final credentialsSaved =
-                          i['credentials_saved'] == true;
-                      final cooldownEndsAt =
-                          i['cooldown_ends_at']?.toString();
-                      final showRequest = credentialsSaved &&
-                          pairingState == 'credentials_saved';
-                      final showCancel = pairingState == 'cooldown_active';
-                      final showClaim = pairingState == 'claimable' ||
-                          (pairingState == 'cooldown_active' &&
-                              cooldownEndsAt != null &&
-                              (DateTime.tryParse(cooldownEndsAt)
-                                      ?.isBefore(DateTime.now()) ==
-                                  true));
-                      final showReveal = pairingState == 'approved' ||
-                          pairingState == 'released';
-                      final showLegacyLinked = isLinked &&
-                          !credentialsSaved &&
-                          pairingState == 'paired_no_credentials';
-
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: showReveal
-                              ? const Color(0xFF10A37F).withValues(alpha: 0.08)
-                              : (showClaim || readyToClaim)
-                                  ? const Color(0xFF10A37F).withValues(alpha: 0.08)
-                                  : (showCancel || isPending)
-                                      ? Colors.orange.withValues(alpha: 0.06)
-                                      : const Color(0xFF222222),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                              color: showReveal
-                                  ? const Color(0xFF10A37F)
-                                  : (showClaim || readyToClaim)
-                                      ? const Color(0xFF10A37F)
-                                      : (showCancel || isPending)
-                                          ? Colors.orange
-                                          : Colors.white10),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(label,
-                                          style: const TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w700)),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _beneficiaryStateLabel(
-                                          pairingState: pairingState,
-                                          credentialsSaved: credentialsSaved,
-                                          legacyStatus: status,
-                                        ),
-                                        style: TextStyle(
-                                            color: _beneficiaryStateColor(
-                                                pairingState),
-                                            fontSize: 12),
-                                      ),
-                                      if (showCancel &&
-                                          cooldownEndsAt != null) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Available in ${_formatCountdown(cooldownEndsAt)}',
-                                          style: const TextStyle(
-                                              color: Color(0xFFB4B4B4),
-                                              fontSize: 11),
-                                        ),
-                                      ] else if (isPending &&
-                                          executesAt != null &&
-                                          !showCancel) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _formatCountdown(executesAt),
-                                          style: TextStyle(
-                                              color: readyToClaim
-                                                  ? const Color(0xFF10A37F)
-                                                  : Colors.orange,
-                                              fontSize: 11),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                if (showRequest)
-                                  FilledButton.icon(
-                                    key: Key(
-                                        'inheritance_beneficiary_request_$id'),
-                                    onPressed: () =>
-                                        _beneficiaryRequestAccess(
-                                      linkId: id, passerLabel: label,
-                                    ),
-                                    icon: const Icon(
-                                        Icons.lock_outline, size: 18),
-                                    label: const Text('Request access'),
-                                  ),
-                                if (showCancel)
-                                  OutlinedButton.icon(
-                                    key: Key(
-                                        'inheritance_beneficiary_cancel_$id'),
-                                    onPressed: () =>
-                                        _beneficiaryCancelAccess(
-                                      linkId: id, passerLabel: label,
-                                    ),
-                                    icon: const Icon(
-                                        Icons.cancel_outlined, size: 18),
-                                    label: const Text('Cancel request'),
-                                  ),
-                                if (showClaim && !showReveal)
-                                  FilledButton.icon(
-                                    key: Key(
-                                        'inheritance_beneficiary_claim_$id'),
-                                    onPressed: () =>
-                                        _beneficiaryClaimAccess(
-                                      linkId: id, passerLabel: label,
-                                    ),
-                                    icon: const Icon(
-                                        Icons.download_done, size: 18),
-                                    label: const Text('Claim and reveal'),
-                                  ),
-                                if (showReveal)
-                                  FilledButton.icon(
-                                    key: Key(
-                                        'inheritance_beneficiary_reveal_$id'),
-                                    onPressed: () =>
-                                        _beneficiaryRevealCredentials(
-                                      linkId: id, passerLabel: label,
-                                    ),
-                                    icon: const Icon(
-                                        Icons.visibility, size: 18),
-                                    label: const Text(
-                                        'Reveal login credentials'),
-                                  ),
-                                if (showLegacyLinked)
-                                  FilledButton.icon(
-                                    onPressed: () =>
-                                        _requestTransfer(id, label),
-                                    icon: const Icon(
-                                        Icons.av_timer, size: 18),
-                                    label: Text(
-                                      AppLocalizations.of(context)
-                                          .inheritanceRequestTransfer,
-                                    ),
-                                  ),
-                                if (readyToClaim &&
-                                    !credentialsSaved &&
-                                    pairingState ==
-                                        'paired_no_credentials')
-                                  FilledButton.icon(
-                                    onPressed: () =>
-                                        _claimInheritance(id, label),
-                                    icon: const Icon(
-                                        Icons.move_to_inbox, size: 18),
-                                    label: const Text('Claim'),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-Widget _buildSettingsSection(bool isMobile) {
-  final app = context.watch<AppState>();
-  final l = AppLocalizations.of(context);
-  final used = app.storageUsedBytes;
-  
-  
-  final limit = app.effectiveStorageLimitBytes;
-  final progress = limit == 0 ? 0.0 : min(1.0, used / limit);
-
-  return SingleChildScrollView(
-    padding: EdgeInsets.all(isMobile ? 12 : 20),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1000),
-        child: Container(
-          width: double.infinity,
-          padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2F2F2F),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white10),
-          ),
+    final _vrInh = VaultResponsive.of(context);
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(_vrInh.pageHorizontalPadding),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                l.settingsTitle,
-                style: TextStyle(
-                    fontSize: vrHeadline(context),
-                    fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                l.settingsSubtitle,
-                style: const TextStyle(
-                  color: Color(0xFFB4B4B4),
-                  fontSize: 15,
-                  height: 1.6,
-                ),
-              ),
-              const SizedBox(height: 24),
-              const LanguageCard(),
-              const SizedBox(height: 24),
-
-              const Text(
-                'Current plan',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.all(18),
+                padding: EdgeInsets.all(_vrInh.isMobile ? 16 : 24),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF262626),
-                  borderRadius: BorderRadius.circular(18),
+                  color: const Color(0xFF2F2F2F),
+                  borderRadius:
+                      BorderRadius.circular(_vrInh.isMobile ? 18 : 24),
                   border: Border.all(color: Colors.white10),
                 ),
-                child: Builder(builder: (_) {
-                  
-                  
-                  if (app.isBillingLoading) {
-                    return const _BillingLoadingCard(label: 'Loading plan…');
-                  }
-                  if (app.isBillingError) {
-                    return _BillingErrorCard(
-                      onRetry: () => app.retryBilling(),
-                    );
-                  }
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        app.planLabel,
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(AppLocalizations.of(context).inheritanceTitle,
+                        style: TextStyle(
+                          fontSize: _vrInh.headingXlSize,
+                          fontWeight: FontWeight.w800,
+                        )),
+                    SizedBox(height: _vrInh.isMobile ? 6 : 8),
+                    Text(
+                      'Designate who can inherit this vault if you can no longer access '
+                      'it, and view vaults you\'re set up to inherit.',
+                      style: TextStyle(
+                        color: const Color(0xFFB4B4B4),
+                        fontSize: _vrInh.isMobile ? 13 : 15,
+                        height: 1.5,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        
-                        
-                        '${formatBytes(used)} used of ${formatBytes(limit)}',
-                        style: const TextStyle(color: Color(0xFFB4B4B4)),
+                    ),
+                    if (context.watch<AppState>().availableVaults.length >
+                        1) ...[
+                      SizedBox(height: _vrInh.isMobile ? 10 : 14),
+                      _VaultSwitcher(),
+                    ],
+                  ],
+                ),
+              ),
+              SizedBox(height: _vrInh.sectionSpacing),
+              Container(
+                padding: EdgeInsets.all(_vrInh.cardInsetPadding),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius:
+                      BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ResponsiveActionBar(
+                      heading: const Text(
+                        'People I\'ve added',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700),
                       ),
-                      if (app.storagePendingBytes > 0) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          '${_formatBytes(app.storagePendingBytes)} pending '
-                          '(in-flight uploads)',
-                          style: const TextStyle(
-                            color: Color(0xFF888888),
-                            fontSize: 13,
+                      actions: [
+                        OutlinedButton.icon(
+                          key: const Key('inheritance_refresh_button'),
+                          onPressed: _loadBeneficiaries,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: Text(
+                            AppLocalizations.of(context).commonRefresh,
+                          ),
+                        ),
+                        FilledButton.icon(
+                          key: const Key('inheritance_add_beneficiary_button'),
+                          onPressed: _showAddBeneficiaryDialog,
+                          icon: const Icon(Icons.person_add_alt_1, size: 18),
+                          label: Text(
+                            AppLocalizations.of(context)
+                                .inheritanceAddBeneficiary,
                           ),
                         ),
                       ],
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          value: progress,
-                          minHeight: 10,
-                        ),
-                      ),
-                    ],
-                  );
-                }),
-              ),
-
-              const SizedBox(height: 16),
-              
-              
-              InkWell(
-                onTap: () => Navigator.pushNamed(context, '/security-center'),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.shield_outlined, color: Color(0xFFB4B4B4)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppLocalizations.of(context).securityCenterTitle,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            const Text(
-                              'Overall vault health and recommendations',
-                              style: TextStyle(
-                                  fontSize: 13, color: Color(0xFFB4B4B4)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              
-              
-              InkWell(
-                onTap: () => Navigator.pushNamed(context, '/storage'),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.cloud_outlined, color: Color(0xFFB4B4B4)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppLocalizations.of(context).storagePageTitle,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            const Text(
-                              'Usage, free tier, and additional pricing',
-                              style: TextStyle(
-                                  fontSize: 13, color: Color(0xFFB4B4B4)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-
-              InkWell(
-                onTap: () => Navigator.pushNamed(context, '/devices'),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Row(
-                    children: const [
-                      Icon(Icons.devices_other, color: Color(0xFFB4B4B4)),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Devices',
-                              style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Approve new devices, revoke devices you '
-                              'no longer use.',
-                              style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              InkWell(
-                key: const Key('settings_help_and_faq_tile'),
-                onTap: () => openHelpCenter(
-                  context, mode: hc.HelpCenterMode.signedIn,
-                ),
-                borderRadius: BorderRadius.circular(18),
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Row(
-                    children: const [
-                      Icon(Icons.help_outline, color: Color(0xFFB4B4B4)),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Help & FAQ',
-                              style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Answers about VaultAI, Crypto Vault, '
-                              'Monero, billing, and support.',
-                              style: TextStyle(
-                                color: Color(0xFFB4B4B4), fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Buy-More-Storage promotional card is WEB-ONLY.
-              // Rationale: App Store 3.1.1 + Google Play Payments
-              // Policy require in-app digital-goods purchases to use
-              // StoreKit / Play Billing. Mobile users still upgrade
-              // via the web at app.svaultai.com; hiding this
-              // promotional entry point keeps the mobile store
-              // submission compliant without touching web behavior.
-              if (kIsWeb) ...[
-                InkWell(
-                  onTap: () => Navigator.pushNamed(
-                    context, '/storage',
-                    arguments: const {'autoOpenPicker': true},
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF10A37F).withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: const Color(0xFF10A37F).withValues(alpha: 0.30),
-                      ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: const [
-                            Icon(Icons.cloud_upload_outlined,
-                                color: Color(0xFF10A37F)),
-                            SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                    const SizedBox(height: 14),
+                    if (loadingBeneficiaries)
+                      const Center(
+                          child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(),
+                      ))
+                    else if (beneficiaries.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          'No beneficiaries yet. Click "Add beneficiary" to generate a pairing code.',
+                          style:
+                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+                        ),
+                      )
+                    else
+                      ...beneficiaries.map((b) {
+                        final label = (b['label'] ?? 'Unnamed').toString();
+                        final status = (b['status'] ?? '').toString();
+                        final id = (b['id'] as num?)?.toInt() ?? 0;
+                        final executesAt =
+                            b['transfer_executes_at']?.toString();
+                        final isTransferPending = status == 'transfer_pending';
+                        final isLinked = b['is_linked'] == true;
+                        final credentialsSaved = b['credentials_saved'] == true;
+                        final credentialUpdatedAt =
+                            b['credential_updated_at']?.toString();
+                        // Phase 2 release-flow state — authoritative
+                        // source is beneficiary_links.pairing_state
+                        // from the server. The legacy transfer flow
+                        // is hidden once the new escrow has produced
+                        // any release-flow signal.
+                        final pairingState =
+                            (b['pairing_state'] ?? 'paired_no_credentials')
+                                .toString();
+                        final cooldownEndsAt =
+                            b['cooldown_ends_at']?.toString();
+                        final accessRequested =
+                            pairingState == 'cooldown_active' ||
+                                pairingState == 'claimable';
+                        final approved = pairingState == 'approved';
+                        final released = pairingState == 'released';
+                        final hideLegacyTransfer = credentialsSaved ||
+                            accessRequested ||
+                            approved ||
+                            released;
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: isTransferPending
+                                ? Colors.orange.withValues(alpha: 0.08)
+                                : const Color(0xFF222222),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: isTransferPending
+                                    ? Colors.orange
+                                    : Colors.white10),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
                                 children: [
-                                  Text(
-                                    'Buy More Storage',
-                                    style: TextStyle(
-                                      fontSize: 18, fontWeight: FontWeight.w800,
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(label,
+                                            style: const TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w700)),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          statusLabel(b),
+                                          style: TextStyle(
+                                              color: statusColor(status),
+                                              fontSize: 12),
+                                        ),
+                                        if (isTransferPending &&
+                                            executesAt != null) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            _formatCountdown(executesAt),
+                                            style: const TextStyle(
+                                                color: Colors.orange,
+                                                fontSize: 11),
+                                          ),
+                                        ],
+                                      ],
                                     ),
                                   ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    'Add storage in 50 GB blocks. Your '
-                                    'limit updates automatically after '
-                                    'payment.',
-                                    style: TextStyle(
-                                      color: Color(0xFFB4B4B4), height: 1.45,
-                                      fontSize: 13,
+                                  if (isTransferPending && !hideLegacyTransfer)
+                                    FilledButton.icon(
+                                      onPressed: () =>
+                                          _cancelTransfer(id, label),
+                                      style: FilledButton.styleFrom(
+                                          backgroundColor: Colors.orange),
+                                      icon: const Icon(Icons.cancel_outlined,
+                                          size: 18),
+                                      label: Text(
+                                        AppLocalizations.of(context)
+                                            .inheritanceCancelTransfer,
+                                      ),
                                     ),
+                                  IconButton(
+                                    tooltip: 'Remove',
+                                    onPressed: () =>
+                                        _deleteBeneficiary(id, label),
+                                    icon: const Icon(Icons.delete_outline,
+                                        color: Colors.redAccent),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
+                              if (isLinked) ...[
+                                const SizedBox(height: 10),
+                                Container(
+                                  key: Key('inheritance_credentials_row_$id'),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1E1E1E),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.white10),
+                                  ),
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 6,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            credentialsSaved
+                                                ? Icons.lock_outline
+                                                : Icons.lock_open_outlined,
+                                            size: 16,
+                                            color: credentialsSaved
+                                                ? const Color(0xFF66BB6A)
+                                                : const Color(0xFFB4B4B4),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            credentialsSaved
+                                                ? 'Inheritance credentials: Saved'
+                                                : 'Inheritance credentials: Not saved',
+                                            style: TextStyle(
+                                              color: credentialsSaved
+                                                  ? const Color(0xFF66BB6A)
+                                                  : const Color(0xFFB4B4B4),
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                          if (credentialsSaved &&
+                                              credentialUpdatedAt != null &&
+                                              credentialUpdatedAt
+                                                  .isNotEmpty) ...[
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              '• Updated ${_shortDateFromIso(credentialUpdatedAt)}',
+                                              style: const TextStyle(
+                                                color: Color(0xFF8A8A8A),
+                                                fontSize: 11,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      if (!credentialsSaved)
+                                        FilledButton.icon(
+                                          key: Key(
+                                              'inheritance_add_credentials_$id'),
+                                          onPressed: () =>
+                                              _showInheritanceCredentialsDialog(
+                                            linkId: id,
+                                            beneficiaryLabel: label,
+                                            isUpdate: false,
+                                          ),
+                                          icon: const Icon(
+                                              Icons.add_moderator_outlined,
+                                              size: 18),
+                                          label: const Text('Add credentials'),
+                                        )
+                                      else ...[
+                                        OutlinedButton.icon(
+                                          key: Key(
+                                              'inheritance_update_credentials_$id'),
+                                          onPressed: () =>
+                                              _showInheritanceCredentialsDialog(
+                                            linkId: id,
+                                            beneficiaryLabel: label,
+                                            isUpdate: true,
+                                          ),
+                                          icon: const Icon(Icons.edit_outlined,
+                                              size: 18),
+                                          label:
+                                              const Text('Update credentials'),
+                                        ),
+                                        OutlinedButton.icon(
+                                          key: Key(
+                                              'inheritance_delete_credentials_$id'),
+                                          onPressed: () =>
+                                              _deleteInheritanceCredentials(
+                                            linkId: id,
+                                            beneficiaryLabel: label,
+                                          ),
+                                          icon: const Icon(
+                                              Icons.lock_open_outlined,
+                                              size: 18,
+                                              color: Colors.redAccent),
+                                          label: const Text(
+                                            'Delete credentials',
+                                            style: TextStyle(
+                                                color: Colors.redAccent),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                // Phase 2: owner-side release actions.
+                                if (accessRequested) ...[
+                                  const SizedBox(height: 10),
+                                  Container(
+                                    key: Key(
+                                        'inheritance_owner_release_row_$id'),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF2A211E),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                          color: Colors.orange
+                                              .withValues(alpha: 0.4)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Access requested',
+                                          style: TextStyle(
+                                            color: Color(0xFFFFA726),
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        if (cooldownEndsAt != null) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Available automatically in '
+                                            '${_formatCountdown(cooldownEndsAt)}',
+                                            style: const TextStyle(
+                                              color: Color(0xFFB4B4B4),
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ],
+                                        const SizedBox(height: 8),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 6,
+                                          children: [
+                                            FilledButton.icon(
+                                              key: Key(
+                                                  'inheritance_owner_approve_$id'),
+                                              onPressed: () =>
+                                                  _ownerApproveInheritance(
+                                                linkId: id,
+                                                beneficiaryLabel: label,
+                                              ),
+                                              icon: const Icon(Icons.check,
+                                                  size: 18),
+                                              label: const Text('Approve now'),
+                                            ),
+                                            OutlinedButton.icon(
+                                              key: Key(
+                                                  'inheritance_owner_reject_$id'),
+                                              onPressed: () =>
+                                                  _ownerRejectInheritance(
+                                                linkId: id,
+                                                beneficiaryLabel: label,
+                                              ),
+                                              icon: const Icon(Icons.close,
+                                                  size: 18,
+                                                  color: Colors.redAccent),
+                                              label: const Text(
+                                                'Reject request',
+                                                style: TextStyle(
+                                                    color: Colors.redAccent),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ] else if (approved || released) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    released
+                                        ? 'Access released'
+                                        : 'Access approved',
+                                    key: Key(
+                                        'inheritance_owner_release_state_$id'),
+                                    style: const TextStyle(
+                                      color: Color(0xFF66BB6A),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ],
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: EdgeInsets.all(_vrInh.cardInsetPadding),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius:
+                      BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Same responsive pattern as "People I've added" above.
+                    // On < 600dp the heading renders full-width and the
+                    // buttons wrap below, so "Vaults I'll inherit" never gets
+                    // squeezed into a one-char-per-line column.
+                    ResponsiveActionBar(
+                      heading: const Text(
+                        'Vaults I\'ll inherit',
+                        key: Key('inheritance_vaults_ill_inherit_heading'),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700),
+                      ),
+                      actions: [
+                        OutlinedButton.icon(
+                          key: const Key(
+                              'inheritance_refresh_inheritances_button'),
+                          onPressed: _loadInheritances,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: Text(
+                            AppLocalizations.of(context).commonRefresh,
+                          ),
                         ),
-                        const SizedBox(height: 14),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: ElevatedButton.icon(
-                            onPressed: () => Navigator.pushNamed(
-                              context, '/storage',
-                              arguments: const {'autoOpenPicker': true},
-                            ),
-                            icon: const Icon(Icons.add, size: 18),
-                            label: Text(
-                              AppLocalizations.of(context).filesChooseStorage,
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF10A37F),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 18, vertical: 12,
-                              ),
-                            ),
+                        FilledButton.icon(
+                          key: const Key('inheritance_enter_code_button'),
+                          onPressed: _showEnterPairingCodeDialog,
+                          icon: const Icon(Icons.vpn_key),
+                          label: Text(
+                            AppLocalizations.of(context).inheritanceEnterCode,
                           ),
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 14),
+                    if (loadingInheritances)
+                      const Center(
+                          child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(),
+                      ))
+                    else if (inheritances.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          'No inheritances. Use "Enter code" if someone shared a pairing code with you.',
+                          style:
+                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+                        ),
+                      )
+                    else
+                      ...inheritances.map((i) {
+                        final label =
+                            (i['passer_label'] ?? 'Unknown').toString();
+                        final status = (i['status'] ?? '').toString();
+                        final id = (i['id'] as num?)?.toInt() ?? 0;
+                        final executesAt =
+                            i['transfer_executes_at']?.toString();
+                        final isLinked = status == 'linked';
+                        final isPending = status == 'transfer_pending';
+                        final readyToClaim = isPending &&
+                            executesAt != null &&
+                            DateTime.tryParse(executesAt)
+                                    ?.isBefore(DateTime.now()) ==
+                                true;
+
+                        // Phase 2 escrow-flow state — authoritative
+                        // source is the server's ``pairing_state``.
+                        final pairingState =
+                            (i['pairing_state'] ?? 'paired_no_credentials')
+                                .toString();
+                        final credentialsSaved = i['credentials_saved'] == true;
+                        final cooldownEndsAt =
+                            i['cooldown_ends_at']?.toString();
+                        final showRequest = credentialsSaved &&
+                            pairingState == 'credentials_saved';
+                        final showCancel = pairingState == 'cooldown_active';
+                        final showClaim = pairingState == 'claimable' ||
+                            (pairingState == 'cooldown_active' &&
+                                cooldownEndsAt != null &&
+                                (DateTime.tryParse(cooldownEndsAt)
+                                        ?.isBefore(DateTime.now()) ==
+                                    true));
+                        final showReveal = pairingState == 'approved' ||
+                            pairingState == 'released';
+                        final showLegacyLinked = isLinked &&
+                            !credentialsSaved &&
+                            pairingState == 'paired_no_credentials';
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: showReveal
+                                ? const Color(0xFF10A37F)
+                                    .withValues(alpha: 0.08)
+                                : (showClaim || readyToClaim)
+                                    ? const Color(0xFF10A37F)
+                                        .withValues(alpha: 0.08)
+                                    : (showCancel || isPending)
+                                        ? Colors.orange.withValues(alpha: 0.06)
+                                        : const Color(0xFF222222),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: showReveal
+                                    ? const Color(0xFF10A37F)
+                                    : (showClaim || readyToClaim)
+                                        ? const Color(0xFF10A37F)
+                                        : (showCancel || isPending)
+                                            ? Colors.orange
+                                            : Colors.white10),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(label,
+                                            style: const TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w700)),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          _beneficiaryStateLabel(
+                                            pairingState: pairingState,
+                                            credentialsSaved: credentialsSaved,
+                                            legacyStatus: status,
+                                          ),
+                                          style: TextStyle(
+                                              color: _beneficiaryStateColor(
+                                                  pairingState),
+                                              fontSize: 12),
+                                        ),
+                                        if (showCancel &&
+                                            cooldownEndsAt != null) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Available in ${_formatCountdown(cooldownEndsAt)}',
+                                            style: const TextStyle(
+                                                color: Color(0xFFB4B4B4),
+                                                fontSize: 11),
+                                          ),
+                                        ] else if (isPending &&
+                                            executesAt != null &&
+                                            !showCancel) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            _formatCountdown(executesAt),
+                                            style: TextStyle(
+                                                color: readyToClaim
+                                                    ? const Color(0xFF10A37F)
+                                                    : Colors.orange,
+                                                fontSize: 11),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  if (showRequest)
+                                    FilledButton.icon(
+                                      key: Key(
+                                          'inheritance_beneficiary_request_$id'),
+                                      onPressed: () =>
+                                          _beneficiaryRequestAccess(
+                                        linkId: id,
+                                        passerLabel: label,
+                                      ),
+                                      icon: const Icon(Icons.lock_outline,
+                                          size: 18),
+                                      label: const Text('Request access'),
+                                    ),
+                                  if (showCancel)
+                                    OutlinedButton.icon(
+                                      key: Key(
+                                          'inheritance_beneficiary_cancel_$id'),
+                                      onPressed: () => _beneficiaryCancelAccess(
+                                        linkId: id,
+                                        passerLabel: label,
+                                      ),
+                                      icon: const Icon(Icons.cancel_outlined,
+                                          size: 18),
+                                      label: const Text('Cancel request'),
+                                    ),
+                                  if (showClaim && !showReveal)
+                                    FilledButton.icon(
+                                      key: Key(
+                                          'inheritance_beneficiary_claim_$id'),
+                                      onPressed: () => _beneficiaryClaimAccess(
+                                        linkId: id,
+                                        passerLabel: label,
+                                      ),
+                                      icon: const Icon(Icons.download_done,
+                                          size: 18),
+                                      label: const Text('Claim and reveal'),
+                                    ),
+                                  if (showReveal)
+                                    FilledButton.icon(
+                                      key: Key(
+                                          'inheritance_beneficiary_reveal_$id'),
+                                      onPressed: () =>
+                                          _beneficiaryRevealCredentials(
+                                        linkId: id,
+                                        passerLabel: label,
+                                      ),
+                                      icon: const Icon(Icons.visibility,
+                                          size: 18),
+                                      label: const Text(
+                                          'Reveal login credentials'),
+                                    ),
+                                  if (showLegacyLinked)
+                                    FilledButton.icon(
+                                      onPressed: () =>
+                                          _requestTransfer(id, label),
+                                      icon:
+                                          const Icon(Icons.av_timer, size: 18),
+                                      label: Text(
+                                        AppLocalizations.of(context)
+                                            .inheritanceRequestTransfer,
+                                      ),
+                                    ),
+                                  if (readyToClaim &&
+                                      !credentialsSaved &&
+                                      pairingState == 'paired_no_credentials')
+                                    FilledButton.icon(
+                                      onPressed: () =>
+                                          _claimInheritance(id, label),
+                                      icon: const Icon(Icons.move_to_inbox,
+                                          size: 18),
+                                      label: const Text('Claim'),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                  ],
                 ),
-                const SizedBox(height: 24),
-              ],
-
-              _DeleteVaultSettingsTile(),
-
-              const SizedBox(height: 24),
-
-
-              CryptoVaultLockedCard(
-                tier: !app.isBillingLoaded
-                    ? kTierLoadingLabel
-                    : ((app.billingBlockCount > 0
-                            && app.billingPurchasedBytes > 0)
-                        ? kTierUpgradedLabel
-                        : kTierFreeLabel),
-                onOpenCryptoVault: () {
-                  setState(() =>
-                      selectedSection = _DashboardSection.cryptoVault);
-                },
               ),
             ],
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
- @override
-void initState() {
-  super.initState();
-  _uploadQueue = UploadQueueController(
-    action: _runUploadAction,
-    maxConcurrency: 3,
-    maxAttempts: 3,
-    onDuplicate: _resolveUploadDuplicate,
-    onNameConflict: _resolveNameConflict,
-    onStorageLimitHit: _onStorageLimitHit,
-  );
-  _uploadQueue.addListener(_onUploadQueueChanged);
-  _folderPicker = createFolderPickerService();
-  _initSpeech();
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    final app = context.read<AppState>();
+  Widget _buildSettingsSection(bool isMobile) {
+    final app = context.watch<AppState>();
+    final l = AppLocalizations.of(context);
+    final used = app.storageUsedBytes;
 
-    
-    _uploadKeepAliveProbe ??= () => _uploadQueue.isBusy;
-    _uploadShutdownHook ??= () => _uploadQueue.cancelAll();
-    app.registerKeepAliveProbe(_uploadKeepAliveProbe!);
-    app.registerShutdownHook(_uploadShutdownHook!);
+    final limit = app.effectiveStorageLimitBytes;
+    final progress = limit == 0 ? 0.0 : min(1.0, used / limit);
 
-    if (!app.unlocked || app.vaultName == null) {
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/pin');
-      return;
-    }
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(isMobile ? 12 : 20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(
+                MediaQuery.of(context).size.width < 600 ? 16 : 24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2F2F2F),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l.settingsTitle,
+                  style: TextStyle(
+                      fontSize: vrHeadline(context),
+                      fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  l.settingsSubtitle,
+                  style: const TextStyle(
+                    color: Color(0xFFB4B4B4),
+                    fontSize: 15,
+                    height: 1.6,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const LanguageCard(),
+                const SizedBox(height: 24),
 
-    
-    if (mounted) {
-      setState(() {
-        msgs.add(
-          _Msg(
-            'assistant',
-            'Your vault is unlocked 🔓\n\n'
-            'This is your private place for the important things you '
-            'may need later — documents, photos, videos, audio, IDs, '
-            'credentials, receipts, device details, notes, and '
-            'personal records.\n\n'
-            'Ask me to find something, save something, organize '
-            'what\'s inside, or help you understand what you\'ve '
-            'stored.',
+                const Text(
+                  'Current plan',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF262626),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white10),
+                  ),
+                  child: Builder(builder: (_) {
+                    if (app.isBillingLoading) {
+                      return const _BillingLoadingCard(label: 'Loading plan…');
+                    }
+                    if (app.isBillingError) {
+                      return _BillingErrorCard(
+                        onRetry: () => app.retryBilling(),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          app.planLabel,
+                          style: const TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${formatBytes(used)} used of ${formatBytes(limit)}',
+                          style: const TextStyle(color: Color(0xFFB4B4B4)),
+                        ),
+                        if (app.storagePendingBytes > 0) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_formatBytes(app.storagePendingBytes)} pending '
+                            '(in-flight uploads)',
+                            style: const TextStyle(
+                              color: Color(0xFF888888),
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            minHeight: 10,
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                ),
+
+                const SizedBox(height: 16),
+
+                InkWell(
+                  onTap: () => Navigator.pushNamed(context, '/security-center'),
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF262626),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.shield_outlined,
+                            color: Color(0xFFB4B4B4)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLocalizations.of(context)
+                                    .securityCenterTitle,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'Overall vault health and recommendations',
+                                style: TextStyle(
+                                    fontSize: 13, color: Color(0xFFB4B4B4)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right,
+                            color: Color(0xFFB4B4B4)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                InkWell(
+                  onTap: () => Navigator.pushNamed(context, '/storage'),
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF262626),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cloud_outlined,
+                            color: Color(0xFFB4B4B4)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLocalizations.of(context).storagePageTitle,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'Usage, free tier, and additional pricing',
+                                style: TextStyle(
+                                    fontSize: 13, color: Color(0xFFB4B4B4)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right,
+                            color: Color(0xFFB4B4B4)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                InkWell(
+                  onTap: () => Navigator.pushNamed(context, '/devices'),
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF262626),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      children: const [
+                        Icon(Icons.devices_other, color: Color(0xFFB4B4B4)),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Devices',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Approve new devices, revoke devices you '
+                                'no longer use.',
+                                style: TextStyle(
+                                    color: Color(0xFFB4B4B4), fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                InkWell(
+                  key: const Key('settings_help_and_faq_tile'),
+                  onTap: () => openHelpCenter(
+                    context,
+                    mode: hc.HelpCenterMode.signedIn,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF262626),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      children: const [
+                        Icon(Icons.help_outline, color: Color(0xFFB4B4B4)),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Help & FAQ',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Answers about VaultAI, Crypto Vault, '
+                                'Monero, billing, and support.',
+                                style: TextStyle(
+                                  color: Color(0xFFB4B4B4),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Buy-More-Storage promotional card is WEB-ONLY.
+                // Rationale: App Store 3.1.1 + Google Play Payments
+                // Policy require in-app digital-goods purchases to use
+                // StoreKit / Play Billing. Mobile users still upgrade
+                // via the web at app.svaultai.com; hiding this
+                // promotional entry point keeps the mobile store
+                // submission compliant without touching web behavior.
+                if (kIsWeb) ...[
+                  InkWell(
+                    onTap: () => Navigator.pushNamed(
+                      context,
+                      '/storage',
+                      arguments: const {'autoOpenPicker': true},
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    child: Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10A37F).withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color:
+                              const Color(0xFF10A37F).withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.cloud_upload_outlined,
+                                  color: Color(0xFF10A37F)),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Buy More Storage',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      'Add storage in 50 GB blocks. Your '
+                                      'limit updates automatically after '
+                                      'payment.',
+                                      style: TextStyle(
+                                        color: Color(0xFFB4B4B4),
+                                        height: 1.45,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: ElevatedButton.icon(
+                              onPressed: () => Navigator.pushNamed(
+                                context,
+                                '/storage',
+                                arguments: const {'autoOpenPicker': true},
+                              ),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text(
+                                AppLocalizations.of(context).filesChooseStorage,
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10A37F),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+
+                _DeleteVaultSettingsTile(),
+
+                const SizedBox(height: 24),
+
+                CryptoVaultLockedCard(
+                  tier: !app.isBillingLoaded
+                      ? kTierLoadingLabel
+                      : ((app.billingBlockCount > 0 &&
+                              app.billingPurchasedBytes > 0)
+                          ? kTierUpgradedLabel
+                          : kTierFreeLabel),
+                  onOpenCryptoVault: () {
+                    setState(
+                        () => selectedSection = _DashboardSection.cryptoVault);
+                  },
+                ),
+              ],
+            ),
           ),
-        );
-      });
-    }
-await app.refreshVaultStats();
-await _loadVaultFiles();
-await _loadVaultLogins();
+        ),
+      ),
+    );
+  }
 
-  });
-}
+  @override
+  void initState() {
+    super.initState();
+    _uploadQueue = UploadQueueController(
+      action: _runUploadAction,
+      maxConcurrency: 3,
+      maxAttempts: 3,
+      onDuplicate: _resolveUploadDuplicate,
+      onNameConflict: _resolveNameConflict,
+      onStorageLimitHit: _onStorageLimitHit,
+    );
+    _uploadQueue.addListener(_onUploadQueueChanged);
+    _folderPicker = createFolderPickerService();
+    _initSpeech();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final app = context.read<AppState>();
+
+      _uploadKeepAliveProbe ??= () => _uploadQueue.isBusy;
+      _uploadShutdownHook ??= () => _uploadQueue.cancelAll();
+      app.registerKeepAliveProbe(_uploadKeepAliveProbe!);
+      app.registerShutdownHook(_uploadShutdownHook!);
+
+      if (!app.unlocked || app.vaultName == null) {
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/pin');
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          msgs.add(
+            _Msg(
+              'assistant',
+              'Your vault is unlocked 🔓\n\n'
+                  'This is your private place for the important things you '
+                  'may need later — documents, photos, videos, audio, IDs, '
+                  'credentials, receipts, device details, notes, and '
+                  'personal records.\n\n'
+                  'Ask me to find something, save something, organize '
+                  'what\'s inside, or help you understand what you\'ve '
+                  'stored.',
+            ),
+          );
+        });
+      }
+      await app.refreshVaultStats();
+      await _loadVaultFiles();
+      await _loadVaultLogins();
+    });
+  }
 
   Future<void> _initSpeech() async {
     try {
@@ -8374,7 +8329,6 @@ await _loadVaultLogins();
       return;
     }
 
-    
     _preMicText = input.text;
     if (mounted) setState(() => _isListening = true);
 
@@ -8382,13 +8336,11 @@ await _loadVaultLogins();
       onResult: (result) {
         if (!mounted) return;
         final transcript = result.recognizedWords;
-        final combined = _preMicText.isEmpty
-            ? transcript
-            : '$_preMicText $transcript';
+        final combined =
+            _preMicText.isEmpty ? transcript : '$_preMicText $transcript';
         setState(() {
           input.text = combined;
-          input.selection =
-              TextSelection.collapsed(offset: combined.length);
+          input.selection = TextSelection.collapsed(offset: combined.length);
         });
       },
       listenFor: const Duration(minutes: 1),
@@ -8399,7 +8351,6 @@ await _loadVaultLogins();
   Future<void> _toggleRecording() async {
     if (sending) return;
 
-    
     if (_isListening) {
       _showSnack('Stop voice input before recording audio.');
       return;
@@ -8424,8 +8375,6 @@ await _loadVaultLogins();
     }
 
     try {
-      
-      
       await _audioRecorder.start(
         const RecordConfig(encoder: AudioEncoder.aacLc),
         path: 'vault_audio_${DateTime.now().millisecondsSinceEpoch}.m4a',
@@ -8447,8 +8396,6 @@ await _loadVaultLogins();
 
     Uint8List bytes;
     try {
-      
-      
       final response = await http.get(Uri.parse(path));
       bytes = response.bodyBytes;
     } catch (_) {
@@ -8486,7 +8433,6 @@ await _loadVaultLogins();
   Future<void> _toggleVideoRecording() async {
     if (sending) return;
 
-    
     if (_isRecording) {
       _showSnack('Stop audio recording before recording video.');
       return;
@@ -8589,15 +8535,11 @@ await _loadVaultLogins();
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          
-          
           if (kIsWeb && viewType != null)
             AspectRatio(
               aspectRatio: 16 / 9,
               child: HtmlElementView(viewType: viewType),
             ),
-          
-          
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             color: Colors.redAccent.withValues(alpha: 0.12),
@@ -8633,7 +8575,6 @@ await _loadVaultLogins();
     );
   }
 
-  
   Widget _buildImportPanel() {
     final q = _uploadQueue;
     final total = q.totalCount;
@@ -8674,9 +8615,8 @@ await _loadVaultLogins();
                     ? Icons.error_outline
                     : Icons.cloud_upload_outlined,
                 size: 16,
-                color: failed > 0 && !isBusy
-                    ? Colors.redAccent
-                    : Colors.white70,
+                color:
+                    failed > 0 && !isBusy ? Colors.redAccent : Colors.white70,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -8710,8 +8650,7 @@ await _loadVaultLogins();
                       size: 14, color: Colors.redAccent),
                   label: const Text(
                     'Cancel',
-                    style:
-                        TextStyle(color: Colors.redAccent, fontSize: 12),
+                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
                   ),
                   style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -8747,8 +8686,6 @@ await _loadVaultLogins();
               ),
             ),
           ],
-          
-          
           const SizedBox(height: 8),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 200),
@@ -8765,7 +8702,6 @@ await _loadVaultLogins();
     );
   }
 
-  
   Widget _buildImportJobRow(UploadJob j) {
     IconData icon;
     Color color;
@@ -8808,15 +8744,11 @@ await _loadVaultLogins();
         label = 'cancelled';
         break;
       case UploadJobStatus.skippedDuplicate:
-        
-        
         icon = Icons.content_copy_outlined;
-        color = const Color(0xFFFBBF24); 
+        color = const Color(0xFFFBBF24);
         label = 'already in vault';
         break;
       case UploadJobStatus.stoppedForStorage:
-        
-        
         icon = Icons.cloud_off_outlined;
         color = const Color(0xFFFBBF24);
         label = 'not enough storage';
@@ -8873,8 +8805,7 @@ await _loadVaultLogins();
       _videoRecorder.cancel();
     }
     _videoRecorder.dispose();
-    
-    
+
     try {
       final app = context.read<AppState>();
       if (_uploadKeepAliveProbe != null) {
@@ -8883,9 +8814,7 @@ await _loadVaultLogins();
       if (_uploadShutdownHook != null) {
         app.unregisterShutdownHook(_uploadShutdownHook!);
       }
-    } catch (_) {
-      
-    }
+    } catch (_) {}
     _uploadQueue.removeListener(_onUploadQueueChanged);
     _uploadQueue.dispose();
     input.dispose();
@@ -8893,7 +8822,6 @@ await _loadVaultLogins();
     super.dispose();
   }
 
-  
   void _onUploadQueueChanged() {
     if (mounted) setState(() {});
     final nowBusy = _uploadQueue.isBusy;
@@ -8901,26 +8829,19 @@ await _loadVaultLogins();
       try {
         final app = context.read<AppState>();
         app.resetInactivityTimer();
-      } catch (_) {
-        
-      }
+      } catch (_) {}
     }
     _wasUploadQueueBusy = nowBusy;
   }
 
-  
   Future<DuplicateUploadDecision?> _resolveUploadDuplicate(
     UploadJob job,
     Map<String, dynamic> detail,
   ) async {
-    
-    
     if (_currentUploadContext?.isBatchUpload == true) {
       return DuplicateUploadDecision.skip;
     }
     if (!mounted) {
-      
-      
       return DuplicateUploadDecision.skip;
     }
     final parsed = DuplicateFoundDetail.fromJson(detail);
@@ -8942,13 +8863,11 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _onStorageLimitHit(StorageLimitDuringUploadException error) {
     if (!mounted) return;
     _showSnack('Import stopped — not enough storage.');
   }
 
-  
   Future<NameConflictDecision?> _resolveNameConflict(
     UploadJob job,
     Map<String, dynamic> detail,
@@ -8967,13 +8886,10 @@ await _loadVaultLogins();
         return NameConflictDecision.keepBoth;
       case NameConflictDialogChoice.cancel:
       case NameConflictDialogChoice.replace:
-        
-        
         return NameConflictDecision.cancel;
     }
   }
 
-  
   Future<UploadResult> _runUploadAction(
     UploadJob job,
     Uint8List bytes,
@@ -8989,12 +8905,10 @@ await _loadVaultLogins();
 
     final preferChunked = bytes.length >= kChunkedUploadThresholdBytes;
 
-    
     final contentSha256 = computeContentSha256(bytes);
-    
-    
-    final duplicateAction = job.duplicateAction ??
-        (ctx.isBatchUpload ? 'skip' : 'prompt');
+
+    final duplicateAction =
+        job.duplicateAction ?? (ctx.isBatchUpload ? 'skip' : 'prompt');
 
     Map<String, dynamic> result;
     try {
@@ -9016,8 +8930,6 @@ await _loadVaultLogins();
             contentSha256: contentSha256,
           );
         } on ChunkedUploadNotAvailableException {
-          
-          
           if (bytes.length > ctx.uploadSafetyCapBytes) {
             throw Exception(
               'Large uploads are not enabled yet on this server. '
@@ -9058,24 +8970,16 @@ await _loadVaultLogins();
         );
       }
     } on DuplicateFoundUploadException catch (e) {
-      
-      
       throw DuplicateUploadDecisionRequired(e.detail);
     } on NameConflictUploadException catch (e) {
-      
-      
       throw NameConflictDecisionRequired(e.detail);
     } on StorageLimitExceededException catch (e) {
-      
-      
       throw StorageLimitDuringUploadException(
         message: e.message,
         usedBytes: e.usedBytes,
         limitBytes: e.limitBytes,
       );
     } on RateLimitedException catch (e) {
-      
-      
       final pauseSec = e.resetInSeconds ?? 30;
       throw TransientUploadException(
         'Server rate-limited the upload (retrying in ${pauseSec}s)',
@@ -9083,17 +8987,14 @@ await _loadVaultLogins();
       );
     }
 
-    
     final status = result['status']?.toString();
     if (status == 'skipped_duplicate') {
-      final existingId =
-          result['duplicate_of_file_id']?.toString() ?? '';
+      final existingId = result['duplicate_of_file_id']?.toString() ?? '';
       return UploadResult(
         fileId: existingId,
         skippedDuplicate: true,
         message: result['message']?.toString(),
-        existingRelativePath:
-            result['existing_relative_path']?.toString(),
+        existingRelativePath: result['existing_relative_path']?.toString(),
       );
     }
 
@@ -9122,14 +9023,11 @@ await _loadVaultLogins();
       fileId: fileId,
       autoNamed: result['auto_named'] == true,
       message: result['message']?.toString(),
-
-
       renamed: result['renamed'] == true,
       originalSavedName: result['original_saved_name']?.toString(),
     );
   }
 
-  
   UploadJob? _findQueueJob(String attachmentId) {
     for (final j in _uploadQueue.jobs) {
       if (j.id == attachmentId) return j;
@@ -9149,66 +9047,64 @@ await _loadVaultLogins();
   }
 
   Future<void> _loadVaultLogins() async {
-  final app = context.read<AppState>();
-  final token = app.sessionToken;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
 
-  if (token == null || app.vaultName == null) return;
+    if (token == null || app.vaultName == null) return;
 
-  setState(() {
-    loadingLogins = true;
-    
-    
-    secureItemsError = null;
-  });
-
-  try {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final client = VaultAIClient(baseUrl: backendBaseUrl);
-    
-    
-    final result = await client.listVaultSecureItems(
-      vaultName: app.vaultName!,
-      pin: pin,
-      authToken: token,
-    );
-    final rawItems = result['items'];
-    final parsed = <VaultLoginItem>[];
-
-    if (rawItems is List) {
-      for (final item in rawItems) {
-        if (item is Map<String, dynamic>) {
-          parsed.add(VaultLoginItem.fromJson(item));
-        } else if (item is Map) {
-          parsed.add(VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
-        }
-      }
-    }
-
-    if (!mounted) return;
     setState(() {
-      vaultLogins = parsed;
-      hasLoadedSecureItems = true;
+      loadingLogins = true;
+
       secureItemsError = null;
     });
-  } catch (e) {
-    if (app.handleApiException(e)) return;
-    
-    
-    if (mounted) {
+
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+
+      final result = await client.listVaultSecureItems(
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+      final rawItems = result['items'];
+      final parsed = <VaultLoginItem>[];
+
+      if (rawItems is List) {
+        for (final item in rawItems) {
+          if (item is Map<String, dynamic>) {
+            parsed.add(VaultLoginItem.fromJson(item));
+          } else if (item is Map) {
+            parsed
+                .add(VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
+          }
+        }
+      }
+
+      if (!mounted) return;
       setState(() {
+        vaultLogins = parsed;
         hasLoadedSecureItems = true;
-        secureItemsError = e.toString();
+        secureItemsError = null;
       });
-    }
-    _showSnack('Could not load secure items: $e');
-  } finally {
-    if (mounted) {
-      setState(() {
-        loadingLogins = false;
-      });
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+
+      if (mounted) {
+        setState(() {
+          hasLoadedSecureItems = true;
+          secureItemsError = e.toString();
+        });
+      }
+      _showSnack('Could not load secure items: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          loadingLogins = false;
+        });
+      }
     }
   }
-}
 
   Future<void> _loadVaultFiles() async {
     final app = context.read<AppState>();
@@ -9237,7 +9133,8 @@ await _loadVaultLogins();
           if (item is Map<String, dynamic>) {
             parsed.add(_VaultStoredFile.fromJson(item));
           } else if (item is Map) {
-            parsed.add(_VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
+            parsed.add(
+                _VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
           }
         }
       }
@@ -9257,11 +9154,9 @@ await _loadVaultLogins();
       }
     }
 
-    
     await _loadFolderTree();
   }
 
-  
   Future<void> _loadFolderTree() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -9284,21 +9179,17 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _navigateToFolder(String path) {
     if (_currentFolderPath == path) return;
     setState(() {
       _currentFolderPath = path;
-      
-      
+
       _folderSearchQuery = '';
     });
-    
-    
+
     _loadFolderTree();
   }
 
-  
   Widget _buildAttachmentPlusMenu() {
     return PopupMenuButton<String>(
       tooltip: 'Add attachment',
@@ -9400,18 +9291,16 @@ await _loadVaultLogins();
   }
 
   Future<void> _pickFile() async {
-  
-  
-  final result = await FilePicker.platform.pickFiles(
-    withData: false,
-    withReadStream: true,
-    allowMultiple: true,
-    type: FileType.any,
-  );
+    final result = await FilePicker.platform.pickFiles(
+      withData: false,
+      withReadStream: true,
+      allowMultiple: true,
+      type: FileType.any,
+    );
 
-  if (result == null || result.files.isEmpty) return;
-  _ingestPickedFiles(result.files, kind: 'file');
-}
+    if (result == null || result.files.isEmpty) return;
+    _ingestPickedFiles(result.files, kind: 'file');
+  }
 
   Future<void> _pickImage() async {
     final result = await FilePicker.platform.pickFiles(
@@ -9435,7 +9324,6 @@ await _loadVaultLogins();
     _ingestPickedFiles(result.files, kind: 'video');
   }
 
-  
   Future<void> _pickAudio() async {
     final result = await FilePicker.platform.pickFiles(
       withData: false,
@@ -9448,7 +9336,6 @@ await _loadVaultLogins();
     _ingestPickedFiles(result.files, kind: 'audio');
   }
 
-  
   Future<void> _pickFolder() async {
     if (!_folderPicker.isSupported) {
       _showSnack(_folderPicker.unsupportedReason);
@@ -9462,7 +9349,7 @@ await _loadVaultLogins();
       _showSnack('Could not open the folder picker: $e');
       return;
     }
-    if (result == null) return; 
+    if (result == null) return;
     if (result.files.isEmpty) {
       _showSnack('No readable files inside that folder.');
       return;
@@ -9471,7 +9358,6 @@ await _loadVaultLogins();
     _ingestPickedFolderFiles(result);
   }
 
-  
   void _ingestPickedFolderFiles(FolderPickResult result) {
     final accepted = <_Attachment>[];
     final skippedReasons = <String>[...result.skipped];
@@ -9482,8 +9368,7 @@ await _loadVaultLogins();
         skippedReasons.add('${f.relativePath}: $sizeError');
         continue;
       }
-      
-      
+
       accepted.add(_Attachment(
         id: _newAttachmentId(),
         name: f.name,
@@ -9497,9 +9382,8 @@ await _loadVaultLogins();
 
     if (accepted.isNotEmpty) {
       setState(() => attachments.addAll(accepted));
-      final rootName = result.rootFolderName.isEmpty
-          ? 'folder'
-          : result.rootFolderName;
+      final rootName =
+          result.rootFolderName.isEmpty ? 'folder' : result.rootFolderName;
       _showSnack(
         'Queued ${accepted.length} file'
         '${accepted.length == 1 ? '' : 's'} from $rootName.',
@@ -9515,7 +9399,6 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _ingestPickedFiles(List<PlatformFile> files, {required String kind}) {
     final accepted = <_Attachment>[];
     final skippedReasons = <String>[];
@@ -9529,8 +9412,7 @@ await _loadVaultLogins();
         skippedReasons.add('${f.name}: $sizeError');
         continue;
       }
-      
-      
+
       final pf = f;
       accepted.add(_Attachment(
         id: _newAttachmentId(),
@@ -9545,8 +9427,6 @@ await _loadVaultLogins();
       setState(() => attachments.addAll(accepted));
     }
     if (skippedReasons.isNotEmpty) {
-      
-      
       _showSnack(
         'Skipped ${skippedReasons.length} file${skippedReasons.length == 1 ? '' : 's'}: '
         '${skippedReasons.take(2).join(' · ')}'
@@ -9559,12 +9439,10 @@ await _loadVaultLogins();
     setState(() => attachments.clear());
   }
 
-  
   String? _checkUploadSize(int sizeBytes) {
     final app = context.read<AppState>();
     final cap = app.uploadSafetyCapBytes;
 
-    
     if (app.isBillingLoaded) {
       final limit = app.effectiveStorageLimitBytes;
       final remaining = (limit - app.storageUsedBytes).clamp(0, limit);
@@ -9575,8 +9453,7 @@ await _loadVaultLogins();
             '${formatBytes(sizeBytes)}.';
       }
     }
-    
-    
+
     if (sizeBytes < kChunkedUploadThresholdBytes && sizeBytes > cap) {
       return 'This file is ${_formatBytes(sizeBytes)}. The current '
           'single-upload safety cap is ${_formatBytes(cap)} — '
@@ -9628,8 +9505,7 @@ await _loadVaultLogins();
         memoryType: mt,
         memoryKey: mk,
         memoryValue: mv,
-        memoryEventDate:
-            md is String && md.isNotEmpty ? md : null,
+        memoryEventDate: md is String && md.isNotEmpty ? md : null,
       );
     } catch (_) {
       // Fail privacy-safe: never surface the parsed plaintext memory
@@ -9638,7 +9514,6 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _askBrainAboutFile(_VaultStoredFile file) {
     if (!mounted) return;
 
@@ -9654,8 +9529,7 @@ await _loadVaultLogins();
 
     setState(() {
       selectedSection = _DashboardSection.chat;
-      
-      
+
       input.clear();
       attachments.clear();
       msgs.addAll(handoff);
@@ -9664,8 +9538,6 @@ await _loadVaultLogins();
   }
 
   Future<void> _previewLocalAttachment(_Attachment attachment) async {
-
-
     await showDialog(
       context: context,
       useRootNavigator: false,
@@ -9686,7 +9558,6 @@ await _loadVaultLogins();
     );
   }
 
-  
   Future<Map<String, dynamic>> _chunkedUpload({
     required VaultAIClient client,
     required String vaultName,
@@ -9724,9 +9595,7 @@ await _loadVaultLogins();
     try {
       for (var i = 0; i < chunkCount; i++) {
         final start = i * chunkSize;
-        final end = (i == chunkCount - 1)
-            ? bytes.length
-            : start + chunkSize;
+        final end = (i == chunkCount - 1) ? bytes.length : start + chunkSize;
         final slice = bytes.sublist(start, end);
 
         final frame = await encryptChunk(
@@ -9761,8 +9630,6 @@ await _loadVaultLogins();
         'message': 'Uploaded $filename.',
       };
     } catch (e) {
-      
-      
       try {
         await client.abortChunkedUpload(
           authToken: authToken,
@@ -9775,16 +9642,12 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _cancelActiveUploads() {
     if (!mounted) return;
     if (!_uploadQueue.isBusy) return;
-    
-    
+
     final ctx = _currentUploadContext;
     if (ctx?.importId != null) {
-      
-      
       ctx!.client
           .cancelImport(
             vaultName: ctx.vaultName,
@@ -9798,7 +9661,6 @@ await _loadVaultLogins();
     _showSnack('Upload cancelled.');
   }
 
-  
   Future<_UploadAttachmentsOutcome> _uploadAttachments({
     required VaultAIClient client,
     required String vaultName,
@@ -9807,8 +9669,6 @@ await _loadVaultLogins();
     required List<_Attachment> pendingAttachments,
     String? accompanyingText,
   }) async {
-    
-    
     final preUploadedIds = <String>[];
     final freshAttachments = <_Attachment>[];
     for (final a in pendingAttachments) {
@@ -9832,22 +9692,18 @@ await _loadVaultLogins();
     final freshCount = freshAttachments.length;
     final isMultiFileBatch = freshCount >= 2;
 
-    
     List<int>? keyBytes;
-    final needsChunked = freshAttachments
-        .any((a) => a.size >= kChunkedUploadThresholdBytes);
+    final needsChunked =
+        freshAttachments.any((a) => a.size >= kChunkedUploadThresholdBytes);
     if (needsChunked) {
       keyBytes = await _VaultCrypto.currentKeyBytesOrThrow();
     }
 
-    
     final hasFolderContext =
         freshAttachments.any((a) => a.relativePath != null);
     final shouldCreateBatch = isMultiFileBatch || hasFolderContext;
     String? importId;
     if (shouldCreateBatch) {
-      
-      
       String? rootFolderName;
       for (final a in freshAttachments) {
         if (a.relativePath == null) continue;
@@ -9857,8 +9713,8 @@ await _loadVaultLogins();
           break;
         }
       }
-      final totalBytesPlanned = freshAttachments
-          .fold<int>(0, (acc, a) => acc + a.size);
+      final totalBytesPlanned =
+          freshAttachments.fold<int>(0, (acc, a) => acc + a.size);
 
       try {
         final batch = await client.startImport(
@@ -9871,23 +9727,18 @@ await _loadVaultLogins();
         );
         importId = batch['import_id']?.toString();
       } on StorageLimitExceededException catch (e) {
-        
-        
         _showSnack(e.message);
         return _UploadAttachmentsOutcome(
           uploadedIds: preUploadedIds,
           autoNamedAny: false,
         );
       } catch (e) {
-        
-        
         if (kDebugMode) {
           debugPrint('startImport failed; proceeding without batch: $e');
         }
       }
     }
 
-    
     for (final a in freshAttachments) {
       a.importId = importId;
     }
@@ -9925,7 +9776,6 @@ await _loadVaultLogins();
       _currentUploadContext = null;
     }
 
-    
     if (importId != null) {
       final cancelledByUser = _uploadQueue.jobs.any(
         (j) => j.status == UploadJobStatus.cancelled,
@@ -9947,7 +9797,6 @@ await _loadVaultLogins();
       }
     }
 
-    
     final uploadedIds = <String>[...preUploadedIds];
     var autoNamedAny = false;
     int multiFileSavedCount = 0;
@@ -9957,8 +9806,6 @@ await _loadVaultLogins();
       if (job == null) continue;
       if (job.status != UploadJobStatus.uploaded ||
           job.uploadedFileId == null) {
-        
-        
         if (job.status == UploadJobStatus.failed) {
           _showSnack(
             'Upload failed: ${a.name}. Open the import panel to retry.',
@@ -9975,7 +9822,6 @@ await _loadVaultLogins();
       final autoNamed = res?.autoNamed ?? false;
       final message = res?.message;
 
-      
       if (isMultiFileBatch) {
         multiFileSavedCount += 1;
       } else if (message != null && message.isNotEmpty) {
@@ -9990,7 +9836,6 @@ await _loadVaultLogins();
       }
     }
 
-    
     if (isMultiFileBatch &&
         !hasAccompanyingText &&
         (multiFileSavedCount > 0 ||
@@ -10007,7 +9852,6 @@ await _loadVaultLogins();
       );
     }
 
-    
     if (!_uploadQueue.hasFailures) {
       _uploadQueue.clearTerminal();
     }
@@ -10019,33 +9863,18 @@ await _loadVaultLogins();
   }
 
   _Msg? _tryParseAssistantStructuredMessage(String text) {
-
-
-
-
-
-
-
-
-
-
-
     if (kDebugMode) {
       debugPrint(
         '[chat_bubble_parse] enter '
         'buffer_len=${text.length} '
         'first_char=${text.isEmpty ? "(empty)" : text[0]} '
-        'last_char=${text.isEmpty ? "(empty)"
-                                  : text[text.length - 1]}',
+        'last_char=${text.isEmpty ? "(empty)" : text[text.length - 1]}',
       );
     }
     final maybeCard = vcs_parser.parseVaultChatCardMessage(text);
     if (maybeCard != null) {
       return maybeCard;
     }
-
-
-
 
     final trimmed = text.trim();
     if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
@@ -10054,18 +9883,13 @@ await _loadVaultLogins();
       final decodedRaw = jsonDecode(trimmed);
       if (decodedRaw is! Map) return null;
 
-
-
-      final Map<String, dynamic> decoded =
-          decodedRaw is Map<String, dynamic>
-              ? decodedRaw
-              : decodedRaw.map<String, dynamic>(
-                  (k, v) => MapEntry(k.toString(), v),
-                );
+      final Map<String, dynamic> decoded = decodedRaw is Map<String, dynamic>
+          ? decodedRaw
+          : decodedRaw.map<String, dynamic>(
+              (k, v) => MapEntry(k.toString(), v),
+            );
       final type = decoded['type']?.toString();
       if (type == 'vault_file' || type == 'vault_image') {
-
-
         final payload = <String, dynamic>{};
         final relativePath = decoded['relative_path']?.toString();
         if (relativePath != null && relativePath.isNotEmpty) {
@@ -10095,8 +9919,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'vault_file_list') {
-        
-        
         final filesRaw = decoded['files'];
         final files = filesRaw is List
             ? filesRaw
@@ -10132,8 +9954,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'vault_inventory') {
-        
-        
         final payload = <String, dynamic>{
           if (decoded['total_files'] is int)
             'total_files': decoded['total_files'],
@@ -10165,19 +9985,13 @@ await _loadVaultLogins();
         );
       }
       if (type == 'travel_readiness') {
-        
-        
         final payload = <String, dynamic>{
           'confidence': decoded['confidence']?.toString() ?? 'blocked',
           'found': (decoded['found'] is List)
-              ? (decoded['found'] as List)
-                  .whereType<String>()
-                  .toList()
+              ? (decoded['found'] as List).whereType<String>().toList()
               : const <String>[],
           'missing': (decoded['missing'] is List)
-              ? (decoded['missing'] as List)
-                  .whereType<String>()
-                  .toList()
+              ? (decoded['missing'] as List).whereType<String>().toList()
               : const <String>[],
           'expired': (decoded['expired'] is List)
               ? (decoded['expired'] as List)
@@ -10200,8 +10014,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'credential_files') {
-        
-        
         final filesRaw = decoded['files'];
         final files = filesRaw is List
             ? filesRaw
@@ -10242,8 +10054,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'deep_answer_progress') {
-        
-        
         final progress = (decoded['progress'] is Map)
             ? (decoded['progress'] as Map).cast<String, dynamic>()
             : const <String, dynamic>{};
@@ -10263,8 +10073,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'credential_extraction_review') {
-        
-        
         final recordsRaw = decoded['records'];
         final records = recordsRaw is List
             ? recordsRaw
@@ -10291,8 +10099,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'file_disambiguation') {
-        
-        
         final filesRaw = decoded['files'];
         final files = filesRaw is List
             ? filesRaw
@@ -10315,8 +10121,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'vault_brain_answer') {
-        
-        
         final evidenceRaw = decoded['evidence'];
         final evidence = evidenceRaw is List
             ? evidenceRaw
@@ -10338,8 +10142,7 @@ await _loadVaultLogins();
             'coverage_note': decoded['coverage_note'],
           if (decoded['retrieval_mode'] is String)
             'retrieval_mode': decoded['retrieval_mode'],
-          if (decoded['breadth'] is String)
-            'breadth': decoded['breadth'],
+          if (decoded['breadth'] is String) 'breadth': decoded['breadth'],
           if (decoded['continuation_available'] is bool)
             'continuation_available': decoded['continuation_available'],
           if (decoded['count'] is int) 'count': decoded['count'],
@@ -10352,8 +10155,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'secure_item_results') {
-        
-        
         final itemsRaw = decoded['items'];
         final items = itemsRaw is List
             ? itemsRaw
@@ -10362,21 +10163,18 @@ await _loadVaultLogins();
                 .toList()
             : const <Map<String, dynamic>>[];
         final payload = <String, dynamic>{
-          'items':   items,
-          if (decoded['count'] is int) 'count':   decoded['count'],
+          'items': items,
+          if (decoded['count'] is int) 'count': decoded['count'],
           if (decoded['reveal'] is bool) 'reveal': decoded['reveal'],
-          
-          
           if (decoded['display_mode'] is String)
             'display_mode': decoded['display_mode'],
           if (decoded['category_filter'] is String)
             'category_filter': decoded['category_filter'],
           if (decoded['schema_version'] is String)
-            'schema_version':  decoded['schema_version'],
+            'schema_version': decoded['schema_version'],
           if (decoded['copy_version'] is String)
-            'copy_version':    decoded['copy_version'],
-          if (decoded['message'] is String)
-            'message': decoded['message'],
+            'copy_version': decoded['copy_version'],
+          if (decoded['message'] is String) 'message': decoded['message'],
         };
         return _Msg(
           'assistant',
@@ -10386,8 +10184,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'vault_chat_card') {
-
-
         final intent = decoded['intent']?.toString() ?? '';
         final cardRaw = decoded['card'];
         final card = cardRaw is Map
@@ -10396,7 +10192,7 @@ await _loadVaultLogins();
         final schema = decoded['schema']?.toString() ?? '';
         final payload = <String, dynamic>{
           'intent': intent,
-          'card':   card,
+          'card': card,
           if (schema.isNotEmpty) 'schema': schema,
         };
         return _Msg(
@@ -10407,24 +10203,19 @@ await _loadVaultLogins();
         );
       }
       if (type == 'crypto_wallet_action') {
-        
-        
         final payload = <String, dynamic>{
-          'intent':  decoded['intent']?.toString() ?? '',
-          if (decoded['asset'] is String)
-            'asset':              decoded['asset'],
-          if (decoded['network'] is String)
-            'network':            decoded['network'],
-          if (decoded['amount'] is String)
-            'amount':             decoded['amount'],
+          'intent': decoded['intent']?.toString() ?? '',
+          if (decoded['asset'] is String) 'asset': decoded['asset'],
+          if (decoded['network'] is String) 'network': decoded['network'],
+          if (decoded['amount'] is String) 'amount': decoded['amount'],
           if (decoded['amountUnit'] is String)
-            'amountUnit':         decoded['amountUnit'],
+            'amountUnit': decoded['amountUnit'],
           if (decoded['destinationAddress'] is String)
             'destinationAddress': decoded['destinationAddress'],
           if (decoded['blockedReason'] is String)
-            'blockedReason':      decoded['blockedReason'],
+            'blockedReason': decoded['blockedReason'],
           if (decoded['engineEnabled'] is bool)
-            'engineEnabled':      decoded['engineEnabled'],
+            'engineEnabled': decoded['engineEnabled'],
         };
         return _Msg(
           'assistant',
@@ -10434,8 +10225,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'file_search_results') {
-        
-        
         final resultsRaw = decoded['results'];
         final results = resultsRaw is List
             ? resultsRaw
@@ -10443,14 +10232,10 @@ await _loadVaultLogins();
                 .map((m) => m.cast<String, dynamic>())
                 .toList()
             : const <Map<String, dynamic>>[];
-        
-        
-        final schemaVersion =
-            (decoded['schema_version'] as String?)?.trim();
-        final copyVersion =
-            (decoded['copy_version'] as String?)?.trim();
+
+        final schemaVersion = (decoded['schema_version'] as String?)?.trim();
+        final copyVersion = (decoded['copy_version'] as String?)?.trim();
         if (kDebugMode) {
-          
           print(
             '[file_search_results] '
             'schema_version=${schemaVersion ?? "(missing)"} '
@@ -10469,20 +10254,14 @@ await _loadVaultLogins();
             'is_complete': decoded['is_complete'],
           if (decoded['incomplete_reason'] is String)
             'incomplete_reason': decoded['incomplete_reason'],
-          
-          
           if (decoded['query_kind'] is String)
             'query_kind': decoded['query_kind'],
           if (decoded['weak_hits_dropped'] is int)
             'weak_hits_dropped': decoded['weak_hits_dropped'],
-          
-          
           if (schemaVersion != null && schemaVersion.isNotEmpty)
             'schema_version': schemaVersion,
           if (copyVersion != null && copyVersion.isNotEmpty)
             'copy_version': copyVersion,
-          
-          
           if (decoded['requested_person_name'] is String)
             'requested_person_name': decoded['requested_person_name'],
           if (decoded['candidate_id_docs_count'] is int)
@@ -10498,8 +10277,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'related_files_graph') {
-        
-        
         final relsRaw = decoded['relationships'];
         final relationships = relsRaw is List
             ? relsRaw
@@ -10514,7 +10291,7 @@ await _loadVaultLogins();
                 ? anchorRaw.cast<String, dynamic>()
                 : const <String, dynamic>{});
         final payload = <String, dynamic>{
-          'anchor':        anchor,
+          'anchor': anchor,
           'relationships': relationships,
           if (decoded['count'] is int) 'count': decoded['count'],
         };
@@ -10526,8 +10303,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'vault_relationship_clusters') {
-        
-        
         final clustersRaw = decoded['clusters'];
         final clusters = clustersRaw is List
             ? clustersRaw
@@ -10547,8 +10322,6 @@ await _loadVaultLogins();
         );
       }
       if (type == 'related_files') {
-        
-        
         final resultsRaw = decoded['results'];
         final results = resultsRaw is List
             ? resultsRaw
@@ -10573,16 +10346,12 @@ await _loadVaultLogins();
         );
       }
 
-
       final fallbackMessage = decoded['message']?.toString();
       if (type != null &&
           fallbackMessage != null &&
           fallbackMessage.isNotEmpty) {
         return _Msg('assistant', fallbackMessage);
       }
-
-
-
 
       if (type != null && type.isNotEmpty) {
         if (kDebugMode) {
@@ -10595,18 +10364,15 @@ await _loadVaultLogins();
         return _Msg(
           'assistant',
           'I received a response but I can\'t render it here yet. '
-          'Please make sure the app is up to date.',
+              'Please make sure the app is up to date.',
         );
       }
     } catch (_) {}
 
-
-
-
     if (trimmed.length > 20 &&
         (trimmed.contains('"schema"') ||
-         trimmed.contains('"cardType"') ||
-         trimmed.contains('"type"'))) {
+            trimmed.contains('"cardType"') ||
+            trimmed.contains('"type"'))) {
       if (kDebugMode) {
         print(
           '[structured_message_parse] JSON-shaped payload with no '
@@ -10616,14 +10382,13 @@ await _loadVaultLogins();
       return _Msg(
         'assistant',
         'I received a response but I can\'t display it. '
-        'Please try again.',
+            'Please try again.',
       );
     }
 
     return null;
   }
 
-  
   Future<({Uint8List bytes, String? contentType, String fileName})>
       _fetchVaultFile({
     required VaultAIClient client,
@@ -10643,8 +10408,6 @@ await _loadVaultLogins();
         fileId: fileId,
       );
     } catch (e) {
-      
-      
       final raw = e.toString().toLowerCase();
       final looksLikeMissingRoute =
           raw.contains('404') || raw.contains('not found');
@@ -10653,8 +10416,6 @@ await _loadVaultLogins();
     }
 
     if (manifest == null) {
-      
-      
       final payload = await client.downloadVaultFile(
         vaultName: vaultName,
         fileId: fileId,
@@ -10718,7 +10479,6 @@ await _loadVaultLogins();
     return (bytes: out, contentType: mime, fileName: fileName);
   }
 
-  
   Future<Map<String, dynamic>?> _fetchRelatedFilesEnvelope(
     String fileId,
   ) async {
@@ -10737,7 +10497,6 @@ await _loadVaultLogins();
     );
   }
 
-  
   Future<void> _showRelatedFilesForFile(String fileId) async {
     if (fileId.trim().isEmpty) {
       _showSnack('Missing file information.');
@@ -10785,9 +10544,9 @@ await _loadVaultLogins();
           message,
           kind: ChatMessage.kRelatedFilesGraph,
           payload: {
-            'anchor':        anchor,
+            'anchor': anchor,
             'relationships': relationships,
-            'count':         relationships.length,
+            'count': relationships.length,
           },
         ));
       });
@@ -10798,10 +10557,7 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _handleScanRemaining(ChatMessage credentialMsg) {
-    
-    
     unawaited(_kickOffDeepAnswerScan(credentialMsg));
   }
 
@@ -10822,13 +10578,12 @@ await _loadVaultLogins();
       return;
     }
 
-    
     const intent = 'search_files_for_credentials';
     final normalizedQuery = normalizeDeepScanQuery('');
 
-    
     if (isDeepScanActive(
-      intent: intent, normalizedQuery: normalizedQuery,
+      intent: intent,
+      normalizedQuery: normalizedQuery,
     )) {
       _focusActiveDeepScanCard();
       return;
@@ -10854,16 +10609,12 @@ await _loadVaultLogins();
     final returnedJobId = (snapshot['job_id'] as String?) ?? '';
     final returnedStatus = (snapshot['status'] as String?) ?? 'scanning';
 
-    
-    if (returnedJobId.isNotEmpty
-        && activeDeepScanJobId == returnedJobId) {
+    if (returnedJobId.isNotEmpty && activeDeepScanJobId == returnedJobId) {
       _focusActiveDeepScanCard();
       return;
     }
 
     setState(() {
-      
-      
       _markPriorCredentialCardsStale();
 
       activeDeepScanJobId = returnedJobId.isNotEmpty ? returnedJobId : null;
@@ -10871,8 +10622,7 @@ await _loadVaultLogins();
       activeDeepScanQuery = normalizedQuery;
       activeDeepScanStatus = returnedStatus;
       activeDeepScanCardKey = GlobalKey();
-      
-      
+
       msgs.add(_Msg(
         'assistant',
         'Let me check your vault properly. '
@@ -10883,20 +10633,17 @@ await _loadVaultLogins();
     });
     _scrollToBottom();
 
-    
     if (returnedStatus == 'ready') {
       _promoteDeepAnswerResult(snapshot);
     }
   }
 
-  
   void _focusActiveDeepScanCard() {
     if (!mounted) return;
     _scrollToBottom();
     _showSnack('Scan is already running.');
   }
 
-  
   void _markPriorCredentialCardsStale() {
     for (var i = 0; i < msgs.length; i++) {
       final m = msgs[i];
@@ -10940,17 +10687,12 @@ await _loadVaultLogins();
         jobId: jobId,
       );
     } catch (_) {
-      
-      
       return null;
     }
-    
-    
+
     if (mounted && activeDeepScanJobId == jobId) {
       final newStatus = (snap['status'] as String?) ?? 'scanning';
       if (newStatus != activeDeepScanStatus) {
-        
-        
         scheduleMicrotask(() {
           if (!mounted) return;
           if (activeDeepScanJobId != jobId) return;
@@ -10970,8 +10712,7 @@ await _loadVaultLogins();
 
   void _promoteDeepAnswerResult(Map<String, dynamic> snapshot) {
     if (!mounted) return;
-    
-    
+
     final status = (snapshot['status'] as String?) ?? '';
     if (status != 'ready') return;
 
@@ -10983,22 +10724,22 @@ await _loadVaultLogins();
     final envelopeType = (envelope['type'] as String?) ?? '';
     if (envelopeType != 'credential_files') return;
 
-    
     final envScanned = (envelope['scanned_count'] is int)
-        ? envelope['scanned_count'] as int : 0;
+        ? envelope['scanned_count'] as int
+        : 0;
     final envNotScanned = (envelope['not_scanned_count'] is int)
-        ? envelope['not_scanned_count'] as int : 0;
+        ? envelope['not_scanned_count'] as int
+        : 0;
     final envTotal = envScanned + envNotScanned;
     if (envTotal > 0 && envScanned == 0) {
       return;
     }
 
-    
     final snapJobId = (snapshot['job_id'] as String?) ?? '';
     if (snapJobId.isNotEmpty) {
       final already = msgs.any((m) =>
-          m.kind == ChatMessage.kCredentialFiles
-          && (m.payload?['deep_answer_job_id'] as String?) == snapJobId);
+          m.kind == ChatMessage.kCredentialFiles &&
+          (m.payload?['deep_answer_job_id'] as String?) == snapJobId);
       if (already) return;
     }
 
@@ -11032,13 +10773,10 @@ await _loadVaultLogins();
         'scanned_count': envelope['scanned_count'],
       if (envelope['not_scanned_count'] is int)
         'not_scanned_count': envelope['not_scanned_count'],
-      if (envelope['is_partial'] is bool)
-        'is_partial': envelope['is_partial'],
+      if (envelope['is_partial'] is bool) 'is_partial': envelope['is_partial'],
       if (snapJobId.isNotEmpty) 'deep_answer_job_id': snapJobId,
     };
     setState(() {
-      
-      
       if (activeDeepScanJobId == snapJobId) {
         activeDeepScanJobId = null;
         activeDeepScanIntent = null;
@@ -11108,8 +10846,8 @@ await _loadVaultLogins();
             final h = (s.height - 120).clamp(200.0, 900.0);
             return Dialog(
               backgroundColor: Colors.black,
-              insetPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 24),
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxWidth: w, maxHeight: h),
                 child: Column(
@@ -11178,8 +10916,8 @@ await _loadVaultLogins();
             final w = (s.width - 32).clamp(240.0, 600.0);
             final h = (s.height - 200).clamp(200.0, 500.0);
             return AlertDialog(
-              insetPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 24),
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
               title: Text(
                 msg.fileName!,
                 maxLines: 2,
@@ -11220,7 +10958,6 @@ await _loadVaultLogins();
     } catch (e) {
       if (app.handleApiException(e)) return;
 
-
       _showSnack(friendlyVaultFileOpenError(e));
     } finally {
       // Always release the per-file lock — including when the fetch
@@ -11246,9 +10983,7 @@ await _loadVaultLogins();
       if (!mounted) return;
       if (action == 'download') {
         _downloadVaultFileCard(msg);
-      } else if (action == 'open' ||
-          action == 'view' ||
-          action == 'show') {
+      } else if (action == 'open' || action == 'view' || action == 'show') {
         _openVaultFileCard(msg);
       }
     });
@@ -11289,9 +11024,8 @@ await _loadVaultLogins();
       if (!mounted) return;
       final ok = FileDownloader().downloadBytes(
         bytes: fetched.bytes,
-        fileName: fetched.fileName.isNotEmpty
-            ? fetched.fileName
-            : msg.fileName!,
+        fileName:
+            fetched.fileName.isNotEmpty ? fetched.fileName : msg.fileName!,
         mimeType: fetched.contentType ?? msg.mimeType,
       );
       if (!mounted) return;
@@ -11305,7 +11039,6 @@ await _loadVaultLogins();
       app.endFileDownload(msg.fileId!);
     }
   }
-
 
   Future<void> _showUnsupportedPreviewDialog({
     required String fileName,
@@ -11354,7 +11087,6 @@ await _loadVaultLogins();
     );
   }
 
-  
   Future<void> _openPdfPreviewDialog({
     required String fileName,
     required Uint8List bytes,
@@ -11368,8 +11100,7 @@ await _loadVaultLogins();
       );
       return;
     }
-    final viewType =
-        'vault-pdf-${DateTime.now().microsecondsSinceEpoch}';
+    final viewType = 'vault-pdf-${DateTime.now().microsecondsSinceEpoch}';
     final registered = previewer.register(
       viewType: viewType,
       bytes: bytes,
@@ -11448,7 +11179,6 @@ await _loadVaultLogins();
     previewer.dispose();
   }
 
-  
   Future<void> _showPdfPreviewFailureDialog({
     required String fileName,
     required Uint8List bytes,
@@ -11495,7 +11225,6 @@ await _loadVaultLogins();
     );
   }
 
-  
   Future<void> _openMediaDialog({
     required String fileName,
     required Uint8List bytes,
@@ -11557,8 +11286,8 @@ await _loadVaultLogins();
           final maxH = (s.height - 200).clamp(120.0, 400.0);
           final videoH = isVideo ? maxH.clamp(160.0, 320.0) : 80.0;
           return AlertDialog(
-            insetPadding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 24),
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
             title: Text(
               fileName,
               maxLines: 2,
@@ -11573,14 +11302,15 @@ await _loadVaultLogins();
                     child: HtmlElementView(viewType: viewType),
                   ),
                   Positioned(
-                    left: 0, right: 0, bottom: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
                     child: ValueListenableBuilder<String?>(
                       valueListenable: player.errorNotifier,
                       builder: (_, err, __) {
                         if (err == null) return const SizedBox.shrink();
                         return Container(
-                          key: const Key(
-                              'media_video_dialog_error_banner'),
+                          key: const Key('media_video_dialog_error_banner'),
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 8),
                           color: const Color(0xCC000000),
@@ -11593,8 +11323,7 @@ await _loadVaultLogins();
                                 child: Text(
                                   err,
                                   style: const TextStyle(
-                                      color: Color(0xFFFFB4A2),
-                                      fontSize: 13),
+                                      color: Color(0xFFFFB4A2), fontSize: 13),
                                 ),
                               ),
                             ],
@@ -11637,15 +11366,12 @@ await _loadVaultLogins();
         Future<void>.delayed(const Duration(milliseconds: 100), () {
           try {
             player.dispose();
-          } catch (_) {
-
-          }
+          } catch (_) {}
         });
       });
     }
   }
 
-  
   Future<void> _openMediaMetadataDialog({
     required String fileName,
     required Uint8List bytes,
@@ -11678,7 +11404,6 @@ await _loadVaultLogins();
     );
   }
 
-
   String? _mainnetNetworkForAsset(String asset) {
     switch (asset) {
       case 'ETH':
@@ -11690,18 +11415,15 @@ await _loadVaultLogins();
       case 'USDT_TRC20':
         return 'tron_mainnet';
       default:
-
         return null;
     }
   }
 
-
   Map<String, dynamic> _unavailableBalance(String reason) => {
-        'balanceStatus':  'unavailable',
-        'reason':         reason,
+        'balanceStatus': 'unavailable',
+        'reason': reason,
         'availableAmount': null,
       };
-
 
   Future<Map<String, dynamic>> _fetchCryptoBalanceForChatCard({
     required String asset,
@@ -11711,8 +11433,6 @@ await _loadVaultLogins();
       return _unavailableBalance('missing_input');
     }
     if (asset == 'XMR') {
-
-
       return _unavailableBalance('scanner_gated');
     }
     final network = _mainnetNetworkForAsset(asset);
@@ -11734,18 +11454,15 @@ await _loadVaultLogins();
       );
       return result;
     } catch (e) {
-
       return _unavailableBalance('network_error');
     }
   }
 
-
   Map<String, dynamic> _unavailableActivity(String reason) => {
         'activityStatus': 'unavailable',
-        'reason':         reason,
-        'transactions':   const <dynamic>[],
+        'reason': reason,
+        'transactions': const <dynamic>[],
       };
-
 
   Future<Map<String, dynamic>> _fetchCryptoActivityForChatCard({
     required String asset,
@@ -11779,7 +11496,6 @@ await _loadVaultLogins();
     }
   }
 
-
   Future<void> _sendQuickPrompt(String text) async {
     setState(() {
       selectedSection = _DashboardSection.chat;
@@ -11810,11 +11526,10 @@ await _loadVaultLogins();
       if (id.isEmpty) return;
       _nextSelectionHint = {
         'kind': 'login',
-        'id':   id,
+        'id': id,
       };
-      final prompt = title.isEmpty
-          ? 'Show my selected login'
-          : 'Show my $title login';
+      final prompt =
+          title.isEmpty ? 'Show my selected login' : 'Show my $title login';
       _sendQuickPrompt(prompt);
       return;
     }
@@ -11830,11 +11545,10 @@ await _loadVaultLogins();
       if (id.isEmpty) return;
       _nextSelectionHint = {
         'kind': 'file',
-        'id':   id,
+        'id': id,
       };
-      final prompt = title.isEmpty
-          ? 'Show my selected file'
-          : 'Show my $title file';
+      final prompt =
+          title.isEmpty ? 'Show my selected file' : 'Show my $title file';
       _sendQuickPrompt(prompt);
       return;
     }
@@ -11877,22 +11591,18 @@ await _loadVaultLogins();
     }
   }
 
-  
   void _handleCryptoWalletChatAction(CryptoWalletActionRequest request) {
-    
-    
-    if (request.blockedReason != null &&
-        request.blockedReason!.isNotEmpty) {
+    if (request.blockedReason != null && request.blockedReason!.isNotEmpty) {
       return;
     }
     final asset = (request.asset ?? 'ETH').toUpperCase();
-    
+
     if (selectedSection != _DashboardSection.cryptoVault) {
       setState(() {
         selectedSection = _DashboardSection.cryptoVault;
       });
     }
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       switch (request.intent) {
@@ -11904,8 +11614,6 @@ await _loadVaultLogins();
           _openReceivePanelFromChat(asset);
           break;
         default:
-          
-          
           break;
       }
     });
@@ -11914,9 +11622,11 @@ await _loadVaultLogins();
   void _openReceivePanelFromChat(String asset) {
     final app = context.read<AppState>();
     final authToken = app.sessionToken;
-    final hasVaultKey = app.vaultId != null && app.vaultName != null
-        && _VaultCrypto.hasKeyFor(
-          vaultId: app.vaultId!, vaultName: app.vaultName!,
+    final hasVaultKey = app.vaultId != null &&
+        app.vaultName != null &&
+        _VaultCrypto.hasKeyFor(
+          vaultId: app.vaultId!,
+          vaultName: app.vaultName!,
         );
     if (authToken == null || !hasVaultKey) {
       _showSnack(
@@ -11949,13 +11659,16 @@ await _loadVaultLogins();
   }
 
   Future<void> _openSendPanelFromChat(
-    String asset, CryptoWalletActionRequest request,
+    String asset,
+    CryptoWalletActionRequest request,
   ) async {
     final app = context.read<AppState>();
     final authToken = app.sessionToken;
-    final hasVaultKey = app.vaultId != null && app.vaultName != null
-        && _VaultCrypto.hasKeyFor(
-          vaultId: app.vaultId!, vaultName: app.vaultName!,
+    final hasVaultKey = app.vaultId != null &&
+        app.vaultName != null &&
+        _VaultCrypto.hasKeyFor(
+          vaultId: app.vaultId!,
+          vaultName: app.vaultName!,
         );
     if (authToken == null || !hasVaultKey) {
       _showSnack(
@@ -11964,13 +11677,13 @@ await _loadVaultLogins();
       );
       return;
     }
-    
-    
+
     String? fromAddress;
     try {
-      final body = await VaultAIClient(baseUrl: backendBaseUrl)
-          .getCryptoWalletReceive(
-        asset: 'ETH', authToken: authToken,
+      final body =
+          await VaultAIClient(baseUrl: backendBaseUrl).getCryptoWalletReceive(
+        asset: 'ETH',
+        authToken: authToken,
       );
       final status = (body['wallet_engine'] ?? '').toString();
       if (status == 'receive_ready') {
@@ -12044,7 +11757,6 @@ await _loadVaultLogins();
     final vaultName = app.vaultName;
     final activeVaultId = app.vaultId;
 
-    
     vlog('chat.preSend', {
       'vault_id': activeVaultId,
       'vaultName': vaultName,
@@ -12057,11 +11769,11 @@ await _loadVaultLogins();
     });
 
     if (!app.unlocked || vaultName == null) {
-      _appendAssistantMessage('Your vault is locked. Please enter your PIN again.');
+      _appendAssistantMessage(
+          'Your vault is locked. Please enter your PIN again.');
       return;
     }
 
-    
     if (activeVaultId == null ||
         !_VaultCrypto.hasKeyFor(vaultId: activeVaultId, vaultName: vaultName)) {
       vlog('chat.preSend.GUARD_TRIPPED', {
@@ -12082,17 +11794,14 @@ await _loadVaultLogins();
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     final pendingAttachments = attachments.map((a) => a.copy()).toList();
 
-    
     if (pendingAttachments.isNotEmpty) {
-      final plannedBytes = pendingAttachments
-          .fold<int>(0, (acc, a) => acc + a.size);
+      final plannedBytes =
+          pendingAttachments.fold<int>(0, (acc, a) => acc + a.size);
       final usedBytes = app.storageUsedBytes;
       final limitBytes = app.effectiveStorageLimitBytes;
       final availableBytes =
           (limitBytes - usedBytes) < 0 ? 0 : (limitBytes - usedBytes);
       if (plannedBytes > availableBytes) {
-        
-        
         String? folderName;
         for (final a in pendingAttachments) {
           final firstSlash = a.name.indexOf('/');
@@ -12109,16 +11818,13 @@ await _loadVaultLogins();
         );
         if (!mounted) return;
         if (choice == StorageLimitDialogChoice.upgrade) {
-          
-          
           Navigator.pushNamed(context, '/storage');
         }
-        
+
         return;
       }
     }
 
-    
     final attachmentSummaries = pendingAttachments
         .map((a) => ChatAttachmentSummary(
               name: a.name,
@@ -12133,8 +11839,7 @@ await _loadVaultLogins();
       msgs.add(_Msg(
         'user',
         text,
-        attachments:
-            attachmentSummaries.isEmpty ? null : attachmentSummaries,
+        attachments: attachmentSummaries.isEmpty ? null : attachmentSummaries,
       ));
       input.clear();
       attachments.clear();
@@ -12154,9 +11859,6 @@ await _loadVaultLogins();
       );
       final uploadedFileIds = uploadOutcome.uploadedIds;
 
-
-
-
       final hadAttachments = pendingAttachments.isNotEmpty;
       if (hadAttachments) {
         await app.refreshVaultStats();
@@ -12171,7 +11873,6 @@ await _loadVaultLogins();
         });
         return;
       }
-
 
       if (uploadOutcome.autoNamedAny) {
         if (!mounted) return;
@@ -12195,7 +11896,6 @@ await _loadVaultLogins();
       bool memoryProposalFinalized = false;
 
       final encryptedMessage = await _VaultCrypto.encrypt(text);
-
 
       final _hintForThisSend = _nextSelectionHint;
       _nextSelectionHint = null;
@@ -12231,8 +11931,7 @@ await _loadVaultLogins();
               alreadyFinalized: memoryProposalFinalized,
             );
             buffer = _stripped.strippedBuffer;
-            if (_stripped.jsonPayload != null &&
-                !memoryProposalFinalized) {
+            if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
               unawaited(_finalizeMemoryProposalBestEffort(
                 jsonPayload: _stripped.jsonPayload!,
@@ -12240,19 +11939,8 @@ await _loadVaultLogins();
               ));
             }
 
-
-
-
-
-
-
-
-
-
-            final structuredNow =
-                _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement = structuredNow ??
-                _Msg('assistant', buffer);
+            final structuredNow = _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
             setState(() {
               if (assistantIndex == null) {
                 msgs.add(replacement);
@@ -12290,9 +11978,6 @@ await _loadVaultLogins();
         });
       }
 
-
-
-
       if (assistantIndex != null && buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
         if (structured != null && mounted) {
@@ -12307,27 +11992,23 @@ await _loadVaultLogins();
           _maybeTriggerPendingFileAction(structured);
         }
       }
-      
+
       if (mounted && thinking) {
         setState(() => thinking = false);
       }
-
-
-
 
       unawaited(app.refreshVaultStats());
       unawaited(_loadVaultFiles());
       unawaited(_loadVaultLogins());
 
-    if (!mounted) return;
+      if (!mounted) return;
       setState(() {
-       sending = false;
-        });
+        sending = false;
+      });
     } catch (e) {
       if (app.handleApiException(e)) return;
       if (!mounted) return;
-      
-      
+
       if (e is UploadCancelledException) {
         setState(() {
           thinking = false;
@@ -12349,16 +12030,12 @@ await _loadVaultLogins();
     return ChatAttachmentPanel(
       isMobile: isMobile,
       count: attachments.length,
-      itemBuilder: (context, index) =>
-          _buildAttachmentRow(attachments[index]),
+      itemBuilder: (context, index) => _buildAttachmentRow(attachments[index]),
       onClear: sending ? null : _clearAttachments,
     );
   }
 
-  
   Widget _buildAttachmentRow(_Attachment a) {
-    
-    
     final IconData icon;
     switch (a.kind) {
       case 'image':
@@ -12404,12 +12081,16 @@ await _loadVaultLogins();
                     a.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     '${a.kind} • ${_formatBytes(a.size)}',
-                    style: const TextStyle(fontSize: 11, color: Color(0xFFB4B4B4)),
+                    style:
+                        const TextStyle(fontSize: 11, color: Color(0xFFB4B4B4)),
                   ),
                 ],
               ),
@@ -12424,10 +12105,6 @@ await _loadVaultLogins();
 
   Widget _buildComposer(bool isMobile) {
     final vr = VaultResponsive.of(context);
-
-
-
-
 
     final canSend = !sending && input.text.trim().isNotEmpty;
 
@@ -12479,11 +12156,8 @@ await _loadVaultLogins();
             ? AppLocalizations.of(context).chatSending
             : AppLocalizations.of(context).chatSendButton,
         child: Material(
-
           key: const Key('composer_send_button'),
-          color: canSend
-              ? const Color(0xFF10A37F)
-              : const Color(0xFF3A3F47),
+          color: canSend ? const Color(0xFF10A37F) : const Color(0xFF3A3F47),
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
@@ -12518,25 +12192,19 @@ await _loadVaultLogins();
           vertical: isMobile ? 8 : 10,
         ),
       ),
-
       minLines: vr.composerMinLines,
       maxLines: vr.composerMaxLines,
       textInputAction: TextInputAction.newline,
       keyboardType: TextInputType.multiline,
       onChanged: (_) {
-
         setState(() {});
       },
     );
-
-
-
 
     return SafeArea(
       top: false,
       bottom: true,
       child: Padding(
-
         padding: EdgeInsets.fromLTRB(
           isMobile ? 10 : 16,
           6,
@@ -12557,8 +12225,7 @@ await _loadVaultLogins();
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               _attachmentIcon(),
-              if (_isRecording || _isVideoRecording)
-                _recordingStopIcon(),
+              if (_isRecording || _isVideoRecording) _recordingStopIcon(),
               _micIcon(),
               const SizedBox(width: 4),
               Expanded(child: textField),
@@ -12581,8 +12248,8 @@ await _loadVaultLogins();
             messages: msgs,
             thinking: thinking,
 
-
-            streaming: sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
+            streaming:
+                sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
             isMobile: isMobile,
             padding: EdgeInsets.symmetric(
               horizontal: isMobile ? 8 : 16,
@@ -12609,76 +12276,60 @@ await _loadVaultLogins();
             isDeepScanActive: ({
               required String intent,
               required String normalizedQuery,
-            }) => isDeepScanActive(
+            }) =>
+                isDeepScanActive(
               intent: intent,
               normalizedQuery: normalizedQuery,
             ),
-            
-            
+
             onSecureItemView: (itemId, title, itemType) {
               final safeTitle = title.trim();
-              _sendQuickPrompt(safeTitle.isEmpty
-                  ? 'show me'
-                  : 'show me $safeTitle');
+              _sendQuickPrompt(
+                  safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
             },
-            
-            
+
             onSecureItemReveal: null,
             onSecureItemCopyUsername: (username) {
               Clipboard.setData(ClipboardData(text: username));
               _showSnack('Username copied');
             },
             onSecureItemCopyValue: (value) {
-              
-              
               Clipboard.setData(ClipboardData(text: value));
               _showSnack('Value copied');
             },
             onSecureItemEdit: (title, itemType) {
-              
-              
               _openSecureItemEditDialog(title, itemType);
             },
             onSecureItemDelete: (title, itemType) {
-              
-              
               _startSecureItemDeleteConfirmation(title, itemType);
             },
-            
-            
-            onCryptoWalletAction: _handleCryptoWalletChatAction,
 
+            onCryptoWalletAction: _handleCryptoWalletChatAction,
 
             onOpenVault: () {
               if (mounted) {
-                setState(() =>
-                    selectedSection = _DashboardSection.dashboard);
+                setState(() => selectedSection = _DashboardSection.dashboard);
               }
             },
             onOpenAssetDetail: (asset) {
               if (!mounted) return;
-              setState(() =>
-                  selectedSection = _DashboardSection.cryptoVault);
+              setState(() => selectedSection = _DashboardSection.cryptoVault);
             },
             onOpenSendFlow: () {
               if (!mounted) return;
-              setState(() =>
-                  selectedSection = _DashboardSection.cryptoVault);
+              setState(() => selectedSection = _DashboardSection.cryptoVault);
             },
             onOpenSecurityPage: () {
               if (!mounted) return;
-              setState(() =>
-                  selectedSection = _DashboardSection.settings);
+              setState(() => selectedSection = _DashboardSection.settings);
             },
             onOpenBillingPage: () {
               if (!mounted) return;
-              setState(() =>
-                  selectedSection = _DashboardSection.settings);
+              setState(() => selectedSection = _DashboardSection.settings);
             },
             onOpenStoragePage: () {
               if (!mounted) return;
-              setState(() =>
-                  selectedSection = _DashboardSection.files);
+              setState(() => selectedSection = _DashboardSection.files);
             },
             onOpenVaultItem: (category, id) {
               if (!mounted) return;
@@ -12687,38 +12338,34 @@ await _loadVaultLogins();
                 case 'generated_login':
                 case 'id_document':
                 case 'secure_item':
-                  setState(() =>
-                      selectedSection = _DashboardSection.logins);
+                  setState(() => selectedSection = _DashboardSection.logins);
                   break;
                 case 'crypto':
-                  setState(() =>
-                      selectedSection = _DashboardSection.cryptoVault);
+                  setState(
+                      () => selectedSection = _DashboardSection.cryptoVault);
                   break;
                 case 'file':
                 case 'document':
-                  setState(() =>
-                      selectedSection = _DashboardSection.files);
+                  setState(() => selectedSection = _DashboardSection.files);
                   break;
                 case 'activity':
-                  setState(() =>
-                      selectedSection = _DashboardSection.dashboard);
+                  setState(() => selectedSection = _DashboardSection.dashboard);
                   break;
                 default:
-                  setState(() =>
-                      selectedSection = _DashboardSection.dashboard);
+                  setState(() => selectedSection = _DashboardSection.dashboard);
               }
             },
             onSearchVault: (query) {
               _sendQuickPrompt('search my vault for $query');
             },
 
-
             onFetchCryptoBalance: ({
               required String asset,
               required String address,
             }) async {
               return _fetchCryptoBalanceForChatCard(
-                asset: asset, address: address,
+                asset: asset,
+                address: address,
               );
             },
             onFetchCryptoActivity: ({
@@ -12727,19 +12374,18 @@ await _loadVaultLogins();
               int limit = 10,
             }) async {
               return _fetchCryptoActivityForChatCard(
-                asset: asset, address: address, limit: limit,
+                asset: asset,
+                address: address,
+                limit: limit,
               );
             },
 
-
             cryptoCache: CryptoChatLiveCache.instance,
-
 
             cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
             onOpenCryptoUpgrade: () {
               if (!mounted) return;
-              setState(() =>
-                  selectedSection = _DashboardSection.settings);
+              setState(() => selectedSection = _DashboardSection.settings);
             },
           ),
         ),
@@ -12767,7 +12413,7 @@ await _loadVaultLogins();
             child: Container(
               width: double.infinity,
               padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
+                  MediaQuery.of(context).size.width < 600 ? 16 : 24),
               decoration: BoxDecoration(
                 color: const Color(0xFF2F2F2F),
                 borderRadius: BorderRadius.circular(24),
@@ -12810,7 +12456,7 @@ await _loadVaultLogins();
               Container(
                 width: double.infinity,
                 padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
+                    MediaQuery.of(context).size.width < 600 ? 16 : 24),
                 decoration: BoxDecoration(
                   color: const Color(0xFF2F2F2F),
                   borderRadius: BorderRadius.circular(24),
@@ -12875,16 +12521,13 @@ await _loadVaultLogins();
     );
   }
 
-  
   Widget _buildVaultFileCard(_VaultStoredFile file) {
-    final label =
-        file.savedName != null && file.savedName!.trim().isNotEmpty
-            ? file.savedName!
-            : file.fileName;
+    final label = file.savedName != null && file.savedName!.trim().isNotEmpty
+        ? file.savedName!
+        : file.fileName;
 
     final subtitleParts = <String>[
-      if (file.assetType != null && file.assetType!.isNotEmpty)
-        file.assetType!,
+      if (file.assetType != null && file.assetType!.isNotEmpty) file.assetType!,
       _formatBytes(file.fileSize),
       if (file.needsNaming) 'needs naming',
       if (file.relativePath != null && file.relativePath!.isNotEmpty)
@@ -12892,382 +12535,383 @@ await _loadVaultLogins();
     ];
 
     return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2A2A2A),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF10A37F).withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Icon(
-                          () {
-                            if (_isVideoMime(file.contentType) ||
-                                file.assetType == 'video') {
-                              return Icons.videocam_outlined;
-                            }
-                            if (_isAudioMime(file.contentType) ||
-                                file.assetType == 'audio') {
-                              return Icons.audiotrack;
-                            }
-                            if (_isImageMime(file.contentType) ||
-                                file.assetType == 'image') {
-                              return Icons.image_outlined;
-                            }
-                            return Icons.insert_drive_file_outlined;
-                          }(),
-                          color: const Color(0xFF10A37F),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                                  Text(
-                                  'Hidden for privacy. Ask ${context.read<AppState>().vaultName ?? 'Vault'} in chat to retrieve this file.',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                    color: Color(0xFFB4B4B4),
-                                    fontSize: 13,
-                                    ),
-                                    ),
-                            const SizedBox(height: 6),
-                            Text(
-                              subtitleParts.join(' • '),
-                              style: const TextStyle(
-                                color: Color(0xFF8E8E8E),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                         OutlinedButton.icon(
-  onPressed: () => _askBrainAboutFile(file),
-  icon: const Icon(Icons.smart_toy_outlined),
-  label: Text(
-    context.read<AppState>().vaultName?.trim().isNotEmpty == true
-        ? 'Ask ${context.read<AppState>().vaultName!}'
-        : 'Ask Vault',
-  ),
-),
-                    ],
-                  ),
-                );
-  }
-
-  Widget _buildDashboardHome(bool isMobile) {
-  final app = context.watch<AppState>();
-  final used = app.storageUsedBytes;
-  
-  
-  final limit = app.effectiveStorageLimitBytes;
-  final progress = limit == 0 ? 0.0 : min(1.0, used / limit);
-
-  final cards = [
-    _OverviewCardData(
-      title: 'Logins',
-      value: app.loginCount.toString(),
-      icon: Icons.lock_outline,
-      iconColor: const Color(0xFF10A37F),
-      bgColor: const Color(0xFF10A37F).withValues(alpha: 0.12),
-    ),
-   
-    _OverviewCardData(
-      title: 'Files',
-      value: app.fileCount.toString(),
-      icon: Icons.folder_open_outlined,
-      iconColor: Colors.purpleAccent,
-      bgColor: Colors.purple.withValues(alpha: 0.12),
-    ),
-  ];
-
-  return SingleChildScrollView(
-    padding: EdgeInsets.all(isMobile ? 12 : 20),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1180),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.all(isMobile ? 20 : 28),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [
-                    Color(0xFF2A2A2A),
-                    Color(0xFF232323),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF10A37F).withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Text(
-                      'Vault overview',
-                      style: TextStyle(
-                        color: Color(0xFF10A37F),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Welcome to ${app.vaultName ?? 'your vault'}',
-                    style: TextStyle(
-                      fontSize: isMobile ? 28 : 40,
-                      fontWeight: FontWeight.w800,
-                      height: 1.02,
-                      letterSpacing: -0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Ask naturally, upload documents, and retrieve private information from one secure workspace.',
-                    style: TextStyle(
-                      color: Color(0xFFB4B4B4),
-                      fontSize: 15,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  
-                  
-                  Builder(builder: (_) {
-                    if (app.isBillingLoading) {
-                      return const _BillingLoadingCard(
-                        label: 'Loading storage usage…',
-                      );
-                    }
-                    if (app.isBillingError) {
-                      return _BillingErrorCard(
-                        onRetry: () => app.retryBilling(),
-                      );
-                    }
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(999),
-                          child: LinearProgressIndicator(
-                            value: progress,
-                            minHeight: 10,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          
-                          
-                          '${formatBytes(used)} used of ${formatBytes(limit)}',
-                          style: const TextStyle(
-                            color: Color(0xFFA3A3A3),
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    );
-                  }),
-                ],
-              ),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(16),
             ),
-            const SizedBox(height: 20),
-            const Padding(
-              padding: EdgeInsets.only(left: 4, bottom: 10),
-              child: Text(
-                'Your vault stats',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
+            child: Icon(
+              () {
+                if (_isVideoMime(file.contentType) ||
+                    file.assetType == 'video') {
+                  return Icons.videocam_outlined;
+                }
+                if (_isAudioMime(file.contentType) ||
+                    file.assetType == 'audio') {
+                  return Icons.audiotrack;
+                }
+                if (_isImageMime(file.contentType) ||
+                    file.assetType == 'image') {
+                  return Icons.image_outlined;
+                }
+                return Icons.insert_drive_file_outlined;
+              }(),
+              color: const Color(0xFF10A37F),
             ),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: cards.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: isMobile ? 1 : 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: isMobile ? 3.0 : 2.8,
-              ),
-              itemBuilder: (_, i) => _OverviewCard(data: cards[i]),
-            ),
-            const SizedBox(height: 22),
-            const Padding(
-              padding: EdgeInsets.only(left: 4, bottom: 10),
-              child: Text(
-                'Quick actions',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => _sendQuickPrompt('Show my saved logins'),
-                  icon: const Icon(Icons.lock_outline, size: 18),
-                  label: Text(
-                    AppLocalizations.of(context).chatQuickSavedLogins,
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
                   ),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => _sendQuickPrompt('What files do I have?'),
-                  icon: const Icon(Icons.folder_open_outlined, size: 18),
-                  label: Text(
-                    AppLocalizations.of(context).chatQuickMyFiles,
+                const SizedBox(height: 4),
+                Text(
+                  'Hidden for privacy. Ask ${context.read<AppState>().vaultName ?? 'Vault'} in chat to retrieve this file.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Color(0xFFB4B4B4),
+                    fontSize: 13,
                   ),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => _sendQuickPrompt('Show my passport'),
-                  icon: const Icon(Icons.badge_outlined, size: 18),
-                  label: Text(
-                    AppLocalizations.of(context).chatQuickMyPassport,
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _sendQuickPrompt('What can you do?'),
-                  icon: const Icon(Icons.auto_awesome_outlined, size: 18),
-                  label: Text(
-                    AppLocalizations.of(context).chatQuickWhatCanYouDo,
+                const SizedBox(height: 6),
+                Text(
+                  subtitleParts.join(' • '),
+                  style: const TextStyle(
+                    color: Color(0xFF8E8E8E),
+                    fontSize: 12,
                   ),
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
- Widget _buildSidebar() {
-  final app = context.watch<AppState>();
-
-  Widget tile(
-    _DashboardSection section,
-    IconData icon,
-    String label, {
-    bool compact = false,
-    double verticalPadding = 14,
-  }) {
-    final selected = selectedSection == section;
-    final horizontalPad = compact ? 10.0 : 14.0;
-    final iconSize      = compact ? 18.0 : 20.0;
-    final labelFont     = compact ? 13.5 : 14.0;
-    final radius        = compact ? 12.0 : 16.0;
-    final marginBottom  = compact ? 4.0  : 8.0;
-
-    return InkWell(
-      onTap: () {
-        setState(() => selectedSection = section);
-        Navigator.of(context).maybePop();
-      },
-      borderRadius: BorderRadius.circular(radius),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        margin: EdgeInsets.only(bottom: marginBottom),
-        padding: EdgeInsets.symmetric(
-          horizontal: horizontalPad,
-          vertical: verticalPadding,
-        ),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF10A37F).withValues(alpha: 0.14) : Colors.transparent,
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(
-            color: selected ? const Color(0xFF10A37F).withValues(alpha: 0.35) : Colors.white10,
           ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: iconSize,
-              color: selected ? const Color(0xFF10A37F) : const Color(0xFF9CA3AF),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: () => _askBrainAboutFile(file),
+            icon: const Icon(Icons.smart_toy_outlined),
+            label: Text(
+              context.read<AppState>().vaultName?.trim().isNotEmpty == true
+                  ? 'Ask ${context.read<AppState>().vaultName!}'
+                  : 'Ask Vault',
             ),
-            SizedBox(width: compact ? 10 : 12),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  color: selected ? Colors.white : const Color(0xFFC7C7C7),
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  fontSize: labelFont,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardHome(bool isMobile) {
+    final app = context.watch<AppState>();
+    final used = app.storageUsedBytes;
+
+    final limit = app.effectiveStorageLimitBytes;
+    final progress = limit == 0 ? 0.0 : min(1.0, used / limit);
+
+    final cards = [
+      _OverviewCardData(
+        title: 'Logins',
+        value: app.loginCount.toString(),
+        icon: Icons.lock_outline,
+        iconColor: const Color(0xFF10A37F),
+        bgColor: const Color(0xFF10A37F).withValues(alpha: 0.12),
+      ),
+      _OverviewCardData(
+        title: 'Files',
+        value: app.fileCount.toString(),
+        icon: Icons.folder_open_outlined,
+        iconColor: Colors.purpleAccent,
+        bgColor: Colors.purple.withValues(alpha: 0.12),
+      ),
+    ];
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(isMobile ? 12 : 20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(isMobile ? 20 : 28),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFF2A2A2A),
+                      Color(0xFF232323),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: Colors.white10),
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'Vault overview',
+                        style: TextStyle(
+                          color: Color(0xFF10A37F),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      // User-facing greeting: username first, never the
+                      // internal VLT handle. If for some reason the
+                      // display username hasn't hydrated yet, we show
+                      // a generic label rather than exposing the handle.
+                      'Welcome to ${app.displayUsername ?? 'your vault'}',
+                      style: TextStyle(
+                        fontSize: isMobile ? 28 : 40,
+                        fontWeight: FontWeight.w800,
+                        height: 1.02,
+                        letterSpacing: -0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Ask naturally, upload documents, and retrieve private information from one secure workspace.',
+                      style: TextStyle(
+                        color: Color(0xFFB4B4B4),
+                        fontSize: 15,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Builder(builder: (_) {
+                      if (app.isBillingLoading) {
+                        return const _BillingLoadingCard(
+                          label: 'Loading storage usage…',
+                        );
+                      }
+                      if (app.isBillingError) {
+                        return _BillingErrorCard(
+                          onRetry: () => app.retryBilling(),
+                        );
+                      }
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              value: progress,
+                              minHeight: 10,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            '${formatBytes(used)} used of ${formatBytes(limit)}',
+                            style: const TextStyle(
+                              color: Color(0xFFA3A3A3),
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      );
+                    }),
+                  ],
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 20),
+              const Padding(
+                padding: EdgeInsets.only(left: 4, bottom: 10),
+                child: Text(
+                  'Your vault stats',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: cards.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: isMobile ? 1 : 2,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                  childAspectRatio: isMobile ? 3.0 : 2.8,
+                ),
+                itemBuilder: (_, i) => _OverviewCard(data: cards[i]),
+              ),
+              const SizedBox(height: 22),
+              const Padding(
+                padding: EdgeInsets.only(left: 4, bottom: 10),
+                child: Text(
+                  'Quick actions',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _sendQuickPrompt('Show my saved logins'),
+                    icon: const Icon(Icons.lock_outline, size: 18),
+                    label: Text(
+                      AppLocalizations.of(context).chatQuickSavedLogins,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _sendQuickPrompt('What files do I have?'),
+                    icon: const Icon(Icons.folder_open_outlined, size: 18),
+                    label: Text(
+                      AppLocalizations.of(context).chatQuickMyFiles,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _sendQuickPrompt('Show my passport'),
+                    icon: const Icon(Icons.badge_outlined, size: 18),
+                    label: Text(
+                      AppLocalizations.of(context).chatQuickMyPassport,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _sendQuickPrompt('What can you do?'),
+                    icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                    label: Text(
+                      AppLocalizations.of(context).chatQuickWhatCanYouDo,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
- 
-     final _vr = VaultResponsive.of(context);
-     final _drawerHeaderFontSize = _vr.isMobile ? 18.0 : 22.0;
-     final _drawerHeaderPadding  = _vr.drawerHeaderPadding;
-     final _drawerBodyPadding    = _vr.drawerBodyPadding;
-     final _drawerTileVpad       = _vr.isMobile ? 6.0 : 8.0;
-     return Drawer(
-      backgroundColor: const Color(0xFF212121),
 
+  Widget _buildSidebar() {
+    final app = context.watch<AppState>();
+
+    Widget tile(
+      _DashboardSection section,
+      IconData icon,
+      String label, {
+      bool compact = false,
+      double verticalPadding = 14,
+    }) {
+      final selected = selectedSection == section;
+      final horizontalPad = compact ? 10.0 : 14.0;
+      final iconSize = compact ? 18.0 : 20.0;
+      final labelFont = compact ? 13.5 : 14.0;
+      final radius = compact ? 12.0 : 16.0;
+      final marginBottom = compact ? 4.0 : 8.0;
+
+      return InkWell(
+        onTap: () {
+          setState(() => selectedSection = section);
+          Navigator.of(context).maybePop();
+        },
+        borderRadius: BorderRadius.circular(radius),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: EdgeInsets.only(bottom: marginBottom),
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPad,
+            vertical: verticalPadding,
+          ),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFF10A37F).withValues(alpha: 0.14)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFF10A37F).withValues(alpha: 0.35)
+                  : Colors.white10,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                size: iconSize,
+                color: selected
+                    ? const Color(0xFF10A37F)
+                    : const Color(0xFF9CA3AF),
+              ),
+              SizedBox(width: compact ? 10 : 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? Colors.white : const Color(0xFFC7C7C7),
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    fontSize: labelFont,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final _vr = VaultResponsive.of(context);
+    final _drawerHeaderFontSize = _vr.isMobile ? 18.0 : 22.0;
+    final _drawerHeaderPadding = _vr.drawerHeaderPadding;
+    final _drawerBodyPadding = _vr.drawerBodyPadding;
+    final _drawerTileVpad = _vr.isMobile ? 6.0 : 8.0;
+    return Drawer(
+      backgroundColor: const Color(0xFF212121),
       width: _vr.drawerWidth,
       child: SafeArea(
-
         bottom: true,
         child: Padding(
           padding: EdgeInsets.fromLTRB(
             _drawerBodyPadding,
             _drawerBodyPadding,
             _drawerBodyPadding,
-
             _drawerBodyPadding + math.max(0, _vr.bottomSafeInset),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
               Container(
                 width: double.infinity,
                 padding: EdgeInsets.all(_drawerHeaderPadding),
@@ -13280,19 +12924,15 @@ await _loadVaultLogins();
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      app.vaultName ?? 'Vault',
+                      // Drawer header: the user-facing display name
+                      // is the primary label. The old code showed
+                      // ``app.vaultName`` which resolves to the
+                      // VLT-* handle for ZK accounts — never surface
+                      // that to the user.
+                      app.displayUsername ?? 'Vault',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: _drawerHeaderFontSize,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    SizedBox(height: _vr.isMobile ? 2 : 6),
-                    Text(
-                      app.displayUsername ?? '',
-                      style: TextStyle(
-                        color: const Color(0xFFB4B4B4),
-                        fontSize: _vr.isMobile ? 12 : 13,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -13300,8 +12940,6 @@ await _loadVaultLogins();
                 ),
               ),
               SizedBox(height: _vr.isMobile ? 8 : 14),
-
-
               Expanded(
                 child: ListView(
                   key: const Key('vault_drawer_menu_list'),
@@ -13309,18 +12947,54 @@ await _loadVaultLogins();
                     bottom: math.max(0, _vr.bottomSafeInset),
                   ),
                   children: [
-                    tile(_DashboardSection.dashboard,     Icons.dashboard_outlined,      AppLocalizations.of(context).sidebarDashboard,      compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.chat,          Icons.chat_bubble_outline,     AppLocalizations.of(context).sidebarChat,           compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.files,         Icons.folder_open_outlined,    AppLocalizations.of(context).sidebarFiles,          compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.logins,        Icons.lock_outline,            AppLocalizations.of(context).sidebarLogins,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.cryptoVault,   Icons.account_balance_wallet_outlined, AppLocalizations.of(context).sidebarCryptoVault, compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.concierge,     Icons.auto_awesome_outlined,   AppLocalizations.of(context).sidebarConcierge,      compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.expiry,        Icons.event_busy_outlined,     AppLocalizations.of(context).sidebarExpiry,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.memory,        Icons.auto_stories_outlined,   AppLocalizations.of(context).sidebarMemory,         compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.relationships, Icons.hub_outlined,            AppLocalizations.of(context).sidebarRelationships,  compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.inheritance,   Icons.diversity_3,             AppLocalizations.of(context).sidebarInheritance,    compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.settings,      Icons.settings_outlined,       AppLocalizations.of(context).sidebarSettings,       compact: _vr.isMobile, verticalPadding: _drawerTileVpad),
-
+                    tile(_DashboardSection.dashboard, Icons.dashboard_outlined,
+                        AppLocalizations.of(context).sidebarDashboard,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.chat, Icons.chat_bubble_outline,
+                        AppLocalizations.of(context).sidebarChat,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.files, Icons.folder_open_outlined,
+                        AppLocalizations.of(context).sidebarFiles,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.logins, Icons.lock_outline,
+                        AppLocalizations.of(context).sidebarLogins,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(
+                        _DashboardSection.cryptoVault,
+                        Icons.account_balance_wallet_outlined,
+                        AppLocalizations.of(context).sidebarCryptoVault,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(
+                        _DashboardSection.concierge,
+                        Icons.auto_awesome_outlined,
+                        AppLocalizations.of(context).sidebarConcierge,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.expiry, Icons.event_busy_outlined,
+                        AppLocalizations.of(context).sidebarExpiry,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.memory, Icons.auto_stories_outlined,
+                        AppLocalizations.of(context).sidebarMemory,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.relationships, Icons.hub_outlined,
+                        AppLocalizations.of(context).sidebarRelationships,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.inheritance, Icons.diversity_3,
+                        AppLocalizations.of(context).sidebarInheritance,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
+                    tile(_DashboardSection.settings, Icons.settings_outlined,
+                        AppLocalizations.of(context).sidebarSettings,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
                     SizedBox(
                       key: const Key('vault_drawer_menu_tail_sentinel'),
                       height: 8,
@@ -13342,54 +13016,43 @@ await _loadVaultLogins();
       case _DashboardSection.chat:
         return _buildChatView(isMobile);
       case _DashboardSection.files:
-      return _buildFilesSection(isMobile);
-     
-       case _DashboardSection.logins:
-  final vaultDisplayName =
-      context.read<AppState>().vaultName?.trim().isNotEmpty == true
-          ? context.read<AppState>().vaultName!
-          : 'Vault';
-  
-  
-  if (!hasLoadedSecureItems
-      && !loadingLogins
-      && secureItemsError == null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _loadVaultLogins();
-    });
-  }
+        return _buildFilesSection(isMobile);
 
-return LoginsPage(
-  isLoading: loadingLogins,
-  hasLoaded: hasLoadedSecureItems,
-  error: secureItemsError,
-  logins: vaultLogins,
-  vaultLabel: vaultDisplayName,
-  onRefresh: _loadVaultLogins,
+      case _DashboardSection.logins:
+        final vaultDisplayName =
+            context.read<AppState>().vaultName?.trim().isNotEmpty == true
+                ? context.read<AppState>().vaultName!
+                : 'Vault';
 
-  onAskVault: (service) async {
-    await _sendQuickPrompt('Show my $service login');
-  },
+        if (!hasLoadedSecureItems &&
+            !loadingLogins &&
+            secureItemsError == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _loadVaultLogins();
+          });
+        }
 
-  onView: (service, itemType) {
-    
-    
-    _openSecureItemView(service, itemType);
-  },
+        return LoginsPage(
+          isLoading: loadingLogins,
+          hasLoaded: hasLoadedSecureItems,
+          error: secureItemsError,
+          logins: vaultLogins,
+          vaultLabel: vaultDisplayName,
+          onRefresh: _loadVaultLogins,
+          onAskVault: (service) async {
+            await _sendQuickPrompt('Show my $service login');
+          },
+          onView: (service, itemType) {
+            _openSecureItemView(service, itemType);
+          },
+          onEdit: (service, itemType) {
+            _openSecureItemEditDialog(service, itemType);
+          },
+          onDelete: (service, itemType) {
+            _startSecureItemDeleteConfirmation(service, itemType);
+          },
+        );
 
-  onEdit: (service, itemType) {
-    
-    
-    _openSecureItemEditDialog(service, itemType);
-  },
-
-  onDelete: (service, itemType) {
-    
-    
-    _startSecureItemDeleteConfirmation(service, itemType);
-  },
-);
-   
       case _DashboardSection.cryptoVault:
         return _buildCryptoVaultSection(isMobile);
 
@@ -13409,11 +13072,10 @@ return LoginsPage(
         return _buildInheritanceSection(isMobile);
 
       case _DashboardSection.settings:
-  return _buildSettingsSection(isMobile);
+        return _buildSettingsSection(isMobile);
     }
   }
 
-  
   Widget _buildCryptoVaultSection(bool isMobile) {
     final app = context.watch<AppState>();
 
@@ -13421,20 +13083,13 @@ return LoginsPage(
     final billingErrored = app.isBillingError;
     final billingLoading = app.isBillingLoading;
 
-
-
-
     if (_cryptoBillingBannerLastState != app.billingLoadState) {
       _cryptoBillingBannerLastState = app.billingLoadState;
       _cryptoBillingBannerDismissed = false;
     }
 
-
-
-
-
-    final isKnownNotUpgraded = billingLoaded
-        && !(app.billingBlockCount > 0 && app.billingPurchasedBytes > 0);
+    final isKnownNotUpgraded = billingLoaded &&
+        !(app.billingBlockCount > 0 && app.billingPurchasedBytes > 0);
 
     Widget content;
     if (isKnownNotUpgraded) {
@@ -13464,14 +13119,11 @@ return LoginsPage(
         ),
       );
     } else {
-
-
-
       content = _buildCryptoVaultEngineContent(app, isMobile);
     }
 
-    final showBanner = (billingLoading || billingErrored)
-        && !_cryptoBillingBannerDismissed;
+    final showBanner =
+        (billingLoading || billingErrored) && !_cryptoBillingBannerDismissed;
 
     if (showBanner) {
       return Stack(
@@ -13479,7 +13131,9 @@ return LoginsPage(
         children: [
           Positioned.fill(child: content),
           Positioned(
-            top: 8, left: 8, right: 8,
+            top: 8,
+            left: 8,
+            right: 8,
             child: Align(
               alignment: Alignment.topRight,
               child: ConstrainedBox(
@@ -13511,12 +13165,13 @@ return LoginsPage(
     );
   }
 
-
   Widget _buildCryptoVaultEngineContent(AppState app, bool isMobile) {
     final authToken = app.sessionToken;
-    final hasVaultKey = app.vaultId != null && app.vaultName != null
-        && _VaultCrypto.hasKeyFor(
-          vaultId: app.vaultId!, vaultName: app.vaultName!,
+    final hasVaultKey = app.vaultId != null &&
+        app.vaultName != null &&
+        _VaultCrypto.hasKeyFor(
+          vaultId: app.vaultId!,
+          vaultName: app.vaultName!,
         );
 
     if (kCryptoWalletEngineEnabled) {
@@ -13607,7 +13262,6 @@ return LoginsPage(
     );
   }
 
-  
   Widget _buildConciergeSection(bool isMobile) {
     final app = context.watch<AppState>();
     final token = app.sessionToken;
@@ -13615,8 +13269,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
+          padding:
+              EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeConcierge,
             textAlign: TextAlign.center,
@@ -13651,8 +13305,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
+          padding:
+              EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeExpiry,
             textAlign: TextAlign.center,
@@ -13672,7 +13326,6 @@ return LoginsPage(
     );
   }
 
-  
   Widget _buildMemorySection(bool isMobile) {
     final app = context.watch<AppState>();
     final token = app.sessionToken;
@@ -13680,8 +13333,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
+          padding:
+              EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeMemory,
             textAlign: TextAlign.center,
@@ -13708,8 +13361,8 @@ return LoginsPage(
     if (token == null || vaultName == null || vaultName.isEmpty) {
       return Center(
         child: Padding(
-          padding: EdgeInsets.all(
-              MediaQuery.of(context).size.width < 600 ? 16 : 24),
+          padding:
+              EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
           child: Text(
             AppLocalizations.of(context).unlockToSeeRelationships,
             textAlign: TextAlign.center,
@@ -13750,7 +13403,6 @@ return LoginsPage(
   }
 }
 
-
 class _DeleteVaultSettingsTile extends StatelessWidget {
   const _DeleteVaultSettingsTile();
 
@@ -13774,9 +13426,6 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
       authToken: token,
       onDeleted: () {},
     );
-
-
-
 
     if (deleted) {
       await app.handleVaultDeleted();
@@ -13836,7 +13485,6 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
   }
 }
 
-
 // Exposed to widget tests via @visibleForTesting so the a11y +
 // viewport-overflow suite in test/language_card_viewport_2026_07_17_test.dart
 // can mount the card in isolation. Not part of the app's public API
@@ -13848,7 +13496,6 @@ class LanguageCard extends StatefulWidget {
   @override
   State<LanguageCard> createState() => _LanguageCardState();
 }
-
 
 class _LanguageCardState extends State<LanguageCard> {
   final TextEditingController _searchCtrl = TextEditingController();
@@ -13890,11 +13537,10 @@ class _LanguageCardState extends State<LanguageCard> {
     final l = AppLocalizations.of(context);
     final app = context.watch<AppState>();
     final current = app.appLocale;
-    final systemLocale = WidgetsBinding.instance
-        .platformDispatcher.locale;
+    final systemLocale = WidgetsBinding.instance.platformDispatcher.locale;
     final systemMatch = findLanguageByCode(systemLocale.languageCode);
-    final systemResolvedLabel = systemMatch?.nativeName ??
-        systemLocale.languageCode.toUpperCase();
+    final systemResolvedLabel =
+        systemMatch?.nativeName ?? systemLocale.languageCode.toUpperCase();
 
     final visibleLangs = kSupportedLanguages
         .where((info) => info.matchesQuery(_query))
@@ -13924,7 +13570,8 @@ class _LanguageCardState extends State<LanguageCard> {
                 child: Text(
                   l.settingsLanguage,
                   style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -13934,11 +13581,12 @@ class _LanguageCardState extends State<LanguageCard> {
           Text(
             l.settingsLanguageHint,
             style: const TextStyle(
-              color: Color(0xFFB4B4B4), fontSize: 13, height: 1.5,
+              color: Color(0xFFB4B4B4),
+              fontSize: 13,
+              height: 1.5,
             ),
           ),
           const SizedBox(height: 14),
-
 
           InkWell(
             key: const Key('settings_language_auto'),
@@ -13946,8 +13594,7 @@ class _LanguageCardState extends State<LanguageCard> {
             borderRadius: BorderRadius.circular(12),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: current == null
                     ? const Color(0xFF10A37F).withValues(alpha: 0.18)
@@ -13981,8 +13628,7 @@ class _LanguageCardState extends State<LanguageCard> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          l.settingsLanguageAutoResolvedTo(
-                              systemResolvedLabel),
+                          l.settingsLanguageAutoResolvedTo(systemResolvedLabel),
                           style: const TextStyle(
                             color: Color(0xFF8E8E8E),
                             fontSize: 11,
@@ -13992,14 +13638,12 @@ class _LanguageCardState extends State<LanguageCard> {
                     ),
                   ),
                   if (current == null)
-                    const Icon(Icons.check,
-                        size: 16, color: Color(0xFF10A37F)),
+                    const Icon(Icons.check, size: 16, color: Color(0xFF10A37F)),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 12),
-
 
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -14010,8 +13654,7 @@ class _LanguageCardState extends State<LanguageCard> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.search,
-                    size: 16, color: Color(0xFF8E8E8E)),
+                const Icon(Icons.search, size: 16, color: Color(0xFF8E8E8E)),
                 const SizedBox(width: 6),
                 Expanded(
                   child: TextField(
@@ -14019,12 +13662,12 @@ class _LanguageCardState extends State<LanguageCard> {
                     controller: _searchCtrl,
                     onChanged: (v) => setState(() => _query = v),
                     style: const TextStyle(
-                      color: Colors.white, fontSize: 13,
+                      color: Colors.white,
+                      fontSize: 13,
                     ),
                     decoration: InputDecoration(
                       isCollapsed: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
                       hintText: l.settingsLanguageSearchHint,
                       hintStyle: const TextStyle(
                           color: Color(0xFF8E8E8E), fontSize: 12),
@@ -14049,7 +13692,6 @@ class _LanguageCardState extends State<LanguageCard> {
           ),
           const SizedBox(height: 12),
 
-
           // 2026-07-17 UX redesign — replace the wall of chips with a
           // sectioned selectable list (iOS/Android Settings pattern).
           // Non-search state: a small Popular list + a "Show all
@@ -14065,7 +13707,8 @@ class _LanguageCardState extends State<LanguageCard> {
                   child: Text(
                     l.settingsLanguageNoMatches(_query.trim()),
                     style: const TextStyle(
-                      color: Color(0xFF8E8E8E), fontSize: 13,
+                      color: Color(0xFF8E8E8E),
+                      fontSize: 13,
                     ),
                   ),
                 ),
@@ -14077,8 +13720,8 @@ class _LanguageCardState extends State<LanguageCard> {
                   for (final info in visibleLangs)
                     _LanguageListRow(
                       info: info,
-                      selected: current != null &&
-                          current.languageCode == info.code,
+                      selected:
+                          current != null && current.languageCode == info.code,
                       onTap: () => app.setAppLocale(Locale(info.code)),
                     ),
                 ],
@@ -14092,8 +13735,8 @@ class _LanguageCardState extends State<LanguageCard> {
                 for (final info in kPopularLanguages)
                   _LanguageListRow(
                     info: info,
-                    selected: current != null &&
-                        current.languageCode == info.code,
+                    selected:
+                        current != null && current.languageCode == info.code,
                     onTap: () => app.setAppLocale(Locale(info.code)),
                   ),
               ],
@@ -14106,8 +13749,8 @@ class _LanguageCardState extends State<LanguageCard> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 constraints: const BoxConstraints(minHeight: 44),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.02),
                   borderRadius: BorderRadius.circular(10),
@@ -14134,7 +13777,8 @@ class _LanguageCardState extends State<LanguageCard> {
                       turns: _expanded ? 0.5 : 0.0,
                       child: const Icon(
                         Icons.keyboard_arrow_down,
-                        size: 20, color: Color(0xFFC7C7C7),
+                        size: 20,
+                        color: Color(0xFFC7C7C7),
                       ),
                     ),
                   ],
@@ -14161,8 +13805,8 @@ class _LanguageCardState extends State<LanguageCard> {
                                 info: info,
                                 selected: current != null &&
                                     current.languageCode == info.code,
-                                onTap: () => app.setAppLocale(
-                                    Locale(info.code)),
+                                onTap: () =>
+                                    app.setAppLocale(Locale(info.code)),
                               ),
                         ],
                       )
@@ -14170,7 +13814,6 @@ class _LanguageCardState extends State<LanguageCard> {
               ),
             ),
           ],
-
 
           if (currentInfo != null && !currentInfo.fullyLocalised) ...[
             const SizedBox(height: 12),
@@ -14192,8 +13835,7 @@ class _LanguageCardState extends State<LanguageCard> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      l.settingsLanguagePartialNotice(
-                          currentInfo.englishName),
+                      l.settingsLanguagePartialNotice(currentInfo.englishName),
                       style: const TextStyle(
                         color: Color(0xFFE0A83E),
                         fontSize: 12,
@@ -14210,7 +13852,6 @@ class _LanguageCardState extends State<LanguageCard> {
     );
   }
 }
-
 
 // Small uppercase caption used above the Popular / All-Languages
 // groups on the Language card. Matches the iOS/Android Settings
@@ -14235,7 +13876,6 @@ class _LanguageSectionHeader extends StatelessWidget {
     );
   }
 }
-
 
 // Full-width selectable language row. Replaces the previous chip
 // treatment so the list scales to arbitrarily many languages
@@ -14274,8 +13914,7 @@ class _LanguageListRow extends StatelessWidget {
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeOut,
               constraints: const BoxConstraints(minHeight: 48),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: selected
                     ? const Color(0xFF10A37F).withValues(alpha: 0.16)
@@ -14301,9 +13940,8 @@ class _LanguageListRow extends StatelessWidget {
                                 ? Colors.white
                                 : const Color(0xFFEAEAEA),
                             fontSize: 14,
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w500,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w500,
                             height: 1.2,
                           ),
                         ),
@@ -14326,7 +13964,8 @@ class _LanguageListRow extends StatelessWidget {
                       padding: EdgeInsets.only(left: 10),
                       child: Icon(
                         Icons.check,
-                        size: 18, color: Color(0xFF10A37F),
+                        size: 18,
+                        color: Color(0xFF10A37F),
                       ),
                     ),
                 ],
@@ -14338,7 +13977,6 @@ class _LanguageListRow extends StatelessWidget {
     );
   }
 }
-
 
 class _OverviewCard extends StatelessWidget {
   final _OverviewCardData data;
@@ -14455,20 +14093,15 @@ class _VaultSwitcher extends StatelessWidget {
   }
 }
 
-
 class _VaultCrypto {
-  
-  
   static final Map<String, SecretKey> _keyCache = {};
   static final Map<String, String> _pinCache = {};
 
-  
   static String? _activeVaultId;
   static String? _activeVaultName;
 
   static String _ck(String vaultId, String vaultName) => '$vaultId|$vaultName';
 
-  
   static void setActiveVault({
     required String vaultId,
     required String vaultName,
@@ -14483,7 +14116,6 @@ class _VaultCrypto {
     });
   }
 
-  
   static bool hasKeyFor({
     required String vaultId,
     required String vaultName,
@@ -14546,7 +14178,11 @@ class _VaultCrypto {
       nonce: nonce,
     );
 
-    final combined = <int>[...nonce, ...secretBox.cipherText, ...secretBox.mac.bytes];
+    final combined = <int>[
+      ...nonce,
+      ...secretBox.cipherText,
+      ...secretBox.mac.bytes
+    ];
     return base64.encode(combined);
   }
 
@@ -14581,7 +14217,6 @@ class _VaultCrypto {
     return pin;
   }
 
-  
   static String? cachedPinFor({
     required String vaultId,
     required String vaultName,
@@ -14590,12 +14225,10 @@ class _VaultCrypto {
     return _pinCache[_ck(vaultId, vaultName)];
   }
 
-  
   static Future<List<int>> currentKeyBytesOrThrow() async {
     return _requireActiveKey().extractBytes();
   }
 
-  
   static void clearCache(String vaultId) {
     final prefix = '$vaultId|';
     final before = _keyCache.length;
@@ -14614,7 +14247,6 @@ class _VaultCrypto {
     });
   }
 
-  
   static Map<String, Object?> debugSnapshot() {
     return {
       'activeVaultId': _activeVaultId,
@@ -14627,7 +14259,6 @@ class _VaultCrypto {
     };
   }
 }
-
 
 class _CryptoVaultBillingStatusBanner extends StatelessWidget {
   final bool errored;
@@ -14666,9 +14297,7 @@ class _CryptoVaultBillingStatusBanner extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              errored
-                  ? Icons.cloud_off_outlined
-                  : Icons.hourglass_top_outlined,
+              errored ? Icons.cloud_off_outlined : Icons.hourglass_top_outlined,
               key: Key(errored
                   ? 'crypto_vault_billing_banner_error_icon'
                   : 'crypto_vault_billing_banner_loading_icon'),
@@ -14696,12 +14325,14 @@ class _CryptoVaultBillingStatusBanner extends StatelessWidget {
                 style: TextButton.styleFrom(
                   foregroundColor: const Color(0xFFE6E6E6),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4,
+                    horizontal: 8,
+                    vertical: 4,
                   ),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   textStyle: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 child: const Text('Retry'),
@@ -14717,7 +14348,8 @@ class _CryptoVaultBillingStatusBanner extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 visualDensity: VisualDensity.compact,
                 constraints: const BoxConstraints.tightFor(
-                  width: 22, height: 22,
+                  width: 22,
+                  height: 22,
                 ),
                 icon: const Icon(
                   Icons.close_rounded,

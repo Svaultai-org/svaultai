@@ -140,7 +140,10 @@ void main() {
 
     test('calls authLogin on submit', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class LoginPage', length: 9000);
+      // 15k is enough to cover the LoginPage class + its state class
+      // + the submit body. The pre-2026-07-20 build fit in 9k; the
+      // preflight + diagnostic vlogs added ~50 lines.
+      final window = _windowAfter(src, 'class LoginPage', length: 15000);
       expect(window, contains('authLogin'),
           reason: 'LoginPage must call client.authLogin on submit');
     });
@@ -149,7 +152,10 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class LoginPage', length: 9000);
+      // 15k is enough to cover the LoginPage class + its state class
+      // + the submit body. The pre-2026-07-20 build fit in 9k; the
+      // preflight + diagnostic vlogs added ~50 lines.
+      final window = _windowAfter(src, 'class LoginPage', length: 15000);
       expect(
         window,
         contains('InvalidCredentialsException'),
@@ -162,7 +168,10 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class LoginPage', length: 9000);
+      // 15k is enough to cover the LoginPage class + its state class
+      // + the submit body. The pre-2026-07-20 build fit in 9k; the
+      // preflight + diagnostic vlogs added ~50 lines.
+      final window = _windowAfter(src, 'class LoginPage', length: 15000);
       expect(
         window,
         isNot(contains('Vault not found')),
@@ -189,7 +198,10 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class LoginPage', length: 9000);
+      // 15k is enough to cover the LoginPage class + its state class
+      // + the submit body. The pre-2026-07-20 build fit in 9k; the
+      // preflight + diagnostic vlogs added ~50 lines.
+      final window = _windowAfter(src, 'class LoginPage', length: 15000);
       expect(
         window,
         contains('RateLimitedException'),
@@ -202,7 +214,10 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class LoginPage', length: 9000);
+      // 15k is enough to cover the LoginPage class + its state class
+      // + the submit body. The pre-2026-07-20 build fit in 9k; the
+      // preflight + diagnostic vlogs added ~50 lines.
+      final window = _windowAfter(src, 'class LoginPage', length: 15000);
       expect(
         window,
         contains('new_device_trusted'),
@@ -538,7 +553,10 @@ void main() {
     test('LoginPage reads display_username from the auth response and '
         'forwards it through setSession', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class LoginPage', length: 9000);
+      // 15k is enough to cover the LoginPage class + its state class
+      // + the submit body. The pre-2026-07-20 build fit in 9k; the
+      // preflight + diagnostic vlogs added ~50 lines.
+      final window = _windowAfter(src, 'class LoginPage', length: 15000);
       expect(
         window,
         contains("result['display_username']"),
