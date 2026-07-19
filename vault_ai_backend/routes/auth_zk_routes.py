@@ -45,10 +45,33 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import logging
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+
+def _handle_fingerprint(handle_bytes: bytes) -> str:
+    """First 4 bytes of SHA-256(handle_bytes), hex-encoded.
+
+    Non-reversible pointer to a specific vault_handle that can be
+    correlated across register + login logs without exposing the
+    handle itself or the username it derives from.
+    """
+    return hashlib.sha256(handle_bytes).hexdigest()[:8]
+
+
+def _record_fingerprint(record_bytes: bytes) -> str:
+    """First 4 bytes of SHA-256(opaque_registration_record), hex.
+
+    A stable identifier for the stored OPAQUE record that lets an
+    operator confirm the same record byte-for-byte was used at
+    register-finish and at every subsequent login-init without
+    logging the record itself (which is registration-secret material).
+    """
+    return hashlib.sha256(record_bytes).hexdigest()[:8]
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
@@ -264,6 +287,19 @@ async def zk_register_finalize(
     except OpaqueError:
         raise HTTPException(status_code=400, detail="registration rejected")
 
+    # Safe diagnostic: the SAME (handle_fpr, record_fpr) pair should
+    # appear later in the [ZK-LOGIN-INIT] log for this account. If a
+    # subsequent login shows a DIFFERENT record_fpr for the same
+    # handle_fpr, the record on disk was silently rewritten — a
+    # storage-layer bug.
+    logger.info(
+        "[ZK-REGISTER-FINALIZE] pid=%d handle_fpr=%s record_fpr=%s "
+        "stage=registration_finish",
+        os.getpid(),
+        _handle_fingerprint(handle_bytes),
+        _record_fingerprint(record),
+    )
+
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -391,14 +427,33 @@ async def zk_login_init(
         conn.close()
 
     if row is None or row["opaque_registration_record"] is None:
-        logger.info("[ZK-LOGIN-INIT] no vault for handle")
+        logger.info(
+            "[ZK-LOGIN-INIT] no vault for handle "
+            "pid=%d handle_fpr=%s",
+            os.getpid(), _handle_fingerprint(handle_bytes),
+        )
         raise HTTPException(
             status_code=401, detail=GENERIC_ZK_AUTH_ERROR,
         )
 
+    record_bytes = bytes(row["opaque_registration_record"])
+    # Safe diagnostic: correlates register-finish and every subsequent
+    # login-init for the SAME account without leaking secrets.
+    # Also reveals whether two workers see the same registration
+    # record (they should — the record lives in Postgres, not in a
+    # per-worker cache).
+    logger.info(
+        "[ZK-LOGIN-INIT] pid=%d handle_fpr=%s record_fpr=%s "
+        "vault_id=%s stage=login_start",
+        os.getpid(),
+        _handle_fingerprint(handle_bytes),
+        _record_fingerprint(record_bytes),
+        row["vault_id"],
+    )
+
     try:
         ke2, server_state = opaque_login_start(
-            bytes(row["opaque_registration_record"]),
+            record_bytes,
             ke1,
             _opaque_credential_id(handle_bytes),
         )

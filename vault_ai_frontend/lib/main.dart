@@ -4093,13 +4093,32 @@ class _SignupPageState extends State<SignupPage> {
       });
       return;
     } catch (e) {
-      // ZK path failed on the server (409 vault_handle collision
-      // is astronomically unlikely; treat any other failure as an
-      // opportunity to surface an actionable message).
+      // Classify the failure so the user never sees a raw
+      // "ZK POST /auth/zk-register-finalize failed 409: {...}"
+      // string. The _zkHttpPost helper throws:
+      //   Exception('ZK POST <path> failed <status>: <body>')
+      // Match the two operationally meaningful cases and map them
+      // to friendly copy; anything else stays generic.
       if (app.handleApiException(e)) return;
+      final msg = e.toString();
+      // ignore: avoid_print
+      print('[zk-signup-diag] error_type=${e.runtimeType} '
+          'head=${msg.length > 120 ? msg.substring(0, 120) : msg}');
+      String friendly;
+      if (msg.contains('failed 409') || msg.contains('HTTP 409')) {
+        // Duplicate username — the backend's canonical copy is
+        // "Username already taken. Please choose another." but the
+        // raw exception also carries the URL and status. Show only
+        // the friendly form.
+        friendly = 'That username is already taken. Please choose another.';
+      } else if (msg.contains('failed 429') || msg.contains('HTTP 429')) {
+        friendly = 'Too many attempts. Please wait and try again.';
+      } else {
+        friendly = 'Signup failed. Please try again.';
+      }
       if (!mounted) return;
       setState(() {
-        err = e.toString().replaceFirst('Exception: ', '');
+        err = friendly;
         loading = false;
       });
     }
@@ -4292,7 +4311,16 @@ class _UnlockPageState extends State<UnlockPage> {
   Future<void> _submit() async {
     final app = context.read<AppState>();
     final name = app.lastVaultName;
-    if (name == null) {
+    // Cache invariants: to run the ZK unlock path we need either the
+    // last used vault_handle (VLT-... display) OR the last used
+    // vault_name (legacy). A stale / partially-cleared cache — for
+    // example `lastVaultName` present but `last_display_username`
+    // wiped — would send us to /unlock with no way to look up the
+    // account. Route the user through full /login instead of
+    // attempting an unlock that would 100% miss.
+    if (name == null || name.isEmpty) {
+      // ignore: avoid_print
+      print('[zk-unlock-diag] cache_incomplete=lastVaultName_missing');
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }

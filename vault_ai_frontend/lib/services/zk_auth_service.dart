@@ -248,7 +248,6 @@ class ZkAuthService {
     // rejects duplicates without ever seeing the username plaintext.
     final handleBytes = deriveVaultHandleFromUsername(username);
     final handleDisplay = vaultHandleToDisplay(handleBytes);
-    final credentialId = vaultHandleCredentialId(handleBytes);
 
     final startResult = OpaqueClient.startRegistration(password: pin);
 
@@ -265,7 +264,22 @@ class ZkAuthService {
       password: pin,
       registrationResponse: ke2,
       clientRegistrationState: startResult.clientRegistrationState,
-      clientIdentifier: credentialId,
+      // No AKE identifiers are passed. RFC 9807 requires client and
+      // server to agree on the OPAQUE AKE identifier parameters;
+      // our Rust backend calls ServerLoginParameters::default() at
+      // login-start and login-finish (both identifiers = None), and
+      // the proven-working interop test at
+      // test_opaque_wire_interop.py also omits them. The pre-fix
+      // build passed the credential-id string as a client-side
+      // identifier which baked a mismatch into the OPAQUE envelope
+      // and made client.finishLogin silently return undefined on
+      // every subsequent login attempt — that is the "Wrong username
+      // or PIN" symptom fresh accounts hit on 7bcaf81.
+      //
+      // The OPAQUE OPRF still binds the account via the SERVER-side
+      // credential_identifier (see auth_zk_routes.py's
+      // _opaque_credential_id) — that pipe is unchanged and stays
+      // tied to the deterministic vault_handle bytes.
     );
 
     final kek = await _deriveKek(finishResult.exportKey);
@@ -367,7 +381,6 @@ class ZkAuthService {
     step('derive_handle');
 
     final handleDisplay = vaultHandleToDisplay(handleBytes);
-    final credentialId = vaultHandleCredentialId(handleBytes);
     step('handle_encoded');
 
     final start = OpaqueClient.startLogin(password: pin);
@@ -389,7 +402,11 @@ class ZkAuthService {
       clientLoginState: start.clientLoginState,
       loginResponse: ke2,
       password: pin,
-      clientIdentifier: credentialId,
+      // See the matching comment in registerVault: identifiers.client
+      // is NOT passed here because the backend Rust uses
+      // ServerLoginParameters::default() and would otherwise mismatch
+      // the AKE transcript, making every login fail with
+      // OpaqueAuthenticationFailed regardless of PIN correctness.
     );
     step('opaque_finish_login');
 
@@ -449,7 +466,6 @@ class ZkAuthService {
 
     final handleBytes = generateVaultHandle();
     final handleDisplay = vaultHandleToDisplay(handleBytes);
-    final credentialId = vaultHandleCredentialId(handleBytes);
 
     final regStart = OpaqueClient.startRegistration(password: pin);
 
@@ -466,7 +482,8 @@ class ZkAuthService {
       password: pin,
       registrationResponse: ke2,
       clientRegistrationState: regStart.clientRegistrationState,
-      clientIdentifier: credentialId,
+      // See registerVault: no identifiers.client in the OPAQUE AKE —
+      // must match the backend's ServerLoginParameters::default().
     );
 
     final kek = await _deriveKek(regFinish.exportKey);
