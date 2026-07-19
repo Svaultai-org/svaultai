@@ -11,6 +11,19 @@ class OpaqueUnavailable implements Exception {
   String toString() => 'OpaqueUnavailable: $reason';
 }
 
+/// Stub-side mirror of the Web-only OpaqueAuthenticationFailed.
+/// Non-Web platforms don't run OPAQUE at all, but the exception
+/// class must be exported from both conditional imports so
+/// ``main.dart`` can ``on OpaqueAuthenticationFailed catch`` without
+/// a per-platform ``if (kIsWeb)`` guard.
+class OpaqueAuthenticationFailed implements Exception {
+  final String stage;
+  OpaqueAuthenticationFailed(this.stage);
+  @override
+  String toString() =>
+      'OpaqueAuthenticationFailed: stage=$stage (wrong PIN or bad server response)';
+}
+
 class ClientRegistrationStart {
   final String clientRegistrationState;
   final String registrationRequest;

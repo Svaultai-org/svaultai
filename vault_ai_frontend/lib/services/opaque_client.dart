@@ -25,10 +25,16 @@ external JSObject? get _vaultaiOpaqueClient;
 external String? get _vaultaiOpaqueVendorVersion;
 
 extension type _OpaqueClientJs(JSObject _) implements JSObject {
-  external _RegStart startRegistration(JSObject params);
-  external _RegFinish finishRegistration(JSObject params);
-  external _LoginStart startLogin(JSObject params);
-  external _LoginFinish finishLogin(JSObject params);
+  // Returns are declared nullable because @serenity-kit/opaque
+  // returns ``undefined`` on OPAQUE-protocol authentication failure
+  // (RFC 9807: the client cannot tell the server that login failed,
+  // so it silently returns nothing). Reading a getter on an undefined
+  // return throws a raw JavaScript TypeError; each wrapper below
+  // null-checks and converts to a typed Dart exception instead.
+  external JSObject? startRegistration(JSObject params);
+  external JSObject? finishRegistration(JSObject params);
+  external JSObject? startLogin(JSObject params);
+  external JSObject? finishLogin(JSObject params);
 }
 
 extension type _RegStart(JSObject _) implements JSObject {
@@ -59,6 +65,30 @@ class OpaqueUnavailable implements Exception {
   OpaqueUnavailable(this.reason);
   @override
   String toString() => 'OpaqueUnavailable: $reason';
+}
+
+/// Raised when @serenity-kit/opaque's ``client.*`` returns
+/// ``undefined``.
+///
+/// Per RFC 9807 the OPAQUE client cannot tell the server that the
+/// login failed — the protocol silently returns no payload when the
+/// PIN is wrong, when the server response cannot be unwrapped with
+/// the registration record, or when the credential identifiers do
+/// not agree.
+///
+/// The wrappers in [OpaqueClient] detect the missing return and throw
+/// this exception instead of letting a raw JavaScript TypeError
+/// bubble up as "Null check operator used on a null value". Callers
+/// catching this must map it to a user-facing "Wrong username or
+/// PIN" message and MUST NOT retry with the legacy /auth/login path —
+/// re-attempting would only expose the same wrong PIN to an
+/// enumerable timing oracle.
+class OpaqueAuthenticationFailed implements Exception {
+  final String stage;
+  OpaqueAuthenticationFailed(this.stage);
+  @override
+  String toString() =>
+      'OpaqueAuthenticationFailed: stage=$stage (wrong PIN or bad server response)';
 }
 
 class OpaqueClient {
@@ -97,7 +127,15 @@ class OpaqueClient {
   }) {
     final params = _obj({'password': password}.jsify()!);
     final result = _client.startRegistration(params);
-    return ClientRegistrationStart._(result);
+    if (result == null) {
+      // startRegistration should NEVER return undefined for a valid
+      // password input. If it does, the vendored bundle is broken;
+      // OpaqueUnavailable is the correct signal.
+      throw OpaqueUnavailable(
+        'client.startRegistration returned undefined',
+      );
+    }
+    return ClientRegistrationStart._(_RegStart(result));
   }
 
   static ClientRegistrationFinish finishRegistration({
@@ -119,13 +157,28 @@ class OpaqueClient {
       };
     }
     final result = _client.finishRegistration(_obj(map.jsify()!));
-    return ClientRegistrationFinish._(result);
+    if (result == null) {
+      // finishRegistration returning undefined during a signup means
+      // the server-side registration response was malformed. Treat
+      // as an unavailable-module signal rather than an auth failure
+      // — a wrong PIN cannot cause this on the registration path
+      // (there is no verifier yet).
+      throw OpaqueUnavailable(
+        'client.finishRegistration returned undefined',
+      );
+    }
+    return ClientRegistrationFinish._(_RegFinish(result));
   }
 
   static ClientLoginStart startLogin({required String password}) {
     final params = _obj({'password': password}.jsify()!);
     final result = _client.startLogin(params);
-    return ClientLoginStart._(result);
+    if (result == null) {
+      throw OpaqueUnavailable(
+        'client.startLogin returned undefined',
+      );
+    }
+    return ClientLoginStart._(_LoginStart(result));
   }
 
   static ClientLoginFinish finishLogin({
@@ -147,7 +200,19 @@ class OpaqueClient {
       };
     }
     final result = _client.finishLogin(_obj(map.jsify()!));
-    return ClientLoginFinish._(result);
+    if (result == null) {
+      // This is the ROOT CAUSE of the a084794 production diagnostic
+      // "Cannot read properties of undefined (reading 'finishLoginRequest')".
+      //
+      // @serenity-kit/opaque's client.finishLogin returns undefined
+      // when the OPAQUE protocol says authentication failed. Per RFC
+      // 9807 the client cannot report failure to the server — it
+      // silently returns no payload. Wrong PIN is the overwhelming
+      // real-world cause; a mismatched credential identifier
+      // between register and login would also trigger it.
+      throw OpaqueAuthenticationFailed('finish_login');
+    }
+    return ClientLoginFinish._(_LoginFinish(result));
   }
 }
 

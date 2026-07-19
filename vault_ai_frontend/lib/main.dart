@@ -3686,6 +3686,24 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loading = false;
         });
         return;
+      } on OpaqueAuthenticationFailed catch (e) {
+        // Wrong PIN — @serenity-kit/opaque returned undefined from
+        // client.finishLogin, meaning the OPAQUE handshake could not
+        // be completed against the stored registration record. Fail
+        // closed on the ZK side; the legacy /auth/login fallback
+        // MUST NOT run (an OPAQUE auth failure is a definitive
+        // "wrong PIN" — retrying against the plaintext-verifier path
+        // would produce the same result and just leak timing info).
+        // ignore: avoid_print
+        print('[zk-login-diag] '
+            'last_step=$loginLastStep type=OpaqueAuthenticationFailed stage=${e.stage}');
+        vlog('login.zk.opaque_auth_failed', {'stage': e.stage});
+        if (!mounted) return;
+        setState(() {
+          err = 'Wrong username or PIN.';
+          loading = false;
+        });
+        return;
       } on RateLimitedException catch (e) {
         if (!mounted) return;
         setState(() {
@@ -4365,6 +4383,19 @@ class _UnlockPageState extends State<UnlockPage> {
         if (!mounted) return;
         setState(() {
           err = 'Secure unlock module unavailable: ${e.reason}';
+          loading = false;
+        });
+        return;
+      } on OpaqueAuthenticationFailed catch (e) {
+        // Same wrong-PIN classification as LoginPage — see the
+        // matching catch there for the rationale.
+        // ignore: avoid_print
+        print('[zk-unlock-diag] '
+            'last_step=$unlockLastStep type=OpaqueAuthenticationFailed stage=${e.stage}');
+        vlog('unlock.zk.opaque_auth_failed', {'stage': e.stage});
+        if (!mounted) return;
+        setState(() {
+          err = 'Wrong username or PIN.';
           loading = false;
         });
         return;
