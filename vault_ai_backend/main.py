@@ -417,13 +417,17 @@ app.include_router(memory_router)
 app.include_router(relationship_router)
 
 
-# Inheritance credential escrow (Phase 1).
+# Inheritance credential escrow (Phase 1) + release flow (Phase 2).
 from routes.inheritance_credential_routes import (
     router as inheritance_credential_router,
+)
+from routes.inheritance_release_routes import (
+    router as inheritance_release_router,
 )
 from inheritance_error_codes import install_inheritance_redaction
 install_inheritance_redaction()
 app.include_router(inheritance_credential_router)
+app.include_router(inheritance_release_router)
 
                                                                       
 from routes.billing_routes import router as billing_router
@@ -8947,6 +8951,9 @@ async def beneficiary_list_mine_endpoint(
                    bl.created_at,
                    COALESCE(bl.pairing_state, 'paired_no_credentials')
                        AS pairing_state,
+                   bl.access_requested_at,
+                   bl.cooldown_ends_at,
+                   bl.decision_at,
                    (ic.id IS NOT NULL) AS credentials_saved,
                    ic.crypto_version   AS credential_crypto_version,
                    ic.updated_at       AS credential_updated_at
@@ -8985,6 +8992,9 @@ async def beneficiary_list_mine_endpoint(
                     else None
                 ),
                 "credential_updated_at": iso(r.get("credential_updated_at")),
+                "access_requested_at": iso(r.get("access_requested_at")),
+                "cooldown_ends_at": iso(r.get("cooldown_ends_at")),
+                "decision_at": iso(r.get("decision_at")),
             }
             for r in rows
         ]
@@ -9005,14 +9015,30 @@ async def beneficiary_list_inheritances_endpoint(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # Include the escrow state (Phase 2) so the beneficiary UI
+        # can decide whether to show Request access / Cancel / Claim
+        # / Reveal. ``credentials_saved`` is set by the LEFT JOIN
+        # on ``inheritance_credentials`` (soft-delete respected).
         cursor.execute(
             """
-            SELECT id, passer_label, status,
-                   transfer_requested_at, transfer_executes_at,
-                   created_at
-            FROM beneficiary_links
-            WHERE beneficiary_vault_id = %s
-            ORDER BY created_at DESC
+            SELECT bl.id,
+                   bl.passer_label,
+                   bl.status,
+                   bl.transfer_requested_at,
+                   bl.transfer_executes_at,
+                   bl.created_at,
+                   COALESCE(bl.pairing_state, 'paired_no_credentials')
+                       AS pairing_state,
+                   bl.access_requested_at,
+                   bl.cooldown_ends_at,
+                   bl.decision_at,
+                   (ic.id IS NOT NULL) AS credentials_saved
+              FROM beneficiary_links bl
+              LEFT JOIN inheritance_credentials ic
+                     ON ic.beneficiary_link_id = bl.id
+                    AND ic.deleted_at IS NULL
+             WHERE bl.beneficiary_vault_id = %s
+             ORDER BY bl.created_at DESC
             """,
             (vault_id,),
         )
@@ -9023,18 +9049,27 @@ async def beneficiary_list_inheritances_endpoint(
     def iso(v):
         return v.isoformat() if v else None
 
+    from datetime import datetime, timezone as _tz
+    server_now_iso = datetime.now(_tz.utc).isoformat()
+
     return {
+        "server_now": server_now_iso,
         "inheritances": [
             {
                 "id": r["id"],
                 "passer_label": r["passer_label"],
                 "status": r["status"],
+                "pairing_state": r.get("pairing_state") or "paired_no_credentials",
+                "credentials_saved": bool(r.get("credentials_saved")),
+                "access_requested_at": iso(r.get("access_requested_at")),
+                "cooldown_ends_at": iso(r.get("cooldown_ends_at")),
+                "decision_at": iso(r.get("decision_at")),
                 "transfer_requested_at": iso(r["transfer_requested_at"]),
                 "transfer_executes_at": iso(r["transfer_executes_at"]),
                 "created_at": iso(r["created_at"]),
             }
             for r in rows
-        ]
+        ],
     }
 
 

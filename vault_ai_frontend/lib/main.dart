@@ -30,6 +30,7 @@ import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_stub.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
 import 'services/billing_me_diagnostic.dart';
@@ -976,6 +977,13 @@ class AppState extends ChangeNotifier {
   
   String? sessionToken;
 
+  /// One-time inheritance device-enrollment token minted after
+  /// credential reveal. When present, the next successful login on
+  /// the inherited account should POST it to
+  /// ``/inheritance/device/consume`` to trust the current device
+  /// without waiting for another approver.
+  String? pendingInheritanceDeviceToken;
+
   
   String? vaultId;
 
@@ -1490,6 +1498,7 @@ void applyBackendStats(Map<String, dynamic> stats) {
     // == null and fall through to legacy plaintext-refuse behavior.
     try {
       zk_mvk_store.ZkActiveMvk.clear();
+      zk_sk_store.ZkActiveSkVault.clear();
     } catch (_) {}
     // Wipe the _VaultCrypto key cache slot for the vault we are
     // leaving. This drops both the derived key and the cached PIN
@@ -3671,6 +3680,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultId: loginResult.vaultId,
           vaultName: loginResult.vaultHandle,
         );
+        // Cache the X25519 private key so the inheritance credential
+        // reveal path can decrypt without another OPAQUE round-trip.
+        // Cleared on logout / vault switch.
+        zk_sk_store.ZkActiveSkVault.set(
+          skVault: loginResult.skVaultPrivate,
+          vaultId: loginResult.vaultId,
+        );
         app.markUnlocked();
         try {
           await app.refreshAvailableVaults();
@@ -4243,6 +4259,13 @@ class _UnlockPageState extends State<UnlockPage> {
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: loginResult.vaultHandle,
+        );
+        // Cache the X25519 private key so the inheritance credential
+        // reveal path can decrypt without another OPAQUE round-trip.
+        // Cleared on logout / vault switch.
+        zk_sk_store.ZkActiveSkVault.set(
+          skVault: loginResult.skVaultPrivate,
+          vaultId: loginResult.vaultId,
         );
         app.markUnlocked();
         try {
@@ -6581,6 +6604,519 @@ Future<void> _deleteInheritanceCredentials({
   }
 }
 
+String _beneficiaryStateLabel({
+  required String pairingState,
+  required bool credentialsSaved,
+  required String legacyStatus,
+}) {
+  switch (pairingState) {
+    case 'credentials_saved':
+      return 'Credentials secured';
+    case 'cooldown_active':
+      return 'Access requested';
+    case 'claimable':
+      return 'Access available';
+    case 'approved':
+      return 'Access approved';
+    case 'released':
+      return 'Access granted';
+    case 'revoked':
+      return 'Revoked';
+    case 'rejected':
+      return 'Request rejected';
+    case 'paired_no_credentials':
+      if (legacyStatus == 'transfer_pending') return 'Transfer pending';
+      if (legacyStatus == 'linked') return 'Linked';
+      return 'Waiting for credentials';
+  }
+  return legacyStatus.isEmpty ? 'Linked' : legacyStatus;
+}
+
+Color _beneficiaryStateColor(String pairingState) {
+  switch (pairingState) {
+    case 'released':
+    case 'approved':
+    case 'claimable':
+      return const Color(0xFF10A37F);
+    case 'cooldown_active':
+      return Colors.orange;
+    case 'revoked':
+    case 'rejected':
+      return Colors.redAccent;
+    default:
+      return const Color(0xFFB4B4B4);
+  }
+}
+
+bool _constantTimeStringEquals(String a, String b) {
+  if (a.length != b.length) return false;
+  int diff = 0;
+  for (int i = 0; i < a.length; i++) {
+    diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+  }
+  return diff == 0;
+}
+
+// ---------------------------------------------------------------------
+// Phase 2 — release-flow helpers (approve / reject / request /
+// cancel / claim / reveal).
+//
+// Each helper wraps a single API call, refreshes the two dashboard
+// lists, and surfaces safe operator-readable messages. The reveal
+// helper additionally requires a local PIN reauth before showing
+// plaintext credentials on screen.
+// ---------------------------------------------------------------------
+
+Future<void> _ownerApproveInheritance({
+  required int linkId,
+  required String beneficiaryLabel,
+}) async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text('Approve $beneficiaryLabel?'),
+      content: const Text(
+        'Approving will permanently release the saved VaultAI '
+        'username and PIN to this beneficiary. This cannot be '
+        'undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dCtx, true),
+          child: const Text('Approve now'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  try {
+    await VaultAIClient(baseUrl: backendBaseUrl)
+        .approveInheritanceAccess(linkId: linkId, authToken: token);
+    _showSnack('Approved $beneficiaryLabel');
+    await _loadBeneficiaries();
+  } catch (e) {
+    vlog('inheritance.access.approve.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack(
+      'Could not approve the request.\nReference: INH-ACCESS-005',
+    );
+  }
+}
+
+Future<void> _ownerRejectInheritance({
+  required int linkId,
+  required String beneficiaryLabel,
+}) async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text('Reject request from $beneficiaryLabel?'),
+      content: const Text(
+        'The saved credentials remain safe. The beneficiary can '
+        'request access again.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx, false),
+          child: const Text('Keep pending'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+          onPressed: () => Navigator.pop(dCtx, true),
+          child: const Text('Reject'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  try {
+    await VaultAIClient(baseUrl: backendBaseUrl)
+        .rejectInheritanceAccess(linkId: linkId, authToken: token);
+    _showSnack('Rejected request');
+    await _loadBeneficiaries();
+  } catch (e) {
+    vlog('inheritance.access.reject.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack(
+      'Could not reject the request.\nReference: INH-ACCESS-005',
+    );
+  }
+}
+
+Future<void> _beneficiaryRequestAccess({
+  required int linkId,
+  required String passerLabel,
+}) async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (dCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text('Request access to $passerLabel?'),
+      content: const Text(
+        'The owner will be notified and can approve or reject. '
+        'Without a response, access becomes available after 30 '
+        'days.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          icon: const Icon(Icons.lock_outline),
+          onPressed: () => Navigator.pop(dCtx, true),
+          label: const Text('Request access'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  try {
+    await VaultAIClient(baseUrl: backendBaseUrl)
+        .requestInheritanceAccess(linkId: linkId, authToken: token);
+    _showSnack('Access requested');
+    await _loadInheritances();
+  } catch (e) {
+    vlog('inheritance.access.request.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack(
+      'Could not request access.\nReference: INH-ACCESS-003',
+    );
+  }
+}
+
+Future<void> _beneficiaryCancelAccess({
+  required int linkId,
+  required String passerLabel,
+}) async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return;
+  try {
+    await VaultAIClient(baseUrl: backendBaseUrl)
+        .cancelInheritanceAccess(linkId: linkId, authToken: token);
+    _showSnack('Request cancelled');
+    await _loadInheritances();
+  } catch (e) {
+    vlog('inheritance.access.cancel.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack('Could not cancel.\nReference: INH-ACCESS-005');
+  }
+}
+
+Future<void> _beneficiaryClaimAccess({
+  required int linkId,
+  required String passerLabel,
+}) async {
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return;
+  try {
+    await VaultAIClient(baseUrl: backendBaseUrl)
+        .claimInheritanceAccess(linkId: linkId, authToken: token);
+    await _loadInheritances();
+    // Straight into reveal after successful claim.
+    await _beneficiaryRevealCredentials(
+      linkId: linkId, passerLabel: passerLabel,
+    );
+  } catch (e) {
+    vlog('inheritance.access.claim.failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack(
+      'Could not claim yet — check the countdown.'
+      '\nReference: INH-CLAIM-001',
+    );
+  }
+}
+
+Future<void> _beneficiaryRevealCredentials({
+  required int linkId,
+  required String passerLabel,
+}) async {
+  // 1. Require the beneficiary's own PIN before showing anything.
+  final pin = await _promptForReauthPin(title: 'Reveal $passerLabel');
+  if (pin == null) return;
+  final app = context.read<AppState>();
+  final token = app.sessionToken;
+  if (token == null) return;
+
+  // Verify PIN against the beneficiary's active vault so an
+  // over-the-shoulder attacker cannot bypass the reveal wall.
+  // ``_VaultCrypto.currentPinOrThrow`` returns the PIN cached at
+  // login/unlock time; we compare constant-time-ish.
+  try {
+    final cached = await _VaultCrypto.currentPinOrThrow();
+    if (cached.length != pin.length ||
+        !_constantTimeStringEquals(cached, pin)) {
+      _showSnack('PIN did not match. Try again.');
+      return;
+    }
+  } catch (_) {
+    _showSnack('PIN did not match. Try again.');
+    return;
+  }
+
+  // 2. Load the wrapped package.
+  Map<String, dynamic> pkg;
+  try {
+    pkg = await VaultAIClient(baseUrl: backendBaseUrl)
+        .retrieveInheritanceCredentials(
+      linkId: linkId, authToken: token,
+    );
+  } catch (e) {
+    vlog('inheritance.reveal.retrieve_failed', {'error': e.toString()});
+    if (app.handleApiException(e)) return;
+    _showSnack(
+      'Could not fetch credentials.\nReference: INH-RETRIEVE-001',
+    );
+    return;
+  }
+
+  // 3. Beneficiary's X25519 private key must be present in the
+  //    in-memory ZK store. If not (e.g. session restored from
+  //    disk without a fresh login), tell the user to log in
+  //    again — never surface the raw error.
+  final sk = zk_sk_store.ZkActiveSkVault.current();
+  if (sk == null) {
+    _showSnack(
+      'Please log out and log back in with your PIN to reveal '
+      'inherited credentials on this device.',
+    );
+    return;
+  }
+  final skBytes = await sk.extractBytes();
+
+  // 4. Decrypt locally.
+  try {
+    final pkgObj = inh_cred.InheritanceCredentialPackage(
+      cryptoVersion: (pkg['crypto_version'] as num).toInt(),
+      encryptedPayloadB64Url: pkg['encrypted_payload'].toString(),
+      payloadNonceB64Url: pkg['payload_nonce'].toString(),
+      wrappedKeyB64Url: pkg['wrapped_key'].toString(),
+      wrappingEphemeralPkB64Url:
+          pkg['wrapping_ephemeral_pk'].toString(),
+      wrappingNonceB64Url: pkg['wrapping_nonce'].toString(),
+    );
+    final decrypted = await inh_cred.decryptInheritanceCredentials(
+      beneficiarySkVaultPrivate: Uint8List.fromList(skBytes),
+      package: pkgObj,
+    );
+    // Wipe the derived skBytes buffer after use.
+    for (var i = 0; i < skBytes.length; i++) {
+      skBytes[i] = 0;
+    }
+
+    if (!mounted) return;
+    await _showRevealedCredentialsDialog(
+      passerLabel: passerLabel,
+      username: decrypted.username,
+      pin: decrypted.pin,
+      linkId: linkId,
+      token: token,
+    );
+    await _loadInheritances();
+  } catch (e) {
+    vlog('inheritance.reveal.decrypt_failed', {'error': e.toString()});
+    _showSnack(
+      'Could not decrypt these credentials on this device.'
+      '\nReference: INH-RETRIEVE-003',
+    );
+  }
+}
+
+Future<String?> _promptForReauthPin({required String title}) async {
+  final ctrl = TextEditingController();
+  final formKey = GlobalKey<FormState>();
+  final result = await showDialog<String>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dCtx) => AlertDialog(
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text(title),
+      content: Form(
+        key: formKey,
+        child: TextFormField(
+          key: const Key('inheritance_reveal_reauth_pin_field'),
+          controller: ctrl,
+          obscureText: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            hintText: 'Enter your VaultAI PIN',
+            isDense: true,
+          ),
+          validator: (v) =>
+              (v == null || v.trim().length < 4)
+                  ? 'PIN is too short'
+                  : null,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx, null),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!(formKey.currentState?.validate() ?? false)) return;
+            Navigator.pop(dCtx, ctrl.text.trim());
+          },
+          child: const Text('Continue'),
+        ),
+      ],
+    ),
+  );
+  ctrl.dispose();
+  return result;
+}
+
+Future<void> _showRevealedCredentialsDialog({
+  required String passerLabel,
+  required String username,
+  required String pin,
+  required int linkId,
+  required String token,
+}) async {
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dCtx) => AlertDialog(
+      key: const Key('inheritance_revealed_dialog'),
+      backgroundColor: const Color(0xFF2F2F2F),
+      title: Text('Inherited VaultAI login: $passerLabel'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'These credentials provide access to the owner\'s '
+              'original VaultAI account. Keep them private.',
+              style: TextStyle(
+                color: Color(0xFFFFA726),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Username',
+              style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+            ),
+            SelectableText(
+              username,
+              key: const Key('inheritance_revealed_username'),
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'PIN',
+              style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+            ),
+            SelectableText(
+              pin,
+              key: const Key('inheritance_revealed_pin'),
+              style: const TextStyle(
+                  fontSize: 16, fontFeatures: [
+                FontFeature.tabularFigures(),
+              ]),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Clipboard contents may be accessible to other apps. '
+              'Copy carefully.',
+              style: TextStyle(
+                  color: Color(0xFFB4B4B4), fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        OutlinedButton.icon(
+          key: const Key('inheritance_revealed_copy_username'),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: username));
+            _showSnack('Username copied');
+          },
+          icon: const Icon(Icons.copy, size: 18),
+          label: const Text('Copy username'),
+        ),
+        OutlinedButton.icon(
+          key: const Key('inheritance_revealed_copy_pin'),
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: pin));
+            _showSnack('PIN copied');
+          },
+          icon: const Icon(Icons.copy, size: 18),
+          label: const Text('Copy PIN'),
+        ),
+        FilledButton.icon(
+          key: const Key('inheritance_revealed_continue'),
+          onPressed: () async {
+            Navigator.pop(dCtx);
+            await _beneficiaryContinueToInheritedAccount(
+              linkId: linkId, authToken: token,
+            );
+          },
+          icon: const Icon(Icons.login),
+          label: const Text('Continue to inherited account'),
+        ),
+      ],
+    ),
+  );
+  // Best-effort: clear the clipboard after 60 s. Not all platforms
+  // honor this; log it and move on. We intentionally do NOT claim
+  // 100% clipboard clearing.
+  Future.delayed(const Duration(seconds: 60), () async {
+    try {
+      await Clipboard.setData(const ClipboardData(text: ''));
+    } catch (_) {}
+  });
+}
+
+Future<void> _beneficiaryContinueToInheritedAccount({
+  required int linkId,
+  required String authToken,
+}) async {
+  // Fire a one-time inheritance-scoped device enrollment token so
+  // the beneficiary's next login on the inherited account can
+  // convert this device from pending → trusted without waiting for
+  // an approval from a device the owner will never touch again.
+  try {
+    final resp = await VaultAIClient(baseUrl: backendBaseUrl)
+        .authorizeInheritanceDevice(
+      linkId: linkId, authToken: authToken,
+    );
+    final token = resp['token']?.toString();
+    if (token != null && token.isNotEmpty) {
+      // Store on the AppState so the next login flow can present it.
+      // (Full wiring lands in the follow-up sign-in flow — see the
+      // Phase 2 report's "unresolved" section.)
+      final app = context.read<AppState>();
+      app.pendingInheritanceDeviceToken = token;
+    }
+  } catch (e) {
+    vlog('inheritance.device.authorize.failed', {'error': e.toString()});
+  }
+  _showSnack(
+    'Sign out and sign back in with the inherited username and PIN.',
+  );
+}
+
 Widget _buildInheritanceSection(bool isMobile) {
   if (!_inheritanceLoadedOnce) {
     _inheritanceLoadedOnce = true;
@@ -6729,6 +7265,24 @@ Widget _buildInheritanceSection(bool isMobile) {
                           b['credentials_saved'] == true;
                       final credentialUpdatedAt =
                           b['credential_updated_at']?.toString();
+                      // Phase 2 release-flow state — authoritative
+                      // source is beneficiary_links.pairing_state
+                      // from the server. The legacy transfer flow
+                      // is hidden once the new escrow has produced
+                      // any release-flow signal.
+                      final pairingState =
+                          (b['pairing_state'] ?? 'paired_no_credentials')
+                              .toString();
+                      final cooldownEndsAt =
+                          b['cooldown_ends_at']?.toString();
+                      final accessRequested =
+                          pairingState == 'cooldown_active' ||
+                              pairingState == 'claimable';
+                      final approved = pairingState == 'approved';
+                      final released = pairingState == 'released';
+                      final hideLegacyTransfer =
+                          credentialsSaved || accessRequested ||
+                              approved || released;
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(14),
@@ -6768,7 +7322,7 @@ Widget _buildInheritanceSection(bool isMobile) {
                                     ],
                                   ),
                                 ),
-                                if (isTransferPending)
+                                if (isTransferPending && !hideLegacyTransfer)
                                   FilledButton.icon(
                                     onPressed: () => _cancelTransfer(id, label),
                                     style: FilledButton.styleFrom(backgroundColor: Colors.orange),
@@ -6899,6 +7453,97 @@ Widget _buildInheritanceSection(bool isMobile) {
                                   ],
                                 ),
                               ),
+                              // Phase 2: owner-side release actions.
+                              if (accessRequested) ...[
+                                const SizedBox(height: 10),
+                                Container(
+                                  key: Key(
+                                      'inheritance_owner_release_row_$id'),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2A211E),
+                                    borderRadius:
+                                        BorderRadius.circular(10),
+                                    border: Border.all(
+                                        color: Colors.orange
+                                            .withValues(alpha: 0.4)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Access requested',
+                                        style: TextStyle(
+                                          color: Color(0xFFFFA726),
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                      if (cooldownEndsAt != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Available automatically in '
+                                          '${_formatCountdown(cooldownEndsAt)}',
+                                          style: const TextStyle(
+                                            color: Color(0xFFB4B4B4),
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 6,
+                                        children: [
+                                          FilledButton.icon(
+                                            key: Key(
+                                                'inheritance_owner_approve_$id'),
+                                            onPressed: () =>
+                                                _ownerApproveInheritance(
+                                              linkId: id,
+                                              beneficiaryLabel: label,
+                                            ),
+                                            icon: const Icon(
+                                                Icons.check, size: 18),
+                                            label: const Text('Approve now'),
+                                          ),
+                                          OutlinedButton.icon(
+                                            key: Key(
+                                                'inheritance_owner_reject_$id'),
+                                            onPressed: () =>
+                                                _ownerRejectInheritance(
+                                              linkId: id,
+                                              beneficiaryLabel: label,
+                                            ),
+                                            icon: const Icon(
+                                                Icons.close, size: 18,
+                                                color: Colors.redAccent),
+                                            label: const Text(
+                                              'Reject request',
+                                              style: TextStyle(
+                                                  color: Colors.redAccent),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ] else if (approved || released) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  released
+                                      ? 'Access released'
+                                      : 'Access approved',
+                                  key: Key(
+                                      'inheritance_owner_release_state_$id'),
+                                  style: const TextStyle(
+                                    color: Color(0xFF66BB6A),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ],
                           ],
                         ),
@@ -6978,66 +7623,176 @@ Widget _buildInheritanceSection(bool isMobile) {
                       final readyToClaim = isPending &&
                           executesAt != null &&
                           DateTime.tryParse(executesAt)?.isBefore(DateTime.now()) == true;
+
+                      // Phase 2 escrow-flow state — authoritative
+                      // source is the server's ``pairing_state``.
+                      final pairingState =
+                          (i['pairing_state'] ?? 'paired_no_credentials')
+                              .toString();
+                      final credentialsSaved =
+                          i['credentials_saved'] == true;
+                      final cooldownEndsAt =
+                          i['cooldown_ends_at']?.toString();
+                      final showRequest = credentialsSaved &&
+                          pairingState == 'credentials_saved';
+                      final showCancel = pairingState == 'cooldown_active';
+                      final showClaim = pairingState == 'claimable' ||
+                          (pairingState == 'cooldown_active' &&
+                              cooldownEndsAt != null &&
+                              (DateTime.tryParse(cooldownEndsAt)
+                                      ?.isBefore(DateTime.now()) ==
+                                  true));
+                      final showReveal = pairingState == 'approved' ||
+                          pairingState == 'released';
+                      final showLegacyLinked = isLinked &&
+                          !credentialsSaved &&
+                          pairingState == 'paired_no_credentials';
+
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: readyToClaim
+                          color: showReveal
                               ? const Color(0xFF10A37F).withValues(alpha: 0.08)
-                              : isPending
-                                  ? Colors.orange.withValues(alpha: 0.06)
-                                  : const Color(0xFF222222),
+                              : (showClaim || readyToClaim)
+                                  ? const Color(0xFF10A37F).withValues(alpha: 0.08)
+                                  : (showCancel || isPending)
+                                      ? Colors.orange.withValues(alpha: 0.06)
+                                      : const Color(0xFF222222),
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                              color: readyToClaim
+                              color: showReveal
                                   ? const Color(0xFF10A37F)
-                                  : isPending
-                                      ? Colors.orange
-                                      : Colors.white10),
+                                  : (showClaim || readyToClaim)
+                                      ? const Color(0xFF10A37F)
+                                      : (showCancel || isPending)
+                                          ? Colors.orange
+                                          : Colors.white10),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(label,
-                                      style: const TextStyle(
-                                          fontSize: 15, fontWeight: FontWeight.w700)),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    statusLabel(i),
-                                    style: TextStyle(color: statusColor(status), fontSize: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(label,
+                                          style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w700)),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _beneficiaryStateLabel(
+                                          pairingState: pairingState,
+                                          credentialsSaved: credentialsSaved,
+                                          legacyStatus: status,
+                                        ),
+                                        style: TextStyle(
+                                            color: _beneficiaryStateColor(
+                                                pairingState),
+                                            fontSize: 12),
+                                      ),
+                                      if (showCancel &&
+                                          cooldownEndsAt != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Available in ${_formatCountdown(cooldownEndsAt)}',
+                                          style: const TextStyle(
+                                              color: Color(0xFFB4B4B4),
+                                              fontSize: 11),
+                                        ),
+                                      ] else if (isPending &&
+                                          executesAt != null &&
+                                          !showCancel) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _formatCountdown(executesAt),
+                                          style: TextStyle(
+                                              color: readyToClaim
+                                                  ? const Color(0xFF10A37F)
+                                                  : Colors.orange,
+                                              fontSize: 11),
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  if (isPending && executesAt != null) ...[
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _formatCountdown(executesAt),
-                                      style: TextStyle(
-                                          color: readyToClaim
-                                              ? const Color(0xFF10A37F)
-                                              : Colors.orange,
-                                          fontSize: 11),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                            if (isLinked)
-                              FilledButton.icon(
-                                onPressed: () => _requestTransfer(id, label),
-                                icon: const Icon(Icons.av_timer, size: 18),
-                                label: Text(
-                                  AppLocalizations.of(context)
-                                      .inheritanceRequestTransfer,
                                 ),
-                              ),
-                            if (readyToClaim)
-                              FilledButton.icon(
-                                onPressed: () => _claimInheritance(id, label),
-                                icon: const Icon(Icons.move_to_inbox, size: 18),
-                                label: const Text('Claim'),
-                              ),
+                                if (showRequest)
+                                  FilledButton.icon(
+                                    key: Key(
+                                        'inheritance_beneficiary_request_$id'),
+                                    onPressed: () =>
+                                        _beneficiaryRequestAccess(
+                                      linkId: id, passerLabel: label,
+                                    ),
+                                    icon: const Icon(
+                                        Icons.lock_outline, size: 18),
+                                    label: const Text('Request access'),
+                                  ),
+                                if (showCancel)
+                                  OutlinedButton.icon(
+                                    key: Key(
+                                        'inheritance_beneficiary_cancel_$id'),
+                                    onPressed: () =>
+                                        _beneficiaryCancelAccess(
+                                      linkId: id, passerLabel: label,
+                                    ),
+                                    icon: const Icon(
+                                        Icons.cancel_outlined, size: 18),
+                                    label: const Text('Cancel request'),
+                                  ),
+                                if (showClaim && !showReveal)
+                                  FilledButton.icon(
+                                    key: Key(
+                                        'inheritance_beneficiary_claim_$id'),
+                                    onPressed: () =>
+                                        _beneficiaryClaimAccess(
+                                      linkId: id, passerLabel: label,
+                                    ),
+                                    icon: const Icon(
+                                        Icons.download_done, size: 18),
+                                    label: const Text('Claim and reveal'),
+                                  ),
+                                if (showReveal)
+                                  FilledButton.icon(
+                                    key: Key(
+                                        'inheritance_beneficiary_reveal_$id'),
+                                    onPressed: () =>
+                                        _beneficiaryRevealCredentials(
+                                      linkId: id, passerLabel: label,
+                                    ),
+                                    icon: const Icon(
+                                        Icons.visibility, size: 18),
+                                    label: const Text(
+                                        'Reveal login credentials'),
+                                  ),
+                                if (showLegacyLinked)
+                                  FilledButton.icon(
+                                    onPressed: () =>
+                                        _requestTransfer(id, label),
+                                    icon: const Icon(
+                                        Icons.av_timer, size: 18),
+                                    label: Text(
+                                      AppLocalizations.of(context)
+                                          .inheritanceRequestTransfer,
+                                    ),
+                                  ),
+                                if (readyToClaim &&
+                                    !credentialsSaved &&
+                                    pairingState ==
+                                        'paired_no_credentials')
+                                  FilledButton.icon(
+                                    onPressed: () =>
+                                        _claimInheritance(id, label),
+                                    icon: const Icon(
+                                        Icons.move_to_inbox, size: 18),
+                                    label: const Text('Claim'),
+                                  ),
+                              ],
+                            ),
                           ],
                         ),
                       );

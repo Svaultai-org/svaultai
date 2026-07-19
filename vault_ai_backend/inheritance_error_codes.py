@@ -120,6 +120,88 @@ class _INHERRSpace:
         "You are not authorized to view or change these credentials.",
     )
 
+    # Access request (release flow)
+    ACCESS_NOT_A_BENEFICIARY = _Code(
+        "INH-ACCESS-001", 403,
+        "This inheritance link is not on your account.",
+    )
+    ACCESS_NOT_OWNER = _Code(
+        "INH-ACCESS-002", 403,
+        "Only the vault owner can approve or reject this request.",
+    )
+    ACCESS_NO_CREDENTIALS = _Code(
+        "INH-ACCESS-003", 409,
+        "The owner has not saved credentials for you yet.",
+    )
+    ACCESS_ALREADY_REQUESTED = _Code(
+        "INH-ACCESS-004", 409,
+        "Access has already been requested for this inheritance.",
+    )
+    ACCESS_NO_ACTIVE_REQUEST = _Code(
+        "INH-ACCESS-005", 409,
+        "There is no active access request to act on.",
+    )
+    ACCESS_REVOKED = _Code(
+        "INH-ACCESS-006", 410,
+        "This inheritance has been revoked and can no longer be used.",
+    )
+    ACCESS_INVALID_STATE = _Code(
+        "INH-ACCESS-007", 409,
+        "The inheritance is not in a state that permits this action.",
+    )
+
+    # Claim
+    CLAIM_TOO_EARLY = _Code(
+        "INH-CLAIM-001", 425,
+        "The waiting period has not finished yet.",
+    )
+    CLAIM_NOT_PERMITTED = _Code(
+        "INH-CLAIM-002", 409,
+        "This inheritance is not ready to be claimed.",
+    )
+
+    # Retrieve
+    RETRIEVE_NOT_RELEASED = _Code(
+        "INH-RETRIEVE-001", 403,
+        "The credentials have not been released yet.",
+    )
+    RETRIEVE_NOT_YOURS = _Code(
+        "INH-RETRIEVE-002", 403,
+        "These credentials are not on your account.",
+    )
+    RETRIEVE_MISSING_PACKAGE = _Code(
+        "INH-RETRIEVE-003", 410,
+        "The encrypted credentials are no longer available.",
+    )
+
+    # Device authorization
+    DEV_NOT_RELEASED = _Code(
+        "INH-DEV-001", 403,
+        "You can only authorize a device after the credentials have "
+        "been released.",
+    )
+    DEV_MISSING_DEVICE_ID = _Code(
+        "INH-DEV-002", 400,
+        "This device is not identifying itself. Refresh the app.",
+    )
+    DEV_TOKEN_INVALID = _Code(
+        "INH-DEV-003", 403,
+        "The inheritance enrollment token is invalid or expired.",
+    )
+    DEV_TOKEN_WRONG_ACCOUNT = _Code(
+        "INH-DEV-004", 403,
+        "This enrollment token does not belong to the account you "
+        "are signed in to.",
+    )
+    DEV_TOKEN_WRONG_DEVICE = _Code(
+        "INH-DEV-005", 403,
+        "This enrollment token was issued for a different device.",
+    )
+    DEV_ALREADY_CONSUMED = _Code(
+        "INH-DEV-006", 409,
+        "This enrollment token has already been used.",
+    )
+
 
 INHERR = _INHERRSpace()
 

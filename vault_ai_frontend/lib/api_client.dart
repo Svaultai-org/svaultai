@@ -1944,6 +1944,150 @@ class VaultAIClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  // ------------------------------------------------------------------
+  // Inheritance release flow (Phase 2).
+  //
+  // All endpoints require a session token; state transitions are
+  // authoritative on the server. The server never returns decrypted
+  // credential bytes — the beneficiary decrypts locally.
+  // ------------------------------------------------------------------
+
+  Future<Map<String, dynamic>> _inhReleasePost({
+    required String path,
+    required int linkId,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({'beneficiary_link_id': linkId}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Inheritance $path failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> requestInheritanceAccess({
+    required int linkId,
+    required String authToken,
+  }) =>
+      _inhReleasePost(
+          path: '/inheritance/access/request',
+          linkId: linkId, authToken: authToken);
+
+  Future<Map<String, dynamic>> cancelInheritanceAccess({
+    required int linkId,
+    required String authToken,
+  }) =>
+      _inhReleasePost(
+          path: '/inheritance/access/cancel',
+          linkId: linkId, authToken: authToken);
+
+  Future<Map<String, dynamic>> approveInheritanceAccess({
+    required int linkId,
+    required String authToken,
+  }) =>
+      _inhReleasePost(
+          path: '/inheritance/access/approve',
+          linkId: linkId, authToken: authToken);
+
+  Future<Map<String, dynamic>> rejectInheritanceAccess({
+    required int linkId,
+    required String authToken,
+  }) =>
+      _inhReleasePost(
+          path: '/inheritance/access/reject',
+          linkId: linkId, authToken: authToken);
+
+  Future<Map<String, dynamic>> claimInheritanceAccess({
+    required int linkId,
+    required String authToken,
+  }) =>
+      _inhReleasePost(
+          path: '/inheritance/access/claim',
+          linkId: linkId, authToken: authToken);
+
+  Future<Map<String, dynamic>> getInheritanceAccessStatus({
+    required int linkId,
+    required String authToken,
+  }) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/inheritance/access/status?link_id=$linkId'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Inheritance status failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> retrieveInheritanceCredentials({
+    required int linkId,
+    required String authToken,
+  }) async {
+    final response = await http.get(
+      Uri.parse(
+          '$baseUrl/inheritance/credentials/retrieve?link_id=$linkId'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Retrieve inheritance credentials failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> authorizeInheritanceDevice({
+    required int linkId,
+    required String authToken,
+  }) =>
+      _inhReleasePost(
+          path: '/inheritance/device/authorize',
+          linkId: linkId, authToken: authToken);
+
+  Future<Map<String, dynamic>> consumeInheritanceDeviceAuthorization({
+    required String token,
+    required String authToken,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/inheritance/device/consume'),
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({'token': token}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Consume inheritance device authorization failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> markNotificationRead({
     int? notificationId,
     required String authToken,
