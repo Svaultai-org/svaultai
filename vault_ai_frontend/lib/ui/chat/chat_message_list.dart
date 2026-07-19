@@ -1,5 +1,3 @@
-
-
 import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
@@ -17,9 +15,14 @@ class ChatMessageList extends StatefulWidget {
   final bool isMobile;
   final EdgeInsets padding;
   final ScrollController? scrollController;
-  
-  
-  final String? vaultName;
+
+  /// User-chosen name for the vault's AI keeper (e.g. "Nova").
+  /// Used ONLY to compose the typing indicator label. Null when
+  /// no name has been set on this device — the typing indicator
+  /// then falls back to the neutral "VaultAI is thinking..."
+  /// literal. This MUST NOT be substituted with the canonical
+  /// username, display name, VLT handle, vault_id, or any hash.
+  final String? vaultAiName;
   final void Function(ChatMessage msg)? onOpenVaultFile;
 
   /// Real download callback — distinct from onOpenVaultFile.
@@ -37,32 +40,24 @@ class ChatMessageList extends StatefulWidget {
   /// True while a Show more request is in flight, so file-list cards
   /// disable their button + render a spinner.
   final bool isShowMoreFilesInFlight;
-  
-  
+
   final void Function(String fileId)? onShowRelated;
-  
-  
+
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
-  final void Function(ChatMessage msg, String action, Map<String, dynamic>? data)?
-      onCardAction;
-  
-  
-  final Future<Map<String, dynamic>?> Function(String jobId)?
-      onDeepAnswerPoll;
-  
-  
+  final void Function(
+      ChatMessage msg, String action, Map<String, dynamic>? data)? onCardAction;
+
+  final Future<Map<String, dynamic>?> Function(String jobId)? onDeepAnswerPoll;
+
   final void Function(Map<String, dynamic> snapshot)? onDeepAnswerReady;
-  
-  
+
   final void Function(ChatMessage credentialMsg)? onScanRemaining;
 
-  
   final bool Function({
     required String intent,
     required String normalizedQuery,
   })? isDeepScanActive;
 
-  
   final void Function(String itemId, String title, String itemType)?
       onSecureItemView;
   final void Function(String itemId, String title, String itemType)?
@@ -71,11 +66,8 @@ class ChatMessageList extends StatefulWidget {
   final void Function(String value)? onSecureItemCopyValue;
   final void Function(String title, String itemType)? onSecureItemEdit;
   final void Function(String title, String itemType)? onSecureItemDelete;
-  
 
   final CryptoWalletActionCallback? onCryptoWalletAction;
-
-
 
   final VoidCallback? onOpenVault;
   final void Function(String asset)? onOpenAssetDetail;
@@ -86,11 +78,9 @@ class ChatMessageList extends StatefulWidget {
   final void Function(String category, String? id)? onOpenVaultItem;
   final void Function(String query)? onSearchVault;
 
-
   final vcr_ui.CryptoBalanceFetcher? onFetchCryptoBalance;
   final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
   final vcr_ui.CryptoChatLiveCache? cryptoCache;
-
 
   final bool cryptoEntitled;
   final VoidCallback? onOpenCryptoUpgrade;
@@ -106,7 +96,7 @@ class ChatMessageList extends StatefulWidget {
       vertical: VaultSpacing.md,
     ),
     this.scrollController,
-    this.vaultName,
+    this.vaultAiName,
     this.onOpenVaultFile,
     this.onDownloadVaultFile,
     this.viewInFlightFileIds = const <String>{},
@@ -152,7 +142,6 @@ class _ChatMessageListState extends State<ChatMessageList> {
   late final ScrollController _scroll;
   bool _ownsScroll = false;
 
-  
   final Set<int> _animated = <int>{};
 
   @override
@@ -171,8 +160,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   @override
   void didUpdateWidget(covariant ChatMessageList old) {
     super.didUpdateWidget(old);
-    
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoScroll());
   }
 
@@ -199,11 +187,18 @@ class _ChatMessageListState extends State<ChatMessageList> {
       padding: widget.padding,
       itemCount: itemCount,
       itemBuilder: (context, index) {
-        
-        
         if (widget.thinking && index == msgs.length) {
           final l = AppLocalizations.of(context);
-          final name = widget.vaultName?.trim();
+          // Typing indicator label source is the USER-CHOSEN vault
+          // AI name only. Prior to 2026-07-20 this widget read
+          // ``app.vaultName``, which for ZK vaults is a VLT-* handle
+          // or a 32-character random hex placeholder — the leak
+          // that produced "b21e31c5b59abdc8067ff6b23643b254 is
+          // thinking..." in production. Never use vault_id,
+          // vaultName, canonicalUsername, displayUsername, or any
+          // hash here — always the vault AI name or the neutral
+          // "VaultAI is thinking..." fallback.
+          final name = widget.vaultAiName?.trim();
           final label = (name != null && name.isNotEmpty)
               ? l.chatThinkingWithName(name)
               : l.chatThinking;
@@ -216,7 +211,6 @@ class _ChatMessageListState extends State<ChatMessageList> {
         final prev = index > 0 ? msgs[index - 1] : null;
         final next = index < msgs.length - 1 ? msgs[index + 1] : null;
 
-        
         final isFirst = prev == null ||
             prev.role != msg.role ||
             msg.createdAt.difference(prev.createdAt).inSeconds > 60;
@@ -224,12 +218,9 @@ class _ChatMessageListState extends State<ChatMessageList> {
             next.role != msg.role ||
             next.createdAt.difference(msg.createdAt).inSeconds > 60;
 
-        
-        final isStreamingTail = widget.streaming &&
-            msg.isAssistant &&
-            index == msgs.length - 1;
+        final isStreamingTail =
+            widget.streaming && msg.isAssistant && index == msgs.length - 1;
 
-        
         final firstSeen = !_animated.contains(index);
         if (firstSeen) _animated.add(index);
 
@@ -259,22 +250,21 @@ class _ChatMessageListState extends State<ChatMessageList> {
           onSecureItemEdit: widget.onSecureItemEdit,
           onSecureItemDelete: widget.onSecureItemDelete,
           onCryptoWalletAction: widget.onCryptoWalletAction,
-          onOpenVault:        widget.onOpenVault,
-          onOpenAssetDetail:  widget.onOpenAssetDetail,
-          onOpenSendFlow:     widget.onOpenSendFlow,
+          onOpenVault: widget.onOpenVault,
+          onOpenAssetDetail: widget.onOpenAssetDetail,
+          onOpenSendFlow: widget.onOpenSendFlow,
           onOpenSecurityPage: widget.onOpenSecurityPage,
-          onOpenBillingPage:  widget.onOpenBillingPage,
-          onOpenStoragePage:  widget.onOpenStoragePage,
-          onOpenVaultItem:    widget.onOpenVaultItem,
-          onSearchVault:      widget.onSearchVault,
-          onFetchCryptoBalance:  widget.onFetchCryptoBalance,
+          onOpenBillingPage: widget.onOpenBillingPage,
+          onOpenStoragePage: widget.onOpenStoragePage,
+          onOpenVaultItem: widget.onOpenVaultItem,
+          onSearchVault: widget.onSearchVault,
+          onFetchCryptoBalance: widget.onFetchCryptoBalance,
           onFetchCryptoActivity: widget.onFetchCryptoActivity,
-          cryptoCache:           widget.cryptoCache,
-          cryptoEntitled:        widget.cryptoEntitled,
-          onOpenCryptoUpgrade:   widget.onOpenCryptoUpgrade,
+          cryptoCache: widget.cryptoCache,
+          cryptoEntitled: widget.cryptoEntitled,
+          onOpenCryptoUpgrade: widget.onOpenCryptoUpgrade,
         );
 
-        
         return RepaintBoundary(
           child: FadeSlideIn(
             animate: firstSeen,

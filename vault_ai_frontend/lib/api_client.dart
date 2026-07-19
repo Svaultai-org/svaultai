@@ -9,13 +9,12 @@ import 'services/session_termination.dart' as st;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 
-
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
       ? ''
       : data.entries.map((e) => '${e.key}=${e.value}').join(' ');
-  
+
   print('[vault-debug] $tag $payload');
 }
 
@@ -29,7 +28,6 @@ void _vlogRequest(String label, Uri uri, Map<String, String> headers) {
     'accept': headers['Accept'] ?? '-',
   });
 }
-
 
 Future<http.Response> _runWithNetLog(
   String label,
@@ -59,7 +57,6 @@ Future<http.Response> _runWithNetLog(
   }
 }
 
-
 class OrphanDataException implements Exception {
   final String message;
   final String? vaultName;
@@ -80,7 +77,9 @@ class OrphanDataException implements Exception {
         final detail = decoded['detail'];
         if (detail is Map<String, dynamic>) {
           final orphan = detail['orphan_data'];
-          final orphanMap = orphan is Map<String, dynamic> ? orphan : const <String, dynamic>{};
+          final orphanMap = orphan is Map<String, dynamic>
+              ? orphan
+              : const <String, dynamic>{};
           return OrphanDataException(
             message: (detail['message'] ?? 'Orphan data detected').toString(),
             vaultName: orphanMap['vault_name']?.toString(),
@@ -89,9 +88,7 @@ class OrphanDataException implements Exception {
           );
         }
       }
-    } catch (_) {
-      
-    }
+    } catch (_) {}
     return const OrphanDataException(message: 'Orphan data detected');
   }
 
@@ -100,14 +97,12 @@ class OrphanDataException implements Exception {
       'OrphanDataException(message: $message, vaultName: $vaultName, items: $itemCount, files: $fileCount)';
 }
 
-
 class VaultFrozenException implements Exception {
   final String message;
   const VaultFrozenException({required this.message});
   @override
   String toString() => 'VaultFrozenException(message: $message)';
 }
-
 
 class VaultLockedException implements Exception {
   final String message;
@@ -123,7 +118,6 @@ class VaultLockedException implements Exception {
       'VaultLockedException(message: $message, lockedUntil: $lockedUntil)';
 }
 
-
 class VaultNameTakenException implements Exception {
   final String message;
   const VaultNameTakenException({
@@ -133,7 +127,6 @@ class VaultNameTakenException implements Exception {
   String toString() => 'VaultNameTakenException(message: $message)';
 }
 
-
 class InvalidCredentialsException implements Exception {
   final String message;
   const InvalidCredentialsException({
@@ -142,7 +135,6 @@ class InvalidCredentialsException implements Exception {
   @override
   String toString() => 'InvalidCredentialsException(message: $message)';
 }
-
 
 class StorageLimitExceededException implements Exception {
   final String message;
@@ -158,21 +150,17 @@ class StorageLimitExceededException implements Exception {
   });
 
   @override
-  String toString() =>
-      'StorageLimitExceededException(message: $message, '
+  String toString() => 'StorageLimitExceededException(message: $message, '
       'used: $usedBytes, limit: $limitBytes, '
       'projected: $projectedBytes)';
 }
-
 
 class DuplicateFoundUploadException implements Exception {
   final Map<String, dynamic> detail;
   const DuplicateFoundUploadException(this.detail);
 
-  
   String? get existingFileId => detail['existing_file_id'] as String?;
 
-  
   String get message =>
       (detail['message'] as String?) ?? 'This file already exists.';
 
@@ -181,12 +169,10 @@ class DuplicateFoundUploadException implements Exception {
       'DuplicateFoundUploadException(existing=$existingFileId)';
 }
 
-
 class NameConflictUploadException implements Exception {
   final Map<String, dynamic> detail;
   const NameConflictUploadException(this.detail);
 
-  
   String? get existingFileId => detail['existing_file_id'] as String?;
 
   String get message =>
@@ -195,10 +181,8 @@ class NameConflictUploadException implements Exception {
           'content is different.';
 
   @override
-  String toString() =>
-      'NameConflictUploadException(existing=$existingFileId)';
+  String toString() => 'NameConflictUploadException(existing=$existingFileId)';
 }
-
 
 class ImportBatchTerminalException implements Exception {
   final String message;
@@ -212,19 +196,18 @@ class ImportBatchTerminalException implements Exception {
       'ImportBatchTerminalException(message: $message, status: $status)';
 }
 
-
 class RateLimitedException implements Exception {
   final String message;
   final int? resetInSeconds;
   const RateLimitedException({
-    this.message = 'Too many attempts. Please wait a few minutes and try again.',
+    this.message =
+        'Too many attempts. Please wait a few minutes and try again.',
     this.resetInSeconds,
   });
   @override
   String toString() =>
       'RateLimitedException(message: $message, resetInSeconds: $resetInSeconds)';
 }
-
 
 class AuthExpiredException implements Exception {
   final String message;
@@ -234,7 +217,6 @@ class AuthExpiredException implements Exception {
   @override
   String toString() => 'AuthExpiredException(message: $message)';
 }
-
 
 /// Coded 401 from the backend's session-revocation layer (Step B.3).
 ///
@@ -251,10 +233,8 @@ class SessionTerminatedException implements Exception {
     required this.message,
   });
   @override
-  String toString() =>
-      'SessionTerminatedException(code: $code)';
+  String toString() => 'SessionTerminatedException(code: $code)';
 }
-
 
 class InvalidVaultUnlockException implements Exception {
   final String message;
@@ -266,7 +246,6 @@ class InvalidVaultUnlockException implements Exception {
   String toString() => 'InvalidVaultUnlockException(message: $message)';
 }
 
-
 class ChunkedUploadNotAvailableException implements Exception {
   final String message;
   const ChunkedUploadNotAvailableException({
@@ -276,11 +255,10 @@ class ChunkedUploadNotAvailableException implements Exception {
   String toString() => 'ChunkedUploadNotAvailableException(message: $message)';
 }
 
-
 class DeviceNotTrustedException implements Exception {
   final String message;
   final String? deviceId;
-  
+
   final String status;
 
   const DeviceNotTrustedException({
@@ -296,15 +274,14 @@ class DeviceNotTrustedException implements Exception {
         final detail = decoded['detail'];
         if (detail is Map) {
           return DeviceNotTrustedException(
-            message: (detail['message'] ?? 'This device is not trusted.').toString(),
+            message:
+                (detail['message'] ?? 'This device is not trusted.').toString(),
             deviceId: detail['device_id']?.toString(),
             status: (detail['status'] ?? 'unknown').toString(),
           );
         }
       }
-    } catch (_) {
-      
-    }
+    } catch (_) {}
     return const DeviceNotTrustedException(
       message: 'This device is not trusted.',
     );
@@ -315,18 +292,15 @@ class DeviceNotTrustedException implements Exception {
       'DeviceNotTrustedException(status: $status, message: $message)';
 }
 
-
 String? _apiClientDeviceId;
 void setApiClientDeviceId(String id) {
   _apiClientDeviceId = id;
-  
-  
+
   final prefix = id.length <= 8 ? id : id.substring(0, 8);
   _vlog('device-id.setApiClient', {'id_prefix': prefix, 'len': id.length});
 }
 
 String? apiClientDeviceId() => _apiClientDeviceId;
-
 
 class VaultAIClient {
   final String baseUrl;
@@ -347,8 +321,7 @@ class VaultAIClient {
         st.SessionTermination.instance.isTerminated) {
       throw const SessionTerminatedException(
         code: st.SessionTerminationCode.invalid,
-        message:
-            'Your session is no longer valid. Sign in again.',
+        message: 'Your session is no longer valid. Sign in again.',
       );
     }
     final headers = <String, String>{};
@@ -373,7 +346,6 @@ class VaultAIClient {
     return headers;
   }
 
-  
   Future<Map<String, dynamic>> authSignup({
     required String vaultName,
     required String pin,
@@ -392,17 +364,16 @@ class VaultAIClient {
       'acknowledged_irrecoverable': acknowledgedIrrecoverable,
     });
 
-    
     _vlog('auth.signup.preflight', {
-      'baseUrl':                baseUrl,
-      'url':                    uri.toString(),
-      'body_len':               body.length,
-      'vault_name_len':         vaultName.length,
-      'pin_len':                pin.length,
-      'has_display_username':   displayUsername != null
-                                && displayUsername.isNotEmpty,
-      'acknowledged':           acknowledgedIrrecoverable,
-      'x_device_id_present':    headers.containsKey('X-Device-Id'),
+      'baseUrl': baseUrl,
+      'url': uri.toString(),
+      'body_len': body.length,
+      'vault_name_len': vaultName.length,
+      'pin_len': pin.length,
+      'has_display_username':
+          displayUsername != null && displayUsername.isNotEmpty,
+      'acknowledged': acknowledgedIrrecoverable,
+      'x_device_id_present': headers.containsKey('X-Device-Id'),
     });
     _vlogRequest('auth.signup', uri, headers);
 
@@ -414,16 +385,15 @@ class VaultAIClient {
         () => http.post(uri, headers: headers, body: body),
       );
     } catch (e, st) {
-      
-      
       _vlog('auth.signup.network_failure', {
-        'baseUrl':         baseUrl,
-        'url':             uri.toString(),
-        'error_type':      e.runtimeType.toString(),
-        'error':           e.toString(),
+        'baseUrl': baseUrl,
+        'url': uri.toString(),
+        'error_type': e.runtimeType.toString(),
+        'error': e.toString(),
         'stack_first_line': st.toString().split('\n').firstWhere(
-                              (_) => true, orElse: () => '-',
-                            ),
+              (_) => true,
+              orElse: () => '-',
+            ),
       });
       rethrow;
     }
@@ -457,7 +427,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> authLogin({
     required String vaultName,
     required String pin,
@@ -469,14 +438,13 @@ class VaultAIClient {
       'pin': pin,
     });
 
-    
     _vlog('auth.login.preflight', {
-      'baseUrl':              baseUrl,
-      'url':                  uri.toString(),
-      'body_len':             body.length,
-      'vault_name_len':       vaultName.length,
-      'pin_len':              pin.length,
-      'x_device_id_present':  headers.containsKey('X-Device-Id'),
+      'baseUrl': baseUrl,
+      'url': uri.toString(),
+      'body_len': body.length,
+      'vault_name_len': vaultName.length,
+      'pin_len': pin.length,
+      'x_device_id_present': headers.containsKey('X-Device-Id'),
     });
     _vlogRequest('auth.login', uri, headers);
 
@@ -489,13 +457,14 @@ class VaultAIClient {
       );
     } catch (e, st) {
       _vlog('auth.login.network_failure', {
-        'baseUrl':         baseUrl,
-        'url':             uri.toString(),
-        'error_type':      e.runtimeType.toString(),
-        'error':           e.toString(),
+        'baseUrl': baseUrl,
+        'url': uri.toString(),
+        'error_type': e.runtimeType.toString(),
+        'error': e.toString(),
         'stack_first_line': st.toString().split('\n').firstWhere(
-                              (_) => true, orElse: () => '-',
-                            ),
+              (_) => true,
+              orElse: () => '-',
+            ),
       });
       rethrow;
     }
@@ -521,7 +490,8 @@ class VaultAIClient {
         }
       } catch (_) {}
       if (code == 'vault_frozen') {
-        throw VaultFrozenException(message: message.isEmpty ? 'Vault frozen' : message);
+        throw VaultFrozenException(
+            message: message.isEmpty ? 'Vault frozen' : message);
       }
       throw VaultLockedException(
         message: message.isEmpty ? 'Vault is temporarily locked' : message,
@@ -542,7 +512,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> authMe({required String authToken}) async {
     final uri = Uri.parse('$baseUrl/auth/me');
     final response = await _runWithNetLog(
@@ -567,6 +536,46 @@ class VaultAIClient {
     return decoded;
   }
 
+  /// Set (or clear, when [vaultAiName] is null) the caller's
+  /// user-chosen vault AI name via ``PATCH /vault/ai-name``.
+  ///
+  /// The value the server persists is the returned
+  /// ``vault_ai_name`` field — after server-side normalization
+  /// (trim + whitespace-collapse + length cap + control-char
+  /// reject). Callers should update ``AppState.vaultAiName`` and
+  /// the persisted ``last_vault_ai_name`` from that returned value,
+  /// not from what they originally submitted.
+  Future<String?> setVaultAiName({
+    required String authToken,
+    required String? vaultAiName,
+  }) async {
+    final uri = Uri.parse('$baseUrl/vault/ai-name');
+    final response = await _runWithNetLog(
+      'vault.ai_name.set',
+      uri,
+      () => http.patch(
+        uri,
+        headers: _defaultHeaders(authToken: authToken),
+        body: jsonEncode({'vault_ai_name': vaultAiName}),
+      ),
+    );
+    if (response.statusCode == 401) {
+      throw const AuthExpiredException();
+    }
+    if (response.statusCode != 200) {
+      throw Exception(_formatBackendError(
+        prefix: 'vault/ai-name failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid /vault/ai-name response format');
+    }
+    final stored = decoded['vault_ai_name'];
+    return stored is String && stored.isNotEmpty ? stored : null;
+  }
 
   Future<void> authLogout({required String authToken}) async {
     final uri = Uri.parse('$baseUrl/auth/logout');
@@ -576,8 +585,6 @@ class VaultAIClient {
       () => http.post(uri, headers: _defaultHeaders(authToken: authToken)),
     );
     if (response.statusCode != 204 && response.statusCode != 200) {
-
-
       if (response.statusCode != 401) {
         throw Exception(_formatBackendError(
           prefix: 'Logout failed',
@@ -587,7 +594,6 @@ class VaultAIClient {
       }
     }
   }
-
 
   Future<Map<String, dynamic>> getDeleteStatus({
     required String authToken,
@@ -614,7 +620,6 @@ class VaultAIClient {
     return decoded;
   }
 
-
   Future<Map<String, dynamic>> requestDeleteVault({
     required String authToken,
   }) async {
@@ -639,7 +644,6 @@ class VaultAIClient {
     }
     return decoded;
   }
-
 
   Future<void> confirmDeleteVault({
     required String authToken,
@@ -674,7 +678,6 @@ class VaultAIClient {
     ));
   }
 
-  
   Future<Map<String, dynamic>> registerDevice({
     required String authToken,
     required String deviceId,
@@ -695,8 +698,7 @@ class VaultAIClient {
 
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
-      
-      
+
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       throw Exception(_formatBackendError(
         prefix: 'Register device failed',
@@ -712,7 +714,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> diagnoseTrust({
     required String authToken,
   }) async {
@@ -739,7 +740,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> listDevices({
     required String authToken,
   }) async {
@@ -766,7 +766,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> createStripeCheckoutSession({
     required String authToken,
     required int blockCount,
@@ -778,20 +777,19 @@ class VaultAIClient {
     final body = jsonEncode({
       'block_count': blockCount,
       if (successUrl != null) 'success_url': successUrl,
-      if (cancelUrl != null)  'cancel_url':  cancelUrl,
+      if (cancelUrl != null) 'cancel_url': cancelUrl,
     });
 
-    
     _vlog('billing.checkout_session.preflight', {
-      'baseUrl':              baseUrl,
-      'url':                  uri.toString(),
-      'block_count':          blockCount,
-      'body_len':             body.length,
-      'auth_token_present':   authToken.isNotEmpty,
-      'auth_token_len':       authToken.length,
-      'x_device_id_present':  headers.containsKey('X-Device-Id'),
-      'has_success_url':      successUrl != null,
-      'has_cancel_url':       cancelUrl != null,
+      'baseUrl': baseUrl,
+      'url': uri.toString(),
+      'block_count': blockCount,
+      'body_len': body.length,
+      'auth_token_present': authToken.isNotEmpty,
+      'auth_token_len': authToken.length,
+      'x_device_id_present': headers.containsKey('X-Device-Id'),
+      'has_success_url': successUrl != null,
+      'has_cancel_url': cancelUrl != null,
     });
     _vlogRequest('billing.checkout_session', uri, headers);
 
@@ -803,16 +801,15 @@ class VaultAIClient {
         () => http.post(uri, headers: headers, body: body),
       );
     } catch (e, st) {
-      
-      
       _vlog('billing.checkout_session.network_failure', {
-        'baseUrl':         baseUrl,
-        'url':             uri.toString(),
-        'error_type':      e.runtimeType.toString(),
-        'error':           e.toString(),
+        'baseUrl': baseUrl,
+        'url': uri.toString(),
+        'error_type': e.runtimeType.toString(),
+        'error': e.toString(),
         'stack_first_line': st.toString().split('\n').firstWhere(
-                              (_) => true, orElse: () => '-',
-                            ),
+              (_) => true,
+              orElse: () => '-',
+            ),
       });
       rethrow;
     }
@@ -833,7 +830,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> createStripePortalSession({
     required String authToken,
     String? returnUrl,
@@ -866,7 +862,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getBillingMe({
     required String authToken,
   }) async {
@@ -896,7 +891,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getSecurityCenterSummary({
     required String authToken,
   }) async {
@@ -926,7 +920,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getActiveExpiryAlerts({
     required String authToken,
     required String vaultName,
@@ -964,7 +957,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getMemoryTimeline({
     required String authToken,
     required String vaultName,
@@ -1002,7 +994,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getRelationshipList({
     required String authToken,
     required String vaultName,
@@ -1040,7 +1031,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> analyzePasswords({
     required String authToken,
     required String vaultName,
@@ -1078,7 +1068,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> approveDevice({
     required String authToken,
     required String deviceId,
@@ -1105,7 +1094,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> revokeDevice({
     required String authToken,
     required String deviceId,
@@ -1132,7 +1120,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> requestSelfApproval({
     required String authToken,
     required String vaultName,
@@ -1161,7 +1148,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> finalizeSelfApproval({
     required String authToken,
     required String vaultName,
@@ -1190,7 +1176,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> cancelSelfApproval({
     required String authToken,
     String? deviceId,
@@ -1237,10 +1222,10 @@ class VaultAIClient {
       sse: true,
     );
 
-
     if (appLocale != null && appLocale.isNotEmpty) {
       final safe = appLocale.replaceAll(
-        RegExp(r'[^a-zA-Z0-9\-]'), '',
+        RegExp(r'[^a-zA-Z0-9\-]'),
+        '',
       );
       if (safe.isNotEmpty && safe.length <= 16) {
         headers['X-App-Locale'] = safe;
@@ -1262,8 +1247,7 @@ class VaultAIClient {
       'vault_name': vaultName,
       'pin': pin,
       'uploaded_file_ids': uploadedFileIds ?? <String>[],
-      if (appLocale != null && appLocale.isNotEmpty)
-        'app_locale': appLocale,
+      if (appLocale != null && appLocale.isNotEmpty) 'app_locale': appLocale,
       // Structured selection hint from a chat card row tap. The
       // shape is {"kind":"login"|"file","id":"<uuid>"}. Not rendered
       // in prose — used by the backend to disambiguate rows that
@@ -1280,11 +1264,10 @@ class VaultAIClient {
 
     if (response.statusCode != 200) {
       final errorBody = await response.stream.bytesToString();
-      
-      
+
       _vlog('chat.error', {
         'status': response.statusCode,
-        'body':   errorBody,
+        'body': errorBody,
       });
       _throwIfAuthExpired(response.statusCode, errorBody);
       _throwIfDeviceNotTrusted(response.statusCode, errorBody);
@@ -1351,13 +1334,12 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken),
     );
 
-    
     if (response.statusCode == 401) {
       _vlog('http.client_401', {
-        'endpoint':        uri.toString(),
+        'endpoint': uri.toString(),
         'authToken_empty': authToken.isEmpty,
-        'authToken_len':   authToken.length,
-        'body':            response.body,
+        'authToken_len': authToken.length,
+        'body': response.body,
       });
     }
 
@@ -1388,7 +1370,6 @@ class VaultAIClient {
     final uri = Uri.parse('$baseUrl/verify-pin');
     final headers = _defaultHeaders(authToken: authToken, json: true);
 
-    
     _vlog('pin.verify.request', {
       'baseUrl': baseUrl,
       'url': uri.toString(),
@@ -1399,7 +1380,6 @@ class VaultAIClient {
       'x_device_id_present': headers.containsKey('X-Device-Id'),
     });
 
-    
     final http.Response response;
     try {
       response = await http.post(
@@ -1416,13 +1396,14 @@ class VaultAIClient {
         'url': uri.toString(),
         'error_type': e.runtimeType.toString(),
         'error': e.toString(),
-        'stack_first_line':
-            st.toString().split('\n').firstWhere((_) => true, orElse: () => '-'),
+        'stack_first_line': st
+            .toString()
+            .split('\n')
+            .firstWhere((_) => true, orElse: () => '-'),
       });
       rethrow;
     }
 
-    
     _vlog('pin.verify.response', {
       'baseUrl': baseUrl,
       'url': uri.toString(),
@@ -1451,7 +1432,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> startDeepAnswer({
     required String pin,
     required String authToken,
@@ -1465,8 +1445,7 @@ class VaultAIClient {
       'pin': pin,
       'intent': intent,
       'query': query,
-      if (resumeJobId != null && resumeJobId.isNotEmpty)
-        'job_id': resumeJobId,
+      if (resumeJobId != null && resumeJobId.isNotEmpty) 'job_id': resumeJobId,
     });
     final response = await http.post(uri, headers: headers, body: body);
     if (response.statusCode != 200) {
@@ -1486,7 +1465,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> pollDeepAnswerJob({
     required String pin,
     required String authToken,
@@ -1525,7 +1503,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/vault-meta'
       '?vault_name=${Uri.encodeQueryComponent(vaultName)}',
-);
+    );
 
     final response = await http.get(
       uri,
@@ -1861,8 +1839,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final response = await http.get(
-      Uri.parse(
-          '$baseUrl/inheritance/beneficiary/$linkId/pubkey'),
+      Uri.parse('$baseUrl/inheritance/beneficiary/$linkId/pubkey'),
       headers: _defaultHeaders(authToken: authToken),
     );
     if (response.statusCode != 200) {
@@ -1981,7 +1958,8 @@ class VaultAIClient {
   }) =>
       _inhReleasePost(
           path: '/inheritance/access/request',
-          linkId: linkId, authToken: authToken);
+          linkId: linkId,
+          authToken: authToken);
 
   Future<Map<String, dynamic>> cancelInheritanceAccess({
     required int linkId,
@@ -1989,7 +1967,8 @@ class VaultAIClient {
   }) =>
       _inhReleasePost(
           path: '/inheritance/access/cancel',
-          linkId: linkId, authToken: authToken);
+          linkId: linkId,
+          authToken: authToken);
 
   Future<Map<String, dynamic>> approveInheritanceAccess({
     required int linkId,
@@ -1997,7 +1976,8 @@ class VaultAIClient {
   }) =>
       _inhReleasePost(
           path: '/inheritance/access/approve',
-          linkId: linkId, authToken: authToken);
+          linkId: linkId,
+          authToken: authToken);
 
   Future<Map<String, dynamic>> rejectInheritanceAccess({
     required int linkId,
@@ -2005,7 +1985,8 @@ class VaultAIClient {
   }) =>
       _inhReleasePost(
           path: '/inheritance/access/reject',
-          linkId: linkId, authToken: authToken);
+          linkId: linkId,
+          authToken: authToken);
 
   Future<Map<String, dynamic>> claimInheritanceAccess({
     required int linkId,
@@ -2013,7 +1994,8 @@ class VaultAIClient {
   }) =>
       _inhReleasePost(
           path: '/inheritance/access/claim',
-          linkId: linkId, authToken: authToken);
+          linkId: linkId,
+          authToken: authToken);
 
   Future<Map<String, dynamic>> getInheritanceAccessStatus({
     required int linkId,
@@ -2041,8 +2023,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final response = await http.get(
-      Uri.parse(
-          '$baseUrl/inheritance/credentials/retrieve?link_id=$linkId'),
+      Uri.parse('$baseUrl/inheritance/credentials/retrieve?link_id=$linkId'),
       headers: _defaultHeaders(authToken: authToken),
     );
     if (response.statusCode != 200) {
@@ -2064,7 +2045,8 @@ class VaultAIClient {
   }) =>
       _inhReleasePost(
           path: '/inheritance/device/authorize',
-          linkId: linkId, authToken: authToken);
+          linkId: linkId,
+          authToken: authToken);
 
   Future<Map<String, dynamic>> consumeInheritanceDeviceAuthorization({
     required String token,
@@ -2178,7 +2160,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   void _throwIfAuthExpired(int statusCode, String body) {
     if (statusCode != 401) return;
     // If the backend supplied a coded 401 (Step B.3), classify it
@@ -2223,7 +2204,6 @@ class VaultAIClient {
     }
   }
 
-  
   RateLimitedException _rateLimitedFromBody(String body) {
     int? resetIn;
     try {
@@ -2239,7 +2219,6 @@ class VaultAIClient {
     return RateLimitedException(resetInSeconds: resetIn);
   }
 
-  
   void _throwIfDeviceNotTrusted(int statusCode, String body) {
     if (statusCode != 403) return;
     try {
@@ -2258,14 +2237,11 @@ class VaultAIClient {
     }
   }
 
-  
   void _throwIfInvalidVaultUnlock(int statusCode, String body) {
     if (statusCode != 400) return;
-    
-    
+
     if (!body.contains('Invalid PIN or corrupted data')) return;
-    
-    
+
     String? message;
     try {
       final decoded = jsonDecode(body);
@@ -2273,16 +2249,13 @@ class VaultAIClient {
         final d = decoded['detail'];
         if (d is String && d.isNotEmpty) message = d;
       }
-    } catch (_) {
-      
-    }
+    } catch (_) {}
     if (message != null && message.contains('Invalid PIN or corrupted data')) {
       throw const InvalidVaultUnlockException();
     }
     throw const InvalidVaultUnlockException();
   }
 
-  
   void _throwIfLockOrFrozen(int statusCode, String body) {
     if (statusCode != 423) return;
     Map<String, dynamic>? detail;
@@ -2362,7 +2335,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> listVaultSecureItems({
     required String vaultName,
     required String pin,
@@ -2398,7 +2370,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getVaultSecureItem({
     required String vaultName,
     required String service,
@@ -2413,9 +2384,9 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'vault_name': vaultName,
-        'service':    service,
-        'item_type':  itemType,
-        'pin':        pin,
+        'service': service,
+        'item_type': itemType,
+        'pin': pin,
       }),
     );
 
@@ -2438,7 +2409,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> saveCryptoWalletProfile({
     required String pin,
     required String authToken,
@@ -2456,8 +2426,8 @@ class VaultAIClient {
         itemType: 'wallet_account',
         service: 'crypto:$asset',
         payload: <String, dynamic>{
-          'asset':         asset,
-          'walletLabel':   walletLabel,
+          'asset': asset,
+          'walletLabel': walletLabel,
           'publicAddress': publicAddress,
           if (network != null && network.isNotEmpty) 'network': network,
           if (note != null && note.isNotEmpty) 'note': note,
@@ -2468,14 +2438,14 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/crypto/save-wallet-profile');
     final body = <String, dynamic>{
-      'pin':           pin,
-      'asset':         asset,
-      'walletLabel':   walletLabel,
+      'pin': pin,
+      'asset': asset,
+      'walletLabel': walletLabel,
       'publicAddress': publicAddress,
     };
     if (network != null && network.isNotEmpty) body['network'] = network;
-    if (note    != null && note.isNotEmpty)    body['note']    = note;
-    if (title   != null && title.isNotEmpty)   body['title']   = title;
+    if (note != null && note.isNotEmpty) body['note'] = note;
+    if (title != null && title.isNotEmpty) body['title'] = title;
 
     final response = await http.post(
       uri,
@@ -2501,14 +2471,13 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> saveCryptoSensitiveBackup({
     required String pin,
     required String authToken,
     required String walletLabel,
     required String secretType,
     required String secretValue,
-    required bool   warningConfirmed,
+    required bool warningConfirmed,
     String? asset,
     String? network,
     String? note,
@@ -2521,9 +2490,9 @@ class VaultAIClient {
         itemType: 'crypto_sensitive_backup',
         service: 'crypto:${asset ?? "unknown"}',
         payload: <String, dynamic>{
-          'walletLabel':      walletLabel,
-          'secretType':       secretType,
-          'secretValue':      secretValue,
+          'walletLabel': walletLabel,
+          'secretType': secretType,
+          'secretValue': secretValue,
           'warningConfirmed': warningConfirmed,
           if (asset != null && asset.isNotEmpty) 'asset': asset,
           if (network != null && network.isNotEmpty) 'network': network,
@@ -2535,16 +2504,16 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/crypto/save-sensitive-backup');
     final body = <String, dynamic>{
-      'pin':              pin,
-      'walletLabel':      walletLabel,
-      'secretType':       secretType,
-      'secretValue':      secretValue,
+      'pin': pin,
+      'walletLabel': walletLabel,
+      'secretType': secretType,
+      'secretValue': secretValue,
       'warningConfirmed': warningConfirmed,
     };
-    if (asset   != null && asset.isNotEmpty)   body['asset']   = asset;
+    if (asset != null && asset.isNotEmpty) body['asset'] = asset;
     if (network != null && network.isNotEmpty) body['network'] = network;
-    if (note    != null && note.isNotEmpty)    body['note']    = note;
-    if (title   != null && title.isNotEmpty)   body['title']   = title;
+    if (note != null && note.isNotEmpty) body['note'] = note;
+    if (title != null && title.isNotEmpty) body['title'] = title;
 
     final response = await http.post(
       uri,
@@ -2570,13 +2539,12 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> saveCryptoNote({
     required String pin,
     required String authToken,
     required String title,
     required String note,
-    required String noteType, 
+    required String noteType,
     String? asset,
     String? network,
     String? walletLabel,
@@ -2591,9 +2559,9 @@ class VaultAIClient {
         itemType: 'crypto_note',
         service: 'crypto:${asset ?? "note"}',
         payload: <String, dynamic>{
-          'title':      title,
-          'note':       note,
-          'noteType':   noteType,
+          'title': title,
+          'note': note,
+          'noteType': noteType,
           if (asset != null && asset.isNotEmpty) 'asset': asset,
           if (network != null && network.isNotEmpty) 'network': network,
           if (walletLabel != null && walletLabel.isNotEmpty)
@@ -2608,17 +2576,19 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/crypto/save-note');
     final body = <String, dynamic>{
-      'pin':      pin,
-      'title':    title,
-      'note':     note,
+      'pin': pin,
+      'title': title,
+      'note': note,
       'noteType': noteType,
     };
-    if (asset       != null && asset.isNotEmpty)       body['asset']       = asset;
-    if (network     != null && network.isNotEmpty)     body['network']     = network;
-    if (walletLabel != null && walletLabel.isNotEmpty) body['walletLabel'] = walletLabel;
-    if (txHash      != null && txHash.isNotEmpty)      body['txHash']      = txHash;
-    if (amountText  != null && amountText.isNotEmpty)  body['amountText']  = amountText;
-    if (dateText    != null && dateText.isNotEmpty)    body['dateText']    = dateText;
+    if (asset != null && asset.isNotEmpty) body['asset'] = asset;
+    if (network != null && network.isNotEmpty) body['network'] = network;
+    if (walletLabel != null && walletLabel.isNotEmpty)
+      body['walletLabel'] = walletLabel;
+    if (txHash != null && txHash.isNotEmpty) body['txHash'] = txHash;
+    if (amountText != null && amountText.isNotEmpty)
+      body['amountText'] = amountText;
+    if (dateText != null && dateText.isNotEmpty) body['dateText'] = dateText;
 
     final response = await http.post(
       uri,
@@ -2644,7 +2614,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> revealCryptoSensitiveBackup({
     required String pin,
     required String authToken,
@@ -2658,8 +2627,8 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'pin':       pin,
-        'service':   service,
+        'pin': pin,
+        'service': service,
         'item_type': itemType,
       }),
     );
@@ -2668,8 +2637,7 @@ class VaultAIClient {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
-      
-      
+
       throw Exception(_formatBackendError(
         prefix: 'Reveal sensitive backup failed',
         statusCode: response.statusCode,
@@ -2692,17 +2660,9 @@ class VaultAIClient {
     required Uint8List fileBytes,
     String? contentType,
     String? accompanyingText,
-    
-    
     bool isBatchUpload = false,
-    
-    
     String? relativePath,
-    
-    
     String? importId,
-    
-    
     String? contentSha256,
     String? duplicateAction,
   }) async {
@@ -2741,17 +2701,18 @@ class VaultAIClient {
     // from the initial write — no cleanup dependency.
     final inlineMvk = zk_mvk_store.ZkActiveMvk.current();
     if (inlineMvk != null) {
-      final hierarchy =
-          vault_key_hierarchy.VaultKeyHierarchy(inlineMvk);
+      final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(inlineMvk);
       final metaKey = await hierarchy.metadataKey();
       final fnCt = await vault_key_hierarchy.aesGcmWrap(
-        metaKey, utf8.encode(filename),
+        metaKey,
+        utf8.encode(filename),
       );
       request.fields['filename_ciphertext'] =
           vault_key_hierarchy.b64urlEncode(fnCt);
       if (contentType != null && contentType.isNotEmpty) {
         final ctCt = await vault_key_hierarchy.aesGcmWrap(
-          metaKey, utf8.encode(contentType),
+          metaKey,
+          utf8.encode(contentType),
         );
         request.fields['content_type_ciphertext'] =
             vault_key_hierarchy.b64urlEncode(ctCt);
@@ -2773,12 +2734,10 @@ class VaultAIClient {
     final response = await request.send();
     final responseBody = await response.stream.bytesToString();
 
-    
     if (response.statusCode == 413) {
       throw _parseStorageLimitException(responseBody);
     }
 
-    
     if (response.statusCode == 409) {
       Map<String, dynamic>? body;
       try {
@@ -2795,7 +2754,7 @@ class VaultAIClient {
           throw NameConflictUploadException(detail);
         }
       }
-      
+
       throw Exception(_formatBackendError(
         prefix: 'File upload failed',
         statusCode: response.statusCode,
@@ -2851,7 +2810,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> startImport({
     required String vaultName,
     required String pin,
@@ -2897,7 +2855,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getImport({
     required String authToken,
     required String importId,
@@ -2926,7 +2883,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> cancelImport({
     required String vaultName,
     required String pin,
@@ -2963,7 +2919,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> completeImport({
     required String vaultName,
     required String pin,
@@ -3004,7 +2959,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   StorageLimitExceededException _parseStorageLimitException(String body) {
     try {
       final decoded = jsonDecode(body);
@@ -3042,7 +2996,8 @@ class VaultAIClient {
       final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
       final metaKey = await hierarchy.metadataKey();
       final savedNameCt = await vault_key_hierarchy.aesGcmWrap(
-        metaKey, utf8.encode(savedName),
+        metaKey,
+        utf8.encode(savedName),
       );
       final zkUri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
       final zkResp = await http.post(
@@ -3208,7 +3163,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> initChunkedUpload({
     required String vaultName,
     required String pin,
@@ -3219,11 +3173,7 @@ class VaultAIClient {
     required int chunkSize,
     String? contentSha256,
     bool isBatchUpload = false,
-    
-    
     String? relativePath,
-    
-    
     String? importId,
   }) async {
     final uri = Uri.parse('$baseUrl/upload-file/init');
@@ -3238,8 +3188,7 @@ class VaultAIClient {
       if (isBatchUpload) 'is_batch_upload': true,
       if (relativePath != null && relativePath.isNotEmpty)
         'relative_path': relativePath,
-      if (importId != null && importId.isNotEmpty)
-        'import_id': importId,
+      if (importId != null && importId.isNotEmpty) 'import_id': importId,
     };
 
     // ZK ciphertext-first mode: encrypt filename + content_type
@@ -3252,13 +3201,14 @@ class VaultAIClient {
       final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
       final metaKey = await hierarchy.metadataKey();
       final fnCt = await vault_key_hierarchy.aesGcmWrap(
-        metaKey, utf8.encode(filename),
+        metaKey,
+        utf8.encode(filename),
       );
-      body['filename_ciphertext'] =
-          vault_key_hierarchy.b64urlEncode(fnCt);
+      body['filename_ciphertext'] = vault_key_hierarchy.b64urlEncode(fnCt);
       if (contentType != null && contentType.isNotEmpty) {
         final ctCt = await vault_key_hierarchy.aesGcmWrap(
-          metaKey, utf8.encode(contentType),
+          metaKey,
+          utf8.encode(contentType),
         );
         body['content_type_ciphertext'] =
             vault_key_hierarchy.b64urlEncode(ctCt);
@@ -3272,7 +3222,6 @@ class VaultAIClient {
     );
 
     if (response.statusCode == 404) {
-
       throw const ChunkedUploadNotAvailableException();
     }
     if (response.statusCode != 200) {
@@ -3293,7 +3242,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> uploadChunk({
     required String authToken,
     required String fileId,
@@ -3335,7 +3283,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> finalizeChunkedUpload({
     required String authToken,
     required String vaultName,
@@ -3372,7 +3319,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> abortChunkedUpload({
     required String authToken,
     required String vaultName,
@@ -3409,7 +3355,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getDownloadManifest({
     required String authToken,
     required String vaultName,
@@ -3446,7 +3391,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  
   Future<Uint8List> downloadChunk({
     required String authToken,
     required String fileId,
@@ -3481,459 +3425,459 @@ class VaultAIClient {
   }
 
   Future<Map<String, dynamic>> listFullLogins({
-  required String vaultName,
-  required String pin,
-  required String authToken,
-}) async {
-  final uri = Uri.parse('$baseUrl/manage/logins-full');
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/manage/logins-full');
 
-  final response = await http.post(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode({
-      'vault_name': vaultName,
-      'pin': pin,
-    }),
-  );
-
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'List full logins failed',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
-  }
-
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
-
-Future<Map<String, dynamic>> updateLogin({
-  required String vaultName,
-  required String pin,
-  required String oldService,
-  required String newService,
-  String? username,
-  String? email,
-  String? password,
-  String? pinValue,
-  String? note,
-  required String authToken,
-}) async {
-  final uri = Uri.parse('$baseUrl/manage/login');
-
-  final response = await http.patch(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode({
-      'vault_name': vaultName,
-      'pin': pin,
-      'old_service': oldService,
-      'new_service': newService,
-      'username': username,
-      'email': email,
-      'password': password,
-      'pin_value': pinValue,
-      'note': note,
-    }..removeWhere((key, value) => value == null)),
-  );
-
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'Update login failed',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
-  }
-
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
-
-Future<Map<String, dynamic>> deleteLogin({
-  required String vaultName,
-  required String service,
-  required String pin,
-  required String authToken,
-}) async {
-  final uri = Uri.parse('$baseUrl/manage/login/delete');
-
-  final response = await http.post(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode({
-      'vault_name': vaultName,
-      'service': service,
-      'pin': pin,
-    }),
-  );
-
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'Delete login failed',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
-  }
-
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
-
-
-Future<Map<String, dynamic>> updateVaultSecureItem({
-  required String vaultName,
-  required String oldService,
-  required String itemType,
-  required String pin,
-  required String authToken,
-  String? newService,
-  Map<String, dynamic>? fields,
-}) async {
-  // ZK ciphertext-first fast path. When an unlocked MVK is active
-  // (i.e. this is a ZK/adopted vault), the item is written to
-  // /vault/ciphertext/vault-items instead of /update-secure-item —
-  // no readable item_type / service / payload leaves the client.
-  if (zk_mvk_store.ZkActiveMvk.current() != null) {
-    final zkResp = await tryZkVaultItemCiphertextUpsert(
-      baseUrl: baseUrl,
-      authToken: authToken,
-      itemType: itemType,
-      service: (newService != null && newService.trim().isNotEmpty)
-          ? newService.trim()
-          : oldService,
-      payload: <String, dynamic>{
-        'old_service': oldService,
-        if (newService != null && newService.trim().isNotEmpty)
-          'new_service': newService.trim(),
-        if (fields != null) 'fields': fields,
-      },
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'pin': pin,
+      }),
     );
-    if (zkResp != null) {
-      return zkResp;
+
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'List full logins failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateLogin({
+    required String vaultName,
+    required String pin,
+    required String oldService,
+    required String newService,
+    String? username,
+    String? email,
+    String? password,
+    String? pinValue,
+    String? note,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/manage/login');
+
+    final response = await http.patch(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'pin': pin,
+        'old_service': oldService,
+        'new_service': newService,
+        'username': username,
+        'email': email,
+        'password': password,
+        'pin_value': pinValue,
+        'note': note,
+      }..removeWhere((key, value) => value == null)),
+    );
+
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Update login failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> deleteLogin({
+    required String vaultName,
+    required String service,
+    required String pin,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/manage/login/delete');
+
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'service': service,
+        'pin': pin,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Delete login failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> updateVaultSecureItem({
+    required String vaultName,
+    required String oldService,
+    required String itemType,
+    required String pin,
+    required String authToken,
+    String? newService,
+    Map<String, dynamic>? fields,
+  }) async {
+    // ZK ciphertext-first fast path. When an unlocked MVK is active
+    // (i.e. this is a ZK/adopted vault), the item is written to
+    // /vault/ciphertext/vault-items instead of /update-secure-item —
+    // no readable item_type / service / payload leaves the client.
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final zkResp = await tryZkVaultItemCiphertextUpsert(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        itemType: itemType,
+        service: (newService != null && newService.trim().isNotEmpty)
+            ? newService.trim()
+            : oldService,
+        payload: <String, dynamic>{
+          'old_service': oldService,
+          if (newService != null && newService.trim().isNotEmpty)
+            'new_service': newService.trim(),
+          if (fields != null) 'fields': fields,
+        },
+      );
+      if (zkResp != null) {
+        return zkResp;
+      }
+    }
+
+    final uri = Uri.parse('$baseUrl/update-secure-item');
+    final body = <String, dynamic>{
+      'vault_name': vaultName,
+      'old_service': oldService,
+      'item_type': itemType,
+      'pin': pin,
+    };
+    if (newService != null && newService.trim().isNotEmpty) {
+      body['new_service'] = newService.trim();
+    }
+    if (fields != null && fields.isNotEmpty) {
+      body['fields'] = fields;
+    }
+
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Could not update saved item',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// ZK ciphertext-first vault-item upsert helper. Called by
+  /// updateVaultSecureItem / saveCryptoWalletProfile / etc when an
+  /// unlocked MVK is available. Encrypts item_type + service + full
+  /// payload JSON under the vault's metadata subkey and POSTs to
+  /// /vault/ciphertext/vault-items. Returns null when no MVK is
+  /// active (caller falls through to legacy plaintext endpoint).
+  ///
+  /// This function is intentionally file-scope (not a method on
+  /// VaultAIClient) so it can be reused by any write path that
+  /// converges on a `(item_type, service, payload_json)` triple.
+  /// ZK ciphertext-first AI-memory finalize.
+  ///
+  /// Called by the chat SSE handler when the backend emits a
+  /// `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>` sentinel. Derives
+  /// `memoryKey` + `memoryLookupKey` from the active MVK, encrypts
+  /// the full memory proposal payload, computes the keyed lookup
+  /// hash locally, and POSTs to /vault/ciphertext/vault-ai-memory.
+  /// The backend accepts only ciphertext + hash; the user's memory
+  /// key/value never touches server storage in readable form.
+  ///
+  /// Returns true iff the finalize POST succeeded. False (with the
+  /// exception swallowed by the caller) means the memory was NOT
+  /// saved — correct privacy tradeoff on network/crypto failure.
+  Future<bool> tryZkFinalizeMemoryProposal({
+    required String baseUrl,
+    required String authToken,
+    required String memoryType,
+    required String memoryKey,
+    required String memoryValue,
+    String? memoryEventDate,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) return false;
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final memoryK = await hierarchy.memoryKey();
+    final memoryLookup = await hierarchy.memoryLookupKey();
+
+    final payloadJson = jsonEncode(<String, dynamic>{
+      'memory_key': memoryKey,
+      'memory_value': memoryValue,
+      if (memoryEventDate != null && memoryEventDate.isNotEmpty)
+        'memory_event_date': memoryEventDate,
+    });
+    final payloadCt = await vault_key_hierarchy.aesGcmWrap(
+      memoryK,
+      utf8.encode(payloadJson),
+    );
+    final lookupHash = await vault_key_hierarchy.keyedLookupHash(
+      memoryLookup,
+      utf8.encode(memoryKey),
+    );
+
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    final resp = await http.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'memory_type': memoryType,
+        'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
+        'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
+      }),
+    );
+    return resp.statusCode == 200;
+  }
+
+  /// ZK ciphertext-first uploaded_files metadata write. Called right
+  /// after an upload path returns a file_id; encrypts every readable
+  /// metadata field under the vault's metadata subkey and POSTs the
+  /// ciphertext to /vault/ciphertext/uploaded-files. That endpoint
+  /// writes the ciphertext columns AND NULLs the corresponding legacy
+  /// plaintext columns atomically. Fails-closed on ZK path.
+  Future<void> tryZkUploadedFileCiphertextUpdate({
+    required String baseUrl,
+    required String authToken,
+    required String fileId,
+    String? fileName,
+    String? savedName,
+    String? contentType,
+    String? detectedType,
+    String? detectedService,
+    String? assetType,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) return;
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final metaKey = await hierarchy.metadataKey();
+    Future<String?> ct(String? plaintext) async {
+      if (plaintext == null || plaintext.isEmpty) return null;
+      final bytes = await vault_key_hierarchy.aesGcmWrap(
+        metaKey,
+        utf8.encode(plaintext),
+      );
+      return vault_key_hierarchy.b64urlEncode(bytes);
+    }
+
+    final body = <String, dynamic>{'file_id': fileId};
+    final fnCt = await ct(fileName);
+    if (fnCt != null) body['file_name_ciphertext'] = fnCt;
+    final snCt = await ct(savedName);
+    if (snCt != null) body['saved_name_ciphertext'] = snCt;
+    final ctypeCt = await ct(contentType);
+    if (ctypeCt != null) body['content_type_ciphertext'] = ctypeCt;
+    final dtCt = await ct(detectedType);
+    if (dtCt != null) body['detected_type_ciphertext'] = dtCt;
+    final dsCt = await ct(detectedService);
+    if (dsCt != null) body['detected_service_ciphertext'] = dsCt;
+    final atCt = await ct(assetType);
+    if (atCt != null) body['asset_type_ciphertext'] = atCt;
+    if (body.length == 1) return; // nothing to encrypt
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
+    final resp = await http.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode(body),
+    );
+    if (resp.statusCode != 200) {
+      throw Exception(
+        'ZK ciphertext uploaded_files metadata write failed '
+        '(${resp.statusCode})',
+      );
     }
   }
 
-  final uri = Uri.parse('$baseUrl/update-secure-item');
-  final body = <String, dynamic>{
-    'vault_name':  vaultName,
-    'old_service': oldService,
-    'item_type':   itemType,
-    'pin':         pin,
-  };
-  if (newService != null && newService.trim().isNotEmpty) {
-    body['new_service'] = newService.trim();
-  }
-  if (fields != null && fields.isNotEmpty) {
-    body['fields'] = fields;
-  }
-
-  final response = await http.post(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode(body),
-  );
-
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'Could not update saved item',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
-  }
-
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
-
-
-/// ZK ciphertext-first vault-item upsert helper. Called by
-/// updateVaultSecureItem / saveCryptoWalletProfile / etc when an
-/// unlocked MVK is available. Encrypts item_type + service + full
-/// payload JSON under the vault's metadata subkey and POSTs to
-/// /vault/ciphertext/vault-items. Returns null when no MVK is
-/// active (caller falls through to legacy plaintext endpoint).
-///
-/// This function is intentionally file-scope (not a method on
-/// VaultAIClient) so it can be reused by any write path that
-/// converges on a `(item_type, service, payload_json)` triple.
-/// ZK ciphertext-first AI-memory finalize.
-///
-/// Called by the chat SSE handler when the backend emits a
-/// `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>` sentinel. Derives
-/// `memoryKey` + `memoryLookupKey` from the active MVK, encrypts
-/// the full memory proposal payload, computes the keyed lookup
-/// hash locally, and POSTs to /vault/ciphertext/vault-ai-memory.
-/// The backend accepts only ciphertext + hash; the user's memory
-/// key/value never touches server storage in readable form.
-///
-/// Returns true iff the finalize POST succeeded. False (with the
-/// exception swallowed by the caller) means the memory was NOT
-/// saved — correct privacy tradeoff on network/crypto failure.
-Future<bool> tryZkFinalizeMemoryProposal({
-  required String baseUrl,
-  required String authToken,
-  required String memoryType,
-  required String memoryKey,
-  required String memoryValue,
-  String? memoryEventDate,
-}) async {
-  final mvk = zk_mvk_store.ZkActiveMvk.current();
-  if (mvk == null) return false;
-  final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
-  final memoryK = await hierarchy.memoryKey();
-  final memoryLookup = await hierarchy.memoryLookupKey();
-
-  final payloadJson = jsonEncode(<String, dynamic>{
-    'memory_key': memoryKey,
-    'memory_value': memoryValue,
-    if (memoryEventDate != null && memoryEventDate.isNotEmpty)
-      'memory_event_date': memoryEventDate,
-  });
-  final payloadCt = await vault_key_hierarchy.aesGcmWrap(
-    memoryK, utf8.encode(payloadJson),
-  );
-  final lookupHash = await vault_key_hierarchy.keyedLookupHash(
-    memoryLookup, utf8.encode(memoryKey),
-  );
-
-  final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-  final resp = await http.post(
-    uri,
-    headers: <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $authToken',
-    },
-    body: jsonEncode(<String, dynamic>{
-      'memory_type': memoryType,
-      'memory_lookup_hash':
-          vault_key_hierarchy.b64urlEncode(lookupHash),
-      'payload_ciphertext':
-          vault_key_hierarchy.b64urlEncode(payloadCt),
-    }),
-  );
-  return resp.statusCode == 200;
-}
-
-
-/// ZK ciphertext-first uploaded_files metadata write. Called right
-/// after an upload path returns a file_id; encrypts every readable
-/// metadata field under the vault's metadata subkey and POSTs the
-/// ciphertext to /vault/ciphertext/uploaded-files. That endpoint
-/// writes the ciphertext columns AND NULLs the corresponding legacy
-/// plaintext columns atomically. Fails-closed on ZK path.
-Future<void> tryZkUploadedFileCiphertextUpdate({
-  required String baseUrl,
-  required String authToken,
-  required String fileId,
-  String? fileName,
-  String? savedName,
-  String? contentType,
-  String? detectedType,
-  String? detectedService,
-  String? assetType,
-}) async {
-  final mvk = zk_mvk_store.ZkActiveMvk.current();
-  if (mvk == null) return;
-  final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
-  final metaKey = await hierarchy.metadataKey();
-  Future<String?> ct(String? plaintext) async {
-    if (plaintext == null || plaintext.isEmpty) return null;
-    final bytes = await vault_key_hierarchy.aesGcmWrap(
-      metaKey, utf8.encode(plaintext),
+  Future<Map<String, dynamic>?> tryZkVaultItemCiphertextUpsert({
+    required String baseUrl,
+    required String authToken,
+    int? existingItemId,
+    required String itemType,
+    required String service,
+    required Map<String, dynamic> payload,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) return null;
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final metaKey = await hierarchy.metadataKey();
+    final itCt = await vault_key_hierarchy.aesGcmWrap(
+      metaKey,
+      utf8.encode(itemType),
     );
-    return vault_key_hierarchy.b64urlEncode(bytes);
-  }
-  final body = <String, dynamic>{'file_id': fileId};
-  final fnCt = await ct(fileName);
-  if (fnCt != null) body['file_name_ciphertext'] = fnCt;
-  final snCt = await ct(savedName);
-  if (snCt != null) body['saved_name_ciphertext'] = snCt;
-  final ctypeCt = await ct(contentType);
-  if (ctypeCt != null) body['content_type_ciphertext'] = ctypeCt;
-  final dtCt = await ct(detectedType);
-  if (dtCt != null) body['detected_type_ciphertext'] = dtCt;
-  final dsCt = await ct(detectedService);
-  if (dsCt != null) body['detected_service_ciphertext'] = dsCt;
-  final atCt = await ct(assetType);
-  if (atCt != null) body['asset_type_ciphertext'] = atCt;
-  if (body.length == 1) return; // nothing to encrypt
-  final uri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
-  final resp = await http.post(
-    uri,
-    headers: <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $authToken',
-    },
-    body: jsonEncode(body),
-  );
-  if (resp.statusCode != 200) {
-    throw Exception(
-      'ZK ciphertext uploaded_files metadata write failed '
-      '(${resp.statusCode})',
+    final svcCt = await vault_key_hierarchy.aesGcmWrap(
+      metaKey,
+      utf8.encode(service),
     );
-  }
-}
-
-
-Future<Map<String, dynamic>?> tryZkVaultItemCiphertextUpsert({
-  required String baseUrl,
-  required String authToken,
-  int? existingItemId,
-  required String itemType,
-  required String service,
-  required Map<String, dynamic> payload,
-}) async {
-  final mvk = zk_mvk_store.ZkActiveMvk.current();
-  if (mvk == null) return null;
-  final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
-  final metaKey = await hierarchy.metadataKey();
-  final itCt = await vault_key_hierarchy.aesGcmWrap(
-    metaKey, utf8.encode(itemType),
-  );
-  final svcCt = await vault_key_hierarchy.aesGcmWrap(
-    metaKey, utf8.encode(service),
-  );
-  final pyCt = await vault_key_hierarchy.aesGcmWrap(
-    metaKey, utf8.encode(jsonEncode(payload)),
-  );
-  final body = <String, dynamic>{
-    if (existingItemId != null) 'item_id': existingItemId,
-    'item_type_ciphertext': vault_key_hierarchy.b64urlEncode(itCt),
-    'service_ciphertext': vault_key_hierarchy.b64urlEncode(svcCt),
-    'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
-  };
-  final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-  final resp = await http.post(
-    uri,
-    headers: <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $authToken',
-    },
-    body: jsonEncode(body),
-  );
-  if (resp.statusCode != 200) {
-    // Fail closed for ZK — a broken ciphertext write must NOT
-    // silently fall back to plaintext.
-    throw Exception(
-      'ZK ciphertext vault-item write failed (${resp.statusCode})',
+    final pyCt = await vault_key_hierarchy.aesGcmWrap(
+      metaKey,
+      utf8.encode(jsonEncode(payload)),
     );
-  }
-  final decoded = jsonDecode(resp.body);
-  if (decoded is! Map<String, dynamic>) {
-    throw Exception('Invalid /vault/ciphertext/vault-items response');
-  }
-  return decoded;
-}
-
-
-Future<Map<String, dynamic>> deleteVaultSecureItem({
-  required String vaultName,
-  required String service,
-  required String itemType,
-  required String pin,
-  required String authToken,
-}) async {
-  final uri = Uri.parse('$baseUrl/delete-secure-item');
-
-  final response = await http.post(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode({
-      'vault_name': vaultName,
-      'service':    service,
-      'item_type':  itemType,
-      'pin':        pin,
-    }),
-  );
-
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'Could not delete saved item',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
+    final body = <String, dynamic>{
+      if (existingItemId != null) 'item_id': existingItemId,
+      'item_type_ciphertext': vault_key_hierarchy.b64urlEncode(itCt),
+      'service_ciphertext': vault_key_hierarchy.b64urlEncode(svcCt),
+      'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
+    };
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
+    final resp = await http.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode(body),
+    );
+    if (resp.statusCode != 200) {
+      // Fail closed for ZK — a broken ciphertext write must NOT
+      // silently fall back to plaintext.
+      throw Exception(
+        'ZK ciphertext vault-item write failed (${resp.statusCode})',
+      );
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid /vault/ciphertext/vault-items response');
+    }
+    return decoded;
   }
 
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
+  Future<Map<String, dynamic>> deleteVaultSecureItem({
+    required String vaultName,
+    required String service,
+    required String itemType,
+    required String pin,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/delete-secure-item');
 
-Future<Map<String, dynamic>> updateVaultFileName({
-  required String vaultName,
-  required String fileId,
-  required String savedName,
-  required String pin,
-  required String authToken,
-}) async {
-  final uri = Uri.parse('$baseUrl/manage/file');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'service': service,
+        'item_type': itemType,
+        'pin': pin,
+      }),
+    );
 
-  final response = await http.patch(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode({
-      'vault_name': vaultName,
-      'file_id': fileId,
-      'saved_name': savedName,
-      'pin': pin,
-    }),
-  );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Could not delete saved item',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
 
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'Update file failed',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
+  Future<Map<String, dynamic>> updateVaultFileName({
+    required String vaultName,
+    required String fileId,
+    required String savedName,
+    required String pin,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/manage/file');
 
-Future<Map<String, dynamic>> deleteVaultFile({
-  required String vaultName,
-  required String fileId,
-  required String pin,
-  required String authToken,
-}) async {
-  final uri = Uri.parse('$baseUrl/manage/file/delete');
+    final response = await http.patch(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'file_id': fileId,
+        'saved_name': savedName,
+        'pin': pin,
+      }),
+    );
 
-  final response = await http.post(
-    uri,
-    headers: _defaultHeaders(authToken: authToken, json: true),
-    body: jsonEncode({
-      'vault_name': vaultName,
-      'file_id': fileId,
-      'pin': pin,
-    }),
-  );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Update file failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
 
-  if (response.statusCode != 200) {
-    _throwIfAuthExpired(response.statusCode, response.body);
-    _throwIfDeviceNotTrusted(response.statusCode, response.body);
-    _throwIfLockOrFrozen(response.statusCode, response.body);
-    throw Exception(_formatBackendError(
-      prefix: 'Delete file failed',
-      statusCode: response.statusCode,
-      responseBody: response.body,
-    ));
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  return jsonDecode(response.body) as Map<String, dynamic>;
-}
+  Future<Map<String, dynamic>> deleteVaultFile({
+    required String vaultName,
+    required String fileId,
+    required String pin,
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/manage/file/delete');
+
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'vault_name': vaultName,
+        'file_id': fileId,
+        'pin': pin,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      _throwIfLockOrFrozen(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Delete file failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
 
   Uint8List decodeDownloadedFileBytes(Map<String, dynamic> payload) {
     final base64Data = payload['base64_data'];
@@ -3970,8 +3914,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
       if (decoded is Map<String, dynamic>) {
         final rawDetail = decoded['detail'];
         if (rawDetail is Map && rawDetail['message'] != null) {
-          
-          
           detail = rawDetail['message'].toString();
         } else if (rawDetail != null) {
           detail = rawDetail.toString();
@@ -3979,9 +3921,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
           detail = decoded['message'].toString();
         }
       }
-    } catch (_) {
-      
-    }
+    } catch (_) {}
 
     if (detail.isEmpty) {
       return '$prefix: $statusCode';
@@ -3990,7 +3930,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return '$prefix: $statusCode - $detail';
   }
 
-  
   Future<Map<String, dynamic>> fetchRelatedFiles({
     required String fileId,
     required String pin,
@@ -4019,7 +3958,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> createCryptoWalletAccount({
     required String asset,
     required String authToken,
@@ -4033,9 +3971,9 @@ Future<Map<String, dynamic>> deleteVaultFile({
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'walletLabel':           walletLabel,
-        'publicAddress':         publicAddress,
-        'network':               network,
+        'walletLabel': walletLabel,
+        'publicAddress': publicAddress,
+        'network': network,
         'encryptedWalletSecret': encryptedWalletSecret,
       }),
     );
@@ -4055,7 +3993,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletAccount({
     required String asset,
     required String authToken,
@@ -4081,7 +4018,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletReceive({
     required String asset,
     required String authToken,
@@ -4107,7 +4043,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletBalance({
     required String asset,
     required String authToken,
@@ -4136,7 +4071,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletEncryptedSecret({
     required String asset,
     required String authToken,
@@ -4162,7 +4096,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   /// ZK ciphertext-first outgoing-history persistence. Fire-and-
   /// forget from the panel; a failure never blocks the send-success
   /// UI.
@@ -4213,9 +4146,9 @@ Future<Map<String, dynamic>> deleteVaultFile({
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset/send/draft');
     final body = <String, dynamic>{
-      'fromAddress':        fromAddress,
+      'fromAddress': fromAddress,
       'destinationAddress': destinationAddress,
-      'amountEth':          amountEth,
+      'amountEth': amountEth,
     };
     if (draftPayloadCiphertext != null) {
       body['draftPayloadCiphertext'] = draftPayloadCiphertext;
@@ -4244,7 +4177,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> broadcastCryptoWalletSignedTransaction({
     required String asset,
     required String authToken,
@@ -4274,7 +4206,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletTransactionStatus({
     required String asset,
     required String txHash,
@@ -4303,7 +4234,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletReceiveNetwork({
     required String network,
     required String asset,
@@ -4332,7 +4262,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> createCryptoWalletAccountNetwork({
     required String network,
     required String asset,
@@ -4347,9 +4276,9 @@ Future<Map<String, dynamic>> deleteVaultFile({
       '$baseUrl/crypto/wallet/network/$network/$asset/create',
     );
     final body = <String, dynamic>{
-      'walletLabel':           walletLabel,
-      'publicAddress':         publicAddress,
-      'network':               network,
+      'walletLabel': walletLabel,
+      'publicAddress': publicAddress,
+      'network': network,
       'encryptedWalletSecret': encryptedWalletSecret,
     };
     if (restoreHeight != null) {
@@ -4379,7 +4308,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletBalanceNetwork({
     required String network,
     required String asset,
@@ -4409,7 +4337,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> listCryptoWalletTransactionsNetwork({
     required String network,
     required String asset,
@@ -4439,7 +4366,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> listCryptoWalletTransactions({
     required String asset,
     required String authToken,
@@ -4468,7 +4394,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> listCryptoWalletAccounts({
     required String authToken,
   }) async {
@@ -4493,7 +4418,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> createCryptoWalletSendDraftNetwork({
     required String network,
     required String asset,
@@ -4512,7 +4436,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
       '$baseUrl/crypto/wallet/network/$network/$asset/send/draft',
     );
     final body = <String, dynamic>{
-      'fromAddress':        fromAddress,
+      'fromAddress': fromAddress,
       'destinationAddress': destinationAddress,
     };
     if (amountEth != null) body['amountEth'] = amountEth;
@@ -4545,9 +4469,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
-  Future<Map<String, dynamic>>
-      broadcastCryptoWalletSignedTransactionNetwork({
+  Future<Map<String, dynamic>> broadcastCryptoWalletSignedTransactionNetwork({
     required String network,
     required String asset,
     required String authToken,
@@ -4588,7 +4510,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletEncryptedSecretNetwork({
     required String network,
     required String asset,
@@ -4617,7 +4538,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletFeatures({
     required String authToken,
   }) async {
@@ -4642,7 +4562,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletDiagnosis({
     required String authToken,
     String? adminToken,
@@ -4668,7 +4587,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     }
     return decoded;
   }
-
 
   Future<Map<String, dynamic>> classifyVaultChat({
     required String message,
@@ -4696,7 +4614,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-
   Future<Map<String, dynamic>> classifyCryptoVaultChat({
     required String message,
     required String authToken,
@@ -4722,7 +4639,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     }
     return decoded;
   }
-
 
   Future<Map<String, dynamic>> getXmrScannerStatus({
     required String authToken,
@@ -4752,7 +4668,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-
   Future<Map<String, dynamic>> getCryptoWalletHealth({
     required String authToken,
     String? adminToken,
@@ -4779,7 +4694,6 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  
   Future<Map<String, dynamic>> getCryptoWalletTransactionStatusNetwork({
     required String network,
     required String asset,
@@ -4883,8 +4797,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
   // Anything other than exactly `status: "fee_estimate_ready"` +
   // parseable `authorizedMaxFeeBaseUnits` MUST be treated as a
   // "Max temporarily unavailable" fail-closed state by the caller.
-  Future<Map<String, dynamic>>
-      postCryptoWalletSendFeeEstimateNetwork({
+  Future<Map<String, dynamic>> postCryptoWalletSendFeeEstimateNetwork({
     required String network,
     required String fromAddress,
     required String destinationAddress,
@@ -4898,9 +4811,9 @@ Future<Map<String, dynamic>> deleteVaultFile({
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'fromAddress':        fromAddress,
+        'fromAddress': fromAddress,
         'destinationAddress': destinationAddress,
-        'asset':              asset,
+        'asset': asset,
       }),
     );
     if (response.statusCode != 200) {
@@ -4919,8 +4832,7 @@ Future<Map<String, dynamic>> deleteVaultFile({
     return decoded;
   }
 
-  Future<Map<String, dynamic>>
-      getCryptoWalletDraftExpiryNetwork({
+  Future<Map<String, dynamic>> getCryptoWalletDraftExpiryNetwork({
     required String network,
     required String draftId,
     required String authToken,

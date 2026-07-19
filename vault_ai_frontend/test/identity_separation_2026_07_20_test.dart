@@ -138,17 +138,19 @@ void main() {
       );
     });
 
-    test('account menu label reads canonicalUsername before displayUsername',
-        () {
+    test('account menu label reads displayUsername (human profile), '
+        'never canonicalUsername or vaultAiName', () {
+      // 2026-07-20 correction: after the vault-AI-name introduction,
+      // the top-right account menu is the HUMAN PROFILE surface —
+      // it shows the owner's display name only. The canonical
+      // username (login identifier) does not belong there;
+      // the vault AI name belongs in the chat surface only.
       final src = _read('lib/main.dart');
-      // dart format may wrap the ternary across lines, so match on
-      // a whitespace-tolerant regex instead of an exact string.
-      final re = RegExp(
-        r"app\.canonicalUsername\s*\?\?\s*"
-        r"app\.displayUsername\s*\?\?\s*'VaultAI User'",
-      );
-      final matches = re.allMatches(src).length;
-      expect(matches, greaterThanOrEqualTo(2));
+      final re = RegExp(r"app\.displayUsername\s*\?\?\s*'Account'");
+      expect(re.allMatches(src).length, greaterThanOrEqualTo(2),
+          reason: 'both PopupMenu header and account chip must '
+              'read displayUsername with the neutral "Account" '
+              'fallback');
     });
   });
 
@@ -197,16 +199,23 @@ void main() {
     });
   });
 
-  group('Deterministic account-identity chat intent', () {
-    test('the intent regex covers vault-name / username / who-am-i '
-         'questions and only exact-form matches', () {
+  group('Deterministic account-USERNAME chat intent (narrowed)', () {
+    // 2026-07-20 correction: the intent was renamed from the
+    // ambiguous _accountIdentityQueryRe / _tryDirectAccountIdentityReply
+    // to _accountUsernameQueryRe / _tryDirectAccountUsernameReply,
+    // and its regex + reply text were narrowed to cover ONLY
+    // unambiguous login-identifier questions. AI-side questions
+    // ("who are you", "what is your name", "what is your role")
+    // fall through to the LLM path so the vault-AI identity
+    // context can answer specifically.
+
+    test('the intent regex is renamed to _accountUsernameQueryRe '
+        'and only matches exact-form login-identifier questions', () {
       final src = _read('lib/main.dart');
-      final idx = src.indexOf('_accountIdentityQueryRe = RegExp');
+      final idx = src.indexOf('_accountUsernameQueryRe = RegExp');
       expect(idx, greaterThan(-1),
-          reason: 'a deterministic account-identity intent must exist');
-      // The regex must not accidentally match casual chat like
-      // "my vault name is a mess". Anchoring on ^ and $ is the
-      // primary defense.
+          reason: 'the narrowed account-username intent must exist '
+              'under the new name');
       final tailIdx = src.indexOf(');', idx);
       final regexSrc = src.substring(idx, tailIdx);
       expect(regexSrc.contains(r'"^\s*(?:"'), isTrue,
@@ -214,33 +223,32 @@ void main() {
       expect(regexSrc.contains(r"caseSensitive: false"), isTrue);
     });
 
-    test('the intent replies from canonicalUsername first, then nickname, '
-         'then a neutral prompt — never from the VLT handle or uuid', () {
+    test('the intent replies "Your username is X" (never "Your vault '
+        'name is X"), and never surfaces the VLT handle or UUID', () {
       final src = _read('lib/main.dart');
-      final idx = src.indexOf('_tryDirectAccountIdentityReply(');
+      final idx = src.indexOf('_tryDirectAccountUsernameReply(');
       expect(idx, greaterThan(-1));
       final endIdx = src.indexOf('Future<void> _send()', idx);
       final window = src.substring(idx, endIdx);
-      expect(window.contains(r"'Your vault name is $canonical.'"), isTrue);
+      expect(window.contains(r"'Your username is $canonical.'"), isTrue,
+          reason: 'reply must specifically name the login identifier');
+      expect(window.contains(r"'Your vault name is"), isFalse,
+          reason: 'the pre-2026-07-20 phrasing conflated the login '
+              'identifier with the vault-AI identity');
       expect(window.contains(r'canonical.isNotEmpty'), isTrue);
-      // NEGATIVE: neither the vault handle nor vault_id nor the raw
-      // exception may appear in the reply string.
-      expect(window.contains('vaultHandle'), isFalse,
-          reason: 'account-identity intent must never surface the '
-                  'VLT-* handle');
-      expect(window.contains('vaultId'), isFalse,
-          reason: 'account-identity intent must never surface the '
-                  'internal UUID');
+      // NEGATIVE: neither the vault handle nor vault_id may appear.
+      expect(window.contains('vaultHandle'), isFalse);
+      expect(window.contains('vaultId'), isFalse);
     });
 
     test('the intent is dispatched from _send BEFORE any network call', () {
       final src = _read('lib/main.dart');
       final sendIdx = src.indexOf('Future<void> _send() async {');
       expect(sendIdx, greaterThan(-1));
-      final window = src.substring(sendIdx, (sendIdx + 8000).clamp(0, src.length));
-      final intentIdx = window.indexOf('_tryDirectAccountIdentityReply(text, app)');
-      // If the intent check moved after the network payload build,
-      // the reply would race with a real chat request.
+      final window =
+          src.substring(sendIdx, (sendIdx + 8000).clamp(0, src.length));
+      final intentIdx =
+          window.indexOf('_tryDirectAccountUsernameReply(text, app)');
       expect(intentIdx, greaterThan(-1));
     });
   });

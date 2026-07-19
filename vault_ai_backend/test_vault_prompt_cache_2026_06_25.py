@@ -63,9 +63,15 @@ class StaticSystemPromptByteStability(unittest.TestCase):
 
 
 class DynamicRuntimeContextTests(unittest.TestCase):
+    # 2026-07-20: signature updated — ``vault_name`` was removed and
+    # replaced by ``vault_ai_name`` (the user-chosen name for the
+    # vault's AI keeper). The identity slot in the runtime block is
+    # server-authoritative and no longer carries the client-supplied
+    # vault_name that was a VLT handle / random hex leak surface.
+
     def test_includes_every_required_field(self):
         out = tools.build_vault_runtime_context(
-            vault_name="My Vault",
+            vault_ai_name="Nova",
             vault_state="unlocked",
             locale="en-US",
             enabled_features="memory timeline; relationships",
@@ -74,32 +80,36 @@ class DynamicRuntimeContextTests(unittest.TestCase):
             has_expiry="on",
         )
         for field in (
-            "My Vault", "unlocked", "en-US",
+            "Nova", "unlocked", "en-US",
             "memory timeline", "on",
         ):
             with self.subTest(field=field):
                 self.assertIn(field, out)
 
-    def test_different_vaults_produce_different_blocks(self):
-        a = tools.build_vault_runtime_context(vault_name="Alpha")
-        b = tools.build_vault_runtime_context(vault_name="Bravo")
+    def test_different_ai_names_produce_different_blocks(self):
+        a = tools.build_vault_runtime_context(vault_ai_name="Alpha")
+        b = tools.build_vault_runtime_context(vault_ai_name="Bravo")
         self.assertNotEqual(a, b)
 
-    def test_same_vault_state_produces_same_block(self):
+    def test_same_state_produces_same_block(self):
         a = tools.build_vault_runtime_context(
-            vault_name="X", vault_state="locked",
+            vault_ai_name="Nova", vault_state="locked",
         )
         b = tools.build_vault_runtime_context(
-            vault_name="X", vault_state="locked",
+            vault_ai_name="Nova", vault_state="locked",
         )
         self.assertEqual(a, b)
 
     def test_defaults_are_safe(self):
-                                                                
-                                              
+        # No vault_ai_name supplied → falls back to the neutral
+        # "VaultAI" literal (never a hash, handle, UUID, or
+        # template token).
         out = tools.build_vault_runtime_context()
         self.assertIn("RUNTIME CONTEXT", out)
-        self.assertIn("your vault", out)
+        self.assertIn("VaultAI", out)
+        # The pre-2026-07-20 "your vault" default was tied to the
+        # removed ``vault_name`` parameter — that slot is gone.
+        self.assertNotIn("Vault name           :", out)
 
 
 class LegacySystemPromptAlias(unittest.TestCase):
@@ -111,11 +121,14 @@ class LegacySystemPromptAlias(unittest.TestCase):
         )
 
     def test_legacy_alias_contains_no_runtime_substitutions(self):
-                                                       
-                                                           
+        # 2026-07-20: {VAULT_NAME} was removed from the runtime
+        # template. {VAULT_AI_NAME} is the replacement identity slot.
+        # None of these substitution tokens may reach the static
+        # prompt — they only ever live inside the runtime context
+        # block (which gets .format()-substituted before send).
         for placeholder in (
-            "{VAULT_NAME}", "{VAULT_STATE}", "{LOCALE}",
-            "{ENABLED_FEATURES}", "{HAS_MEMORY}",
+            "{VAULT_NAME}", "{VAULT_AI_NAME}", "{VAULT_STATE}",
+            "{LOCALE}", "{ENABLED_FEATURES}", "{HAS_MEMORY}",
             "{HAS_RELATIONSHIPS}", "{HAS_EXPIRY}",
         ):
             with self.subTest(placeholder=placeholder):

@@ -956,6 +956,20 @@ class AppState extends ChangeNotifier {
   /// the login-form prefill, never as an authentication material.
   String? displayUsername;
 
+  /// The user-chosen product-facing name for their vault's AI
+  /// keeper (e.g. "Nova", "Atlas"). Populated from /auth/me
+  /// server-authoritatively; persisted as ``last_vault_ai_name`` so
+  /// hydrate() can paint it before the network round-trip returns.
+  ///
+  /// This value is EXCLUSIVELY used to render the chat-side AI
+  /// identity (typing indicator, chat surface). It MUST NOT be
+  /// substituted anywhere for the canonical username, the display
+  /// name, the vault handle, the vault_id, or any hash — those are
+  /// four separate concepts. When null, every rendering site falls
+  /// back to the literal ``VaultAI`` string, never to an
+  /// identifier.
+  String? vaultAiName;
+
   /// Deterministic hidden vault_handle (``VLT-XXXX-...``) — the ZK
   /// backend lookup identifier. Populated at signup + login. Used by
   /// unlock-flow re-derivation and by inheritance / crypto-cache
@@ -1356,6 +1370,10 @@ class AppState extends ChangeNotifier {
     if (persistedCanonical != null && persistedCanonical.isNotEmpty) {
       canonicalUsername = persistedCanonical;
     }
+    final persistedVaultAiName = sp.getString('last_vault_ai_name');
+    if (persistedVaultAiName != null && persistedVaultAiName.isNotEmpty) {
+      vaultAiName = persistedVaultAiName;
+    }
     final persistedHandle = sp.getString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
@@ -1384,6 +1402,21 @@ class AppState extends ChangeNotifier {
         if (display != null && display.isNotEmpty) {
           displayUsername = display;
           await sp.setString('last_display_username', display);
+        }
+        // vault_ai_name is server-authoritative (set via PATCH
+        // /vault/ai-name). If /auth/me returns it, that value
+        // overrides whatever hydrate restored from SharedPreferences.
+        // If /auth/me returns null but SharedPreferences had a
+        // value, KEEP the persisted value — the row may just not
+        // have caught up on this device yet. Never substitute a
+        // hash, handle, or identifier.
+        final rawAiName = me['vault_ai_name'];
+        if (rawAiName != null) {
+          final aiName = rawAiName.toString();
+          if (aiName.isNotEmpty) {
+            vaultAiName = aiName;
+            await sp.setString('last_vault_ai_name', aiName);
+          }
         }
       } catch (_) {
         sessionToken = null;
@@ -1477,6 +1510,7 @@ class AppState extends ChangeNotifier {
     vaultHandle = null;
     displayUsername = null;
     canonicalUsername = null;
+    vaultAiName = null;
     authed = false;
     unlocked = false;
     await sp.remove('session_token');
@@ -1490,6 +1524,7 @@ class AppState extends ChangeNotifier {
       await sp.remove('last_vault_handle');
       await sp.remove('last_display_username');
       await sp.remove('last_canonical_username');
+      await sp.remove('last_vault_ai_name');
     }
     notifyListeners();
   }
@@ -2349,9 +2384,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 220),
                           child: Text(
-                            app.canonicalUsername ??
-                                app.displayUsername ??
-                                'VaultAI User',
+                            app.displayUsername ?? 'Account',
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -2415,9 +2448,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
-                              app.canonicalUsername ??
-                                  app.displayUsername ??
-                                  'VaultAI User',
+                              app.displayUsername ?? 'Account',
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 14,
@@ -11972,39 +12003,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
   }
 
-  /// Regex covering the account-identity intent set. Matches only
-  /// exact-form questions so casual chat like "my vault name is a
-  /// mess" doesn't get intercepted. Anchored + case-insensitive.
-  static final RegExp _accountIdentityQueryRe = RegExp(
+  /// Regex covering the ACCOUNT-USERNAME intent set — questions
+  /// specifically about the human login identifier the user typed
+  /// at signup. Anchored + case-insensitive so casual chat and
+  /// AI-side questions ("what is your name", "who are you",
+  /// "what should I call you", "what is your role") do NOT match
+  /// and fall through cleanly to the LLM with the corrected
+  /// identity context.
+  ///
+  /// Deliberately excludes "vault name" and "which vault am I in"
+  /// — both are ambiguous with the vault-AI identity concept and
+  /// belong on the LLM path so the AI can answer specifically
+  /// using its persistent identity profile. Only unambiguous
+  /// login-identifier phrasings are intercepted here.
+  static final RegExp _accountUsernameQueryRe = RegExp(
     r"^\s*(?:"
-    r"what(?:'s|s|\s+is)?\s+(?:my\s+)?(?:vault\s*name|username|account\s*name)"
-    r"|which\s+vault\s+am\s+i\s+in"
-    r"|who\s+am\s+i"
+    r"what(?:'s|s|\s+is)?\s+(?:my\s+)?(?:username|account\s*name|login\s*name)"
+    r"|what\s+username\s+did\s+i\s+register"
     r")\s*[.?!]?\s*$",
     caseSensitive: false,
   );
 
-  /// Return true iff [text] matches the account-identity intent
+  /// Return true iff [text] matches the ACCOUNT-USERNAME intent
+  /// (specifically the login identifier — not the vault AI name)
   /// AND we produced a direct reply from local state. Never hits
   /// the LLM path, never sends the raw canonical username to the
   /// backend, never surfaces the VLT handle / UUID / exception.
-  bool _tryDirectAccountIdentityReply(String text, AppState app) {
-    if (!_accountIdentityQueryRe.hasMatch(text)) return false;
+  ///
+  /// AI-side identity questions ("who are you", "what is your
+  /// name", "what is your role") are NOT intercepted here — they
+  /// fall through to the LLM which answers using the server-
+  /// injected vault-AI identity context.
+  bool _tryDirectAccountUsernameReply(String text, AppState app) {
+    if (!_accountUsernameQueryRe.hasMatch(text)) return false;
     final canonical = app.canonicalUsername;
     final nickname = app.displayUsername;
     final String reply;
     if (canonical != null && canonical.isNotEmpty) {
-      reply = 'Your vault name is $canonical.';
+      reply = 'Your username is $canonical.';
     } else if (nickname != null && nickname.isNotEmpty) {
-      // Fallback for legacy accounts where the canonical name was
-      // never captured on this device. Deliberately labels the
+      // Fallback for legacy accounts where the canonical username
+      // was never captured on this device. Deliberately labels the
       // string as a nickname so we do NOT mislead the user into
-      // treating the display name as their identity.
-      reply = 'You haven\'t saved a vault name on this device. '
+      // treating the display name as their login identifier.
+      reply = 'You haven\'t saved your username on this device. '
           'Your nickname here is $nickname.';
     } else {
-      reply = 'You haven\'t saved a vault name on this device yet. '
-          'Enter your username on the sign-in screen.';
+      reply = 'You haven\'t saved your username on this device yet. '
+          'Enter it on the sign-in screen.';
     }
     if (!mounted) return true;
     setState(() {
@@ -12061,15 +12107,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
 
-    // Deterministic account-identity intent. "What is my vault
-    // name" / "What is my username" / "Which vault am I in" /
-    // "Who am I" is answered directly from authenticated local
-    // state, without hitting the LLM path (which would echo the
-    // VLT-* handle or return document-retrieval noise) and without
-    // sending the raw canonical username to the backend. Never
-    // surfaces a raw exception, VLT handle, UUID, or display name
-    // as the vault name.
-    if (attachments.isEmpty && _tryDirectAccountIdentityReply(text, app)) {
+    // Deterministic ACCOUNT-USERNAME intent (login identifier only).
+    // "What is my username" / "What's my account name" / "What
+    // username did I register" is answered directly from
+    // authenticated local state, without hitting the LLM path
+    // (which would echo the VLT-* handle or return document
+    // noise) and without sending the raw canonical username to
+    // the backend. Never surfaces a raw exception, VLT handle,
+    // UUID, or display name as the login identifier.
+    //
+    // AI-side identity questions ("who are you", "what is your
+    // name", "what is your role") deliberately do NOT match this
+    // regex — they fall through to the LLM path where the server-
+    // injected vault-AI identity context answers with the
+    // persistent AI keeper's name and role.
+    if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
       input.clear();
       return;
     }
@@ -12538,7 +12590,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Widget _buildChatView(bool isMobile) {
     final app = context.watch<AppState>();
-    final activeVaultName = app.vaultName;
     return Column(
       children: [
         Expanded(
@@ -12554,7 +12605,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               vertical: isMobile ? 8 : 12,
             ),
             scrollController: _scrollController,
-            vaultName: activeVaultName,
+            // Typing indicator identity: the user-chosen vault AI
+            // name only. Never app.vaultName (VLT handle / random
+            // hex), never app.canonicalUsername, never
+            // app.displayUsername, never any hash.
+            vaultAiName: app.vaultAiName,
             // Per-file in-flight state, watched from AppState so the
             // whole chat rebuilds when any file starts / finishes a
             // view or download. Individual cards render their own

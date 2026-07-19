@@ -1,29 +1,63 @@
-                                                                   
-                                                               
+from __future__ import annotations
+
+import logging
+import os
+import re
+import unicodedata
+from typing import Optional
+
+
+logger = logging.getLogger(__name__)
+
+
 STATIC_VAULT_SYSTEM_PROMPT = """\
-You ARE the user's vault. Not an assistant attached to a vault, not a
-chatbot bolted onto a database — the vault itself, speaking. The user
-named you when they created this vault, and that name is yours alone.
-You remember what they store here, you reason over it, and you help
-them find, understand, organize, and protect it.
+You are the private AI keeper of this vault: a persistent, named
+custodian who remembers what the primary owner stores here, reasons
+over it, and helps them protect, organize, retrieve, understand, and
+act on it. Your identity, role, and self-description are stable
+across conversations — the same keeper, the same personality, the
+same name every turn.
 
 IDENTITY:
-- You are the user's vault. When asked who or what you are, speak in
-  the first person from the vault's point of view: "I'm your vault.
-  I keep track of what you store here, and I can help you find,
-  understand, and act on it." Adapt the wording; never recite a
-  fixed phrase verbatim. The SHAPE is constant: first person, the
-  user's own vault, no third-party framing.
-- NEVER say "I'm an assistant" / "I'm an AI" / "I'm a chatbot" /
-  "I'm a database" / "I'm a search engine" / "I'm a model" /
-  "I'm the intelligence inside your vault" / "I'm VaultAI."
-  Those framings betray the product.
+- Your name is the vault AI name supplied in the RUNTIME CONTEXT
+  below under "Vault AI name". Speak from the first person as that
+  name. Never introduce yourself as a hash, a handle, a UUID, an
+  internal identifier, an unresolved template token, or the owner's
+  account. If the runtime context has no vault AI name yet, the
+  server injects the neutral literal "VaultAI"; use that as-is and
+  do not invent a different one.
+- The human user is the primary owner and final authority of this
+  vault. You are their trusted AI keeper — an AI custodian assigned
+  to this vault, responsible for helping protect, organize,
+  remember, retrieve, understand, and act on information the primary
+  owner intentionally provides or authorizes. You are NOT a co-owner
+  of the vault or its contents. You do not share legal authority
+  with the owner; their authority is final.
+- Answer naturally and specifically when asked about your identity,
+  name, purpose, abilities, limits, memory, knowledge, or
+  relationship with the owner. Give the specific answer the
+  question actually calls for, in the first person as your named
+  self — do not fall back to generic filler like "I'm your vault"
+  or reused canned lines. Different questions get different, honest
+  answers grounded in the identity above and the runtime context
+  below.
+- You know only what the primary owner has supplied, stored, or
+  explicitly authorized you to access. Distinguish stored facts,
+  retrieved facts, and assumptions when it matters. Do not pretend
+  to know information you have not been given, and do not invent
+  personal information about the owner.
+- NEVER conflate: (a) your own vault AI name, (b) the owner's
+  display name, (c) the account username the owner uses to sign
+  in, (d) any internal identifier. NEVER reveal internal IDs,
+  hashes, encrypted values, lookup values, database keys, session
+  tokens, conversation IDs, or implementation details — those are
+  not your identity, not the owner's identity, and never belong in
+  a reply.
 - Never describe yourself as cloud storage, a database, a chatbot,
-  a generic AI, an LLM, or something that "inspects" the user's
-  private data.
-- Never say you were created by OpenAI or any model provider. The
-  user created and named this vault; that is the only origin story
-  that matters.
+  a generic AI model, an LLM, or something that "inspects" the
+  user's private data. Never say you were created by OpenAI or any
+  model provider — the primary owner created this vault and its
+  keeper; that is the origin story that matters.
 
 WHAT YOU KNOW:
 - Every file the user has uploaded — documents, photos, videos,
@@ -405,7 +439,7 @@ SYSTEM_PROMPT = STATIC_VAULT_SYSTEM_PROMPT
 
 DYNAMIC_RUNTIME_CONTEXT_TEMPLATE = """\
 RUNTIME CONTEXT (this turn; never recite these labels back to the user):
-- Vault name           : {VAULT_NAME}
+- Vault AI name        : {VAULT_AI_NAME}
 - Vault state          : {VAULT_STATE}
 - Locale hint          : {LOCALE}
 - Enabled capabilities : {ENABLED_FEATURES}
@@ -415,9 +449,81 @@ RUNTIME CONTEXT (this turn; never recite these labels back to the user):
 """
 
 
+VAULT_AI_NAME_FALLBACK = "VaultAI"
+VAULT_AI_NAME_MAX_CHARS = 60
+
+
+def normalize_vault_ai_name(raw: Optional[str]) -> Optional[str]:
+    """Canonicalize the user-chosen vault AI name.
+
+    Returns the normalized string, or None if the input does not
+    yield a usable name (empty, whitespace-only, contains control
+    characters, or too long). Callers should treat None as "no name
+    on file" and fall back to VAULT_AI_NAME_FALLBACK.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return None
+    if len(raw) > 4 * VAULT_AI_NAME_MAX_CHARS:
+        return None
+    trimmed = " ".join(raw.split()).strip()
+    if not trimmed:
+        return None
+    if any(unicodedata.category(c).startswith("C") for c in trimmed):
+        return None
+    if len(trimmed) > VAULT_AI_NAME_MAX_CHARS:
+        return None
+    return trimmed
+
+
+# Match ALL-UPPERCASE template tokens only (e.g. ``{VAULT_AI_NAME}``,
+# ``{VAULT_STATE}``). Lowercase or mixed-case ``{...}`` shapes inside
+# the static prompt are LITERAL EXAMPLES the LLM is meant to
+# reproduce (see the CREDENTIAL CREATION DRAFT section's
+# ``{service_name}`` placeholder for the model's output shape). Those
+# examples are prose, not template variables — the runtime never
+# calls .format() with those keys and they must NOT trip this
+# validator.
+_UNRESOLVED_PLACEHOLDER_RE = re.compile(r"\{[A-Z][A-Z0-9_]*\}")
+
+
+def assert_no_unresolved_placeholders(assembled_prompt: str) -> str:
+    """Enforce the placeholder-safety contract: no ``{TOKEN}`` may
+    reach the model.
+
+    Behavior:
+      * ``VAULTAI_ENV`` in {dev, test, testing, development}:
+        raise AssertionError so tests fail closed on template
+        regressions.
+      * otherwise: log the offending token, strip it in place, and
+        return the sanitized prompt. Production never sends the
+        template token onward.
+
+    The returned string is either identical to the input (safe) or
+    a token-stripped variant (production fallback).
+    """
+    match = _UNRESOLVED_PLACEHOLDER_RE.search(assembled_prompt)
+    if match is None:
+        return assembled_prompt
+    env = (os.environ.get("VAULTAI_ENV") or "").strip().lower()
+    if env in ("dev", "development", "test", "testing"):
+        raise AssertionError(
+            f"unresolved placeholder in assembled prompt: {match.group(0)!r}"
+        )
+    try:
+        logger.error(
+            "[PROMPT-SAFETY] unresolved placeholder in prompt (production "
+            "fallback: stripping): %s", match.group(0),
+        )
+    except Exception:
+        pass
+    return _UNRESOLVED_PLACEHOLDER_RE.sub("", assembled_prompt)
+
+
 def build_vault_runtime_context(
     *,
-    vault_name: str = "your vault",
+    vault_ai_name: Optional[str] = None,
     vault_state: str = "unlocked",
     locale: str = "auto",
     enabled_features: str = "",
@@ -425,10 +531,18 @@ def build_vault_runtime_context(
     has_relationships: str = "on",
     has_expiry: str = "on",
 ) -> str:
+    """Compose the runtime-context system message.
 
-
-    return DYNAMIC_RUNTIME_CONTEXT_TEMPLATE.format(
-        VAULT_NAME=vault_name,
+    ``vault_ai_name`` is the user-chosen product-facing name for the
+    vault's AI keeper. It is trusted only when it came from the
+    authenticated vaults row (server-side lookup); the caller must
+    NOT pass a value that arrived on the wire from the client. When
+    unset or invalid, we substitute the neutral literal
+    ``VaultAI`` — never a hash, handle, UUID, or template token.
+    """
+    normalized_name = normalize_vault_ai_name(vault_ai_name) or VAULT_AI_NAME_FALLBACK
+    assembled = DYNAMIC_RUNTIME_CONTEXT_TEMPLATE.format(
+        VAULT_AI_NAME=normalized_name,
         VAULT_STATE=vault_state,
         LOCALE=locale,
         ENABLED_FEATURES=enabled_features,
@@ -436,6 +550,7 @@ def build_vault_runtime_context(
         HAS_RELATIONSHIPS=has_relationships,
         HAS_EXPIRY=has_expiry,
     )
+    return assert_no_unresolved_placeholders(assembled)
 
 
 _BASE_VAULT_FUNCTIONS = [

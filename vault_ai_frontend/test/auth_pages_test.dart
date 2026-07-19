@@ -374,34 +374,54 @@ void main() {
 
   
   group('Post-auth account labels never fall back to vault_name', () {
-    test('TopNavBar account labels use displayUsername ?? "VaultAI '
-        'User", never vaultName', () {
+    test('TopNavBar account labels use displayUsername ?? "Account", '
+        'never vaultName or vaultAiName', () {
+      // 2026-07-20 update: the profile menu now uses the neutral
+      // "Account" fallback (not "VaultAI User") to keep the human
+      // profile surface visually distinct from the vault AI
+      // identity surface. displayUsername is the sole primary
+      // source; nothing else — canonicalUsername, vaultAiName,
+      // vaultName, vaultHandle, or any hash — may appear here.
       final src = _readLib('main.dart');
       final classIdx = src.indexOf('class TopNavBar');
       expect(classIdx, greaterThan(-1));
-      
+
       final window = src.substring(
         classIdx,
         (classIdx + 12000).clamp(0, src.length),
       );
-      
+
       expect(
         window,
-        contains("'VaultAI User'"),
-        reason: 'TopNavBar must use the generic "VaultAI User" '
-                'fallback in the displayUsername chain.',
+        contains("app.displayUsername ?? 'Account'"),
+        reason: 'TopNavBar must read displayUsername with a '
+                'neutral "Account" fallback',
       );
-      
+      expect(
+        window,
+        isNot(contains("'VaultAI User'")),
+        reason: 'the pre-2026-07-20 "VaultAI User" fallback '
+                'conflates the human profile with the product name',
+      );
       expect(
         window,
         isNot(contains('displayUsername ?? app.vaultName')),
         reason: 'TopNavBar must not fall back to vault_name in '
-                'account labels — vault_name is the login handle.',
+                'account labels — vault_name is the login handle',
       );
       expect(
         window,
-        isNot(contains("?? app.vaultName ?? 'Account'")),
-        reason: 'legacy three-step fallback chain must be removed',
+        isNot(contains('app.canonicalUsername')),
+        reason: 'the profile menu is the human display surface — '
+                'canonicalUsername is a login identifier and does '
+                'not belong here',
+      );
+      expect(
+        window,
+        isNot(contains('app.vaultAiName')),
+        reason: 'the profile menu is the human display surface — '
+                'vaultAiName is the AI identity and belongs in '
+                'the chat surface only',
       );
     });
   });

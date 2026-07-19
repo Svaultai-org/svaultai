@@ -11646,8 +11646,42 @@ def _flag_enabled(env_var: str, *, default_true: bool = True) -> bool:
     return raw.strip().lower() not in ("false", "0", "no", "off")
 
 
+def _fetch_vault_ai_name_for_prompt(vault_id: str) -> Optional[str]:
+    """Server-authoritative lookup of the user-chosen vault AI name.
+
+    Reads ``vaults.vault_ai_name`` for the AUTHENTICATED vault_id
+    (never trusts a client-supplied name). Returns None on lookup
+    failure, missing row, or NULL column — callers must fall back
+    to the neutral literal in ``tools.VAULT_AI_NAME_FALLBACK``.
+
+    Failure is intentionally swallowed: a DB hiccup during prompt
+    build must not fail the chat request. The prompt just uses the
+    fallback name that turn.
+    """
+    try:
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT vault_ai_name FROM vaults WHERE vault_id = %s",
+                (vault_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            value = row[0]
+            if value is None:
+                return None
+            return str(value)
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("[PROMPT] vault_ai_name lookup failed")
+        return None
+
+
 def _build_chat_prompt_context(
-    *, vault_name: str, request: Request
+    *, vault_id: str, request: Request
 ) -> dict:
 
 
@@ -11695,10 +11729,19 @@ def _build_chat_prompt_context(
     raw_locale = (request.headers.get("accept-language") or "").strip()
     locale_hint = raw_locale.split(",")[0].strip()[:16] or "auto"
 
+    # SERVER-AUTHORITATIVE vault_ai_name lookup. The chat request may
+    # also carry a hint field, but the identity slot in the prompt
+    # trusts ONLY the value from the authenticated vaults row. This
+    # matches the 2026-07-20 review directive that client-provided
+    # AI names are untrusted until validated against authenticated
+    # vault metadata. On any failure the prompt builder returns None
+    # and tools.build_vault_runtime_context substitutes the neutral
+    # "VaultAI" literal — never a hash, handle, UUID, or template
+    # token.
+    vault_ai_name = _fetch_vault_ai_name_for_prompt(vault_id)
+
     return {
-        "VAULT_NAME": vault_name,
-                                                                       
-                                                                
+        "VAULT_AI_NAME": vault_ai_name,
         "VAULT_STATE": "unlocked",
         "LOCALE": locale_hint,
         "ENABLED_FEATURES": enabled_features_str,
@@ -11910,7 +11953,7 @@ async def chat_endpoint(
         def _route_to_ai_planner_stream():
             safe_message = redact_message(decrypted_message)
             prompt_context = _build_chat_prompt_context(
-                vault_name=req.vault_name,
+                vault_id=vault_id,
                 request=request,
             )
             from tools import (
@@ -11925,7 +11968,12 @@ async def chat_endpoint(
                     prompt_context.get("LOCALE", "auto")
                 )
                 _dynamic_context = build_vault_runtime_context(
-                    vault_name=str(prompt_context.get("VAULT_NAME", "")),
+                    # vault_ai_name is the AUTHENTICATED value from the
+                    # vaults row (or None). tools.build_vault_runtime_context
+                    # substitutes "VaultAI" when None. Never pass
+                    # req.vault_name here — that field carries client
+                    # state and can be a VLT handle or random hex.
+                    vault_ai_name=prompt_context.get("VAULT_AI_NAME"),
                     vault_state=str(prompt_context.get("VAULT_STATE", "unlocked")),
                     locale=_effective_locale,
                     enabled_features=str(prompt_context.get("ENABLED_FEATURES", "")),
