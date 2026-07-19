@@ -14,7 +14,7 @@ Fix
 * ``ZkRegisterFinalize`` INSERT relies on the pre-existing UNIQUE
   INDEX ``vaults_vault_handle_uniq`` and, on ``UniqueViolation``,
   returns HTTP 409 with copy
-      "Username already taken. Please choose another."
+      "That username is already taken. Please choose another."
 * The accounts + vaults INSERT sit in the same implicit psycopg2
   transaction; the rollback on 409 drops both — no orphan account.
 * ``principal.vault_id`` (attribute access on ``SessionPrincipal``
@@ -293,7 +293,10 @@ class RegistrationDuplicateTests(unittest.TestCase):
         self.assertEqual(r1.status_code, 200)
         r2 = _run_register(_payload_for_username("chosen"), store)
         self.assertEqual(r2.status_code, 409, r2.text)
-        self.assertIn("Username already taken", r2.text)
+        self.assertIn(
+            "That username is already taken. Please choose another.",
+            r2.text,
+        )
         self.assertIn("Please choose another", r2.text)
 
     def test_3_variants_of_chosen_also_409(self) -> None:

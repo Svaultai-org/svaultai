@@ -46,6 +46,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -72,6 +73,51 @@ def _record_fingerprint(record_bytes: bytes) -> str:
     logging the record itself (which is registration-secret material).
     """
     return hashlib.sha256(record_bytes).hexdigest()[:8]
+
+
+_USERNAME_BLIND_INDEX_ENV_VAR = "VAULTAI_USERNAME_BLIND_INDEX_PEPPER"
+
+
+def _username_blind_index_pepper() -> Optional[bytes]:
+    """Return the per-deployment pepper for the username blind index.
+
+    Returns None when the env var is unset — in which case the
+    endpoints degrade to the pre-2026-07-20 behavior (uniqueness only
+    on ``vault_handle``, no blind index written). Never logs the
+    pepper's value.
+    """
+    raw = os.environ.get(_USERNAME_BLIND_INDEX_ENV_VAR)
+    if not raw:
+        return None
+    try:
+        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    except (binascii.Error, ValueError):
+        return raw.encode("utf-8")
+
+
+def _compute_username_blind_index(
+    normalized_username: str,
+) -> Optional[bytes]:
+    """HMAC-SHA256 of the normalized username under the deployment
+    pepper. Returns None when no pepper is configured.
+    """
+    pepper = _username_blind_index_pepper()
+    if pepper is None:
+        return None
+    return hmac.new(
+        pepper,
+        normalized_username.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+
+
+def _username_blind_index_fingerprint(bi: bytes) -> str:
+    """8-hex fingerprint of the blind index for correlated logs. The
+    full 32 bytes are already non-reversible without the pepper; the
+    fingerprint is a further truncation so log strings never carry
+    the entire lookup token.
+    """
+    return hashlib.sha256(bi).hexdigest()[:8]
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
@@ -100,9 +146,11 @@ from rate_limit_auth import (
 )
 from vault_core import get_db
 from vault_handle import (
+    InvalidUsername,
     InvalidVaultHandle,
     VAULT_HANDLE_BYTES,
     from_display,
+    normalize_username,
     to_display,
 )
 
@@ -117,7 +165,29 @@ MAX_OPAQUE_MESSAGE_BYTES = 8 * 1024
 MAX_WRAPPED_BLOB_BYTES = 64 * 1024
 
 
-GENERIC_ZK_AUTH_ERROR = "vault_handle or PIN is incorrect"
+GENERIC_ZK_AUTH_ERROR = "Wrong username or PIN."
+DUPLICATE_USERNAME_ERROR = (
+    "That username is already taken. Please choose another."
+)
+
+
+def _normalized_username_or_400(raw: str) -> str:
+    """Server-side re-normalization guard.
+
+    The client is expected to send an already-normalized username so
+    that both sides derive the same vault_handle and the same blind
+    index. We re-normalize on receive as defense-in-depth: a
+    tampered/legacy client that sends the raw string would otherwise
+    produce a blind index that never collides with another user's,
+    silently defeating the uniqueness check.
+    """
+    try:
+        return normalize_username(raw)
+    except InvalidUsername as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="username is malformed",
+        ) from exc
 
 
 def _b64url_decode(value: str, *, name: str, max_bytes: int) -> bytes:
@@ -177,6 +247,14 @@ def _opaque_credential_id(handle_bytes: bytes) -> bytes:
 class ZkRegisterInitRequest(BaseModel):
     vault_handle: str = Field(..., min_length=1, max_length=200)
     ke1: str = Field(..., min_length=1)
+    # New in 2026-07-20: the client sends the RFC-normalized username
+    # so the server can compute a derivation-version-independent
+    # blind index and reject duplicates that the vault_handle UNIQUE
+    # alone cannot detect. Optional (a stale client still works via
+    # vault_handle uniqueness only) but strongly recommended.
+    normalized_username: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+    )
 
 
 class ZkRegisterInitResponse(BaseModel):
@@ -192,6 +270,45 @@ async def zk_register_init(
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
     ke1 = _b64url_decode(payload.ke1, name="ke1",
                          max_bytes=MAX_OPAQUE_MESSAGE_BYTES)
+
+    # Early duplicate check on the canonical-username layer. If the
+    # client supplied a normalized_username AND the deployment is
+    # configured with a blind-index pepper, refuse to start the OPAQUE
+    # exchange when the username is already taken. This surfaces the
+    # collision BEFORE any server-side OPRF state is created, so
+    # nothing about the existing record leaks. If either the client
+    # omits the field or no pepper is configured, we still fall
+    # through to the vault_handle uniqueness gate at finalize.
+    if payload.normalized_username is not None:
+        normalized = _normalized_username_or_400(payload.normalized_username)
+        bi = _compute_username_blind_index(normalized)
+        if bi is not None:
+            conn = get_db()
+            try:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute(
+                    """
+                    SELECT 1 FROM vaults
+                    WHERE username_blind_index = %s
+                    LIMIT 1
+                    """,
+                    (bi,),
+                )
+                if cur.fetchone() is not None:
+                    logger.info(
+                        "[ZK-REGISTER-INIT] duplicate username pid=%d "
+                        "handle_fpr=%s bi_fpr=%s",
+                        os.getpid(),
+                        _handle_fingerprint(handle_bytes),
+                        _username_blind_index_fingerprint(bi),
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=DUPLICATE_USERNAME_ERROR,
+                    )
+            finally:
+                conn.close()
+
     try:
         ke2 = opaque_registration_start(ke1, _opaque_credential_id(handle_bytes))
     except OpaqueWheelMissing:
@@ -226,6 +343,12 @@ class ZkRegisterFinalizeRequest(BaseModel):
     pin_salt: str = Field(..., min_length=1, max_length=200)
     pin_verifier: str = Field(..., min_length=1, max_length=400)
     kdf_iterations: int = Field(..., ge=100_000, le=2_000_000)
+    # Same as ZkRegisterInitRequest.normalized_username. Optional so
+    # older client builds still complete registration on the plain
+    # vault_handle uniqueness path.
+    normalized_username: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+    )
 
     @field_validator("acknowledged_irrecoverable")
     @classmethod
@@ -300,6 +423,13 @@ async def zk_register_finalize(
         _record_fingerprint(record),
     )
 
+    # Compute the blind index once; used by the INSERT column, the
+    # diagnostic log line, and the UniqueViolation classification.
+    blind_index: Optional[bytes] = None
+    if payload.normalized_username is not None:
+        normalized = _normalized_username_or_400(payload.normalized_username)
+        blind_index = _compute_username_blind_index(normalized)
+
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -321,7 +451,8 @@ async def zk_register_finalize(
                   wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                   display_name_ciphertext,
                   account_id, acknowledged_irrecoverable,
-                  vault_name
+                  vault_name,
+                  username_blind_index
                 )
                 VALUES (
                   gen_random_uuid(), %s, %s, %s,
@@ -329,7 +460,8 @@ async def zk_register_finalize(
                   %s, %s, %s,
                   %s,
                   %s, %s,
-                  encode(gen_random_bytes(16),'hex')
+                  encode(gen_random_bytes(16),'hex'),
+                  %s
                 )
                 RETURNING vault_id, vault_name
                 """,
@@ -340,17 +472,28 @@ async def zk_register_finalize(
                     wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                     display_name_ciphertext,
                     account_id, payload.acknowledged_irrecoverable,
+                    blind_index,
                 ),
             )
         except pg_errors.UniqueViolation as exc:
             # The vaults INSERT sits in the same implicit transaction
             # as the accounts INSERT above; rollback here undoes both,
-            # so no orphan ``accounts`` row is left behind.
+            # so no orphan ``accounts`` row is left behind. Either the
+            # vault_handle partial UNIQUE fired (same derivation as an
+            # existing row) OR the username_blind_index partial UNIQUE
+            # fired (same canonical username as an existing row under
+            # a different derivation). Both cases surface as the same
+            # 409 to the client — the difference is diagnostic only.
             conn.rollback()
-            logger.warning("[ZK-REGISTER] vault_handle collision")
+            logger.warning(
+                "[ZK-REGISTER] duplicate on finalize (handle_fpr=%s bi_fpr=%s)",
+                _handle_fingerprint(handle_bytes),
+                _username_blind_index_fingerprint(blind_index)
+                if blind_index is not None else "-",
+            )
             raise HTTPException(
                 status_code=409,
-                detail="Username already taken. Please choose another.",
+                detail=DUPLICATE_USERNAME_ERROR,
             ) from exc
         _new_vault_row = cur.fetchone()
         vault_id = str(_new_vault_row["vault_id"])
@@ -392,6 +535,14 @@ async def zk_register_finalize(
 class ZkLoginInitRequest(BaseModel):
     vault_handle: str = Field(..., min_length=1, max_length=200)
     ke1: str = Field(..., min_length=1)
+    # Optional canonical username so the server can fall back to the
+    # blind-index lookup if the vault_handle bytes don't match a row
+    # (which happens for accounts registered before the deterministic
+    # derivation was introduced). Never persisted; only used for the
+    # single row lookup and then discarded end-of-request.
+    normalized_username: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+    )
 
 
 class ZkLoginInitResponse(BaseModel):
@@ -411,31 +562,83 @@ async def zk_login_init(
         payload.ke1, name="ke1", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
     )
 
+    lookup_bi: Optional[bytes] = None
+    if payload.normalized_username is not None:
+        normalized = _normalized_username_or_400(payload.normalized_username)
+        lookup_bi = _compute_username_blind_index(normalized)
+
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT vault_id, opaque_registration_record
+            SELECT vault_id, opaque_registration_record, vault_handle,
+                   username_blind_index
             FROM vaults
             WHERE vault_handle = %s
             """,
             (handle_bytes,),
         )
         row = cur.fetchone()
+        # Fallback: a client-supplied vault_handle that misses may
+        # still name a real account if the client's derivation drifted
+        # since registration (algorithm change, normalization tweak).
+        # If we have a blind index for the canonical username, look
+        # the row up by that instead.
+        if row is None and lookup_bi is not None:
+            cur.execute(
+                """
+                SELECT vault_id, opaque_registration_record, vault_handle,
+                       username_blind_index
+                FROM vaults
+                WHERE username_blind_index = %s
+                """,
+                (lookup_bi,),
+            )
+            row = cur.fetchone()
+        # Opportunistic backfill: any row we successfully match whose
+        # blind index is NULL gets it populated now, so a subsequent
+        # duplicate-registration attempt for the same canonical
+        # username will collide on the partial UNIQUE index. This is
+        # the migration story for accounts that predate this column.
+        if (
+            row is not None
+            and lookup_bi is not None
+            and row["username_blind_index"] is None
+        ):
+            cur.execute(
+                """
+                UPDATE vaults
+                   SET username_blind_index = %s
+                 WHERE vault_id = %s
+                   AND username_blind_index IS NULL
+                """,
+                (lookup_bi, row["vault_id"]),
+            )
+            conn.commit()
     finally:
         conn.close()
 
     if row is None or row["opaque_registration_record"] is None:
         logger.info(
             "[ZK-LOGIN-INIT] no vault for handle "
-            "pid=%d handle_fpr=%s",
-            os.getpid(), _handle_fingerprint(handle_bytes),
+            "pid=%d handle_fpr=%s bi_fpr=%s",
+            os.getpid(),
+            _handle_fingerprint(handle_bytes),
+            _username_blind_index_fingerprint(lookup_bi)
+            if lookup_bi is not None else "-",
         )
         raise HTTPException(
             status_code=401, detail=GENERIC_ZK_AUTH_ERROR,
         )
 
+    # Use the STORED handle bytes as the OPAQUE credential_identifier.
+    # This is what was passed to registration_start when the record
+    # was created; passing anything else keys the OPRF with the wrong
+    # secret and the AKE would fail. Almost always this equals the
+    # bytes the client sent, but for a blind-index fallback the two
+    # can differ — and the stored bytes are the correct ones.
+    stored_handle_bytes = bytes(row["vault_handle"])
     record_bytes = bytes(row["opaque_registration_record"])
     # Safe diagnostic: correlates register-finish and every subsequent
     # login-init for the SAME account without leaking secrets.
@@ -455,7 +658,7 @@ async def zk_login_init(
         ke2, server_state = opaque_login_start(
             record_bytes,
             ke1,
-            _opaque_credential_id(handle_bytes),
+            _opaque_credential_id(stored_handle_bytes),
         )
     except OpaqueWheelMissing:
         raise HTTPException(

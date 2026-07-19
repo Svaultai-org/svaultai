@@ -909,11 +909,22 @@ class AppState extends ChangeNotifier {
 
   String? vaultId;
 
-  /// User-facing account name shown in the UI (dashboard welcome,
-  /// drawer header, account menu). Populated at signup + login from
-  /// the ZK-encrypted display_name blob, restored on next launch
-  /// from ``last_display_username`` in SharedPreferences. The VLT-*
-  /// vault handle MUST NEVER be substituted here.
+  /// The canonical username — the badge/identity the user typed at
+  /// signup (e.g. "Alexa"). Preserved as-typed on the local device
+  /// for UI display, but only its RFC-normalized form ever leaves
+  /// the client (and even then only long enough for the server to
+  /// compute a blind index; the raw normalized string is never
+  /// persisted server-side). Restored on next launch from
+  /// ``last_canonical_username`` in SharedPreferences. This is the
+  /// PRIMARY label shown in the dashboard welcome, drawer header,
+  /// and account menu. ``displayUsername`` is a secondary optional
+  /// nickname; it must NOT replace this field anywhere.
+  String? canonicalUsername;
+
+  /// Optional profile nickname the user set separately at signup.
+  /// Shown ONLY as a secondary label where explicitly marked
+  /// "Nickname" — never as the primary account identity, never as
+  /// the login-form prefill, never as an authentication material.
   String? displayUsername;
 
   /// Deterministic hidden vault_handle (``VLT-XXXX-...``) — the ZK
@@ -1312,6 +1323,10 @@ class AppState extends ChangeNotifier {
     if (persistedDisplay != null && persistedDisplay.isNotEmpty) {
       displayUsername = persistedDisplay;
     }
+    final persistedCanonical = sp.getString('last_canonical_username');
+    if (persistedCanonical != null && persistedCanonical.isNotEmpty) {
+      canonicalUsername = persistedCanonical;
+    }
     final persistedHandle = sp.getString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
@@ -1359,6 +1374,7 @@ class AppState extends ChangeNotifier {
     required String vaultNameValue,
     String? displayUsernameValue,
     String? vaultHandleValue,
+    String? canonicalUsernameValue,
   }) async {
     // A successful login clears the "terminated" flag so the api
     // layer stops short-circuiting authenticated requests. The
@@ -1381,6 +1397,10 @@ class AppState extends ChangeNotifier {
       // paint it BEFORE /auth/me returns (or if it fails). Without
       // this the UI would fall back to the VLT handle for one frame.
       await sp.setString('last_display_username', displayUsernameValue);
+    }
+    if (canonicalUsernameValue != null && canonicalUsernameValue.isNotEmpty) {
+      canonicalUsername = canonicalUsernameValue;
+      await sp.setString('last_canonical_username', canonicalUsernameValue);
     }
     authed = true;
     await sp.setString('session_token', token);
@@ -1427,6 +1447,7 @@ class AppState extends ChangeNotifier {
     vaultName = null;
     vaultHandle = null;
     displayUsername = null;
+    canonicalUsername = null;
     authed = false;
     unlocked = false;
     await sp.remove('session_token');
@@ -1439,6 +1460,7 @@ class AppState extends ChangeNotifier {
       // name during the fresh session's hydrate.
       await sp.remove('last_vault_handle');
       await sp.remove('last_display_username');
+      await sp.remove('last_canonical_username');
     }
     notifyListeners();
   }
@@ -2298,7 +2320,9 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 220),
                           child: Text(
-                            app.displayUsername ?? 'VaultAI User',
+                            app.canonicalUsername ??
+                                app.displayUsername ??
+                                'VaultAI User',
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -2362,7 +2386,9 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
-                              app.displayUsername ?? 'VaultAI User',
+                              app.canonicalUsername ??
+                                  app.displayUsername ??
+                                  'VaultAI User',
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 14,
@@ -4016,8 +4042,21 @@ class _SignupPageState extends State<SignupPage> {
     try {
       await OpaqueClient.ready();
 
-      final zkChosenDisplay =
-          displayUsername.isEmpty ? vaultName : displayUsername;
+      // Identity separation contract (2026-07-20):
+      //   vaultName          = canonical username (badge, primary
+      //                        UI label, sole authentication input)
+      //   displayUsername    = optional nickname; NEVER replaces
+      //                        the canonical name in the UI, NEVER
+      //                        used as authentication material
+      // The old code overwrote both with the display name if the
+      // display field was set, which is how "Alexa" disappeared from
+      // the dashboard and was replaced by "show".
+      final nickname = displayUsername;
+      // Encrypted server-side ``display_name`` slot holds the
+      // canonical username by default so a re-install can still
+      // paint SOMETHING before hydration; when the user set a
+      // nickname explicitly, that goes in the slot instead.
+      final encryptedDisplayName = nickname.isEmpty ? vaultName : nickname;
 
       final zk = ZkAuthService(_zkHttpPost);
       final result = await zk.registerVault(
@@ -4026,7 +4065,7 @@ class _SignupPageState extends State<SignupPage> {
         // ZkAuthService.registerVault; the plaintext username never
         // leaves the device (only its handle-derived form does).
         username: vaultName,
-        displayName: zkChosenDisplay,
+        displayName: encryptedDisplayName,
         pin: pin,
       );
 
@@ -4035,13 +4074,15 @@ class _SignupPageState extends State<SignupPage> {
         vaultIdValue: result.vaultId,
         // vaultNameValue stays == vault_handle for backend calls
         // that still take vault_name as a session identifier (legacy
-        // endpoints not yet migrated). The user-facing name is set
-        // via displayUsernameValue below.
+        // endpoints not yet migrated).
         vaultNameValue: result.vaultHandle,
         vaultHandleValue: result.vaultHandle,
-        // The typed username IS the user-facing display name after
-        // signup — persisted so hydrate() can paint it next launch.
-        displayUsernameValue: zkChosenDisplay,
+        // Canonical username is what the user typed at signup —
+        // preserved as-typed for UI display. This is the badge.
+        canonicalUsernameValue: vaultName,
+        // Nickname only when the user set it explicitly; otherwise
+        // leave the slot empty so no secondary chip appears.
+        displayUsernameValue: nickname.isEmpty ? null : nickname,
       );
       await _registerDeviceBestEffort(result.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
@@ -5693,6 +5734,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        // Route InvalidVaultUnlockException / VaultLockedException /
+        // SessionTerminatedException / DeviceNotTrustedException
+        // through the AppState handler so the vault re-locks, the
+        // key cache is cleared, and the user lands on the correct
+        // recovery screen. Without this, the SSE stream's outer
+        // catch would paint the raw exception ("Error:
+        // InvalidVaultUnlockException(message: ...)") straight into
+        // the assistant bubble AND leave app.unlocked=true — the
+        // 2026-07-20 dashboard-says-unlocked/chat-says-expired
+        // desync symptom.
+        if (app.handleApiException(err)) return;
         if (!mounted) return;
         setState(() {
           thinking = false;
@@ -12116,6 +12168,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        // Route InvalidVaultUnlockException / VaultLockedException /
+        // SessionTerminatedException / DeviceNotTrustedException
+        // through the AppState handler so the vault re-locks, the
+        // key cache is cleared, and the user lands on the correct
+        // recovery screen. Without this, the SSE stream's outer
+        // catch would paint the raw exception ("Error:
+        // InvalidVaultUnlockException(message: ...)") straight into
+        // the assistant bubble AND leave app.unlocked=true — the
+        // 2026-07-20 dashboard-says-unlocked/chat-says-expired
+        // desync symptom.
+        if (app.handleApiException(err)) return;
         if (!mounted) return;
         setState(() {
           thinking = false;
@@ -12839,11 +12902,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      // User-facing greeting: username first, never the
-                      // internal VLT handle. If for some reason the
-                      // display username hasn't hydrated yet, we show
-                      // a generic label rather than exposing the handle.
-                      'Welcome to ${app.displayUsername ?? 'your vault'}',
+                      // User-facing greeting: the canonical username
+                      // is the vault's identity badge — what the user
+                      // typed at signup. Optional nickname
+                      // (displayUsername) is secondary and never
+                      // replaces the canonical name here. The internal
+                      // VLT-* handle is never surfaced. If neither
+                      // identity has hydrated yet, show a generic
+                      // label rather than exposing the handle.
+                      'Welcome to ${app.canonicalUsername ?? app.displayUsername ?? 'your vault'}',
                       style: TextStyle(
                         fontSize: isMobile ? 28 : 40,
                         fontWeight: FontWeight.w800,
@@ -13074,12 +13141,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      // Drawer header: the user-facing display name
-                      // is the primary label. The old code showed
-                      // ``app.vaultName`` which resolves to the
-                      // VLT-* handle for ZK accounts — never surface
-                      // that to the user.
-                      app.displayUsername ?? 'Vault',
+                      // Drawer header: canonical username (badge) is
+                      // the primary label; optional nickname is a
+                      // fallback for old accounts that never captured
+                      // one. The old code showed ``app.vaultName``
+                      // which resolves to the VLT-* handle for ZK
+                      // accounts — never surface that to the user.
+                      app.canonicalUsername ?? app.displayUsername ?? 'Vault',
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: _drawerHeaderFontSize,

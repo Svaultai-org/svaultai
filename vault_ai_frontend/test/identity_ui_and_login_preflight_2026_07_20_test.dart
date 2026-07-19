@@ -28,22 +28,30 @@ String _readLib(String path) => File('lib/$path').readAsStringSync();
 
 void main() {
   group('UI never surfaces the internal VLT vault handle', () {
-    test('dashboard "Welcome to …" reads displayUsername, not vaultName',
-        () {
+    test(
+        'dashboard "Welcome to …" reads canonicalUsername (badge) first, '
+        'falling back through displayUsername (nickname), never vaultName', () {
       final src = _readLib('main.dart');
-      // The old code was:
-      //   'Welcome to ${app.vaultName ?? 'your vault'}'
-      // The fixed code MUST bind to displayUsername.
+      // 2026-07-20 correction: the 2026-07-19 build painted the
+      // display name (nickname) even when the user had a canonical
+      // username, which produced "Welcome to show" instead of
+      // "Welcome to Alexa" — that is now fixed by preferring
+      // canonicalUsername with displayUsername as a fallback for
+      // pre-fix accounts that never captured a canonical value.
       expect(
-        src.contains("'Welcome to \${app.displayUsername ?? 'your vault'}'"),
+        src.contains(
+          "'Welcome to \${app.canonicalUsername ?? app.displayUsername ?? 'your vault'}'",
+        ),
         isTrue,
-        reason: 'dashboard greeting must show the friendly username',
+        reason: 'dashboard greeting must show the canonical username '
+            'first (the badge), fall back to the nickname if any, '
+            'and never surface the VLT handle',
       );
       expect(
         src.contains("'Welcome to \${app.vaultName"),
         isFalse,
         reason: 'dashboard greeting must not read vaultName — that '
-                'value is the VLT handle for ZK accounts',
+            'value is the VLT handle for ZK accounts',
       );
     });
 
@@ -79,45 +87,44 @@ void main() {
       // both meanings is the root cause of the UI leak.
       expect(src.contains('String? vaultHandle;'), isTrue,
           reason: 'AppState must expose vaultHandle separately from '
-                  'vaultName so UI/lookup/cache-key concerns can be '
-                  'reasoned about independently');
+              'vaultName so UI/lookup/cache-key concerns can be '
+              'reasoned about independently');
     });
 
-    test('setSession accepts vaultHandleValue and displayUsernameValue',
-        () {
+    test('setSession accepts vaultHandleValue and displayUsernameValue', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> setSession(');
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 2000).clamp(0, src.length));
       expect(window.contains('String? vaultHandleValue'), isTrue,
           reason: 'setSession must accept the deterministic handle '
-                  'so it can be recovered without another OPAQUE '
-                  'round-trip');
+              'so it can be recovered without another OPAQUE '
+              'round-trip');
       expect(window.contains('String? displayUsernameValue'), isTrue);
       expect(
         window.contains("sp.setString('last_display_username'"),
         isTrue,
         reason: 'the friendly name must persist so hydrate() can '
-                'paint it before /auth/me returns',
+            'paint it before /auth/me returns',
       );
     });
 
-    test('hydrate reads last_display_username BEFORE calling /auth/me',
-        () {
+    test('hydrate reads last_display_username BEFORE calling /auth/me', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> hydrate(');
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 2500).clamp(0, src.length));
-      final restoreIdx = window.indexOf("sp.getString('last_display_username')");
+      final restoreIdx =
+          window.indexOf("sp.getString('last_display_username')");
       final authMeIdx = window.indexOf('client.authMe(');
       expect(restoreIdx, greaterThan(-1),
           reason: 'hydrate must restore the persisted friendly name '
-                  'from SharedPreferences on launch');
+              'from SharedPreferences on launch');
       expect(authMeIdx, greaterThan(-1));
       expect(restoreIdx, lessThan(authMeIdx),
           reason: 'the friendly name must be painted BEFORE /auth/me '
-                  '— otherwise the first frame flashes the fallback '
-                  'label until the network round-trip completes');
+              '— otherwise the first frame flashes the fallback '
+              'label until the network round-trip completes');
     });
 
     test('hydrate never clobbers displayUsername with vault_name', () {
@@ -135,7 +142,7 @@ void main() {
         window.contains('displayUsername = name.trim();'),
         isFalse,
         reason: 'hydrate must not overload vault_name into '
-                'displayUsername — those are distinct concepts',
+            'displayUsername — those are distinct concepts',
       );
     });
 
@@ -144,7 +151,11 @@ void main() {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> clearSession(');
       expect(idx, greaterThan(-1));
-      final window = src.substring(idx, (idx + 2000).clamp(0, src.length));
+      // Window widened 2026-07-20: clearSession now also clears the
+      // canonical username slot, so more lines live between the
+      // function head and the last relevant remove(). 4000 chars is
+      // comfortably above the current function size.
+      final window = src.substring(idx, (idx + 4000).clamp(0, src.length));
       // "Use another vault" MUST drop last_display_username so the
       // fresh /login page starts blank instead of pre-filling the
       // previous user.
@@ -152,18 +163,25 @@ void main() {
         window.contains("sp.remove('last_display_username')"),
         isTrue,
         reason: 'use-another-vault must clear the persisted friendly '
-                'name — a leftover would prefill the wrong user',
+            'name — a leftover would prefill the wrong user',
       );
       expect(
         window.contains("sp.remove('last_vault_handle')"),
         isTrue,
       );
+      expect(
+        window.contains("sp.remove('last_canonical_username')"),
+        isTrue,
+        reason: 'use-another-vault must also clear the canonical '
+            'username so the previous badge does not carry over',
+      );
     });
   });
 
   group('LoginPage preflight validates before touching the network', () {
-    test('_submit runs a derivation preflight with typed InvalidUsername '
-         'catches before any HTTP call', () {
+    test(
+        '_submit runs a derivation preflight with typed InvalidUsername '
+        'catches before any HTTP call', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _LoginPageState');
       final window = src.substring(idx, (idx + 25000).clamp(0, src.length));
@@ -172,8 +190,8 @@ void main() {
       final zkAttemptIdx = window.indexOf('zk.loginVault(');
       expect(preflightIdx, greaterThan(-1),
           reason: 'preflight vlog must exist and be emitted before '
-                  'any HTTP call, so production logs can pinpoint '
-                  'a derivation failure without a wire trace');
+              'any HTTP call, so production logs can pinpoint '
+              'a derivation failure without a wire trace');
       expect(preflightIdx, lessThan(zkAttemptIdx),
           reason: 'preflight must run BEFORE the ZK login attempt');
       // The preflight must catch the two typed exceptions the
@@ -200,8 +218,8 @@ void main() {
         window.contains(r"err = 'Login failed. ${msg.replaceFirst"),
         isFalse,
         reason: 'never stringify a raw exception into the user-'
-                'visible error message; use a controlled copy so a '
-                'bang null does not leak to the user',
+            'visible error message; use a controlled copy so a '
+            'bang null does not leak to the user',
       );
       // The controlled copy carries the diagnostic tag so operators
       // can see WHICH step threw.
@@ -214,8 +232,8 @@ void main() {
         window.contains(r'[diagnostic: step=$loginLastStep, type=$typeName]'),
         isTrue,
         reason: 'ZK catch must surface the step + exception class '
-                'in the user-visible error so an operator reading '
-                'a screenshot can identify the failing step',
+            'in the user-visible error so an operator reading '
+            'a screenshot can identify the failing step',
       );
     });
 
@@ -237,13 +255,14 @@ void main() {
         window.contains('onStep: (s) => loginLastStep = s'),
         isTrue,
         reason: 'LoginPage must pass onStep into zk.loginVault so '
-                'the step tracker gets updated as the ZK pipeline '
-                'progresses',
+            'the step tracker gets updated as the ZK pipeline '
+            'progresses',
       );
     });
 
-    test('LoginPage emits an unconditional console diagnostic on ZK '
-         'failure (fires in release builds)', () {
+    test(
+        'LoginPage emits an unconditional console diagnostic on ZK '
+        'failure (fires in release builds)', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _LoginPageState');
       final window = src.substring(idx, (idx + 25000).clamp(0, src.length));
@@ -254,13 +273,12 @@ void main() {
         window.contains('[zk-login-diag]'),
         isTrue,
         reason: 'LoginPage must print a diagnostic line to the '
-                'browser console on ZK failure so production '
-                'operators can pinpoint the throwing step',
+            'browser console on ZK failure so production '
+            'operators can pinpoint the throwing step',
       );
     });
 
-    test('failure classification only routes HTTP 401 to legacy fallback',
-        () {
+    test('failure classification only routes HTTP 401 to legacy fallback', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _LoginPageState');
       final window = src.substring(idx, (idx + 25000).clamp(0, src.length));
@@ -271,8 +289,8 @@ void main() {
         window.contains("looksLikeAuth401"),
         isTrue,
         reason: 'the ZK-vs-legacy classifier must be an explicit '
-                'boolean, not an ad-hoc string match — this makes '
-                'the intent obvious to reviewers',
+            'boolean, not an ad-hoc string match — this makes '
+            'the intent obvious to reviewers',
       );
     });
   });
@@ -294,7 +312,7 @@ void main() {
         window.contains(r"err = e.toString().replaceFirst('Exception: ', '')"),
         isFalse,
         reason: 'UnlockPage must not stringify a raw exception into '
-                'the user-visible error message',
+            'the user-visible error message',
       );
       expect(
         window.contains("'Wrong username or PIN. '"),
@@ -309,13 +327,13 @@ void main() {
         window.contains(r'[diagnostic: step=$unlockLastStep, type=$typeName]'),
         isTrue,
         reason: 'UnlockPage error must carry the diagnostic step + '
-                'exception class tag',
+            'exception class tag',
       );
       expect(
         window.contains('[zk-unlock-diag]'),
         isTrue,
         reason: 'UnlockPage must print a diagnostic line to the '
-                'browser console on ZK failure',
+            'browser console on ZK failure',
       );
     });
   });
@@ -329,13 +347,12 @@ void main() {
         src.contains('void Function(String stepDone)? onStep'),
         isTrue,
         reason: 'loginVault must accept an onStep callback so a '
-                'LoginPage-side tracker can pinpoint the failing '
-                'step from production logs',
+            'LoginPage-side tracker can pinpoint the failing '
+            'step from production logs',
       );
     });
 
-    test('loginVault prints every step to the console unconditionally',
-        () {
+    test('loginVault prints every step to the console unconditionally', () {
       final src = _svc().readAsStringSync();
       // The [zk-login-step] tag is what an operator greps for in
       // the browser DevTools console when a login fails without
@@ -344,8 +361,8 @@ void main() {
         src.contains('[zk-login-step]'),
         isTrue,
         reason: 'loginVault must emit console-visible step beacons '
-                'in release builds too — vlog() is silenced by '
-                'kReleaseMode and cannot be used here',
+            'in release builds too — vlog() is silenced by '
+            'kReleaseMode and cannot be used here',
       );
       // Sanity-check the exact steps we depend on in the test
       // above about page-side tracking. If a step name is renamed
@@ -362,8 +379,8 @@ void main() {
           src.contains("step('$s')"),
           isTrue,
           reason: 'the pipeline step "$s" is missing from '
-                  'loginVault — production diagnostics depend on '
-                  'this exact name',
+              'loginVault — production diagnostics depend on '
+              'this exact name',
         );
       }
     });
@@ -372,16 +389,13 @@ void main() {
       final src = _svc().readAsStringSync();
       // Grep the print() lines specifically. If a future refactor
       // adds `print('... pin=$pin ...')` this test flips.
-      final printLines = src
-          .split('\n')
-          .where((ln) => ln.contains('print('))
-          .toList();
+      final printLines =
+          src.split('\n').where((ln) => ln.contains('print(')).toList();
       expect(printLines, isNotEmpty,
           reason: 'expected at least one print() call for the '
-                  'step beacons');
+              'step beacons');
       for (final ln in printLines) {
-        expect(ln.contains(r'$pin'), isFalse,
-            reason: 'never log the PIN: $ln');
+        expect(ln.contains(r'$pin'), isFalse, reason: 'never log the PIN: $ln');
         expect(ln.contains(r'$password'), isFalse,
             reason: 'never log the password: $ln');
         expect(ln.contains(r'$wrappedMvk'), isFalse,
@@ -402,11 +416,11 @@ void main() {
       final handleIdx = window.indexOf('readCachedVaultHandle()');
       expect(usernameIdx, greaterThan(-1),
           reason: 'autofill must prefer the persisted friendly '
-                  'username so returning users do not see a VLT '
-                  'handle in their login form');
+              'username so returning users do not see a VLT '
+              'handle in their login form');
       expect(usernameIdx, lessThan(handleIdx),
           reason: 'username must be checked BEFORE the legacy '
-                  'cached handle');
+              'cached handle');
     });
   });
 }

@@ -246,16 +246,25 @@ class ZkAuthService {
     // Deterministic handle from the username. Same username on any
     // device -> same handle -> the DB's UNIQUE index on vault_handle
     // rejects duplicates without ever seeing the username plaintext.
+    final normalized = normalizeUsername(username);
     final handleBytes = deriveVaultHandleFromUsername(username);
     final handleDisplay = vaultHandleToDisplay(handleBytes);
 
     final startResult = OpaqueClient.startRegistration(password: pin);
 
+    // ``normalized_username`` is sent so the server can compute a
+    // per-deployment HMAC blind index and reject duplicates that the
+    // vault_handle UNIQUE alone can't catch (e.g. a pre-fix account
+    // still living in the DB under a random handle). The server never
+    // persists the raw username; only the HMAC bytes land in
+    // vaults.username_blind_index. This crosses the same TLS pipe as
+    // the OPAQUE request the client is about to send anyway.
     final initResponse = await _post(
       '/auth/zk-register-init',
       {
         'vault_handle': handleDisplay,
         'ke1': startResult.registrationRequest,
+        'normalized_username': normalized,
       },
     );
     final ke2 = initResponse['ke2'] as String;
@@ -315,6 +324,7 @@ class ZkAuthService {
         'pin_salt': legacyPin.pinSalt,
         'pin_verifier': legacyPin.pinVerifier,
         'kdf_iterations': legacyPin.kdfIterations,
+        'normalized_username': normalized,
       },
     );
 
@@ -369,7 +379,9 @@ class ZkAuthService {
     step('opaque_ready');
 
     final Uint8List handleBytes;
+    String? normalizedUsername;
     if (username != null && username.isNotEmpty) {
+      normalizedUsername = normalizeUsername(username);
       handleBytes = deriveVaultHandleFromUsername(username);
     } else if (vaultHandle != null && vaultHandle.isNotEmpty) {
       handleBytes = vaultHandleFromDisplay(vaultHandle);
@@ -386,11 +398,18 @@ class ZkAuthService {
     final start = OpaqueClient.startLogin(password: pin);
     step('opaque_start_login');
 
+    // Include ``normalized_username`` when we have it: the server
+    // uses it as a fallback lookup key if the deterministic handle
+    // bytes don't hit a row, and opportunistically backfills the
+    // blind index for legacy rows that were registered before this
+    // column existed.
     final initResponse = await _post(
       '/auth/zk-login-init',
       {
         'vault_handle': handleDisplay,
         'ke1': start.startLoginRequest,
+        if (normalizedUsername != null)
+          'normalized_username': normalizedUsername,
       },
     );
     step('post_login_init');
