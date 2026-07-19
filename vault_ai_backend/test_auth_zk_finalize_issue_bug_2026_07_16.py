@@ -354,6 +354,13 @@ class ZkRegisterFinalizeBehavioralTests(_ZkRouteHarness):
             "display_name_ciphertext":   _b64url_no_pad(b"fake-display-name-ciphertext"),
             "acknowledged_irrecoverable": True,
             "device_id":                 self._DEVICE_ID,
+            # New required fields (corrective release 2026-07-19):
+            # ZK register-finalize must populate legacy pin_salt /
+            # pin_verifier so the beneficiary/link endpoint's PIN
+            # cross-check works for ZK-registered accounts.
+            "pin_salt":                  base64.b64encode(b"\x11" * 16).decode(),
+            "pin_verifier":              base64.b64encode(b"\x22" * 32).decode(),
+            "kdf_iterations":            600000,
         }
 
     def _run_route(self, mock_issue_return: Dict[str, Any]) -> tuple:
@@ -850,6 +857,9 @@ class ZkFinalizeRealDbIntegrationTests(unittest.TestCase):
                     "display_name_ciphertext":   _b64url_no_pad(b"fake-display"),
                     "acknowledged_irrecoverable": True,
                     "device_id": "device-integration-reg",
+                    "pin_salt": base64.b64encode(b"\x11" * 16).decode(),
+                    "pin_verifier": base64.b64encode(b"\x22" * 32).decode(),
+                    "kdf_iterations": 600000,
                 },
                 headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/126.0"},
             )
@@ -913,6 +923,9 @@ class ZkFinalizeRealDbIntegrationTests(unittest.TestCase):
                     "display_name_ciphertext":   _b64url_no_pad(b"fake-display"),
                     "acknowledged_irrecoverable": True,
                     "device_id": "device-integration-pre-login",
+                    "pin_salt": base64.b64encode(b"\x11" * 16).decode(),
+                    "pin_verifier": base64.b64encode(b"\x22" * 32).decode(),
+                    "kdf_iterations": 600000,
                 },
                 headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/126.0"},
             )

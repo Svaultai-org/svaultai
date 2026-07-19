@@ -21,7 +21,6 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'logins_page.dart';
 import 'api_client.dart';
 import 'chunked_aead.dart';
-import 'vault_handle_saved_page.dart';
 import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
@@ -3528,15 +3527,11 @@ Future<bool> _tryLegacyAdoptionBestEffort({
     );
 
     if (result.adopted && result.newVaultHandle != null && context.mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => VaultHandleSavedPage(
-            vaultHandle: result.newVaultHandle!,
-            continueRoute: '/chat',
-            wasAdoption: true,
-          ),
-        ),
-      );
+      // Adoption completes silently and the user lands in /chat. The
+      // internal vault handle is stored via legacy_adoption for
+      // subsequent ZK login, but the user never sees it — VaultAI's
+      // user-facing credentials are username + PIN only.
+      Navigator.of(context).pushReplacementNamed('/chat');
       return true;
     }
     return false;
@@ -4047,15 +4042,12 @@ class _SignupPageState extends State<SignupPage> {
       } catch (_) {}
 
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => VaultHandleSavedPage(
-            vaultHandle: result.vaultHandle,
-            continueRoute: '/chat',
-            wasAdoption: false,
-          ),
-        ),
-      );
+      // Successful ZK registration enters the app directly. The
+      // internal vault handle is persisted client-side by
+      // ``ZkAuthService`` for the next ZK login, but never shown to
+      // the user — the only user-visible credentials are the
+      // username and PIN they just chose.
+      Navigator.of(context).pushReplacementNamed('/chat');
       return;
     } on OpaqueUnavailable catch (e) {
       // If WASM did not load (rare), inform the user and stop —

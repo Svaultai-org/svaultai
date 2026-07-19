@@ -196,6 +196,13 @@ class ZkRegisterFinalizeRequest(BaseModel):
     display_name_ciphertext: str = Field(..., min_length=1)
     acknowledged_irrecoverable: bool
     device_id: Optional[str] = Field(default=None, max_length=128)
+    # Legacy PIN verifier (PBKDF2-derived, base64) supplied by the
+    # client so that endpoints which still cross-check the PIN
+    # (currently only /beneficiary/link) work for ZK-registered
+    # accounts. Server never sees the plaintext PIN.
+    pin_salt: str = Field(..., min_length=1, max_length=200)
+    pin_verifier: str = Field(..., min_length=1, max_length=400)
+    kdf_iterations: int = Field(..., ge=100_000, le=2_000_000)
 
     @field_validator("acknowledged_irrecoverable")
     @classmethod
@@ -273,7 +280,7 @@ async def zk_register_finalize(
             cur.execute(
                 """
                 INSERT INTO vaults (
-                  vault_id, pin_salt, pin_verifier,
+                  vault_id, pin_salt, pin_verifier, kdf_iterations,
                   vault_handle, opaque_registration_record,
                   wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                   display_name_ciphertext,
@@ -281,7 +288,7 @@ async def zk_register_finalize(
                   vault_name
                 )
                 VALUES (
-                  gen_random_uuid(), '', '',
+                  gen_random_uuid(), %s, %s, %s,
                   %s, %s,
                   %s, %s, %s,
                   %s,
@@ -291,6 +298,8 @@ async def zk_register_finalize(
                 RETURNING vault_id, vault_name
                 """,
                 (
+                    payload.pin_salt, payload.pin_verifier,
+                    payload.kdf_iterations,
                     handle_bytes, record,
                     wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                     display_name_ciphertext,
@@ -597,6 +606,13 @@ async def zk_adopt(
             )
 
         try:
+            # Adoption preserves the legacy pin_salt/pin_verifier: the
+            # user is the same person with the same PIN, and the
+            # /beneficiary/link endpoint's PIN cross-check still uses
+            # that verifier. The wire representation of the PIN never
+            # left the legacy signup — this row was populated at
+            # legacy account creation. Wiping it here would break the
+            # inheritance-link path for adopted users.
             cur.execute(
                 """
                 UPDATE vaults
@@ -606,9 +622,7 @@ async def zk_adopt(
                       wrapped_sk_vault              = %s,
                       pk_vault_public               = %s,
                       display_name_ciphertext       = %s,
-                      legacy_vault_name_cleared_at  = NOW(),
-                      pin_salt                      = '',
-                      pin_verifier                  = ''
+                      legacy_vault_name_cleared_at  = NOW()
                   WHERE vault_id = %s
                     AND vault_handle IS NULL
                 """,

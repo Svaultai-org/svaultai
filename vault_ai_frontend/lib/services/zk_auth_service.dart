@@ -47,12 +47,31 @@ const int _mvkBytes = 32;
 const int _skVaultBytes = 32;
 const int _aesGcmNonceBytes = 12;
 
+/// Legacy PIN-verifier constants.
+///
+/// The server-side check in ``vault_core.verify_vault_pin`` decrypts
+/// ``pin_verifier`` with a PBKDF2-HMAC-SHA256 key derived from
+/// (pin, base64decode(pin_salt), kdfIterations) and expects the exact
+/// plaintext ``vaultai_pin_ok``. We derive both fields client-side
+/// during ZK registration so that endpoints which still cross-check
+/// the legacy PIN work for ZK-adopted accounts. The server never
+/// sees the plaintext PIN.
+const String _pinVerifierPlaintext = 'vaultai_pin_ok';
+const int _pinSaltBytes = 16;
+const int _pinKdfIterations = 600000;
+
 final Hkdf _hkdf = Hkdf(
   hmac: Hmac.sha256(),
   outputLength: 32,
 );
 
 final AesGcm _aesGcm = AesGcm.with256bits();
+
+final Pbkdf2 _pinKdf = Pbkdf2(
+  macAlgorithm: Hmac.sha256(),
+  iterations: _pinKdfIterations,
+  bits: 256,
+);
 
 class RegisterResult {
   final String vaultId;
@@ -176,6 +195,37 @@ class ZkAuthService {
     return Uint8List.fromList(base64Url.decode(padded));
   }
 
+  /// Client-side derivation of the legacy PIN-verifier envelope.
+  ///
+  /// Format matches ``vault_core.encrypt_message``:
+  ///   base64(nonce(12) || AES-GCM ciphertext || tag(16))
+  /// keyed by ``PBKDF2-HMAC-SHA256(pin, salt, iterations=600_000)``.
+  /// The two returned strings map 1:1 to the ``pin_salt`` /
+  /// ``pin_verifier`` columns in the ``vaults`` table.
+  Future<({String pinSalt, String pinVerifier, int kdfIterations})>
+      _deriveLegacyPinVerifier(String pin) async {
+    final saltBytes = _randomBytes(_pinSaltBytes);
+    final key = await _pinKdf.deriveKey(
+      secretKey: SecretKey(utf8.encode(pin)),
+      nonce: saltBytes,
+    );
+    final nonce = _randomBytes(_aesGcmNonceBytes);
+    final secretBox = await _aesGcm.encrypt(
+      utf8.encode(_pinVerifierPlaintext),
+      secretKey: key,
+      nonce: nonce,
+    );
+    final envelope = BytesBuilder();
+    envelope.add(nonce);
+    envelope.add(secretBox.cipherText);
+    envelope.add(secretBox.mac.bytes);
+    return (
+      pinSalt: base64.encode(saltBytes),
+      pinVerifier: base64.encode(envelope.toBytes()),
+      kdfIterations: _pinKdfIterations,
+    );
+  }
+
   Future<Uint8List> _x25519PublicFromSecret(Uint8List sk) async {
     final algo = X25519();
     // cryptography's X25519 requires KeyPair construction from a seed;
@@ -233,6 +283,8 @@ class ZkAuthService {
       Uint8List.fromList(utf8.encode(displayName)),
     );
 
+    final legacyPin = await _deriveLegacyPinVerifier(pin);
+
     final finalizeResponse = await _post(
       '/auth/zk-register-finalize',
       {
@@ -243,6 +295,9 @@ class ZkAuthService {
         'pk_vault_public': _b64urlEncode(pkVaultPublic),
         'display_name_ciphertext': _b64urlEncode(displayNameCiphertext),
         'acknowledged_irrecoverable': true,
+        'pin_salt': legacyPin.pinSalt,
+        'pin_verifier': legacyPin.pinVerifier,
+        'kdf_iterations': legacyPin.kdfIterations,
       },
     );
 
