@@ -193,8 +193,9 @@ void main() {
       // The literal error copy the pre-2026-07-20 build produced
       // ("Null check operator…") came from stringifying `msg` into
       // the user-visible error. The fixed code uses a controlled
-      // copy. If a future refactor puts the raw message back in,
-      // this test flips.
+      // copy PLUS a diagnostic step + exception-class tag. If a
+      // future refactor puts the raw ``.toString()`` back in, this
+      // test flips.
       expect(
         window.contains(r"err = 'Login failed. ${msg.replaceFirst"),
         isFalse,
@@ -202,11 +203,59 @@ void main() {
                 'visible error message; use a controlled copy so a '
                 'bang null does not leak to the user',
       );
-      // And the controlled copy MUST be present.
+      // The controlled copy carries the diagnostic tag so operators
+      // can see WHICH step threw.
       expect(
-        window.contains("'Login failed. Please try again.'"),
+        window.contains("'Login failed. '"),
         isTrue,
         reason: 'controlled login-failed copy is missing',
+      );
+      expect(
+        window.contains(r'[diagnostic: step=$loginLastStep, type=$typeName]'),
+        isTrue,
+        reason: 'ZK catch must surface the step + exception class '
+                'in the user-visible error so an operator reading '
+                'a screenshot can identify the failing step',
+      );
+    });
+
+    test('LoginPage passes onStep into zk.loginVault and records last step',
+        () {
+      final src = _readLib('main.dart');
+      final idx = src.indexOf('class _LoginPageState');
+      final window = src.substring(idx, (idx + 25000).clamp(0, src.length));
+      // The step tracker is a plain local that mutates as each
+      // pipeline step completes. If a future refactor drops the
+      // onStep hook, we lose the ability to pinpoint pre-HTTP
+      // failures from production logs.
+      expect(
+        window.contains('String loginLastStep ='),
+        isTrue,
+        reason: 'LoginPage must track the last completed login step',
+      );
+      expect(
+        window.contains('onStep: (s) => loginLastStep = s'),
+        isTrue,
+        reason: 'LoginPage must pass onStep into zk.loginVault so '
+                'the step tracker gets updated as the ZK pipeline '
+                'progresses',
+      );
+    });
+
+    test('LoginPage emits an unconditional console diagnostic on ZK '
+         'failure (fires in release builds)', () {
+      final src = _readLib('main.dart');
+      final idx = src.indexOf('class _LoginPageState');
+      final window = src.substring(idx, (idx + 25000).clamp(0, src.length));
+      // ``print`` fires in release builds too (unlike ``vlog``
+      // which is stripped by kReleaseMode). The tag is greppable
+      // in DevTools without a debug build.
+      expect(
+        window.contains('[zk-login-diag]'),
+        isTrue,
+        reason: 'LoginPage must print a diagnostic line to the '
+                'browser console on ZK failure so production '
+                'operators can pinpoint the throwing step',
       );
     });
 
@@ -248,10 +297,98 @@ void main() {
                 'the user-visible error message',
       );
       expect(
-        window.contains("'Wrong username or PIN.'"),
+        window.contains("'Wrong username or PIN. '"),
         isTrue,
         reason: 'controlled unlock-failed copy is missing',
       );
+      // Same diagnostic contract as LoginPage — the UnlockPage error
+      // string must expose the step + exception class so a wrong-
+      // PIN attempt and a bang-null crash look different in a
+      // screenshot.
+      expect(
+        window.contains(r'[diagnostic: step=$unlockLastStep, type=$typeName]'),
+        isTrue,
+        reason: 'UnlockPage error must carry the diagnostic step + '
+                'exception class tag',
+      );
+      expect(
+        window.contains('[zk-unlock-diag]'),
+        isTrue,
+        reason: 'UnlockPage must print a diagnostic line to the '
+                'browser console on ZK failure',
+      );
+    });
+  });
+
+  group('zk_auth_service loginVault emits step-tag beacons', () {
+    File _svc() => File('lib/services/zk_auth_service.dart');
+
+    test('loginVault accepts an onStep callback', () {
+      final src = _svc().readAsStringSync();
+      expect(
+        src.contains('void Function(String stepDone)? onStep'),
+        isTrue,
+        reason: 'loginVault must accept an onStep callback so a '
+                'LoginPage-side tracker can pinpoint the failing '
+                'step from production logs',
+      );
+    });
+
+    test('loginVault prints every step to the console unconditionally',
+        () {
+      final src = _svc().readAsStringSync();
+      // The [zk-login-step] tag is what an operator greps for in
+      // the browser DevTools console when a login fails without
+      // an HTTP request reaching the backend.
+      expect(
+        src.contains('[zk-login-step]'),
+        isTrue,
+        reason: 'loginVault must emit console-visible step beacons '
+                'in release builds too — vlog() is silenced by '
+                'kReleaseMode and cannot be used here',
+      );
+      // Sanity-check the exact steps we depend on in the test
+      // above about page-side tracking. If a step name is renamed
+      // without updating the operator runbook, this test flips.
+      for (final s in const [
+        'opaque_ready',
+        'derive_handle',
+        'opaque_start_login',
+        'post_login_init',
+        'opaque_finish_login',
+        'post_login_finalize',
+      ]) {
+        expect(
+          src.contains("step('$s')"),
+          isTrue,
+          reason: 'the pipeline step "$s" is missing from '
+                  'loginVault — production diagnostics depend on '
+                  'this exact name',
+        );
+      }
+    });
+
+    test('loginVault never logs the pin, password, or ciphertext', () {
+      final src = _svc().readAsStringSync();
+      // Grep the print() lines specifically. If a future refactor
+      // adds `print('... pin=$pin ...')` this test flips.
+      final printLines = src
+          .split('\n')
+          .where((ln) => ln.contains('print('))
+          .toList();
+      expect(printLines, isNotEmpty,
+          reason: 'expected at least one print() call for the '
+                  'step beacons');
+      for (final ln in printLines) {
+        expect(ln.contains(r'$pin'), isFalse,
+            reason: 'never log the PIN: $ln');
+        expect(ln.contains(r'$password'), isFalse,
+            reason: 'never log the password: $ln');
+        expect(ln.contains(r'$wrappedMvk'), isFalse,
+            reason: 'never log wrapped MVK bytes: $ln');
+        expect(ln.contains(r'$ke1'), isFalse,
+            reason: 'never log OPAQUE ke1 bytes: $ln');
+      }
     });
   });
 

@@ -3547,6 +3547,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         'auth_path': 'zk_first_then_legacy_fallback',
       });
     } on vh.InvalidUsername catch (e) {
+      // ignore: avoid_print
+      print('[zk-login-diag] '
+          'last_step=preflight type=InvalidUsername reason=${e.message}');
       vlog('login.preflight.invalid_username', {'reason': e.message});
       setState(() {
         err = 'Please enter your username.';
@@ -3554,6 +3557,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       });
       return;
     } on vh.InvalidVaultHandle catch (e) {
+      // ignore: avoid_print
+      print('[zk-login-diag] '
+          'last_step=preflight type=InvalidVaultHandle reason=${e.message}');
       vlog('login.preflight.invalid_handle', {'reason': e.message});
       setState(() {
         err = 'Please enter your username.';
@@ -3561,28 +3567,59 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       });
       return;
     } catch (e) {
+      final typeName = e.runtimeType.toString();
+      final msg = e.toString();
+      final head = msg.length > 120 ? msg.substring(0, 120) : msg;
+      // ignore: avoid_print
+      print('[zk-login-diag] '
+          'last_step=preflight type=$typeName head=$head');
       vlog('login.preflight.derivation_failed',
-          {'error_type': e.runtimeType.toString(), 'error': e.toString()});
+          {'error_type': typeName, 'error': msg});
       setState(() {
-        err = 'Login failed. Please check your username and try again.';
+        err = 'Login failed. '
+            '[diagnostic: step=preflight, type=$typeName]';
         loading = false;
       });
       return;
     }
 
+    // Step tracker for post-preflight diagnostics.
+    //
+    // The pre-2026-07-21 build surfaced "Login failed. Please try
+    // again." with no clue WHICH step in the ZK login pipeline
+    // threw. When the operator sees no /auth/zk-login-init request
+    // hit the backend, the failure is by definition before the first
+    // POST — the step recorded here is the last one that COMPLETED,
+    // so the failing step is (recorded + 1) in the pipeline order.
+    //
+    // Steps emitted by ZkAuthService.loginVault:
+    //   begin, opaque_ready, derive_handle, handle_encoded,
+    //   opaque_start_login, post_login_init,   <-- first HTTP
+    //   opaque_finish_login, post_login_finalize, decode_response,
+    //   unwrap_mvk, unwrap_display_name.
+    // The LoginPage's OWN post-loginVault steps use the ``page_``
+    // prefix so operators can distinguish page-side from service-side.
+    String loginLastStep = 'submit_entry';
     bool zkLoginNotFound = false;
     {
       try {
+        // ignore: avoid_print
+        print('[zk-login-step] page/submit_entry '
+            'entry_type=${entryIsHandle ? "handle" : "username"} '
+            'identifier_len=${vaultName.length} pin_len=${pin.length}');
         vlog('login.zk.attempt', {
           'entry_type': entryIsHandle ? 'handle' : 'username',
         });
         await OpaqueClient.ready();
+        loginLastStep = 'page_opaque_ready';
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
           username: entryIsHandle ? null : vaultName,
           vaultHandle: entryIsHandle ? vaultName : null,
           pin: pin,
+          onStep: (s) => loginLastStep = s,
         );
+        loginLastStep = 'page_zk_login_returned';
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -3640,6 +3677,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e) {
+        // ignore: avoid_print
+        print('[zk-login-diag] '
+            'last_step=$loginLastStep type=OpaqueUnavailable reason=${e.reason}');
         if (!mounted) return;
         setState(() {
           err = 'Secure login module unavailable: ${e.reason}';
@@ -3653,14 +3693,30 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loading = false;
         });
         return;
-      } catch (e) {
+      } catch (e, stack) {
         if (app.handleApiException(e)) return;
         final msg = e.toString();
+        final typeName = e.runtimeType.toString();
+        final head = msg.length > 120 ? msg.substring(0, 120) : msg;
+        // Unconditional console log — fires in release builds too so
+        // an operator can grep the browser DevTools console for
+        // "[zk-login-diag]" without a debug build. No PIN, token,
+        // ciphertext or handle bytes are printed.
+        // ignore: avoid_print
+        print('[zk-login-diag] '
+            'last_step=$loginLastStep type=$typeName head=$head');
+        // First line of the stack — the top frame usually names the
+        // exact file+line that threw, which is the fastest way to
+        // identify a bang null in a minified web build.
+        final stackLines = stack.toString().split('\n');
+        final topFrame = stackLines.isNotEmpty ? stackLines.first : '';
+        // ignore: avoid_print
+        print('[zk-login-diag] top_frame=$topFrame');
+
         vlog('login.zk.failed', {
-          'error_type': e.runtimeType.toString(),
-          // Only the first ~120 chars of the message so a stray
-          // ciphertext / long path segment doesn't blow up the log.
-          'error_head': msg.length > 120 ? msg.substring(0, 120) : msg,
+          'error_type': typeName,
+          'last_step': loginLastStep,
+          'error_head': head,
         });
         // Two ZK failure modes:
         //   * 401 "vault_handle or PIN is incorrect" — either the
@@ -3670,11 +3726,11 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         //     alone, so we let the fallback run; it will 401 again
         //     with the correct "Wrong username or PIN" copy for the
         //     pre-ZK-but-wrong-PIN case.
-        //   * anything else — hard error. NEVER surface the raw Dart
-        //     message ("Null check operator used on a null value" is
-        //     what the pre-2026-07-20 build showed). The controlled
-        //     copy below is human-actionable AND cannot leak internal
-        //     identifiers, ciphertext, or exception structure.
+        //   * anything else — hard error. Surface a controlled copy
+        //     that ALSO carries the diagnostic step + exception
+        //     class so an operator or user reading production logs
+        //     can identify the failing step. Truncated to remain
+        //     free of PIN/ciphertext/handle bytes.
         final looksLikeAuth401 = msg.contains('HTTP 401') ||
             msg.contains('failed 401') ||
             msg.contains('vault_handle or PIN is incorrect');
@@ -3683,7 +3739,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         } else {
           if (!mounted) return;
           setState(() {
-            err = 'Login failed. Please try again.';
+            err = 'Login failed. '
+                '[diagnostic: step=$loginLastStep, type=$typeName]';
             loading = false;
           });
           return;
@@ -3762,15 +3819,20 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     } catch (e) {
       if (app.handleApiException(e)) return;
       if (!mounted) return;
-      vlog('login.legacy.failed', {
-        'error_type': e.runtimeType.toString(),
-      });
+      final typeName = e.runtimeType.toString();
+      final msg = e.toString();
+      final head = msg.length > 120 ? msg.substring(0, 120) : msg;
+      // ignore: avoid_print
+      print('[zk-login-diag] '
+          'last_step=legacy_fallback type=$typeName head=$head');
+      vlog('login.legacy.failed', {'error_type': typeName});
       setState(() {
         // Controlled copy — never the raw Dart exception. The old
         // "Null check operator used on a null value" from the pre-
         // 2026-07-20 build reached this branch when a bang deeper
         // in the login pipeline blew up.
-        err = 'Login failed. Please try again.';
+        err = 'Login failed. '
+            '[diagnostic: step=legacy_fallback, type=$typeName]';
         loading = false;
       });
     }
@@ -4236,11 +4298,20 @@ class _UnlockPageState extends State<UnlockPage> {
     });
 
     // Cached lastVaultName is a valid Vault Handle => ZK path.
+    String unlockLastStep = 'submit_entry';
     if (vh.isValidVaultHandleDisplay(name)) {
       try {
+        // ignore: avoid_print
+        print('[zk-unlock-step] page/submit_entry entry_type=handle');
         await OpaqueClient.ready();
+        unlockLastStep = 'page_opaque_ready';
         final zk = ZkAuthService(_zkHttpPost);
-        final loginResult = await zk.loginVault(vaultHandle: name, pin: pin);
+        final loginResult = await zk.loginVault(
+          vaultHandle: name,
+          pin: pin,
+          onStep: (s) => unlockLastStep = s,
+        );
+        unlockLastStep = 'page_zk_login_returned';
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -4288,6 +4359,9 @@ class _UnlockPageState extends State<UnlockPage> {
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e) {
+        // ignore: avoid_print
+        print('[zk-unlock-diag] '
+            'last_step=$unlockLastStep type=OpaqueUnavailable reason=${e.reason}');
         if (!mounted) return;
         setState(() {
           err = 'Secure unlock module unavailable: ${e.reason}';
@@ -4296,14 +4370,26 @@ class _UnlockPageState extends State<UnlockPage> {
         return;
       } catch (e) {
         if (app.handleApiException(e)) return;
+        final typeName = e.runtimeType.toString();
+        final msg = e.toString();
+        final head = msg.length > 120 ? msg.substring(0, 120) : msg;
+        // ignore: avoid_print
+        print('[zk-unlock-diag] '
+            'last_step=$unlockLastStep type=$typeName head=$head');
         vlog('unlock.zk.failed', {
-          'error_type': e.runtimeType.toString(),
+          'error_type': typeName,
+          'last_step': unlockLastStep,
         });
         if (!mounted) return;
         setState(() {
-          // Controlled copy for a wrong-PIN attempt OR any other
-          // failure — never the raw Dart message.
-          err = 'Wrong username or PIN.';
+          // A wrong PIN takes the same code path as any other ZK
+          // failure. Show the diagnostic tag alongside the friendly
+          // copy so operators reading a screenshot can distinguish
+          // "wrong PIN" from a bang-null crash. A wrong-PIN attempt
+          // reports step=post_login_init (the /auth/zk-login-init
+          // POST is what returns 401).
+          err = 'Wrong username or PIN. '
+              '[diagnostic: step=$unlockLastStep, type=$typeName]';
           loading = false;
         });
         return;
@@ -4364,12 +4450,17 @@ class _UnlockPageState extends State<UnlockPage> {
       });
     } catch (e) {
       if (app.handleApiException(e)) return;
-      vlog('unlock.legacy.failed', {
-        'error_type': e.runtimeType.toString(),
-      });
+      final typeName = e.runtimeType.toString();
+      final msg = e.toString();
+      final head = msg.length > 120 ? msg.substring(0, 120) : msg;
+      // ignore: avoid_print
+      print('[zk-unlock-diag] '
+          'last_step=legacy_fallback type=$typeName head=$head');
+      vlog('unlock.legacy.failed', {'error_type': typeName});
       if (!mounted) return;
       setState(() {
-        err = 'Wrong username or PIN.';
+        err = 'Wrong username or PIN. '
+            '[diagnostic: step=legacy_fallback, type=$typeName]';
         loading = false;
       });
     }

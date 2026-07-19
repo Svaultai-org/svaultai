@@ -143,7 +143,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      final window = _windowAfter(src, 'class LoginPage', length: 15000);
+      // 20k covers the LoginPage class + full submit body after the
+      // 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class LoginPage', length: 20000);
       expect(window, contains('authLogin'),
           reason: 'LoginPage must call client.authLogin on submit');
     });
@@ -155,7 +157,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      final window = _windowAfter(src, 'class LoginPage', length: 15000);
+      // 20k covers the LoginPage class + full submit body after the
+      // 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class LoginPage', length: 20000);
       expect(
         window,
         contains('InvalidCredentialsException'),
@@ -171,7 +175,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      final window = _windowAfter(src, 'class LoginPage', length: 15000);
+      // 20k covers the LoginPage class + full submit body after the
+      // 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class LoginPage', length: 20000);
       expect(
         window,
         isNot(contains('Vault not found')),
@@ -201,7 +207,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      final window = _windowAfter(src, 'class LoginPage', length: 15000);
+      // 20k covers the LoginPage class + full submit body after the
+      // 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class LoginPage', length: 20000);
       expect(
         window,
         contains('RateLimitedException'),
@@ -217,7 +225,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      final window = _windowAfter(src, 'class LoginPage', length: 15000);
+      // 20k covers the LoginPage class + full submit body after the
+      // 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class LoginPage', length: 20000);
       expect(
         window,
         contains('new_device_trusted'),
@@ -242,7 +252,9 @@ void main() {
     test('reads vault name from AppState.lastVaultName (not a form '
         'field)', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class UnlockPage', length: 9000);
+      // 15k covers the UnlockPage class + submit body + build body
+      // after the 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
       
       
       expect(
@@ -258,7 +270,9 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class UnlockPage', length: 9000);
+      // 15k covers the UnlockPage class + submit body + build body
+      // after the 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
       expect(window, contains("'Welcome back'"));
       expect(
         window,
@@ -277,7 +291,9 @@ void main() {
     test('offers a "Use another vault" link that clears the remembered '
         'name and routes to /login', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class UnlockPage', length: 9000);
+      // 15k covers the UnlockPage class + submit body + build body
+      // after the 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
       expect(
         window.contains('Use another vault') ||
             window.contains('authUseAnotherVault'),
@@ -294,7 +310,9 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class UnlockPage', length: 9000);
+      // 15k covers the UnlockPage class + submit body + build body
+      // after the 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
       expect(window, contains('RateLimitedException'));
       expect(window, contains('new_device_trusted'));
       expect(window, contains('_notifyNewDeviceTrustedIfNeeded'));
@@ -556,7 +574,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      final window = _windowAfter(src, 'class LoginPage', length: 15000);
+      // 20k covers the LoginPage class + full submit body after the
+      // 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class LoginPage', length: 20000);
       expect(
         window,
         contains("result['display_username']"),
@@ -571,7 +591,9 @@ void main() {
 
     test('UnlockPage reads display_username from the auth response', () {
       final src = _readLib('main.dart');
-      final window = _windowAfter(src, 'class UnlockPage', length: 9000);
+      // 15k covers the UnlockPage class + submit body + build body
+      // after the 2026-07-21 diagnostic instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
       expect(window, contains("result['display_username']"));
       expect(window, contains('displayUsernameValue:'));
     });

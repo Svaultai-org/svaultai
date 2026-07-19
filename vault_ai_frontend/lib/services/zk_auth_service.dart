@@ -39,8 +39,7 @@ import 'dart:math' show Random;
 
 import 'package:cryptography/cryptography.dart';
 
-import 'opaque_client.dart'
-    if (dart.library.io) 'opaque_client_stub.dart';
+import 'opaque_client.dart' if (dart.library.io) 'opaque_client_stub.dart';
 import 'vault_handle.dart';
 
 const int _mvkBytes = 32;
@@ -324,12 +323,36 @@ class ZkAuthService {
   /// argument stays because a handful of internal call sites still
   /// pass a saved handle (e.g. adopted legacy accounts that persisted
   /// their handle in SharedPreferences).
+  ///
+  /// [onStep] is a step-completion callback for diagnostic tracing.
+  /// After each risky sub-step finishes cleanly, the callback is
+  /// invoked with the step name. If the login later throws, the
+  /// caller knows the LAST completed step — so the failing step is
+  /// (last-completed + 1). No PIN, ciphertext, or session material
+  /// ever crosses this boundary; only short static step tags.
   Future<LoginResult> loginVault({
     String? username,
     String? vaultHandle,
     required String pin,
+    void Function(String stepDone)? onStep,
   }) async {
+    void step(String s) {
+      // Always print — this is the ONE place we can rely on to see
+      // pre-HTTP progress in a production browser console. Release
+      // builds silence ``print`` but ``debugPrint`` fires; the tag
+      // ``[zk-login-step]`` is greppable in the DevTools console.
+      // ignore: avoid_print
+      print('[zk-login-step] $s');
+      try {
+        onStep?.call(s);
+      } catch (_) {
+        // Never let a callback error mask the real failure.
+      }
+    }
+
+    step('begin');
     await OpaqueClient.ready();
+    step('opaque_ready');
 
     final Uint8List handleBytes;
     if (username != null && username.isNotEmpty) {
@@ -341,10 +364,14 @@ class ZkAuthService {
         'loginVault requires either username or vaultHandle',
       );
     }
+    step('derive_handle');
+
     final handleDisplay = vaultHandleToDisplay(handleBytes);
     final credentialId = vaultHandleCredentialId(handleBytes);
+    step('handle_encoded');
 
     final start = OpaqueClient.startLogin(password: pin);
+    step('opaque_start_login');
 
     final initResponse = await _post(
       '/auth/zk-login-init',
@@ -353,6 +380,8 @@ class ZkAuthService {
         'ke1': start.startLoginRequest,
       },
     );
+    step('post_login_init');
+
     final ke2 = initResponse['ke2'] as String;
     final slotId = initResponse['slot_id'] as String;
 
@@ -362,6 +391,7 @@ class ZkAuthService {
       password: pin,
       clientIdentifier: credentialId,
     );
+    step('opaque_finish_login');
 
     final finalizeResponse = await _post(
       '/auth/zk-login-finalize',
@@ -370,23 +400,27 @@ class ZkAuthService {
         'ke3': finish.finishLoginRequest,
       },
     );
+    step('post_login_finalize');
 
     final kek = await _deriveKek(finish.exportKey);
-    final wrappedMvk =
-        _b64urlDecode(finalizeResponse['wrapped_mvk'] as String);
+    final wrappedMvk = _b64urlDecode(finalizeResponse['wrapped_mvk'] as String);
     final wrappedSkVault =
         _b64urlDecode(finalizeResponse['wrapped_sk_vault'] as String);
     final displayNameCt = _b64urlDecode(
       finalizeResponse['display_name_ciphertext'] as String,
     );
+    step('decode_response');
 
     final mvkBytes = await _unwrap(kek, wrappedMvk);
     final mvk = SecretKey(mvkBytes);
     final skVaultBytes = await _unwrap(kek, wrappedSkVault);
     final skVault = SecretKey(skVaultBytes);
+    step('unwrap_mvk');
 
     final displayNameKey = await _deriveDisplayNameKey(mvk);
-    final displayName = utf8.decode(await _unwrap(displayNameKey, displayNameCt));
+    final displayName =
+        utf8.decode(await _unwrap(displayNameKey, displayNameCt));
+    step('unwrap_display_name');
 
     return LoginResult(
       vaultId: finalizeResponse['vault_id'] as String,
