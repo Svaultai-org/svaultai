@@ -280,7 +280,7 @@ def get_beneficiary_public_key(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         link = _fetch_owned_link(
             cur, link_id=link_id,
-            owner_vault_id=principal.vault_id,
+            owner_vault_id=principal["vault_id"],
             for_update=False,
         )
         if not link.get("beneficiary_vault_id"):
@@ -375,7 +375,7 @@ def save_credentials(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         link = _fetch_owned_link(
             cur, link_id=payload.beneficiary_link_id,
-            owner_vault_id=principal.vault_id, for_update=True,
+            owner_vault_id=principal["vault_id"], for_update=True,
         )
         if not link.get("beneficiary_vault_id"):
             raise inheritance_http_error(
@@ -401,7 +401,7 @@ def save_credentials(
 
         _insert_credential_row(
             cur, link_id=payload.beneficiary_link_id,
-            owner_vault_id=principal.vault_id,
+            owner_vault_id=principal["vault_id"],
             crypto_version=payload.crypto_version,
             encrypted_payload=encrypted,
             payload_nonce=payload_nonce,
@@ -464,7 +464,7 @@ def replace_credentials(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         link = _fetch_owned_link(
             cur, link_id=payload.beneficiary_link_id,
-            owner_vault_id=principal.vault_id, for_update=True,
+            owner_vault_id=principal["vault_id"], for_update=True,
         )
         if not link.get("beneficiary_vault_id"):
             raise inheritance_http_error(
@@ -490,7 +490,7 @@ def replace_credentials(
             )
         _insert_credential_row(
             cur, link_id=payload.beneficiary_link_id,
-            owner_vault_id=principal.vault_id,
+            owner_vault_id=principal["vault_id"],
             crypto_version=payload.crypto_version,
             encrypted_payload=encrypted,
             payload_nonce=payload_nonce,
@@ -526,7 +526,7 @@ def delete_credentials(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         link = _fetch_owned_link(
             cur, link_id=payload.beneficiary_link_id,
-            owner_vault_id=principal.vault_id, for_update=True,
+            owner_vault_id=principal["vault_id"], for_update=True,
         )
         _refuse_if_access_in_flight(link)
 
@@ -573,7 +573,7 @@ def credential_status(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         link = _fetch_owned_link(
             cur, link_id=link_id,
-            owner_vault_id=principal.vault_id, for_update=False,
+            owner_vault_id=principal["vault_id"], for_update=False,
         )
         cur.execute(
             """

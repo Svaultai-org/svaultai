@@ -169,7 +169,7 @@ def vault_item_upsert_ciphertext(
                 RETURNING id
                 """,
                 (
-                    principal.vault_id,
+                    principal["vault_id"],
                     item_type_ct, service_ct, payload_ct,
                 ),
             )
@@ -191,7 +191,7 @@ def vault_item_upsert_ciphertext(
             """,
             (
                 item_type_ct, service_ct, payload_ct,
-                payload.item_id, principal.vault_id,
+                payload.item_id, principal["vault_id"],
             ),
         )
         if cur.rowcount != 1:
@@ -263,7 +263,7 @@ def uploaded_file_metadata_ciphertext(
     set_ct_clauses = ", ".join(f"{ct} = %s" for _, ct, _ in updates_ct)
     set_null_clauses = ", ".join(f"{legacy} = NULL" for legacy, _, _ in updates_ct)
     params: list[Any] = [v for _, _, v in updates_ct]
-    params.extend([payload.file_id, principal.vault_id])
+    params.extend([payload.file_id, principal["vault_id"]])
 
     conn = get_db()
     try:
@@ -341,7 +341,7 @@ def notification_ciphertext_create(
             RETURNING id
             """,
             (
-                principal.vault_id, payload.kind,
+                principal["vault_id"], payload.kind,
                 title_ct, body_ct, metadata_ct,
             ),
         )
@@ -409,7 +409,7 @@ def ai_memory_ciphertext_upsert(
                AND superseded_at IS NULL
              LIMIT 1
             """,
-            (principal.vault_id, lookup_hash),
+            (principal["vault_id"], lookup_hash),
         )
         prev = cur.fetchone()
         superseded_id: Optional[int] = None
@@ -424,7 +424,7 @@ def ai_memory_ciphertext_upsert(
             RETURNING id
             """,
             (
-                principal.vault_id, payload.memory_type,
+                principal["vault_id"], payload.memory_type,
                 payload_ct, lookup_hash,
             ),
         )
@@ -438,7 +438,7 @@ def ai_memory_ciphertext_upsert(
                        superseded_by_id = %s
                  WHERE id = %s AND vault_id = %s
                 """,
-                (new_id, prev["id"], principal.vault_id),
+                (new_id, prev["id"], principal["vault_id"]),
             )
             superseded_id = int(prev["id"])
 
@@ -483,7 +483,7 @@ def beneficiary_label_ciphertext_update(
              WHERE id = %s
                AND passer_vault_id = %s
             """,
-            (label_ct, payload.link_id, principal.vault_id),
+            (label_ct, payload.link_id, principal["vault_id"]),
         )
         if cur.rowcount != 1:
             conn.rollback()
@@ -551,7 +551,7 @@ def semantic_index_keyed_hash_upsert(
                     updated_at         = NOW()
                 """,
                 (
-                    principal.vault_id, payload.source_kind,
+                    principal["vault_id"], payload.source_kind,
                     payload.uploaded_file_id, payload.embedding,
                     keyed_hash,
                 ),
@@ -572,7 +572,7 @@ def semantic_index_keyed_hash_upsert(
                     updated_at         = NOW()
                 """,
                 (
-                    principal.vault_id, payload.source_kind,
+                    principal["vault_id"], payload.source_kind,
                     payload.vault_item_id, payload.embedding,
                     keyed_hash,
                 ),
@@ -615,7 +615,7 @@ def inheritance_rewrap_upload(
              WHERE id = %s
                AND passer_vault_id = %s
             """,
-            (wrapped.hex(), payload.link_id, principal.vault_id),
+            (wrapped.hex(), payload.link_id, principal["vault_id"]),
         )
         if cur.rowcount != 1:
             conn.rollback()
@@ -709,7 +709,7 @@ def crypto_draft_ciphertext_persist(
              WHERE draft_id = %s
                AND vault_id = %s
             """,
-            (payload.draft_id, str(principal.vault_id)),
+            (payload.draft_id, str(principal["vault_id"])),
         )
         row = cur.fetchone()
         if row is None:
@@ -723,7 +723,7 @@ def crypto_draft_ciphertext_persist(
              WHERE draft_id = %s
                AND vault_id = %s
             """,
-            (payload_ct, payload.draft_id, str(principal.vault_id)),
+            (payload_ct, payload.draft_id, str(principal["vault_id"])),
         )
 
         if old_sender:
@@ -800,7 +800,7 @@ def crypto_history_ciphertext_write(
                AND signature_lookup_hash IS NULL
              RETURNING 1
             """,
-            (sig_hash, outcome_ct, str(principal.vault_id)),
+            (sig_hash, outcome_ct, str(principal["vault_id"])),
         )
         conn.commit()
     finally:
