@@ -526,6 +526,37 @@ async def zk_register_finalize(
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
 
+    # Single-active-device: the client that just proved knowledge of
+    # the PIN gets trusted immediately, and every other device row on
+    # this vault is revoked atomically. On a brand-new vault the
+    # revoke-others UPDATE matches zero rows; on a signup that raced
+    # against a leftover row (imports, staging seeds) any other
+    # row is closed out. If no device_id was supplied we cannot
+    # register anything — the /devices/register call from the client
+    # will do it on next boot.
+    if payload.device_id:
+        try:
+            from device_monitor import (
+                ip_prefix_from,
+                trust_current_and_revoke_others,
+            )
+            trust_current_and_revoke_others(
+                vault_id=vault_id,
+                device_id=payload.device_id,
+                label=None,
+                user_agent_brand=(
+                    (request.headers.get("user-agent") or "")[:120] or None
+                ),
+                ip_prefix=ip_prefix_from(request),
+            )
+        except Exception:
+            logger.exception(
+                "[ZK-REGISTER-FINALIZE] single-active-device trust failed "
+                "vault_id=%s (session issued anyway; client will retry via "
+                "/devices/register)",
+                vault_id,
+            )
+
     return ZkRegisterFinalizeResponse(
         vault_id=vault_id,
         vault_handle=to_display(handle_bytes),
@@ -907,6 +938,35 @@ async def zk_login_finalize(
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
+
+    # Single-active-device: the client that just completed OPAQUE
+    # login is the new sole trusted device on this vault. Trust the
+    # current device_id and revoke every other row atomically. Any
+    # device that was trusted before this login (including the one
+    # the user just signed out of on another browser) now gets a
+    # device_revoked response on its next protected request.
+    if payload.device_id:
+        try:
+            from device_monitor import (
+                ip_prefix_from,
+                trust_current_and_revoke_others,
+            )
+            trust_current_and_revoke_others(
+                vault_id=str(vault_row["vault_id"]),
+                device_id=payload.device_id,
+                label=None,
+                user_agent_brand=(
+                    (request.headers.get("user-agent") or "")[:120] or None
+                ),
+                ip_prefix=ip_prefix_from(request),
+            )
+        except Exception:
+            logger.exception(
+                "[ZK-LOGIN-FINALIZE] single-active-device trust failed "
+                "vault_id=%s (session issued anyway; client will retry via "
+                "/devices/register)",
+                vault_row["vault_id"],
+            )
 
     return ZkLoginFinalizeResponse(
         vault_id=str(vault_row["vault_id"]),

@@ -1198,28 +1198,29 @@ class AppState extends ChangeNotifier {
       final activeDeviceIdPrefix = activeDeviceId.length >= 8
           ? activeDeviceId.substring(0, 8)
           : activeDeviceId;
+      // Single-active-device model (2026-07-20): a device_not_trusted
+      // or device_revoked response from any protected endpoint means
+      // this browser's session is no longer valid — either it was
+      // never trusted in the first place, or a fresh login on another
+      // device revoked it. Drop the local session and route straight
+      // to the login screen. The legacy /device-pending waiting-period
+      // flow is bypassed for normal login.
       vlog('handleApiException.device_not_trusted', {
         'status': error.status,
         'backend_device_id': error.deviceId ?? '-',
         'active_device_id_prefix': activeDeviceIdPrefix,
         'message': error.message,
-        'route_target': '/device-pending',
+        'route_target': '/auth',
       });
-      unlocked = false;
-      if (vaultId != null) _VaultCrypto.clearCache(vaultId!);
+      clearSession(keepLastVaultName: true);
       notifyListeners();
       rootScaffoldMessengerKey.currentState?.clearSnackBars();
       rootScaffoldMessengerKey.currentState?.showSnackBar(
         SnackBar(content: Text(error.message)),
       );
       rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-        '/device-pending',
+        '/auth',
         (_) => false,
-        arguments: {
-          'status': error.status,
-          'device_id': error.deviceId,
-          'message': error.message,
-        },
       );
       return true;
     }

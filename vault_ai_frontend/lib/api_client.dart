@@ -2234,7 +2234,9 @@ class VaultAIClient {
         final d = decoded['detail'];
         if (d is Map) {
           final code = d['code']?.toString();
-          if (code == 'device_not_trusted' || code == 'missing_device_id') {
+          if (code == 'device_not_trusted' ||
+              code == 'missing_device_id' ||
+              code == 'device_revoked') {
             throw DeviceNotTrustedException.fromResponseBody(body);
           }
         }

@@ -243,6 +243,26 @@ async def verify_trusted_device(
         return principal
 
     response_status, response_message = resolve_response_status(db_status, row_missing)
+    # Under single-active-device semantics, a 'revoked' row means
+    # this device's session ended because the user (or someone with
+    # their credentials) signed in on a different device. The client
+    # needs to distinguish that from "no device row yet / pending"
+    # so it can drop the local session, surface an unambiguous
+    # message, and redirect straight to the login screen instead of
+    # opening the legacy approval-waiting-period flow.
+    if response_status == "revoked":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code":      "device_revoked",
+                "message":   (
+                    "This device's session ended because you signed in "
+                    "on another device. Sign in again to continue."
+                ),
+                "device_id": device_id,
+                "status":    "revoked",
+            },
+        )
     raise HTTPException(
         status_code=403,
         detail={

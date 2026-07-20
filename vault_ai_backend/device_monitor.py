@@ -69,6 +69,92 @@ def ip_prefix_from(request) -> Optional[str]:
         return None
 
 
+def trust_current_and_revoke_others(
+    *,
+    vault_id: str,
+    device_id: str,
+    label: Optional[str] = None,
+    user_agent_brand: Optional[str] = None,
+    ip_prefix: Optional[str] = None,
+) -> dict:
+    # Single-active-device invariant, enforced atomically.
+    #
+    # The caller has just proven possession of the vault credentials
+    # (ZK signup, ZK login, or a legacy adoption path calling
+    # /devices/register). We record the current device as trusted
+    # and, in the SAME transaction, revoke every other row for the
+    # same vault_id. When the two statements share a transaction, no
+    # concurrent reader (device gate, /devices/me listing) can
+    # observe an intermediate state with two live devices.
+    #
+    # Idempotent when called with the same (vault_id, device_id):
+    # the UPSERT re-affirms trusted status and the revoke-others UPDATE
+    # matches zero rows.
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            INSERT INTO trusted_devices (
+                vault_id, device_id, label, user_agent_brand, last_ip_prefix,
+                status, approved_at, last_seen_at, revoked_at, cooldown_until
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                'trusted', NOW(), NOW(), NULL, NULL
+            )
+            ON CONFLICT (vault_id, device_id) DO UPDATE
+                SET status           = 'trusted',
+                    approved_at      = NOW(),
+                    last_seen_at     = NOW(),
+                    revoked_at       = NULL,
+                    cooldown_until   = NULL,
+                    last_ip_prefix   = COALESCE(
+                        EXCLUDED.last_ip_prefix,
+                        trusted_devices.last_ip_prefix),
+                    user_agent_brand = COALESCE(
+                        EXCLUDED.user_agent_brand,
+                        trusted_devices.user_agent_brand),
+                    label            = COALESCE(
+                        NULLIF(EXCLUDED.label, ''),
+                        trusted_devices.label)
+            """,
+            (vault_id, device_id, label, user_agent_brand, ip_prefix),
+        )
+        cur.execute(
+            """
+            UPDATE trusted_devices
+               SET status         = 'revoked',
+                   revoked_at     = NOW(),
+                   cooldown_until = NULL
+             WHERE vault_id = %s
+               AND device_id <> %s
+               AND status <> 'revoked'
+            RETURNING device_id
+            """,
+            (vault_id, device_id),
+        )
+        revoked_rows = cur.fetchall() or []
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    revoked_ids = [r["device_id"] for r in revoked_rows]
+    if revoked_ids:
+        logger.info(
+            "[SINGLE-ACTIVE-DEVICE] vault=%s trusted=%s revoked_others=%d",
+            _short(vault_id), _short(device_id), len(revoked_ids),
+        )
+    return {
+        "status":                    "trusted",
+        "device_id":                 device_id,
+        "revoked_other_count":       len(revoked_ids),
+        "revoked_other_device_ids":  revoked_ids,
+    }
+
+
 def register_or_refresh(
     *,
     vault_id: str,
@@ -77,89 +163,44 @@ def register_or_refresh(
     user_agent_brand: Optional[str],
     ip_prefix: Optional[str],
 ) -> dict:
-
-
-    conn = get_db()
+    # Under the single-active-device model, /devices/register no
+    # longer creates a 'pending' row that waits for approval from an
+    # older device. The caller has an authenticated session, which
+    # means they already passed OPAQUE — they hold the master key —
+    # so this device is trusted and every other device is revoked in
+    # one atomic step. The return shape is kept compatible with the
+    # legacy `is_first_device`/`created` fields so existing callers
+    # (test_device_register_idempotency, front-end retry loop)
+    # continue to compile; `is_first_device` now means "there were
+    # no other trusted devices before this call", i.e. no siblings
+    # got revoked.
+    prior_conn = get_db()
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = prior_conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
             SELECT status FROM trusted_devices
-            WHERE vault_id = %s AND device_id = %s
+             WHERE vault_id = %s AND device_id = %s
             """,
             (vault_id, device_id),
         )
-        existing = cur.fetchone()
-
-        if existing:
-            cur.execute(
-                """
-                UPDATE trusted_devices
-                SET last_seen_at     = NOW(),
-                    last_ip_prefix   = COALESCE(%s, last_ip_prefix),
-                    user_agent_brand = COALESCE(%s, user_agent_brand),
-                    label            = COALESCE(NULLIF(%s, ''), label)
-                WHERE vault_id = %s AND device_id = %s
-                """,
-                (ip_prefix, user_agent_brand, label, vault_id, device_id),
-            )
-            conn.commit()
-            return {
-                "status": existing["status"],
-                "is_first_device": False,
-                "created": False,
-            }
-
-                                                                              
-        cur.execute(
-            """
-            SELECT COUNT(*) AS n
-            FROM trusted_devices
-            WHERE vault_id = %s AND status = 'trusted'
-            """,
-            (vault_id,),
-        )
-        trusted_count = int((cur.fetchone() or {}).get("n") or 0)
-        is_first = trusted_count == 0
-        new_status = "trusted" if is_first else "pending"
-
-        cur.execute(
-            """
-            INSERT INTO trusted_devices (
-                vault_id, device_id, label, user_agent_brand, last_ip_prefix,
-                status, approved_at, last_seen_at
-            ) VALUES (
-                %s, %s, %s, %s, %s,
-                %s,
-                CASE WHEN %s = 'trusted' THEN NOW() ELSE NULL END,
-                NOW()
-            )
-            ON CONFLICT (vault_id, device_id) DO NOTHING
-            """,
-            (
-                vault_id, device_id, label, user_agent_brand, ip_prefix,
-                new_status, new_status,
-            ),
-        )
-        cur.execute(
-            """
-            SELECT status FROM trusted_devices
-            WHERE vault_id = %s AND device_id = %s
-            """,
-            (vault_id, device_id),
-        )
-        final = cur.fetchone() or {"status": new_status}
-        conn.commit()
-        return {
-            "status": final["status"],
-            "is_first_device": is_first and final["status"] == "trusted",
-            "created": True,
-        }
-    except Exception:
-        conn.rollback()
-        raise
+        prior_row = cur.fetchone()
     finally:
-        conn.close()
+        prior_conn.close()
+
+    outcome = trust_current_and_revoke_others(
+        vault_id=vault_id,
+        device_id=device_id,
+        label=label,
+        user_agent_brand=user_agent_brand,
+        ip_prefix=ip_prefix,
+    )
+    return {
+        "status":          outcome["status"],
+        "is_first_device": outcome["revoked_other_count"] == 0
+                           and prior_row is None,
+        "created":         prior_row is None,
+    }
 
 
 def monitor_best_effort(request, vault_id: str) -> None:
