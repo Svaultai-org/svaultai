@@ -3714,13 +3714,20 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loginResult.sessionToken,
           app,
         );
-        _VaultCrypto._keyCache[_VaultCrypto._ck(
-            loginResult.vaultId, loginResult.vaultHandle)] = loginResult.mvk;
-        _VaultCrypto._pinCache[_VaultCrypto._ck(
-            loginResult.vaultId, loginResult.vaultHandle)] = pin;
+        // Crypto cache key uses the user-typed vault name (not the
+        // VLT handle) so the AppState.unlocked invariant getter's
+        // ``hasKeyFor(vaultId, vaultName)`` lookup — which reads
+        // ``AppState._vaultName`` — actually hits this entry.
+        // Mismatching keys was the immediate cause of the login-
+        // succeeds-then-redirects-to-PIN symptom.
+        _VaultCrypto._keyCache[
+                _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
+            loginResult.mvk;
+        _VaultCrypto._pinCache[
+            _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] = pin;
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
-          vaultName: loginResult.vaultHandle,
+          vaultName: resolvedVaultName,
         );
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
@@ -4140,15 +4147,22 @@ class _SignupPageState extends State<SignupPage> {
         result.sessionToken,
         app,
       );
-      _VaultCrypto
-              ._keyCache[_VaultCrypto._ck(result.vaultId, result.vaultHandle)] =
+      // Crypto cache key MUST match what the ``unlocked`` invariant
+      // getter reads at [main.dart:908]:
+      //     _VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName)
+      // where ``vName`` is ``AppState._vaultName`` (populated with
+      // the user-typed vault name via setSession above). Before the
+      // ed825aa unification, this line stored the entry under
+      // ``result.vaultHandle`` (the VLT-... identifier) which no
+      // longer matches — that mismatch produced the "signup
+      // succeeds → redirect back to PIN" symptom because
+      // ``unlocked`` returned false immediately.
+      _VaultCrypto._keyCache[_VaultCrypto._ck(result.vaultId, vaultName)] =
           result.mvk;
-      _VaultCrypto
-              ._pinCache[_VaultCrypto._ck(result.vaultId, result.vaultHandle)] =
-          pin;
+      _VaultCrypto._pinCache[_VaultCrypto._ck(result.vaultId, vaultName)] = pin;
       _VaultCrypto.setActiveVault(
         vaultId: result.vaultId,
-        vaultName: result.vaultHandle,
+        vaultName: vaultName,
       );
       app.markUnlocked();
       try {
@@ -4435,28 +4449,45 @@ class _UnlockPageState extends State<UnlockPage> {
       err = null;
     });
 
-    // Cached lastVaultName is a valid Vault Handle => ZK path.
+    // Under the corrected identity model (ed825aa), lastVaultName
+    // holds the USER-TYPED vault name — the same string used for
+    // both signing in and as the vault AI's name. Only sessions
+    // predating that migration might carry a VLT-... handle in
+    // this slot (via the SharedPreferences fallback chain in
+    // hydrate). Route accordingly: user-typed name → ZK vault-
+    // name path; literal VLT handle → ZK handle path. Legacy
+    // /auth/login is a last-resort fallback for unadopted pre-ZK
+    // accounts (the ZK path 401's on those because no vault_handle
+    // row exists for the derived bytes).
+    final entryIsVltHandle = vh.isValidVaultHandleDisplay(name);
     String unlockLastStep = 'submit_entry';
-    if (vh.isValidVaultHandleDisplay(name)) {
+    bool zkLoginNotFound = false;
+    {
       try {
         // ignore: avoid_print
-        print('[zk-unlock-step] page/submit_entry entry_type=handle');
+        print('[zk-unlock-step] page/submit_entry '
+            'entry_type=${entryIsVltHandle ? "handle" : "name"}');
         await OpaqueClient.ready();
         unlockLastStep = 'page_opaque_ready';
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
-          vaultHandle: name,
+          vaultName: entryIsVltHandle ? null : name,
+          vaultHandle: entryIsVltHandle ? name : null,
           pin: pin,
           onStep: (s) => unlockLastStep = s,
         );
         unlockLastStep = 'page_zk_login_returned';
-        // Unlock enters via a saved VLT handle only (the user did
-        // not re-type their vault name). Take the server-
-        // authoritative vault_name from the response; fall back to
-        // whatever hydrate() had (via app.vaultName) or, worst
-        // case, the decrypted displayName. Never the VLT handle.
-        final resolvedVaultName =
-            loginResult.vaultName ?? app.vaultName ?? loginResult.displayName;
+        // Preferred: server-authoritative vault_name from the
+        // finalize response. If null (e.g. an existing account
+        // whose column hasn't been backfilled yet), use the
+        // typed name when the entry was a vault name, or the
+        // client-side app.vaultName / decrypted displayName when
+        // the entry was a VLT handle. Never the VLT handle
+        // itself.
+        final resolvedVaultName = loginResult.vaultName ??
+            (entryIsVltHandle
+                ? (app.vaultName ?? loginResult.displayName)
+                : name);
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -4469,13 +4500,20 @@ class _UnlockPageState extends State<UnlockPage> {
           loginResult.sessionToken,
           app,
         );
-        _VaultCrypto._keyCache[_VaultCrypto._ck(
-            loginResult.vaultId, loginResult.vaultHandle)] = loginResult.mvk;
-        _VaultCrypto._pinCache[_VaultCrypto._ck(
-            loginResult.vaultId, loginResult.vaultHandle)] = pin;
+        // Crypto cache key uses the user-typed vault name (not the
+        // VLT handle) so the AppState.unlocked invariant getter's
+        // ``hasKeyFor(vaultId, vaultName)`` lookup — which reads
+        // ``AppState._vaultName`` — actually hits this entry.
+        // Mismatching keys was the immediate cause of the login-
+        // succeeds-then-redirects-to-PIN symptom.
+        _VaultCrypto._keyCache[
+                _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
+            loginResult.mvk;
+        _VaultCrypto._pinCache[
+            _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] = pin;
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
-          vaultName: loginResult.vaultHandle,
+          vaultName: resolvedVaultName,
         );
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
@@ -4538,22 +4576,46 @@ class _UnlockPageState extends State<UnlockPage> {
           'error_type': typeName,
           'last_step': unlockLastStep,
         });
-        if (!mounted) return;
-        setState(() {
-          // A wrong PIN takes the same code path as any other ZK
-          // failure. Show the diagnostic tag alongside the friendly
-          // copy so operators reading a screenshot can distinguish
-          // "wrong PIN" from a bang-null crash. A wrong-PIN attempt
-          // reports step=post_login_init (the /auth/zk-login-init
-          // POST is what returns 401).
-          err = 'Wrong username or PIN. '
-              '[diagnostic: step=$unlockLastStep, type=$typeName]';
-          loading = false;
-        });
-        return;
+        // 2026-07-20: mirror the LoginPage classifier so unadopted
+        // legacy accounts can still unlock. A 401 at zk-login-init
+        // means either "account not in ZK" (legacy) or "wrong PIN"
+        // (ZK). We can't tell from the error alone; let the legacy
+        // fallback run when the entry is NOT a VLT handle. A wrong
+        // PIN on a real ZK account raises OpaqueAuthenticationFailed
+        // (caught above) so we never falsely fall through for that
+        // case.
+        final looksLikeAuth401 = msg.contains('HTTP 401') ||
+            msg.contains('failed 401') ||
+            msg.contains('Wrong username or PIN');
+        if (looksLikeAuth401 && !entryIsVltHandle) {
+          zkLoginNotFound = true;
+        } else {
+          if (!mounted) return;
+          setState(() {
+            err = 'Wrong username or PIN. '
+                '[diagnostic: step=$unlockLastStep, type=$typeName]';
+            loading = false;
+          });
+          return;
+        }
       }
     }
 
+    // A typed VLT handle never falls back to legacy — a wrong PIN
+    // there must fail closed on the ZK side.
+    if (entryIsVltHandle && zkLoginNotFound) {
+      if (!mounted) return;
+      setState(() {
+        err = 'Wrong username or PIN.';
+        loading = false;
+      });
+      return;
+    }
+
+    // Legacy /auth/login fallback — reserved for un-adopted vaults
+    // that predate the ZK rollout (no vault_handle row exists for
+    // their derived bytes, so the ZK path 401's; the plaintext
+    // pin_verifier still works).
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.authLogin(vaultName: name, pin: pin);
