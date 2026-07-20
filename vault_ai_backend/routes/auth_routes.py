@@ -404,31 +404,65 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
 
     enforce_login_rate_limit(request)
     _validate_pin_shape(payload.pin, is_signup=False)
-    vault_name = _normalize_vault_name(payload.vault_name)
-    if not vault_name:
-                                                                        
-                                                                  
+    # 2026-07-20: preserve the user-typed casing here. Migration 0031
+    # repurposed vaults.vault_name from the legacy lowercase-only
+    # login identifier to the user-chosen product identity, and
+    # tools.normalize_vault_name (used by ZK signup) preserves case.
+    # A blind .lower() at the lookup step caused the endpoint to miss
+    # every ZK-signed-up mixed-case row (e.g. "Alexa"), which surfaced
+    # as the production "PIN loop" on the reload -> /pin path.
+    vault_name_raw = (payload.vault_name or "").strip()
+    if not vault_name_raw:
+
+
         _do_dummy_derive(payload.pin)
         raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
 
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # Case-insensitive lookup with EXACT-case precedence, plus
+        # explicit ambiguity refusal. Collision safety:
+        #
+        #  * Case-sensitive UNIQUE(vault_name) means at most ONE row
+        #    can match exact-case equality with vault_name = %(raw)s.
+        #  * If that exact-case row exists we use it — deterministic;
+        #    NEVER authenticates a case-collided sibling.
+        #  * If no exact-case match exists AND multiple rows share
+        #    the same case-insensitive canonical form (reachable only
+        #    across the legacy/ZK boundary — see the CollisionSchema
+        #    audit in test_auth_login_case_insensitive_2026_07_20.py)
+        #    we REFUSE with the same generic 401 as a nonexistent
+        #    vault. Never pick an arbitrary row from a case-collided
+        #    set: doing so would let a client who types the shared
+        #    case-insensitive form authenticate as an unintended
+        #    vault whose PIN happened to match.
         cur.execute(
             """
             SELECT vault_id, vault_name, pin_salt, pin_verifier, kdf_iterations,
-                   failed_pin_attempts, locked_until, must_reset, display_username
+                   failed_pin_attempts, locked_until, must_reset, display_username,
+                   (vault_name = %(raw)s) AS is_exact_match
             FROM vaults
-            WHERE vault_name = %s
-            LIMIT 1
+            WHERE LOWER(vault_name) = LOWER(%(raw)s)
             """,
-            (vault_name,),
+            {"raw": vault_name_raw},
         )
-        row = cur.fetchone()
+        rows = cur.fetchall()
+
+        row = None
+        if rows:
+            exact_matches = [r for r in rows if r.get("is_exact_match")]
+            if exact_matches:
+                # UNIQUE(vault_name) case-sensitively guarantees len<=1.
+                row = exact_matches[0]
+            elif len(rows) == 1:
+                row = rows[0]
+            # else: ambiguous — leave row=None, fall through to the
+            # generic 401 below.
 
         if not row:
-                                                                    
-                                                          
+
+
             _do_dummy_derive(payload.pin)
             raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
 
