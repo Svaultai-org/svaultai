@@ -1649,26 +1649,77 @@ class AppState extends ChangeNotifier {
         'iterations': iterations,
       });
 
+      // 2026-07-21 (c2f917e first-chat regression fix): the previous
+      // shape wrapped the rotate call, a rotated-flag inspection,
+      // and the re-derive in ONE try block that silently swallowed
+      // every failure. That silently desynced the client key from
+      // the DB whenever the server rotated but the flag inspection
+      // failed for any reason, and the very first /chat POST then
+      // encrypted with the stale key. Server re-derived from the
+      // (now-rotated) DB salt, and vault_core.decrypt_message
+      // raised "Invalid PIN or corrupted data" -->
+      // InvalidVaultUnlockException on the client.
+      //
+      // New shape (three-part):
+      //   * Attempt the rotation. Do NOT silently swallow errors -
+      //     log the outcome via vlog. If the rotate call threw the
+      //     server transaction rolled back (see
+      //     vault_core.py:530-533), so K1 from /vault-meta above is
+      //     still valid and no client action is needed.
+      //   * REGARDLESS of the rotate outcome, refetch /vault-meta.
+      //     That is the authoritative source of the CURRENT DB
+      //     salt/iter and closes the "server committed but response
+      //     was malformed or lost" window that no flag inspection
+      //     can catch.
+      //   * If the fresh salt/iter differ from what K1 was derived
+      //     from, re-derive K2 and REPLACE the cached key so the
+      //     next /chat's server-side re-derive matches.
+      Object? _rotateError;
       try {
-        final rotateResult = await client.rotateVaultKdf(
+        await client.rotateVaultKdf(
           vaultName: newVaultName,
           pin: pin,
           authToken: newToken,
         );
-        if (rotateResult['rotated'] == true) {
-          final newSalt = rotateResult['pin_salt']?.toString();
-          final newIter = (rotateResult['kdf_iterations'] as num?)?.toInt();
-          if (newSalt != null && newSalt.isNotEmpty && newIter != null) {
-            await _VaultCrypto.deriveAndCacheKey(
-              pin: pin,
-              vaultId: newVaultId,
-              vaultName: newVaultName,
-              pinSaltBase64: newSalt,
-              iterations: newIter,
-            );
-          }
-        }
-      } catch (_) {}
+      } catch (e) {
+        _rotateError = e;
+      }
+      vlog('pin.rotate.attempt', {
+        'ok': _rotateError == null,
+        if (_rotateError != null)
+          'error_type': _rotateError.runtimeType.toString(),
+        if (_rotateError != null) 'error': _rotateError.toString(),
+      });
+
+      final freshMeta = await _API.getVaultMeta(
+        vaultName: newVaultName,
+        authToken: newToken,
+      );
+      final freshSalt = freshMeta['pin_salt']?.toString();
+      final freshIter =
+          (freshMeta['kdf_iterations'] as num?)?.toInt() ?? iterations;
+      final saltChanged =
+          freshSalt != null && freshSalt.isNotEmpty && freshSalt != pinSalt;
+      final iterChanged = freshIter != iterations;
+      vlog('pin.rotate.post_meta', {
+        'salt_changed': saltChanged,
+        'iter_changed': iterChanged,
+        'new_iterations': freshIter,
+      });
+      if (freshSalt != null && freshSalt.isNotEmpty
+          && (saltChanged || iterChanged)) {
+        // Authoritative salt/iter differ from what K1 was derived
+        // from. Re-derive K2 with the fresh values so the client
+        // encryption key matches the server's future re-derive
+        // on the very next request.
+        await _VaultCrypto.deriveAndCacheKey(
+          pin: pin,
+          vaultId: newVaultId,
+          vaultName: newVaultName,
+          pinSaltBase64: freshSalt,
+          iterations: freshIter,
+        );
+      }
       vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
 
       pinAttempts = 0;
@@ -2323,24 +2374,26 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
             child: const Icon(Icons.shield_rounded,
                 color: Color(0xFF10A37F), size: 22),
           ),
-          const SizedBox(width: 12),
-          // 2026-07-21: wrapped in Flexible + maxLines:1 + ellipsis so
-          // the title Row yields horizontal space to the actions region
-          // (notification bell + account chip) on narrow phones. A
-          // naked Text child let the wordmark overflow into the actions
-          // slot on <= 412px viewports, painting over the bell.
-          const Flexible(
-            child: Text(
-              'Vaultai',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-                letterSpacing: -0.2,
+          // 2026-07-21 (c2f917e follow-up): on phone-width viewports
+          // (< 600 CSS px) hide the wordmark entirely and show only
+          // the shield logo. The previous Flexible+ellipsis approach
+          // produced "V..." at 320-390px which reads as broken UI.
+          // Tablet + desktop (>= 600px) keep the full wordmark.
+          if (screenWidth >= 600) ...[
+            const SizedBox(width: 12),
+            const Flexible(
+              child: Text(
+                'Vaultai',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                  letterSpacing: -0.2,
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
       actions: !showActions
@@ -13125,15 +13178,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      // User-facing greeting: the canonical username
-                      // is the vault's identity badge — what the user
-                      // typed at signup. Optional nickname
-                      // (displayUsername) is secondary and never
-                      // replaces the canonical name here. The internal
-                      // VLT-* handle is never surfaced. If neither
-                      // identity has hydrated yet, show a generic
-                      // label rather than exposing the handle.
-                      'Welcome to ${app.vaultName ?? app.displayName ?? 'your vault'}',
+                      // 2026-07-21 (c2f917e regression fix): greet
+                      // using the user's chosen display_name. The
+                      // vault_name is the login and AI identity —
+                      // it must NOT be the visible greeting label.
+                      // Neutral fallback when displayName is absent.
+                      () {
+                        final name = app.displayName?.trim() ?? '';
+                        if (name.isEmpty) return 'Welcome to your vault';
+                        return 'Welcome, $name';
+                      }(),
                       style: TextStyle(
                         fontSize: isMobile ? 28 : 40,
                         fontWeight: FontWeight.w800,

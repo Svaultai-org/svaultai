@@ -1,36 +1,28 @@
-// Root-cause repro for the 2026-07-21 production layout regression:
+// Origin: 2026-07-21 production layout regression — the notification
+// bell overlapped / was embedded in the "Vaultai" wordmark on iPhone-
+// width viewports.
 //
-//   Notification bell overlaps / is embedded in the "Vaultai"
-//   wordmark on iPhone-width viewports. Reason (see the branch
-//   investigation report): the wordmark Text is a naked child of
-//   the title Row (main.dart:2316-2323) with no
-//   Flexible/Expanded/overflow guard, while the AppBar actions
-//   region reserves ~248px on mobile (48px bell IconButton + 4px
-//   padding + 180px maxWidth account chip + 16px right padding).
-//   On a 320px viewport the title Row's intrinsic width exceeds
-//   the available slot and NavigationToolbar allows it to visually
-//   collide with the actions region — the wordmark's tail letters
-//   overpaint the bell IconButton.
+// UPDATED 2026-07-21 (c2f917e follow-up): the original fix wrapped
+// the wordmark in Flexible + maxLines:1 + TextOverflow.ellipsis so
+// the title Row would yield space to the actions region. In
+// production that produced "V..." at 320-412px, which reads as
+// broken. The new fix HIDES the wordmark entirely on
+// screenWidth < 600 and keeps the full "Vaultai" text on tablet+
+// (>= 600).
 //
-// The bell only renders when app.unlocked is true, which requires
-// the _VaultCrypto key cache to hold a live key. That cache is
-// library-private to main.dart, so a widget test cannot populate
-// it without an invasive test hook we don't want to add. Every
-// assertion here is therefore expressed in one of two ways:
+// This test file was rewritten to reflect the new invariant:
 //
-//   1. Live widget-tree tests using the AUTHENTICATED-BUT-NOT-
-//      UNLOCKED state. This still renders the wordmark and the
-//      account chip. The account chip is the widest actions-slot
-//      element (up to 180px on mobile), and if the wordmark is
-//      constrained enough to not overlap it, the bell (48px, sits
-//      LEFT of the chip) is by construction also safe.
-//   2. Source-scan tests that lock down the structural fix — the
-//      wordmark MUST be wrapped in Flexible with maxLines:1 and
-//      TextOverflow.ellipsis so the title Row can never eat the
-//      actions region.
-//
-// These tests are written FIRST so they fail against the current
-// widget tree; the structural fix will make them pass.
+//   * On phones (all DeviceProfiles.allPhones widths): the wordmark
+//     Text('Vaultai') is NOT in the tree at all — proved by
+//     the sibling suite in top_nav_bar_mobile_shield_only_2026_07_21_test.dart.
+//     Nothing here re-asserts that; this file's mobile group is
+//     removed.
+//   * At tablet width (600+): the wordmark IS rendered AND does
+//     not overlap the account chip.
+//   * The wordmark, when rendered, is still wrapped in Flexible +
+//     maxLines:1 + TextOverflow.ellipsis so a translated / longer
+//     wordmark can still shrink safely without pushing actions off
+//     screen at edge-case narrow tablet widths.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -49,7 +41,6 @@ AppState _authedAppState({String displayName = 'Alexa'}) {
   app.vaultName = 'Alexa';
   app.displayName = displayName;
   app.authed = true;
-  // We do NOT touch app.unlocked — see the file header explanation.
   return app;
 }
 
@@ -59,7 +50,7 @@ Future<void> _pumpHeader(
   required DeviceProfile device,
   required AppState app,
   bool showMenuButton = true,
-  bool isMobile = true,
+  bool isMobile = false,
 }) async {
   await pumpAtDevice(
     tester,
@@ -88,7 +79,6 @@ Rect _rectOf(WidgetTester tester, Finder finder) {
 }
 
 
-// The wordmark is a Text widget with data 'Vaultai'.
 Finder _wordmarkTextFinder() {
   return find.byWidgetPredicate(
     (w) => w is Text && w.data == 'Vaultai',
@@ -96,10 +86,6 @@ Finder _wordmarkTextFinder() {
 }
 
 
-// The account chip surrounds the display name Text inside the
-// PopupMenuButton's child Container. We reach the outer chip by
-// walking up from the display-name Text to the ancestor Container
-// with a BoxConstraints maxWidth.
 Finder _accountChipContainerFinder(String displayName) {
   return find.ancestor(
     of: find.byWidgetPredicate(
@@ -117,8 +103,6 @@ String _mainDartSource() =>
     File('lib/main.dart').readAsStringSync();
 
 
-// Grep out the title:Row block inside TopNavBar.build() so we can
-// assert on its structure directly.
 String _topNavBarTitleBlock() {
   final src = _mainDartSource();
   final classIdx = src.indexOf('class TopNavBar');
@@ -126,8 +110,6 @@ String _topNavBarTitleBlock() {
   final buildIdx = src.indexOf('Widget build(BuildContext context)', classIdx);
   final titleIdx = src.indexOf('title: Row(', buildIdx);
   expect(titleIdx, greaterThan(-1), reason: 'TopNavBar must have title:Row');
-  // Take up to the "actions:" line so we don't accidentally scan
-  // the actions.
   final actionsIdx = src.indexOf('actions:', titleIdx);
   return src.substring(titleIdx, actionsIdx);
 }
@@ -135,11 +117,15 @@ String _topNavBarTitleBlock() {
 
 void main() {
   // ─────────────────────────────────────────────────────────────────
-  // Live widget tests: wordmark must not overlap the account chip.
+  // Tablet + desktop still render the wordmark; it must not overlap
+  // the account chip.
   // ─────────────────────────────────────────────────────────────────
 
-  group('TopNavBar — wordmark does not overlap actions on mobile', () {
-    for (final device in DeviceProfiles.allPhones) {
+  group('TopNavBar — wordmark does not overlap actions on tablet+', () {
+    for (final device in <DeviceProfile>[
+      DeviceProfiles.ipad,       // 820x1180
+      DeviceProfiles.desktop,    // 1440x900
+    ]) {
       testWidgets(
         'wordmark ⟂ account chip @ ${device.name} '
         '(${device.width.toInt()}px)',
@@ -150,9 +136,8 @@ void main() {
           final wordmark = _wordmarkTextFinder();
           final chip = _accountChipContainerFinder('Alexa');
           expect(wordmark, findsOneWidget,
-              reason: 'header must render the Vaultai wordmark');
-          expect(chip, findsWidgets,
-              reason: 'header must render the account chip when authed');
+              reason: 'tablet+ must render the Vaultai wordmark');
+          expect(chip, findsWidgets);
 
           final wordmarkRect = _rectOf(tester, wordmark);
           final chipRect = _rectOf(tester, chip);
@@ -160,74 +145,53 @@ void main() {
           final overlap = wordmarkRect.intersect(chipRect);
           final hasOverlap =
               overlap.width > 0 && overlap.height > 0;
-          expect(
-            hasOverlap, isFalse,
-            reason: 'Wordmark $wordmarkRect overlaps account chip '
-                '$chipRect @ ${device.name} — the title Row must not '
-                'eat the actions region on narrow phones',
-          );
-
-          // Wordmark must be to the left of the chip with a visible
-          // gap (>=4px).
-          expect(
-            chipRect.left, greaterThanOrEqualTo(wordmarkRect.right + 4.0),
-            reason: '>=4px gap between wordmark right edge and chip '
-                'left edge required on ${device.name}',
-          );
+          expect(hasOverlap, isFalse,
+              reason: 'Wordmark $wordmarkRect overlaps chip $chipRect '
+                      '@ ${device.name}');
+          expect(chipRect.left,
+              greaterThanOrEqualTo(wordmarkRect.right + 4.0));
         },
       );
     }
   });
 
-  group('TopNavBar — with a long display name (worst-case squeeze)', () {
+  group('TopNavBar — long display name at tablet width', () {
     testWidgets(
-      'wordmark stays visible with a long display name @ iPhone SE',
+      'wordmark stays visible with a long display name @ iPad',
       (tester) async {
         final app = _authedAppState(
           displayName: 'A Long Displayed Owner Name For Test Coverage',
         );
         await _pumpHeader(
-            tester, device: DeviceProfiles.iphoneSE, app: app);
-
+            tester, device: DeviceProfiles.ipad, app: app);
         final wordmark = _wordmarkTextFinder();
         expect(wordmark, findsOneWidget);
-        final rect = _rectOf(tester, wordmark);
-        // Non-zero width required — a Flexible with maxLines:1
-        // + ellipsis may narrow the wordmark but must not collapse
-        // it to invisible.
-        expect(rect.width, greaterThan(0.0),
-            reason: 'wordmark must not be zero-width — the fix must '
-                    'not clip it to invisible on narrow phones');
+        expect(_rectOf(tester, wordmark).width, greaterThan(0.0));
       },
     );
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // Structural fix guard: source-scan the TopNavBar title block.
+  // Structural fix guard: when rendered, the wordmark must still be
+  // wrapped in Flexible + maxLines:1 + TextOverflow.ellipsis so it
+  // shrinks safely at edge-case narrow tablet widths.
   // ─────────────────────────────────────────────────────────────────
 
-  group('TopNavBar structure — wordmark wrapped in Flexible + ellipsis', () {
-    test('title Row wraps the Vaultai Text in Flexible', () {
+  group('TopNavBar structure — wordmark, when rendered, is Flexible+ellipsis',
+        () {
+    test('title Row wraps the Vaultai Text in Flexible when shown', () {
       final title = _topNavBarTitleBlock();
-      // The wordmark must sit inside a Flexible so the title Row
-      // yields horizontal space to the actions region before it
-      // ever paints over them. `Expanded` would also work
-      // structurally; either is acceptable.
       final vaultaiIdx = title.indexOf("'Vaultai'");
       expect(vaultaiIdx, greaterThan(-1),
-          reason: 'Vaultai wordmark must exist in TopNavBar title');
-      // Look at the parent widget the Text is nested inside. Take
-      // ~600 chars of context BEFORE the wordmark string to catch
-      // Flexible( or Expanded( in an outer wrapper.
+          reason: 'Vaultai wordmark literal must exist in title');
       final start = (vaultaiIdx - 600).clamp(0, title.length);
       final context = title.substring(start, vaultaiIdx);
       final hasWrapper = context.contains('Flexible(')
           || context.contains('Expanded(');
       expect(hasWrapper, isTrue,
-          reason: 'the Vaultai Text must be wrapped in Flexible(...) '
-                  'or Expanded(...) — a naked Text child of the title '
-                  'Row is what causes the actions-region overlap on '
-                  'narrow phones');
+          reason: 'wordmark, when rendered, must sit inside a '
+                  'Flexible/Expanded so it never pushes actions off '
+                  'screen at edge-case narrow tablet widths');
     });
 
     test('wordmark Text has maxLines:1 + TextOverflow.ellipsis', () {
@@ -238,14 +202,28 @@ void main() {
       expect(
         window.contains('maxLines: 1') || window.contains('maxLines:1'),
         isTrue,
-        reason: 'wordmark Text must have maxLines:1 so it cannot wrap '
-                'and push actions off-screen on narrow phones',
       );
       expect(
         window.contains('TextOverflow.ellipsis')
             || window.contains('overflow: TextOverflow.ellipsis'),
         isTrue,
-        reason: 'wordmark Text must ellipsize on horizontal overflow',
+      );
+    });
+
+    test('wordmark is gated on screenWidth >= 600 (tablet+)', () {
+      // Positive assertion that the wordmark is now behind a
+      // tablet-width gate — this is what prevents "V..." on phones.
+      final title = _topNavBarTitleBlock();
+      final vaultaiIdx = title.indexOf("'Vaultai'");
+      final start = (vaultaiIdx - 200).clamp(0, title.length);
+      final context = title.substring(start, vaultaiIdx);
+      expect(
+        context.contains('screenWidth >= 600')
+            || context.contains('screenWidth >=600'),
+        isTrue,
+        reason: 'wordmark must be conditionally rendered behind a '
+                '>= 600 tablet-width gate so phones show only the '
+                'shield brand mark',
       );
     });
   });

@@ -29,20 +29,40 @@ String _readLib(String path) => File('lib/$path').readAsStringSync();
 void main() {
   group('UI never surfaces the internal VLT vault handle', () {
     test(
-        'dashboard "Welcome to …" reads vaultName (product identity) '
-        'first, falling back to displayName, never the VLT handle', () {
+        'dashboard welcome greets with displayName (not vault_name, '
+        'never the VLT handle) — updated 2026-07-21 (c2f917e)', () {
       final src = _readLib('main.dart');
-      // 2026-07-20 (corrected): vault_name IS the product identity
-      // used for both signing in and as the vault AI's name. The
-      // dashboard welcome reads it directly (falling back to
-      // displayName for legacy accounts without a captured value).
+      // 2026-07-21 UPDATE: production feedback said greeting users
+      // with their vault_name ("Welcome to Yola") looks like the
+      // app is greeting the vault, not the person. The welcome
+      // heading now uses displayName as the visible name and falls
+      // back to a neutral "Welcome to your vault" when there is no
+      // displayName. vault_name remains the LOGIN + AI identity —
+      // just never the visible greeting.
+      expect(src.contains('app.vaultName'), isTrue,
+          reason: 'vaultName remains referenced elsewhere for '
+                  'login/AI identity — sanity check');
+      // The welcome heading itself no longer reads vault_name.
       expect(
         src.contains(
           "'Welcome to \${app.vaultName ?? app.displayName ?? 'your vault'}'",
         ),
+        isFalse,
+        reason: 'the OLD "Welcome to \${vaultName …}" interpolation '
+                'must be gone — greet by displayName instead',
+      );
+      // New shape: neutral "Welcome to your vault" fallback string
+      // appears in the source AND the greeting reads displayName.
+      expect(
+        src.contains("'Welcome to your vault'"),
         isTrue,
-        reason: 'dashboard greeting must show the vault name — '
-            'the user-chosen product identity',
+        reason: 'neutral fallback string must exist for the null-'
+                'displayName case',
+      );
+      expect(
+        src.contains("'Welcome, \$name'"),
+        isTrue,
+        reason: 'the primary greeting must be "Welcome, <displayName>"',
       );
     });
 
