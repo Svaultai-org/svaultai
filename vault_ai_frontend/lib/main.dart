@@ -1484,6 +1484,9 @@ class AppState extends ChangeNotifier {
         _VaultCrypto._pinCache.remove(
           _VaultCrypto._ck(leavingVaultId, leavingVaultName),
         );
+        _VaultCrypto._keyOrigin.remove(
+          _VaultCrypto._ck(leavingVaultId, leavingVaultName),
+        );
       }
     } catch (_) {}
     final sp = await SharedPreferences.getInstance();
@@ -1757,6 +1760,109 @@ class AppState extends ChangeNotifier {
       });
       notifyListeners();
       return false;
+    }
+  }
+
+  /// Definitive fix for the 2026-07-21 first-chat-invalidates-unlock
+  /// production incident (e797516 deployment still repro'd it).
+  ///
+  /// Root cause: the client-cached crypto key can drift out of sync
+  /// with the server's current DB (pin_salt, kdf_iterations) between
+  /// PIN unlock and the first /chat send. The earlier "refetch after
+  /// /rotate-vault-kdf" patch closed the rotate-response race but not
+  /// the general drift window (any server-side maintenance path that
+  /// mutates the row, a stale rotate response, an aborted rotate that
+  /// still committed, a nginx-cached /vault-meta response served
+  /// during the unlock hot path, or a concurrent second tab racing
+  /// its own rotate — all can leave the cached key on the OLD salt
+  /// while the server derives from the NEW salt on decrypt).
+  ///
+  /// Fix: at every chat send, before we encrypt, do one authoritative
+  /// GET /vault-meta and compare against the recorded derivation
+  /// origin for the current cache slot. If salt or iterations changed,
+  /// re-derive with the fresh values and REPLACE the cached key. This
+  /// is NOT a retry (no failed request precedes it) and NOT a delay
+  /// (one HTTP GET, ~50-200ms, dwarfed by LLM latency). It's an
+  /// authoritative sync point that guarantees the encryption key
+  /// used for the next request matches what the server will derive.
+  ///
+  /// Silent on the common path: when salt/iter are unchanged (steady
+  /// state), the origin comparison short-circuits with zero PBKDF2
+  /// cost. Only a genuinely drifted state pays the ~100-500ms
+  /// re-derive.
+  ///
+  /// Silent on ZK-adopted vaults: those store their MVK directly in
+  /// _keyCache without a PBKDF2 origin (there is nothing to
+  /// re-derive from a PIN — the MVK is unwrapped via OPAQUE
+  /// export_key). Absence of an origin entry short-circuits to
+  /// no-op, so this path is safe for both legacy and ZK vaults.
+  ///
+  /// Errors are swallowed: if /vault-meta fails (network drop, 5xx,
+  /// device gate), the cached key stays and the chat encrypt proceeds
+  /// with what we have. If the drift was real the chat will still
+  /// surface InvalidVaultUnlockException; we don't want to compound
+  /// a transient network failure into a forced re-PIN.
+  Future<void> resyncCryptoKeyIfDrifted() async {
+    final token = sessionToken;
+    final vId = vaultId;
+    final vName = _vaultName;
+    if (token == null || vId == null || vName == null) return;
+    if (!_VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName)) return;
+    final origin = _VaultCrypto.originFor(vaultId: vId, vaultName: vName);
+    if (origin == null) {
+      // ZK-adopted vault (MVK stored directly without PBKDF2 origin).
+      // Nothing to re-derive; server-side key material is the same
+      // MVK unwrapped at OPAQUE login and does not rotate under us.
+      return;
+    }
+    final String? pin = _VaultCrypto.cachedPinFor(
+      vaultId: vId,
+      vaultName: vName,
+    );
+    if (pin == null) return;
+
+    Map<String, dynamic> freshMeta;
+    try {
+      freshMeta = await _API.getVaultMeta(
+        vaultName: vName,
+        authToken: token,
+      );
+    } catch (e) {
+      vlog('crypto.resync.vault_meta_failed', {'error': e.toString()});
+      return;
+    }
+    final freshSalt = freshMeta['pin_salt']?.toString();
+    final freshIter =
+        (freshMeta['kdf_iterations'] as num?)?.toInt() ?? origin.iterations;
+    if (freshSalt == null || freshSalt.isEmpty) {
+      vlog('crypto.resync.missing_salt', {});
+      return;
+    }
+    final saltChanged = freshSalt != origin.saltBase64;
+    final iterChanged = freshIter != origin.iterations;
+    vlog('crypto.resync.check', {
+      'salt_changed': saltChanged,
+      'iter_changed': iterChanged,
+      'origin_iter': origin.iterations,
+      'fresh_iter': freshIter,
+    });
+    if (!saltChanged && !iterChanged) return;
+
+    try {
+      await _VaultCrypto.deriveAndCacheKey(
+        pin: pin,
+        vaultId: vId,
+        vaultName: vName,
+        pinSaltBase64: freshSalt,
+        iterations: freshIter,
+      );
+      vlog('crypto.resync.rederived', {
+        'iterations': freshIter,
+        'salt_changed': saltChanged,
+        'iter_changed': iterChanged,
+      });
+    } catch (e) {
+      vlog('crypto.resync.rederive_failed', {'error': e.toString()});
     }
   }
 
@@ -5864,6 +5970,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
+      // See AppState.resyncCryptoKeyIfDrifted — mirror the /send()
+      // pre-encrypt sync so the delete-item sentinel does not trip
+      // the same "Invalid PIN or corrupted data" server-side.
+      await app.resyncCryptoKeyIfDrifted();
       final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
       int? assistantIndex;
       String buffer = '';
@@ -12368,6 +12478,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
 
+      // Authoritative sync of the local crypto key against the
+      // server's current DB (pin_salt, kdf_iterations) BEFORE we
+      // encrypt. See AppState.resyncCryptoKeyIfDrifted docstring for
+      // the incident context. Silent no-op when the cached key's
+      // origin already matches the server; a full re-derive when it
+      // drifted. Never a retry.
+      await app.resyncCryptoKeyIfDrifted();
       final encryptedMessage = await _VaultCrypto.encrypt(text);
 
       final _hintForThisSend = _nextSelectionHint;
@@ -12739,13 +12856,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               vertical: isMobile ? 8 : 12,
             ),
             scrollController: _scrollController,
-            // Typing indicator identity: the user-chosen vault name
-            // (product-facing identity for BOTH vault and AI keeper).
+            // Typing indicator identity: the user-facing display
+            // name, so the AI is addressed the same way the drawer
+            // header and dashboard greeting address the user (2026-
+            // 07-21 c2f917e follow-up — vault_name is the internal
+            // login/AI identity and must not surface in normal UI).
             // Falls back to the neutral "VaultAI is thinking..."
-            // literal when null. Never a VLT handle, never a random
-            // hex placeholder, never the display name, never any
-            // hash.
-            vaultName: app.vaultName,
+            // literal when display_name is unset.
+            vaultName: app.displayName,
             // Per-file in-flight state, watched from AppState so the
             // whole chat rebuilds when any file starts / finishes a
             // view or download. Individual cards render their own
@@ -13076,7 +13194,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Hidden for privacy. Ask ${context.read<AppState>().vaultName ?? 'Vault'} in chat to retrieve this file.',
+                  // 2026-07-21 c2f917e follow-up: never surface
+                  // vault_name in normal UI. Use display_name; fall
+                  // back to the neutral 'Vault' literal.
+                  'Hidden for privacy. Ask ${context.read<AppState>().displayName?.trim().isNotEmpty == true ? context.read<AppState>().displayName!.trim() : 'Vault'} in chat to retrieve this file.',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -13100,8 +13221,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             onPressed: () => _askBrainAboutFile(file),
             icon: const Icon(Icons.smart_toy_outlined),
             label: Text(
-              context.read<AppState>().vaultName?.trim().isNotEmpty == true
-                  ? 'Ask ${context.read<AppState>().vaultName!}'
+              // 2026-07-21 c2f917e follow-up: user-visible AI-address
+              // uses display_name, not vault_name.
+              context.read<AppState>().displayName?.trim().isNotEmpty == true
+                  ? 'Ask ${context.read<AppState>().displayName!.trim()}'
                   : 'Ask Vault',
             ),
           ),
@@ -13418,13 +13541,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      // Drawer header: canonical username (badge) is
-                      // the primary label; optional nickname is a
-                      // fallback for old accounts that never captured
-                      // one. The old code showed ``app.vaultName``
-                      // which resolves to the VLT-* handle for ZK
-                      // accounts — never surface that to the user.
-                      app.vaultName ?? app.displayName ?? 'Vault',
+                      // Drawer header (2026-07-21 c2f917e follow-up):
+                      // display the user-facing display_name only.
+                      // The internal vault_name is the login/AI
+                      // identity — never a normal-UI label. Falls back
+                      // to the neutral 'Vault' literal when the row
+                      // has no display_name captured.
+                      () {
+                        final name = app.displayName?.trim() ?? '';
+                        return name.isEmpty ? 'Vault' : name;
+                      }(),
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: _drawerHeaderFontSize,
@@ -13514,9 +13640,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return _buildFilesSection(isMobile);
 
       case _DashboardSection.logins:
+        // 2026-07-21 c2f917e follow-up: LoginsPage vaultLabel is a
+        // user-visible header string ("Your Vault" / display_name).
+        // Never surface the internal vault_name here.
         final vaultDisplayName =
-            context.read<AppState>().vaultName?.trim().isNotEmpty == true
-                ? context.read<AppState>().vaultName!
+            context.read<AppState>().displayName?.trim().isNotEmpty == true
+                ? context.read<AppState>().displayName!.trim()
                 : 'Vault';
 
         if (!hasLoadedSecureItems &&
@@ -14588,14 +14717,45 @@ class _VaultSwitcher extends StatelessWidget {
   }
 }
 
+/// Origin snapshot for a cached crypto key: the exact (pin_salt,
+/// kdf_iterations) pair the current [SecretKey] was derived from.
+///
+/// The 2026-07-21 first-chat-invalidates-unlock incident showed that
+/// merely deriving a key at PIN-unlock time is not enough — the DB
+/// state can drift under the cached key (KDF rotation, server-side
+/// re-encryption maintenance, timing races between /rotate-vault-kdf
+/// and /vault-meta refetch, etc.). Tracking the derivation origin
+/// per cache slot lets the chat send path detect drift with one
+/// authoritative `/vault-meta` GET and silently re-derive when the
+/// server's current state differs — no user-visible error, no retry,
+/// no delay beyond the necessary HTTP round-trip.
+class _KeyOrigin {
+  final String saltBase64;
+  final int iterations;
+  const _KeyOrigin({required this.saltBase64, required this.iterations});
+}
+
 class _VaultCrypto {
   static final Map<String, SecretKey> _keyCache = {};
   static final Map<String, String> _pinCache = {};
+  static final Map<String, _KeyOrigin> _keyOrigin = {};
 
   static String? _activeVaultId;
   static String? _activeVaultName;
 
   static String _ck(String vaultId, String vaultName) => '$vaultId|$vaultName';
+
+  /// Return the (salt, iterations) that the currently-cached key for
+  /// (vaultId, vaultName) was derived from, or ``null`` if no key is
+  /// cached for that slot. Used by `AppState.resyncCryptoKeyIfDrifted`
+  /// to decide whether the cache is authoritative or needs a fresh
+  /// PBKDF2 pass against the server's current DB state.
+  static _KeyOrigin? originFor({
+    required String vaultId,
+    required String vaultName,
+  }) {
+    return _keyOrigin[_ck(vaultId, vaultName)];
+  }
 
   static void setActiveVault({
     required String vaultId,
@@ -14639,6 +14799,10 @@ class _VaultCrypto {
     final k = _ck(vaultId, vaultName);
     _keyCache[k] = secretKey;
     _pinCache[k] = pin;
+    _keyOrigin[k] = _KeyOrigin(
+      saltBase64: pinSaltBase64,
+      iterations: iterations,
+    );
     _activeVaultId = vaultId;
     _activeVaultName = vaultName;
     vlog('crypto.deriveAndCacheKey.stored', {
@@ -14729,6 +14893,7 @@ class _VaultCrypto {
     final before = _keyCache.length;
     _keyCache.removeWhere((k, _) => k.startsWith(prefix));
     _pinCache.removeWhere((k, _) => k.startsWith(prefix));
+    _keyOrigin.removeWhere((k, _) => k.startsWith(prefix));
     final wasActive = _activeVaultId == vaultId;
     if (wasActive) {
       _activeVaultId = null;

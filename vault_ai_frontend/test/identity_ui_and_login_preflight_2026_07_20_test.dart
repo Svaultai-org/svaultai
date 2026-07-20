@@ -66,19 +66,28 @@ void main() {
       );
     });
 
-    test('drawer header reads vaultName (product) with displayName '
-        'fallback, never the raw handle field', () {
+    test('drawer header reads displayName only, never vault_name '
+        '(updated 2026-07-21 c2f917e follow-up)', () {
       final src = _readLib('main.dart');
       final drawerIdx = src.indexOf("'vault_drawer_menu_list'");
       expect(drawerIdx, greaterThan(-1));
       final windowStart = (drawerIdx - 1500).clamp(0, src.length);
       final window = src.substring(windowStart, drawerIdx);
-      // The drawer header now uses vaultName ?? displayName ??
-      // 'Vault' since vault_name IS the product identity.
+      // 2026-07-21 UPDATE (from earlier "vaultName ?? displayName"
+      // contract): production users reported seeing the internal
+      // vault_name ("Yola") in the drawer. The user policy is now
+      // that vault_name is INTERNAL only — the drawer header (and
+      // every other normal-UI surface) must use display_name with a
+      // neutral 'Vault' fallback.
       expect(
         window.contains('app.vaultName ?? app.displayName ??'),
-        isTrue,
+        isFalse,
+        reason: 'the OLD vaultName-first shape must be gone — the '
+                'drawer header must read displayName with a neutral '
+                'fallback, never surface vault_name',
       );
+      expect(window.contains('app.displayName'), isTrue,
+          reason: 'drawer header must interpolate app.displayName');
       // Retired identifier — must not resurface.
       expect(window.contains('app.canonicalUsername'), isFalse);
     });
