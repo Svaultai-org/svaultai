@@ -7,7 +7,7 @@
 #
 # Exit codes:
 #   0 = clean, safe to deploy
-#   2 = missing or malformed artifact — DO NOT DEPLOY
+#   2 = missing or malformed artifact - DO NOT DEPLOY
 #   3 = internal error (script bug or missing bundle)
 
 $ErrorActionPreference = 'Stop'
@@ -106,7 +106,7 @@ if (-not (Test-Path $mainJs -PathType Leaf)) {
     Write-Error "[verify-web-release] FAIL: $mainJs missing."
     $fail++
 } elseif ($expectedSha) {
-    # Streaming search — main.dart.js can be tens of MB.
+    # Streaming search - main.dart.js can be tens of MB.
     $found = $false
     $sr = [System.IO.StreamReader]::new($mainJs)
     try {
@@ -151,7 +151,7 @@ if ($fail -gt 0) {
 }
 
 if ($warn -gt 0) {
-    Write-Host "[verify-web-release] $warn warning(s) — bundle is deployable but review advisories above."
+    Write-Host "[verify-web-release] $warn warning(s) - bundle is deployable but review advisories above."
 }
 
 Write-Host '[verify-web-release] OK: bundle looks clean.' -ForegroundColor Green
