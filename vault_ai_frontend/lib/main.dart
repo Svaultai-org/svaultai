@@ -2283,6 +2283,17 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    // 2026-07-21: the account chip's maxWidth on isMobile used to be
+    // a flat 180 which, combined with a 42px shield + 12px gap +
+    // menu IconButton + AppBar titleSpacing, consumed enough of the
+    // 320-360px viewports that the Flexible-wrapped wordmark laid
+    // out at 0 width (long display names amplified this). Tighten
+    // the chip cap on the narrowest phones so the wordmark keeps
+    // some space to render.
+    final screenWidth = MediaQuery.of(context).size.width;
+    final double accountChipMaxWidth = !isMobile
+        ? 260.0
+        : (screenWidth < 380 ? 120.0 : 180.0);
 
     return AppBar(
       toolbarHeight: 72,
@@ -2313,12 +2324,21 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                 color: Color(0xFF10A37F), size: 22),
           ),
           const SizedBox(width: 12),
-          const Text(
-            'Vaultai',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 18,
-              letterSpacing: -0.2,
+          // 2026-07-21: wrapped in Flexible + maxLines:1 + ellipsis so
+          // the title Row yields horizontal space to the actions region
+          // (notification bell + account chip) on narrow phones. A
+          // naked Text child let the wordmark overflow into the actions
+          // slot on <= 412px viewports, painting over the bell.
+          const Flexible(
+            child: Text(
+              'Vaultai',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+                letterSpacing: -0.2,
+              ),
             ),
           ),
         ],
@@ -2416,7 +2436,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                     },
                     child: Container(
                       constraints:
-                          BoxConstraints(maxWidth: isMobile ? 180 : 260),
+                          BoxConstraints(maxWidth: accountChipMaxWidth),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 10),
                       decoration: BoxDecoration(

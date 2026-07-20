@@ -7844,6 +7844,7 @@ async def ai_stream(
         )
         from vault_chat_save_guard import (
             guard_response_text,
+            planner_intent_is_save,
             tool_call_was_successful_save,
         )
         from vault_chat_truth_guard import (
@@ -8164,9 +8165,26 @@ async def ai_stream(
 
                                                                     
         _full_reply = "".join(_reply_buf)
+        # 2026-07-21: gate the descriptive-prose branch of the save-
+        # claim guard by whether the current turn's planner intent
+        # was actually to save something. On a capability_question
+        # or identity_question turn the LLM's natural answer often
+        # contains descriptive phrases like "credentials are stored"
+        # while explaining what the vault does — those are not
+        # save-claim lies. Strong first-person claims ("I've saved
+        # X") are still caught regardless. See vault_chat_save_guard.
+        _intent_was_save = planner_intent_is_save(
+            planner=_planner,
+            allowed_tool_names={
+                fn.get("function", {}).get("name")
+                for fn in allowed_tools
+                if isinstance(fn.get("function", {}).get("name"), str)
+            },
+        )
         _corrected_reply, _triggered_slug = guard_response_text(
             reply_text=_full_reply,
             save_tool_succeeded=_save_tool_succeeded_this_turn,
+            intent_was_save=_intent_was_save,
         )
         if _triggered_slug is not None:
                                                                
