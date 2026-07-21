@@ -246,6 +246,50 @@ class InvalidVaultUnlockException implements Exception {
   String toString() => 'InvalidVaultUnlockException(message: $message)';
 }
 
+/// Client-declared protocol version for encrypted-request endpoints.
+///
+/// Sent inside the request body (never a header). The backend uses
+/// this — not the diagnostic X-App-Release header — to decide
+/// whether the KDF-generation fields are mandatory. See
+/// `vault_kdf_generation.client_requires_kdf_fields`.
+///
+/// 2 = requires kdf_salt_used AND kdf_iterations_used on every
+/// encrypted request.
+const int kCryptoProtocolVersion = 2;
+
+/// Pure function that builds the JSON map sent as the /chat request
+/// body. Exposed at top level so tests can call it directly with a
+/// null-origin scenario (the pre-fix ZK-path shape) and prove the
+/// KDF fields are absent — the concrete evidence the review gate
+/// asked for. Never touches HTTP, sessions, crypto state, or
+/// singletons; every input is a parameter.
+Map<String, dynamic> buildChatRequestBody({
+  required String encryptedMessage,
+  required String vaultName,
+  required String pin,
+  List<String>? uploadedFileIds,
+  String? appLocale,
+  Map<String, String>? selectionHint,
+  String? kdfSaltUsed,
+  int? kdfIterationsUsed,
+}) {
+  return <String, dynamic>{
+    'encrypted_message': encryptedMessage,
+    'vault_name': vaultName,
+    'pin': pin,
+    'uploaded_file_ids': uploadedFileIds ?? const <String>[],
+    // Client-declared protocol version. Backend uses THIS (not a
+    // header) to gate whether the KDF fields are mandatory.
+    'crypto_protocol_version': kCryptoProtocolVersion,
+    if (appLocale != null && appLocale.isNotEmpty) 'app_locale': appLocale,
+    if (selectionHint != null && selectionHint.isNotEmpty)
+      'selection_hint': selectionHint,
+    if (kdfSaltUsed != null && kdfSaltUsed.isNotEmpty)
+      'kdf_salt_used': kdfSaltUsed,
+    if (kdfIterationsUsed != null) 'kdf_iterations_used': kdfIterationsUsed,
+  };
+}
+
 /// Server returned 400 "Invalid PIN or corrupted data" from
 /// [vault_core.decrypt_message]. Semantically DISTINCT from
 /// [InvalidVaultUnlockException] — the session and unlock are
@@ -281,6 +325,27 @@ class PinInvalidException implements Exception {
   @override
   String toString() =>
       'PinInvalidException(attemptsLeft: $attemptsLeft, message: $message)';
+}
+
+/// Any 401 the api_client cannot positively classify as a session
+/// termination (one of the four coded session termination codes) or
+/// as an `invalid_pin` PIN failure. **HTTP 401 alone is NOT proof
+/// that the session expired** — this exception says exactly that:
+/// "the server rejected the request on authorization grounds, but
+/// nothing about that response proves the session died." Handlers
+/// MUST NOT clear the session on this type; only the four explicit
+/// codes may do that. The correct UX is a generic retryable
+/// authorization error.
+class ApiAuthorizationException implements Exception {
+  final String message;
+  final int statusCode;
+  const ApiAuthorizationException({
+    this.message = 'Request was rejected on authorization grounds.',
+    this.statusCode = 401,
+  });
+  @override
+  String toString() =>
+      'ApiAuthorizationException(status: $statusCode, message: $message)';
 }
 
 /// Server returned 409 kdf_generation_stale — the client's declared
@@ -1368,30 +1433,16 @@ class VaultAIClient {
       'app_locale_present': appLocale != null && appLocale.isNotEmpty,
     });
 
-    request.body = jsonEncode({
-      'encrypted_message': encryptedMessage,
-      'vault_name': vaultName,
-      'pin': pin,
-      'uploaded_file_ids': uploadedFileIds ?? <String>[],
-      if (appLocale != null && appLocale.isNotEmpty) 'app_locale': appLocale,
-      // Structured selection hint from a chat card row tap. The
-      // shape is {"kind":"login"|"file","id":"<uuid>"}. Not rendered
-      // in prose — used by the backend to disambiguate rows that
-      // share a title.
-      if (selectionHint != null && selectionHint.isNotEmpty)
-        'selection_hint': selectionHint,
-      // 2026-07-21 KDF-version compare-and-swap fields. When present
-      // the server verifies these match the current DB row BEFORE
-      // decryption; on mismatch it responds with 409
-      // kdf_generation_stale carrying fresh salt+iter for the
-      // client to re-derive against. When absent the server falls
-      // through to legacy behavior. See ChatRequest schema and
-      // vault_kdf_generation.py.
-      if (kdfSaltUsed != null && kdfSaltUsed.isNotEmpty)
-        'kdf_salt_used': kdfSaltUsed,
-      if (kdfIterationsUsed != null)
-        'kdf_iterations_used': kdfIterationsUsed,
-    });
+    request.body = jsonEncode(buildChatRequestBody(
+      encryptedMessage: encryptedMessage,
+      vaultName: vaultName,
+      pin: pin,
+      uploadedFileIds: uploadedFileIds,
+      appLocale: appLocale,
+      selectionHint: selectionHint,
+      kdfSaltUsed: kdfSaltUsed,
+      kdfIterationsUsed: kdfIterationsUsed,
+    ));
 
     final response = await request.send();
     _vlog('chat.response', {
@@ -2348,12 +2399,23 @@ class VaultAIClient {
     if (invalidPin != null) {
       throw invalidPin;
     }
-    // Any other uncoded 401 stays a generic AuthExpiredException
-    // (session issue we cannot classify — safe default is to
-    // require re-auth). Callers that KNOW their endpoint returns
-    // typed 401s (auth/chat/PIN) should handle those types before
-    // handleApiException classifies the leftover as AuthExpired.
-    throw const AuthExpiredException();
+    // 2026-07-22 (2) — REVIEW-GATE FIX. HTTP 401 alone is NOT
+    // proof that the session died. Only the four explicit
+    // session-termination codes above cause sign-out. Every other
+    // 401 becomes a typed [ApiAuthorizationException] that
+    // handleApiException surfaces as a generic retryable
+    // authorization error — never clearing the session.
+    //
+    // The pre-review-gate behavior threw AuthExpiredException here,
+    // which handleApiException converted into a full clearSession
+    // + navigate-to-/unlock. That's exactly what signed the user
+    // out on 401s that had no session-termination code (and it's
+    // what let the /chat invalid_pin 401 masquerade as a session
+    // expiry before the invalid_pin carve-out landed).
+    throw ApiAuthorizationException(
+      message: 'Request was rejected on authorization grounds.',
+      statusCode: statusCode,
+    );
   }
 
   /// Parse a 401 body of the shape

@@ -36,7 +36,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/api_client.dart'
+    show KdfGenerationStaleException,
+         InvalidVaultUnlockException,
+         buildChatRequestBody;
 
 
 String _mainDart() => File('lib/main.dart').readAsStringSync();
@@ -119,20 +122,18 @@ void main() {
                   'iteration count');
     });
 
-    test('chatStream body includes kdf_salt_used + '
-         'kdf_iterations_used when present', () {
-      final src = _apiClient();
-      final fnIdx = src.indexOf('Stream<String> chatStream');
-      final bodyIdx = src.indexOf('request.body = jsonEncode', fnIdx);
-      expect(bodyIdx, greaterThan(-1));
-      final bodyEnd = src.indexOf('});', bodyIdx);
-      final body = src.substring(bodyIdx, bodyEnd);
-      expect(body.contains("'kdf_salt_used'"), isTrue,
-          reason: 'the request body MUST carry the client\'s '
-                  'declared salt so the server can gate');
-      expect(body.contains("'kdf_iterations_used'"), isTrue,
-          reason: 'the request body MUST carry the declared '
-                  'iterations');
+    test('buildChatRequestBody includes kdf_salt_used + '
+         'kdf_iterations_used when both are provided', () {
+      // UPDATED 2026-07-22 (2): the body is now built by a pure
+      // helper `buildChatRequestBody` exposed at top level of
+      // api_client.dart so tests can inspect the actual wire body
+      // directly. Behavioral check instead of source-scan:
+      final body = buildChatRequestBody(
+        encryptedMessage: 'x', vaultName: 'v', pin: '1',
+        kdfSaltUsed: 'salt-b64', kdfIterationsUsed: 600000,
+      );
+      expect(body['kdf_salt_used'], 'salt-b64');
+      expect(body['kdf_iterations_used'], 600000);
     });
 
     test('chatStream error path throws KdfGenerationStaleException '

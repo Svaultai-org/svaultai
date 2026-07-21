@@ -305,36 +305,58 @@ void main() {
   // Test 3 (spec) — production serializer includes KDF fields
   // -------------------------------------------------------------
   group('Test 3 — production serializer includes KDF fields', () {
-    test('chatStream body serializer includes kdf_salt_used + '
-         'kdf_iterations_used when both are provided', () {
-      final src = _apiClient();
-      final fnIdx = src.indexOf('Stream<String> chatStream');
-      expect(fnIdx, greaterThan(-1));
-      final bodyIdx = src.indexOf('request.body = jsonEncode', fnIdx);
-      final bodyEnd = src.indexOf('});', bodyIdx);
-      final body = src.substring(bodyIdx, bodyEnd);
-      expect(body.contains("'kdf_salt_used'"), isTrue);
-      expect(body.contains("'kdf_iterations_used'"), isTrue);
-      expect(body.contains('kdfSaltUsed'), isTrue);
-      expect(body.contains('kdfIterationsUsed'), isTrue);
+    test('buildChatRequestBody serializes kdf_salt_used + '
+         'kdf_iterations_used + crypto_protocol_version = 2', () {
+      // UPDATED 2026-07-22 (2): the wire body is now built by the
+      // pure top-level helper `buildChatRequestBody`, exposed for
+      // exactly this kind of end-to-end shape verification.
+      // Behavioral check instead of source-scan:
+      final body = buildChatRequestBody(
+        encryptedMessage: 'ct', vaultName: 'v', pin: '1',
+        kdfSaltUsed: 'salt-b64', kdfIterationsUsed: 600000,
+      );
+      expect(body['kdf_salt_used'], 'salt-b64');
+      expect(body['kdf_iterations_used'], 600000);
+      expect(body['crypto_protocol_version'], 2,
+          reason: 'the protocol-version field must ride in every '
+                  'request body so the backend can enforce KDF-field '
+                  'presence without depending on a spoofable header');
     });
 
-    test('every request sends X-App-Release when APP_RELEASE is '
-         'not "dev"', () {
+    test('every chat request declares crypto_protocol_version = 2 '
+         'in the REQUEST BODY (not a header) so backend enforcement '
+         'cannot be bypassed by a spoofable header', () {
+      // UPDATED 2026-07-22 (2) after the review-gate rejected
+      // X-App-Release as a security boundary. The header remains
+      // in _defaultHeaders for diagnostics but is no longer the
+      // authoritative modern-client signal; the enforcement
+      // boundary is the request-body `crypto_protocol_version`
+      // field which the api_client always emits at version 2.
       final src = _apiClient();
+      final bodyIdx = src.indexOf('Map<String, dynamic> buildChatRequestBody');
+      expect(bodyIdx, greaterThan(-1),
+          reason: 'buildChatRequestBody helper must exist so tests '
+                  'can inspect the wire body directly');
+      final endIdx = src.indexOf('return <String, dynamic>{', bodyIdx);
+      final mapEnd = src.indexOf('};', endIdx);
+      final mapBody = src.substring(endIdx, mapEnd);
+      expect(mapBody.contains("'crypto_protocol_version'"), isTrue,
+          reason: 'chat body MUST include crypto_protocol_version — '
+                  'that is the backend\'s enforcement boundary');
+      expect(mapBody.contains('kCryptoProtocolVersion'), isTrue,
+          reason: 'must use the pinned constant so a value change '
+                  'requires an explicit code edit');
+      // X-App-Release stays in _defaultHeaders for diagnostics —
+      // but MUST NOT be described in the code as an enforcement
+      // gate. This assertion just confirms the header emit stays
+      // present (log correlation is useful even after enforcement
+      // moved to the body).
       final defIdx = src.indexOf('Map<String, String> _defaultHeaders(');
-      expect(defIdx, greaterThan(-1));
-      final endIdx = src.indexOf('return headers;', defIdx);
-      final fn = src.substring(defIdx, endIdx);
-      expect(fn.contains("'X-App-Release'"), isTrue,
-          reason: '_defaultHeaders must send X-App-Release so the '
-                  'server can identify modern clients');
-      expect(fn.contains("String.fromEnvironment('APP_RELEASE'"), isTrue,
-          reason: 'the header value must come from the build-time '
-                  'APP_RELEASE constant');
-      expect(fn.contains("_appRelease != 'dev'"), isTrue,
-          reason: 'dev-only local builds must NOT identify as modern '
-                  '— they would fail the missing-fields check');
+      final defEnd = src.indexOf('return headers;', defIdx);
+      final defFn = src.substring(defIdx, defEnd);
+      expect(defFn.contains("'X-App-Release'"), isTrue,
+          reason: 'header is retained for diagnostic correlation '
+                  '(NOT enforcement)');
     });
   });
 

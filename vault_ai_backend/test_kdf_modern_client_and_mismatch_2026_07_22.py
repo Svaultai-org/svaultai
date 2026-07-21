@@ -68,10 +68,11 @@ from vault_core import (
     verify_vault_pin,
 )
 from vault_kdf_generation import (
+    CRYPTO_PROTOCOL_VERSION_REQUIRES_KDF,
     KDF_STALE_CODE,
     MISSING_KDF_FIELDS_CODE,
     check_kdf_generation_fresh,
-    is_modern_client,
+    client_requires_kdf_fields,
     key_fingerprint,
     missing_kdf_fields_error,
     salt_fingerprint,
@@ -180,21 +181,35 @@ def _add_vault(db: InMemoryVaultDb, *, pin: str,
 
 
 class ModernClientRequiresKdfFields(unittest.TestCase):
+    # UPDATED 2026-07-22 (2): the enforcement boundary is now the
+    # in-body crypto_protocol_version field, NOT the client-controlled
+    # X-App-Release header. See the review-gate memo for the security
+    # rationale. Old `is_modern_client(header)` helper was removed;
+    # `client_requires_kdf_fields(version)` replaces it.
 
-    def test_is_modern_client_accepts_40_char_hex(self) -> None:
-        self.assertTrue(is_modern_client("a" * 40))
-        self.assertTrue(is_modern_client("0123456789abcdef" * 2 + "01234567"))
-        # From actual build script output shape
-        self.assertTrue(is_modern_client(
-            "8aeb8df4fb82518ad5abfb1d4a9dadf643682d3f"))
+    def test_client_requires_kdf_fields_accepts_v2(self) -> None:
+        self.assertTrue(client_requires_kdf_fields(2))
+        # Forward-compat: higher versions also require.
+        self.assertTrue(client_requires_kdf_fields(3))
+        self.assertTrue(client_requires_kdf_fields(999))
 
-    def test_is_modern_client_rejects_short_or_nonhex(self) -> None:
-        self.assertFalse(is_modern_client(None))
-        self.assertFalse(is_modern_client(""))
-        self.assertFalse(is_modern_client("dev"))
-        self.assertFalse(is_modern_client("a" * 39))
-        self.assertFalse(is_modern_client("z" * 40))          # non-hex
-        self.assertFalse(is_modern_client("  " + "a" * 38))   # whitespace
+    def test_client_requires_kdf_fields_legacy_pass_for_none_or_1(
+        self,
+    ) -> None:
+        self.assertFalse(client_requires_kdf_fields(None))
+        self.assertFalse(client_requires_kdf_fields(1))
+        self.assertFalse(client_requires_kdf_fields(0))
+
+    def test_client_requires_kdf_fields_rejects_junk_values(
+        self,
+    ) -> None:
+        # Malformed values must NOT trigger enforcement — a garbled
+        # request stays on the safe legacy path (still fails at
+        # decrypt if the key is wrong, but never trips the typed
+        # missing-fields error on nonsense input).
+        self.assertFalse(client_requires_kdf_fields("garbage"))
+        self.assertFalse(client_requires_kdf_fields(""))
+        self.assertFalse(client_requires_kdf_fields([]))
 
     def test_missing_kdf_fields_error_shape(self) -> None:
         exc = missing_kdf_fields_error()

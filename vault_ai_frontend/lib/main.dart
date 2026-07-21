@@ -1188,6 +1188,21 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       return true;
     }
+    // 2026-07-22 (2) REVIEW-GATE FIX. Every 401 the api_client
+    // couldn't positively classify as a session-termination code
+    // or as invalid_pin arrives here. **HTTP 401 alone is NOT
+    // proof that the session expired.** Surface a generic,
+    // retryable authorization error and do NOT clear the session.
+    // The only paths that may clear the session are the four
+    // explicit session-termination codes handled above via
+    // [SessionTerminatedException].
+    if (error is ApiAuthorizationException) {
+      rootScaffoldMessengerKey.currentState?.clearSnackBars();
+      rootScaffoldMessengerKey.currentState?.showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      return true;
+    }
     if (error is AuthExpiredException) {
       if (!authed && !unlocked) {
         return false;
@@ -3547,25 +3562,33 @@ Future<Map<String, dynamic>> _zkHttpGet(
 }
 
 /// Fire-and-forget lazy metadata migration triggered after unlock.
-/// Also publishes the active MVK to `ZkActiveMvk` so downstream
-/// panels (crypto send / upload / chat) can encrypt local metadata
-/// without ambient state passing.
+///
+/// 2026-07-22 (2) — CORRECTED after the crypto-context refactor.
+/// The prior version read the MVK from `_VaultCrypto._keyCache` and
+/// re-published it to `ZkActiveMvk`. That is now WRONG: the
+/// atomic-context refactor's legacy-mirror step overwrites the
+/// _keyCache slot with the PBKDF2 vault key (so `/chat` decrypt
+/// works), so reading _keyCache here would publish the PBKDF2 key
+/// as if it were the MVK — silently corrupting every downstream ZK
+/// metadata encrypt.
+///
+/// New source of truth for MVK: [ZkActiveMvk.current] — populated
+/// EXPLICITLY at each ZK login/signup site right after OPAQUE
+/// unwrap. This helper only publishes when a live MVK is already
+/// visible (i.e. the caller went through a ZK path); legacy vaults
+/// have no MVK and this helper safely no-ops for them.
 void _scheduleMetadataMigration({required AppState app}) {
   final token = app.sessionToken;
   final vaultName = app.vaultName;
   final vaultId = app.vaultId;
   if (token == null || vaultName == null || vaultId == null) return;
-  final key = _VaultCrypto._keyCache[_VaultCrypto._ck(vaultId, vaultName)];
-  if (key == null) return;
-
-  zk_mvk_store.ZkActiveMvk.set(
-    mvk: key,
-    vaultId: vaultId,
-    vaultHandle: vaultName,
-  );
+  // Read the MVK from the authoritative ZK-metadata store. Legacy
+  // vaults leave this null; the migration is a no-op there.
+  final mvk = zk_mvk_store.ZkActiveMvk.current();
+  if (mvk == null) return;
 
   unawaited(mmc.runMetadataMigrationBestEffort(
-    mvk: key,
+    mvk: mvk,
     sessionToken: token,
     post: _zkHttpPost,
     get: _zkHttpGet,
@@ -3941,6 +3964,16 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
+        );
+        // Publish MVK to the ZK metadata surface BEFORE the PBKDF2
+        // derive-and-install below mirrors the vault key into
+        // _keyCache (overwriting the MVK slot). ZkActiveMvk is the
+        // authoritative source for MVK downstream (see
+        // _scheduleMetadataMigration).
+        zk_mvk_store.ZkActiveMvk.set(
+          mvk: loginResult.mvk,
+          vaultId: loginResult.vaultId,
+          vaultHandle: resolvedVaultName,
         );
         try {
           final _zkLoginMeta = await _API.getVaultMeta(
@@ -4412,6 +4445,13 @@ class _SignupPageState extends State<SignupPage> {
         vaultId: result.vaultId,
         vaultName: vaultName,
       );
+      // Publish MVK explicitly before the PBKDF2 mirror overwrites
+      // _keyCache — see the LoginPage ZK path.
+      zk_mvk_store.ZkActiveMvk.set(
+        mvk: result.mvk,
+        vaultId: result.vaultId,
+        vaultHandle: vaultName,
+      );
       // 2026-07-22 crypto-context refactor. Fresh ZK signup writes
       // a random MVK; the server's /chat handler derives PBKDF2 from
       // the vault's pin_salt/kdf_iterations (set at signup). We
@@ -4799,6 +4839,13 @@ class _UnlockPageState extends State<UnlockPage> {
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
+        );
+        // Publish MVK explicitly before the PBKDF2 mirror overwrites
+        // _keyCache — see the LoginPage ZK path above.
+        zk_mvk_store.ZkActiveMvk.set(
+          mvk: loginResult.mvk,
+          vaultId: loginResult.vaultId,
+          vaultHandle: resolvedVaultName,
         );
         try {
           final _zkUnlockMeta = await _API.getVaultMeta(

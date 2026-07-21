@@ -60,47 +60,57 @@ KDF_STALE_MESSAGE = (
     "Please re-send your message."
 )
 
-# 2026-07-22 modern-client enforcement.
+# 2026-07-22 modern-client enforcement — CORRECTED 2026-07-22 (2)
+# to use an in-body protocol-version field instead of the
+# X-App-Release header. A client-controlled header MUST NOT decide
+# whether the backend validates required crypto fields — the review
+# gate rejected that boundary because a missing/spoofed header
+# could re-enable the legacy pass-through that let the exact
+# production failure through.
 #
-# The 2026-07-22 production regression traced back to modern clients
-# whose in-flight requests omitted `kdf_salt_used` because the
-# frontend ZK login paths never populated `_keyOrigin`. Server fell
-# through the legacy pass-through, derived from current DB, tried
-# to decrypt MVK-ciphertext with PBKDF2 K, and returned generic 400
-# — silently signing the user out downstream.
+# The correct boundary is a request-body field the client declares
+# EXPLICITLY:
 #
-# The fix: modern clients (identified by X-App-Release header
-# matching the 40-char SHA of the running frontend build) MUST
-# declare their KDF fields. Missing fields on a modern client is a
-# 400 typed as `missing_kdf_generation_fields` — never a silent
-# legacy pass-through. Older builds without the header keep the
-# legacy behavior so a partial rollout doesn't break anyone.
+#   crypto_protocol_version >= 2  =>  kdf_salt_used AND
+#                                     kdf_iterations_used are
+#                                     mandatory. Missing = typed
+#                                     400 missing_kdf_generation_fields.
+#
+#   crypto_protocol_version absent OR 1 => legacy compatibility.
+#
+# X-App-Release stays as a diagnostic log field but is NEVER used
+# to decide enforcement.
 MISSING_KDF_FIELDS_CODE = "missing_kdf_generation_fields"
 MISSING_KDF_FIELDS_MESSAGE = (
-    "This client build must declare kdf_salt_used and "
+    "This client protocol version requires kdf_salt_used and "
     "kdf_iterations_used with encrypted requests. Reload the app "
     "to pick up the latest frontend."
 )
 
+# Minimum protocol version that MUST declare its KDF fields.
+CRYPTO_PROTOCOL_VERSION_REQUIRES_KDF = 2
 
-def is_modern_client(app_release_header: Optional[str]) -> bool:
-    """Return True iff the request carries an X-App-Release header
-    that looks like a 40-char hex SHA. The build script bakes the
-    commit SHA into the frontend via `--dart-define=APP_RELEASE=`;
-    any client that reaches this branch has code that knows to send
-    kdf_salt_used and kdf_iterations_used. Older builds without the
-    header keep the legacy pass-through behavior at
-    [check_kdf_generation_fresh].
+
+def client_requires_kdf_fields(
+    crypto_protocol_version: Optional[int],
+) -> bool:
+    """Return True iff the client's declared crypto_protocol_version
+    is high enough to make the KDF fields mandatory. Missing/None
+    or 1 stays on the legacy pass-through so an older client build
+    is not broken by a partial rollout; 2 and above triggers the
+    typed missing_kdf_generation_fields rejection.
+
+    The version is declared in the REQUEST BODY (not a header) so
+    it cannot be silently stripped by an intermediate cache /
+    proxy / client-controlled header injection.
     """
-    if not app_release_header:
+    if crypto_protocol_version is None:
         return False
-    s = app_release_header.strip().lower()
-    if len(s) != 40:
+    try:
+        v = int(crypto_protocol_version)
+    except (TypeError, ValueError):
         return False
-    for ch in s:
-        if ch not in "0123456789abcdef":
-            return False
-    return True
+    return v >= CRYPTO_PROTOCOL_VERSION_REQUIRES_KDF
 
 
 def salt_fingerprint(salt_base64: Optional[str]) -> str:

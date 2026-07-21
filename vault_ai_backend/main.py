@@ -971,6 +971,18 @@ class ChatRequest(BaseModel):
     kdf_salt_used: Optional[str] = None
     kdf_iterations_used: Optional[int] = None
 
+    # 2026-07-22 (2) protocol version — the AUTHORITATIVE boundary
+    # for whether kdf_salt_used and kdf_iterations_used are
+    # mandatory on this request. A client-controlled header is NOT
+    # a valid enforcement gate (spoofable, stripable by proxies);
+    # a request-body field the client MUST include is. See
+    # vault_kdf_generation.client_requires_kdf_fields.
+    #
+    #   >= 2  => KDF fields mandatory; missing => 400
+    #            missing_kdf_generation_fields (typed).
+    #   1 or None => legacy pass-through (older builds).
+    crypto_protocol_version: Optional[int] = None
+
 
 class VaultNameCheck(BaseModel):
     vault_name: str
@@ -11825,26 +11837,28 @@ async def chat_endpoint(
         print("[CHAT-DEBUG] missing_encrypted_message", flush=True)
         raise HTTPException(status_code=400, detail="Missing encrypted message")
 
-    # 2026-07-22 modern-client enforcement + KDF version gate.
+    # 2026-07-22 (2) protocol-version enforcement + KDF version gate.
     #
-    # (1) Modern clients (identified by X-App-Release header carrying
-    #     the 40-char SHA baked into main.dart.js by build-web-release)
-    #     MUST declare kdf_salt_used and kdf_iterations_used. Missing
-    #     fields is a typed 400 (missing_kdf_generation_fields) —
-    #     never a silent legacy pass-through into a decrypt-failure
-    #     400 that the client mis-classified as session-expired.
+    # (1) The client's declared `crypto_protocol_version` in the
+    #     REQUEST BODY (not a header) is the AUTHORITATIVE boundary
+    #     for whether the KDF fields are mandatory. >= 2 => required;
+    #     missing => 400 missing_kdf_generation_fields (typed).
+    #     Header-based enforcement was rejected on review — a
+    #     spoofable header is not a valid crypto-protocol boundary.
     #
-    # (2) Once declared, [check_kdf_generation_fresh] compares to the
-    #     current DB row and 409s on mismatch. See
-    #     vault_kdf_generation.py for the full compare-and-swap
+    # (2) Once the fields are declared, [check_kdf_generation_fresh]
+    #     compares them to the current DB row and 409s on mismatch.
+    #     See vault_kdf_generation.py for the full compare-and-swap
     #     semantics.
     from vault_kdf_generation import (
         check_kdf_generation_fresh,
-        is_modern_client,
+        client_requires_kdf_fields,
         missing_kdf_fields_error,
         salt_fingerprint,
         key_fingerprint,
     )
+    # X-App-Release stays as a diagnostic-only log field. It is
+    # NEVER used to decide whether the crypto gate runs.
     _app_release = None
     try:
         _app_release = (
@@ -11853,33 +11867,39 @@ async def chat_endpoint(
         )
     except Exception:
         _app_release = None
-    _is_modern = is_modern_client(_app_release)
-    if _is_modern and (
+    _requires_kdf = client_requires_kdf_fields(
+        req.crypto_protocol_version,
+    )
+    if _requires_kdf and (
         not req.kdf_salt_used or req.kdf_iterations_used is None
     ):
-        # Modern client dropped the KDF fields — do NOT fall into
-        # legacy pass-through. Fail fast so the client's typed
-        # error path can surface a specific message (and the exact
-        # production incident cannot recur silently).
+        # Modern-protocol client dropped the KDF fields — do NOT
+        # fall into the legacy pass-through. Fail fast with a typed
+        # code so the client can surface a specific message (and
+        # the exact production regression cannot recur silently).
         print(
-            "[CHAT-DEBUG] modern_client_missing_kdf app_release="
-            f"{(_app_release or '')[:12]}",
+            "[CHAT-DEBUG] modern_protocol_missing_kdf "
+            f"crypto_protocol_version={req.crypto_protocol_version} "
+            f"app_release_diag={(_app_release or '-')[:12]}",
             flush=True,
         )
         raise missing_kdf_fields_error()
 
     # Diagnostic log — non-secret fingerprints only. Used to
     # correlate client-side [chat.body.diag] entries with server
-    # decisions during incident triage.
+    # decisions during incident triage. app_release is logged for
+    # release-correlation ONLY; it does not gate anything.
     _chat_request_id = request.headers.get("X-Chat-Request-Id") or "-"
     _received_salt_fp = salt_fingerprint(req.kdf_salt_used)
     print(
         "[CHAT-DEBUG] kdf_gate_pre "
         f"chat_request_id={_chat_request_id} vault_id={vault_id} "
-        f"is_modern={_is_modern} "
+        f"crypto_protocol_version={req.crypto_protocol_version} "
+        f"requires_kdf={_requires_kdf} "
         f"kdf_salt_used_present={bool(req.kdf_salt_used)} "
         f"received_salt_fp12={_received_salt_fp} "
-        f"received_iterations={req.kdf_iterations_used}",
+        f"received_iterations={req.kdf_iterations_used} "
+        f"app_release_diag={(_app_release or '-')[:12]}",
         flush=True,
     )
 
