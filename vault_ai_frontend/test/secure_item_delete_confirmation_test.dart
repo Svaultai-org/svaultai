@@ -104,16 +104,30 @@ void main() {
             'backend recognises in vault_secure_item_delete_confirmation.',
       );
       
+      // 2026-07-22 crypto-context refactor: the delete-sentinel is
+      // now encrypted via `encryptWithContext(plaintext: sentinel,
+      // context: ctxSnapshot)` instead of the legacy
+      // `_VaultCrypto.encrypt(sentinel)`. The invariant remains
+      // "the wire payload is the SENTINEL, not the visible bubble"
+      // — the change is only which crypto helper is called.
       expect(
         body,
-        contains('_VaultCrypto.encrypt(sentinel)'),
+        contains('encryptWithContext('),
         reason:
-            'The encrypted /chat payload MUST be the sentinel — the '
+            'The encrypted /chat payload MUST be produced via '
+            'encryptWithContext so the key and its declared KDF '
+            'metadata come from a single immutable snapshot.',
+      );
+      expect(
+        body,
+        contains('plaintext: sentinel'),
+        reason:
+            'The encrypted plaintext MUST be the sentinel — the '
             'visible bubble is shown to the user separately.',
       );
       expect(
         body,
-        isNot(contains('_VaultCrypto.encrypt(visibleBubble)')),
+        isNot(contains('plaintext: visibleBubble')),
         reason:
             'The visible bubble is for display only; it must not be '
             'sent on the wire.',

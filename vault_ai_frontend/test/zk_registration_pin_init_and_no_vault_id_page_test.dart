@@ -67,7 +67,10 @@ void main() {
       expect(idx, greaterThan(-1),
           reason: 'signup handler must call zk.registerVault');
       // Look at the window after registerVault for the navigation call.
-      final window = src.substring(idx, (idx + 3000).clamp(0, src.length));
+      // Bumped 3k → 6k for the 2026-07-22 crypto-context refactor
+      // which added the ZK-path PBKDF2 derive + install between
+      // registerVault and the /chat navigation.
+      final window = src.substring(idx, (idx + 6000).clamp(0, src.length));
       expect(window.contains("pushReplacementNamed('/chat')"), isTrue,
           reason: 'signup must navigate to /chat via '
                   'pushReplacementNamed after successful registration');

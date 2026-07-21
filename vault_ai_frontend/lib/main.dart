@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
-    show kIsWeb, kReleaseMode, kDebugMode, visibleForTesting, debugPrint;
+    show kIsWeb, kReleaseMode, kDebugMode, visibleForTesting, debugPrint,
+         immutable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart' as web_plugins;
@@ -1159,6 +1162,32 @@ class AppState extends ChangeNotifier {
       );
       return true;
     }
+    // 2026-07-22 typed crypto-context mismatch (server 400 "Invalid
+    // PIN or corrupted data"). The session and unlock are both
+    // intact — the client's ciphertext just did not decrypt under
+    // the server's current key. NEVER clear the session, NEVER
+    // navigate away, NEVER show "Incorrect PIN". Callers (chat send
+    // paths) surface a typed snackbar and preserve the input. If a
+    // caller propagates this to the generic error boundary we just
+    // return true so no other handler misinterprets it.
+    if (error is CryptoContextMismatchException) {
+      rootScaffoldMessengerKey.currentState?.clearSnackBars();
+      rootScaffoldMessengerKey.currentState?.showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      return true;
+    }
+    // 2026-07-22 typed 401 invalid_pin. The session is fine; the
+    // supplied PIN just didn't match. Do NOT clear the session or
+    // navigate; the caller (usually PinGatePage._submit) already
+    // surfaces its own PIN-specific error. Returning true here
+    // suppresses the generic error boundary — the caller UX owns
+    // the message.
+    if (error is PinInvalidException) {
+      lockMessage = error.message;
+      notifyListeners();
+      return true;
+    }
     if (error is AuthExpiredException) {
       if (!authed && !unlocked) {
         return false;
@@ -1488,6 +1517,11 @@ class AppState extends ChangeNotifier {
           _VaultCrypto._ck(leavingVaultId, leavingVaultName),
         );
       }
+      // 2026-07-22: clear the authoritative crypto context too. Any
+      // subsequent unlock will install a fresh context; leaving the
+      // previous context live across a session boundary is a
+      // recipe for the exact TOCTOU class we just eliminated.
+      VaultCryptoRegistry.clear(reason: 'clearSession');
     } catch (_) {}
     final sp = await SharedPreferences.getInstance();
     sessionToken = null;
@@ -1640,13 +1674,28 @@ class AppState extends ChangeNotifier {
       final iterations =
           (vaultMeta['kdf_iterations'] as num?)?.toInt() ?? 100000;
 
-      await _VaultCrypto.deriveAndCacheKey(
-        pin: pin,
+      // 2026-07-22 crypto-context refactor: derive PBKDF2 AND
+      // install the atomic VaultCryptoContext in one guarded
+      // operation. Reserves an operation id before the derive and
+      // refuses to install if a later reservation superseded us.
+      // Both the registry AND the legacy _VaultCrypto caches are
+      // updated atomically so no read path sees a half-updated
+      // state.
+      final _preRotateCtx = await deriveAndInstallCryptoContext(
         vaultId: newVaultId,
         vaultName: newVaultName,
+        pin: pin,
         pinSaltBase64: pinSalt,
         iterations: iterations,
+        source: 'verify_pin',
       );
+      if (_preRotateCtx == null) {
+        vlog('pin.verify.derive.superseded', {
+          'phase': 'initial',
+          'vaultName': newVaultName,
+        });
+        return false;
+      }
       vlog('pin.timing.derive_key', {
         'elapsed_ms': tick(),
         'iterations': iterations,
@@ -1712,16 +1761,24 @@ class AppState extends ChangeNotifier {
       if (freshSalt != null && freshSalt.isNotEmpty
           && (saltChanged || iterChanged)) {
         // Authoritative salt/iter differ from what K1 was derived
-        // from. Re-derive K2 with the fresh values so the client
-        // encryption key matches the server's future re-derive
-        // on the very next request.
-        await _VaultCrypto.deriveAndCacheKey(
-          pin: pin,
+        // from. Re-derive K2 with the fresh values and install as a
+        // new context (bumping the generation). Legacy _VaultCrypto
+        // caches are mirrored inside deriveAndInstallCryptoContext.
+        final _postRotateCtx = await deriveAndInstallCryptoContext(
           vaultId: newVaultId,
           vaultName: newVaultName,
+          pin: pin,
           pinSaltBase64: freshSalt,
           iterations: freshIter,
+          source: 'verify_pin.post_rotate',
         );
+        if (_postRotateCtx == null) {
+          vlog('pin.verify.derive.superseded', {
+            'phase': 'post_rotate',
+            'vaultName': newVaultName,
+          });
+          return false;
+        }
       }
       vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
 
@@ -1789,25 +1846,39 @@ class AppState extends ChangeNotifier {
     final vName = _vaultName;
     if (vId == null || vName == null) return false;
     if (pinSaltBase64.isEmpty || iterations <= 0) return false;
-    final String? pin = _VaultCrypto.cachedPinFor(
-      vaultId: vId,
-      vaultName: vName,
-    );
+    // Read the PIN from the current authoritative context if there is
+    // one — falls back to the legacy _pinCache for pre-refactor
+    // ZK-login state where the context was not yet installed.
+    final currentCtx = VaultCryptoRegistry.current;
+    final String? pin = (currentCtx != null
+            && currentCtx.vaultId == vId
+            && currentCtx.vaultName == vName)
+        ? currentCtx.pin
+        : _VaultCrypto.cachedPinFor(vaultId: vId, vaultName: vName);
     if (pin == null) {
       vlog('crypto.applyFreshKdfMetadata.no_pin', {});
       return false;
     }
     try {
-      await _VaultCrypto.deriveAndCacheKey(
-        pin: pin,
+      // Derive AND install a new atomic context. The install is
+      // generation-guarded; if a concurrent derive completes later
+      // with a lower generation, it will be refused.
+      final newCtx = await deriveAndInstallCryptoContext(
         vaultId: vId,
         vaultName: vName,
+        pin: pin,
         pinSaltBase64: pinSaltBase64,
         iterations: iterations,
+        source: '409_refresh',
       );
+      if (newCtx == null) {
+        vlog('crypto.applyFreshKdfMetadata.superseded', {});
+        return false;
+      }
       vlog('crypto.applyFreshKdfMetadata.rederived', {
         'iterations': iterations,
         'saltLen': pinSaltBase64.length,
+        'generation': newCtx.generation,
       });
       return true;
     } catch (e) {
@@ -3567,13 +3638,18 @@ Future<bool> _deriveKeyAndUnlock({
   }
   final iterations = (vaultMeta['kdf_iterations'] as num?)?.toInt() ?? 100000;
 
-  await _VaultCrypto.deriveAndCacheKey(
-    pin: pin,
+  final _unlockCtx = await deriveAndInstallCryptoContext(
     vaultId: vaultId,
     vaultName: vaultName,
+    pin: pin,
     pinSaltBase64: pinSalt,
     iterations: iterations,
+    source: 'legacy_unlock',
   );
+  if (_unlockCtx == null) {
+    vlog('unlock.derive.superseded', {'vaultName': vaultName});
+    return false;
+  }
   app.markUnlocked();
 
   await app.refreshAvailableVaults();
@@ -3844,12 +3920,19 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loginResult.sessionToken,
           app,
         );
-        // Crypto cache key uses the user-typed vault name (not the
-        // VLT handle) so the AppState.unlocked invariant getter's
-        // ``hasKeyFor(vaultId, vaultName)`` lookup — which reads
-        // ``AppState._vaultName`` — actually hits this entry.
-        // Mismatching keys was the immediate cause of the login-
-        // succeeds-then-redirects-to-PIN symptom.
+        // 2026-07-22 crypto-context refactor. The MVK unwrapped by
+        // OPAQUE is preserved in the legacy _keyCache slot for the
+        // ZK metadata surface (ZkActiveMvk publish below reads it).
+        // But it is NOT the vault key /chat's server-side decrypt
+        // uses: /chat derives PBKDF2(pin, vaults.pin_salt,
+        // vaults.kdf_iterations) from the current DB row. For
+        // ZK-adopted vaults rotated after adoption, MVK != current
+        // PBKDF2 key — that divergence was the production
+        // first-chat-fail symptom (LoginPage path).
+        //
+        // Fix: install the atomic VaultCryptoContext with the
+        // FRESHLY-DERIVED PBKDF2 key from current /vault-meta.
+        // /chat now reads exclusively from VaultCryptoRegistry.
         _VaultCrypto._keyCache[
                 _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
             loginResult.mvk;
@@ -3859,6 +3942,41 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
         );
+        try {
+          final _zkLoginMeta = await _API.getVaultMeta(
+            vaultName: resolvedVaultName,
+            authToken: loginResult.sessionToken,
+          );
+          final _zkLoginSalt = _zkLoginMeta['pin_salt']?.toString();
+          final _zkLoginIter =
+              (_zkLoginMeta['kdf_iterations'] as num?)?.toInt();
+          if (_zkLoginSalt != null && _zkLoginSalt.isNotEmpty
+              && _zkLoginIter != null) {
+            final _zkLoginCtx = await deriveAndInstallCryptoContext(
+              vaultId: loginResult.vaultId,
+              vaultName: resolvedVaultName,
+              pin: pin,
+              pinSaltBase64: _zkLoginSalt,
+              iterations: _zkLoginIter,
+              source: 'zk_login',
+            );
+            if (_zkLoginCtx == null) {
+              vlog('login.zk.derive.superseded', {
+                'vaultName': resolvedVaultName,
+              });
+            }
+          } else {
+            vlog('login.zk.meta_missing_fields', {
+              'has_salt': _zkLoginSalt != null,
+              'has_iter': _zkLoginIter != null,
+            });
+          }
+        } catch (e) {
+          vlog('login.zk.pbkdf2_derive_failed', {
+            'error': e.toString(),
+            'vaultName': resolvedVaultName,
+          });
+        }
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
         // Cleared on logout / vault switch.
@@ -4294,6 +4412,45 @@ class _SignupPageState extends State<SignupPage> {
         vaultId: result.vaultId,
         vaultName: vaultName,
       );
+      // 2026-07-22 crypto-context refactor. Fresh ZK signup writes
+      // a random MVK; the server's /chat handler derives PBKDF2 from
+      // the vault's pin_salt/kdf_iterations (set at signup). We
+      // install the atomic VaultCryptoContext from that DB state so
+      // /chat encrypt uses the same key the server will derive.
+      // See LoginPage ZK path for the full incident context.
+      try {
+        final _zkSignupMeta = await _API.getVaultMeta(
+          vaultName: vaultName,
+          authToken: result.sessionToken,
+        );
+        final _zkSignupSalt = _zkSignupMeta['pin_salt']?.toString();
+        final _zkSignupIter =
+            (_zkSignupMeta['kdf_iterations'] as num?)?.toInt();
+        if (_zkSignupSalt != null && _zkSignupSalt.isNotEmpty
+            && _zkSignupIter != null) {
+          final _zkSignupCtx = await deriveAndInstallCryptoContext(
+            vaultId: result.vaultId,
+            vaultName: vaultName,
+            pin: pin,
+            pinSaltBase64: _zkSignupSalt,
+            iterations: _zkSignupIter,
+            source: 'zk_signup',
+          );
+          if (_zkSignupCtx == null) {
+            vlog('signup.zk.derive.superseded', {'vaultName': vaultName});
+          }
+        } else {
+          vlog('signup.zk.meta_missing_fields', {
+            'has_salt': _zkSignupSalt != null,
+            'has_iter': _zkSignupIter != null,
+          });
+        }
+      } catch (e) {
+        vlog('signup.zk.pbkdf2_derive_failed', {
+          'error': e.toString(),
+          'vaultName': vaultName,
+        });
+      }
       app.markUnlocked();
       try {
         await app.refreshAvailableVaults();
@@ -4630,12 +4787,10 @@ class _UnlockPageState extends State<UnlockPage> {
           loginResult.sessionToken,
           app,
         );
-        // Crypto cache key uses the user-typed vault name (not the
-        // VLT handle) so the AppState.unlocked invariant getter's
-        // ``hasKeyFor(vaultId, vaultName)`` lookup — which reads
-        // ``AppState._vaultName`` — actually hits this entry.
-        // Mismatching keys was the immediate cause of the login-
-        // succeeds-then-redirects-to-PIN symptom.
+        // 2026-07-22 crypto-context refactor. Preserve MVK in
+        // _keyCache for the ZK metadata surface, but install the
+        // freshly-derived PBKDF2 VaultCryptoContext for /chat. See
+        // the LoginPage ZK path above for the full incident context.
         _VaultCrypto._keyCache[
                 _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
             loginResult.mvk;
@@ -4645,6 +4800,41 @@ class _UnlockPageState extends State<UnlockPage> {
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
         );
+        try {
+          final _zkUnlockMeta = await _API.getVaultMeta(
+            vaultName: resolvedVaultName,
+            authToken: loginResult.sessionToken,
+          );
+          final _zkUnlockSalt = _zkUnlockMeta['pin_salt']?.toString();
+          final _zkUnlockIter =
+              (_zkUnlockMeta['kdf_iterations'] as num?)?.toInt();
+          if (_zkUnlockSalt != null && _zkUnlockSalt.isNotEmpty
+              && _zkUnlockIter != null) {
+            final _zkUnlockCtx = await deriveAndInstallCryptoContext(
+              vaultId: loginResult.vaultId,
+              vaultName: resolvedVaultName,
+              pin: pin,
+              pinSaltBase64: _zkUnlockSalt,
+              iterations: _zkUnlockIter,
+              source: 'zk_unlock',
+            );
+            if (_zkUnlockCtx == null) {
+              vlog('unlock.zk.derive.superseded', {
+                'vaultName': resolvedVaultName,
+              });
+            }
+          } else {
+            vlog('unlock.zk.meta_missing_fields', {
+              'has_salt': _zkUnlockSalt != null,
+              'has_iter': _zkUnlockIter != null,
+            });
+          }
+        } catch (e) {
+          vlog('unlock.zk.pbkdf2_derive_failed', {
+            'error': e.toString(),
+            'vaultName': resolvedVaultName,
+          });
+        }
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
         // Cleared on logout / vault switch.
@@ -5919,18 +6109,39 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
-      // 2026-07-21: correctness is enforced by the server-side KDF-
-      // version compare-and-swap gate — the client declares the
-      // exact (salt, iter) it derived against, and the server 409s
-      // on mismatch (see vault_kdf_generation.py). No pre-encrypt
-      // GET here — GET+POST is not atomic, so it can only mitigate,
-      // never fix, the concurrent-rotation race.
-      final _keyOriginForDelete = _VaultCrypto.originFor(
-        vaultId: activeVaultId,
-        vaultName: vaultName,
+      // Snapshot the crypto context ONCE; use it for both encrypt
+      // and declared metadata. See _send() for the incident-context
+      // rationale — the delete-sentinel path was subject to the
+      // exact same race.
+      final ctxSnapshot = VaultCryptoRegistry.current;
+      if (ctxSnapshot == null
+          || ctxSnapshot.vaultId != activeVaultId
+          || ctxSnapshot.vaultName != vaultName) {
+        vlog('delete_sentinel.no_context', {
+          'has_ctx': ctxSnapshot != null,
+        });
+        setState(() {
+          sending = false;
+          thinking = false;
+          if (msgs.isNotEmpty && msgs.last.role == 'user') {
+            msgs.removeLast();
+          }
+        });
+        rootScaffoldMessengerKey.currentState?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Vault crypto state is out of sync. Please tap Delete '
+              'again.',
+            ),
+          ),
+        );
+        return;
+      }
+      final pin = ctxSnapshot.pin;
+      final encryptedMessage = await encryptWithContext(
+        plaintext: sentinel,
+        context: ctxSnapshot,
       );
-      final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
       int? assistantIndex;
       String buffer = '';
       bool memoryProposalFinalized = false;
@@ -5942,8 +6153,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: token,
         uploadedFileIds: const <String>[],
         appLocale: context.read<AppState>().chatReplyLanguageCode,
-        kdfSaltUsed: _keyOriginForDelete?.saltBase64,
-        kdfIterationsUsed: _keyOriginForDelete?.iterations,
+        kdfSaltUsed: ctxSnapshot.saltBase64,
+        kdfIterationsUsed: ctxSnapshot.iterations,
       );
 
       try {
@@ -5996,6 +6207,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        // 2026-07-22 crypto-context mismatch (server 400) — same
+        // policy as _send: preserve session, snackbar, no navigate.
+        if (err is CryptoContextMismatchException) {
+          if (!mounted) return;
+          setState(() {
+            thinking = false;
+            sending = false;
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
+          });
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          rootScaffoldMessengerKey.currentState?.showSnackBar(
+            SnackBar(content: Text(err.message)),
+          );
+          return;
+        }
         // 2026-07-21 KDF-generation-stale: identical policy to _send.
         // Re-derive from response salt/iter, drop the just-added
         // user bubble, show snackbar, do NOT force PIN, do NOT
@@ -12484,27 +12712,77 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
 
-      // 2026-07-21 concurrency fix — do NOT insert a pre-encrypt
-      // /vault-meta GET here (the earlier mitigation traded one race
-      // for another: a stale cached meta or a rotation racing
-      // BETWEEN the GET and the POST would still leave the client's
-      // key wrong). Correctness is now guaranteed by the server-side
-      // KDF-version compare-and-swap gate (see
-      // vault_kdf_generation.check_kdf_generation_fresh). The client
-      // declares the exact (salt, iter) it derived against; the
-      // server compares to the current DB row BEFORE decryption and
-      // responds 409 kdf_generation_stale on mismatch, carrying
-      // fresh salt+iter so the client re-derives without another
-      // HTTP round-trip. No auto-retry — user is prompted to send
-      // again.
-      final _keyOriginForSend = _VaultCrypto.originFor(
-        vaultId: activeVaultId,
-        vaultName: vaultName,
+      // 2026-07-22 atomic crypto context snapshot. This is the ONE
+      // place the /chat send path samples the vault's key + KDF
+      // metadata, and BOTH values come from the same immutable
+      // VaultCryptoContext object. NEVER read the key and metadata
+      // from separate getters — that produced the production
+      // "encrypted with MVK, declared PBKDF2 metadata" ciphertext
+      // whose server-side decrypt failed and mis-signed-out the
+      // user. NEVER await between capturing the snapshot and
+      // finishing the encrypt+request-build unless the SAME
+      // snapshot object is retained.
+      final ctxSnapshot = VaultCryptoRegistry.current;
+      if (ctxSnapshot == null
+          || ctxSnapshot.vaultId != activeVaultId
+          || ctxSnapshot.vaultName != vaultName) {
+        // No live context for the caller's vault. Do NOT force PIN
+        // (that would be the pre-2026-07-22 silent-sign-out bug).
+        // Surface a clear typed error and preserve the input; the
+        // route guard will guide the user to /pin only when the
+        // session itself is missing.
+        vlog('chat.preSend.no_context', {
+          'has_ctx': ctxSnapshot != null,
+          'ctx_vault_id': ctxSnapshot?.vaultId,
+          'ctx_vault_name': ctxSnapshot?.vaultName,
+          'active_vault_id': activeVaultId,
+          'active_vault_name': vaultName,
+        });
+        setState(() {
+          sending = false;
+          thinking = false;
+          if (msgs.isNotEmpty && msgs.last.role == 'user') {
+            msgs.removeLast();
+          }
+          input.text = text;
+          input.selection = TextSelection.collapsed(offset: text.length);
+        });
+        rootScaffoldMessengerKey.currentState?.clearSnackBars();
+        rootScaffoldMessengerKey.currentState?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Vault crypto state is out of sync. Please tap send '
+              'again.',
+            ),
+          ),
+        );
+        return;
+      }
+      final _chatRequestId =
+          '${DateTime.now().microsecondsSinceEpoch}_${ctxSnapshot.generation}';
+      final _keyFp = await cryptoFingerprintForKey(ctxSnapshot.key);
+      final _saltFp = cryptoFingerprintForSaltBase64(ctxSnapshot.saltBase64);
+      final encryptedMessage = await encryptWithContext(
+        plaintext: text,
+        context: ctxSnapshot,
       );
-      final encryptedMessage = await _VaultCrypto.encrypt(text);
+      vlog('chat.body.diag', {
+        'chat_request_id': _chatRequestId,
+        'vault_id': ctxSnapshot.vaultId,
+        'context_generation': ctxSnapshot.generation,
+        'key_fp12': _keyFp,
+        'salt_fp12_sent': _saltFp,
+        'iterations_sent': ctxSnapshot.iterations,
+        'kdf_fields_present': true,
+        'encrypted_length': encryptedMessage.length,
+      });
 
       final _hintForThisSend = _nextSelectionHint;
       _nextSelectionHint = null;
+      // The kdf metadata sent to the server MUST be the same fields
+      // from the same ctxSnapshot the encryption used above — no
+      // separate lookups. This is the atomicity contract the
+      // production incident traced back to.
       final stream = client.chatStream(
         encryptedMessage: encryptedMessage,
         vaultName: vaultName,
@@ -12513,14 +12791,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         uploadedFileIds: uploadedFileIds,
         appLocale: context.read<AppState>().chatReplyLanguageCode,
         selectionHint: _hintForThisSend,
-        // Declare the exact (pin_salt, kdf_iterations) the cached
-        // vault key was derived from. Server compares to the current
-        // DB row BEFORE decryption and returns 409
-        // kdf_generation_stale on mismatch. Null when no origin was
-        // recorded (ZK-adopted vaults that stamped the MVK directly
-        // into the cache); server falls through to legacy behavior.
-        kdfSaltUsed: _keyOriginForSend?.saltBase64,
-        kdfIterationsUsed: _keyOriginForSend?.iterations,
+        kdfSaltUsed: ctxSnapshot.saltBase64,
+        kdfIterationsUsed: ctxSnapshot.iterations,
       );
 
       try {
@@ -12580,6 +12852,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        // 2026-07-22: server 400 "Invalid PIN or corrupted data" is
+        // NOT a session-expired condition and NOT an incorrect PIN
+        // — it's a client-side crypto-context mismatch. Preserve
+        // the user's input, drop the just-added user bubble, show
+        // a typed snackbar, and keep everything else unchanged.
+        // The atomic VaultCryptoContext + snapshot-once contract
+        // above should prevent this from ever happening for a
+        // modern client; if it does, we recover gracefully rather
+        // than sign the user out.
+        if (err is CryptoContextMismatchException) {
+          if (!mounted) return;
+          setState(() {
+            thinking = false;
+            sending = false;
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
+            input.text = text;
+            input.selection =
+                TextSelection.collapsed(offset: text.length);
+          });
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          rootScaffoldMessengerKey.currentState?.showSnackBar(
+            SnackBar(content: Text(err.message)),
+          );
+          return;
+        }
         // 2026-07-21: 409 kdf_generation_stale is a specific,
         // recoverable state — the client's declared (salt, iter)
         // did not match the server's current DB (something rotated
@@ -14808,19 +15107,315 @@ class _VaultSwitcher extends StatelessWidget {
 /// Origin snapshot for a cached crypto key: the exact (pin_salt,
 /// kdf_iterations) pair the current [SecretKey] was derived from.
 ///
-/// The 2026-07-21 first-chat-invalidates-unlock incident showed that
-/// merely deriving a key at PIN-unlock time is not enough — the DB
-/// state can drift under the cached key (KDF rotation, server-side
-/// re-encryption maintenance, timing races between /rotate-vault-kdf
-/// and /vault-meta refetch, etc.). Tracking the derivation origin
-/// per cache slot lets the chat send path detect drift with one
-/// authoritative `/vault-meta` GET and silently re-derive when the
-/// server's current state differs — no user-visible error, no retry,
-/// no delay beyond the necessary HTTP round-trip.
+/// LEGACY — kept for back-compat with pre-2026-07-22 call sites.
+/// New code MUST use [VaultCryptoContext] via [VaultCryptoRegistry].
 class _KeyOrigin {
   final String saltBase64;
   final int iterations;
   const _KeyOrigin({required this.saltBase64, required this.iterations});
+}
+
+/// Immutable snapshot of the vault's crypto state at a specific
+/// generation. Every derive/rotation/refresh atomically REPLACES the
+/// whole object via [VaultCryptoRegistry.install]. Never mutate any
+/// field, never construct one without going through the registry.
+///
+/// The 2026-07-22 production incident (see f8210d6 deployment
+/// aftermath): the pre-fix code stored the key in one map
+/// (`_keyCache`) and its (salt, iter) origin in another
+/// (`_keyOrigin`), updated by different code paths at different
+/// times. The three ZK login/signup paths wrote MVK into `_keyCache`
+/// without touching `_keyOrigin` at all. On the /chat send path,
+/// `_send()` read the origin first (returning null for the ZK
+/// slot), then read the key (returning the MVK), producing a
+/// ciphertext-encrypted-with-MVK that was declared as PBKDF2 salt.
+/// Server matched the metadata, derived PBKDF2 K, tried to decrypt
+/// MVK-ciphertext → 400 "Invalid PIN or corrupted data" → client
+/// signed the user out and later showed "Incorrect PIN". Root cause
+/// was that the key and its metadata were NEVER an atomic unit.
+///
+/// This class is that atomic unit. There is exactly one live
+/// [VaultCryptoRegistry._current] per session; every writer replaces
+/// the whole object under a monotonically-increasing generation
+/// guard so a stale async completion cannot clobber newer state.
+///
+/// **/chat contract**: every send path MUST snapshot the whole
+/// context ONCE with `VaultCryptoRegistry.current`, then use the
+/// same snapshot for both `context.key` (encryption) and
+/// `context.saltBase64` / `context.iterations` (declared metadata).
+/// No await may sit between the snapshot capture and constructing
+/// the request unless the same immutable snapshot is retained.
+@immutable
+class VaultCryptoContext {
+  final String vaultId;
+  final String vaultName;
+  final SecretKey key;
+  final String pin;
+  final String saltBase64;
+  final int iterations;
+  final int generation;
+  final String source;
+
+  const VaultCryptoContext({
+    required this.vaultId,
+    required this.vaultName,
+    required this.key,
+    required this.pin,
+    required this.saltBase64,
+    required this.iterations,
+    required this.generation,
+    required this.source,
+  });
+}
+
+/// Non-secret fingerprints for the diagnostic log. First 12 hex
+/// chars of SHA-256(bytes) — enough to distinguish keys / salts in
+/// production logs without exposing any secret material.
+Future<String> cryptoFingerprintForKey(SecretKey key) async {
+  try {
+    final bytes = await key.extractBytes();
+    return _fp12(Uint8List.fromList(bytes));
+  } catch (_) {
+    return 'unavailable';
+  }
+}
+
+String cryptoFingerprintForSaltBase64(String saltBase64) {
+  try {
+    final raw = base64Decode(saltBase64);
+    return _fp12(raw);
+  } catch (_) {
+    return 'unavailable';
+  }
+}
+
+String _fp12(Uint8List bytes) {
+  final digest = sha256.convert(bytes);
+  final hex = digest.toString();
+  return hex.length >= 12 ? hex.substring(0, 12) : hex;
+}
+
+/// Registry of the vault's authoritative [VaultCryptoContext].
+///
+/// Every writer (unlock, verifyPin, ZK login, ZK signup, session
+/// restore, rotation, 409-refresh, etc.) MUST:
+///
+///   1. Reserve an operation id via [nextOperationId] BEFORE any
+///      async work.
+///   2. Perform its async derivation.
+///   3. Construct a [VaultCryptoContext] with
+///      `generation: nextGeneration()`.
+///   4. Call [install]. The install is refused if the operation id
+///      was superseded by a later reservation, and it is refused if
+///      the constructed generation is not strictly greater than the
+///      currently-installed generation. Both guards must pass — the
+///      operation id catches "started earlier but finishing later",
+///      the generation catches "wrote directly without reserving."
+///
+/// The registry has NO getters that expose the key or PIN by pointer
+/// — the only way to obtain them is via a full context snapshot,
+/// which guarantees the caller can never end up with a key from one
+/// generation and metadata from another.
+class VaultCryptoRegistry {
+  static VaultCryptoContext? _current;
+  static int _generationSeq = 0;
+  static int _operationSeq = 0;
+
+  static VaultCryptoContext? get current => _current;
+
+  /// Reserve an operation id for an in-flight derivation. The id is
+  /// checked at [install] time; a later reservation invalidates the
+  /// earlier one so a stale async completion cannot overwrite newer
+  /// state.
+  static int nextOperationId() {
+    return ++_operationSeq;
+  }
+
+  /// Return the current sequence peak. install() will refuse a
+  /// write whose operationId is not equal to this peak (i.e. some
+  /// later reservation has taken over).
+  static int currentOperationPeak() => _operationSeq;
+
+  /// Allocate the next generation number for a new context. Called
+  /// AFTER the async derivation completes, right before install.
+  static int nextGeneration() {
+    return ++_generationSeq;
+  }
+
+  /// Install a new context atomically. Returns true on success, false
+  /// when refused (stale operation id, non-monotonic generation, or
+  /// mismatched vault). NEVER partially updates state on refusal.
+  static bool install({
+    required int operationId,
+    required VaultCryptoContext context,
+  }) {
+    if (operationId != _operationSeq) {
+      vlog('crypto.context.install.stale', {
+        'reason': 'operation_id_superseded',
+        'op_id': operationId,
+        'peak': _operationSeq,
+        'source': context.source,
+      });
+      return false;
+    }
+    final current = _current;
+    if (current != null && context.generation <= current.generation) {
+      vlog('crypto.context.install.stale', {
+        'reason': 'generation_not_greater',
+        'ctx_gen': context.generation,
+        'current_gen': current.generation,
+        'source': context.source,
+      });
+      return false;
+    }
+    _current = context;
+    // Diagnostic log — fingerprints only, never key bytes / salt bytes
+    // / pin. Fingerprint call is fire-and-forget so it never blocks
+    // the install path.
+    unawaited(cryptoFingerprintForKey(context.key).then((keyFp) {
+      vlog('crypto.context.installed', {
+        'vault_id': context.vaultId,
+        'vault_name': context.vaultName,
+        'generation': context.generation,
+        'prev_generation': current?.generation,
+        'op_id': operationId,
+        'source': context.source,
+        'iterations': context.iterations,
+        'key_fp12': keyFp,
+        'salt_fp12': cryptoFingerprintForSaltBase64(context.saltBase64),
+      });
+    }));
+    return true;
+  }
+
+  /// Clear the context — session end / vault switch / explicit
+  /// invalidation. Also resets the generation counter for the next
+  /// unlock cycle so the numbers stay small in logs.
+  static void clear({String? reason}) {
+    final prev = _current;
+    _current = null;
+    _generationSeq = 0;
+    _operationSeq = 0;
+    if (prev != null) {
+      vlog('crypto.context.cleared', {
+        'reason': reason ?? 'unspecified',
+        'prev_generation': prev.generation,
+        'prev_vault_id': prev.vaultId,
+      });
+    }
+  }
+
+  /// For diagnostics only.
+  static Map<String, Object?> debugSnapshot() {
+    final c = _current;
+    return {
+      'has_current': c != null,
+      'vault_id': c?.vaultId,
+      'vault_name': c?.vaultName,
+      'generation': c?.generation,
+      'iterations': c?.iterations,
+      'operation_peak': _operationSeq,
+      'source': c?.source,
+    };
+  }
+}
+
+/// PBKDF2-derive a key AND install the atomic context in one guarded
+/// operation. Used by every unlock/rotate/refresh path.
+///
+/// - Reserves an operation id BEFORE the derive.
+/// - Runs PBKDF2 (the expensive step).
+/// - Constructs a [VaultCryptoContext] with a fresh generation.
+/// - Installs via [VaultCryptoRegistry.install]. If the install is
+///   refused (a later reservation superseded us), the returned
+///   context is null and the caller MUST NOT proceed as if the key
+///   were live.
+///
+/// Also mirrors the derived key into the legacy `_VaultCrypto`
+/// caches so any code path that still reads `_keyCache` / `_pinCache`
+/// / `_keyOrigin` sees a consistent view. New code should read from
+/// [VaultCryptoRegistry.current] exclusively.
+Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
+  required String vaultId,
+  required String vaultName,
+  required String pin,
+  required String pinSaltBase64,
+  required int iterations,
+  required String source,
+}) async {
+  final opId = VaultCryptoRegistry.nextOperationId();
+
+  final algorithm = Pbkdf2(
+    macAlgorithm: Hmac.sha256(),
+    iterations: iterations,
+    bits: 256,
+  );
+  final secretKey = await algorithm.deriveKey(
+    secretKey: SecretKey(utf8.encode(pin)),
+    nonce: base64Decode(pinSaltBase64),
+  );
+
+  final gen = VaultCryptoRegistry.nextGeneration();
+  final context = VaultCryptoContext(
+    vaultId: vaultId,
+    vaultName: vaultName,
+    key: secretKey,
+    pin: pin,
+    saltBase64: pinSaltBase64,
+    iterations: iterations,
+    generation: gen,
+    source: source,
+  );
+
+  final ok = VaultCryptoRegistry.install(
+    operationId: opId,
+    context: context,
+  );
+  if (!ok) {
+    // Superseded — do NOT mirror into legacy caches (would clobber a
+    // newer install's mirror below).
+    return null;
+  }
+
+  // Legacy mirror — keep the old caches in lock-step with the
+  // registry so no read path is left dangling. Deliberately after
+  // the install success check so a stale derive never overwrites
+  // the newer install's mirror.
+  final k = _VaultCrypto._ck(vaultId, vaultName);
+  _VaultCrypto._keyCache[k] = secretKey;
+  _VaultCrypto._pinCache[k] = pin;
+  _VaultCrypto._keyOrigin[k] = _KeyOrigin(
+    saltBase64: pinSaltBase64,
+    iterations: iterations,
+  );
+  _VaultCrypto._activeVaultId = vaultId;
+  _VaultCrypto._activeVaultName = vaultName;
+
+  return context;
+}
+
+/// Encrypt [plaintext] using [context.key] atomically. No implicit
+/// registry lookups. The caller passes the context snapshot they
+/// intend to declare in the request body, and this function uses
+/// EXACTLY that key. This is what enforces the "key and metadata
+/// come from the same context" contract at the crypto boundary.
+Future<String> encryptWithContext({
+  required String plaintext,
+  required VaultCryptoContext context,
+}) async {
+  final algorithm = AesGcm.with256bits();
+  final nonce = algorithm.newNonce();
+  final secretBox = await algorithm.encrypt(
+    utf8.encode(plaintext),
+    secretKey: context.key,
+    nonce: nonce,
+  );
+  final combined = <int>[
+    ...nonce,
+    ...secretBox.cipherText,
+    ...secretBox.mac.bytes,
+  ];
+  return base64.encode(combined);
 }
 
 class _VaultCrypto {
@@ -14986,6 +15581,12 @@ class _VaultCrypto {
     if (wasActive) {
       _activeVaultId = null;
       _activeVaultName = null;
+    }
+    // 2026-07-22: keep the authoritative VaultCryptoContext in
+    // lock-step with the legacy cache. If the leaving vault was
+    // the active one, clear the registry too.
+    if (VaultCryptoRegistry.current?.vaultId == vaultId) {
+      VaultCryptoRegistry.clear(reason: 'clearCache');
     }
     vlog('crypto.clearCache', {
       'vault_id': vaultId,

@@ -40,6 +40,8 @@ of truth. Deliberately does NOT include the PIN in the response.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 from typing import Optional
 
@@ -57,6 +59,84 @@ KDF_STALE_MESSAGE = (
     "The vault's key generation changed since you last unlocked. "
     "Please re-send your message."
 )
+
+# 2026-07-22 modern-client enforcement.
+#
+# The 2026-07-22 production regression traced back to modern clients
+# whose in-flight requests omitted `kdf_salt_used` because the
+# frontend ZK login paths never populated `_keyOrigin`. Server fell
+# through the legacy pass-through, derived from current DB, tried
+# to decrypt MVK-ciphertext with PBKDF2 K, and returned generic 400
+# — silently signing the user out downstream.
+#
+# The fix: modern clients (identified by X-App-Release header
+# matching the 40-char SHA of the running frontend build) MUST
+# declare their KDF fields. Missing fields on a modern client is a
+# 400 typed as `missing_kdf_generation_fields` — never a silent
+# legacy pass-through. Older builds without the header keep the
+# legacy behavior so a partial rollout doesn't break anyone.
+MISSING_KDF_FIELDS_CODE = "missing_kdf_generation_fields"
+MISSING_KDF_FIELDS_MESSAGE = (
+    "This client build must declare kdf_salt_used and "
+    "kdf_iterations_used with encrypted requests. Reload the app "
+    "to pick up the latest frontend."
+)
+
+
+def is_modern_client(app_release_header: Optional[str]) -> bool:
+    """Return True iff the request carries an X-App-Release header
+    that looks like a 40-char hex SHA. The build script bakes the
+    commit SHA into the frontend via `--dart-define=APP_RELEASE=`;
+    any client that reaches this branch has code that knows to send
+    kdf_salt_used and kdf_iterations_used. Older builds without the
+    header keep the legacy pass-through behavior at
+    [check_kdf_generation_fresh].
+    """
+    if not app_release_header:
+        return False
+    s = app_release_header.strip().lower()
+    if len(s) != 40:
+        return False
+    for ch in s:
+        if ch not in "0123456789abcdef":
+            return False
+    return True
+
+
+def salt_fingerprint(salt_base64: Optional[str]) -> str:
+    """First 12 hex chars of SHA-256(decoded_salt). Non-secret —
+    salts are already public metadata via /vault-meta. Used only
+    for diagnostic log correlation."""
+    if not salt_base64:
+        return "-"
+    try:
+        raw = base64.b64decode(salt_base64)
+    except Exception:
+        return "invalid_b64"
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
+def key_fingerprint(key_bytes: bytes) -> str:
+    """First 12 hex chars of SHA-256(key_bytes). Non-secret —
+    a 12-hex prefix of SHA-256(K) is a random 48-bit value and
+    reveals no key material. Used only for diagnostic log
+    correlation across the client + server logs."""
+    if not key_bytes:
+        return "-"
+    return hashlib.sha256(key_bytes).hexdigest()[:12]
+
+
+def missing_kdf_fields_error() -> HTTPException:
+    """Modern clients that forgot to include the KDF fields get
+    a typed 400 (NOT the generic decrypt-failure 400 that the pre-
+    2026-07-22 client mis-classified as session-expired)."""
+    return HTTPException(
+        status_code=400,
+        detail={
+            "code": MISSING_KDF_FIELDS_CODE,
+            "message": MISSING_KDF_FIELDS_MESSAGE,
+        },
+    )
 
 
 def check_kdf_generation_fresh(

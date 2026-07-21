@@ -11825,21 +11825,114 @@ async def chat_endpoint(
         print("[CHAT-DEBUG] missing_encrypted_message", flush=True)
         raise HTTPException(status_code=400, detail="Missing encrypted message")
 
-    # 2026-07-21 authoritative KDF-version compare-and-swap gate.
-    # Runs BEFORE PIN verify + decrypt so a stale-generation request
-    # cannot silently trip the generic decrypt-failure 400. On
-    # mismatch this raises HTTPException(409, kdf_generation_stale,
-    # ...) carrying the current salt+iter for the client to re-derive
-    # against. Missing client-side fields (older builds) pass through
-    # to legacy behavior. Documented in vault_kdf_generation.py.
-    from vault_kdf_generation import check_kdf_generation_fresh
+    # 2026-07-22 modern-client enforcement + KDF version gate.
+    #
+    # (1) Modern clients (identified by X-App-Release header carrying
+    #     the 40-char SHA baked into main.dart.js by build-web-release)
+    #     MUST declare kdf_salt_used and kdf_iterations_used. Missing
+    #     fields is a typed 400 (missing_kdf_generation_fields) —
+    #     never a silent legacy pass-through into a decrypt-failure
+    #     400 that the client mis-classified as session-expired.
+    #
+    # (2) Once declared, [check_kdf_generation_fresh] compares to the
+    #     current DB row and 409s on mismatch. See
+    #     vault_kdf_generation.py for the full compare-and-swap
+    #     semantics.
+    from vault_kdf_generation import (
+        check_kdf_generation_fresh,
+        is_modern_client,
+        missing_kdf_fields_error,
+        salt_fingerprint,
+        key_fingerprint,
+    )
+    _app_release = None
+    try:
+        _app_release = (
+            request.headers.get("X-App-Release")
+            or request.headers.get("x-app-release")
+        )
+    except Exception:
+        _app_release = None
+    _is_modern = is_modern_client(_app_release)
+    if _is_modern and (
+        not req.kdf_salt_used or req.kdf_iterations_used is None
+    ):
+        # Modern client dropped the KDF fields — do NOT fall into
+        # legacy pass-through. Fail fast so the client's typed
+        # error path can surface a specific message (and the exact
+        # production incident cannot recur silently).
+        print(
+            "[CHAT-DEBUG] modern_client_missing_kdf app_release="
+            f"{(_app_release or '')[:12]}",
+            flush=True,
+        )
+        raise missing_kdf_fields_error()
+
+    # Diagnostic log — non-secret fingerprints only. Used to
+    # correlate client-side [chat.body.diag] entries with server
+    # decisions during incident triage.
+    _chat_request_id = request.headers.get("X-Chat-Request-Id") or "-"
+    _received_salt_fp = salt_fingerprint(req.kdf_salt_used)
+    print(
+        "[CHAT-DEBUG] kdf_gate_pre "
+        f"chat_request_id={_chat_request_id} vault_id={vault_id} "
+        f"is_modern={_is_modern} "
+        f"kdf_salt_used_present={bool(req.kdf_salt_used)} "
+        f"received_salt_fp12={_received_salt_fp} "
+        f"received_iterations={req.kdf_iterations_used}",
+        flush=True,
+    )
+
     _conn_for_kdf_check = get_db()
     try:
-        check_kdf_generation_fresh(
-            _conn_for_kdf_check,
-            vault_id,
-            req.kdf_salt_used,
-            req.kdf_iterations_used,
+        # Read current DB fingerprint for the diag log BEFORE the
+        # gate call (gate reads the same row; second read here is
+        # informational only — never used for the actual gating).
+        _cur = _conn_for_kdf_check.cursor()
+        _cur.execute(
+            "SELECT pin_salt, kdf_iterations FROM vaults "
+            "WHERE vault_id = %s LIMIT 1",
+            (vault_id,),
+        )
+        _row = _cur.fetchone()
+        _db_salt = _row[0] if _row else None
+        _db_iter = int(_row[1]) if _row and _row[1] is not None else None
+        _db_salt_fp = salt_fingerprint(_db_salt)
+
+        _gate_result: str
+        try:
+            check_kdf_generation_fresh(
+                _conn_for_kdf_check,
+                vault_id,
+                req.kdf_salt_used,
+                req.kdf_iterations_used,
+            )
+            _gate_result = (
+                "legacy_pass"
+                if (not req.kdf_salt_used
+                    and req.kdf_iterations_used is None)
+                else "match"
+            )
+        except HTTPException as _gate_exc:
+            _gate_result = (
+                "stale"
+                if _gate_exc.status_code == 409
+                else f"other_{_gate_exc.status_code}"
+            )
+            print(
+                "[CHAT-DEBUG] kdf_gate_post "
+                f"chat_request_id={_chat_request_id} "
+                f"db_salt_fp12={_db_salt_fp} db_iter={_db_iter} "
+                f"gate_result={_gate_result}",
+                flush=True,
+            )
+            raise
+        print(
+            "[CHAT-DEBUG] kdf_gate_post "
+            f"chat_request_id={_chat_request_id} "
+            f"db_salt_fp12={_db_salt_fp} db_iter={_db_iter} "
+            f"gate_result={_gate_result}",
+            flush=True,
         )
     finally:
         _conn_for_kdf_check.close()
@@ -11860,24 +11953,50 @@ async def chat_endpoint(
                 flush=True,
             )
             raise
-        print("[CHAT-DEBUG] verify_pin_ok", flush=True)
+        _server_key_fp = key_fingerprint(key)
+        print(
+            "[CHAT-DEBUG] verify_pin_ok "
+            f"chat_request_id={_chat_request_id} "
+            f"server_key_fp12={_server_key_fp}",
+            flush=True,
+        )
 
-        print("[CHAT-DEBUG] decrypt_start", flush=True)
+        print(
+            "[CHAT-DEBUG] decrypt_start "
+            f"chat_request_id={_chat_request_id} "
+            f"encrypted_len={len(req.encrypted_message)}",
+            flush=True,
+        )
         try:
             decrypted_message = decrypt_message(req.encrypted_message, key)
         except HTTPException as e:
+            # Correlate with the client's [chat.body.diag] entry so
+            # an incident triage can prove which key-vs-metadata
+            # pairing the request carried without exposing any
+            # secret material.
             print(
-                f"[CHAT-DEBUG] decrypt_failed status={e.status_code} detail={e.detail!r}",
+                "[CHAT-DEBUG] decrypt_failed "
+                f"chat_request_id={_chat_request_id} "
+                f"status={e.status_code} detail={e.detail!r} "
+                f"server_key_fp12={_server_key_fp} "
+                f"received_salt_fp12={_received_salt_fp} "
+                f"gate_result={_gate_result}",
                 flush=True,
             )
             raise
         except Exception as e:
             print(
-                f"[CHAT-DEBUG] decrypt_failed error_type={type(e).__name__} repr={e!r}",
+                f"[CHAT-DEBUG] decrypt_failed "
+                f"chat_request_id={_chat_request_id} "
+                f"error_type={type(e).__name__} repr={e!r}",
                 flush=True,
             )
             raise
-        print("[CHAT-DEBUG] decrypt_ok", flush=True)
+        print(
+            "[CHAT-DEBUG] decrypt_ok "
+            f"chat_request_id={_chat_request_id}",
+            flush=True,
+        )
 
 
 

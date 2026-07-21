@@ -203,9 +203,14 @@ void main() {
       final window = src.substring(idx, windowEnd);
       expect(window.contains('pinSaltBase64'), isTrue);
       expect(window.contains('iterations'), isTrue);
-      expect(window.contains('deriveAndCacheKey'), isTrue,
-          reason: 'must re-derive via the same PBKDF2 path unlock '
-                  'uses');
+      // Updated 2026-07-22: applyFreshKdfMetadata now goes through
+      // the atomic-context path (deriveAndInstallCryptoContext)
+      // instead of the legacy deriveAndCacheKey — enforces the
+      // generation-guarded install so a stale async cannot clobber
+      // newer state.
+      expect(window.contains('deriveAndInstallCryptoContext'), isTrue,
+          reason: 'must re-derive via the atomic-context installer, '
+                  'not the legacy deriveAndCacheKey');
       // Must NOT hit HTTP.
       expect(window.contains('getVaultMeta'), isFalse,
           reason: 'applyFreshKdfMetadata must NOT fetch /vault-meta '
@@ -220,22 +225,27 @@ void main() {
 
   group('_send() — passes origin, catches 409, no forced PIN, no '
         'auto-retry', () {
-    test('reads _keyOrigin and forwards to chatStream', () {
+    test('snapshots the atomic crypto context and forwards it '
+         'to chatStream', () {
+      // Updated 2026-07-22: /send() no longer reads _keyOrigin
+      // separately from the key — instead it snapshots
+      // VaultCryptoRegistry.current ONCE and uses that snapshot
+      // for BOTH the encrypt and the declared metadata. See
+      // vault_crypto_context_atomic_2026_07_22_test.dart for the
+      // detailed atomicity assertions.
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
       final endIdx = (sendIdx + 20000).clamp(0, src.length);
       final fn = src.substring(sendIdx, endIdx);
-      final originIdx = fn.indexOf('_VaultCrypto.originFor(');
+      final snapIdx = fn.indexOf('VaultCryptoRegistry.current');
       final streamIdx = fn.indexOf('client.chatStream(');
-      expect(originIdx, greaterThan(-1),
-          reason: '_send() must look up _keyOrigin to know what '
-                  '(salt, iter) the cached key was derived from');
-      expect(streamIdx, greaterThan(originIdx),
-          reason: 'origin lookup must precede the chatStream call');
-      expect(fn.contains('kdfSaltUsed:'), isTrue,
-          reason: '_send() must forward the origin salt');
-      expect(fn.contains('kdfIterationsUsed:'), isTrue,
-          reason: '_send() must forward the origin iterations');
+      expect(snapIdx, greaterThan(-1),
+          reason: '_send() must snapshot VaultCryptoRegistry.current');
+      expect(streamIdx, greaterThan(snapIdx),
+          reason: 'snapshot must precede the chatStream call');
+      expect(fn.contains('kdfSaltUsed: ctxSnapshot.saltBase64'), isTrue);
+      expect(fn.contains('kdfIterationsUsed: ctxSnapshot.iterations'),
+          isTrue);
     });
 
     test('catches KdfGenerationStaleException in the stream error '
@@ -337,14 +347,17 @@ void main() {
   });
 
   group('_startSecureItemDeleteConfirmation — same 409 policy', () {
-    test('reads _keyOrigin and forwards to chatStream', () {
+    test('snapshots the atomic crypto context and forwards to '
+         'chatStream', () {
+      // Updated 2026-07-22: same rewrite as _send.
       final src = _mainDart();
       final fnIdx = src.indexOf('_startSecureItemDeleteConfirmation');
       final endIdx = (fnIdx + 8000).clamp(0, src.length);
       final fn = src.substring(fnIdx, endIdx);
-      expect(fn.contains('_VaultCrypto.originFor('), isTrue);
-      expect(fn.contains('kdfSaltUsed:'), isTrue);
-      expect(fn.contains('kdfIterationsUsed:'), isTrue);
+      expect(fn.contains('VaultCryptoRegistry.current'), isTrue);
+      expect(fn.contains('kdfSaltUsed: ctxSnapshot.saltBase64'), isTrue);
+      expect(fn.contains('kdfIterationsUsed: ctxSnapshot.iterations'),
+          isTrue);
     });
 
     test('catches KdfGenerationStaleException with same recovery '

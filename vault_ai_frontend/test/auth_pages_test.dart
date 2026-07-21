@@ -291,9 +291,10 @@ void main() {
     test('offers a "Use another vault" link that clears the remembered '
         'name and routes to /login', () {
       final src = _readLib('main.dart');
-      // 15k covers the UnlockPage class + submit body + build body
-      // after the 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
+      // Bumped 15k → 20k for the 2026-07-22 crypto-context refactor
+      // which added the ZK-path PBKDF2 derive + install to the
+      // UnlockPage submit body.
+      final window = _windowAfter(src, 'class UnlockPage', length: 20000);
       expect(
         window.contains('Use another vault') ||
             window.contains('authUseAnotherVault'),

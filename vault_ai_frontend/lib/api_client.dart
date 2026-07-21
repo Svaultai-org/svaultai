@@ -246,6 +246,43 @@ class InvalidVaultUnlockException implements Exception {
   String toString() => 'InvalidVaultUnlockException(message: $message)';
 }
 
+/// Server returned 400 "Invalid PIN or corrupted data" from
+/// [vault_core.decrypt_message]. Semantically DISTINCT from
+/// [InvalidVaultUnlockException] — the session and unlock are
+/// intact, the client's ciphertext just did not decrypt under the
+/// server's derived key. The correct recovery is to re-derive the
+/// crypto context (freshly from /vault-meta) and ask the user to
+/// tap send again. NEVER map this to session-expired sign-out or
+/// "Incorrect PIN" — those were the confusing 2026-07-22 production
+/// UX symptoms.
+class CryptoContextMismatchException implements Exception {
+  final String message;
+  const CryptoContextMismatchException({
+    this.message =
+        'Vault crypto state is out of sync. Please tap send again.',
+  });
+  @override
+  String toString() => 'CryptoContextMismatchException(message: $message)';
+}
+
+/// Server returned 401 `invalid_pin` from [verify_vault_pin]. The
+/// user's PIN did NOT match the stored verifier. This is a
+/// PIN-specific error and MUST NOT be conflated with session
+/// termination — the session is still valid; only the supplied
+/// PIN was wrong. UI should surface a PIN-specific message and
+/// remain on whatever screen it is (usually /pin).
+class PinInvalidException implements Exception {
+  final String message;
+  final int? attemptsLeft;
+  const PinInvalidException({
+    this.message = 'Incorrect PIN.',
+    this.attemptsLeft,
+  });
+  @override
+  String toString() =>
+      'PinInvalidException(attemptsLeft: $attemptsLeft, message: $message)';
+}
+
 /// Server returned 409 kdf_generation_stale — the client's declared
 /// (pin_salt, kdf_iterations) did not match the vault row's current
 /// values. Something rotated the DB under this session (a second
@@ -399,6 +436,19 @@ class VaultAIClient {
     final did = _apiClientDeviceId;
     if (did != null && did.isNotEmpty) {
       headers['X-Device-Id'] = did;
+    }
+
+    // 2026-07-22 modern-client identification. The build script
+    // bakes the full 40-char commit SHA into main.dart.js via
+    // --dart-define=APP_RELEASE=<sha>. Sending it on every request
+    // lets the backend distinguish modern clients (which MUST
+    // declare kdf_salt_used / kdf_iterations_used) from older
+    // builds (which stay on the legacy pass-through). See
+    // vault_kdf_generation.is_modern_client.
+    const _appRelease =
+        String.fromEnvironment('APP_RELEASE', defaultValue: 'dev');
+    if (_appRelease.isNotEmpty && _appRelease != 'dev') {
+      headers['X-App-Release'] = _appRelease;
     }
 
     return headers;
@@ -2286,7 +2336,49 @@ class VaultAIClient {
       st.SessionTermination.instance.handle(code);
       throw exc;
     }
+    // 2026-07-22: `invalid_pin` is NOT a session-termination code
+    // — the session is valid; the caller's supplied PIN just
+    // didn't match. Convert to the typed [PinInvalidException] so
+    // the app's error boundary does NOT clear the session or
+    // navigate to sign-in. The pre-fix code fell through to a
+    // generic AuthExpiredException here, which is exactly what
+    // signed the user out on the production /chat 401 that had
+    // detail.code=invalid_pin.
+    final invalidPin = _extractInvalidPinException(body);
+    if (invalidPin != null) {
+      throw invalidPin;
+    }
+    // Any other uncoded 401 stays a generic AuthExpiredException
+    // (session issue we cannot classify — safe default is to
+    // require re-auth). Callers that KNOW their endpoint returns
+    // typed 401s (auth/chat/PIN) should handle those types before
+    // handleApiException classifies the leftover as AuthExpired.
     throw const AuthExpiredException();
+  }
+
+  /// Parse a 401 body of the shape
+  /// `{"detail": {"code": "invalid_pin", "message": "...",
+  ///              "attempts_left": <int>}}`.
+  static PinInvalidException? _extractInvalidPinException(String body) {
+    if (body.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map) return null;
+      final detail = decoded['detail'];
+      if (detail is! Map) return null;
+      if (detail['code']?.toString() != 'invalid_pin') return null;
+      int? attempts;
+      final rawAttempts = detail['attempts_left'];
+      if (rawAttempts is int) {
+        attempts = rawAttempts;
+      } else if (rawAttempts is num) {
+        attempts = rawAttempts.toInt();
+      }
+      final msg = detail['message']?.toString() ?? 'Incorrect PIN.';
+      return PinInvalidException(message: msg, attemptsLeft: attempts);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Parse a FastAPI 401 body of the shape
@@ -2346,21 +2438,16 @@ class VaultAIClient {
 
   void _throwIfInvalidVaultUnlock(int statusCode, String body) {
     if (statusCode != 400) return;
-
     if (!body.contains('Invalid PIN or corrupted data')) return;
-
-    String? message;
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) {
-        final d = decoded['detail'];
-        if (d is String && d.isNotEmpty) message = d;
-      }
-    } catch (_) {}
-    if (message != null && message.contains('Invalid PIN or corrupted data')) {
-      throw const InvalidVaultUnlockException();
-    }
-    throw const InvalidVaultUnlockException();
+    // 2026-07-22: what looks like "invalid unlock" is really a
+    // crypto-context mismatch — the server derived a valid key
+    // from the current DB (verify_pin_ok in the log), but the
+    // client-supplied ciphertext did not decrypt under it. The
+    // session and unlock are both fine; only the CIPHERTEXT is
+    // out of sync with the server's derived key. Never map this
+    // to sign-out or "Incorrect PIN" — see
+    // [CryptoContextMismatchException] for the correct recovery.
+    throw const CryptoContextMismatchException();
   }
 
   /// Server declared the client's (pin_salt, kdf_iterations) stale.
