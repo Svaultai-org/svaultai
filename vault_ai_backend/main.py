@@ -596,6 +596,19 @@ CORS_ALLOWED_HEADERS = [
     "X-Requested-With",
     "X-App-Locale",
     "X-Device-Id",
+    # 2026-07-22 (3) CORS regression fix. The 7b34d92 client build
+    # added X-App-Release to _defaultHeaders() as a diagnostic-only
+    # log field, but this allowlist was not updated in the same
+    # commit. Starlette's CORSMiddleware rejected every preflight
+    # whose Access-Control-Request-Headers included x-app-release
+    # with 400 Bad Request. Every authenticated route from
+    # https://app.svaultai.com stopped working — /vault-meta,
+    # /devices/register, /list-my-vaults, /notifications,
+    # /vault-stats, /billing/me, /list-files, /folders,
+    # /list-secure-items — because the real GET/POST never fired.
+    # See test_cors_preflight_login_2026_07_09.py for the
+    # regression tests.
+    "X-App-Release",
 ]
 
                                                                           

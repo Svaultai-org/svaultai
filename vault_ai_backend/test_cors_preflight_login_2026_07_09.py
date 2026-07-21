@@ -75,6 +75,10 @@ def _mount_preflight_app(regex: str) -> TestClient:
             "X-Requested-With",
             "X-App-Locale",
             "X-Device-Id",
+            # Kept in lock-step with main.CORS_ALLOWED_HEADERS.
+            # The 2026-07-22 (3) production CORS regression traced
+            # to this stub falling behind the real allowlist.
+            "X-App-Release",
         ],
         max_age=600,
     )
@@ -86,6 +90,27 @@ def _mount_preflight_app(regex: str) -> TestClient:
     @app.post("/chat")
     async def _chat_stub() -> dict:
         return {"ok": True}
+
+    # 2026-07-22 (3): stubs for the endpoints that broke in
+    # production when the CORS preflight started including
+    # x-app-release. Only OPTIONS matters for the preflight
+    # invariant; the concrete method (GET/POST) is preflight-
+    # neutral so a single POST stub covers all of them.
+    async def _empty_ok() -> dict:
+        return {"ok": True}
+
+    for _path in (
+        "/vault-meta",
+        "/devices/register",
+        "/list-my-vaults",
+        "/notifications",
+        "/vault-stats",
+        "/billing/me",
+        "/list-files",
+        "/folders",
+        "/list-secure-items",
+    ):
+        app.add_api_route(_path, _empty_ok, methods=["POST", "GET"])
 
     return TestClient(app)
 
@@ -358,6 +383,32 @@ class CorsHeadersAndMethodsInvariants(unittest.TestCase):
             ),
         )
 
+    def test_x_app_release_is_in_allow_headers_list(self) -> None:
+        # 2026-07-22 (3) production CORS regression: the 7b34d92
+        # client build added X-App-Release to _defaultHeaders() as
+        # a diagnostic-only field. Every preflight from
+        # https://app.svaultai.com included it in
+        # Access-Control-Request-Headers, and every one was
+        # rejected 400 by Starlette because this list did not
+        # include x-app-release. Every authenticated endpoint
+        # stopped working from the browser (the real GET/POST
+        # never fired). This invariant makes sure the header stays
+        # in the allowlist while it is emitted by the client.
+        import main
+        lower = [h.lower() for h in main.CORS_ALLOWED_HEADERS]
+        self.assertIn(
+            "x-app-release", lower,
+            msg=(
+                "X-App-Release must be in CORS_ALLOWED_HEADERS or "
+                "every browser preflight from the production frontend "
+                "will fail with 400 Bad Request — same class of "
+                "regression that blocked /vault-meta, "
+                "/devices/register, /list-my-vaults, /notifications, "
+                "/vault-stats, /billing/me, /list-files, /folders, "
+                "/list-secure-items after the 7b34d92 deploy."
+            ),
+        )
+
     def test_options_and_post_are_in_allow_methods(self) -> None:
         import main
         upper = [m.upper() for m in main.CORS_ALLOWED_METHODS]
@@ -525,6 +576,199 @@ class ProdChatPreflightAcceptsAppLocaleFromSvaultai(unittest.TestCase):
             resp.headers.get("access-control-allow-headers", "").lower()
         )
         self.assertIn("x-app-locale", allow_hdrs)
+
+
+class ProdPreflightAcceptsXAppReleaseFromSvaultai(unittest.TestCase):
+    """2026-07-22 (3) production CORS regression reproduction.
+
+    After the 7b34d92 deploy, the frontend at
+    https://app.svaultai.com sent this preflight for every
+    authenticated request:
+
+        OPTIONS <endpoint>
+        Origin: https://app.svaultai.com
+        Access-Control-Request-Method: GET | POST
+        Access-Control-Request-Headers:
+            authorization, content-type, x-app-release, x-device-id
+
+    Starlette returned 400 because x-app-release was not in
+    CORS_ALLOWED_HEADERS. That silently blocked /vault-meta,
+    /devices/register, /list-my-vaults, /notifications,
+    /vault-stats, /billing/me, /list-files, /folders,
+    /list-secure-items — the browser never sent the real GET/POST.
+    Surface symptoms: "Could not load files" and "Vault crypto
+    state is out of sync" (because /vault-meta never executed).
+
+    These tests reproduce the exact preflight for every endpoint
+    named in the production report. Each must return 200 with
+    x-app-release echoed in access-control-allow-headers."""
+
+    _PROD_REGEX = (
+        r"^https://(app|www)\.svaultai\.com$|^https://svaultai\.com$"
+    )
+    _ORIGIN = "https://app.svaultai.com"
+    # The exact ACRH string production browsers emitted post-7b34d92.
+    _ACRH_WITH_APP_RELEASE = (
+        "authorization,content-type,x-app-release,x-device-id"
+    )
+    # Endpoints from the production incident report.
+    _AFFECTED_ENDPOINTS = (
+        ("/devices/register",       "POST"),
+        ("/vault-meta",             "GET"),
+        ("/list-my-vaults",         "POST"),
+        ("/notifications",          "GET"),
+        ("/vault-stats",            "POST"),
+        ("/billing/me",             "GET"),
+        ("/list-files",             "POST"),
+        ("/folders",                "GET"),
+        ("/list-secure-items",      "POST"),
+    )
+
+    def _client(self) -> TestClient:
+        regex = _resolve_regex_under_env({
+            "VAULTAI_ENV": "production",
+            "CORS_ALLOWED_ORIGIN_REGEX": self._PROD_REGEX,
+        })
+        return _mount_preflight_app(regex)
+
+    def test_every_reported_endpoint_preflight_from_svaultai_returns_200(
+        self,
+    ) -> None:
+        client = self._client()
+        for path, method in self._AFFECTED_ENDPOINTS:
+            with self.subTest(path=path, method=method):
+                resp = client.options(
+                    path,
+                    headers={
+                        "Origin": self._ORIGIN,
+                        "Access-Control-Request-Method": method,
+                        "Access-Control-Request-Headers":
+                            self._ACRH_WITH_APP_RELEASE,
+                    },
+                )
+                self.assertEqual(
+                    resp.status_code, 200,
+                    msg=(
+                        f"OPTIONS {path} from {self._ORIGIN} with "
+                        f"ACRH={self._ACRH_WITH_APP_RELEASE!r} must "
+                        f"return 200 — got {resp.status_code}. "
+                        f"body={resp.text!r}"
+                    ),
+                )
+                self.assertEqual(
+                    resp.headers.get("access-control-allow-origin"),
+                    self._ORIGIN,
+                    msg=(
+                        "ACAO must echo the concrete production origin, "
+                        "not '*'"
+                    ),
+                )
+                allow_hdrs = (
+                    resp.headers.get(
+                        "access-control-allow-headers", "",
+                    ).lower()
+                )
+                for h in (
+                    "authorization", "content-type",
+                    "x-app-release", "x-device-id",
+                ):
+                    self.assertIn(
+                        h, allow_hdrs,
+                        msg=(
+                            f"access-control-allow-headers must include "
+                            f"{h}: got {allow_hdrs!r}"
+                        ),
+                    )
+
+    def test_options_vault_meta_specifically_returns_200(self) -> None:
+        # Named-endpoint test so a grep for '/vault-meta' in future
+        # test failures immediately points here. /vault-meta is the
+        # request whose 400 preflight surfaced client-side as "Vault
+        # crypto state is out of sync" (the client's own error copy
+        # for a missing meta refetch).
+        client = self._client()
+        resp = client.options(
+            "/vault-meta",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers":
+                    self._ACRH_WITH_APP_RELEASE,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, msg=resp.text)
+        self.assertIn(
+            "x-app-release",
+            resp.headers.get("access-control-allow-headers", "").lower(),
+        )
+
+    def test_pre_fix_state_is_the_400_the_production_frontend_saw(
+        self,
+    ) -> None:
+        # Sanity check that the regression scenario is REAL: mount a
+        # stub app whose CORS allowlist is missing x-app-release
+        # (the pre-fix state) and confirm the exact production
+        # symptom — Starlette returns 400 with no ACAO header.
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+        pre_fix_app = FastAPI()
+        pre_fix_app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=self._PROD_REGEX,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=[
+                "Authorization", "Content-Type", "Accept", "Origin",
+                "X-Requested-With", "X-App-Locale", "X-Device-Id",
+                # Deliberately WITHOUT X-App-Release — mirrors the
+                # 7b34d92 pre-fix state.
+            ],
+            max_age=600,
+        )
+
+        @pre_fix_app.get("/vault-meta")
+        async def _stub() -> dict:
+            return {"ok": True}
+
+        client = TestClient(pre_fix_app)
+        resp = client.options(
+            "/vault-meta",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers":
+                    self._ACRH_WITH_APP_RELEASE,
+            },
+        )
+        self.assertEqual(
+            resp.status_code, 400,
+            msg=(
+                "PROVEN — the pre-fix state (x-app-release absent from "
+                "the CORS allowlist) returns exactly 400 for the "
+                "production preflight. That is the response the "
+                "frontend saw for every failing endpoint after the "
+                "7b34d92 deploy."
+            ),
+        )
+        # The rejected preflight's access-control-allow-headers must
+        # NOT include x-app-release — that mismatch (requested but
+        # not allowed) is the exact reason the browser blocks the
+        # follow-up GET/POST. The 400 status is the primary signal
+        # the frontend saw; this assertion documents why the browser
+        # treated it as a CORS failure regardless of status code.
+        allow_hdrs = (
+            resp.headers.get(
+                "access-control-allow-headers", "",
+            ).lower()
+        )
+        self.assertNotIn(
+            "x-app-release", allow_hdrs,
+            msg=(
+                "pre-fix allow-headers must NOT include x-app-release "
+                "— that omission is the reason the browser refused "
+                "the follow-up request"
+            ),
+        )
 
 
 if __name__ == "__main__":
