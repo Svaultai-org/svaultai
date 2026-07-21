@@ -1836,10 +1836,22 @@ class VaultAIClient {
     required String vaultName,
     required String pin,
     required String authToken,
+    // 2026-07-22: optional client-generated request id. When set,
+    // sent as X-Client-Request-Id so the ClientException-vs-200
+    // distinction visible in nginx access logs can be correlated
+    // with the specific failed invocation on the device. NOT used
+    // for auth, NOT logged if unset. Bounded to 64 chars.
+    String? clientRequestId,
   }) async {
+    final headers = _defaultHeaders(authToken: authToken, json: true);
+    if (clientRequestId != null && clientRequestId.isNotEmpty) {
+      final cri = clientRequestId.length > 64
+          ? clientRequestId.substring(0, 64) : clientRequestId;
+      headers['X-Client-Request-Id'] = cri;
+    }
     final response = await http.post(
       Uri.parse('$baseUrl/beneficiary/list-mine'),
-      headers: _defaultHeaders(authToken: authToken, json: true),
+      headers: headers,
       body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
     );
     if (response.statusCode != 200) {
@@ -1853,6 +1865,34 @@ class VaultAIClient {
       ));
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// Best-effort ingest of a safe client-side diagnostic for an
+  /// inheritance-scoped failure. NO ciphertext, NO wrapped-key
+  /// contents, NO nonces, NO tokens, NO PINs may appear in
+  /// ``body`` — the backend endpoint's Pydantic model rejects any
+  /// field that isn't in its allowlist (see
+  /// ``routes/inheritance_credential_routes.py::ClientDiagnosticRequest``).
+  ///
+  /// Fire-and-forget: a failure to POST the diagnostic never
+  /// surfaces to the caller. The reveal / list-mine catch blocks
+  /// depend on this to keep the UI-visible reference tag stable
+  /// even when the network round-trip for the diagnostic itself
+  /// fails.
+  Future<void> postInheritanceClientDiagnostic({
+    required Map<String, dynamic> body,
+    required String authToken,
+  }) async {
+    try {
+      await http.post(
+        Uri.parse('$baseUrl/inheritance/client-diagnostic'),
+        headers: _defaultHeaders(authToken: authToken, json: true),
+        body: jsonEncode(body),
+      );
+    } catch (_) {
+      // Intentionally swallowed. Diagnostic emission must never
+      // itself become an error the user sees.
+    }
   }
 
   Future<Map<String, dynamic>> listInheritances({

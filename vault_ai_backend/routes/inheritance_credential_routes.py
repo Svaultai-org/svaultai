@@ -52,6 +52,9 @@ import base64
 import binascii
 import json
 import logging
+import threading
+import time
+from collections import OrderedDict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -602,3 +605,215 @@ def credential_status(
         credentials_saved=False,
         pairing_state=link.get("pairing_state") or "paired_no_credentials",
     )
+
+
+# ---------------------------------------------------------------------
+# Client-side diagnostic ingest
+# ---------------------------------------------------------------------
+
+
+# -- Dedup window ---
+# One identical (vault_id, area, reference_code) triple is logged at
+# most once per _DIAG_DEDUP_TTL_S. Subsequent identical reports in
+# the window are silently accepted (still 200) but do NOT emit a
+# ``[INH-CLIENT-DIAG]`` line. Prevents log spam if a client loops
+# through the reveal path or a page auto-refreshes into the same
+# failure. Values ARE NOT surfaced to the client; the response is
+# identical whether the report was recorded or deduped.
+_DIAG_DEDUP_TTL_S: float = 45.0
+_DIAG_DEDUP_MAX_ENTRIES: int = 8192
+
+_diag_dedup_lock = threading.Lock()
+# LRU-ordered by insertion / touch time so we can bound the map
+# under a keyspace attack (attacker cycling many fake references).
+_diag_dedup_seen: "OrderedDict[tuple[str, str, str], float]" = OrderedDict()
+
+
+def _diag_should_emit(vault_id: str, area: str, ref: str) -> bool:
+    """Return True if this (vault, area, reference) triple was NOT
+    logged within the last ``_DIAG_DEDUP_TTL_S`` seconds. On True,
+    the caller is responsible for actually emitting the line; the
+    dedup map is updated on the True path only so a would-be
+    logger that decides to skip does not extend the window.
+
+    Thread-safe. Bounded (max ``_DIAG_DEDUP_MAX_ENTRIES``); oldest
+    entries are dropped LRU-style.
+    """
+    key = (vault_id, area, ref)
+    now = time.monotonic()
+    with _diag_dedup_lock:
+        # Opportunistic sweep of expired entries. O(k) in the number
+        # of entries scanned before we hit a fresh one.
+        cutoff = now - _DIAG_DEDUP_TTL_S
+        while _diag_dedup_seen:
+            oldest_key = next(iter(_diag_dedup_seen))
+            oldest_ts = _diag_dedup_seen[oldest_key]
+            if oldest_ts < cutoff:
+                _diag_dedup_seen.popitem(last=False)
+            else:
+                break
+
+        existing = _diag_dedup_seen.get(key)
+        if existing is not None and existing >= cutoff:
+            # Within the dedup window — silently skip the emit.
+            return False
+
+        _diag_dedup_seen[key] = now
+        _diag_dedup_seen.move_to_end(key)
+        # LRU cap to guard against unbounded growth under a
+        # unique-key attack.
+        while len(_diag_dedup_seen) > _DIAG_DEDUP_MAX_ENTRIES:
+            _diag_dedup_seen.popitem(last=False)
+        return True
+
+
+def _reset_diag_dedup_for_tests() -> None:
+    """Test-only. Drops the entire dedup map so each test starts
+    from a clean slate. Never call from non-test code."""
+    with _diag_dedup_lock:
+        _diag_dedup_seen.clear()
+
+
+# Closed set of `area` tags the client can send. Any other value is
+# rejected by Pydantic before this handler runs, so a caller cannot
+# invent a new area name via the wire.
+_DIAG_AREAS = frozenset({"reveal", "beneficiary_list"})
+
+# Reference codes we currently classify on the client. Kept as a
+# closed allow-list so a leaked value in a log line stays a well-
+# known token (grep-friendly) and unknown strings get rejected.
+_DIAG_REFERENCES = frozenset({
+    "INH-RETRIEVE-003-AUTH",
+    "INH-RETRIEVE-003-SHAPE",
+    "INH-RETRIEVE-003-B64",
+    "INH-RETRIEVE-003-KEYLEN",
+    "INH-RETRIEVE-003-PAYLOAD",
+    "INH-RETRIEVE-003-OTHER",
+    "INH-LIST-MINE-ABORT",
+    "INH-LIST-MINE-STALE",
+})
+
+_DIAG_CATEGORIES = frozenset({
+    "auth", "shape", "b64", "keylen", "payload",
+    "network_abort", "stale", "other",
+})
+
+
+class ClientDiagnosticRequest(BaseModel):
+    """Body schema for the client diagnostic endpoint.
+
+    Every field is either an enum-like short string, an integer,
+    or a bounded-length id. NO base64 / ciphertext / wrapped-key
+    contents / nonces / tokens / PINs are accepted. A caller that
+    tries to send a large opaque blob will fail Pydantic validation
+    at ingest and never reach the log formatter.
+
+    ``client_request_id`` is a client-generated UUID (base64url or
+    hex, up to 64 chars). It lets an operator correlate a specific
+    client-side failure against the nginx access-log entry for the
+    same request.
+    """
+
+    area: str = Field(..., min_length=1, max_length=32)
+    reference_code: str = Field(..., min_length=1, max_length=48)
+    client_request_id: Optional[str] = Field(None, max_length=64)
+    link_id: Optional[int] = Field(None, ge=1, le=2_147_483_647)
+    exception_type: Optional[str] = Field(None, max_length=64)
+    category: Optional[str] = Field(None, max_length=32)
+    crypto_version: Optional[int] = Field(None, ge=0, le=99)
+
+    # Byte-length metadata. Upper bounds match the wire invariants
+    # in the inheritance_credentials schema (see migration 0028).
+    encrypted_payload_len: Optional[int] = Field(
+        None, ge=0, le=1_000_000,
+    )
+    payload_nonce_len: Optional[int] = Field(None, ge=0, le=64)
+    wrapped_key_len: Optional[int] = Field(None, ge=0, le=8_192)
+    wrapping_ephemeral_pk_len: Optional[int] = Field(None, ge=0, le=256)
+    wrapping_nonce_len: Optional[int] = Field(None, ge=0, le=64)
+    active_sk_present: Optional[bool] = None
+    active_sk_len: Optional[int] = Field(None, ge=0, le=1024)
+
+
+class ClientDiagnosticResponse(BaseModel):
+    ok: bool = True
+
+
+def _sanitize_diag_field(value: Optional[str], *,
+                          allowed: frozenset[str],
+                          name: str) -> Optional[str]:
+    """Reject unknown enum-like values. Turns a stray/unknown
+    ``area`` or ``reference_code`` into a hard 400 so nothing
+    weird ever reaches the log line."""
+    if value is None:
+        return None
+    if value not in allowed:
+        raise inheritance_http_error(
+            INHERR.CRED_INVALID_PACKAGE,
+            log_details={
+                "reason": f"unknown_diag_{name}",
+                "value_len": len(value),
+            },
+        )
+    return value
+
+
+@router.post(
+    "/inheritance/client-diagnostic",
+    response_model=ClientDiagnosticResponse,
+)
+def client_diagnostic(
+    payload: ClientDiagnosticRequest,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> ClientDiagnosticResponse:
+    """Ingest a safe structured diagnostic from a beneficiary / owner
+    device when an inheritance-scoped client-side operation fails.
+
+    NO credential material, NO ciphertext, NO wrapped-key contents,
+    NO nonces, NO tokens are accepted or logged. Only categorical
+    enum values, integer byte lengths, an optional exception type
+    name, and an optional client-generated request id.
+
+    Emits a single ``[INH-CLIENT-DIAG]`` log line the operator can
+    grep by ``reference_code`` or by ``client_request_id`` (which
+    also appears in the nginx access log if the client set the
+    ``X-Client-Request-Id`` header on the failed request).
+    """
+    area = _sanitize_diag_field(
+        payload.area, allowed=_DIAG_AREAS, name="area",
+    )
+    ref = _sanitize_diag_field(
+        payload.reference_code,
+        allowed=_DIAG_REFERENCES, name="reference_code",
+    )
+    category = _sanitize_diag_field(
+        payload.category, allowed=_DIAG_CATEGORIES, name="category",
+    )
+
+    # Dedup one identical (vault_id, area, reference_code) triple per
+    # 45s so a client stuck in a retry loop cannot spam production
+    # logs. Response is identical whether we log or dedup — the
+    # client cannot observe the difference.
+    if not _diag_should_emit(
+        vault_id=str(principal["vault_id"]),
+        area=area or "",
+        ref=ref or "",
+    ):
+        return ClientDiagnosticResponse()
+
+    logger.warning(
+        "[INH-CLIENT-DIAG] area=%s ref=%s cri=%s link_id=%s "
+        "vault_tail=%s exc_type=%s category=%s crypto_v=%s "
+        "payload_len=%s nonce_len=%s wrapped_len=%s "
+        "eph_pk_len=%s wrap_nonce_len=%s "
+        "sk_present=%s sk_len=%s",
+        area, ref, payload.client_request_id,
+        payload.link_id,
+        str(principal["vault_id"])[-6:],
+        payload.exception_type, category, payload.crypto_version,
+        payload.encrypted_payload_len, payload.payload_nonce_len,
+        payload.wrapped_key_len, payload.wrapping_ephemeral_pk_len,
+        payload.wrapping_nonce_len,
+        payload.active_sk_present, payload.active_sk_len,
+    )
+    return ClientDiagnosticResponse()

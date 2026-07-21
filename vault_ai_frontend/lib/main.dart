@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart' as web_plugins;
 
 import 'route_guard.dart';
+import 'services/inheritance_reveal_classify.dart' as inh_classify;
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
@@ -6436,12 +6437,32 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool loadingInheritances = false;
   bool _inheritanceLoadedOnce = false;
 
+  // Monotonic generation counter for _loadBeneficiaries. 2026-07-22:
+  // ``_loadBeneficiaries`` is called from ~10 UI sites (dialog
+  // dismissals, refresh buttons, post-mutation reloads). On iOS
+  // Safari an in-flight fetch that is superseded by a newer call —
+  // or by a page teardown — surfaces as ``ClientException: Load
+  // failed`` from package:http. That aborted request is unrelated
+  // to the newer 200 the backend records; showing it as a toast
+  // misleads the operator. We record the generation at entry and
+  // only apply results / show errors when it still matches, so a
+  // stale invocation is silently discarded.
+  int _loadBeneficiariesGen = 0;
+
   Future<void> _loadBeneficiaries() async {
+    final myGen = ++_loadBeneficiariesGen;
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null || app.vaultName == null) return;
 
     setState(() => loadingBeneficiaries = true);
+    // Per-invocation correlation id sent on the wire so an
+    // operator can align nginx access-log entries with the
+    // client-diagnostic log line. Never used for auth. Bounded
+    // by the api_client to 64 chars.
+    final clientRequestId =
+        'lm-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
+        '${myGen.toRadixString(36)}';
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
@@ -6449,9 +6470,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultName: app.vaultName!,
         pin: pin,
         authToken: token,
+        clientRequestId: clientRequestId,
       );
+      // Discard results from a superseded invocation. A newer
+      // _loadBeneficiaries has already started; its result is
+      // what should populate the panel.
+      if (!mounted || myGen != _loadBeneficiariesGen) return;
       final raw = result['beneficiaries'];
-      if (!mounted) return;
       setState(() {
         beneficiaries = raw is List
             ? raw
@@ -6461,11 +6486,84 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             : <Map<String, dynamic>>[];
       });
     } catch (e) {
+      // Skip stale errors — a newer invocation is in flight or
+      // already resolved.
+      if (myGen != _loadBeneficiariesGen) {
+        vlog('inheritance.list_mine.stale', {
+          'gen': myGen,
+          'current_gen': _loadBeneficiariesGen,
+          'exception_type': e.runtimeType.toString(),
+        });
+        // Fire-and-forget diagnostic (safe fields only).
+        unawaited(VaultAIClient(baseUrl: backendBaseUrl)
+            .postInheritanceClientDiagnostic(
+          authToken: token,
+          body: {
+            'area': 'beneficiary_list',
+            'reference_code': 'INH-LIST-MINE-STALE',
+            'client_request_id': clientRequestId,
+            'exception_type': e.runtimeType.toString(),
+            'category': 'stale',
+          },
+        ));
+        return;
+      }
       if (app.handleApiException(e)) return;
+      // Distinguish network-level aborts (iOS Safari "Load
+      // failed" ClientException, browser cancellations) from
+      // real backend errors. A network abort is informational
+      // — a subsequent refresh will populate the panel — and
+      // must not toast the user with a scary "ClientException"
+      // string. Real errors (auth, backend-side exceptions
+      // that surfaced with a body) still toast.
+      if (_looksLikeNetworkAbort(e)) {
+        vlog('inheritance.list_mine.network_abort', {
+          'exception_type': e.runtimeType.toString(),
+          'client_request_id': clientRequestId,
+        });
+        unawaited(VaultAIClient(baseUrl: backendBaseUrl)
+            .postInheritanceClientDiagnostic(
+          authToken: token,
+          body: {
+            'area': 'beneficiary_list',
+            'reference_code': 'INH-LIST-MINE-ABORT',
+            'client_request_id': clientRequestId,
+            'exception_type': e.runtimeType.toString(),
+            'category': 'network_abort',
+          },
+        ));
+        return;
+      }
       _showSnack('Could not load beneficiaries: $e');
     } finally {
-      if (mounted) setState(() => loadingBeneficiaries = false);
+      // Only clear the loading spinner if we're still the latest
+      // invocation. Otherwise the newer invocation is in charge
+      // of the spinner state.
+      if (mounted && myGen == _loadBeneficiariesGen) {
+        setState(() => loadingBeneficiaries = false);
+      }
     }
+  }
+
+  // Recognises the browser fetch-level failures that
+  // ``package:http`` surfaces as `ClientException`. On iOS Safari
+  // these carry the message "Load failed"; other browsers use
+  // "Failed to fetch" / "aborted" / "cancelled". None of these
+  // are backend errors — the request either was aborted client-
+  // side (page navigation, superseded refresh, `AbortController`)
+  // or failed at the network layer before a status code was
+  // returned. Treat as informational: log via the diagnostic
+  // endpoint and let the next refresh populate the panel.
+  bool _looksLikeNetworkAbort(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('clientexception')
+        || s.contains('load failed')
+        || s.contains('failed to fetch')
+        || s.contains('aborted')
+        || s.contains('cancelled')
+        || s.contains('canceled')
+        || s.contains('network is offline')
+        || s.contains('network request failed');
   }
 
   Future<void> _loadInheritances() async {
@@ -7747,10 +7845,51 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       await _loadInheritances();
     } catch (e) {
-      vlog('inheritance.reveal.decrypt_failed', {'error': e.toString()});
+      // 2026-07-22: classify the failure locally so the operator
+      // can distinguish response-shape / base64 / key-length /
+      // AES-GCM auth / post-decrypt payload issues from the UI
+      // alone. iOS Safari does not surface a usable console, so
+      // the reference tag carries the diagnostic category, and a
+      // safe structured payload is best-effort POSTed to the
+      // inheritance client-diagnostic endpoint (byte lengths and
+      // enum tags ONLY — never ciphertext / wrapped-key contents /
+      // nonces / PINs / tokens).
+      final ref = inh_classify.classifyRevealException(e);
+      final safeLens = inh_classify.safeLengthsFromRawPkg(pkg);
+      final category = inh_classify.revealCategoryFor(ref);
+      vlog('inheritance.reveal.decrypt_failed', {
+        'ref': ref,
+        'link_id': linkId,
+        'exception_type': e.runtimeType.toString(),
+      });
+      unawaited(VaultAIClient(baseUrl: backendBaseUrl)
+          .postInheritanceClientDiagnostic(
+        authToken: token,
+        body: {
+          'area': 'reveal',
+          'reference_code': ref,
+          'link_id': linkId,
+          'exception_type': e.runtimeType.toString(),
+          'category': category,
+          'crypto_version':
+              safeLens['crypto_version'],
+          'encrypted_payload_len':
+              safeLens['encrypted_payload_len'],
+          'payload_nonce_len':
+              safeLens['payload_nonce_len'],
+          'wrapped_key_len':
+              safeLens['wrapped_key_len'],
+          'wrapping_ephemeral_pk_len':
+              safeLens['wrapping_ephemeral_pk_len'],
+          'wrapping_nonce_len':
+              safeLens['wrapping_nonce_len'],
+          'active_sk_present': true,
+          'active_sk_len': skBytes.length,
+        },
+      ));
       _showSnack(
-        'Could not decrypt these credentials on this device.'
-        '\nReference: INH-RETRIEVE-003',
+        '${inh_classify.userMessageForReveal(ref)}\n'
+        'Reference: $ref',
       );
     }
   }
