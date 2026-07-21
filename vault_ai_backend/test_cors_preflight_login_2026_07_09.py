@@ -79,6 +79,13 @@ def _mount_preflight_app(regex: str) -> TestClient:
             # The 2026-07-22 (3) production CORS regression traced
             # to this stub falling behind the real allowlist.
             "X-App-Release",
+            # 2026-07-22 (4) Safari preflight adds Cache-Control and
+            # Pragma to Access-Control-Request-Headers for GETs. Same
+            # lock-step invariant: this stub must mirror the real
+            # main.CORS_ALLOWED_HEADERS list or the browser-shape
+            # regression tests below silently pass on a wrong stub.
+            "Cache-Control",
+            "Pragma",
         ],
         max_age=600,
     )
@@ -406,6 +413,37 @@ class CorsHeadersAndMethodsInvariants(unittest.TestCase):
                 "/devices/register, /list-my-vaults, /notifications, "
                 "/vault-stats, /billing/me, /list-files, /folders, "
                 "/list-secure-items after the 7b34d92 deploy."
+            ),
+        )
+
+    def test_cache_control_and_pragma_are_in_allow_headers_list(
+        self,
+    ) -> None:
+        # 2026-07-22 (4) Safari CORS regression follow-up. After (3)
+        # landed and X-App-Release was allowed, Safari's preflight
+        # for /vault-meta still failed 400 because its Access-
+        # Control-Request-Headers also carries Cache-Control and
+        # Pragma. Same class of bug as (3): a header the client
+        # forwards to the preflight is absent from the server
+        # allowlist. Both must remain in the allowlist for Safari
+        # to reach any authenticated endpoint from the production
+        # frontend.
+        import main
+        lower = [h.lower() for h in main.CORS_ALLOWED_HEADERS]
+        self.assertIn(
+            "cache-control", lower,
+            msg=(
+                "Cache-Control must be in CORS_ALLOWED_HEADERS or "
+                "Safari's preflight for /vault-meta from "
+                "https://app.svaultai.com will fail 400 — same class "
+                "of regression as (3)/x-app-release."
+            ),
+        )
+        self.assertIn(
+            "pragma", lower,
+            msg=(
+                "Pragma must be in CORS_ALLOWED_HEADERS or Safari's "
+                "preflight will fail 400 alongside Cache-Control."
             ),
         )
 
@@ -767,6 +805,206 @@ class ProdPreflightAcceptsXAppReleaseFromSvaultai(unittest.TestCase):
                 "pre-fix allow-headers must NOT include x-app-release "
                 "— that omission is the reason the browser refused "
                 "the follow-up request"
+            ),
+        )
+
+
+class ProdPreflightAcceptsSafariCacheHintsFromSvaultai(unittest.TestCase):
+    """2026-07-22 (4) Safari-specific CORS regression follow-up.
+
+    After the (3) X-App-Release fix landed and Chrome preflights
+    succeeded, Safari on the production frontend still failed
+    OPTIONS /vault-meta with:
+
+        400 Bad Request
+        Disallowed CORS headers
+
+    with failing header list
+        authorization,cache-control,pragma,x-app-release,x-device-id
+
+    Safari attaches Cache-Control and Pragma to
+    Access-Control-Request-Headers for GETs (unlike Chrome, which
+    only forwards custom headers). Same class of bug as (3): the
+    browser advertises a header in the preflight that the server's
+    allowlist does not include. Both Cache-Control and Pragma must
+    now be present.
+
+    These tests reproduce the exact Safari preflight for
+    /vault-meta and confirm 200 with Cache-Control, Pragma, and
+    X-App-Release all echoed in access-control-allow-headers."""
+
+    _PROD_REGEX = (
+        r"^https://(app|www)\.svaultai\.com$|^https://svaultai\.com$"
+    )
+    _ORIGIN = "https://app.svaultai.com"
+    # The exact ACRH string Safari sent for OPTIONS /vault-meta on
+    # the post-(3) deploy.
+    _SAFARI_ACRH = (
+        "authorization,cache-control,pragma,x-app-release,x-device-id"
+    )
+
+    def _client(self) -> TestClient:
+        regex = _resolve_regex_under_env({
+            "VAULTAI_ENV": "production",
+            "CORS_ALLOWED_ORIGIN_REGEX": self._PROD_REGEX,
+        })
+        return _mount_preflight_app(regex)
+
+    def test_safari_vault_meta_preflight_returns_200(self) -> None:
+        # Exact production-Safari preflight for /vault-meta.
+        client = self._client()
+        resp = client.options(
+            "/vault-meta",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": self._SAFARI_ACRH,
+            },
+        )
+        self.assertEqual(
+            resp.status_code, 200,
+            msg=(
+                f"Safari preflight for /vault-meta must return 200 "
+                f"with ACRH={self._SAFARI_ACRH!r}. Got "
+                f"{resp.status_code}. body={resp.text!r}"
+            ),
+        )
+        self.assertEqual(
+            resp.headers.get("access-control-allow-origin"),
+            self._ORIGIN,
+        )
+        allow_hdrs = (
+            resp.headers.get("access-control-allow-headers", "").lower()
+        )
+        for h in (
+            "authorization",
+            "cache-control",
+            "pragma",
+            "x-app-release",
+            "x-device-id",
+        ):
+            self.assertIn(
+                h, allow_hdrs,
+                msg=(
+                    f"access-control-allow-headers must include {h} "
+                    f"for the Safari preflight — got {allow_hdrs!r}"
+                ),
+            )
+
+    def test_safari_preflight_shape_across_reported_endpoints(
+        self,
+    ) -> None:
+        # Guard: Safari's ACRH shape must work on every endpoint the
+        # (3) fix already covered. If any of these were to 400 under
+        # the Safari header set, /vault-meta would not be the only
+        # broken surface — that failure mode is what happened before
+        # this commit.
+        client = self._client()
+        endpoints = (
+            ("/devices/register",  "POST"),
+            ("/vault-meta",        "GET"),
+            ("/list-my-vaults",    "POST"),
+            ("/notifications",     "GET"),
+            ("/vault-stats",       "POST"),
+            ("/billing/me",        "GET"),
+            ("/list-files",        "POST"),
+            ("/folders",           "GET"),
+            ("/list-secure-items", "POST"),
+        )
+        for path, method in endpoints:
+            with self.subTest(path=path, method=method):
+                resp = client.options(
+                    path,
+                    headers={
+                        "Origin": self._ORIGIN,
+                        "Access-Control-Request-Method": method,
+                        "Access-Control-Request-Headers":
+                            self._SAFARI_ACRH,
+                    },
+                )
+                self.assertEqual(
+                    resp.status_code, 200,
+                    msg=(
+                        f"OPTIONS {path} (Safari-shape preflight) "
+                        f"must return 200 — got {resp.status_code}. "
+                        f"body={resp.text!r}"
+                    ),
+                )
+                allow_hdrs = (
+                    resp.headers.get(
+                        "access-control-allow-headers", "",
+                    ).lower()
+                )
+                # Both new headers must be present. The (3) header
+                # set is covered by the other class; this class's
+                # unique invariant is Cache-Control + Pragma.
+                self.assertIn("cache-control", allow_hdrs)
+                self.assertIn("pragma", allow_hdrs)
+
+    def test_pre_fix_state_is_the_400_safari_saw(self) -> None:
+        # Negative-path proof: the pre-(4) state (Cache-Control and
+        # Pragma absent from the allowlist) returns exactly the 400
+        # Safari saw. Mirrors the pattern in the (3) regression
+        # class and guarantees the fix would fail closed if either
+        # header were dropped from CORS_ALLOWED_HEADERS.
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+        pre_fix_app = FastAPI()
+        pre_fix_app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=self._PROD_REGEX,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=[
+                "Authorization", "Content-Type", "Accept", "Origin",
+                "X-Requested-With", "X-App-Locale", "X-Device-Id",
+                "X-App-Release",
+                # Deliberately WITHOUT Cache-Control and Pragma —
+                # mirrors the post-(3) / pre-(4) production state.
+            ],
+            max_age=600,
+        )
+
+        @pre_fix_app.get("/vault-meta")
+        async def _stub() -> dict:
+            return {"ok": True}
+
+        client = TestClient(pre_fix_app)
+        resp = client.options(
+            "/vault-meta",
+            headers={
+                "Origin": self._ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": self._SAFARI_ACRH,
+            },
+        )
+        self.assertEqual(
+            resp.status_code, 400,
+            msg=(
+                "PROVEN — with Cache-Control and Pragma absent from "
+                "the CORS allowlist, Safari's /vault-meta preflight "
+                "returns exactly 400. That is the response Safari "
+                "showed after the (3) deploy on the production "
+                "frontend."
+            ),
+        )
+        allow_hdrs = (
+            resp.headers.get(
+                "access-control-allow-headers", "",
+            ).lower()
+        )
+        self.assertNotIn(
+            "cache-control", allow_hdrs,
+            msg=(
+                "pre-fix allow-headers must NOT include cache-control "
+                "— that omission is why Safari refused /vault-meta"
+            ),
+        )
+        self.assertNotIn(
+            "pragma", allow_hdrs,
+            msg=(
+                "pre-fix allow-headers must NOT include pragma — "
+                "same reason"
             ),
         )
 

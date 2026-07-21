@@ -609,6 +609,19 @@ CORS_ALLOWED_HEADERS = [
     # See test_cors_preflight_login_2026_07_09.py for the
     # regression tests.
     "X-App-Release",
+    # 2026-07-22 (4) Safari-specific CORS regression follow-up.
+    # After the (3) fix landed, the Safari production frontend still
+    # failed OPTIONS /vault-meta with 400 because its preflight also
+    # carries Cache-Control and Pragma in Access-Control-Request-
+    # Headers (Safari includes them for GETs when the client sets
+    # cache-invalidating headers on the real request). Chrome sent
+    # only authorization,content-type,x-app-release,x-device-id and
+    # worked; Safari sent
+    # authorization,cache-control,pragma,x-app-release,x-device-id
+    # and was 400'd. Adding both keeps parity with any browser that
+    # forwards standard caching hints in the preflight header set.
+    "Cache-Control",
+    "Pragma",
 ]
 
                                                                           
