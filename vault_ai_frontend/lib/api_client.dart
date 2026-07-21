@@ -246,6 +246,64 @@ class InvalidVaultUnlockException implements Exception {
   String toString() => 'InvalidVaultUnlockException(message: $message)';
 }
 
+/// Server returned 409 kdf_generation_stale — the client's declared
+/// (pin_salt, kdf_iterations) did not match the vault row's current
+/// values. Something rotated the DB under this session (a second
+/// tab's /rotate-vault-kdf, a maintenance path, a browser cache that
+/// served us a stale /vault-meta before we derived) so the client
+/// key does not match what the server will derive. The response
+/// body carries the authoritative CURRENT (pin_salt, kdf_iterations)
+/// so the client can re-derive locally without another HTTP
+/// round-trip and prompt the user to send again. NEVER surface as
+/// "unlock session expired" — the session is fine, the KEY just
+/// needs to be re-derived from the fresh salt.
+class KdfGenerationStaleException implements Exception {
+  final String? currentPinSalt;
+  final int? currentKdfIterations;
+  final String message;
+  const KdfGenerationStaleException({
+    required this.currentPinSalt,
+    required this.currentKdfIterations,
+    this.message =
+        'The vault was updated in another tab or window. Please tap send again.',
+  });
+
+  factory KdfGenerationStaleException.fromResponseBody(String body) {
+    String? salt;
+    int? iter;
+    String? msg;
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final detail = decoded['detail'];
+        if (detail is Map) {
+          salt = detail['current_pin_salt']?.toString();
+          final rawIter = detail['current_kdf_iterations'];
+          if (rawIter is int) {
+            iter = rawIter;
+          } else if (rawIter is num) {
+            iter = rawIter.toInt();
+          }
+          final rawMsg = detail['message'];
+          if (rawMsg is String && rawMsg.isNotEmpty) msg = rawMsg;
+        }
+      }
+    } catch (_) {}
+    return KdfGenerationStaleException(
+      currentPinSalt: salt,
+      currentKdfIterations: iter,
+      message: msg ??
+          'The vault was updated in another tab or window. '
+          'Please tap send again.',
+    );
+  }
+
+  @override
+  String toString() =>
+      'KdfGenerationStaleException(hasSalt: ${currentPinSalt != null}, '
+      'iter: $currentKdfIterations)';
+}
+
 class ChunkedUploadNotAvailableException implements Exception {
   final String message;
   const ChunkedUploadNotAvailableException({
@@ -1219,6 +1277,17 @@ class VaultAIClient {
     List<String>? uploadedFileIds,
     String? appLocale,
     Map<String, String>? selectionHint,
+    // 2026-07-21 concurrency-safety fields. The client declares
+    // the exact (pin_salt, kdf_iterations) it derived the vault
+    // key against; the server compares these to the current DB row
+    // BEFORE decryption and returns 409 kdf_generation_stale with
+    // fresh salt+iter on mismatch (see vault_kdf_generation.py).
+    // Optional so a request path that has no origin recorded (rare
+    // — legacy code that stamped the cache directly without going
+    // through deriveAndCacheKey) still works via the server's
+    // legacy behavior of deriving with the current DB state.
+    String? kdfSaltUsed,
+    int? kdfIterationsUsed,
   }) async* {
     final uri = Uri.parse('$baseUrl/chat');
 
@@ -1261,6 +1330,17 @@ class VaultAIClient {
       // share a title.
       if (selectionHint != null && selectionHint.isNotEmpty)
         'selection_hint': selectionHint,
+      // 2026-07-21 KDF-version compare-and-swap fields. When present
+      // the server verifies these match the current DB row BEFORE
+      // decryption; on mismatch it responds with 409
+      // kdf_generation_stale carrying fresh salt+iter for the
+      // client to re-derive against. When absent the server falls
+      // through to legacy behavior. See ChatRequest schema and
+      // vault_kdf_generation.py.
+      if (kdfSaltUsed != null && kdfSaltUsed.isNotEmpty)
+        'kdf_salt_used': kdfSaltUsed,
+      if (kdfIterationsUsed != null)
+        'kdf_iterations_used': kdfIterationsUsed,
     });
 
     final response = await request.send();
@@ -1279,6 +1359,12 @@ class VaultAIClient {
       _throwIfAuthExpired(response.statusCode, errorBody);
       _throwIfDeviceNotTrusted(response.statusCode, errorBody);
       _throwIfLockOrFrozen(response.statusCode, errorBody);
+      // 2026-07-21: 409 kdf_generation_stale MUST throw its
+      // typed exception BEFORE the generic 400 InvalidVaultUnlock
+      // check — a stale-generation request is a specific,
+      // recoverable state (client re-derives from response salt +
+      // user taps send), NOT a session-expired condition.
+      _throwIfKdfGenerationStale(response.statusCode, errorBody);
       _throwIfInvalidVaultUnlock(response.statusCode, errorBody);
       throw Exception(_formatBackendError(
         prefix: 'Chat failed',
@@ -1507,15 +1593,27 @@ class VaultAIClient {
     required String vaultName,
     required String authToken,
   }) async {
+    // 2026-07-21 cache-poisoning hardening for the "first chat forces
+    // PIN" production incident. /vault-meta is authoritative for the
+    // (pin_salt, kdf_iterations) the client derives the vault key
+    // against; any cached response served after a server-side
+    // rotation would leave the client on a stale salt and trip the
+    // decrypt-side generic 400. The server-side fix (add /vault-meta
+    // to SENSITIVE_PATH_PREFIXES in security_headers.py) already
+    // pins the response as no-store, and the request-side pragmas
+    // below defend against browser-heuristic caching + shared
+    // caches that ignored the response header. Never send from a
+    // cached copy.
+    final headers = _defaultHeaders(authToken: authToken);
+    headers['Cache-Control'] = 'no-cache, no-store';
+    headers['Pragma'] = 'no-cache';
+
     final uri = Uri.parse(
       '$baseUrl/vault-meta'
       '?vault_name=${Uri.encodeQueryComponent(vaultName)}',
     );
 
-    final response = await http.get(
-      uri,
-      headers: _defaultHeaders(authToken: authToken),
-    );
+    final response = await http.get(uri, headers: headers);
 
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2263,6 +2361,20 @@ class VaultAIClient {
       throw const InvalidVaultUnlockException();
     }
     throw const InvalidVaultUnlockException();
+  }
+
+  /// Server declared the client's (pin_salt, kdf_iterations) stale.
+  /// Convert the 409 into a typed exception that carries the fresh
+  /// salt/iter so the caller can re-derive without another HTTP
+  /// round-trip. Semantically DISTINCT from
+  /// `InvalidVaultUnlockException`: the session is intact, only the
+  /// KDF version drifted. Callers MUST NOT force a re-PIN on this
+  /// exception and MUST NOT auto-retry the request (per the 2026-
+  /// 07-21 hardening review).
+  void _throwIfKdfGenerationStale(int statusCode, String body) {
+    if (statusCode != 409) return;
+    if (!body.contains('kdf_generation_stale')) return;
+    throw KdfGenerationStaleException.fromResponseBody(body);
   }
 
   void _throwIfLockOrFrozen(int statusCode, String body) {

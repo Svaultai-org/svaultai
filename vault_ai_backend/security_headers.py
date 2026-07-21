@@ -80,6 +80,21 @@ SENSITIVE_PATH_PREFIXES: tuple[str, ...] = (
     "/manage/",
     "/get-login",
     "/reveal-",
+    # 2026-07-21 root-cause fix for the "first chat forces PIN"
+    # production incident. /vault-meta is the authoritative source of
+    # (pin_salt, kdf_iterations) that the client uses to derive the
+    # per-session PBKDF2 vault key. Without a strict no-store, the
+    # browser (and any intermediate cache) is free to serve a
+    # previous response body from disk after a rotation has moved
+    # the DB to a new salt — the client re-derives from the STALE
+    # cached salt while the server derives from the CURRENT salt,
+    # decrypt fails at vault_core.decrypt_message with 400
+    # "Invalid PIN or corrupted data", InvalidVaultUnlockException
+    # trips on the client, and the user is forced back to /pin even
+    # though they entered the correct PIN. The route is
+    # session-authenticated, per-user, and MUST always reflect the
+    # current row — never a cached one.
+    "/vault-meta",
 )
 
 

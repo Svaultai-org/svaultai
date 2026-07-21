@@ -952,6 +952,25 @@ class ChatRequest(BaseModel):
     # Shape: {"kind": "login" | "file", "id": "<uuid>"}
     selection_hint: Optional[dict] = None
 
+    # 2026-07-21 concurrency-safety fields for the "first chat forces
+    # PIN" production incident. These carry the (pin_salt,
+    # kdf_iterations) the client's cached vault key was ACTUALLY
+    # derived from. The /chat handler compares them to the CURRENT
+    # DB row BEFORE decryption: if they differ, the DB rotated under
+    # the client (another tab's /rotate-vault-kdf, a maintenance
+    # path, or a stale metadata cache the client derived against) and
+    # the handler responds with 409 kdf_generation_stale carrying the
+    # authoritative salt/iter for the client to re-derive against.
+    #
+    # Left Optional so the field is safely absent on requests from
+    # older clients — server falls back to the legacy behavior of
+    # deriving with the current DB state. Presence + mismatch is the
+    # only path that returns 409; presence + match is the fast path
+    # (matches what the server would have derived anyway); absence
+    # is legacy-compat (same behavior as before this field existed).
+    kdf_salt_used: Optional[str] = None
+    kdf_iterations_used: Optional[int] = None
+
 
 class VaultNameCheck(BaseModel):
     vault_name: str
@@ -11805,6 +11824,25 @@ async def chat_endpoint(
     if not req.encrypted_message:
         print("[CHAT-DEBUG] missing_encrypted_message", flush=True)
         raise HTTPException(status_code=400, detail="Missing encrypted message")
+
+    # 2026-07-21 authoritative KDF-version compare-and-swap gate.
+    # Runs BEFORE PIN verify + decrypt so a stale-generation request
+    # cannot silently trip the generic decrypt-failure 400. On
+    # mismatch this raises HTTPException(409, kdf_generation_stale,
+    # ...) carrying the current salt+iter for the client to re-derive
+    # against. Missing client-side fields (older builds) pass through
+    # to legacy behavior. Documented in vault_kdf_generation.py.
+    from vault_kdf_generation import check_kdf_generation_fresh
+    _conn_for_kdf_check = get_db()
+    try:
+        check_kdf_generation_fresh(
+            _conn_for_kdf_check,
+            vault_id,
+            req.kdf_salt_used,
+            req.kdf_iterations_used,
+        )
+    finally:
+        _conn_for_kdf_check.close()
 
     try:
         print("[CHAT-DEBUG] verify_pin_start", flush=True)

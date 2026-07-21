@@ -1763,106 +1763,56 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Definitive fix for the 2026-07-21 first-chat-invalidates-unlock
-  /// production incident (e797516 deployment still repro'd it).
+  /// Apply the authoritative (pin_salt, kdf_iterations) the server
+  /// returned in a 409 kdf_generation_stale response body. Re-derives
+  /// the cached vault key IN PLACE using the currently-cached PIN and
+  /// the fresh salt/iter. No HTTP call — the server already told us
+  /// the current values, so this cannot re-race the DB the way a
+  /// pre-encrypt GET could (the pre-encrypt-GET approach was rejected
+  /// on 2026-07-21 review because a GET+POST is not atomic and a
+  /// concurrent rotation between the two can still leave the client
+  /// on a stale key).
   ///
-  /// Root cause: the client-cached crypto key can drift out of sync
-  /// with the server's current DB (pin_salt, kdf_iterations) between
-  /// PIN unlock and the first /chat send. The earlier "refetch after
-  /// /rotate-vault-kdf" patch closed the rotate-response race but not
-  /// the general drift window (any server-side maintenance path that
-  /// mutates the row, a stale rotate response, an aborted rotate that
-  /// still committed, a nginx-cached /vault-meta response served
-  /// during the unlock hot path, or a concurrent second tab racing
-  /// its own rotate — all can leave the cached key on the OLD salt
-  /// while the server derives from the NEW salt on decrypt).
+  /// Returns true when the re-derive succeeded (the caller may then
+  /// prompt the user to re-send their message); false when it could
+  /// not (no cached PIN, malformed salt) and the caller must fall
+  /// back to forcing PIN re-entry with a specific reason.
   ///
-  /// Fix: at every chat send, before we encrypt, do one authoritative
-  /// GET /vault-meta and compare against the recorded derivation
-  /// origin for the current cache slot. If salt or iterations changed,
-  /// re-derive with the fresh values and REPLACE the cached key. This
-  /// is NOT a retry (no failed request precedes it) and NOT a delay
-  /// (one HTTP GET, ~50-200ms, dwarfed by LLM latency). It's an
-  /// authoritative sync point that guarantees the encryption key
-  /// used for the next request matches what the server will derive.
-  ///
-  /// Silent on the common path: when salt/iter are unchanged (steady
-  /// state), the origin comparison short-circuits with zero PBKDF2
-  /// cost. Only a genuinely drifted state pays the ~100-500ms
-  /// re-derive.
-  ///
-  /// Silent on ZK-adopted vaults: those store their MVK directly in
-  /// _keyCache without a PBKDF2 origin (there is nothing to
-  /// re-derive from a PIN — the MVK is unwrapped via OPAQUE
-  /// export_key). Absence of an origin entry short-circuits to
-  /// no-op, so this path is safe for both legacy and ZK vaults.
-  ///
-  /// Errors are swallowed: if /vault-meta fails (network drop, 5xx,
-  /// device gate), the cached key stays and the chat encrypt proceeds
-  /// with what we have. If the drift was real the chat will still
-  /// surface InvalidVaultUnlockException; we don't want to compound
-  /// a transient network failure into a forced re-PIN.
-  Future<void> resyncCryptoKeyIfDrifted() async {
-    final token = sessionToken;
+  /// Never mutates the session token, the ``authed`` flag, the
+  /// ``unlocked`` flag, or navigation. Purely a crypto-cache
+  /// resynchronization step.
+  Future<bool> applyFreshKdfMetadata({
+    required String pinSaltBase64,
+    required int iterations,
+  }) async {
     final vId = vaultId;
     final vName = _vaultName;
-    if (token == null || vId == null || vName == null) return;
-    if (!_VaultCrypto.hasKeyFor(vaultId: vId, vaultName: vName)) return;
-    final origin = _VaultCrypto.originFor(vaultId: vId, vaultName: vName);
-    if (origin == null) {
-      // ZK-adopted vault (MVK stored directly without PBKDF2 origin).
-      // Nothing to re-derive; server-side key material is the same
-      // MVK unwrapped at OPAQUE login and does not rotate under us.
-      return;
-    }
+    if (vId == null || vName == null) return false;
+    if (pinSaltBase64.isEmpty || iterations <= 0) return false;
     final String? pin = _VaultCrypto.cachedPinFor(
       vaultId: vId,
       vaultName: vName,
     );
-    if (pin == null) return;
-
-    Map<String, dynamic> freshMeta;
-    try {
-      freshMeta = await _API.getVaultMeta(
-        vaultName: vName,
-        authToken: token,
-      );
-    } catch (e) {
-      vlog('crypto.resync.vault_meta_failed', {'error': e.toString()});
-      return;
+    if (pin == null) {
+      vlog('crypto.applyFreshKdfMetadata.no_pin', {});
+      return false;
     }
-    final freshSalt = freshMeta['pin_salt']?.toString();
-    final freshIter =
-        (freshMeta['kdf_iterations'] as num?)?.toInt() ?? origin.iterations;
-    if (freshSalt == null || freshSalt.isEmpty) {
-      vlog('crypto.resync.missing_salt', {});
-      return;
-    }
-    final saltChanged = freshSalt != origin.saltBase64;
-    final iterChanged = freshIter != origin.iterations;
-    vlog('crypto.resync.check', {
-      'salt_changed': saltChanged,
-      'iter_changed': iterChanged,
-      'origin_iter': origin.iterations,
-      'fresh_iter': freshIter,
-    });
-    if (!saltChanged && !iterChanged) return;
-
     try {
       await _VaultCrypto.deriveAndCacheKey(
         pin: pin,
         vaultId: vId,
         vaultName: vName,
-        pinSaltBase64: freshSalt,
-        iterations: freshIter,
+        pinSaltBase64: pinSaltBase64,
+        iterations: iterations,
       );
-      vlog('crypto.resync.rederived', {
-        'iterations': freshIter,
-        'salt_changed': saltChanged,
-        'iter_changed': iterChanged,
+      vlog('crypto.applyFreshKdfMetadata.rederived', {
+        'iterations': iterations,
+        'saltLen': pinSaltBase64.length,
       });
+      return true;
     } catch (e) {
-      vlog('crypto.resync.rederive_failed', {'error': e.toString()});
+      vlog('crypto.applyFreshKdfMetadata.failed', {'error': e.toString()});
+      return false;
     }
   }
 
@@ -5970,10 +5920,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
-      // See AppState.resyncCryptoKeyIfDrifted — mirror the /send()
-      // pre-encrypt sync so the delete-item sentinel does not trip
-      // the same "Invalid PIN or corrupted data" server-side.
-      await app.resyncCryptoKeyIfDrifted();
+      // 2026-07-21: correctness is enforced by the server-side KDF-
+      // version compare-and-swap gate — the client declares the
+      // exact (salt, iter) it derived against, and the server 409s
+      // on mismatch (see vault_kdf_generation.py). No pre-encrypt
+      // GET here — GET+POST is not atomic, so it can only mitigate,
+      // never fix, the concurrent-rotation race.
+      final _keyOriginForDelete = _VaultCrypto.originFor(
+        vaultId: activeVaultId,
+        vaultName: vaultName,
+      );
       final encryptedMessage = await _VaultCrypto.encrypt(sentinel);
       int? assistantIndex;
       String buffer = '';
@@ -5986,6 +5942,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: token,
         uploadedFileIds: const <String>[],
         appLocale: context.read<AppState>().chatReplyLanguageCode,
+        kdfSaltUsed: _keyOriginForDelete?.saltBase64,
+        kdfIterationsUsed: _keyOriginForDelete?.iterations,
       );
 
       try {
@@ -6038,6 +5996,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        // 2026-07-21 KDF-generation-stale: identical policy to _send.
+        // Re-derive from response salt/iter, drop the just-added
+        // user bubble, show snackbar, do NOT force PIN, do NOT
+        // auto-retry. The user tapped "Delete X"; if the underlying
+        // request 409'd they just tap the delete-confirmation button
+        // again.
+        if (err is KdfGenerationStaleException) {
+          bool rederived = false;
+          final freshSalt = err.currentPinSalt;
+          final freshIter = err.currentKdfIterations;
+          if (freshSalt != null &&
+              freshSalt.isNotEmpty &&
+              freshIter != null &&
+              freshIter > 0) {
+            rederived = await app.applyFreshKdfMetadata(
+              pinSaltBase64: freshSalt,
+              iterations: freshIter,
+            );
+          }
+          if (!mounted) return;
+          setState(() {
+            thinking = false;
+            sending = false;
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
+          });
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          if (rederived) {
+            rootScaffoldMessengerKey.currentState?.showSnackBar(
+              SnackBar(content: Text(err.message)),
+            );
+          } else {
+            rootScaffoldMessengerKey.currentState?.showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'The vault was updated. Please enter your PIN '
+                  'again to continue.',
+                ),
+              ),
+            );
+            rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+              '/pin',
+              (_) => false,
+            );
+          }
+          return;
+        }
         // Route InvalidVaultUnlockException / VaultLockedException /
         // SessionTerminatedException / DeviceNotTrustedException
         // through the AppState handler so the vault re-locks, the
@@ -12478,13 +12484,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
 
-      // Authoritative sync of the local crypto key against the
-      // server's current DB (pin_salt, kdf_iterations) BEFORE we
-      // encrypt. See AppState.resyncCryptoKeyIfDrifted docstring for
-      // the incident context. Silent no-op when the cached key's
-      // origin already matches the server; a full re-derive when it
-      // drifted. Never a retry.
-      await app.resyncCryptoKeyIfDrifted();
+      // 2026-07-21 concurrency fix — do NOT insert a pre-encrypt
+      // /vault-meta GET here (the earlier mitigation traded one race
+      // for another: a stale cached meta or a rotation racing
+      // BETWEEN the GET and the POST would still leave the client's
+      // key wrong). Correctness is now guaranteed by the server-side
+      // KDF-version compare-and-swap gate (see
+      // vault_kdf_generation.check_kdf_generation_fresh). The client
+      // declares the exact (salt, iter) it derived against; the
+      // server compares to the current DB row BEFORE decryption and
+      // responds 409 kdf_generation_stale on mismatch, carrying
+      // fresh salt+iter so the client re-derives without another
+      // HTTP round-trip. No auto-retry — user is prompted to send
+      // again.
+      final _keyOriginForSend = _VaultCrypto.originFor(
+        vaultId: activeVaultId,
+        vaultName: vaultName,
+      );
       final encryptedMessage = await _VaultCrypto.encrypt(text);
 
       final _hintForThisSend = _nextSelectionHint;
@@ -12497,6 +12513,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         uploadedFileIds: uploadedFileIds,
         appLocale: context.read<AppState>().chatReplyLanguageCode,
         selectionHint: _hintForThisSend,
+        // Declare the exact (pin_salt, kdf_iterations) the cached
+        // vault key was derived from. Server compares to the current
+        // DB row BEFORE decryption and returns 409
+        // kdf_generation_stale on mismatch. Null when no origin was
+        // recorded (ZK-adopted vaults that stamped the MVK directly
+        // into the cache); server falls through to legacy behavior.
+        kdfSaltUsed: _keyOriginForSend?.saltBase64,
+        kdfIterationsUsed: _keyOriginForSend?.iterations,
       );
 
       try {
@@ -12556,6 +12580,70 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        // 2026-07-21: 409 kdf_generation_stale is a specific,
+        // recoverable state — the client's declared (salt, iter)
+        // did not match the server's current DB (something rotated
+        // between our unlock and this send). Re-derive the key from
+        // the fresh values in the response body, put the user's
+        // text back in the input so they can send again, and show
+        // a clear snackbar. NEVER force PIN re-entry for this
+        // exception (the session is intact) and NEVER auto-retry
+        // the send (would double-post the user's message).
+        if (err is KdfGenerationStaleException) {
+          bool rederived = false;
+          final freshSalt = err.currentPinSalt;
+          final freshIter = err.currentKdfIterations;
+          if (freshSalt != null &&
+              freshSalt.isNotEmpty &&
+              freshIter != null &&
+              freshIter > 0) {
+            rederived = await app.applyFreshKdfMetadata(
+              pinSaltBase64: freshSalt,
+              iterations: freshIter,
+            );
+          }
+          if (!mounted) return;
+          setState(() {
+            thinking = false;
+            sending = false;
+            // Drop the just-added user message (send failed) so the
+            // chat log doesn't imply the message was received.
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
+            // Put the text back in the input so the user can just
+            // tap send again — no retyping.
+            input.text = text;
+            input.selection =
+                TextSelection.collapsed(offset: text.length);
+          });
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          if (rederived) {
+            rootScaffoldMessengerKey.currentState?.showSnackBar(
+              SnackBar(content: Text(err.message)),
+            );
+          } else {
+            // Could not re-derive locally (no cached PIN, or the
+            // server did not include current_pin_salt). Force a
+            // fresh PIN entry with a specific, non-generic reason —
+            // this is NOT the pre-2026-07-21 "unlock session
+            // expired" silent bounce; the user has a clear
+            // explanation.
+            rootScaffoldMessengerKey.currentState?.showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'The vault was updated. Please enter your PIN '
+                  'again to continue.',
+                ),
+              ),
+            );
+            rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+              '/pin',
+              (_) => false,
+            );
+          }
+          return;
+        }
         // Route InvalidVaultUnlockException / VaultLockedException /
         // SessionTerminatedException / DeviceNotTrustedException
         // through the AppState handler so the vault re-locks, the
