@@ -109,14 +109,36 @@ def test_expired_drafts_dropped_silently():
         ttl_seconds=1,
     )
     assert get_draft(vault_id=VAULT_A, draft_id=a.draft_id) is not None
-                                                         
-                                                                 
-    draft_store._store[VAULT_A][a.draft_id] = CredentialDraft(
-        draft_id=a.draft_id, vault_id=a.vault_id,
-        service_name=a.service_name, username=a.username,
-        password=a.password, created_at=a.created_at,
-        expires_at=time.time() - 1, saved=False,
-        service_key=a.service_key,
+    # Backdate the draft into expiry by re-writing it directly to
+    # the shared backend under the same key with expires_at in the
+    # past. The old pre-2026-07-22 approach ("draft_store._store[
+    # vault_id][draft_id] = ...") no longer works — drafts live in
+    # the shared chat-state backend (Redis in prod, in-memory in
+    # tests) rather than a per-process dict.
+    import json as _json
+    from vault_chat_state_store import (
+        compose_key as _compose_key,
+        get_chat_state_backend as _get_backend,
+    )
+    expired = {
+        "draft_id":     a.draft_id,
+        "vault_id":     a.vault_id,
+        "service_name": a.service_name,
+        "service_key":  a.service_key,
+        "username":     a.username,
+        "password":     a.password,
+        "created_at":   a.created_at,
+        "expires_at":   time.time() - 1,
+        "saved":        False,
+    }
+    _get_backend().set(
+        _compose_key(
+            bucket="cred_draft",
+            vault_id=a.vault_id,
+            sub=a.draft_id,
+        ),
+        _json.dumps(expired).encode("utf-8"),
+        ttl_seconds=60,
     )
     assert get_draft(vault_id=VAULT_A, draft_id=a.draft_id) is None
 

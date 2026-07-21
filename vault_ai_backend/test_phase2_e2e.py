@@ -39,7 +39,9 @@ class _Phase2E2EBase(unittest.TestCase):
                 f"{_TEST_DB_ENV_VAR} not in environ after .env reload"
             )
         from vault_chat_memory import CHAT_MEMORY
-        CHAT_MEMORY._data.clear()
+        # 2026-07-22 chat memory migrated to shared backend.
+        from vault_chat_memory import _reset_for_test as _rst
+        _rst()
         from vault_followup_classifier import reset_anchor_cache_for_tests
         reset_anchor_cache_for_tests()
         self.vault_id = str(uuid.uuid4())
@@ -258,7 +260,9 @@ class CompleteCoverageFollowupTests(_Phase2E2EBase):
         from vault_chat_planner_pipeline import run_pipeline as _run_again
                                                  
         from vault_chat_memory import CHAT_MEMORY
-        CHAT_MEMORY._data.clear()
+        # 2026-07-22 chat memory migrated to shared backend.
+        from vault_chat_memory import _reset_for_test as _rst
+        _rst()
         result2 = make_credential_search_result(
             query="find credentials",
             file_ids_returned=[f1],

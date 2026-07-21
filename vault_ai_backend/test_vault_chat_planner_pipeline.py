@@ -37,8 +37,12 @@ from test_vault_followup_classifier import fake_embed, fake_embed_disabled
 
 
 def _reset_chat_memory():
-    from vault_chat_memory import CHAT_MEMORY
-    CHAT_MEMORY._data.clear()
+    # As of 2026-07-22 chat memory is backed by the shared
+    # chat-state store (Redis in prod, in-memory here), not a
+    # per-process TTLDict. Reset via the shared-backend helper
+    # so the same test fixture works in both environments.
+    from vault_chat_memory import _reset_for_test
+    _reset_for_test()
 
 
 def _credential_result(

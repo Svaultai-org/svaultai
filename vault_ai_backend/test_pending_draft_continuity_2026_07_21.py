@@ -60,13 +60,16 @@ from vault_pending_draft_confirm import (
 )
 
 
-# The synthetic per-process draft store persists across tests, so we
-# reset it before each test to isolate the scenario.
+# The shared chat-state backend persists across tests, so we reset
+# it before each test to isolate the scenario. As of 2026-07-22 the
+# draft store is Redis-backed in production and in-memory in tests
+# (see vault_chat_state_store); the pre-fix per-process
+# ``_store`` dict no longer exists.
 @pytest.fixture(autouse=True)
 def _reset_draft_store() -> Iterator[None]:
-    vault_credential_draft._store.clear()
+    vault_credential_draft._reset_store_for_test()
     yield
-    vault_credential_draft._store.clear()
+    vault_credential_draft._reset_store_for_test()
 
 
 VAULT_ID = "00000000-0000-4000-8000-0000000000f1"

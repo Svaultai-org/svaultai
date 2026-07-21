@@ -68,6 +68,29 @@ _UNICODE_BLOCK_LANG: tuple[tuple[str, tuple[tuple[int, int], ...]], ...] = (
 
 
 _LATIN_KEYWORDS_BY_LANG: dict[str, tuple[str, ...]] = {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    "en":  (" the ", " and ", " with ", " your ", " what ",
+            " how ", " you ", " are ", " is a ", " is my ",
+            " please ", " thank ", " thanks ",
+            " hello ", " hi ", " hey ",
+            " i'm ", " it's ", " that's ",
+            " can you ", " show me ", " tell me "),
     "fr":  ("le ", "la ", " est ", " je ", " mon ", " ma ", " avec ",
             "être", "voici", "pourquoi", " qu'", "supprim", "coffre",
             " mot de passe", " compte", " comment "),
@@ -78,8 +101,18 @@ _LATIN_KEYWORDS_BY_LANG: dict[str, tuple[str, ...]] = {
             "excluir", "cofre", "conta", "senha", "por que"),
     "de":  (" ist ", " der ", " die ", " ich ", " mein ", "meine",
             "wieso", "löschen", "tresor", "passwort", "konto"),
-    "it":  ("il ", "la ", " è ", " io ", " mio ", " mia ", "come",
-            "cassaforte", "eliminare", "password", " account "),
+
+
+
+
+
+
+
+
+
+
+    "it":  ("il ", "la ", " è ", " io ", " mio ", " mia ",
+            "cassaforte", "eliminare"),
     "id":  (" saya ", " adalah ", " apa ", "hapus", "brankas",
             "kata sandi", "akun"),
     "vi":  (" tôi ", " là ", "xóa", "két", "mật khẩu", "tài khoản"),

@@ -41,12 +41,35 @@ _CONFIRM_PATTERNS: tuple[str, ...] = (
     r"^\s*keep\s+(?:it|this|that)\s*[.!?]*\s*$",
                                   
     r"^\s*add\s+(?:it|this|that)\s*[.!?]*\s*$",
-                                 
+
     r"^\s*ok(?:ay)?[\s,.!]+save(?:\s+(?:it|this|that|now))?\s*[.!?]*\s*$",
-                         
+
     r"^\s*sure[\s,.!]+save(?:\s+(?:it|this|that|now))?\s*[.!?]*\s*$",
-           
+
     r"^\s*do\s+it\s*[.!?]*\s*$",
+    # 2026-07-22 chat deep-fix — natural "put this in my vault"
+    # phrasings the user identified as missing coverage. All are
+    # confirmation forms (no new information supplied); they
+    # should resolve the current pending draft the same way
+    # "save it" already does.
+    r"^\s*put\s+(?:it|this|that)\s+in(?:to)?\s+"
+    r"(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*(?:add|drop|toss|throw)\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*save\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*save\s+to\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*store\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*keep\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    # "remember this" / "remember it" — confirmation shorthand
+    # that reads as "commit this thing to my vault".
+    r"^\s*remember\s+(?:it|this|that)\s*[.!?]*\s*$",
+    # Variants with a trailing "please" / "for me" that leave the
+    # confirm meaning intact.
+    r"^\s*save\s+(?:it|this|that)[,\s]+please\s*[.!?]*\s*$",
+    r"^\s*save\s+(?:it|this|that)\s+for\s+me\s*[.!?]*\s*$",
 )
 
 
@@ -72,6 +95,21 @@ _SAVE_THEMED_PATTERNS: tuple[str, ...] = (
     r"^\s*add\s+(?:it|this|that)\s*[.!?]*\s*$",
     r"^\s*ok(?:ay)?[\s,.!]+save(?:\s+(?:it|this|that|now))?\s*[.!?]*\s*$",
     r"^\s*sure[\s,.!]+save(?:\s+(?:it|this|that|now))?\s*[.!?]*\s*$",
+    # 2026-07-22 additions mirroring the CONFIRM list.
+    r"^\s*put\s+(?:it|this|that)\s+in(?:to)?\s+"
+    r"(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*(?:add|drop|toss|throw)\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*save\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*save\s+to\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*store\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*keep\s+(?:it|this|that)\s+"
+    r"(?:in(?:to)?|to)\s+(?:my\s+|the\s+)?vault\s*[.!?]*\s*$",
+    r"^\s*remember\s+(?:it|this|that)\s*[.!?]*\s*$",
+    r"^\s*save\s+(?:it|this|that)[,\s]+please\s*[.!?]*\s*$",
+    r"^\s*save\s+(?:it|this|that)\s+for\s+me\s*[.!?]*\s*$",
 )
 
 

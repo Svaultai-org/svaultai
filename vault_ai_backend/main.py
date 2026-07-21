@@ -207,6 +207,22 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Database ready")
 
+    # 2026-07-22 chat deep-fix — eagerly resolve the chat-state
+    # backend at startup so the [CHAT-STATE] backend_resolved log
+    # line fires when the container boots (not lazily on first
+    # chat request). Operators grep for this line to confirm the
+    # Uvicorn worker is actually using Redis and not the
+    # in-memory fallback.
+    try:
+        from vault_chat_state_store import get_chat_state_backend
+        get_chat_state_backend()
+    except Exception:
+        logger.exception(
+            "[CHAT-STATE] eager backend resolution failed at "
+            "startup — chat pending-save may degrade to per-"
+            "process state",
+        )
+
                                                                         
     try:
         from device_gate import gate_status_for_boot
@@ -6486,6 +6502,45 @@ class SaveSecretStorageLimitError(SaveSecretError):
         self.limit_bytes = int(limit_bytes)
 
 
+_PLACEHOLDER_VALUE_PATTERNS: tuple = (
+    # LLM template placeholders that must never be committed as a
+    # real credential. 2026-07-22 incident: the assistant's chat
+    # freeform reply text like "Username: <your Instagram
+    # username>" is user-facing chat only, but if any code path
+    # ever routed that literal string into save_secret_tool it
+    # would corrupt the vault. Defensively reject.
+    re.compile(r"^\s*<[^>]{2,64}>\s*$"),
+    re.compile(r"^\s*\[[^\]]{2,64}\]\s*$"),
+    re.compile(r"^\s*\{\{[^}]{2,64}\}\}\s*$"),
+    re.compile(r"^\s*your\s+(?:instagram|facebook|twitter|"
+               r"linkedin|gmail|email|username|password|login|"
+               r"account)\s+(?:username|password|email|handle)?"
+               r"\s*$", re.IGNORECASE),
+    re.compile(r"^\s*enter\s+(?:your\s+)?"
+               r"(?:username|password|email|login)\s*$",
+               re.IGNORECASE),
+    re.compile(r"^\s*REPLACE(?:_ME)?\s*$", re.IGNORECASE),
+    re.compile(r"^\s*TODO\s*$", re.IGNORECASE),
+    re.compile(r"^\s*<REDACTED>\s*$", re.IGNORECASE),
+)
+
+
+def _looks_like_placeholder_value(value) -> bool:
+    """True when ``value`` looks like an LLM template placeholder
+    rather than a real credential the user typed. Belt-and-braces
+    check: the LLM's chat text should never reach this function,
+    but we refuse to commit obvious placeholders as a defensive
+    guarantee (2026-07-22 chat deep-fix)."""
+    if not isinstance(value, str):
+        return False
+    if not value.strip():
+        return False
+    for pat in _PLACEHOLDER_VALUE_PATTERNS:
+        if pat.match(value):
+            return True
+    return False
+
+
 def _classify_save_login_payload(args) -> Optional[str]:
 
 
@@ -6502,6 +6557,12 @@ def _classify_save_login_payload(args) -> Optional[str]:
         return "fields_not_dict"
     if not fields:
         return "empty_fields"
+    # 2026-07-22 chat deep-fix (item 5): reject placeholder-shaped
+    # field values so a template like "<your Instagram username>"
+    # can never be persisted as a real credential.
+    for _fname, _fval in fields.items():
+        if _looks_like_placeholder_value(_fval):
+            return "placeholder_field_value"
     return None
 
 
@@ -11809,12 +11870,26 @@ def _build_chat_prompt_context(
     # SERVER-AUTHORITATIVE vault_name lookup. The chat request may
     # also carry a vault_name field on the wire, but the identity
     # slot in the prompt trusts ONLY the value from the authenticated
-    # vaults row keyed by principal["vault_id"]. On any failure the
-    # prompt builder returns None and
-    # tools.build_vault_runtime_context substitutes the neutral
-    # "VaultAI" literal — never a hash, handle, UUID, template token,
-    # or the random 32-hex placeholder that used to leak into the
-    # UI before 2026-07-20.
+    # ``vaults`` row keyed by principal["vault_id"]. On any failure
+    # the prompt builder returns None and
+    # ``tools.build_vault_runtime_context`` substitutes the neutral
+    # literal ``VaultAI`` — never a hash, handle, UUID, template
+    # token, or the random 32-hex placeholder that used to leak
+    # into the UI before 2026-07-20.
+    #
+    # 2026-07-22 chat deep-fix note: this slot is the AI keeper's
+    # own name in the LLM's system prompt. It is the USER-CHOSEN
+    # vault name (e.g. "Brain", "My Safe", "Family Vault") — a
+    # per-vault value, NOT a hardcoded global constant. It must
+    # NEVER be sourced from the user's DISPLAY NAME
+    # (``users.display_name``), which is the human owner's own
+    # label; the prior "Chosen is thinking..." regression came
+    # from the frontend binding the ChatMessageList vault-name
+    # parameter to ``app.displayName`` instead of to
+    # ``app.vaultName``. Both fields have a legitimate purpose:
+    # display_name identifies the human owner in UI headers /
+    # greetings; vault_name is the vault's own identity used both
+    # for signing in and for the AI keeper.
     vault_name = _fetch_vault_name_for_prompt(vault_id)
 
     return {
@@ -13331,6 +13406,97 @@ async def chat_endpoint(
                 return encrypted_reply(
                     f"Saved your {_draft_service.title()} login to "
                     "your vault \U0001F510"
+                )
+
+            # 2026-07-22 chat deep-fix — attachment save via pure
+            # confirm phrase ("save this", "save it", "put this in
+            # my vault", etc.). If neither a credential draft nor a
+            # pending_login_draft matched but a chat-uploaded file
+            # is awaiting naming (needs_naming = TRUE in
+            # uploaded_files), commit it using the file's original
+            # filename as the default saved name. This is what the
+            # user expects when they upload an image/video and then
+            # say "save this" without specifying a name.
+            # Attachments are DB-backed, so this fallback is
+            # cross-worker safe with no per-process state.
+            try:
+                _pending_attachment = get_pending_named_file(vault_id)
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] pending_attachment_lookup_failed "
+                    "vault=%s", (vault_id or "")[:8] + "...",
+                )
+                _pending_attachment = None
+            if _pending_attachment is not None:
+                _att_ct = (
+                    _pending_attachment.get("content_type") or ""
+                ).lower()
+                if _att_ct.startswith("audio/"):
+                    _att_noun = "recording"
+                elif _att_ct.startswith("video/"):
+                    _att_noun = "video"
+                elif _att_ct.startswith("image/"):
+                    _att_noun = "image"
+                else:
+                    _att_noun = "file"
+                _att_default_name = str(
+                    _pending_attachment.get("file_name") or ""
+                ).strip()
+                if not _att_default_name:
+                    _att_default_name = _att_noun
+                _att_clean_name = _normalize_asset_name(
+                    _att_default_name,
+                )
+                if not _att_clean_name or _att_clean_name == "general":
+                    _att_clean_name = _att_noun
+                try:
+                    _att_result = save_named_uploaded_asset(
+                        vault_id=vault_id,
+                        file_id=_pending_attachment["id"],
+                        saved_name=_att_clean_name,
+                        key=key,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHAT-DEBUG] confirm_save_attachment_failed "
+                        "vault=%s file_id=%s",
+                        (vault_id or "")[:8] + "...",
+                        (_pending_attachment.get("id") or "")[:8] + "...",
+                    )
+                    # False-success guard (item 7 of the deep-fix):
+                    # never claim we saved when the save failed.
+                    return encrypted_reply(
+                        f"I couldn't save that {_att_noun} right "
+                        "now. Try again in a moment."
+                    )
+                # Post-save verification: save_named_uploaded_asset
+                # must return a dict with a saved_name field on
+                # success. If either is missing, treat as failure
+                # (defensive false-success guard).
+                if (
+                    not isinstance(_att_result, dict)
+                    or not _att_result.get("saved_name")
+                ):
+                    logger.warning(
+                        "[CHAT-DEBUG] confirm_save_attachment_shape "
+                        "vault=%s result=%r",
+                        (vault_id or "")[:8] + "...",
+                        _att_result,
+                    )
+                    return encrypted_reply(
+                        f"I couldn't save that {_att_noun} right "
+                        "now. Try again in a moment."
+                    )
+                logger.info(
+                    "[CHAT-TRACE] pending_attachment_confirmed "
+                    "vault=%s file_id=%s content_type=%s",
+                    (vault_id or "")[:8] + "...",
+                    (_pending_attachment.get("id") or "")[:8] + "...",
+                    _att_ct or "?",
+                )
+                return encrypted_reply(
+                    f"Saved this {_att_noun} as "
+                    f"{_title_case_asset(_att_result['saved_name'])}."
                 )
 
 

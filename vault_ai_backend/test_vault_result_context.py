@@ -23,7 +23,9 @@ from vault_result_context import (
 def _reset_chat_memory():
                                                                   
     from vault_chat_memory import CHAT_MEMORY
-    CHAT_MEMORY._data.clear()
+    # 2026-07-22 chat memory migrated to shared backend.
+    from vault_chat_memory import _reset_for_test as _rst
+    _rst()
 
 
 class StructuredShapeTests(unittest.TestCase):

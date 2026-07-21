@@ -13290,14 +13290,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               vertical: isMobile ? 8 : 12,
             ),
             scrollController: _scrollController,
-            // Typing indicator identity: the user-facing display
-            // name, so the AI is addressed the same way the drawer
-            // header and dashboard greeting address the user (2026-
-            // 07-21 c2f917e follow-up — vault_name is the internal
-            // login/AI identity and must not surface in normal UI).
-            // Falls back to the neutral "VaultAI is thinking..."
-            // literal when display_name is unset.
-            vaultName: app.displayName,
+            // Typing indicator identity: the user-chosen vault
+            // name (``AppState._vaultName``), which is the vault's
+            // own identity — the same string the user typed to
+            // sign into the vault and the same string the LLM is
+            // instructed to identify as. It is a per-vault value
+            // (e.g. "Brain", "My Safe", "Family Vault"), NOT a
+            // hardcoded global constant.
+            //
+            // 2026-07-22 fix: the previous binding was
+            // ``vaultName: app.displayName`` — that field is the
+            // human owner's display label (e.g. "Chosen"), not
+            // the vault's identity, and produced the incident
+            // "Chosen is thinking..." for a user named Chosen.
+            // Never re-bind this parameter to app.displayName or
+            // to a hardcoded literal; the vault-name registry
+            // pattern (AppState.setSession populates
+            // ``_vaultName`` from the authenticated backend
+            // vault_name and clears it on sign-out) is the single
+            // source of truth per-session.
+            vaultName: app.vaultName,
             // Per-file in-flight state, watched from AppState so the
             // whole chat rebuilds when any file starts / finishes a
             // view or download. Individual cards render their own
