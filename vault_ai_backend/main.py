@@ -638,6 +638,21 @@ CORS_ALLOWED_HEADERS = [
     # forwards standard caching hints in the preflight header set.
     "Cache-Control",
     "Pragma",
+    # 2026-07-22 (5) CORS regression fix. Commits 27c14e6 / 4c371ff
+    # added X-Client-Request-Id to /beneficiary/list-mine as a
+    # correlation id for nginx access-log alignment, but this
+    # allowlist was not extended in the same commit. Starlette's
+    # CORSMiddleware rejected every preflight whose Access-Control-
+    # Request-Headers included x-client-request-id with 400 Bad
+    # Request. On the owner-side inheritance panel that meant the
+    # real POST /beneficiary/list-mine never fired, package:http
+    # surfaced the blocked fetch as ClientException, and the new
+    # _looksLikeNetworkAbort() branch silently swallowed it — the
+    # panel rendered "No beneficiaries yet." with no error toast.
+    # Same shape as (3)/(4) above; see
+    # test_cors_preflight_login_2026_07_09.py for the regression
+    # test family this belongs to.
+    "X-Client-Request-Id",
 ]
 
                                                                           
