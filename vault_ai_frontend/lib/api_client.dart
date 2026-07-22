@@ -127,6 +127,37 @@ class VaultNameTakenException implements Exception {
   String toString() => 'VaultNameTakenException(message: $message)';
 }
 
+/// Thrown by ``saveInheritanceCredentials`` / ``replaceInheritanceCredentials``
+/// when the backend responds with a non-200 that is NOT one of the
+/// generic auth / device / lock exceptions the API client already
+/// classifies (those still throw ``AuthExpiredException`` /
+/// ``VaultLockedException`` / etc. first).
+///
+/// Preserves the backend's ``detail.code`` (e.g. ``INH-CRED-005``,
+/// ``INH-CRED-006``, ``INH-CRED-007``) so the UI can surface the
+/// real reference tag instead of the pre-2026-07-22 hardcoded
+/// ``INH-CRED-004`` fallback that hid every non-shape failure.
+class InheritanceCredSaveException implements Exception {
+  final int statusCode;
+  /// The backend's stable ``detail.code`` string, or null when the
+  /// response body could not be parsed as the expected shape.
+  final String? backendCode;
+  /// The backend's user-safe ``detail.message`` (already scrubbed
+  /// of internals by ``inheritance_http_error``).
+  final String? backendMessage;
+
+  const InheritanceCredSaveException({
+    required this.statusCode,
+    this.backendCode,
+    this.backendMessage,
+  });
+
+  @override
+  String toString() =>
+      'InheritanceCredSaveException(statusCode: $statusCode, '
+      'backendCode: $backendCode, backendMessage: $backendMessage)';
+}
+
 class InvalidCredentialsException implements Exception {
   final String message;
   const InvalidCredentialsException({
@@ -2114,11 +2145,12 @@ class VaultAIClient {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Save inheritance credentials failed',
+      final detail = _parseInheritanceBackendDetail(response.body);
+      throw InheritanceCredSaveException(
         statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
+        backendCode: detail.$1,
+        backendMessage: detail.$2,
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -2136,13 +2168,39 @@ class VaultAIClient {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Replace inheritance credentials failed',
+      final detail = _parseInheritanceBackendDetail(response.body);
+      throw InheritanceCredSaveException(
         statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
+        backendCode: detail.$1,
+        backendMessage: detail.$2,
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// Extract ``(detail.code, detail.message)`` from the standard
+  /// FastAPI error envelope produced by ``inheritance_http_error``:
+  ///   ``{"detail": {"code": "INH-CRED-006", "message": "..."}}``
+  /// Returns ``(null, null)`` when the body is not that shape.
+  /// Scoped to the inheritance credential save/replace path — other
+  /// endpoints keep their existing ``_formatBackendError``-based
+  /// generic ``Exception`` throw, unchanged.
+  (String?, String?) _parseInheritanceBackendDetail(String responseBody) {
+    try {
+      final decoded = jsonDecode(responseBody);
+      if (decoded is Map<String, dynamic>) {
+        final rawDetail = decoded['detail'];
+        if (rawDetail is Map<String, dynamic>) {
+          final code = rawDetail['code'];
+          final msg = rawDetail['message'];
+          return (
+            code is String ? code : null,
+            msg is String ? msg : null,
+          );
+        }
+      }
+    } catch (_) {}
+    return (null, null);
   }
 
   Future<Map<String, dynamic>> deleteInheritanceCredentials({

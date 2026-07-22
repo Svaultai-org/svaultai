@@ -7375,13 +7375,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         saving = true;
                         errRef = null;
                       });
-                      final ok = await _submitInheritanceCredentials(
+                      final result = await _submitInheritanceCredentials(
                         linkId: linkId,
                         username: usernameCtrl.text.trim(),
                         pin: pinCtrl.text.trim(),
                         isUpdate: isUpdate,
                       );
-                      if (ok) {
+                      if (result.ok) {
                         // Wipe the plaintext from the widget's memory
                         // as soon as we no longer need it.
                         usernameCtrl.text = '';
@@ -7390,10 +7390,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           Navigator.pop(dialogCtx, true);
                         }
                       } else {
+                        // 2026-07-22: surface the ACTUAL failure code
+                        // (backend detail.code when the request
+                        // reached the backend, or a distinct
+                        // INH-CRED-CLIENT-* sentinel when it
+                        // failed before that). Never hardcode
+                        // INH-CRED-004 anymore — that string was
+                        // masking every non-shape failure mode.
                         setLocal(() {
                           saving = false;
                           errRef = 'Could not save credentials. Please try '
-                              'again.\nReference: INH-CRED-004';
+                              'again.\nReference: ${result.code}';
                         });
                       }
                     },
@@ -7418,7 +7425,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     await _loadBeneficiaries();
   }
 
-  Future<bool> _submitInheritanceCredentials({
+  /// Owner-side "Save securely" handler. Returns a record so the
+  /// dialog can surface the ACTUAL failure reference tag rather
+  /// than the pre-2026-07-22 hardcoded ``INH-CRED-004`` fallback:
+  ///
+  ///   * ``ok = true``  → save succeeded; ``code`` is unused
+  ///   * ``ok = false`` → save failed; ``code`` is the reference to
+  ///                      display, one of:
+  ///                        - the backend's ``detail.code``
+  ///                          (``INH-CRED-005``, ``INH-CRED-006``,
+  ///                          ``INH-CRED-007``, ``INH-CRED-001``,
+  ///                          ``INH-CRED-002``, ``INH-CRED-003``,
+  ///                          ``INH-CRED-004``, ``INH-CRED-401``, …)
+  ///                          when the failure came from the
+  ///                          backend and carried a parsable detail;
+  ///                        - a ``INH-CRED-CLIENT-*`` sentinel when
+  ///                          the failure was purely client-side and
+  ///                          the request never left the device.
+  ///
+  /// The user-facing wording is set by the caller; this method only
+  /// PRESERVES and RETURNS the code — no crypto, backend validation,
+  /// or state-machine change.
+  Future<({bool ok, String code})> _submitInheritanceCredentials({
     required int linkId,
     required String username,
     required String pin,
@@ -7426,7 +7454,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
-    if (token == null) return false;
+    if (token == null) {
+      vlog('inheritance.cred.save.no_session', {'link_id': linkId});
+      return (ok: false, code: 'INH-CRED-CLIENT-NO-SESSION');
+    }
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
@@ -7438,7 +7469,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final pkB64 = pkResp['pk_vault_public_b64url']?.toString();
       if (pkB64 == null || pkB64.isEmpty) {
         vlog('inheritance.cred.save.no_pk', {'link_id': linkId});
-        return false;
+        return (ok: false, code: 'INH-CRED-CLIENT-NO-PUBKEY');
       }
       // Base64url decode with padding forgiveness.
       final padded = pkB64 + '=' * ((4 - pkB64.length % 4) % 4);
@@ -7460,11 +7491,74 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         await client.saveInheritanceCredentials(body: body, authToken: token);
       }
       _showSnack(isUpdate ? 'Credentials updated' : 'Credentials saved');
-      return true;
+      return (ok: true, code: '');
+    } on InheritanceCredSaveException catch (e) {
+      // Backend-side failure that carried a parseable INH-CRED-* code.
+      vlog('inheritance.cred.save.backend_error', {
+        'link_id': linkId,
+        'status': e.statusCode,
+        'backend_code': e.backendCode,
+      });
+      if (app.handleApiException(e)) {
+        return (ok: false, code: 'INH-CRED-CLIENT-AUTH');
+      }
+      return (
+        ok: false,
+        code: e.backendCode ?? 'INH-CRED-CLIENT-UNKNOWN',
+      );
+    } on FormatException catch (e) {
+      // Malformed base64 from the pubkey response, or a bad JSON
+      // body decode. Purely client-side.
+      vlog('inheritance.cred.save.client_format_error', {
+        'link_id': linkId,
+        'error': e.toString(),
+      });
+      return (ok: false, code: 'INH-CRED-CLIENT-CRYPTO');
+    } on ArgumentError catch (e) {
+      // Thrown by encryptInheritanceCredentials when the decoded
+      // beneficiary pubkey is not 32 bytes, or by the cryptography
+      // package for a key/seed length mismatch. Client-side only.
+      vlog('inheritance.cred.save.client_argument_error', {
+        'link_id': linkId,
+        'error': e.toString(),
+      });
+      return (ok: false, code: 'INH-CRED-CLIENT-CRYPTO');
+    } on StateError catch (e) {
+      // Post-decrypt / post-encrypt structural failure in the
+      // cryptography package. Client-side only.
+      vlog('inheritance.cred.save.client_state_error', {
+        'link_id': linkId,
+        'error': e.toString(),
+      });
+      return (ok: false, code: 'INH-CRED-CLIENT-CRYPTO');
     } catch (e) {
-      vlog('inheritance.cred.save.failed', {'error': e.toString()});
-      if (app.handleApiException(e)) return false;
-      return false;
+      // Network aborts, timeouts, TLS failures, DNS errors — all
+      // travel as ClientException / SocketException from
+      // package:http and never carry a backend code.
+      final s = e.toString().toLowerCase();
+      final isNetwork = s.contains('clientexception')
+          || s.contains('socketexception')
+          || s.contains('load failed')
+          || s.contains('failed to fetch')
+          || s.contains('aborted')
+          || s.contains('cancelled')
+          || s.contains('canceled')
+          || s.contains('network is offline')
+          || s.contains('network request failed');
+      vlog('inheritance.cred.save.failed', {
+        'link_id': linkId,
+        'error': e.toString(),
+        'network_abort': isNetwork,
+      });
+      if (app.handleApiException(e)) {
+        return (ok: false, code: 'INH-CRED-CLIENT-AUTH');
+      }
+      return (
+        ok: false,
+        code: isNetwork
+            ? 'INH-CRED-CLIENT-NETWORK'
+            : 'INH-CRED-CLIENT-UNKNOWN',
+      );
     }
   }
 
