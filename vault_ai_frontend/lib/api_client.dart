@@ -2216,11 +2216,20 @@ class VaultAIClient {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Delete inheritance credentials failed',
+      // 2026-07-22: mirror the save/replace path — surface the
+      // backend's ``detail.code`` on the typed exception so the UI
+      // can display the ACTUAL reference (e.g. INH-CRED-007 when
+      // the caller tried to delete during cooldown_active) instead
+      // of the hardcoded INH-CRED-006 the delete UI used to show
+      // for every failure mode. The exception name reads "Save"
+      // for historical reasons but now covers save/replace/delete
+      // uniformly.
+      final detail = _parseInheritanceBackendDetail(response.body);
+      throw InheritanceCredSaveException(
         statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
+        backendCode: detail.$1,
+        backendMessage: detail.$2,
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }

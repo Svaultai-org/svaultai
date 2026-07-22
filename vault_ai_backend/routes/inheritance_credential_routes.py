@@ -233,29 +233,87 @@ def _fetch_beneficiary_pk(cur, *, beneficiary_vault_id) -> bytes:
     return pk
 
 
+# Escrow-mutating operations are refused while the release flow is
+# mid-cycle. Anything else — including a released link the owner
+# wants to rotate or revoke — is permitted; the downstream row-
+# existence checks still emit INH-CRED-005 (already saved) or
+# INH-CRED-006 (no row to replace) for those specific cases.
+_STATES_MID_ACCESS_REQUEST = frozenset({"cooldown_active"})
+
+
 def _refuse_if_access_in_flight(link_row: dict) -> None:
-    """Phase 1 conservative gate: if the row is anywhere in the
-    request/approve/cooldown pipeline, credentials must not be
-    mutated. Phase 2 will refine this."""
-    active = link_row.get("access_requested_at") is not None or (
-        link_row.get("cooldown_ends_at") is not None
-    )
-    if active:
+    """State-aware credential-mutation gate.
+
+    Reads ``beneficiary_links.pairing_state`` (the authoritative source
+    of truth for the release flow — see the module docstring in
+    ``inheritance_release_routes.py``).
+
+    Historical note: the previous implementation refused whenever
+    ``access_requested_at`` or ``cooldown_ends_at`` was non-null. Those
+    columns are stamped by ``/inheritance/access/request`` and are only
+    cleared by ``/access/cancel`` and ``/access/reject``. The forward
+    path ``request → cooldown_active → approved → released`` leaves
+    them populated forever, so any released link was permanently locked
+    out of both ``/replace`` and ``/delete`` with INH-CRED-007 — even
+    though the release flow is already complete. See
+    ``test_inheritance_release_owner_mutations_2026_07_22.py`` for the
+    regression test that pins this behavior.
+    """
+    pairing_state = (link_row.get("pairing_state") or "").strip()
+    if pairing_state in _STATES_MID_ACCESS_REQUEST:
         raise inheritance_http_error(
             INHERR.CRED_ACCESS_IN_FLIGHT,
-            log_details={"link_id": link_row["id"]},
+            log_details={
+                "link_id": link_row["id"],
+                "pairing_state": pairing_state,
+            },
         )
     # Legacy transfer path signals via ``status``: refuse if the
-    # link is anywhere past ``linked``.
+    # link is anywhere past ``linked``. Kept for pre-Phase-2 rows
+    # that never adopted a ``pairing_state`` value.
     legacy_status = (link_row.get("status") or "").strip()
     if legacy_status not in ("pairing_pending", "linked", ""):
         raise inheritance_http_error(
             INHERR.CRED_ACCESS_IN_FLIGHT,
             log_details={
                 "link_id": link_row["id"],
+                "pairing_state": pairing_state,
                 "legacy_status": legacy_status,
             },
         )
+
+
+# States from which a successful replace or delete transitions the
+# link back to a fresh escrow-only lifecycle. Any of the release-
+# flow timestamps left behind by /access/request would then render as
+# a stale countdown in the owner UI, so we clear them along with the
+# pairing_state transition. Mirrors what /access/cancel and
+# /access/reject already do (see inheritance_release_routes.py).
+_STATES_WITH_STALE_RELEASE_TIMESTAMPS = frozenset({
+    "approved", "claimable", "released",
+})
+
+
+def _clear_release_timestamps_if_stale(
+    cur, *, link_id: int, prior_state: str,
+) -> None:
+    """Best-effort cleanup of the ``access_requested_at`` /
+    ``cooldown_ends_at`` / ``decision_at`` triple whenever a
+    credential mutation moves the link back out of a post-request
+    state. No-op for links that were already in the pre-request
+    portion of the state machine."""
+    if prior_state not in _STATES_WITH_STALE_RELEASE_TIMESTAMPS:
+        return
+    cur.execute(
+        """
+        UPDATE beneficiary_links
+           SET access_requested_at = NULL,
+               cooldown_ends_at    = NULL,
+               decision_at         = NULL
+         WHERE id = %s
+        """,
+        (link_id,),
+    )
 
 
 # ---------------------------------------------------------------------
@@ -475,6 +533,7 @@ def replace_credentials(
                 log_details={"link_id": payload.beneficiary_link_id},
             )
         _refuse_if_access_in_flight(link)
+        prior_state = (link.get("pairing_state") or "").strip()
 
         cur.execute(
             """
@@ -500,6 +559,10 @@ def replace_credentials(
             wrapped_key=wrapped_key,
             wrapping_ephemeral_pk=eph_pk,
             wrapping_nonce=wrap_nonce,
+        )
+        _clear_release_timestamps_if_stale(
+            cur, link_id=payload.beneficiary_link_id,
+            prior_state=prior_state,
         )
         conn.commit()
     finally:
@@ -532,6 +595,7 @@ def delete_credentials(
             owner_vault_id=principal["vault_id"], for_update=True,
         )
         _refuse_if_access_in_flight(link)
+        prior_state = (link.get("pairing_state") or "").strip()
 
         cur.execute(
             """
@@ -549,6 +613,10 @@ def delete_credentials(
              WHERE id = %s
             """,
             (payload.beneficiary_link_id,),
+        )
+        _clear_release_timestamps_if_stale(
+            cur, link_id=payload.beneficiary_link_id,
+            prior_state=prior_state,
         )
         conn.commit()
     finally:
@@ -698,6 +766,26 @@ _DIAG_CATEGORIES = frozenset({
     "network_abort", "stale", "other",
 })
 
+# Closed allow-list of decrypt-pipeline stages the client can report.
+# Every value MUST match a ``kRevealStage*`` constant declared in
+# ``vault_ai_frontend/lib/services/inheritance_credentials.dart``.
+# Added 2026-07-22: turns "INH-RETRIEVE-003-OTHER" from a black box
+# into an operator-searchable stage label.
+_DIAG_STAGES = frozenset({
+    "eph_pub_decode",
+    "beneficiary_sk_import",
+    "ecdh",
+    "hkdf",
+    "wrapped_key_decode",
+    "wrapping_nonce_decode",
+    "cek_unwrap",
+    "cek_len",
+    "payload_decode",
+    "payload_nonce_decode",
+    "payload_decrypt",
+    "json",
+})
+
 
 class ClientDiagnosticRequest(BaseModel):
     """Body schema for the client diagnostic endpoint.
@@ -720,6 +808,10 @@ class ClientDiagnosticRequest(BaseModel):
     link_id: Optional[int] = Field(None, ge=1, le=2_147_483_647)
     exception_type: Optional[str] = Field(None, max_length=64)
     category: Optional[str] = Field(None, max_length=32)
+    # 2026-07-22: pipeline stage at which the client-side decrypt
+    # failed. Bounded + allowlist-enforced against ``_DIAG_STAGES``
+    # so unknown / malformed values are rejected before logging.
+    stage: Optional[str] = Field(None, max_length=32)
     crypto_version: Optional[int] = Field(None, ge=0, le=99)
 
     # Byte-length metadata. Upper bounds match the wire invariants
@@ -789,6 +881,9 @@ def client_diagnostic(
     category = _sanitize_diag_field(
         payload.category, allowed=_DIAG_CATEGORIES, name="category",
     )
+    stage = _sanitize_diag_field(
+        payload.stage, allowed=_DIAG_STAGES, name="stage",
+    )
 
     # Dedup one identical (vault_id, area, reference_code) triple per
     # 45s so a client stuck in a retry loop cannot spam production
@@ -802,12 +897,12 @@ def client_diagnostic(
         return ClientDiagnosticResponse()
 
     logger.warning(
-        "[INH-CLIENT-DIAG] area=%s ref=%s cri=%s link_id=%s "
+        "[INH-CLIENT-DIAG] area=%s ref=%s stage=%s cri=%s link_id=%s "
         "vault_tail=%s exc_type=%s category=%s crypto_v=%s "
         "payload_len=%s nonce_len=%s wrapped_len=%s "
         "eph_pk_len=%s wrap_nonce_len=%s "
         "sk_present=%s sk_len=%s",
-        area, ref, payload.client_request_id,
+        area, ref, stage, payload.client_request_id,
         payload.link_id,
         str(principal["vault_id"])[-6:],
         payload.exception_type, category, payload.crypto_version,

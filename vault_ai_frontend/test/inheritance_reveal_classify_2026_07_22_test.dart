@@ -29,6 +29,21 @@ import 'package:cryptography/cryptography.dart'
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/services/inheritance_credentials.dart'
+    show
+        InheritanceRevealStageException,
+        kRevealStageBeneficiarySkImport,
+        kRevealStageCekLen,
+        kRevealStageCekUnwrap,
+        kRevealStageEcdh,
+        kRevealStageEphPubDecode,
+        kRevealStageHkdf,
+        kRevealStageJson,
+        kRevealStagePayloadDecode,
+        kRevealStagePayloadDecrypt,
+        kRevealStagePayloadNonceDecode,
+        kRevealStageWrappedKeyDecode,
+        kRevealStageWrappingNonceDecode;
 import 'package:vault_ai_frontend/services/inheritance_reveal_classify.dart';
 
 
@@ -534,6 +549,154 @@ void main() {
       expect(saw, isTrue,
           reason: 'reveal catch diagnostic body must include at '
               'least one of the allowed fields');
+    });
+
+    test('reveal catch emits the pipeline stage in the diagnostic '
+        'body (2026-07-22)', () {
+      final idx = src.indexOf("'inheritance.reveal.decrypt_failed'");
+      final window =
+          src.substring(idx, (idx + 2500).clamp(0, src.length));
+      expect(
+        window.contains("'stage'"),
+        isTrue,
+        reason: "the reveal-catch diagnostic body must include a "
+            "'stage' field carrying the pipeline stage from "
+            "revealStageOf(e). Without it, an operator cannot tell "
+            "an ECDH failure apart from a payload-decrypt AES-GCM "
+            "tag mismatch.",
+      );
+      expect(
+        window.contains('revealStageOf(e)'),
+        isTrue,
+        reason: 'the reveal-catch must derive the stage via '
+            'revealStageOf(e) so the wire value stays inside the '
+            'closed backend allowlist',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Stage-aware classification (2026-07-22)
+  // -------------------------------------------------------------------
+  //
+  // The decrypt pipeline now wraps every failing stage in
+  // InheritanceRevealStageException(stage, cause). The classifier
+  // must (a) return the SAME category the raw cause would have
+  // produced (transparent unwrap), and (b) expose the stage via
+  // revealStageOf so the reveal catch can add it to the diagnostic
+  // POST body.
+  group('classifyRevealException — stage-wrapped exceptions', () {
+    test('unwraps SecretBoxAuthenticationError → AUTH regardless of '
+        'stage', () {
+      for (final stage in const [
+        'cek_unwrap', 'payload_decrypt',
+      ]) {
+        final inner = SecretBoxAuthenticationError(
+          secretBox: SecretBox(
+            const <int>[1, 2, 3],
+            nonce: Uint8List(12),
+            mac: Mac(const <int>[]),
+          ),
+        );
+        final wrapped = InheritanceRevealStageException(
+          stage: stage, cause: inner, causeStackTrace: StackTrace.current,
+        );
+        expect(classifyRevealException(wrapped),
+            equals(kRefRevealAuth));
+        expect(revealStageOf(wrapped), equals(stage));
+      }
+    });
+
+    test('unwraps ArgumentError → KEYLEN with stage preserved', () {
+      final wrapped = InheritanceRevealStageException(
+        stage: kRevealStageBeneficiarySkImport,
+        cause: ArgumentError.value(
+          Uint8List(31), 'seed', 'must be 32 bytes',
+        ),
+        causeStackTrace: StackTrace.current,
+      );
+      expect(classifyRevealException(wrapped),
+          equals(kRefRevealKeyLen));
+      expect(revealStageOf(wrapped),
+          equals(kRevealStageBeneficiarySkImport));
+    });
+
+    test('unwraps StateError → PAYLOAD when cause is JSON-shaped', () {
+      final wrapped = InheritanceRevealStageException(
+        stage: kRevealStageJson,
+        cause: StateError('credential payload is not a JSON object'),
+        causeStackTrace: StackTrace.current,
+      );
+      expect(classifyRevealException(wrapped),
+          equals(kRefRevealPayload));
+      expect(revealStageOf(wrapped), equals(kRevealStageJson));
+    });
+
+    test('unwraps FormatException → B64 with stage preserved', () {
+      Object? caught;
+      try {
+        base64Url.decode('!!!not-b64!!!');
+      } catch (e) { caught = e; }
+      final wrapped = InheritanceRevealStageException(
+        stage: kRevealStageEphPubDecode,
+        cause: caught!,
+        causeStackTrace: StackTrace.current,
+      );
+      expect(classifyRevealException(wrapped),
+          equals(kRefRevealB64));
+      expect(revealStageOf(wrapped),
+          equals(kRevealStageEphPubDecode));
+    });
+
+    test('unwraps arbitrary Object → OTHER but stage still surfaces',
+        () {
+      final wrapped = InheritanceRevealStageException(
+        stage: kRevealStageEcdh,
+        cause: Object(),
+        causeStackTrace: StackTrace.current,
+      );
+      expect(classifyRevealException(wrapped),
+          equals(kRefRevealOther));
+      expect(revealStageOf(wrapped), equals(kRevealStageEcdh),
+          reason: 'even when the classifier falls through to OTHER '
+              'the STAGE must still be available so the operator can '
+              'grep the diagnostic log line by pipeline step');
+    });
+
+    test('revealStageOf returns null for a bare (unwrapped) exception',
+        () {
+      expect(revealStageOf(Object()), isNull);
+      expect(revealStageOf(const FormatException('bad')), isNull);
+      expect(
+        revealStageOf(ArgumentError.value(1, 'x', 'y')), isNull,
+      );
+    });
+
+    test('every kRevealStage* constant is a short log-safe token', () {
+      for (final stage in const [
+        kRevealStageEphPubDecode,
+        kRevealStageBeneficiarySkImport,
+        kRevealStageEcdh,
+        kRevealStageHkdf,
+        kRevealStageWrappedKeyDecode,
+        kRevealStageWrappingNonceDecode,
+        kRevealStageCekUnwrap,
+        kRevealStageCekLen,
+        kRevealStagePayloadDecode,
+        kRevealStagePayloadNonceDecode,
+        kRevealStagePayloadDecrypt,
+        kRevealStageJson,
+      ]) {
+        expect(stage.length, lessThanOrEqualTo(32),
+            reason: 'stage tag $stage must fit the backend '
+                '_DIAG_STAGES allowlist (max_length=32)');
+        // Only lowercase letters + underscores — grep-friendly, no
+        // whitespace to break log parsers.
+        expect(
+          RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(stage), isTrue,
+          reason: 'stage tag $stage must be lowercase snake_case',
+        );
+      }
     });
   });
 }

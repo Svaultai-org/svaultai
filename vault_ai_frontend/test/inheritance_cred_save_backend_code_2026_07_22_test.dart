@@ -338,4 +338,246 @@ void main() {
       );
     });
   });
+
+  // -------------------------------------------------------------------
+  // deleteInheritanceCredentials — typed exception + backend-code
+  // interpolation (2026-07-22)
+  // -------------------------------------------------------------------
+  //
+  // Production evidence: the backend rejects a released-link delete
+  // with 409 INH-CRED-007 but the UI substituted a hardcoded
+  // INH-CRED-006 because the delete path (a) threw a generic Exception
+  // that carried the code only in its stringified form, and (b) the
+  // catch block hardcoded 'INH-CRED-006' regardless of what the
+  // backend actually returned. This group locks the fix: the wire
+  // throws the typed exception (mirroring save/replace), and the
+  // main.dart handler interpolates ``e.backendCode``.
+  group('deleteInheritanceCredentials — typed exception carries '
+      'backend code', () {
+
+    Future<Object?> _capture(
+        Future<void> Function() action) async {
+      try {
+        await action();
+        return null;
+      } catch (e) {
+        return e;
+      }
+    }
+
+    Future<HttpServer> _serve(int status, dynamic body,
+        {ContentType? contentType}) async {
+      final srv = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      srv.listen((req) {
+        req.response.statusCode = status;
+        req.response.headers.contentType =
+            contentType ?? ContentType.json;
+        req.response.write(body is String ? body : jsonEncode(body));
+        req.response.close();
+      });
+      return srv;
+    }
+
+    test('409 INH-CRED-007 (delete during cooldown_active) → typed '
+        'exception preserves 007 — NOT INH-CRED-006', () async {
+      final srv = await _serve(409, {
+        'detail': {
+          'code': 'INH-CRED-007',
+          'message': 'This beneficiary already has an active access '
+              'request. Cancel it before changing the credentials.',
+        },
+      });
+      try {
+        final client = VaultAIClient(
+            baseUrl: 'http://${srv.address.host}:${srv.port}');
+        final caught = await _capture(() async {
+          await client.deleteInheritanceCredentials(
+              linkId: 8, authToken: 'session-fake');
+        });
+        expect(caught, isA<InheritanceCredSaveException>());
+        final e = caught as InheritanceCredSaveException;
+        expect(e.statusCode, 409);
+        expect(e.backendCode, 'INH-CRED-007',
+            reason: 'the delete path must surface the ACTUAL backend '
+                'code (INH-CRED-007) instead of substituting the '
+                'hardcoded INH-CRED-006 the UI used to display for '
+                'every delete failure');
+        expect(e.backendMessage, contains('active access'));
+      } finally {
+        await srv.close(force: true);
+      }
+    });
+
+    test('404 INH-CRED-006 (no credentials to delete) → typed '
+        'exception preserves 006', () async {
+      final srv = await _serve(404, {
+        'detail': {
+          'code': 'INH-CRED-006',
+          'message': 'No credentials are saved for this beneficiary yet.',
+        },
+      });
+      try {
+        final client = VaultAIClient(
+            baseUrl: 'http://${srv.address.host}:${srv.port}');
+        final caught = await _capture(() async {
+          await client.deleteInheritanceCredentials(
+              linkId: 8, authToken: 'session-fake');
+        });
+        expect((caught as InheritanceCredSaveException).backendCode,
+            'INH-CRED-006');
+      } finally {
+        await srv.close(force: true);
+      }
+    });
+
+    test('500 with empty body → typed exception with null backendCode '
+        '(never fabricated as 006)', () async {
+      final srv = await _serve(500, '', contentType: ContentType.text);
+      try {
+        final client = VaultAIClient(
+            baseUrl: 'http://${srv.address.host}:${srv.port}');
+        final caught = await _capture(() async {
+          await client.deleteInheritanceCredentials(
+              linkId: 8, authToken: 'session-fake');
+        });
+        expect(caught, isA<InheritanceCredSaveException>());
+        expect((caught as InheritanceCredSaveException).backendCode,
+            isNull);
+      } finally {
+        await srv.close(force: true);
+      }
+    });
+
+    test('200 body still returns the decoded map (happy path)',
+        () async {
+      final srv = await _serve(200, {
+        'beneficiary_link_id': 8,
+        'credentials_saved': false,
+        'pairing_state': 'paired_no_credentials',
+      });
+      try {
+        final client = VaultAIClient(
+            baseUrl: 'http://${srv.address.host}:${srv.port}');
+        final r = await client.deleteInheritanceCredentials(
+            linkId: 8, authToken: 'session-fake');
+        expect(r['credentials_saved'], isFalse);
+        expect(r['pairing_state'], 'paired_no_credentials');
+      } finally {
+        await srv.close(force: true);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // main.dart _deleteInheritanceCredentials — source contract
+  // -------------------------------------------------------------------
+  //
+  // The delete-credentials dialog handler MUST NOT hardcode
+  // 'INH-CRED-006' in the catch block anymore. This locks the fix
+  // structurally so the regression can't come back through a stray
+  // copy-paste.
+  group('main.dart _deleteInheritanceCredentials — source contract',
+      () {
+    late String src;
+
+    setUpAll(() {
+      src = File('lib/main.dart').readAsStringSync();
+    });
+
+    test('no hardcoded "Reference: INH-CRED-006" remains inside a '
+        '_showSnack call for the delete path', () {
+      // The old failure line looked like:
+      //   'Could not delete credentials.\nReference: INH-CRED-006'
+      // The fix interpolates the returned backend code instead. It
+      // is OK for the SUCCESS path elsewhere to reference
+      // INH-CRED-006 in dartdoc — we only forbid the exact snack
+      // string used by the delete-failure path.
+      expect(
+        src.contains(
+            "'Could not delete credentials.\\nReference: INH-CRED-006'"),
+        isFalse,
+        reason: 'the delete-failure snack must not hardcode '
+            'Reference: INH-CRED-006 — use the backend code',
+      );
+    });
+
+    test('delete handler catches InheritanceCredSaveException '
+        'and interpolates e.backendCode', () {
+      final idx = src.indexOf(
+          "Future<void> _deleteInheritanceCredentials(");
+      expect(idx, greaterThan(-1),
+          reason: '_deleteInheritanceCredentials method not found');
+      // The delete handler's method body spans ~80 lines including
+      // dialog, try/catch, dedicated typed-exception branch, and a
+      // final generic catch. 4000 chars covers it end-to-end.
+      final window =
+          src.substring(idx, (idx + 4000).clamp(0, src.length));
+      expect(
+        window.contains('on InheritanceCredSaveException catch'),
+        isTrue,
+        reason: 'the delete handler must catch the typed exception '
+            'so backendCode can be surfaced',
+      );
+      expect(
+        window.contains(r'Reference: $code'),
+        isTrue,
+        reason: 'the delete-failure snack must interpolate the '
+            'derived code (backend or CLIENT-* sentinel)',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // main.dart _deleteBeneficiary — local-state removal contract
+  // -------------------------------------------------------------------
+  //
+  // Production evidence: /beneficiary/delete returns HTTP 200 but the
+  // card lingered in the UI because ``_loadBeneficiaries`` was
+  // silently discarded by its generation-counter guard. The fix
+  // filters the deleted id out of ``beneficiaries`` before the
+  // authoritative refresh. Locked structurally.
+  group('main.dart _deleteBeneficiary — local-state removal contract',
+      () {
+    late String src;
+
+    setUpAll(() {
+      src = File('lib/main.dart').readAsStringSync();
+    });
+
+    test('_deleteBeneficiary removes the linkId from local '
+        'beneficiaries state BEFORE calling _loadBeneficiaries', () {
+      final idx = src.indexOf(
+          'Future<void> _deleteBeneficiary(int linkId, String label)');
+      expect(idx, greaterThan(-1),
+          reason: '_deleteBeneficiary method not found');
+      final window =
+          src.substring(idx, (idx + 3000).clamp(0, src.length));
+
+      final deleteCallAt =
+          window.indexOf('client.deleteBeneficiary(');
+      final setStateAt = window.indexOf('setState(');
+      final loadAt = window.indexOf('_loadBeneficiaries()');
+      expect(deleteCallAt, greaterThan(-1),
+          reason: 'client.deleteBeneficiary call not found');
+      expect(setStateAt, greaterThan(deleteCallAt),
+          reason: 'setState must occur AFTER the API 200 (inside '
+              'the try {} block, not before)');
+      expect(loadAt, greaterThan(setStateAt),
+          reason: 'the authoritative refresh must come AFTER the '
+              'local filter — otherwise the gen-counter guard can '
+              'silently discard the refresh and leave the card '
+              'lingering in the UI');
+      // The filter can wrap across lines in the source (dart-format
+      // will do this for long expressions), so match on the
+      // whitespace-collapsed body.
+      final collapsed = window.replaceAll(RegExp(r'\s+'), ' ');
+      expect(
+        collapsed.contains(
+            ".where((b) => (b['id'] as num?)?.toInt() != linkId)"),
+        isTrue,
+        reason: 'the local removal must filter by linkId exactly '
+            '(matches the id shape /beneficiary/list-mine returns)',
+      );
+    });
+  });
 }

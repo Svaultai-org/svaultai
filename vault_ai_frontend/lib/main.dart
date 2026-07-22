@@ -7226,6 +7226,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         pin: pin,
         authToken: token,
       );
+      // 2026-07-22: synchronously remove the deleted card from local
+      // state BEFORE the authoritative refresh. The refresh path
+      // (``_loadBeneficiaries``) is gated by a generation counter
+      // that can silently discard the reload when a concurrent
+      // panel refresh is in flight — without this local removal the
+      // card lingered in the UI even though the backend deletion
+      // succeeded (POST /beneficiary/delete → 200). See
+      // test/inheritance_delete_beneficiary_refresh_2026_07_22_test.dart.
+      if (mounted) {
+        setState(() {
+          beneficiaries = beneficiaries
+              .where((b) => (b['id'] as num?)?.toInt() != linkId)
+              .toList();
+        });
+      }
       _showSnack('Removed $label');
       await _loadBeneficiaries();
     } catch (e) {
@@ -7602,11 +7617,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       _showSnack('Credentials deleted');
       await _loadBeneficiaries();
+    } on InheritanceCredSaveException catch (e) {
+      // 2026-07-22: surface the ACTUAL backend code (e.g.
+      // INH-CRED-007 when the caller tried to delete a link that is
+      // mid-cooldown) instead of the hardcoded INH-CRED-006 the UI
+      // used to show for every failure mode.
+      vlog('inheritance.cred.delete.failed', {
+        'link_id': linkId,
+        'status': e.statusCode,
+        'backend_code': e.backendCode,
+      });
+      if (app.handleApiException(e)) return;
+      final code = (e.backendCode == null || e.backendCode!.isEmpty)
+          ? 'INH-CRED-CLIENT-UNKNOWN'
+          : e.backendCode!;
+      _showSnack(
+        'Could not delete credentials.\nReference: $code',
+      );
     } catch (e) {
       vlog('inheritance.cred.delete.failed', {'error': e.toString()});
       if (app.handleApiException(e)) return;
       _showSnack(
-        'Could not delete credentials.\nReference: INH-CRED-006',
+        'Could not delete credentials.\nReference: INH-CRED-CLIENT-UNKNOWN',
       );
     }
   }
@@ -7953,6 +7985,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final category = inh_classify.revealCategoryFor(ref);
       vlog('inheritance.reveal.decrypt_failed', {
         'ref': ref,
+        // 2026-07-22: pipeline stage from the staged decrypt.
+        // ``revealStageOf`` returns null when the exception came
+        // from anywhere other than the staged decrypt (e.g. a
+        // pre-decrypt guard) so ``stage`` may be null — that is
+        // itself an operator signal.
+        'stage': inh_classify.revealStageOf(e),
         'link_id': linkId,
         'exception_type': e.runtimeType.toString(),
       });
@@ -7962,6 +8000,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         body: {
           'area': 'reveal',
           'reference_code': ref,
+          'stage': inh_classify.revealStageOf(e),
           'link_id': linkId,
           'exception_type': e.runtimeType.toString(),
           'category': category,

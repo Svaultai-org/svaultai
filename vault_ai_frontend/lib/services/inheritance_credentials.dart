@@ -182,47 +182,148 @@ class DecryptedInheritanceCredentials {
   });
 }
 
+// 2026-07-22: named stages of the beneficiary decrypt pipeline.
+// Every stage tag is a short, log-safe token — no ciphertext, no
+// key material, no user text. The reveal catch-block includes the
+// stage in the diagnostic body so the operator can distinguish an
+// ECDH failure from an AES-GCM tag mismatch without inspecting the
+// iOS console.
+const String kRevealStageEphPubDecode        = 'eph_pub_decode';
+const String kRevealStageBeneficiarySkImport = 'beneficiary_sk_import';
+const String kRevealStageEcdh                = 'ecdh';
+const String kRevealStageHkdf                = 'hkdf';
+const String kRevealStageWrappedKeyDecode    = 'wrapped_key_decode';
+const String kRevealStageWrappingNonceDecode = 'wrapping_nonce_decode';
+const String kRevealStageCekUnwrap           = 'cek_unwrap';
+const String kRevealStageCekLen              = 'cek_len';
+const String kRevealStagePayloadDecode       = 'payload_decode';
+const String kRevealStagePayloadNonceDecode  = 'payload_nonce_decode';
+const String kRevealStagePayloadDecrypt      = 'payload_decrypt';
+const String kRevealStageJson                = 'json';
+
+/// Wraps any exception thrown inside ``decryptInheritanceCredentials``
+/// with the STAGE at which it occurred. The classifier
+/// (``inheritance_reveal_classify.dart``) unwraps this and reports
+/// the stage in the client-diagnostic payload, so an operator can
+/// tell "AES-GCM tag mismatch on the CEK unwrap" apart from
+/// "AES-GCM tag mismatch on the payload decrypt" — both would
+/// otherwise surface as an identical ``SecretBoxAuthenticationError``.
+///
+/// ``cause`` is the original exception; ``causeStackTrace`` is the
+/// stack captured at the failing await. Neither is placed on the
+/// wire — they exist only for local vlog / diagnostic emission.
+class InheritanceRevealStageException implements Exception {
+  final String stage;
+  final Object cause;
+  final StackTrace causeStackTrace;
+
+  const InheritanceRevealStageException({
+    required this.stage,
+    required this.cause,
+    required this.causeStackTrace,
+  });
+
+  @override
+  String toString() =>
+      'InheritanceRevealStageException(stage: $stage, '
+      'cause: ${cause.runtimeType})';
+}
+
+Future<T> _stage<T>(String stage, Future<T> Function() body) async {
+  try {
+    return await body();
+  } catch (e, st) {
+    throw InheritanceRevealStageException(
+      stage: stage, cause: e, causeStackTrace: st,
+    );
+  }
+}
+
+T _stageSync<T>(String stage, T Function() body) {
+  try {
+    return body();
+  } catch (e, st) {
+    throw InheritanceRevealStageException(
+      stage: stage, cause: e, causeStackTrace: st,
+    );
+  }
+}
+
 Future<DecryptedInheritanceCredentials> decryptInheritanceCredentials({
   required Uint8List beneficiarySkVaultPrivate,
   required InheritanceCredentialPackage package,
 }) async {
   final algo = X25519();
-  final ephPub = SimplePublicKey(
+  final ephPub = _stageSync(kRevealStageEphPubDecode, () => SimplePublicKey(
     _b64UrlDecode(package.wrappingEphemeralPkB64Url),
     type: KeyPairType.x25519,
+  ));
+
+  final skKeyPair = await _stage(
+    kRevealStageBeneficiarySkImport,
+    () => algo.newKeyPairFromSeed(beneficiarySkVaultPrivate),
+  );
+  final shared = await _stage(
+    kRevealStageEcdh,
+    () => algo.sharedSecretKey(
+      keyPair: skKeyPair,
+      remotePublicKey: ephPub,
+    ),
+  );
+  final kWrap = await _stage(
+    kRevealStageHkdf,
+    () => _hkdf.deriveKey(
+      secretKey: shared,
+      nonce: Uint8List.fromList(ephPub.bytes),
+      info: utf8.encode(_credentialInfoLabel),
+    ),
   );
 
-  final skKeyPair = await algo.newKeyPairFromSeed(beneficiarySkVaultPrivate);
-  final shared = await algo.sharedSecretKey(
-    keyPair: skKeyPair,
-    remotePublicKey: ephPub,
+  final wrappedKey = _stageSync(
+    kRevealStageWrappedKeyDecode,
+    () => _b64UrlDecode(package.wrappedKeyB64Url),
   );
-  final kWrap = await _hkdf.deriveKey(
-    secretKey: shared,
-    nonce: Uint8List.fromList(ephPub.bytes),
-    info: utf8.encode(_credentialInfoLabel),
+  final wrapNonce = _stageSync(
+    kRevealStageWrappingNonceDecode,
+    () => _b64UrlDecode(package.wrappingNonceB64Url),
   );
-
-  final wrappedKey = _b64UrlDecode(package.wrappedKeyB64Url);
-  final wrapNonce = _b64UrlDecode(package.wrappingNonceB64Url);
-  final cek = await _aesGcm.decrypt(
-    _splitCiphertextAndMac(wrappedKey, wrapNonce),
-    secretKey: kWrap,
+  final cek = await _stage(
+    kRevealStageCekUnwrap,
+    () => _aesGcm.decrypt(
+      _splitCiphertextAndMac(wrappedKey, wrapNonce),
+      secretKey: kWrap,
+    ),
   );
   if (cek.length != _cekBytes) {
-    throw StateError('unwrapped CEK has wrong length');
+    throw InheritanceRevealStageException(
+      stage: kRevealStageCekLen,
+      cause: StateError('unwrapped CEK has wrong length'),
+      causeStackTrace: StackTrace.current,
+    );
   }
 
-  final encryptedPayload = _b64UrlDecode(package.encryptedPayloadB64Url);
-  final payloadNonce = _b64UrlDecode(package.payloadNonceB64Url);
-  final plainBytes = await _aesGcm.decrypt(
-    _splitCiphertextAndMac(encryptedPayload, payloadNonce),
-    secretKey: SecretKey(cek),
+  final encryptedPayload = _stageSync(
+    kRevealStagePayloadDecode,
+    () => _b64UrlDecode(package.encryptedPayloadB64Url),
   );
-  final decoded = jsonDecode(utf8.decode(plainBytes));
-  if (decoded is! Map) {
-    throw StateError('credential payload is not a JSON object');
-  }
+  final payloadNonce = _stageSync(
+    kRevealStagePayloadNonceDecode,
+    () => _b64UrlDecode(package.payloadNonceB64Url),
+  );
+  final plainBytes = await _stage(
+    kRevealStagePayloadDecrypt,
+    () => _aesGcm.decrypt(
+      _splitCiphertextAndMac(encryptedPayload, payloadNonce),
+      secretKey: SecretKey(cek),
+    ),
+  );
+  final Map decoded = _stageSync(kRevealStageJson, () {
+    final j = jsonDecode(utf8.decode(plainBytes));
+    if (j is! Map) {
+      throw StateError('credential payload is not a JSON object');
+    }
+    return j;
+  });
   return DecryptedInheritanceCredentials(
     version: (decoded['version'] as num).toInt(),
     username: (decoded['username'] ?? '').toString(),

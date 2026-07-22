@@ -31,6 +31,9 @@ import 'dart:convert' show base64Url;
 import 'package:cryptography/cryptography.dart'
     show SecretBoxAuthenticationError;
 
+import 'inheritance_credentials.dart'
+    show InheritanceRevealStageException;
+
 
 /// Reference tags surfaced in the UI. Each corresponds to a
 /// distinct failure mode of the decrypt pipeline. Operators grep
@@ -59,6 +62,30 @@ String revealCategoryFor(String referenceCode) {
 }
 
 
+/// Return the pipeline STAGE at which the decrypt failed, or null
+/// when the exception did not carry stage metadata (older reveal
+/// paths, non-decrypt failures).
+///
+/// The stage tag is a short log-safe token — see the ``kRevealStage*``
+/// constants in ``inheritance_credentials.dart`` — so the operator
+/// can distinguish an ECDH failure from an AES-GCM tag mismatch on
+/// the payload decrypt from an AES-GCM tag mismatch on the CEK
+/// unwrap, without inspecting the client console.
+String? revealStageOf(Object e) {
+  if (e is InheritanceRevealStageException) {
+    return e.stage;
+  }
+  return null;
+}
+
+
+/// Return the underlying (unwrapped) exception, so classification
+/// treats an ``InheritanceRevealStageException(cause: FormatException)``
+/// the same as a bare ``FormatException``.
+Object _unwrap(Object e) =>
+    e is InheritanceRevealStageException ? e.cause : e;
+
+
 /// Classify a caught exception into one of the reveal reference
 /// codes. The ordering is deliberate: more specific matches come
 /// first (e.g. an AES-GCM authentication error is more specific
@@ -66,13 +93,21 @@ String revealCategoryFor(String referenceCode) {
 ///
 /// Pure function — no I/O, no clock, no random. Tests exercise
 /// every branch with synthesized exceptions.
+///
+/// 2026-07-22: transparently unwraps
+/// ``InheritanceRevealStageException`` so callers that emit the
+/// staged wrapper get the same category the raw cause would have
+/// produced. The stage itself is exposed separately via
+/// ``revealStageOf`` for the diagnostic payload.
 String classifyRevealException(Object e) {
+  final u = _unwrap(e);
+
   // Stage 5: AES-GCM authentication tag mismatch. This is the
   // canonical "wrong key" outcome — the beneficiary's local sk
   // does not correspond to the pk the owner wrapped for. Highest
   // priority so a StateError-wrapping SecretBox failure never
   // gets miscategorised as KEYLEN.
-  if (e is SecretBoxAuthenticationError) {
+  if (u is SecretBoxAuthenticationError) {
     return kRefRevealAuth;
   }
 
@@ -81,7 +116,7 @@ String classifyRevealException(Object e) {
   // is missing / null / a string. Comes before FormatException
   // because `null.toString()` followed by base64 decode ends up
   // as a FormatException that we'd otherwise mis-attribute to B64.
-  if (e is TypeError || e is NoSuchMethodError) {
+  if (u is TypeError || u is NoSuchMethodError) {
     return kRefRevealShape;
   }
 
@@ -89,8 +124,8 @@ String classifyRevealException(Object e) {
   // FormatException with a base64-shaped message: "Invalid
   // character" / "Invalid length". Post-decrypt JSON parse is
   // handled below (PAYLOAD) before the generic B64 fallback.
-  if (e is FormatException) {
-    final msg = e.message.toLowerCase();
+  if (u is FormatException) {
+    final msg = u.message.toLowerCase();
     // Post-decrypt json / utf8 errors travel as FormatException;
     // route them to PAYLOAD, not B64.
     if (msg.contains('unexpected character')
@@ -107,8 +142,8 @@ String classifyRevealException(Object e) {
   // succeeded but its plaintext is not the expected 32-byte CEK,
   // OR the JSON payload is not a Map. These live inside
   // decryptInheritanceCredentials and are thrown as StateError.
-  if (e is StateError) {
-    final msg = e.message.toLowerCase();
+  if (u is StateError) {
+    final msg = u.message.toLowerCase();
     if (msg.contains('cek')
         || msg.contains('not a json object')
         || msg.contains('credential payload')) {
@@ -122,7 +157,7 @@ String classifyRevealException(Object e) {
   // Stage 1: seed / public key length mismatch feeding into
   // newKeyPairFromSeed or SimplePublicKey. cryptography throws
   // ArgumentError with a length-related message.
-  if (e is ArgumentError) {
+  if (u is ArgumentError) {
     return kRefRevealKeyLen;
   }
 
