@@ -10235,6 +10235,50 @@ async def upload_file_endpoint(
             is_batch_upload=is_batch_upload,
         )
 
+        # 2026-07-24 chat-brain rebuild — bind THIS upload to the
+        # session + turn that produced it so a later text-only
+        # reply cannot revive an unrelated unnamed file. Only
+        # bind when the upload still needs naming (auto-named
+        # files were already committed).
+        try:
+            if result.get("file_id") and not auto_saved_name:
+                from vault_chat_upload_binding import bind_upload
+                _upload_session_id = None
+                try:
+                    _upload_session_id = (
+                        principal.get("token_id")
+                        if isinstance(principal, dict) else None
+                    ) or None
+                except Exception:
+                    _upload_session_id = None
+                _upload_turn_id = ""
+                try:
+                    _upload_turn_id = (
+                        request.headers.get("X-Chat-Turn-Id")
+                        or request.headers.get("x-chat-turn-id")
+                        or ""
+                    )
+                except Exception:
+                    _upload_turn_id = ""
+                if not _upload_turn_id:
+                    _upload_turn_id = str(result["file_id"])
+                bind_upload(
+                    vault_id=vault_id,
+                    session_id=_upload_session_id,
+                    turn_id=_upload_turn_id,
+                    uploaded_file_id=str(result["file_id"]),
+                    filename=str(result.get("filename")
+                                 or result.get("file_name") or ""),
+                    content_type=str(resolved_content_type or ""),
+                )
+        except Exception:
+            logger.exception(
+                "[UPLOAD-BINDING] bind_call_failed "
+                "vault=%s file_id=%s",
+                (vault_id or "")[:8] + "…",
+                str(result.get("file_id") or "")[:8] + "…",
+            )
+
         print(
             "[CHAT-DEBUG] upload_accompanying_text "
             f"text_present={bool(text_for_classification)} "
@@ -13267,6 +13311,49 @@ async def chat_endpoint(
             )
             raise
         print("[CHAT-DEBUG] memory_ok", flush=True)
+
+        # -----------------------------------------------------------
+        # 2026-07-24 chat-brain rebuild — semantic decider band.
+        #
+        # Runs BEFORE the deterministic pending-confirm cascade so
+        # a user's response to a pending action is interpreted
+        # semantically against the actual live pending state,
+        # rather than by "whichever store's regex matches first"
+        # (the pre-rebuild bug that let a stale unnamed video
+        # hijack a delete confirmation). Falls through on any
+        # decider error, low-confidence guess, or unknown-tool
+        # response so the existing cascade continues to handle
+        # everything the brain doesn't own.
+        try:
+            from vault_chat_brain import run_chat_brain
+            _brain_result = await run_chat_brain(
+                vault_id=vault_id,
+                session_id=(
+                    principal.get("token_id") if isinstance(principal, dict)
+                    else None
+                ),
+                turn_id=str(_chat_request_id or ""),
+                vault_name=req.vault_name or "",
+                reply_language=(_reply_language or "en"),
+                user_message=decrypted_message or "",
+                memory=memory,
+                key=key,
+                unlocked=True,
+                user_tier=(
+                    principal.get("user_tier") if isinstance(principal, dict)
+                    else "free"
+                ) or "free",
+                features={},
+            )
+        except Exception:
+            logger.exception(
+                "[CHAT-BRAIN] band_crashed vault=%s",
+                (vault_id or "")[:8] + "…",
+            )
+            _brain_result = None
+
+        if _brain_result is not None and _brain_result.handled:
+            return encrypted_reply(_brain_result.reply_text)
 
 
         try:

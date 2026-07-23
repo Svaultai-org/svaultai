@@ -5,31 +5,6 @@ with a single system that also serves file, secure item, ID document,
 note, folder, generated-login-draft, storage/billing card, and crypto
 wallet follow-ups.
 
-The record stored for a vault is a small dictionary — nothing else:
-
-    {
-      "vault_id":        str,   # the owning vault
-      "session_id":      str,   # session-scope (token id short-hash);
-                                # required for read on write, so a
-                                # replay across sessions cannot see
-                                # a previous session's entity
-      "entity_type":     str,   # closed set — see ENTITY_TYPES
-      "entity_ref":      dict,  # SAFE reference — never plaintext.
-                                # For an item: {"id": "..."}
-                                # For a search: {"query": "..."}
-                                # For a draft: {"draft_id": "..."}
-                                # For a multi-match: {"kind": "..."}
-      "display_label":   str,   # short user-facing label ("Gmail",
-                                # "passport.pdf", "Aldonaid")
-      "query":           str,   # the search query that resolved the
-                                # entity (kept for follow-up re-render)
-      "allowed_actions": tuple, # closed set — see ALLOWED_ACTIONS
-      "is_multi":        bool,  # True iff this record is a chooser
-      "candidates":      list,  # for chooser: safe references only
-      "created_at":      float, # wall-clock
-      "expires_at":      float, # wall-clock + TTL
-    }
-
 ## What is NEVER stored
 
   * passwords, PINs, seed phrases, private keys, tokens
@@ -58,27 +33,20 @@ checklist below.
       - vault delete
       - explicit topic change (chat handler's explicit-different-
         intent branches call clear_active_entity)
-      - process restart (it's an in-memory store — no persistence)
 
-## Threading
+## 2026-07-24 cross-worker migration
 
-  * A single `threading.Lock` guards a dict keyed by vault_id.
-    Follows the exact same pattern as ``vault_active_context`` and
-    ``vault_chat_memory`` — matches how uvicorn is configured today.
-
-## Migration note
-
-  * The former ``vault_chat_last_login_search`` module is removed.
-    All call sites now write an ENTITY record of type ``login``
-    with ``entity_ref = {"query": ...}`` and
-    ``allowed_actions = ("show","open","view","copy","rename",
-    "delete")``.
-
-  * The former ``vault_chat_login_followup`` module was generalized
-    into ``vault_chat_pronoun_followup`` which returns a verb tag
-    per hit (`show`, `open`, `view`, `rename`, `delete`, `copy`,
-    `save`, `upgrade`) — the chat handler dispatches on entity_type
-    + verb.
+  Prior to 2026-07-24 the store was a per-process ``dict`` guarded by
+  ``threading.Lock``. Under Uvicorn ``--workers 2`` an entity set on
+  worker A was invisible to worker B on the next turn — the same
+  worker-hop class of bug that the credential draft, chat memory, and
+  secure delete intent modules were migrated to fix. This module now
+  reads/writes through ``vault_chat_state_store`` (Redis in prod;
+  in-memory shim in dev / test / Redis-outage). Public API is
+  unchanged; every existing caller keeps working. The session-scope
+  guarantee is preserved: a record stamped with a ``session_id``
+  is only readable by a request that presents the same
+  ``session_id``.
 
 None of this weakens the existing PIN, trusted-device, masking, or
 password-reveal gates. This module has no ability to reveal a
@@ -91,11 +59,15 @@ Password reveal goes through the same
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import os
-import threading
 import time
 from typing import Any, Iterable, Optional
+
+from vault_chat_state_store import (
+    compose_key, get_chat_state_backend,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -177,8 +149,6 @@ _ALLOWED_REF_KEYS: frozenset[str] = frozenset({
     "asset_type",
     "content_type",
     "relative_path",
-    # File-list pagination state — an integer offset into the vault's
-    # stably-ordered file list, plus the page size the client sees.
     "offset",
     "page_size",
     "total_count",
@@ -218,8 +188,7 @@ MAX_QUERY_CHARS:    int = 80
 MAX_CANDIDATES:     int = 25
 
 
-_lock = threading.Lock()
-_store: dict[str, dict[str, Any]] = {}
+_BUCKET: str = "active_entity"
 
 
 def _now() -> float:
@@ -230,6 +199,34 @@ def _short_session_id(session_id: Optional[str]) -> Optional[str]:
     if not session_id or not isinstance(session_id, str):
         return None
     return session_id.strip() or None
+
+
+def _redis_key(vault_id: str) -> str:
+    return compose_key(bucket=_BUCKET, vault_id=vault_id)
+
+
+def _serialize(record: dict[str, Any]) -> bytes:
+    safe = dict(record)
+    actions = safe.get("allowed_actions")
+    if isinstance(actions, tuple):
+        safe["allowed_actions"] = list(actions)
+    return json.dumps(safe, ensure_ascii=False).encode("utf-8")
+
+
+def _deserialize(raw: Optional[bytes]) -> Optional[dict[str, Any]]:
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw.decode("utf-8"))
+    except Exception:
+        logger.warning("[ACTIVE-ENTITY] deserialize_failed")
+        return None
+    if not isinstance(d, dict):
+        return None
+    actions = d.get("allowed_actions")
+    if isinstance(actions, list):
+        d["allowed_actions"] = tuple(a for a in actions if isinstance(a, str))
+    return d
 
 
 def _validate_ref(entity_ref: Any) -> Optional[dict[str, Any]]:
@@ -263,7 +260,6 @@ def _validate_ref(entity_ref: Any) -> Optional[dict[str, Any]]:
                 v = v[:128]
             safe[klow] = v
         else:
-
             logger.warning(
                 "[ACTIVE-ENTITY] rejected_nonscalar_ref_value key=%s type=%s",
                 klow, type(v).__name__,
@@ -338,9 +334,7 @@ def set_active_entity(
 
     safe_ref = _validate_ref(entity_ref)
     if safe_ref is None:
-
         return False
-
 
     safe_label = ""
     if isinstance(display_label, str):
@@ -352,9 +346,7 @@ def set_active_entity(
         if q:
             safe_query = q[:MAX_QUERY_CHARS]
 
-
     safe_actions = _validate_actions(allowed_actions)
-
 
     safe_candidates: list[dict[str, Any]] = []
     if is_multi and candidates:
@@ -379,8 +371,15 @@ def set_active_entity(
         "created_at":      now,
         "expires_at":      now + ttl,
     }
-    with _lock:
-        _store[vault_id] = record
+    try:
+        backend = get_chat_state_backend()
+        backend.set(_redis_key(vault_id), _serialize(record), ttl)
+    except Exception:
+        logger.exception(
+            "[ACTIVE-ENTITY] write_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+        return False
 
     logger.info(
         "[ACTIVE-ENTITY] set vault=%s type=%s label_len=%d "
@@ -410,28 +409,54 @@ def get_active_entity(
     if not vault_id or not isinstance(vault_id, str):
         return None
     now = _now()
-    with _lock:
-        record = _store.get(vault_id)
-        if record is None:
-            return None
-        if now >= record.get("expires_at", 0):
-            _store.pop(vault_id, None)
-            return None
+    try:
+        backend = get_chat_state_backend()
+        raw = backend.get(_redis_key(vault_id))
+    except Exception:
+        logger.exception(
+            "[ACTIVE-ENTITY] read_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+        return None
+    record = _deserialize(raw)
+    if record is None:
+        return None
+    if now >= float(record.get("expires_at") or 0):
+        try:
+            backend.delete(_redis_key(vault_id))
+        except Exception:
+            pass
+        return None
 
-        stored_sid = record.get("session_id")
-        if stored_sid is not None:
-            requested_sid = _short_session_id(session_id)
-            if requested_sid != stored_sid:
-                return None
-        return copy.deepcopy(record)
+    stored_sid = record.get("session_id")
+    if stored_sid is not None:
+        requested_sid = _short_session_id(session_id)
+        if requested_sid != stored_sid:
+            return None
+    return copy.deepcopy(record)
 
 
 def clear_active_entity(vault_id: str) -> bool:
     """Forget the active entity. Returns True if one was cleared."""
     if not vault_id or not isinstance(vault_id, str):
         return False
-    with _lock:
-        return _store.pop(vault_id, None) is not None
+    try:
+        backend = get_chat_state_backend()
+        # Best-effort check-before-delete so we can return an
+        # accurate "was one present" boolean. Not strictly atomic
+        # against a concurrent writer, but the same semantics as
+        # the previous per-process dict implementation.
+        raw = backend.get(_redis_key(vault_id))
+        if raw is None:
+            return False
+        backend.delete(_redis_key(vault_id))
+        return True
+    except Exception:
+        logger.exception(
+            "[ACTIVE-ENTITY] clear_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+        return False
 
 
 def entity_matches_action(record: dict[str, Any], action: str) -> bool:
@@ -452,13 +477,43 @@ def entity_matches_action(record: dict[str, Any], action: str) -> bool:
 
 
 def _reset_store_for_test() -> None:
-    with _lock:
-        _store.clear()
+    from vault_chat_state_store import (
+        reset_chat_state_backend_for_tests,
+    )
+    reset_chat_state_backend_for_tests()
 
 
 def _snapshot_for_test() -> dict[str, dict[str, Any]]:
-    with _lock:
-        return copy.deepcopy(_store)
+    """Test-only. Returns a dict of currently-live entities, keyed
+    by vault_id. Only enumerates the in-memory backend — a Redis
+    backend has no safe SCAN we can use without a full keyspace
+    walk. Tests should install the in-memory backend.
+    """
+    try:
+        backend = get_chat_state_backend()
+    except Exception:
+        return {}
+    kv = getattr(backend, "_kv", None)
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(kv, dict):
+        return out
+    prefix = f"chatst:v1:{_BUCKET}:"
+    for key, entry in list(kv.items()):
+        if not isinstance(key, str) or not key.startswith(prefix):
+            continue
+        # in-memory backend stores each entry as (expires_at, value_bytes)
+        try:
+            payload = entry[1]
+        except Exception:
+            continue
+        record = _deserialize(payload)
+        if record is None:
+            continue
+        vid = str(record.get("vault_id") or "")
+        if not vid:
+            continue
+        out[vid] = record
+    return out
 
 
 __all__ = [

@@ -13,29 +13,41 @@ import vault_saved_item_chat_intent as ci
 class TestConfirmPhraseClosedSet(unittest.TestCase):
 
     def test_operator_listed_phrases_all_match(self):
-                                                                 
-                         
+        # 2026-07-24 chat-brain rebuild — the bare "yes",
+        # "confirm", "go ahead", "do it" phrases were removed
+        # from the broad save-confirm regex to prevent orphan
+        # unnamed uploads from hijacking a delete confirmation.
+        # Semantic confirmation understanding now lives in
+        # ``vault_chat_semantic_decider``. Phrases below are the
+        # remaining defense-in-depth fallback that mentions
+        # "save" explicitly.
         for phrase in [
             "save it", "save it now",
             "save this",
             "save that", "save that now",
             "save now",
-            "yes",
             "yes save it", "yes save this",
-            "confirm",
             "confirm save",
-            "go ahead", "go ahead and save",
+            "go ahead and save",
             "store it", "store this",
             "keep it",
             "add it", "add this",
             "ok save it", "okay save it", "ok, save it",
             "sure save it", "sure, save it",
-            "do it",
         ]:
             with self.subTest(phrase=phrase):
                 self.assertTrue(
                     pdc.is_pending_draft_confirm_phrase(phrase),
                     f"closed-set must match {phrase!r}",
+                )
+        # These were REMOVED — they now go through the semantic
+        # decider. Regression-lock the narrowing.
+        for phrase in ["yes", "confirm", "go ahead", "do it"]:
+            with self.subTest(phrase=phrase):
+                self.assertFalse(
+                    pdc.is_pending_draft_confirm_phrase(phrase),
+                    f"{phrase!r} must NOT match the narrow regex "
+                    "any more — semantic decider owns this",
                 )
 
     def test_negatives_do_not_match(self):
@@ -99,15 +111,17 @@ class TestSaveThemedSubset(unittest.TestCase):
 class TestSecureItemClassifierConfirmCoverage(unittest.TestCase):
 
     def test_classifier_routes_each_phrase_to_confirm(self):
+        # 2026-07-24 chat-brain rebuild — narrowed to
+        # "save"-mentioning phrases. Bare "yes", "confirm",
+        # "go ahead", "do it" go through the semantic decider now.
         for phrase in [
             "save it", "save it now",
             "save this", "save that", "save now",
-            "yes", "yes save it",
-            "confirm", "confirm save",
-            "go ahead", "go ahead and save",
+            "yes save it",
+            "confirm save",
+            "go ahead and save",
             "store it", "keep it", "add it",
             "ok save it", "sure save it",
-            "do it",
         ]:
             with self.subTest(phrase=phrase):
                 out = ci.classify_secure_item_intent(phrase)

@@ -131,22 +131,36 @@ class TestConfirmPhraseBoundary:
     @pytest.mark.parametrize(
         "resume_phrase",
         [
+            # 2026-07-24 chat-brain rebuild — narrowed regex
+            # covers "save"-mentioning phrasings only. Bare
+            # "yes", "confirm", "go ahead", "do it" now go
+            # through the semantic decider.
             "save it now",
             "save it",
             "save this",
-            "yes",
-            "confirm",
-            "go ahead",
             "ok save it",
             "okay save it",
             "please save it",
-            "do it",
         ],
     )
     def test_canonical_resume_phrases_match_confirmation(
         self, resume_phrase: str,
     ) -> None:
         assert is_pending_draft_confirm_phrase(resume_phrase) is True
+
+    @pytest.mark.parametrize(
+        "phrase_removed_from_broad_regex",
+        ["yes", "confirm", "go ahead", "do it"],
+    )
+    def test_removed_bare_phrases_no_longer_match(
+        self, phrase_removed_from_broad_regex: str,
+    ) -> None:
+        """Regression-lock the 2026-07-24 narrowing. These
+        phrases must NOT match the broad save-confirm regex any
+        more — they go through the semantic decider."""
+        assert is_pending_draft_confirm_phrase(
+            phrase_removed_from_broad_regex,
+        ) is False
 
 
 # ---------------------------------------------------------------------------

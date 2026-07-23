@@ -1,0 +1,52 @@
+{"category": "intent_accuracy",             "id": "ia-01",  "pending_kind": "delete_secure_item", "user_message": "yes",                                 "expected_tool": "confirm_pending_delete",   "confirm_reply_contains": "Deleted"}
+{"category": "intent_accuracy",             "id": "ia-02",  "pending_kind": "delete_secure_item", "user_message": "yeah go ahead",                       "expected_tool": "confirm_pending_delete",   "confirm_reply_contains": "Deleted"}
+{"category": "intent_accuracy",             "id": "ia-03",  "pending_kind": "delete_secure_item", "user_message": "ok delete it",                        "expected_tool": "confirm_pending_delete",   "confirm_reply_contains": "Deleted"}
+{"category": "intent_accuracy",             "id": "ia-04",  "pending_kind": "delete_secure_item", "user_message": "no",                                  "expected_tool": "cancel_pending_delete",    "confirm_reply_contains": "won't delete"}
+{"category": "intent_accuracy",             "id": "ia-05",  "pending_kind": "delete_secure_item", "user_message": "keep it",                             "expected_tool": "cancel_pending_delete",    "confirm_reply_contains": "won't delete"}
+
+{"category": "tool_selection",              "id": "ts-01",  "pending_kind": "none",               "user_message": "what's my gmail password",            "expected_tool": "fallthrough"}
+{"category": "tool_selection",              "id": "ts-02",  "pending_kind": "none",               "user_message": "generate a password for netflix",     "expected_tool": "fallthrough"}
+{"category": "tool_selection",              "id": "ts-03",  "pending_kind": "none",               "user_message": "list my saved logins",                "expected_tool": "fallthrough"}
+{"category": "tool_selection",              "id": "ts-04",  "pending_kind": "delete_secure_item", "user_message": "delete my chase login",               "expected_tool": "fallthrough",             "reason": "user wants to switch to a different delete target, not confirm the pending one"}
+
+{"category": "reference_resolution",        "id": "rr-01",  "pending_kind": "none",               "user_message": "which one did I save last",           "expected_tool": "fallthrough"}
+{"category": "reference_resolution",        "id": "rr-02",  "pending_kind": "delete_secure_item", "user_message": "the other one",                       "expected_tool": "request_clarification"}
+{"category": "reference_resolution",        "id": "rr-03",  "pending_kind": "delete_secure_item", "user_message": "not that one — the second one",       "expected_tool": "request_clarification"}
+
+{"category": "confirmation_understanding",  "id": "cu-01",  "pending_kind": "delete_secure_item", "user_message": "yep",                                 "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-02",  "pending_kind": "delete_secure_item", "user_message": "sure thing",                          "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-03",  "pending_kind": "delete_secure_item", "user_message": "please proceed",                      "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-04",  "pending_kind": "delete_secure_item", "user_message": "confirm",                             "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-05",  "pending_kind": "delete_secure_item", "user_message": "go for it",                           "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-06",  "pending_kind": "delete_secure_item", "user_message": "affirmative",                         "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-07",  "pending_kind": "delete_secure_item", "user_message": "yee",                                 "expected_tool": "confirm_pending_delete"}
+{"category": "confirmation_understanding",  "id": "cu-08",  "pending_kind": "delete_secure_item", "user_message": "yes plz",                             "expected_tool": "confirm_pending_delete"}
+
+{"category": "cancellation_understanding",  "id": "ca-01",  "pending_kind": "delete_secure_item", "user_message": "nope",                                "expected_tool": "cancel_pending_delete"}
+{"category": "cancellation_understanding",  "id": "ca-02",  "pending_kind": "delete_secure_item", "user_message": "actually don't",                      "expected_tool": "cancel_pending_delete"}
+{"category": "cancellation_understanding",  "id": "ca-03",  "pending_kind": "delete_secure_item", "user_message": "on second thought no",                "expected_tool": "cancel_pending_delete"}
+{"category": "cancellation_understanding",  "id": "ca-04",  "pending_kind": "delete_secure_item", "user_message": "never mind",                          "expected_tool": "cancel_pending_delete"}
+{"category": "cancellation_understanding",  "id": "ca-05",  "pending_kind": "delete_secure_item", "user_message": "cancel that",                         "expected_tool": "cancel_pending_delete"}
+
+{"category": "context_retention",           "id": "ct-01",  "pending_kind": "delete_secure_item", "user_message": "what did I ask you a moment ago",     "expected_tool": "fallthrough"}
+{"category": "context_retention",           "id": "ct-02",  "pending_kind": "none",               "user_message": "what was I doing before",             "expected_tool": "fallthrough"}
+
+{"category": "attachment_isolation",        "id": "at-01",  "pending_kind": "none",               "user_message": "yes",                                 "expected_tool": "fallthrough",             "reason": "no pending action, no confirm target — must never save an unrelated file"}
+{"category": "attachment_isolation",        "id": "at-02",  "pending_kind": "none",               "user_message": "save it",                             "expected_tool": "fallthrough"}
+{"category": "attachment_isolation",        "id": "at-03",  "pending_kind": "delete_secure_item", "user_message": "yes",                                 "expected_tool": "confirm_pending_delete",  "reason": "must resolve to the DELETE, never to any stale unnamed file"}
+
+{"category": "hallucination_prevention",    "id": "hp-01",  "pending_kind": "none",               "user_message": "what did you save just now",          "expected_tool": "fallthrough",             "must_not_contain": "saved"}
+{"category": "hallucination_prevention",    "id": "hp-02",  "pending_kind": "none",               "user_message": "delete my imaginary account",         "expected_tool": "fallthrough"}
+{"category": "hallucination_prevention",    "id": "hp-03",  "pending_kind": "none",               "user_message": "did you delete it",                   "expected_tool": "fallthrough"}
+
+{"category": "successful_action_truthfulness","id": "sa-01","pending_kind": "delete_secure_item", "user_message": "yes",                                 "expected_tool": "confirm_pending_delete",  "confirm_reply_contains": "Deleted"}
+{"category": "successful_action_truthfulness","id": "sa-02","pending_kind": "delete_secure_item", "user_message": "no",                                  "expected_tool": "cancel_pending_delete",   "confirm_reply_contains": "won't delete"}
+
+{"category": "general_conversation",        "id": "gc-01",  "pending_kind": "none",               "user_message": "hi",                                  "expected_tool": "conversational_reply"}
+{"category": "general_conversation",        "id": "gc-02",  "pending_kind": "none",               "user_message": "what can you do",                     "expected_tool": "conversational_reply"}
+{"category": "general_conversation",        "id": "gc-03",  "pending_kind": "none",               "user_message": "what is vaultai",                     "expected_tool": "conversational_reply"}
+{"category": "general_conversation",        "id": "gc-04",  "pending_kind": "none",               "user_message": "how does zero knowledge work here",   "expected_tool": "conversational_reply"}
+
+{"category": "clarification_quality",       "id": "cq-01",  "pending_kind": "delete_secure_item", "user_message": "which login are we deleting",         "expected_tool": "request_clarification"}
+{"category": "clarification_quality",       "id": "cq-02",  "pending_kind": "none",               "user_message": "delete it",                           "expected_tool": "request_clarification"}
+{"category": "clarification_quality",       "id": "cq-03",  "pending_kind": "delete_secure_item", "user_message": "wait what does that even mean",       "expected_tool": "request_clarification"}

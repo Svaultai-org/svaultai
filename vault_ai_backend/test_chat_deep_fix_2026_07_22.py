@@ -486,18 +486,44 @@ class TestExpandedConfirmPhrases(unittest.TestCase):
     save) and item 8 (natural conversation) both require this."""
 
     def test_original_save_phrases_still_match(self) -> None:
+        """2026-07-24 chat-brain rebuild: the narrow regex-based
+        confirm list is now a defense-in-depth fallback ONLY for
+        phrasings that mention "save" explicitly and cannot be
+        misread as delete confirmations. Bare "yes", "confirm",
+        "go ahead", "do it" were REMOVED from the broad list and
+        migrated to the semantic decider (see
+        ``vault_chat_semantic_decider`` +
+        ``vault_pending_draft_confirm``'s updated docstring).
+        These four phrases below still work end-to-end via the
+        semantic path — see
+        ``test_chat_semantic_paraphrase_2026_07_24`` for the
+        cross-worker semantic regression tests."""
         from vault_pending_draft_confirm import (
             is_pending_draft_confirm_phrase as _c,
-            is_save_themed_confirm_phrase as _s,
         )
+        # Phrases that explicitly say "save" — narrow safe list,
+        # kept for the regex-level defense-in-depth fallback.
         for phrase in (
             "save this", "save it", "save that", "save",
-            "save now", "store this", "keep it",
-            "add that", "yes", "confirm", "go ahead",
-            "do it",
+            "save now", "store this", "keep it", "add that",
         ):
             with self.subTest(phrase=phrase):
                 self.assertTrue(_c(phrase), phrase)
+        # Phrases that were previously in the broad regex are
+        # NO LONGER matched here — the semantic decider owns
+        # them now. Regression-lock the removal so nobody puts
+        # them back accidentally.
+        for phrase in (
+            "yes", "confirm", "go ahead", "do it",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertFalse(
+                    _c(phrase),
+                    f"{phrase!r} should NOT match the broad save-"
+                    "confirm regex any more — it goes to the "
+                    "semantic decider instead. This regression-"
+                    "locks the 2026-07-24 narrowing.",
+                )
 
     def test_added_natural_save_phrases_match(self) -> None:
         # 2026-07-22 additions from the deep-fix spec.
