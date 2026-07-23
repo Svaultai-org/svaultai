@@ -223,12 +223,16 @@ class ChatBrainTopicSwitchTest(unittest.TestCase):
         _install_provider(None)
         reset_chat_state_backend_for_tests()
 
-    def test_topic_switch_with_destructive_pending_asks_clarification(self):
-        """Adjustment 3: with a destructive action pending, a
-        model-fallthrough on an unrelated topic must NOT delegate
-        to the legacy pipeline (which could confirm the delete
-        via legacy phrase matching). The fail-safe intercepts and
-        asks the user to clarify."""
+    def test_topic_switch_with_destructive_pending_deliberate_fallthrough(self):
+        """Phase II refinement of adjustment 3: a DELIBERATE
+        model-fallthrough on a destructive-pending turn (empty
+        ``error``, MEDIUM+ confidence, tool == fallthrough) is
+        allowed to reach the legacy pipeline. The model has
+        semantically judged the reply as a topic switch, and the
+        safety hijack risk is already closed by the bare
+        yes/no/cancel branches above. The Instagram delete
+        remains pending; the legacy pipeline stamps the new
+        Chase request."""
         from vault_secure_item_delete_confirmation import store_delete_intent
         store_delete_intent(
             vault_id=VAULT_A, service="Netflix", item_type="login",
@@ -237,15 +241,34 @@ class ChatBrainTopicSwitchTest(unittest.TestCase):
             "tool": TOOL_FALLTHROUGH,
             "args": {},
             "confidence": CONFIDENCE_MEDIUM,
-            "why": "unrelated",
+            "why": "topic switch",
         })
         result = _run(_run_brain(
             "what's my chase password",
             vault_id=VAULT_A, session_id=SESS_A,
         ))
-        # Fail-safe intercepts; the brain handles the turn.
+        # Deliberate fallthrough is allowed through.
+        self.assertFalse(result.handled)
+        self.assertNotIn("Deleted", result.reply_text)
+
+    def test_failure_driven_fallthrough_destructive_pending_asks_clarification(self):
+        """When the decider FAILED (timeout, malformed, etc.)
+        AND destructive is pending AND the message is not bare
+        yes/no/cancel, the safety fallback still asks the user
+        to repeat — the failure-driven fallthrough case is
+        distinct from the deliberate-model case above."""
+        from vault_secure_item_delete_confirmation import store_delete_intent
+        store_delete_intent(
+            vault_id=VAULT_A, service="Netflix", item_type="login",
+        )
+        # Provider raises → decider returns fallthrough with error.
+        import asyncio as _asyncio
+        _install_provider(_asyncio.TimeoutError())
+        result = _run(_run_brain(
+            "what's my chase password",
+            vault_id=VAULT_A, session_id=SESS_A,
+        ))
         self.assertTrue(result.handled)
-        # It is a clarification, not a deletion.
         self.assertNotIn("Deleted", result.reply_text)
         self.assertIn("yes", result.reply_text.lower())
         self.assertIn("no", result.reply_text.lower())
@@ -447,12 +470,12 @@ class ChatBrainConversationalReplyTest(unittest.TestCase):
 
     def test_conversational_refused_when_delete_pending(self):
         """Policy refuses the model's conversational hijack while a
-        destructive action is pending. Under the 2026-07-24
-        adjustment 3, the brain then applies the deterministic
-        fail-safe: the user's message ("what's the weather like")
-        is not a bare yes/no/cancel, so it asks for
-        clarification. It must NOT delegate to the legacy
-        pipeline for a destructive turn."""
+        destructive action is pending. The decider's tool was
+        NOT fallthrough (it was conversational_reply); the
+        deliberate-fallthrough exemption therefore does not
+        apply, and the safety fallback asks the user to repeat.
+        This ensures the model cannot side-step a destructive
+        pending by dressing it up as a conversation."""
         from vault_secure_item_delete_confirmation import store_delete_intent
         store_delete_intent(
             vault_id=VAULT_A, service="Netflix", item_type="login",
@@ -467,8 +490,6 @@ class ChatBrainConversationalReplyTest(unittest.TestCase):
             "what's the weather like",
             vault_id=VAULT_A, session_id=SESS_A,
         ))
-        # Handled by brain (not legacy). Clarification, not a
-        # weather answer, not a deletion.
         self.assertTrue(result.handled)
         self.assertNotIn("Deleted", result.reply_text)
         self.assertNotIn("weather", result.reply_text.lower())

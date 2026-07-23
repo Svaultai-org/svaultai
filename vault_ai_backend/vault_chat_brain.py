@@ -108,7 +108,9 @@ async def run_chat_brain(
         return FALLTHROUGH
 
     if decision.is_fallthrough():
-        safe = _apply_destructive_failsafe(snapshot, key=key, memory=memory)
+        safe = _apply_destructive_failsafe(
+            snapshot, key=key, memory=memory, decision=decision,
+        )
         if safe is not None:
             _log_brain_outcome(
                 snapshot, decision, handled=True,
@@ -143,7 +145,9 @@ async def run_chat_brain(
         _log_policy(snapshot, decision, policy_result)
 
     if policy_result is None or not policy_result.approved:
-        safe = _apply_destructive_failsafe(snapshot, key=key, memory=memory)
+        safe = _apply_destructive_failsafe(
+            snapshot, key=key, memory=memory, decision=decision,
+        )
         if safe is not None:
             _log_brain_outcome(
                 snapshot, decision, handled=True,
@@ -193,7 +197,9 @@ async def run_chat_brain(
         # destructive fail-safe: legacy routing must NEVER
         # execute a destructive action on the strength of a
         # planner failure.
-        safe = _apply_destructive_failsafe(snapshot, key=key, memory=memory)
+        safe = _apply_destructive_failsafe(
+            snapshot, key=key, memory=memory, decision=decision,
+        )
         if safe is not None:
             _log_brain_outcome(
                 snapshot, decision, handled=True,
@@ -245,6 +251,7 @@ def _apply_destructive_failsafe(
     *,
     key: bytes,
     memory: Any,
+    decision: Optional[Decision] = None,
 ) -> Optional[RouterResult]:
     """Fail-safe for turns where a destructive action is pending
     and the semantic path did NOT confidently handle the turn.
@@ -254,12 +261,25 @@ def _apply_destructive_failsafe(
           confirm/cancel dispatched OR a short clarification
           asked. In either case the caller must treat the turn
           as handled and NOT fall through to the legacy pipeline.
-        * ``None`` — no destructive pending; caller may fall
-          through to the existing pipeline as usual.
+        * ``None`` — either no destructive pending, OR the model
+          DELIBERATELY chose fallthrough (empty ``error``, i.e.
+          the decider did not fail — it just yielded to the
+          existing pipeline as a semantic judgment). Callers
+          may then fall through to the existing pipeline as
+          usual. This preserves the Phase II ability of the
+          model to route a topic-switch reply (``"delete my
+          chase login"`` while an Instagram delete was pending)
+          into the existing pipeline that can stamp the new
+          delete correctly, WITHOUT giving up the safety
+          guarantees when the model actually fails.
 
-    Non-destructive pending actions do NOT go through this
-    fail-safe (see adjustment 3 of the 2026-07-24 chat-brain
-    rebuild): they may still fall back to the existing pipeline.
+    Note: even when the model deliberately chose fallthrough,
+    the safety classifier is still tried first — a bare
+    ``"yes"`` / ``"no"`` / ``"cancel"`` reply is ALWAYS handled
+    by the failsafe regardless of what the model returned. That
+    is the exact regression the deterministic safety fallback
+    exists to prevent: a mis-behaving planner cannot let a bare
+    confirmation slip through to legacy routing.
     """
     pending = snapshot.pending_action
     if not pending.is_destructive:
@@ -327,10 +347,33 @@ def _apply_destructive_failsafe(
                 tool=TOOL_CANCEL_PENDING_DELETE,
             )
         return result
-    # SAFETY_UNCLEAR — the user said something the deterministic
-    # layer cannot safely interpret. We MUST NOT let the legacy
-    # pipeline try to interpret it either — that is exactly the
-    # attack vector we are closing. Ask the user to repeat.
+    # SAFETY_UNCLEAR path. We need one more discrimination
+    # before asking the user to repeat: was this fallthrough
+    # DELIBERATE (the model semantically decided "not my job")
+    # or FAILURE-DRIVEN (timeout, malformed JSON, unknown tool,
+    # schema mismatch)?
+    #
+    #   * Failure-driven → keep destructive-safety posture; ask
+    #     the user to repeat (never let legacy handle a
+    #     destructive turn on a planner failure — adjustment 3).
+    #   * Deliberate      → the model was confident this is a
+    #     topic switch or non-destructive-relevant request.
+    #     Return None so the caller falls through to the
+    #     existing pipeline, which can process the new request
+    #     correctly (e.g. stamp a delete for a DIFFERENT target).
+    #     Safety is preserved because the bare yes/no/cancel
+    #     branches above already handled the confirmation
+    #     hijack risk.
+    from vault_chat_tool_registry import TOOL_FALLTHROUGH as _TF
+    if (decision is not None
+            and decision.tool == _TF
+            and not decision.error
+            and decision.confidence in (CONFIDENCE_HIGH, "medium")):
+        # Deliberate fallthrough. The model explicitly said
+        # "this is a topic switch — pipeline should handle it".
+        # Let the pipeline handle it; the safety hijack risk is
+        # already closed above (bare yes/no/cancel branches).
+        return None
     return RouterResult(
         handled=True,
         reply_text=build_clarification_prompt(pending.target_label),

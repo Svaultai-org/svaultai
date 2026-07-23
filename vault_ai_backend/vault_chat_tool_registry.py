@@ -86,11 +86,14 @@ def _register(spec: ToolSpec) -> None:
 _register(ToolSpec(
     name=TOOL_CONFIRM_PENDING_DELETE,
     description=(
-        "Confirm and execute the currently pending delete action. "
-        "Use ONLY when the user's reply clearly means 'yes go ahead' "
-        "with respect to the pending delete action described in the "
-        "context. The backend independently re-checks that a matching "
-        "pending delete exists for this session before executing."
+        "Confirm and execute the pending delete described in "
+        "snapshot.pending_action. Use when the user's reply "
+        "unambiguously means 'yes proceed with that delete' — any "
+        "phrasing where the user is affirming the pending action. "
+        "REQUIRED ARG: action_id copied verbatim from "
+        "snapshot.pending_action.action_id. The backend re-checks "
+        "that a matching pending delete exists for this session "
+        "before executing."
     ),
     args_schema={
         "type": "object",
@@ -114,8 +117,12 @@ _register(ToolSpec(
 _register(ToolSpec(
     name=TOOL_CANCEL_PENDING_DELETE,
     description=(
-        "Cancel the currently pending delete action. Use when the "
-        "user's reply clearly means they no longer want to delete."
+        "Cancel the pending delete described in "
+        "snapshot.pending_action. Use when the user's reply means "
+        "they no longer want to delete — 'no', 'cancel', 'keep it', "
+        "'actually don't', 'never mind', 'on second thought', etc. "
+        "REQUIRED ARG: action_id copied verbatim from "
+        "snapshot.pending_action.action_id."
     ),
     args_schema={
         "type": "object",
@@ -133,10 +140,12 @@ _register(ToolSpec(
 _register(ToolSpec(
     name=TOOL_CONFIRM_PENDING_SAVE,
     description=(
-        "Confirm the currently pending save action (credential draft, "
-        "login draft, secure item draft, or a freshly-uploaded "
-        "attachment that was bound to THIS session). Use ONLY when "
-        "the user's reply clearly means 'yes save it'."
+        "Confirm the pending save described in "
+        "snapshot.pending_action (credential draft, login draft, "
+        "secure item draft, or a session-bound attachment). Use "
+        "when the user's reply means 'yes save it'. REQUIRED ARGS: "
+        "action_id copied from snapshot.pending_action.action_id "
+        "AND pending_kind copied from snapshot.pending_action.kind."
     ),
     args_schema={
         "type": "object",
@@ -163,8 +172,10 @@ _register(ToolSpec(
 _register(ToolSpec(
     name=TOOL_CANCEL_PENDING_SAVE,
     description=(
-        "Cancel the currently pending save action. Use when the "
-        "user's reply clearly means 'don't save that'."
+        "Cancel the pending save described in "
+        "snapshot.pending_action. Use when the user's reply means "
+        "'don't save that'. REQUIRED ARG: action_id copied verbatim "
+        "from snapshot.pending_action.action_id."
     ),
     args_schema={
         "type": "object",
@@ -182,10 +193,12 @@ _register(ToolSpec(
 _register(ToolSpec(
     name=TOOL_REQUEST_CLARIFICATION,
     description=(
-        "Ask the user a concise clarification question. Use when the "
-        "reply is ambiguous, references something that isn't "
-        "grounded, or asks about an item that has multiple matches. "
-        "Never guess."
+        "Ask the user a concise clarification question. Use when "
+        "the reply is ambiguous, references something that isn't "
+        "grounded in the snapshot, or asks about an item that has "
+        "multiple matches. Never guess. REQUIRED ARG: question — "
+        "the exact text of the question to render to the user; "
+        "short and specific."
     ),
     args_schema={
         "type": "object",
@@ -211,12 +224,17 @@ _register(ToolSpec(
 _register(ToolSpec(
     name=TOOL_CONVERSATIONAL_REPLY,
     description=(
-        "Answer the user conversationally without invoking any vault "
-        "tool. Use for ordinary chat, greetings, general questions "
-        "about VaultAI, or explanations that don't require reading "
-        "or writing vault data. Never claim an item was saved / "
-        "deleted / changed here — those require real tool "
-        "invocations."
+        "Answer the user conversationally without invoking any "
+        "vault tool. Use for greetings ('hi', 'hello'), general "
+        "questions about VaultAI's capabilities ('what can you "
+        "do', 'what is VaultAI'), or explanations that don't "
+        "require reading or writing vault data ('how does zero-"
+        "knowledge work', 'is this encrypted'). Keep it short "
+        "(one to three sentences). Never claim an item was saved / "
+        "deleted / changed / found — those require real tool "
+        "invocations. REQUIRED ARG: reply — the exact user-"
+        "facing text. Note the key is literally `reply`, not "
+        "`response` and not `message`."
     ),
     args_schema={
         "type": "object",
@@ -239,12 +257,15 @@ _register(ToolSpec(
     name=TOOL_FALLTHROUGH,
     description=(
         "Yield to the existing chat pipeline. Use when the user's "
-        "request needs a vault tool that is not listed here — the "
-        "downstream pipeline can classify vault reads, credential "
-        "generation, file search, and other capabilities that are "
-        "not in this narrow registry. NEVER pick fallthrough when "
-        "the user is confirming or rejecting a pending destructive "
-        "action."
+        "request needs a vault capability NOT in this closed set "
+        "(vault reads, credential generation, file search, ID "
+        "lookups, wallet operations, secure-item saves, deletes of "
+        "OTHER targets, etc.) — the downstream pipeline handles "
+        "those correctly. Also use for topic switches (the user is "
+        "clearly asking about something OTHER than the pending "
+        "action). ARG: empty object {}. NEVER pick fallthrough "
+        "when the user is confirming or cancelling a pending "
+        "destructive action described in the snapshot."
     ),
     args_schema={
         "type": "object",

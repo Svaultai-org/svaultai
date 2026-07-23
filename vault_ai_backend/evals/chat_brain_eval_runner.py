@@ -199,11 +199,8 @@ def _build_live_provider(pending_id: str):
 
     async def _provider(**kwargs):
         result = await chat_complete_with_fallback(**kwargs)
-        # If the model returned a JSON object whose action_id is
-        # a placeholder, substitute the real id so the policy
-        # gate does not spuriously refuse. Real models we tested
-        # correctly copy the id from the snapshot.
         content = result.content or ""
+        _LAST_RAW_MODEL_OUTPUT["content"] = content
         try:
             parsed = json.loads(content)
             if (isinstance(parsed, dict)
@@ -211,10 +208,13 @@ def _build_live_provider(pending_id: str):
                     and parsed["args"].get("action_id") == "PENDING_ACTION_ID"):
                 parsed["args"]["action_id"] = pending_id
                 content = json.dumps(parsed)
+            if isinstance(parsed, dict):
+                _LAST_RAW_MODEL_OUTPUT["confidence"] = str(
+                    parsed.get("confidence") or "",
+                )
         except Exception:
             pass
 
-        # Re-wrap into a lightweight object exposing .content.
         class _R:
             pass
         r = _R()
@@ -246,10 +246,15 @@ def _install_secure_item_stub():
     ss._cancel_pending_delete = _cancel
 
 
+_LAST_RAW_MODEL_OUTPUT: dict = {"content": "", "confidence": ""}
+
+
 async def _run_row(row: dict, *, live: bool = False) -> tuple[str, str, str]:
     """Return (chosen_tool, reply_text, notes)."""
     import vault_chat_semantic_decider as sd
     from vault_chat_brain import run_chat_brain
+    _LAST_RAW_MODEL_OUTPUT["content"] = ""
+    _LAST_RAW_MODEL_OUTPUT["confidence"] = ""
 
     reset_chat_state_backend_for_tests()
     install_backend_for_tests(InMemoryChatStateBackend())
@@ -368,10 +373,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 fail_count += 1
                 by_category[cat]["fail"] += 1
+                raw = ""
+                if args.live:
+                    raw_content = _LAST_RAW_MODEL_OUTPUT.get("content") or ""
+                    if raw_content:
+                        raw = f" raw={raw_content[:200]!r}"
                 print(
                     f"FAIL {row.get('id', '?'):<8} [{cat}] "
                     f"expected={expected_tool} chosen={chosen_tool} "
-                    f"msg={row['user_message']!r}",
+                    f"msg={row['user_message']!r}{raw}",
                 )
     finally:
         loop.close()

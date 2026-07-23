@@ -33,8 +33,15 @@ from vault_chat_pending_action import (
 logger = logging.getLogger(__name__)
 
 
-MAX_HISTORY_TURNS: int = 6
+# Phase II: larger recent-turn window so the model sees enough
+# history to answer "what did I just ask you" and to resolve
+# short-range references like "that one" against actual prior
+# text.
+MAX_HISTORY_TURNS: int = 12
 MAX_MESSAGE_CHARS: int = 2000
+# Maximum candidates from the active entity that we surface in
+# the snapshot so the model can resolve "the second one".
+MAX_ACTIVE_ENTITY_CANDIDATES: int = 10
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,12 @@ class ActiveEntitySafeView:
     display_label:   str
     is_multi:        bool
     allowed_actions: tuple = ()
+    # Phase II: safe references (ids / display labels) of the
+    # candidates the last search or list rendered. Used by the
+    # decider to resolve "the second one" / "that other login"
+    # against real, grounded options rather than guessing.
+    candidates:      tuple = ()
+    query:           str   = ""
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,10 @@ class TurnSnapshot:
     unlocked:            bool = True
     user_tier:           str = "free"
     features:            dict = field(default_factory=dict)
+    # Phase II: short rolling digest of the conversation so far
+    # (empty when the conversation is short or the digest module
+    # is unavailable). Never contains vault plaintext or secrets.
+    conversation_digest: str  = ""
 
     def has_pending(self) -> bool:
         return self.pending_action.kind != NONE_PENDING.kind
@@ -93,8 +110,15 @@ class TurnSnapshot:
                     "allowed_actions": list(
                         self.active_entity.allowed_actions
                     ),
+                    "candidates":      [
+                        dict(c) for c in self.active_entity.candidates
+                    ],
+                    "query":           self.active_entity.query,
                 }
                 if self.active_entity is not None else None
+            ),
+            "conversation_digest": (
+                self.conversation_digest or None
             ),
             "recent_turns": [
                 {
@@ -196,11 +220,30 @@ def _active_entity_view(
         return None
     if not isinstance(record, dict):
         return None
+    raw_candidates = record.get("candidates") or []
+    if not isinstance(raw_candidates, list):
+        raw_candidates = []
+    safe_candidates: list[dict] = []
+    for c in raw_candidates[:MAX_ACTIVE_ENTITY_CANDIDATES]:
+        if isinstance(c, dict):
+            # Copy only the always-safe keys the active-entity
+            # store already validated (allowed-ref-key set). No
+            # plaintext, no encrypted-column values, no tokens.
+            safe = {
+                k: v for k, v in c.items()
+                if isinstance(k, str) and isinstance(
+                    v, (str, int, float, bool),
+                )
+            }
+            if safe:
+                safe_candidates.append(safe)
     return ActiveEntitySafeView(
         entity_type=str(record.get("entity_type") or ""),
         display_label=str(record.get("display_label") or ""),
         is_multi=bool(record.get("is_multi") or False),
         allowed_actions=tuple(record.get("allowed_actions") or ()),
+        candidates=tuple(safe_candidates),
+        query=str(record.get("query") or "")[:80],
     )
 
 
@@ -231,6 +274,7 @@ def build_turn_snapshot(
     )
     entity = _active_entity_view(vault_id, session_id)
     recent = _recent_turns_from_memory(memory, when)
+    digest = _build_digest(recent, pending, entity)
 
     return TurnSnapshot(
         vault_id=str(vault_id or ""),
@@ -247,7 +291,45 @@ def build_turn_snapshot(
         unlocked=bool(unlocked),
         user_tier=str(user_tier or "free"),
         features=dict(features or {}),
+        conversation_digest=digest,
     )
+
+
+def _build_digest(
+    recent: tuple,
+    pending: Any,
+    entity: Optional[ActiveEntitySafeView],
+) -> str:
+    try:
+        from vault_chat_conversation_digest import build_digest
+    except Exception:
+        return ""
+    try:
+        return build_digest(
+            recent_user_turns=[
+                t.text for t in recent if t.role == "user"
+            ],
+            recent_assistant_turns=[
+                t.text for t in recent if t.role == "assistant"
+            ],
+            pending_kind=(
+                pending.kind if pending and pending.kind != "none"
+                else None
+            ),
+            pending_target_label=(
+                pending.target_label if pending
+                and pending.kind != "none" else None
+            ),
+            active_entity_label=(
+                entity.display_label if entity else None
+            ),
+            active_entity_is_multi=(
+                entity.is_multi if entity else False
+            ),
+        )
+    except Exception:
+        logger.exception("[SNAPSHOT] digest_failed")
+        return ""
 
 
 __all__ = [
