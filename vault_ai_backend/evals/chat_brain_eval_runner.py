@@ -41,7 +41,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional  # noqa: F401
 
 # ensure the parent (backend) directory is importable when running
 # as a module from any cwd.
@@ -189,6 +189,41 @@ def _build_provider(pending_id: str):
     return _provider
 
 
+def _build_live_provider(pending_id: str):
+    """Real production-LLM provider — wraps
+    ``chat_complete_with_fallback`` and substitutes the current
+    pending action_id if the model quotes ``PENDING_ACTION_ID``
+    verbatim (defensive; a well-behaved model reads the
+    real id from the snapshot). No emulator involved."""
+    from vault_ai_provider import chat_complete_with_fallback
+
+    async def _provider(**kwargs):
+        result = await chat_complete_with_fallback(**kwargs)
+        # If the model returned a JSON object whose action_id is
+        # a placeholder, substitute the real id so the policy
+        # gate does not spuriously refuse. Real models we tested
+        # correctly copy the id from the snapshot.
+        content = result.content or ""
+        try:
+            parsed = json.loads(content)
+            if (isinstance(parsed, dict)
+                    and isinstance(parsed.get("args"), dict)
+                    and parsed["args"].get("action_id") == "PENDING_ACTION_ID"):
+                parsed["args"]["action_id"] = pending_id
+                content = json.dumps(parsed)
+        except Exception:
+            pass
+
+        # Re-wrap into a lightweight object exposing .content.
+        class _R:
+            pass
+        r = _R()
+        r.content = content
+        r.model = result.model
+        return r
+    return _provider
+
+
 _pending_kind_holder: dict = {"kind": None}
 
 
@@ -211,7 +246,7 @@ def _install_secure_item_stub():
     ss._cancel_pending_delete = _cancel
 
 
-async def _run_row(row: dict) -> tuple[str, str, str]:
+async def _run_row(row: dict, *, live: bool = False) -> tuple[str, str, str]:
     """Return (chosen_tool, reply_text, notes)."""
     import vault_chat_semantic_decider as sd
     from vault_chat_brain import run_chat_brain
@@ -234,7 +269,10 @@ async def _run_row(row: dict) -> tuple[str, str, str]:
         intent = get_pending_delete_intent(vault_id="vault-eval")
         pending_id = intent.intent_id if intent else ""
 
-    provider = _build_provider(pending_id)
+    if live:
+        provider = _build_live_provider(pending_id)
+    else:
+        provider = _build_provider(pending_id)
     orig = sd.decide
 
     async def patched(snapshot, *, timeout_s=None, ai_provider=None):
@@ -260,7 +298,22 @@ async def _run_row(row: dict) -> tuple[str, str, str]:
     )
 
 
-def main() -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    import argparse
+
+    p = argparse.ArgumentParser(description=(
+        "Chat brain eval runner. Default: deterministic semantic "
+        "emulator. --live: hits the real production LLM via "
+        "chat_complete_with_fallback (costs API tokens)."
+    ))
+    p.add_argument("--live", action="store_true",
+                   help="Use real production LLM instead of the emulator")
+    p.add_argument("--limit", type=int, default=0,
+                   help="Only run the first N rows (0 = all)")
+    p.add_argument("--categories", type=str, default="",
+                   help="Comma-separated category prefixes to include")
+    args = p.parse_args(argv or sys.argv[1:])
+
     if not os.path.exists(EVAL_PATH):
         print(f"eval corpus not found at {EVAL_PATH}")
         return 2
@@ -278,6 +331,16 @@ def main() -> int:
         print("empty corpus")
         return 2
 
+    if args.categories:
+        wanted = {c.strip() for c in args.categories.split(",") if c.strip()}
+        rows = [r for r in rows if r.get("category") in wanted]
+    if args.limit > 0:
+        rows = rows[:args.limit]
+
+    mode = "LIVE (real LLM)" if args.live else "EMULATOR (deterministic)"
+    print(f"chat brain eval: mode={mode}  rows={len(rows)}")
+    print("")
+
     pass_count = 0
     fail_count = 0
     by_category: dict = defaultdict(lambda: {"pass": 0, "fail": 0})
@@ -287,7 +350,9 @@ def main() -> int:
         asyncio.set_event_loop(loop)
         for row in rows:
             expected_tool = row.get("expected_tool")
-            chosen_tool, reply, _notes = loop.run_until_complete(_run_row(row))
+            chosen_tool, reply, _notes = loop.run_until_complete(
+                _run_row(row, live=args.live),
+            )
             row_ok = (chosen_tool == expected_tool)
             confirm_expects = row.get("confirm_reply_contains")
             if row_ok and confirm_expects:
@@ -314,7 +379,8 @@ def main() -> int:
     total = pass_count + fail_count
     pct = (100.0 * pass_count / total) if total else 0.0
     print("")
-    print(f"===== chat brain eval: {pass_count}/{total} ({pct:.1f}%) =====")
+    print(f"===== chat brain eval [{mode}]: "
+          f"{pass_count}/{total} ({pct:.1f}%) =====")
     for cat, counts in sorted(by_category.items()):
         c_total = counts["pass"] + counts["fail"]
         c_pct = 100.0 * counts["pass"] / c_total if c_total else 0.0

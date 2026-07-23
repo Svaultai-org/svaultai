@@ -22,12 +22,26 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional  # noqa: F401 — Optional used by _apply_destructive_failsafe
 
 import vault_chat_semantic_decider as _decider_mod
 from vault_chat_decision_router import RouterResult, dispatch
+from vault_chat_destructive_safety_fallback import (
+    SAFETY_CANCEL,
+    SAFETY_CONFIRM,
+    SAFETY_UNCLEAR,
+    build_clarification_prompt,
+    classify_destructive_message,
+)
 from vault_chat_policy import authorize, _log_policy
-from vault_chat_semantic_decider import Decision
+from vault_chat_semantic_decider import (
+    CONFIDENCE_HIGH,
+    Decision,
+)
+from vault_chat_tool_registry import (
+    TOOL_CANCEL_PENDING_DELETE,
+    TOOL_CONFIRM_PENDING_DELETE,
+)
 from vault_chat_turn_snapshot import (
     TurnSnapshot, append_recent_turn, build_turn_snapshot,
 )
@@ -94,6 +108,21 @@ async def run_chat_brain(
         return FALLTHROUGH
 
     if decision.is_fallthrough():
+        safe = _apply_destructive_failsafe(snapshot, key=key, memory=memory)
+        if safe is not None:
+            _log_brain_outcome(
+                snapshot, decision, handled=True,
+                elapsed=time.time() - started,
+                note=(
+                    "destructive_failsafe_after_decider:"
+                    f"{safe.tool or 'clarify'}"
+                ),
+            )
+            return BrainResult(
+                handled=True,
+                reply_text=safe.reply_text,
+                tool=safe.tool,
+            )
         _log_brain_outcome(
             snapshot, decision, handled=False,
             elapsed=time.time() - started,
@@ -109,18 +138,41 @@ async def run_chat_brain(
         policy_result = authorize(snapshot=snapshot, decision=decision)
     except Exception:
         logger.exception("[BRAIN] policy_crashed")
-        return FALLTHROUGH
-    _log_policy(snapshot, decision, policy_result)
+        policy_result = None
+    if policy_result is not None:
+        _log_policy(snapshot, decision, policy_result)
 
-    if not policy_result.approved:
+    if policy_result is None or not policy_result.approved:
+        safe = _apply_destructive_failsafe(snapshot, key=key, memory=memory)
+        if safe is not None:
+            _log_brain_outcome(
+                snapshot, decision, handled=True,
+                elapsed=time.time() - started,
+                note=(
+                    "destructive_failsafe_after_policy:"
+                    f"{safe.tool or 'clarify'}"
+                ),
+            )
+            return BrainResult(
+                handled=True,
+                reply_text=safe.reply_text,
+                tool=safe.tool,
+            )
+        _reason = (
+            "policy_crashed" if policy_result is None
+            else f"policy:{policy_result.reason}"
+        )
         _log_brain_outcome(
             snapshot, decision, handled=False,
             elapsed=time.time() - started,
-            note=f"policy_reject:{policy_result.reason}",
+            note=(
+                "policy_crashed" if policy_result is None
+                else f"policy_reject:{policy_result.reason}"
+            ),
         )
         return BrainResult(
             handled=False,
-            fallthrough_reason=f"policy:{policy_result.reason}",
+            fallthrough_reason=_reason,
         )
 
     # 4) dispatch
@@ -133,9 +185,26 @@ async def run_chat_brain(
         )
     except Exception:
         logger.exception("[BRAIN] dispatch_crashed")
-        return FALLTHROUGH
+        router_result = RouterResult.fallthrough()
 
     if not router_result.handled:
+        # Router did not handle. Before we allow the request to
+        # fall through to the existing pipeline, apply the
+        # destructive fail-safe: legacy routing must NEVER
+        # execute a destructive action on the strength of a
+        # planner failure.
+        safe = _apply_destructive_failsafe(snapshot, key=key, memory=memory)
+        if safe is not None:
+            _log_brain_outcome(
+                snapshot, decision, handled=True,
+                elapsed=time.time() - started,
+                note=f"destructive_failsafe:{safe.tool or 'clarify'}",
+            )
+            return BrainResult(
+                handled=True,
+                reply_text=safe.reply_text,
+                tool=safe.tool,
+            )
         _log_brain_outcome(
             snapshot, decision, handled=False,
             elapsed=time.time() - started,
@@ -168,6 +237,105 @@ async def run_chat_brain(
         handled=True,
         reply_text=router_result.reply_text,
         tool=router_result.tool,
+    )
+
+
+def _apply_destructive_failsafe(
+    snapshot: TurnSnapshot,
+    *,
+    key: bytes,
+    memory: Any,
+) -> Optional[RouterResult]:
+    """Fail-safe for turns where a destructive action is pending
+    and the semantic path did NOT confidently handle the turn.
+
+    Returns:
+        * ``RouterResult(handled=True, ...)`` — deterministic
+          confirm/cancel dispatched OR a short clarification
+          asked. In either case the caller must treat the turn
+          as handled and NOT fall through to the legacy pipeline.
+        * ``None`` — no destructive pending; caller may fall
+          through to the existing pipeline as usual.
+
+    Non-destructive pending actions do NOT go through this
+    fail-safe (see adjustment 3 of the 2026-07-24 chat-brain
+    rebuild): they may still fall back to the existing pipeline.
+    """
+    pending = snapshot.pending_action
+    if not pending.is_destructive:
+        return None
+    verdict = classify_destructive_message(snapshot.user_message)
+    if verdict == SAFETY_CONFIRM:
+        synthetic = Decision(
+            tool=TOOL_CONFIRM_PENDING_DELETE,
+            args={"action_id": pending.action_id},
+            confidence=CONFIDENCE_HIGH,
+            why="deterministic safety fallback",
+            error="",
+        )
+        try:
+            result = dispatch(
+                snapshot=snapshot, decision=synthetic,
+                key=key, memory=memory,
+            )
+        except Exception:
+            logger.exception("[BRAIN] failsafe_confirm_dispatch_crashed")
+            return RouterResult(
+                handled=True,
+                reply_text=(
+                    "I couldn't delete that right now. Try again "
+                    "in a moment."
+                ),
+                tool=TOOL_CONFIRM_PENDING_DELETE,
+                metadata={"error": "failsafe_dispatch_crashed"},
+            )
+        if not result.handled:
+            return RouterResult(
+                handled=True,
+                reply_text=(
+                    "I couldn't delete that right now. Try again "
+                    "in a moment."
+                ),
+                tool=TOOL_CONFIRM_PENDING_DELETE,
+                metadata={"error": "failsafe_dispatch_no_op"},
+            )
+        return result
+    if verdict == SAFETY_CANCEL:
+        synthetic = Decision(
+            tool=TOOL_CANCEL_PENDING_DELETE,
+            args={"action_id": pending.action_id},
+            confidence=CONFIDENCE_HIGH,
+            why="deterministic safety fallback",
+            error="",
+        )
+        try:
+            result = dispatch(
+                snapshot=snapshot, decision=synthetic,
+                key=key, memory=memory,
+            )
+        except Exception:
+            logger.exception("[BRAIN] failsafe_cancel_dispatch_crashed")
+            return RouterResult(
+                handled=True,
+                reply_text="Okay — I won't delete it.",
+                tool=TOOL_CANCEL_PENDING_DELETE,
+            )
+        if not result.handled:
+            return RouterResult(
+                handled=True,
+                reply_text="Okay — I won't delete it.",
+                tool=TOOL_CANCEL_PENDING_DELETE,
+            )
+        return result
+    # SAFETY_UNCLEAR — the user said something the deterministic
+    # layer cannot safely interpret. We MUST NOT let the legacy
+    # pipeline try to interpret it either — that is exactly the
+    # attack vector we are closing. Ask the user to repeat.
+    return RouterResult(
+        handled=True,
+        reply_text=build_clarification_prompt(pending.target_label),
+        tool="",
+        metadata={"failsafe": "clarify"},
     )
 
 

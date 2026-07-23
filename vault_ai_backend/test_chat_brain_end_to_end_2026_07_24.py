@@ -223,13 +223,37 @@ class ChatBrainTopicSwitchTest(unittest.TestCase):
         _install_provider(None)
         reset_chat_state_backend_for_tests()
 
-    def test_topic_switch_falls_through_to_pipeline(self):
+    def test_topic_switch_with_destructive_pending_asks_clarification(self):
+        """Adjustment 3: with a destructive action pending, a
+        model-fallthrough on an unrelated topic must NOT delegate
+        to the legacy pipeline (which could confirm the delete
+        via legacy phrase matching). The fail-safe intercepts and
+        asks the user to clarify."""
         from vault_secure_item_delete_confirmation import store_delete_intent
         store_delete_intent(
             vault_id=VAULT_A, service="Netflix", item_type="login",
         )
-        # Model recognizes the reply is unrelated to the pending
-        # delete and yields to the existing pipeline.
+        _install_provider({
+            "tool": TOOL_FALLTHROUGH,
+            "args": {},
+            "confidence": CONFIDENCE_MEDIUM,
+            "why": "unrelated",
+        })
+        result = _run(_run_brain(
+            "what's my chase password",
+            vault_id=VAULT_A, session_id=SESS_A,
+        ))
+        # Fail-safe intercepts; the brain handles the turn.
+        self.assertTrue(result.handled)
+        # It is a clarification, not a deletion.
+        self.assertNotIn("Deleted", result.reply_text)
+        self.assertIn("yes", result.reply_text.lower())
+        self.assertIn("no", result.reply_text.lower())
+
+    def test_topic_switch_without_destructive_pending_falls_through(self):
+        """Non-destructive contexts may still fall back to the
+        legacy pipeline — the fail-safe only applies when
+        something destructive is pending."""
         _install_provider({
             "tool": TOOL_FALLTHROUGH,
             "args": {},
@@ -422,6 +446,13 @@ class ChatBrainConversationalReplyTest(unittest.TestCase):
         self.assertIn("Hello", result.reply_text)
 
     def test_conversational_refused_when_delete_pending(self):
+        """Policy refuses the model's conversational hijack while a
+        destructive action is pending. Under the 2026-07-24
+        adjustment 3, the brain then applies the deterministic
+        fail-safe: the user's message ("what's the weather like")
+        is not a bare yes/no/cancel, so it asks for
+        clarification. It must NOT delegate to the legacy
+        pipeline for a destructive turn."""
         from vault_secure_item_delete_confirmation import store_delete_intent
         store_delete_intent(
             vault_id=VAULT_A, service="Netflix", item_type="login",
@@ -436,9 +467,13 @@ class ChatBrainConversationalReplyTest(unittest.TestCase):
             "what's the weather like",
             vault_id=VAULT_A, session_id=SESS_A,
         ))
-        # Policy refuses conversational hijack while destructive
-        # is pending — brain falls through.
-        self.assertFalse(result.handled)
+        # Handled by brain (not legacy). Clarification, not a
+        # weather answer, not a deletion.
+        self.assertTrue(result.handled)
+        self.assertNotIn("Deleted", result.reply_text)
+        self.assertNotIn("weather", result.reply_text.lower())
+        self.assertIn("yes", result.reply_text.lower())
+        self.assertIn("no", result.reply_text.lower())
 
 
 class ChatBrainLowConfidenceTest(unittest.TestCase):
@@ -451,7 +486,16 @@ class ChatBrainLowConfidenceTest(unittest.TestCase):
         _install_provider(None)
         reset_chat_state_backend_for_tests()
 
-    def test_low_confidence_destructive_confirm_denied(self):
+    def test_low_confidence_destructive_confirm_denied_by_policy(self):
+        """Policy denies the model's LOW-confidence destructive
+        confirm. But the user's message IS a bare "yes" — so
+        the deterministic safety fallback (adjustment 1)
+        recognizes it and dispatches the delete. The model
+        being uncertain doesn't override an unambiguous
+        user-typed "yes"; the two paths converge on the same
+        outcome, but the fail-safe is what carries it (see the
+        [BRAIN] outcome log tag ``destructive_failsafe_...``
+        for the audit trail)."""
         from vault_secure_item_delete_confirmation import (
             get_pending_delete_intent, store_delete_intent,
         )
@@ -468,8 +512,37 @@ class ChatBrainLowConfidenceTest(unittest.TestCase):
         result = _run(_run_brain(
             "yes", vault_id=VAULT_A, session_id=SESS_A,
         ))
-        # Policy denies → brain falls through.
-        self.assertFalse(result.handled)
+        self.assertTrue(result.handled)
+        self.assertIn("Deleted", result.reply_text)
+
+    def test_low_confidence_destructive_confirm_denied_and_unclear_asks(self):
+        """Same as above but the user's message is compound
+        (``"yeah do it now"``) — outside the narrow deterministic
+        safety layer. The fail-safe MUST ask for clarification
+        instead of dispatching, and MUST NOT delegate to
+        legacy routing (which could confirm via the legacy
+        secure-item cascade)."""
+        from vault_secure_item_delete_confirmation import (
+            get_pending_delete_intent, store_delete_intent,
+        )
+        store_delete_intent(
+            vault_id=VAULT_A, service="Instagram", item_type="login",
+        )
+        intent = get_pending_delete_intent(vault_id=VAULT_A)
+        _install_provider({
+            "tool": TOOL_CONFIRM_PENDING_DELETE,
+            "args": {"action_id": intent.intent_id},
+            "confidence": CONFIDENCE_LOW,
+            "why": "guessing",
+        })
+        result = _run(_run_brain(
+            "yeah go ahead and take care of it thanks",
+            vault_id=VAULT_A, session_id=SESS_A,
+        ))
+        self.assertTrue(result.handled)
+        self.assertNotIn("Deleted", result.reply_text)
+        self.assertIn("yes", result.reply_text.lower())
+        self.assertIn("no", result.reply_text.lower())
 
 
 if __name__ == "__main__":
