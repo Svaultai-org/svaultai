@@ -26,12 +26,10 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from vault_chat_pending_action import (
-    KIND_DELETE_SECURE_ITEM,
     KIND_SAVE_ATTACHMENT,
     KIND_SAVE_CREDENTIAL,
     KIND_SAVE_LOGIN_DRAFT,
     KIND_SAVE_SECURE_ITEM,
-    PendingAction,
 )
 from vault_chat_semantic_decider import Decision
 from vault_chat_tool_registry import (

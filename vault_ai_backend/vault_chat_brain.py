@@ -29,13 +29,13 @@ from vault_chat_decision_router import RouterResult, dispatch
 from vault_chat_destructive_safety_fallback import (
     SAFETY_CANCEL,
     SAFETY_CONFIRM,
-    SAFETY_UNCLEAR,
     build_clarification_prompt,
     classify_destructive_message,
 )
 from vault_chat_policy import authorize, _log_policy
 from vault_chat_semantic_decider import (
     CONFIDENCE_HIGH,
+    CONFIDENCE_MEDIUM,
     Decision,
 )
 from vault_chat_tool_registry import (
@@ -368,7 +368,7 @@ def _apply_destructive_failsafe(
     if (decision is not None
             and decision.tool == _TF
             and not decision.error
-            and decision.confidence in (CONFIDENCE_HIGH, "medium")):
+            and decision.confidence in (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM)):
         # Deliberate fallthrough. The model explicitly said
         # "this is a topic switch — pipeline should handle it".
         # Let the pipeline handle it; the safety hijack risk is

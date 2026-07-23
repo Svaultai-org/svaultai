@@ -48,14 +48,7 @@ from typing import Any, Optional
 
 from vault_chat_pending_action import KIND_NONE
 from vault_chat_tool_registry import (
-    TOOL_CANCEL_PENDING_DELETE,
-    TOOL_CANCEL_PENDING_SAVE,
-    TOOL_CONFIRM_PENDING_DELETE,
-    TOOL_CONFIRM_PENDING_SAVE,
-    TOOL_CONVERSATIONAL_REPLY,
     TOOL_FALLTHROUGH,
-    TOOL_REQUEST_CLARIFICATION,
-    all_tools,
     get_tool,
     tool_names,
     tools_for_prompt,

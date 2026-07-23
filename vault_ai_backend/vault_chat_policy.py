@@ -51,7 +51,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from vault_chat_pending_action import (
-    KIND_NONE,
     KIND_DELETE_SECURE_ITEM,
     KIND_SAVE_ATTACHMENT,
     KIND_SAVE_CREDENTIAL,
@@ -62,7 +61,6 @@ from vault_chat_pending_action import (
 from vault_chat_semantic_decider import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
-    CONFIDENCE_MEDIUM,
     Decision,
 )
 from vault_chat_tool_registry import (
