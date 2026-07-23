@@ -621,19 +621,20 @@ class TestClientDiagnosticStageAllowlist:
     everything else with the operator-safe ``INH-CRED-004``.
     """
 
+    # 2026-07-23: stage naming migrated to UPPER_SNAKE — mirrors
+    # the kRevealStage* constants in
+    # vault_ai_frontend/lib/services/inheritance_credentials.dart.
     _KNOWN_STAGES = [
-        "eph_pub_decode",
-        "beneficiary_sk_import",
-        "ecdh",
-        "hkdf",
-        "wrapped_key_decode",
-        "wrapping_nonce_decode",
-        "cek_unwrap",
-        "cek_len",
-        "payload_decode",
-        "payload_nonce_decode",
-        "payload_decrypt",
-        "json",
+        "LOAD_SECRET_KEY",
+        "PARSE_EPHEMERAL_PUBLIC_KEY",
+        "DERIVE_SHARED_SECRET",
+        "DERIVE_WRAP_KEY",
+        "UNWRAP_DATA_KEY",
+        "DECRYPT_PAYLOAD",
+        "UTF8_DECODE",
+        "JSON_PARSE",
+        "MAP_CREDENTIAL",
+        "UNSTAGED_UNKNOWN",
     ]
 
     def setup_method(self, _method) -> None:

@@ -32,18 +32,21 @@ import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/inheritance_credentials.dart'
     show
         InheritanceRevealStageException,
-        kRevealStageBeneficiarySkImport,
-        kRevealStageCekLen,
-        kRevealStageCekUnwrap,
-        kRevealStageEcdh,
-        kRevealStageEphPubDecode,
-        kRevealStageHkdf,
-        kRevealStageJson,
-        kRevealStagePayloadDecode,
-        kRevealStagePayloadDecrypt,
-        kRevealStagePayloadNonceDecode,
-        kRevealStageWrappedKeyDecode,
-        kRevealStageWrappingNonceDecode;
+        // 2026-07-23: stage names migrated to UPPER_SNAKE — the
+        // prior lowercase constants have been removed. Each new
+        // constant covers a superset of the prior tag's scope; see
+        // ``inheritance_credentials.dart`` header.
+        kRevealStageDecryptPayload,
+        kRevealStageDeriveSharedSecret,
+        kRevealStageDeriveWrapKey,
+        kRevealStageJsonParse,
+        kRevealStageLoadSecretKey,
+        kRevealStageMapCredential,
+        kRevealStageParseEphemeralPublicKey,
+        kRevealStagesAll,
+        kRevealStageUnstagedUnknown,
+        kRevealStageUnwrapDataKey,
+        kRevealStageUtf8Decode;
 import 'package:vault_ai_frontend/services/inheritance_reveal_classify.dart';
 
 
@@ -552,25 +555,33 @@ void main() {
     });
 
     test('reveal catch emits the pipeline stage in the diagnostic '
-        'body (2026-07-22)', () {
+        'body (2026-07-23)', () {
       final idx = src.indexOf("'inheritance.reveal.decrypt_failed'");
       final window =
-          src.substring(idx, (idx + 2500).clamp(0, src.length));
+          src.substring(idx, (idx + 3500).clamp(0, src.length));
       expect(
         window.contains("'stage'"),
         isTrue,
         reason: "the reveal-catch diagnostic body must include a "
-            "'stage' field carrying the pipeline stage from "
-            "revealStageOf(e). Without it, an operator cannot tell "
-            "an ECDH failure apart from a payload-decrypt AES-GCM "
-            "tag mismatch.",
+            "'stage' field carrying the pipeline stage",
       );
+      // 2026-07-23: the reveal catch now uses the staged pipeline's
+      // captured error variable (``stagedError``), not the raw
+      // ``e``. Guarantee-fallback to ``kRevealStageUnstagedUnknown``
+      // ensures stage is never null.
       expect(
-        window.contains('revealStageOf(e)'),
+        window.contains('revealStageOf('),
         isTrue,
         reason: 'the reveal-catch must derive the stage via '
-            'revealStageOf(e) so the wire value stays inside the '
+            'revealStageOf(...) so the wire value stays inside the '
             'closed backend allowlist',
+      );
+      expect(
+        window.contains('kRevealStageUnstagedUnknown'),
+        isTrue,
+        reason: 'the reveal-catch must fall back to '
+            'kRevealStageUnstagedUnknown so the diagnostic never '
+            'carries stage=None even if the wrapper has a hole',
       );
     });
   });
@@ -589,7 +600,7 @@ void main() {
     test('unwraps SecretBoxAuthenticationError → AUTH regardless of '
         'stage', () {
       for (final stage in const [
-        'cek_unwrap', 'payload_decrypt',
+        kRevealStageUnwrapDataKey, kRevealStageDecryptPayload,
       ]) {
         final inner = SecretBoxAuthenticationError(
           secretBox: SecretBox(
@@ -609,7 +620,7 @@ void main() {
 
     test('unwraps ArgumentError → KEYLEN with stage preserved', () {
       final wrapped = InheritanceRevealStageException(
-        stage: kRevealStageBeneficiarySkImport,
+        stage: kRevealStageLoadSecretKey,
         cause: ArgumentError.value(
           Uint8List(31), 'seed', 'must be 32 bytes',
         ),
@@ -618,18 +629,18 @@ void main() {
       expect(classifyRevealException(wrapped),
           equals(kRefRevealKeyLen));
       expect(revealStageOf(wrapped),
-          equals(kRevealStageBeneficiarySkImport));
+          equals(kRevealStageLoadSecretKey));
     });
 
     test('unwraps StateError → PAYLOAD when cause is JSON-shaped', () {
       final wrapped = InheritanceRevealStageException(
-        stage: kRevealStageJson,
+        stage: kRevealStageJsonParse,
         cause: StateError('credential payload is not a JSON object'),
         causeStackTrace: StackTrace.current,
       );
       expect(classifyRevealException(wrapped),
           equals(kRefRevealPayload));
-      expect(revealStageOf(wrapped), equals(kRevealStageJson));
+      expect(revealStageOf(wrapped), equals(kRevealStageJsonParse));
     });
 
     test('unwraps FormatException → B64 with stage preserved', () {
@@ -638,26 +649,27 @@ void main() {
         base64Url.decode('!!!not-b64!!!');
       } catch (e) { caught = e; }
       final wrapped = InheritanceRevealStageException(
-        stage: kRevealStageEphPubDecode,
+        stage: kRevealStageParseEphemeralPublicKey,
         cause: caught!,
         causeStackTrace: StackTrace.current,
       );
       expect(classifyRevealException(wrapped),
           equals(kRefRevealB64));
       expect(revealStageOf(wrapped),
-          equals(kRevealStageEphPubDecode));
+          equals(kRevealStageParseEphemeralPublicKey));
     });
 
     test('unwraps arbitrary Object → OTHER but stage still surfaces',
         () {
       final wrapped = InheritanceRevealStageException(
-        stage: kRevealStageEcdh,
+        stage: kRevealStageDeriveSharedSecret,
         cause: Object(),
         causeStackTrace: StackTrace.current,
       );
       expect(classifyRevealException(wrapped),
           equals(kRefRevealOther));
-      expect(revealStageOf(wrapped), equals(kRevealStageEcdh),
+      expect(revealStageOf(wrapped),
+          equals(kRevealStageDeriveSharedSecret),
           reason: 'even when the classifier falls through to OTHER '
               'the STAGE must still be available so the operator can '
               'grep the diagnostic log line by pipeline step');
@@ -672,31 +684,32 @@ void main() {
       );
     });
 
-    test('every kRevealStage* constant is a short log-safe token', () {
-      for (final stage in const [
-        kRevealStageEphPubDecode,
-        kRevealStageBeneficiarySkImport,
-        kRevealStageEcdh,
-        kRevealStageHkdf,
-        kRevealStageWrappedKeyDecode,
-        kRevealStageWrappingNonceDecode,
-        kRevealStageCekUnwrap,
-        kRevealStageCekLen,
-        kRevealStagePayloadDecode,
-        kRevealStagePayloadNonceDecode,
-        kRevealStagePayloadDecrypt,
-        kRevealStageJson,
-      ]) {
+    test('every kRevealStage* constant is UPPER_SNAKE and length ≤ '
+        '32 chars (matches _DIAG_STAGES backend allowlist)', () {
+      for (final stage in kRevealStagesAll) {
         expect(stage.length, lessThanOrEqualTo(32),
             reason: 'stage tag $stage must fit the backend '
                 '_DIAG_STAGES allowlist (max_length=32)');
-        // Only lowercase letters + underscores — grep-friendly, no
-        // whitespace to break log parsers.
+        // 2026-07-23 single-convention rule: UPPER_SNAKE only.
         expect(
-          RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(stage), isTrue,
-          reason: 'stage tag $stage must be lowercase snake_case',
+          RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(stage), isTrue,
+          reason: 'stage tag $stage must be UPPER_SNAKE_CASE',
         );
       }
+      // Sanity: the union of the nine pipeline stages + the
+      // defensive fallback.
+      expect(kRevealStagesAll, containsAll(<String>{
+        kRevealStageLoadSecretKey,
+        kRevealStageParseEphemeralPublicKey,
+        kRevealStageDeriveSharedSecret,
+        kRevealStageDeriveWrapKey,
+        kRevealStageUnwrapDataKey,
+        kRevealStageDecryptPayload,
+        kRevealStageUtf8Decode,
+        kRevealStageJsonParse,
+        kRevealStageMapCredential,
+        kRevealStageUnstagedUnknown,
+      }));
     });
   });
 }

@@ -6969,8 +6969,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               .inheritanceCancelPendingTransferTitle(label),
         ),
         content: const Text(
-          'The 30-day countdown will be cleared. The beneficiary will be '
-          'emailed about the cancellation. They can request again later.',
+          // 2026-07-23: VaultAI does not email — the cancel notify
+          // fires via _create_notification (in-app only).
+          'The 30-day countdown will be cleared. The beneficiary will '
+          'be notified inside VaultAI. They can request again later.',
         ),
         actions: [
           TextButton(
@@ -7130,9 +7132,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           AppLocalizations.of(dialogCtx).inheritanceRequestTransferTitle(label),
         ),
         content: const Text(
-          'A 30-day countdown will start. The vault owner will be emailed and '
-          'can cancel during that window. After 30 days, you can claim the '
-          'inherited vault on your account.',
+          // 2026-07-23: text corrected against the actual backend
+          // state machine. VaultAI does not email — it notifies
+          // owners in-app. The post-countdown behavior is NOT
+          // automatic release: the beneficiary must call
+          // /inheritance/access/claim → /credentials/retrieve to
+          // move the escrow to 'released'. See
+          // inheritance_release_routes.py::claim_access.
+          'A 30-day countdown will start. The vault owner will be '
+          'notified inside VaultAI and can approve or reject the '
+          'request during that period. If the owner does not respond '
+          'before the countdown ends, you\'ll be able to claim the '
+          'credentials and open the inherited login on your account.',
         ),
         actions: [
           TextButton(
@@ -7940,59 +7951,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       return;
     }
-    final skBytes = await sk.extractBytes();
 
-    // 4. Decrypt locally.
+    // 4. Stage-complete decrypt.
+    //
+    // 2026-07-23: reveal now runs entirely inside
+    // ``revealInheritanceCredentialsStaged``. Every one of the nine
+    // decrypt stages is separately wrapped so any failure surfaces
+    // as ``InheritanceRevealStageException(stage: <NAME>)``. The
+    // defensive outer catch below guarantees that ANYTHING that
+    // escapes gets a stage of ``UNSTAGED_UNKNOWN`` — the operator
+    // will never see ``stage=None`` again.
+    inh_cred.DecryptedInheritanceCredentials? decrypted;
+    Object? stagedError;
+    StackTrace? stagedStack;
     try {
-      final pkgObj = inh_cred.InheritanceCredentialPackage(
-        cryptoVersion: (pkg['crypto_version'] as num).toInt(),
-        encryptedPayloadB64Url: pkg['encrypted_payload'].toString(),
-        payloadNonceB64Url: pkg['payload_nonce'].toString(),
-        wrappedKeyB64Url: pkg['wrapped_key'].toString(),
-        wrappingEphemeralPkB64Url: pkg['wrapping_ephemeral_pk'].toString(),
-        wrappingNonceB64Url: pkg['wrapping_nonce'].toString(),
+      decrypted = await inh_cred.revealInheritanceCredentialsStaged(
+        beneficiarySkVault: sk,
+        rawPackage: pkg,
       );
-      final decrypted = await inh_cred.decryptInheritanceCredentials(
-        beneficiarySkVaultPrivate: Uint8List.fromList(skBytes),
-        package: pkgObj,
-      );
-      // Wipe the derived skBytes buffer after use.
-      for (var i = 0; i < skBytes.length; i++) {
-        skBytes[i] = 0;
+    } catch (e, st) {
+      // Anything that isn't already staged (should be nothing) gets
+      // wrapped as UNSTAGED_UNKNOWN. If we ever see this stage in
+      // production logs it means the wrapper has a hole to fix.
+      if (e is inh_cred.InheritanceRevealStageException) {
+        stagedError = e;
+      } else {
+        stagedError = inh_cred.InheritanceRevealStageException(
+          stage: inh_cred.kRevealStageUnstagedUnknown,
+          cause: e,
+          causeStackTrace: st,
+        );
       }
+      stagedStack = st;
+    }
 
-      if (!mounted) return;
-      await _showRevealedCredentialsDialog(
-        passerLabel: passerLabel,
-        username: decrypted.username,
-        pin: decrypted.pin,
-        linkId: linkId,
-        token: token,
-      );
-      await _loadInheritances();
-    } catch (e) {
-      // 2026-07-22: classify the failure locally so the operator
-      // can distinguish response-shape / base64 / key-length /
-      // AES-GCM auth / post-decrypt payload issues from the UI
-      // alone. iOS Safari does not surface a usable console, so
-      // the reference tag carries the diagnostic category, and a
-      // safe structured payload is best-effort POSTed to the
-      // inheritance client-diagnostic endpoint (byte lengths and
-      // enum tags ONLY — never ciphertext / wrapped-key contents /
-      // nonces / PINs / tokens).
-      final ref = inh_classify.classifyRevealException(e);
+    if (stagedError != null) {
+      final ref = inh_classify.classifyRevealException(stagedError);
       final safeLens = inh_classify.safeLengthsFromRawPkg(pkg);
       final category = inh_classify.revealCategoryFor(ref);
       vlog('inheritance.reveal.decrypt_failed', {
         'ref': ref,
-        // 2026-07-22: pipeline stage from the staged decrypt.
-        // ``revealStageOf`` returns null when the exception came
-        // from anywhere other than the staged decrypt (e.g. a
-        // pre-decrypt guard) so ``stage`` may be null — that is
-        // itself an operator signal.
-        'stage': inh_classify.revealStageOf(e),
+        // 2026-07-23: stage is guaranteed non-null. If the staged
+        // wrapper somehow missed a code path, we surface the
+        // ``kRevealStageUnstagedUnknown`` sentinel — never
+        // ``stage=None``.
+        'stage': inh_classify.revealStageOf(stagedError)
+            ?? inh_cred.kRevealStageUnstagedUnknown,
         'link_id': linkId,
-        'exception_type': e.runtimeType.toString(),
+        'exception_type': stagedError.runtimeType.toString(),
       });
       unawaited(VaultAIClient(baseUrl: backendBaseUrl)
           .postInheritanceClientDiagnostic(
@@ -8000,9 +8006,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         body: {
           'area': 'reveal',
           'reference_code': ref,
-          'stage': inh_classify.revealStageOf(e),
+          'stage': inh_classify.revealStageOf(stagedError)
+              ?? inh_cred.kRevealStageUnstagedUnknown,
           'link_id': linkId,
-          'exception_type': e.runtimeType.toString(),
+          'exception_type': stagedError.runtimeType.toString(),
           'category': category,
           'crypto_version':
               safeLens['crypto_version'],
@@ -8017,14 +8024,39 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'wrapping_nonce_len':
               safeLens['wrapping_nonce_len'],
           'active_sk_present': true,
-          'active_sk_len': skBytes.length,
+          // sk_len is 32 for every ZK-adopted account (X25519 seed).
+          // We report the SPEC value here rather than re-extracting
+          // the sk bytes just to measure them — the LOAD_SECRET_KEY
+          // stage already length-checks the actual seed.
+          'active_sk_len': inh_cred.kExpectedSkVaultLen,
+          // Expected wire lengths per crypto_version=1 so the
+          // operator can compare actual vs expected inline.
+          ...inh_classify.expectedLengthsForCryptoVersionOne(),
         },
       ));
+      // stagedStack is captured for local `flutter run` debugging
+      // only. It never leaves the device — stack traces on Web
+      // include minified symbol names but can still identify user
+      // code paths, so nothing is wired to the diagnostic body
+      // beyond the safe fields above.
+      // ignore: unnecessary_null_comparison
+      final _ = stagedStack;
       _showSnack(
         '${inh_classify.userMessageForReveal(ref)}\n'
         'Reference: $ref',
       );
+      return;
     }
+
+    if (!mounted) return;
+    await _showRevealedCredentialsDialog(
+      passerLabel: passerLabel,
+      username: decrypted!.username,
+      pin: decrypted.pin,
+      linkId: linkId,
+      token: token,
+    );
+    await _loadInheritances();
   }
 
   Future<String?> _promptForReauthPin({required String title}) async {
@@ -8709,8 +8741,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       )
                     else
                       ...inheritances.map((i) {
-                        final label =
-                            (i['passer_label'] ?? 'Unknown').toString();
+                        // 2026-07-23: prefer the passer_label the owner
+                        // originally typed. For ZK-created pairings
+                        // that column is NULL on the server (the
+                        // plaintext is encrypted under the OWNER's
+                        // metadataKey and the beneficiary cannot
+                        // decrypt it), so fall back to the owner's
+                        // chosen vault_name. Only render 'Unknown'
+                        // when the backend genuinely has no usable
+                        // identity for either field.
+                        final label = (i['passer_label']
+                                ?? i['owner_vault_name']
+                                ?? 'Unknown')
+                            .toString();
                         final status = (i['status'] ?? '').toString();
                         final id = (i['id'] as num?)?.toInt() ?? 0;
                         final executesAt =

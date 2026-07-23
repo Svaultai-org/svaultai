@@ -1,13 +1,66 @@
+"""Owner-side "delete this saved item" confirmation intent store.
 
+2026-07-23 revision — Bug 4 root-cause fix.
+
+Prior to this revision the intent was held in a module-level dict.
+On the production topology (Uvicorn ``--workers 2`` with no session
+affinity) that meant:
+
+  * Request A — sentinel ``__delete_item:login:instagram`` — hits
+    worker A, stores the intent in A's local ``_store`` dict,
+    responds "Are you sure you want to delete instagram login…".
+  * Request B — user types ``yes`` — round-robins to worker B,
+    whose ``_store`` is empty, so the pending-delete resolver falls
+    through. The next handler down the chain
+    (``pending_named_file``) reinterprets the "yes" as a filename
+    for a recently-uploaded image, replying "Saved this image as
+    Img_3177.png." Exact production incident.
+
+The fix routes the intent through the same Redis-backed
+``vault_chat_state_store`` module that ``vault_credential_draft``
+and ``vault_secure_item_draft`` already use post-c1e3df3. Same
+Redis URL, same key namespace shape, same TTL enforcement mechanic
+(``PEX`` on ``SET``). No new env var, no new dependency, no
+migration. The public API (``store_delete_intent``,
+``get_pending_delete_intent``, ``consume_pending_delete_intent``,
+``clear_pending_delete_intent``, ``_reset_store_for_test``) is
+UNCHANGED — callers do not know they moved from a dict to Redis.
+
+Data written to Redis under the key
+``chatst:v1:secure_delete_intent:{sha256(vault_id)[0:16]}``:
+
+  { intent_id, vault_id, service, item_type, item_id,
+    is_login, created_at, expires_at }
+
+The ``service`` field is product metadata — the same value that
+appears in the SQL ``WHERE LOWER(service) = LOWER(%s)`` clause the
+delete executor uses. It is NOT a credential. NO plaintext PINs,
+NO passwords, NO recovery codes, NO tokens are stored.
+
+Failure semantics unchanged:
+  * TTL 600s (10 min).
+  * At most one active intent per vault_id.
+  * Storing a new intent overwrites any prior one.
+  * ``consume`` deletes-and-returns atomically.
+  * ``get`` reads without touching TTL.
+  * Redis outage → the backend falls back to a per-process
+    in-memory shim on that call (``vault_chat_state_store``
+    handles that) and the request continues without erroring.
+    Worst case matches the pre-fix worker-hop behavior — which was
+    the bug we are fixing — but does not brick the chat UX.
+
+Original prompt / cancellation phrases (``_CONFIRM_DELETE_RE``,
+``_CANCEL_DELETE_RE``) and their public accessors are unchanged.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 
@@ -15,10 +68,6 @@ logger = logging.getLogger(__name__)
 
 
 DELETE_INTENT_TTL_SECONDS: int = 600
-
-
-_lock = threading.Lock()
-_store: dict[str, "SecureItemDeleteIntent"] = {}
 
 
 BAND_DELETE_CONFIRMATION_PENDING: str = "delete_confirmation_pending"
@@ -40,7 +89,7 @@ class SecureItemDeleteIntent:
     created_at: float
     expires_at: float
 
-    def __repr__(self) -> str:                          
+    def __repr__(self) -> str:
         return (
             f"SecureItemDeleteIntent(intent_id={self.intent_id!r}, "
             f"vault_prefix={self.vault_id[:8]!r}..., "
@@ -58,17 +107,83 @@ class SecureItemDeleteIntent:
 _LOGIN_LIKE_TYPES: frozenset[str] = frozenset({"login", "credential"})
 
 
+# ---------------------------------------------------------------------
+# Cross-worker persistence (Redis-backed shared state)
+# ---------------------------------------------------------------------
+#
+# The 2026-07-23 root cause fix. Previously ``_store`` was a
+# per-process dict; the sentinel + "yes" round-robined across
+# Uvicorn workers so worker B never saw worker A's intent. This
+# migrates to the same shared backend the rest of the chat state
+# uses, which resolves to Redis in production and to an in-memory
+# shim in dev / test — semantically identical to the old dict for
+# single-worker environments.
+
+_BUCKET: str = "secure_delete_intent"
+
+
 def _now() -> float:
     return time.time()
 
 
-def _gc_expired(vault_id: str, now: float) -> None:
+def _serialize(intent: SecureItemDeleteIntent) -> bytes:
+    return json.dumps(asdict(intent), separators=(",", ":")).encode("utf-8")
 
-    entry = _store.get(vault_id)
-    if entry is None:
-        return
-    if entry.is_expired(now):
-        _store.pop(vault_id, None)
+
+def _deserialize(raw: bytes) -> Optional[SecureItemDeleteIntent]:
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw.decode("utf-8"))
+        return SecureItemDeleteIntent(
+            intent_id=str(d["intent_id"]),
+            vault_id=str(d["vault_id"]),
+            service=str(d["service"]),
+            item_type=str(d["item_type"]),
+            item_id=d.get("item_id"),
+            is_login=bool(d.get("is_login", False)),
+            created_at=float(d["created_at"]),
+            expires_at=float(d["expires_at"]),
+        )
+    except Exception:
+        # Corrupt / partial value: treat as no-pending. Log via the
+        # shared-state backend's normal warning cadence so the
+        # operator sees repeated corruption on the correct module.
+        logger.warning(
+            "[SECURE-ITEM-DELETE] intent_deserialize_failed",
+        )
+        return None
+
+
+def _backend_key(vault_id: str) -> str:
+    from vault_chat_state_store import compose_key
+    return compose_key(bucket=_BUCKET, vault_id=vault_id)
+
+
+def _get_intent_from_shared_store(
+    vault_id: str,
+) -> Optional[SecureItemDeleteIntent]:
+    if not vault_id:
+        return None
+    from vault_chat_state_store import get_chat_state_backend
+    raw = get_chat_state_backend().get(_backend_key(vault_id))
+    if raw is None:
+        return None
+    intent = _deserialize(raw)
+    if intent is None:
+        # Corrupt — clean up so subsequent reads return None.
+        try:
+            get_chat_state_backend().delete(_backend_key(vault_id))
+        except Exception:
+            pass
+        return None
+    if intent.is_expired(_now()):
+        try:
+            get_chat_state_backend().delete(_backend_key(vault_id))
+        except Exception:
+            pass
+        return None
+    return intent
 
 
 def store_delete_intent(
@@ -106,8 +221,10 @@ def store_delete_intent(
         created_at=now,
         expires_at=now + ttl,
     )
-    with _lock:
-        _store[vault_id] = intent
+    from vault_chat_state_store import get_chat_state_backend
+    get_chat_state_backend().set(
+        _backend_key(vault_id), _serialize(intent), ttl_seconds=ttl,
+    )
     logger.info(
         "[SECURE-ITEM-DELETE] intent_stored vault=%s type=%s ttl=%d",
         (vault_id or "")[:8] + "…", safe_type, ttl,
@@ -118,12 +235,7 @@ def store_delete_intent(
 def get_pending_delete_intent(
     *, vault_id: str,
 ) -> Optional[SecureItemDeleteIntent]:
-    if not vault_id:
-        return None
-    now = _now()
-    with _lock:
-        _gc_expired(vault_id, now)
-        return _store.get(vault_id)
+    return _get_intent_from_shared_store(vault_id)
 
 
 def consume_pending_delete_intent(
@@ -133,22 +245,47 @@ def consume_pending_delete_intent(
 
     if not vault_id:
         return None
-    now = _now()
-    with _lock:
-        _gc_expired(vault_id, now)
-        return _store.pop(vault_id, None)
+    intent = _get_intent_from_shared_store(vault_id)
+    if intent is None:
+        return None
+    try:
+        from vault_chat_state_store import get_chat_state_backend
+        get_chat_state_backend().delete(_backend_key(vault_id))
+    except Exception:
+        # The get returned a valid intent — a delete failure here
+        # would leak a re-consumable ghost. Log it and continue so
+        # the caller still executes the delete; the ghost either
+        # gets consumed on the next matching "yes" (safe — it
+        # points at the same target) or expires via TTL.
+        logger.warning(
+            "[SECURE-ITEM-DELETE] consume_delete_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+    return intent
 
 
 def clear_pending_delete_intent(vault_id: str) -> bool:
     if not vault_id:
         return False
-    with _lock:
-        return _store.pop(vault_id, None) is not None
+    from vault_chat_state_store import get_chat_state_backend
+    key = _backend_key(vault_id)
+    existed = get_chat_state_backend().get(key) is not None
+    try:
+        get_chat_state_backend().delete(key)
+    except Exception:
+        pass
+    return existed
 
 
 def _reset_store_for_test() -> None:
-    with _lock:
-        _store.clear()
+    """Drop any prior intent, and also reset the shared-state
+    backend singleton so tests get a fresh InMemoryChatStateBackend.
+    Idempotent."""
+    try:
+        from vault_chat_state_store import reset_chat_state_backend_for_tests
+        reset_chat_state_backend_for_tests()
+    except Exception:
+        pass
 
 
 _CONFIRM_DELETE_PATTERNS: tuple[str, ...] = (
@@ -183,7 +320,7 @@ _CANCEL_DELETE_PATTERNS: tuple[str, ...] = (
     r"^\s*nah\s*[.!?]*\s*$",
     r"^\s*cancel\s*[.!?]*\s*$",
     r"^\s*cancel\s+(?:it|that|delete)\s*[.!?]*\s*$",
-                                                               
+
     r"^\s*don'?t\s+delete(?:\s+(?:it|that))?\s*[.!?]*\s*$",
     r"^\s*do\s+not\s+delete(?:\s+(?:it|that))?\s*[.!?]*\s*$",
     r"^\s*stop\s*[.!?]*\s*$",
@@ -296,8 +433,8 @@ def confirmation_question(intent: SecureItemDeleteIntent) -> str:
     title = (intent.service or "").strip()
     if intent.is_login:
         if not title:
-                                                                
-                                                               
+
+
             return _CONFIRM_QUESTION_NON_LOGIN_NO_TITLE
         return _CONFIRM_QUESTION_LOGIN.format(title=title)
     if title:

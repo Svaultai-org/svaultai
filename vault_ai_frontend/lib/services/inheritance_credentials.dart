@@ -182,27 +182,62 @@ class DecryptedInheritanceCredentials {
   });
 }
 
-// 2026-07-22: named stages of the beneficiary decrypt pipeline.
-// Every stage tag is a short, log-safe token — no ciphertext, no
-// key material, no user text. The reveal catch-block includes the
-// stage in the diagnostic body so the operator can distinguish an
-// ECDH failure from an AES-GCM tag mismatch without inspecting the
-// iOS console.
-const String kRevealStageEphPubDecode        = 'eph_pub_decode';
-const String kRevealStageBeneficiarySkImport = 'beneficiary_sk_import';
-const String kRevealStageEcdh                = 'ecdh';
-const String kRevealStageHkdf                = 'hkdf';
-const String kRevealStageWrappedKeyDecode    = 'wrapped_key_decode';
-const String kRevealStageWrappingNonceDecode = 'wrapping_nonce_decode';
-const String kRevealStageCekUnwrap           = 'cek_unwrap';
-const String kRevealStageCekLen              = 'cek_len';
-const String kRevealStagePayloadDecode       = 'payload_decode';
-const String kRevealStagePayloadNonceDecode  = 'payload_nonce_decode';
-const String kRevealStagePayloadDecrypt      = 'payload_decrypt';
-const String kRevealStageJson                = 'json';
+// ---------------------------------------------------------------------
+// Beneficiary reveal — stage-complete decrypt pipeline
+// ---------------------------------------------------------------------
+//
+// Stage naming (2026-07-22 revision): ONE stable convention —
+// UPPER_SNAKE. The prior lowercase constants ("eph_pub_decode",
+// "cek_unwrap", …) are removed; the backend allowlist accepts only
+// the tags below. Fire-and-forget diagnostics from browsers still
+// running the previous bundle will be rejected server-side (400
+// INH-CRED-004) but this has no user-visible impact — the failure
+// classification / snack reference tag on the beneficiary device
+// is unchanged, only the diagnostic ingest is stricter.
+//
+// The nine stages match the user-spec exactly. ``UNSTAGED_UNKNOWN``
+// is a defensive fallback that should never fire in production — its
+// presence in the ``[INH-CLIENT-DIAG]`` log is itself an operator
+// signal that the wrapper has a hole.
+const String kRevealStageLoadSecretKey            = 'LOAD_SECRET_KEY';
+const String kRevealStageParseEphemeralPublicKey  = 'PARSE_EPHEMERAL_PUBLIC_KEY';
+const String kRevealStageDeriveSharedSecret       = 'DERIVE_SHARED_SECRET';
+const String kRevealStageDeriveWrapKey            = 'DERIVE_WRAP_KEY';
+const String kRevealStageUnwrapDataKey            = 'UNWRAP_DATA_KEY';
+const String kRevealStageDecryptPayload           = 'DECRYPT_PAYLOAD';
+const String kRevealStageUtf8Decode               = 'UTF8_DECODE';
+const String kRevealStageJsonParse                = 'JSON_PARSE';
+const String kRevealStageMapCredential            = 'MAP_CREDENTIAL';
+const String kRevealStageUnstagedUnknown          = 'UNSTAGED_UNKNOWN';
 
-/// Wraps any exception thrown inside ``decryptInheritanceCredentials``
-/// with the STAGE at which it occurred. The classifier
+/// Every reveal stage as an unordered set — used by the frontend
+/// diagnostic and by the backend allowlist regression test to keep
+/// the two sides in lockstep.
+const Set<String> kRevealStagesAll = <String>{
+  kRevealStageLoadSecretKey,
+  kRevealStageParseEphemeralPublicKey,
+  kRevealStageDeriveSharedSecret,
+  kRevealStageDeriveWrapKey,
+  kRevealStageUnwrapDataKey,
+  kRevealStageDecryptPayload,
+  kRevealStageUtf8Decode,
+  kRevealStageJsonParse,
+  kRevealStageMapCredential,
+  kRevealStageUnstagedUnknown,
+};
+
+/// Fixed on-wire byte lengths per crypto_version 1. Sent alongside
+/// the actual measured length in the diagnostic body so an operator
+/// can see the mismatch at a glance without having to look up the
+/// spec.
+const int kExpectedPayloadNonceLen         = 12;
+const int kExpectedWrappingEphemeralPkLen  = 32;
+const int kExpectedWrappingNonceLen        = 12;
+const int kExpectedWrappedKeyLen           = 48;  // 32B CEK + 16B GCM tag
+const int kExpectedSkVaultLen              = 32;  // X25519 seed
+
+/// Wraps any exception thrown inside the reveal pipeline with the
+/// STAGE at which it occurred. The classifier
 /// (``inheritance_reveal_classify.dart``) unwraps this and reports
 /// the stage in the client-diagnostic payload, so an operator can
 /// tell "AES-GCM tag mismatch on the CEK unwrap" apart from
@@ -233,6 +268,7 @@ Future<T> _stage<T>(String stage, Future<T> Function() body) async {
   try {
     return await body();
   } catch (e, st) {
+    if (e is InheritanceRevealStageException) rethrow;
     throw InheritanceRevealStageException(
       stage: stage, cause: e, causeStackTrace: st,
     );
@@ -243,92 +279,217 @@ T _stageSync<T>(String stage, T Function() body) {
   try {
     return body();
   } catch (e, st) {
+    if (e is InheritanceRevealStageException) rethrow;
     throw InheritanceRevealStageException(
       stage: stage, cause: e, causeStackTrace: st,
     );
   }
 }
 
-Future<DecryptedInheritanceCredentials> decryptInheritanceCredentials({
-  required Uint8List beneficiarySkVaultPrivate,
-  required InheritanceCredentialPackage package,
+/// Stage-complete beneficiary reveal.
+///
+/// This is the ONLY correct entry point for the reveal button on
+/// the beneficiary side. Contract: **any exception this function
+/// throws is an ``InheritanceRevealStageException``** — the caller's
+/// diagnostic will therefore never see ``stage=None``. If a caller
+/// wraps this in a further try/catch, it MUST re-throw a wrapped
+/// ``InheritanceRevealStageException(stage: UNSTAGED_UNKNOWN, ...)``
+/// for anything that escapes.
+///
+/// Every one of the nine stages is separately wrapped so a byte-
+/// shape failure at UNWRAP_DATA_KEY is distinguishable from a tag-
+/// authentication failure at DECRYPT_PAYLOAD.
+///
+/// ``rawPackage`` is the wire response from
+/// ``GET /inheritance/credentials/retrieve``. All fields are
+/// base64url. No decryption happens on the server; the pipeline
+/// verifies every field length against the crypto_version 1 spec
+/// before touching any key material.
+Future<DecryptedInheritanceCredentials> revealInheritanceCredentialsStaged({
+  required SecretKey beneficiarySkVault,
+  required Map<String, dynamic> rawPackage,
 }) async {
-  final algo = X25519();
-  final ephPub = _stageSync(kRevealStageEphPubDecode, () => SimplePublicKey(
-    _b64UrlDecode(package.wrappingEphemeralPkB64Url),
-    type: KeyPairType.x25519,
-  ));
+  // ---- Stage 1 · LOAD_SECRET_KEY ------------------------------
+  // sk.extractBytes() -> Uint8List. Also length-check the 32-byte
+  // X25519 seed invariant before feeding it to newKeyPairFromSeed
+  // (which would otherwise throw an unstaged ArgumentError from
+  // BEFORE the first stage wrapper covers it).
+  final Uint8List skBytes = await _stage(kRevealStageLoadSecretKey, () async {
+    final raw = await beneficiarySkVault.extractBytes();
+    final bytes = raw is Uint8List ? raw : Uint8List.fromList(raw);
+    if (bytes.length != kExpectedSkVaultLen) {
+      throw StateError(
+        'beneficiary sk_vault seed has wrong length '
+        '(got ${bytes.length}, expected $kExpectedSkVaultLen)',
+      );
+    }
+    return bytes;
+  });
 
-  final skKeyPair = await _stage(
-    kRevealStageBeneficiarySkImport,
-    () => algo.newKeyPairFromSeed(beneficiarySkVaultPrivate),
-  );
-  final shared = await _stage(
-    kRevealStageEcdh,
-    () => algo.sharedSecretKey(
-      keyPair: skKeyPair,
-      remotePublicKey: ephPub,
-    ),
-  );
-  final kWrap = await _stage(
-    kRevealStageHkdf,
-    () => _hkdf.deriveKey(
+  // ---- Stage 2 · PARSE_EPHEMERAL_PUBLIC_KEY --------------------
+  // Base64url-decode the ephemeral public key AND construct the
+  // SimplePublicKey object. cryptography 2.9.0's SimplePublicKey
+  // constructor length-checks the bytes so a wrong-length input
+  // throws here rather than at DERIVE_SHARED_SECRET.
+  final SimplePublicKey ephPub =
+      await _stage(kRevealStageParseEphemeralPublicKey, () async {
+    final ephPubB64 = (rawPackage['wrapping_ephemeral_pk'] ?? '').toString();
+    final bytes = _b64UrlDecode(ephPubB64);
+    if (bytes.length != kExpectedWrappingEphemeralPkLen) {
+      throw StateError(
+        'ephemeral pk has wrong length '
+        '(got ${bytes.length}, expected $kExpectedWrappingEphemeralPkLen)',
+      );
+    }
+    return SimplePublicKey(bytes, type: KeyPairType.x25519);
+  });
+
+  // ---- Stage 3 · DERIVE_SHARED_SECRET --------------------------
+  // Import seed as X25519 keypair, then ECDH with the ephemeral pk.
+  // Both operations live in the same stage — they represent one
+  // conceptual failure mode (agreement between our sk and the
+  // owner's ephemeral pk) and neither returns a useful intermediate
+  // value the operator would want to distinguish.
+  final SecretKey shared =
+      await _stage(kRevealStageDeriveSharedSecret, () async {
+    final algo = X25519();
+    final skKeyPair = await algo.newKeyPairFromSeed(skBytes);
+    return algo.sharedSecretKey(
+      keyPair: skKeyPair, remotePublicKey: ephPub,
+    );
+  });
+
+  // ---- Stage 4 · DERIVE_WRAP_KEY -------------------------------
+  // HKDF-SHA256 with the ephemeral pk as salt and the fixed
+  // ``vaultai.inh-cred.v1`` info label. Output is the 32-byte AES
+  // key that unwraps the CEK.
+  final SecretKey kWrap = await _stage(kRevealStageDeriveWrapKey, () async {
+    return _hkdf.deriveKey(
       secretKey: shared,
       nonce: Uint8List.fromList(ephPub.bytes),
       info: utf8.encode(_credentialInfoLabel),
-    ),
-  );
+    );
+  });
 
-  final wrappedKey = _stageSync(
-    kRevealStageWrappedKeyDecode,
-    () => _b64UrlDecode(package.wrappedKeyB64Url),
-  );
-  final wrapNonce = _stageSync(
-    kRevealStageWrappingNonceDecode,
-    () => _b64UrlDecode(package.wrappingNonceB64Url),
-  );
-  final cek = await _stage(
-    kRevealStageCekUnwrap,
-    () => _aesGcm.decrypt(
+  // ---- Stage 5 · UNWRAP_DATA_KEY -------------------------------
+  // AES-GCM decrypt the wrapped CEK. Combines the wrapped-key
+  // + wrapping-nonce decode, ct/tag split, decrypt, and 32-byte
+  // CEK length assertion — they collectively represent "recover
+  // the credential encryption key". A tag mismatch here means
+  // ``kWrap`` doesn't match what the owner used to wrap (typically
+  // the wrong beneficiary sk).
+  final List<int> cek = await _stage(kRevealStageUnwrapDataKey, () async {
+    final wrappedKeyB64 = (rawPackage['wrapped_key'] ?? '').toString();
+    final wrapNonceB64  = (rawPackage['wrapping_nonce'] ?? '').toString();
+    final wrappedKey = _b64UrlDecode(wrappedKeyB64);
+    final wrapNonce  = _b64UrlDecode(wrapNonceB64);
+    if (wrappedKey.length != kExpectedWrappedKeyLen) {
+      throw StateError(
+        'wrapped_key has wrong length '
+        '(got ${wrappedKey.length}, expected $kExpectedWrappedKeyLen)',
+      );
+    }
+    if (wrapNonce.length != kExpectedWrappingNonceLen) {
+      throw StateError(
+        'wrapping_nonce has wrong length '
+        '(got ${wrapNonce.length}, expected $kExpectedWrappingNonceLen)',
+      );
+    }
+    final unwrapped = await _aesGcm.decrypt(
       _splitCiphertextAndMac(wrappedKey, wrapNonce),
       secretKey: kWrap,
-    ),
-  );
-  if (cek.length != _cekBytes) {
-    throw InheritanceRevealStageException(
-      stage: kRevealStageCekLen,
-      cause: StateError('unwrapped CEK has wrong length'),
-      causeStackTrace: StackTrace.current,
     );
-  }
+    if (unwrapped.length != _cekBytes) {
+      throw StateError(
+        'unwrapped CEK has wrong length '
+        '(got ${unwrapped.length}, expected $_cekBytes)',
+      );
+    }
+    return unwrapped;
+  });
 
-  final encryptedPayload = _stageSync(
-    kRevealStagePayloadDecode,
-    () => _b64UrlDecode(package.encryptedPayloadB64Url),
-  );
-  final payloadNonce = _stageSync(
-    kRevealStagePayloadNonceDecode,
-    () => _b64UrlDecode(package.payloadNonceB64Url),
-  );
-  final plainBytes = await _stage(
-    kRevealStagePayloadDecrypt,
-    () => _aesGcm.decrypt(
+  // ---- Stage 6 · DECRYPT_PAYLOAD -------------------------------
+  // AES-GCM decrypt the credential payload using the CEK. A tag
+  // mismatch here means the credential ciphertext was tampered
+  // with — or (much more likely) that a subtle envelope format
+  // change happened between owner-encrypt and beneficiary-decrypt.
+  final List<int> plainBytes =
+      await _stage(kRevealStageDecryptPayload, () async {
+    final encPayloadB64 = (rawPackage['encrypted_payload'] ?? '').toString();
+    final payloadNonceB64 = (rawPackage['payload_nonce'] ?? '').toString();
+    final encryptedPayload = _b64UrlDecode(encPayloadB64);
+    final payloadNonce     = _b64UrlDecode(payloadNonceB64);
+    if (payloadNonce.length != kExpectedPayloadNonceLen) {
+      throw StateError(
+        'payload_nonce has wrong length '
+        '(got ${payloadNonce.length}, expected $kExpectedPayloadNonceLen)',
+      );
+    }
+    return _aesGcm.decrypt(
       _splitCiphertextAndMac(encryptedPayload, payloadNonce),
+      // Wrap the CEK in a FRESH SecretKey object — do not reuse a
+      // reference from another zone. cryptography 2.9.0 accepts
+      // both SecretKey and SecretKeyData; SecretKey(cek) is the
+      // documented owner-encrypt shape.
       secretKey: SecretKey(cek),
-    ),
-  );
-  final Map decoded = _stageSync(kRevealStageJson, () {
-    final j = jsonDecode(utf8.decode(plainBytes));
+    );
+  });
+
+  // ---- Stage 7 · UTF8_DECODE -----------------------------------
+  // Convert plaintext bytes to a Dart string. Any malformed UTF-8
+  // surface as a FormatException with 'utf' in the message; the
+  // classifier maps this to PAYLOAD.
+  final String plainText = await _stage(kRevealStageUtf8Decode, () async {
+    return utf8.decode(plainBytes);
+  });
+
+  // ---- Stage 8 · JSON_PARSE ------------------------------------
+  // Parse the plaintext string as a JSON object. If it isn't a
+  // Map (e.g. an array or a scalar sneaked through), we throw
+  // StateError with 'not a JSON object' — the classifier maps
+  // this to PAYLOAD.
+  final Map decoded = await _stage(kRevealStageJsonParse, () async {
+    final j = jsonDecode(plainText);
     if (j is! Map) {
       throw StateError('credential payload is not a JSON object');
     }
     return j;
   });
-  return DecryptedInheritanceCredentials(
-    version: (decoded['version'] as num).toInt(),
-    username: (decoded['username'] ?? '').toString(),
-    pin: (decoded['pin'] ?? '').toString(),
-    createdAtIso: (decoded['created_at'] ?? '').toString(),
+
+  // ---- Stage 9 · MAP_CREDENTIAL --------------------------------
+  // Extract the four fields into a strongly-typed record. Missing
+  // ``version`` throws a TypeError → classified as SHAPE.
+  return _stage(kRevealStageMapCredential, () async {
+    return DecryptedInheritanceCredentials(
+      version:      (decoded['version'] as num).toInt(),
+      username:     (decoded['username'] ?? '').toString(),
+      pin:          (decoded['pin'] ?? '').toString(),
+      createdAtIso: (decoded['created_at'] ?? '').toString(),
+    );
+  });
+}
+
+/// Legacy round-trip entry point retained for the existing
+/// ``inheritance_credentials_test.dart`` round-trip test that
+/// operates on a raw seed instead of a SecretKey. Delegates to the
+/// stage-complete pipeline so BOTH paths get the same coverage.
+///
+/// New callers should prefer ``revealInheritanceCredentialsStaged``.
+Future<DecryptedInheritanceCredentials> decryptInheritanceCredentials({
+  required Uint8List beneficiarySkVaultPrivate,
+  required InheritanceCredentialPackage package,
+}) async {
+  final rawPackage = <String, dynamic>{
+    'crypto_version':          package.cryptoVersion,
+    'encrypted_payload':       package.encryptedPayloadB64Url,
+    'payload_nonce':           package.payloadNonceB64Url,
+    'wrapped_key':             package.wrappedKeyB64Url,
+    'wrapping_ephemeral_pk':   package.wrappingEphemeralPkB64Url,
+    'wrapping_nonce':          package.wrappingNonceB64Url,
+  };
+  return revealInheritanceCredentialsStaged(
+    beneficiarySkVault: SecretKey(beneficiarySkVaultPrivate),
+    rawPackage: rawPackage,
   );
 }
 

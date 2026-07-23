@@ -32,7 +32,13 @@ import 'package:cryptography/cryptography.dart'
     show SecretBoxAuthenticationError;
 
 import 'inheritance_credentials.dart'
-    show InheritanceRevealStageException;
+    show
+        InheritanceRevealStageException,
+        kExpectedPayloadNonceLen,
+        kExpectedSkVaultLen,
+        kExpectedWrappedKeyLen,
+        kExpectedWrappingEphemeralPkLen,
+        kExpectedWrappingNonceLen;
 
 
 /// Reference tags surfaced in the UI. Each corresponds to a
@@ -203,6 +209,26 @@ Map<String, int?> safeLengthsFromRawPkg(Map<String, dynamic>? pkg) {
     'wrapping_ephemeral_pk_len':
         decodeLen(pkg?['wrapping_ephemeral_pk']),
     'wrapping_nonce_len':       decodeLen(pkg?['wrapping_nonce']),
+  };
+}
+
+
+/// Expected on-wire lengths for the crypto_version=1 shape. Sent
+/// alongside the ACTUAL lengths in the diagnostic body so an operator
+/// can spot a byte-shape mismatch at a glance without cross-referencing
+/// the code.
+///
+/// The keys mirror ``safeLengthsFromRawPkg`` and are namespaced with
+/// ``expected_`` for the diagnostic body:
+///
+///   ``{'expected_payload_nonce_len': 12, ...}``
+Map<String, int> expectedLengthsForCryptoVersionOne() {
+  return <String, int>{
+    'expected_payload_nonce_len':        kExpectedPayloadNonceLen,
+    'expected_wrapped_key_len':          kExpectedWrappedKeyLen,
+    'expected_wrapping_ephemeral_pk_len': kExpectedWrappingEphemeralPkLen,
+    'expected_wrapping_nonce_len':       kExpectedWrappingNonceLen,
+    'expected_sk_vault_len':             kExpectedSkVaultLen,
   };
 }
 

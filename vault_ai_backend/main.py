@@ -9170,10 +9170,25 @@ async def beneficiary_list_inheritances_endpoint(
         # can decide whether to show Request access / Cancel / Claim
         # / Reveal. ``credentials_saved`` is set by the LEFT JOIN
         # on ``inheritance_credentials`` (soft-delete respected).
+        #
+        # 2026-07-23: also expose the owner's chosen ``vault_name``
+        # so the beneficiary UI can render a human-readable owner
+        # identity even when ``passer_label`` is NULL (which happens
+        # for every ZK-created pairing — the plaintext label is
+        # encrypted under the OWNER's metadataKey and stored in
+        # ``passer_label_ciphertext``, which the beneficiary cannot
+        # decrypt). The vault_name is already server-visible product
+        # metadata (returned by /auth/me to the owner) and the
+        # beneficiary already holds a pairing code they exchanged
+        # with the owner, so surfacing it here does not leak new
+        # information. It is nullable — a pre-migration-0031 ZK
+        # account that never adopted a real vault_name returns NULL
+        # and the frontend falls back to 'Unknown'.
         cursor.execute(
             """
             SELECT bl.id,
                    bl.passer_label,
+                   ov.vault_name AS owner_vault_name,
                    bl.status,
                    bl.transfer_requested_at,
                    bl.transfer_executes_at,
@@ -9188,6 +9203,8 @@ async def beneficiary_list_inheritances_endpoint(
               LEFT JOIN inheritance_credentials ic
                      ON ic.beneficiary_link_id = bl.id
                     AND ic.deleted_at IS NULL
+              LEFT JOIN vaults ov
+                     ON ov.vault_id = bl.passer_vault_id
              WHERE bl.beneficiary_vault_id = %s
              ORDER BY bl.created_at DESC
             """,
@@ -9209,6 +9226,10 @@ async def beneficiary_list_inheritances_endpoint(
             {
                 "id": r["id"],
                 "passer_label": r["passer_label"],
+                # 2026-07-23: owner's chosen vault_name, nullable.
+                # Frontend uses this as a fallback when passer_label
+                # is NULL (every ZK-created pairing).
+                "owner_vault_name": r.get("owner_vault_name"),
                 "status": r["status"],
                 "pairing_state": r.get("pairing_state") or "paired_no_credentials",
                 "credentials_saved": bool(r.get("credentials_saved")),

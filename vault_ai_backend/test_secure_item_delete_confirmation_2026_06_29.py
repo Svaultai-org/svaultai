@@ -622,22 +622,29 @@ class TestTTLBehaviour(unittest.TestCase):
         self.assertEqual(DELETE_INTENT_TTL_SECONDS, 600)
 
     def test_expired_intent_returns_none(self) -> None:
-                                                                  
-                                                               
+        # 2026-07-23: the intent lives in the shared chat-state
+        # backend now. Overwrite the on-disk value directly with an
+        # already-expired ``expires_at`` so we hit the
+        # ``is_expired`` guard inside ``get_pending_delete_intent``
+        # without waiting 10 minutes. The public API is unchanged;
+        # only the test-hook plumbing moved.
+        import json
         import time
-        from vault_secure_item_delete_confirmation import (
-            _store, _lock,
-        )
+        from dataclasses import asdict, replace
+        from vault_chat_state_store import get_chat_state_backend
+        from vault_secure_item_delete_confirmation import _backend_key
+
         intent = store_delete_intent(
             vault_id=VAULT_ID, service="X", item_type="imei",
             ttl_seconds=10,
         )
-                                         
-        from dataclasses import replace
-        with _lock:
-            _store[VAULT_ID] = replace(
-                intent, expires_at=time.time() - 1.0,
-            )
+        expired = replace(intent, expires_at=time.time() - 1.0)
+        get_chat_state_backend().set(
+            _backend_key(VAULT_ID),
+            json.dumps(asdict(expired), separators=(",", ":"))
+                .encode("utf-8"),
+            ttl_seconds=60,  # keep the row so the guard fires, not TTL
+        )
         self.assertIsNone(get_pending_delete_intent(vault_id=VAULT_ID))
 
 

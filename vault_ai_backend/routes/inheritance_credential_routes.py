@@ -769,21 +769,24 @@ _DIAG_CATEGORIES = frozenset({
 # Closed allow-list of decrypt-pipeline stages the client can report.
 # Every value MUST match a ``kRevealStage*`` constant declared in
 # ``vault_ai_frontend/lib/services/inheritance_credentials.dart``.
-# Added 2026-07-22: turns "INH-RETRIEVE-003-OTHER" from a black box
-# into an operator-searchable stage label.
+#
+# 2026-07-23 revision: ONE stable UPPER_SNAKE convention. The prior
+# lowercase stage tags ("eph_pub_decode", "cek_unwrap", …) are
+# removed. Fire-and-forget diagnostics from browsers still running
+# the previous bundle will be rejected 400 INH-CRED-004; the failure
+# has no user-visible impact (the classifier + snack reference tag
+# on the beneficiary device are unchanged).
 _DIAG_STAGES = frozenset({
-    "eph_pub_decode",
-    "beneficiary_sk_import",
-    "ecdh",
-    "hkdf",
-    "wrapped_key_decode",
-    "wrapping_nonce_decode",
-    "cek_unwrap",
-    "cek_len",
-    "payload_decode",
-    "payload_nonce_decode",
-    "payload_decrypt",
-    "json",
+    "LOAD_SECRET_KEY",
+    "PARSE_EPHEMERAL_PUBLIC_KEY",
+    "DERIVE_SHARED_SECRET",
+    "DERIVE_WRAP_KEY",
+    "UNWRAP_DATA_KEY",
+    "DECRYPT_PAYLOAD",
+    "UTF8_DECODE",
+    "JSON_PARSE",
+    "MAP_CREDENTIAL",
+    "UNSTAGED_UNKNOWN",
 })
 
 
@@ -825,6 +828,15 @@ class ClientDiagnosticRequest(BaseModel):
     wrapping_nonce_len: Optional[int] = Field(None, ge=0, le=64)
     active_sk_present: Optional[bool] = None
     active_sk_len: Optional[int] = Field(None, ge=0, le=1024)
+    # 2026-07-23: expected on-wire lengths per crypto_version=1,
+    # sent alongside the ACTUAL lengths so an operator can spot a
+    # byte-shape mismatch without cross-referencing the code. All
+    # fields are optional (older bundles won't include them).
+    expected_payload_nonce_len:        Optional[int] = Field(None, ge=0, le=64)
+    expected_wrapped_key_len:          Optional[int] = Field(None, ge=0, le=8_192)
+    expected_wrapping_ephemeral_pk_len: Optional[int] = Field(None, ge=0, le=256)
+    expected_wrapping_nonce_len:       Optional[int] = Field(None, ge=0, le=64)
+    expected_sk_vault_len:             Optional[int] = Field(None, ge=0, le=1024)
 
 
 class ClientDiagnosticResponse(BaseModel):
@@ -899,16 +911,21 @@ def client_diagnostic(
     logger.warning(
         "[INH-CLIENT-DIAG] area=%s ref=%s stage=%s cri=%s link_id=%s "
         "vault_tail=%s exc_type=%s category=%s crypto_v=%s "
-        "payload_len=%s nonce_len=%s wrapped_len=%s "
-        "eph_pk_len=%s wrap_nonce_len=%s "
-        "sk_present=%s sk_len=%s",
+        "payload_len=%s(exp=%s) nonce_len=%s(exp=%s) "
+        "wrapped_len=%s(exp=%s) eph_pk_len=%s(exp=%s) "
+        "wrap_nonce_len=%s(exp=%s) "
+        "sk_present=%s sk_len=%s(exp=%s)",
         area, ref, stage, payload.client_request_id,
         payload.link_id,
         str(principal["vault_id"])[-6:],
         payload.exception_type, category, payload.crypto_version,
-        payload.encrypted_payload_len, payload.payload_nonce_len,
-        payload.wrapped_key_len, payload.wrapping_ephemeral_pk_len,
-        payload.wrapping_nonce_len,
-        payload.active_sk_present, payload.active_sk_len,
+        payload.encrypted_payload_len, None,
+        payload.payload_nonce_len, payload.expected_payload_nonce_len,
+        payload.wrapped_key_len, payload.expected_wrapped_key_len,
+        payload.wrapping_ephemeral_pk_len,
+        payload.expected_wrapping_ephemeral_pk_len,
+        payload.wrapping_nonce_len, payload.expected_wrapping_nonce_len,
+        payload.active_sk_present,
+        payload.active_sk_len, payload.expected_sk_vault_len,
     )
     return ClientDiagnosticResponse()
