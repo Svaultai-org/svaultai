@@ -6350,6 +6350,84 @@ def get_pending_named_file(vault_id: str) -> Optional[dict]:
         conn.close()
 
 
+def get_pending_named_file_for_session(
+    vault_id: str,
+    session_id: Optional[str],
+) -> Optional[dict]:
+    """Session-scoped, upload-binding-gated version of
+    :func:`get_pending_named_file`.
+
+    Returns the newest pending-name row for the vault ONLY when a
+    corresponding upload binding exists in the shared chat-state
+    store, belongs to THIS session, has not expired, and points at
+    the same ``uploaded_file_id`` as the DB row. Under any other
+    condition (no binding at all, binding for a different session,
+    expired binding, binding for a different file, or storage read
+    error) the function returns ``None`` so callers cannot silently
+    consume a stale row.
+
+    This closes the residual save-cascade path documented in the
+    2026-07-24 production-readiness review: the "yes"->save-video
+    hijack was already fixed by the arbiter in the chat-brain
+    band, but the legacy cascade (main.py:13459) and the legacy
+    ``intent="name_file"`` branch (main.py:15319) still queried
+    the DB directly. Both now go through this wrapper so an
+    explicit save phrase like ``"save this"`` also cannot revive
+    an old unnamed row.
+
+    NEVER raises; on any exception logs at INFO and returns None
+    (fail-closed for the save side; callers see "no pending
+    attachment" and either fall through safely or ask for
+    clarification, matching the architecture).
+    """
+    if not vault_id:
+        return None
+    try:
+        row = get_pending_named_file(vault_id)
+    except Exception:
+        logger.exception(
+            "[PENDING-ATT] db_lookup_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+        return None
+    if row is None:
+        return None
+    file_id = str(row.get("id") or "")
+    if not file_id:
+        return None
+    try:
+        from vault_chat_upload_binding import resolve_active_upload
+        binding = resolve_active_upload(
+            vault_id=vault_id, session_id=session_id,
+        )
+    except Exception:
+        logger.exception(
+            "[PENDING-ATT] binding_lookup_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+        return None
+    if binding is None:
+        logger.info(
+            "[PENDING-ATT] refused_no_binding vault=%s file=%s",
+            (vault_id or "")[:8] + "…",
+            file_id[:8] + "…",
+        )
+        return None
+    if binding.uploaded_file_id != file_id:
+        # The current session has a binding, but it does not
+        # match the newest needs_naming row. Do not silently
+        # pick a different file. Refuse the save.
+        logger.info(
+            "[PENDING-ATT] refused_file_mismatch vault=%s "
+            "row_file=%s bound_file=%s",
+            (vault_id or "")[:8] + "…",
+            file_id[:8] + "…",
+            (binding.uploaded_file_id or "")[:8] + "…",
+        )
+        return None
+    return row
+
+
 async def handle_tool_call(
     tool_name: str, args: dict, vault_id: str, key: bytes,
     token_id: str = "",
@@ -11991,6 +12069,14 @@ async def chat_endpoint(
     principal=Depends(verify_trusted_device),
 ):
     vault_id = principal["vault_id"]
+    # Per-chat-turn session id used by session-scoped chat state
+    # readers (upload binding, pending-attachment gate, etc.).
+    # Threaded through every call site that needs to distinguish
+    # THIS session's uploads from a stale row in the DB.
+    _chat_session_id = (
+        principal.get("token_id")
+        if isinstance(principal, dict) else None
+    )
     logger.debug("Chat request from vault: %s", vault_id)
 
 
@@ -13542,8 +13628,15 @@ async def chat_endpoint(
             # say "save this" without specifying a name.
             # Attachments are DB-backed, so this fallback is
             # cross-worker safe with no per-process state.
+            # 2026-07-24 production-readiness fix — legacy save
+            # cascade now goes through the session/binding-scoped
+            # wrapper so a stale needs_naming row cannot be
+            # revived by an explicit "save this" phrase from an
+            # unrelated session or after the binding TTL.
             try:
-                _pending_attachment = get_pending_named_file(vault_id)
+                _pending_attachment = get_pending_named_file_for_session(
+                    vault_id, _chat_session_id,
+                )
             except Exception:
                 logger.exception(
                     "[CHAT-DEBUG] pending_attachment_lookup_failed "
@@ -14414,7 +14507,9 @@ async def chat_endpoint(
                         embed_fn=_p2_brain_embed(client),
                         coverage=_p2_brain_coverage,
                         pending_file_present=(
-                            get_pending_named_file(vault_id) is not None
+                            get_pending_named_file_for_session(
+                                vault_id, _chat_session_id,
+                            ) is not None
                         ),
                         has_uploaded_files_in_turn=bool(req.uploaded_file_ids),
                         grounded_answer_client=client,
@@ -14567,7 +14662,9 @@ async def chat_endpoint(
                     embed_fn=_brain_embed(client),
                     coverage=_brain_coverage,
                     pending_file_present=(
-                        get_pending_named_file(vault_id) is not None
+                        get_pending_named_file_for_session(
+                            vault_id, _chat_session_id,
+                        ) is not None
                     ),
                     has_uploaded_files_in_turn=bool(req.uploaded_file_ids),
                     grounded_answer_client=client,
@@ -14614,7 +14711,13 @@ async def chat_endpoint(
         safe_for_intent = redact_message(decrypted_message)
 
                                                                 
-        pending_file_for_intent = get_pending_named_file(vault_id)
+        # Session/binding-scoped. The intent classifier is only
+        # told a file is pending-name when this session actually
+        # has a live upload binding for that file. Prevents an
+        # explicit "call it foo" from consuming a stale row.
+        pending_file_for_intent = get_pending_named_file_for_session(
+            vault_id, _chat_session_id,
+        )
         if pending_file_for_intent is not None:
             ct = (pending_file_for_intent.get("content_type") or "").lower()
             if ct.startswith("audio/"):
@@ -15368,7 +15471,9 @@ async def chat_endpoint(
         pending_file = (
             pending_file_for_intent
             if pending_file_for_intent is not None
-            else get_pending_named_file(vault_id)
+            else get_pending_named_file_for_session(
+                vault_id, _chat_session_id,
+            )
         )
 
         if intent == "name_file" and pending_file:
@@ -15532,7 +15637,9 @@ async def chat_endpoint(
                             embed_fn=_cred_brain_embed(client),
                             coverage=_cred_brain_coverage,
                             pending_file_present=(
-                                get_pending_named_file(vault_id) is not None
+                                get_pending_named_file_for_session(
+                                    vault_id, _chat_session_id,
+                                ) is not None
                             ),
                             has_uploaded_files_in_turn=bool(req.uploaded_file_ids),
                             grounded_answer_client=client,
