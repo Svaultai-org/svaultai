@@ -124,6 +124,19 @@ AUTH_TTL_SECONDS: int = 60
 
 
 # -------------------------------------------------------------------
+# Payload schema version — strict discipline per design memo rev 4.
+# Redis JSON payloads MUST carry this exact version; deserializers
+# (both the Python from_json and the Lua atomic-consume script)
+# reject any other value. Bumping this constant requires an
+# explicit forward-migration path (or dropping in-flight
+# authorization records — acceptable, they are single-use with
+# 60s TTL).
+# -------------------------------------------------------------------
+
+AUTH_SCHEMA_VERSION: int = 1
+
+
+# -------------------------------------------------------------------
 # Dataclasses
 # -------------------------------------------------------------------
 
@@ -140,8 +153,14 @@ class AuthorizationRecord:
     confidence:                     float
     created_at:                     float
     expires_at:                     float
+    schema_version:                 int = 1
 
     def __post_init__(self) -> None:
+        if self.schema_version != AUTH_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported authorization_record schema_version "
+                f"{self.schema_version!r}"
+            )
         if not self.auth_id:
             raise ValueError("auth_id required")
         if not self.vault_id:
@@ -169,6 +188,7 @@ class AuthorizationRecord:
 
     def to_json(self) -> str:
         return json.dumps({
+            "schema_version":              self.schema_version,
             "auth_id":                     self.auth_id,
             "vault_id":                    self.vault_id,
             "session_id":                  self.session_id or "",
@@ -185,6 +205,12 @@ class AuthorizationRecord:
     @classmethod
     def from_json(cls, raw: str) -> "AuthorizationRecord":
         p = json.loads(raw)
+        # Strict schema-version discipline (design memo rev 4).
+        sv = p.get("schema_version")
+        if sv != AUTH_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported authorization_record schema_version {sv!r}"
+            )
         sess = p.get("session_id")
         if sess == "":
             sess = None
@@ -200,6 +226,7 @@ class AuthorizationRecord:
             confidence=float(p["confidence"]),
             created_at=float(p["created_at"]),
             expires_at=float(p["expires_at"]),
+            schema_version=int(sv),
         )
 
 
@@ -354,6 +381,14 @@ if not ok or type(record) ~= 'table' then
     return {'malformed', raw}
 end
 
+-- Strict schema-version discipline: refuse (without consuming)
+-- any record whose version we do not understand. See design memo
+-- rev 4. The specific version constant is passed as ARGV[8] so
+-- Python and Lua stay in sync automatically.
+if tonumber(record.schema_version) ~= tonumber(ARGV[8]) then
+    return {'malformed', raw}
+end
+
 if tonumber(record.expires_at) == nil then
     return {'malformed', raw}
 end
@@ -469,6 +504,7 @@ def _consume_via_lua(
         expected_target_id,
         expected_action,
         expected_turn,
+        str(AUTH_SCHEMA_VERSION),
     )
     reason_raw = result[0] if result else b""
     raw_value  = result[1] if len(result) > 1 else b""
@@ -582,6 +618,7 @@ __all__ = [
     "AUTH_ACTION_SAVE_ATTACHMENT",
     "AUTH_ACTIONS",
     "AUTH_TTL_SECONDS",
+    "AUTH_SCHEMA_VERSION",
     "REASON_CONSUMED",
     "REASON_NOT_FOUND",
     "REASON_MALFORMED",

@@ -168,6 +168,17 @@ DRAFT_TTL_SECONDS: int = 600
 
 
 # -------------------------------------------------------------------
+# Payload schema version — strict discipline per design memo rev 4.
+# The Redis JSON payload MUST carry this version; deserializers
+# reject any other value. Bumping this constant requires an
+# explicit forward-migration path (or dropping in-flight drafts —
+# acceptable since drafts are ephemeral).
+# -------------------------------------------------------------------
+
+DRAFT_SCHEMA_VERSION: int = 1
+
+
+# -------------------------------------------------------------------
 # Field-format validators
 # -------------------------------------------------------------------
 
@@ -357,6 +368,10 @@ class Draft:
     schema_version:      int = 1
 
     def __post_init__(self) -> None:
+        if self.schema_version != DRAFT_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported draft schema_version {self.schema_version!r}"
+            )
         if self.draft_kind not in DRAFT_KINDS:
             raise ValueError(f"unknown draft_kind {self.draft_kind!r}")
         if self.status not in DRAFT_STATUSES:
@@ -443,6 +458,14 @@ class Draft:
     @classmethod
     def from_json(cls, raw: str) -> "Draft":
         payload = json.loads(raw)
+        # Strict schema-version discipline (design memo rev 4):
+        # unknown/missing versions are rejected outright. Bumping
+        # DRAFT_SCHEMA_VERSION requires an explicit migration path.
+        sv = payload.get("schema_version")
+        if sv != DRAFT_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported draft schema_version {sv!r}"
+            )
         fields = {
             name: DraftField(
                 value=meta["value"],
@@ -464,7 +487,7 @@ class Draft:
             origin_turn_id=str(payload["origin_turn_id"]),
             last_touch_turn_id=str(payload["last_touch_turn_id"]),
             status=str(payload["status"]),
-            schema_version=int(payload.get("schema_version") or 1),
+            schema_version=int(sv),
         )
 
 
@@ -739,6 +762,7 @@ __all__ = [
     "OP_UNCHANGED",
     "PATCH_OPS",
     "DRAFT_TTL_SECONDS",
+    "DRAFT_SCHEMA_VERSION",
     "FieldFormatError",
     "FieldSpec",
     "schema_for",

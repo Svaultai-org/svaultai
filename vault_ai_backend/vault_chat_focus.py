@@ -97,6 +97,17 @@ FOCUS_TTL_SECONDS: int = 180
 
 
 # -------------------------------------------------------------------
+# Payload schema version — strict discipline per design memo rev 4.
+# Redis JSON payloads MUST carry this exact version; deserializers
+# reject any other value. Bumping this constant requires an
+# explicit forward-migration path (or dropping in-flight focus
+# records — acceptable, focus is short-lived).
+# -------------------------------------------------------------------
+
+FOCUS_SCHEMA_VERSION: int = 1
+
+
+# -------------------------------------------------------------------
 # Dataclass
 # -------------------------------------------------------------------
 
@@ -110,8 +121,13 @@ class ConversationalFocus:
     session_id:         Optional[str]
     at:                 float
     expires_at:         float
+    schema_version:     int = 1
 
     def __post_init__(self) -> None:
+        if self.schema_version != FOCUS_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported focus schema_version {self.schema_version!r}"
+            )
         if self.kind not in FOCUS_KINDS:
             raise ValueError(f"unknown focus kind {self.kind!r}")
         if self.assistant_act not in FOCUS_ACTS:
@@ -144,6 +160,7 @@ class ConversationalFocus:
 
     def to_json(self) -> str:
         return json.dumps({
+            "schema_version":    self.schema_version,
             "kind":              self.kind,
             "id":                self.id,
             "assistant_act":     self.assistant_act,
@@ -157,6 +174,12 @@ class ConversationalFocus:
     @classmethod
     def from_json(cls, raw: str) -> "ConversationalFocus":
         p = json.loads(raw)
+        # Strict schema-version discipline (design memo rev 4).
+        sv = p.get("schema_version")
+        if sv != FOCUS_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported focus schema_version {sv!r}"
+            )
         return cls(
             kind=str(p["kind"]),
             id=p.get("id"),
@@ -166,6 +189,7 @@ class ConversationalFocus:
             session_id=p.get("session_id"),
             at=float(p["at"]),
             expires_at=float(p["expires_at"]),
+            schema_version=int(sv),
         )
 
 
@@ -336,6 +360,7 @@ __all__ = [
     "FOCUS_ACT_NONE",
     "FOCUS_ACTS",
     "FOCUS_TTL_SECONDS",
+    "FOCUS_SCHEMA_VERSION",
     "ConversationalFocus",
     "stamp_focus",
     "read_focus",

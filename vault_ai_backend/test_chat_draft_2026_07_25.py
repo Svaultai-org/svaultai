@@ -353,5 +353,51 @@ class ExpiryTest(unittest.TestCase):
         self.assertEqual(lst, [])
 
 
+class SchemaVersionTest(unittest.TestCase):
+    """Strict schema-version discipline (design memo rev 4)."""
+
+    def test_from_json_rejects_missing_schema_version(self):
+        import json
+        d = vd.new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=vd.DRAFT_LOGIN,
+            initial_fields=_login_fields_ok(), origin_turn_id="t1",
+        )
+        payload = json.loads(d.to_json())
+        payload.pop("schema_version", None)
+        with self.assertRaises(ValueError):
+            vd.Draft.from_json(json.dumps(payload))
+
+    def test_from_json_rejects_unknown_version(self):
+        import json
+        d = vd.new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=vd.DRAFT_LOGIN,
+            initial_fields=_login_fields_ok(), origin_turn_id="t1",
+        )
+        payload = json.loads(d.to_json())
+        payload["schema_version"] = 99
+        with self.assertRaises(ValueError):
+            vd.Draft.from_json(json.dumps(payload))
+
+    def test_constructor_rejects_unknown_schema_version(self):
+        with self.assertRaises(ValueError):
+            vd.new_draft(
+                vault_id=VAULT, session_id=SESSION,
+                draft_kind=vd.DRAFT_LOGIN,
+                initial_fields=_login_fields_ok(), origin_turn_id="t1",
+            ).__class__(
+                # Instantiate with wrong schema_version
+                draft_id="x", vault_id=VAULT, session_id=SESSION,
+                draft_kind=vd.DRAFT_LOGIN, fields={},
+                created_at=1.0, updated_at=1.0, expires_at=2.0,
+                origin_turn_id="t", last_touch_turn_id="t",
+                status=vd.STATUS_EDITABLE, schema_version=99,
+            )
+
+    def test_current_version_constant_is_one(self):
+        self.assertEqual(vd.DRAFT_SCHEMA_VERSION, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

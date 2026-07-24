@@ -283,5 +283,54 @@ class ConcurrencyTest(unittest.TestCase):
         self.assertEqual(len(not_found), N - 1)
 
 
+class AuthSchemaVersionTest(unittest.TestCase):
+    """Strict schema-version discipline (design memo rev 4)."""
+
+    def setUp(self):
+        install_backend_for_tests(InMemoryChatStateBackend())
+
+    def tearDown(self):
+        reset_chat_state_backend_for_tests()
+
+    def test_to_json_includes_schema_version(self):
+        import json
+        rec = _mint_valid()
+        payload = json.loads(rec.to_json())
+        self.assertEqual(payload["schema_version"], vauth.AUTH_SCHEMA_VERSION)
+
+    def test_from_json_rejects_missing_schema_version(self):
+        import json
+        rec = _mint_valid()
+        payload = json.loads(rec.to_json())
+        payload.pop("schema_version", None)
+        with self.assertRaises(ValueError):
+            vauth.AuthorizationRecord.from_json(json.dumps(payload))
+
+    def test_from_json_rejects_unknown_version(self):
+        import json
+        rec = _mint_valid()
+        payload = json.loads(rec.to_json())
+        payload["schema_version"] = 42
+        with self.assertRaises(ValueError):
+            vauth.AuthorizationRecord.from_json(json.dumps(payload))
+
+    def test_constructor_rejects_unknown_schema_version(self):
+        with self.assertRaises(ValueError):
+            vauth.AuthorizationRecord(
+                auth_id="a", vault_id=VAULT, session_id=SESSION,
+                target_kind=vauth.AUTH_TARGET_DRAFT,
+                target_id="d1",
+                action=vauth.AUTH_ACTION_SAVE,
+                authorizing_user_turn_id="u1",
+                preceding_assistant_turn_id="a1",
+                confidence=0.9,
+                created_at=1.0, expires_at=61.0,
+                schema_version=99,
+            )
+
+    def test_current_version_constant_is_one(self):
+        self.assertEqual(vauth.AUTH_SCHEMA_VERSION, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -215,5 +215,52 @@ class FocusSessionScopeTest(unittest.TestCase):
         self.assertIsNone(vf.read_focus(vault_id=VAULT, session_id="B"))
 
 
+class FocusSchemaVersionTest(unittest.TestCase):
+    """Strict schema-version discipline (design memo rev 4)."""
+
+    def _valid_focus(self):
+        return vf.ConversationalFocus(
+            kind=vf.FOCUS_KIND_DRAFT, id="d-1",
+            assistant_act=vf.FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+            assistant_turn_id="a1",
+            vault_id=VAULT, session_id=SESSION,
+            at=1.0, expires_at=2.0,
+        )
+
+    def test_to_json_includes_schema_version(self):
+        import json
+        f = self._valid_focus()
+        payload = json.loads(f.to_json())
+        self.assertEqual(payload["schema_version"], vf.FOCUS_SCHEMA_VERSION)
+
+    def test_from_json_rejects_missing_schema_version(self):
+        import json
+        payload = json.loads(self._valid_focus().to_json())
+        payload.pop("schema_version", None)
+        with self.assertRaises(ValueError):
+            vf.ConversationalFocus.from_json(json.dumps(payload))
+
+    def test_from_json_rejects_unknown_version(self):
+        import json
+        payload = json.loads(self._valid_focus().to_json())
+        payload["schema_version"] = 42
+        with self.assertRaises(ValueError):
+            vf.ConversationalFocus.from_json(json.dumps(payload))
+
+    def test_constructor_rejects_unknown_schema_version(self):
+        with self.assertRaises(ValueError):
+            vf.ConversationalFocus(
+                kind=vf.FOCUS_KIND_DRAFT, id="d-1",
+                assistant_act=vf.FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+                assistant_turn_id="a1",
+                vault_id=VAULT, session_id=SESSION,
+                at=1.0, expires_at=2.0,
+                schema_version=99,
+            )
+
+    def test_current_version_constant_is_one(self):
+        self.assertEqual(vf.FOCUS_SCHEMA_VERSION, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
