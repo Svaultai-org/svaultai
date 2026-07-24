@@ -91,7 +91,8 @@ def _install_secure_item_stub():
     shape production returns."""
     import vault_secure_item_save as ss
 
-    def _fake_execute(*, vault_id, key=None, db_executor=None):
+    # Signature must match production; db_executor is required.
+    def _fake_execute(*, vault_id, key, db_executor):
         return {
             "band": "deleted",
             "message": "Deleted saved item from your vault.",
@@ -564,6 +565,67 @@ class ChatBrainLowConfidenceTest(unittest.TestCase):
         self.assertNotIn("Deleted", result.reply_text)
         self.assertIn("yes", result.reply_text.lower())
         self.assertIn("no", result.reply_text.lower())
+
+
+class TestRouterCallsExecutePendingDeleteWithRequiredKwargs(unittest.TestCase):
+    """Regression guard for Bug C. autospec=True enforces the real
+    signature so an omitted required kwarg raises the same TypeError
+    production saw."""
+
+    def setUp(self):
+        install_backend_for_tests(InMemoryChatStateBackend())
+
+    def tearDown(self):
+        _install_provider(None)
+        reset_chat_state_backend_for_tests()
+
+    def test_router_supplies_db_executor_and_propagates_executor_result(self):
+        from unittest import mock
+        from vault_secure_item_delete_confirmation import (
+            get_pending_delete_intent, store_delete_intent,
+        )
+        store_delete_intent(
+            vault_id=VAULT_A, service="Instagram", item_type="login",
+        )
+        intent = get_pending_delete_intent(vault_id=VAULT_A)
+        _install_provider({
+            "tool": TOOL_CONFIRM_PENDING_DELETE,
+            "args": {"action_id": intent.intent_id},
+            "confidence": CONFIDENCE_HIGH,
+            "why": "yes",
+        })
+        # Distinctive message so the propagation assertion below
+        # can't be satisfied by any generic fallback text.
+        EXECUTOR_MESSAGE = (
+            "Deleted your Instagram login from your vault "
+            "(distinctive-token-for-propagation-check)."
+        )
+        EXECUTOR_RESULT = {
+            "band": "deleted",
+            "message": EXECUTOR_MESSAGE,
+        }
+        with mock.patch(
+            "vault_secure_item_save._execute_pending_delete",
+            autospec=True,
+        ) as mocked:
+            mocked.return_value = EXECUTOR_RESULT
+            result = _run(_run_brain(
+                "yes", vault_id=VAULT_A, session_id=SESS_A,
+            ))
+        self.assertTrue(result.handled)
+        self.assertEqual(mocked.call_count, 1)
+        _, kwargs = mocked.call_args
+        self.assertIn("vault_id", kwargs)
+        self.assertIn("key", kwargs)
+        self.assertIn("db_executor", kwargs)
+        # Router must not rewrite the executor's success band or
+        # message. Guards against a future regression where the
+        # router correctly calls the executor but overwrites the
+        # returned success text.
+        self.assertEqual(
+            result.reply_text, EXECUTOR_MESSAGE,
+            "router must propagate the executor's message verbatim",
+        )
 
 
 if __name__ == "__main__":

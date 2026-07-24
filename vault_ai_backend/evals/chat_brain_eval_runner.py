@@ -234,7 +234,8 @@ def _current_pending_kind() -> Optional[str]:
 def _install_secure_item_stub():
     import vault_secure_item_save as ss
 
-    def _exec(*, vault_id, key=None, db_executor=None):
+    # Signature must match production; db_executor is required.
+    def _exec(*, vault_id, key, db_executor):
         return {"band": "deleted",
                 "message": "Deleted saved item from your vault."}
 

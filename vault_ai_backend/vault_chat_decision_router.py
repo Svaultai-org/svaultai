@@ -84,8 +84,11 @@ def _confirm_pending_delete(
         logger.exception("[ROUTER] confirm_delete_import_failed")
         return FALLTHROUGH
     try:
+        # db_executor is required-keyword; None routes through
+        # _default_delete (same as the card-delete path).
         result = _execute_pending_delete(
             vault_id=snapshot.vault_id, key=key,
+            db_executor=None,
         )
     except Exception:
         logger.exception(
