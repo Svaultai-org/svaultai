@@ -57,8 +57,76 @@ confirmation.
 """
 
 
+# -------------------------------------------------------------------
+# Predicate helpers (per design memo rev 4 constraint 7).
+#
+# Production v2 code MUST call these predicates instead of comparing
+# floats against the raw thresholds. Direct threshold comparison is
+# a lint smell — permitted only inside this module and inside test
+# files that intentionally exercise threshold boundaries.
+# -------------------------------------------------------------------
+
+from typing import Any
+
+
+def is_valid_confidence(value: Any) -> bool:
+    """True iff ``value`` is a number in the [0.0, 1.0] interval.
+
+    Booleans are rejected because ``bool`` is a numeric subtype in
+    Python and confidence must not be a truthy/falsy value smuggled
+    through the schema.
+    """
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    v = float(value)
+    return 0.0 <= v <= 1.0
+
+
+def may_execute_non_destructive(confidence: float) -> bool:
+    """True iff ``confidence`` meets or exceeds the floor for a
+    non-destructive execution (confirm_draft on a save-flavored
+    draft, cancel_draft, cancel_pending_action, etc.)."""
+    return float(confidence) >= CONFIDENCE_EXECUTE_NON_DESTRUCTIVE
+
+
+def may_execute_destructive(confidence: float) -> bool:
+    """True iff ``confidence`` meets or exceeds the floor for a
+    destructive execution (confirm_pending_action on a delete
+    kind). Higher floor than non-destructive because the cost of
+    a false accept is asymmetric."""
+    return float(confidence) >= CONFIDENCE_EXECUTE_DESTRUCTIVE
+
+
+def may_execute_high_context(confidence: float) -> bool:
+    """True iff ``confidence`` meets or exceeds the floor for
+    bypassing the default focus-binding rule (i.e. authorizing a
+    target that is NOT the current conversational focus)."""
+    return float(confidence) >= CONFIDENCE_EXECUTE_HIGH_CONTEXT
+
+
+def requires_clarification(confidence: float, *, destructive: bool = False) -> bool:
+    """True iff a decision at this confidence should be downgraded
+    to ``ask_clarification`` instead of executed.
+
+    Callers pass ``destructive=True`` for delete-flavored
+    confirmations so the higher floor applies. This is the single
+    inversion point used by the policy layer; do not re-express
+    this rule with raw threshold comparisons elsewhere.
+    """
+    if destructive:
+        return not may_execute_destructive(confidence)
+    return not may_execute_non_destructive(confidence)
+
+
 __all__ = [
     "CONFIDENCE_EXECUTE_NON_DESTRUCTIVE",
     "CONFIDENCE_EXECUTE_DESTRUCTIVE",
     "CONFIDENCE_EXECUTE_HIGH_CONTEXT",
+    "is_valid_confidence",
+    "may_execute_non_destructive",
+    "may_execute_destructive",
+    "may_execute_high_context",
+    "requires_clarification",
 ]
