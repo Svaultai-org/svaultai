@@ -838,7 +838,17 @@ def _try_route_inner(
                         or resolve.row.get("file_name")
                         or "",
                     )[:120],
-                    ("show", "open", "view", "download", "delete"),
+                    # 2026-07-27 architectural gap fix: full follow-up
+                    # verb set. Any bare "download it" / "delete it" /
+                    # "show related" / "tell me about it" / "rename it"
+                    # / "copy it" / "move it" now resolves against this
+                    # pinned file via the existing pronoun-followup
+                    # dispatcher, which was widened at the same time.
+                    (
+                        "show", "open", "view", "download",
+                        "delete", "rename", "copy",
+                        "related", "describe", "move",
+                    ),
                 ),
             )
         if resolve.status == "ambiguous":

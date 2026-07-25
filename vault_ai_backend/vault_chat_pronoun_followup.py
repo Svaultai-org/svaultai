@@ -121,6 +121,38 @@ _VERB_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("upgrade", r"^\s*upgrade\s+it\s*[.!?]*\s*$"),
         ("upgrade", r"^\s*upgrade\s+that\s*[.!?]*\s*$"),
         ("upgrade", r"^\s*upgrade\s+now\s*[.!?]*\s*$"),
+
+
+        # 2026-07-27 architectural gap fix: the follow-up verb set
+        # the deterministic-router audit surfaced. Every one of these
+        # must resolve against the active vault-object entity rather
+        # than fall through to the LLM planner. The dispatcher in
+        # main.py maps each canonical verb to the appropriate
+        # pending_action on the file card.
+
+        # "related" - fetch objects related to the active object
+        ("related", r"^\s*show\s+related\s*[.!?]*\s*$"),
+        ("related", r"^\s*show\s+me\s+related\s*[.!?]*\s*$"),
+        ("related", r"^\s*show\s+the\s+related\s*[.!?]*\s*$"),
+        ("related", r"^\s*any\s+related\s*[.!?]*\s*$"),
+        ("related", r"^\s*related\s+files?\s*[.!?]*\s*$"),
+        ("related", r"^\s*related\s+items?\s*[.!?]*\s*$"),
+
+        # "describe" - summarize / tell me about the active object
+        ("describe", r"^\s*tell\s+me\s+about\s+it\s*[.!?]*\s*$"),
+        ("describe", r"^\s*tell\s+me\s+about\s+that\s*[.!?]*\s*$"),
+        ("describe", r"^\s*tell\s+me\s+about\s+this\s*[.!?]*\s*$"),
+        ("describe", r"^\s*what\s+is\s+it\s*[.!?]*\s*$"),
+        ("describe", r"^\s*what['']?s\s+that\s*[.!?]*\s*$"),
+        ("describe", r"^\s*what['']?s\s+it\s*[.!?]*\s*$"),
+        ("describe", r"^\s*describe\s+it\s*[.!?]*\s*$"),
+        ("describe", r"^\s*describe\s+that\s*[.!?]*\s*$"),
+        ("describe", r"^\s*summarize\s+it\s*[.!?]*\s*$"),
+        ("describe", r"^\s*summarize\s+that\s*[.!?]*\s*$"),
+
+        # "move" - move the active object
+        ("move", r"^\s*move\s+it\s*[.!?]*\s*$"),
+        ("move", r"^\s*move\s+that\s*[.!?]*\s*$"),
     )
 )
 

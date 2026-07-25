@@ -118,6 +118,14 @@ ACTION_UPGRADE:  str = "upgrade"
 ACTION_EDIT:     str = "edit"
 ACTION_DOWNLOAD: str = "download"
 ACTION_MORE:     str = "more"
+# 2026-07-27 architectural gap fix. These follow-up verbs used to
+# fall through to the LLM planner even when there was an active
+# file entity. Added so the entity gate `entity_matches_action`
+# allows the pronoun-followup dispatcher to render the file card
+# with pending_action set to the verb.
+ACTION_RELATED:  str = "related"
+ACTION_DESCRIBE: str = "describe"
+ACTION_MOVE:     str = "move"
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset({
     ACTION_SHOW,
@@ -131,6 +139,9 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset({
     ACTION_EDIT,
     ACTION_DOWNLOAD,
     ACTION_MORE,
+    ACTION_RELATED,
+    ACTION_DESCRIBE,
+    ACTION_MOVE,
 })
 
 

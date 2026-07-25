@@ -13077,9 +13077,23 @@ async def chat_endpoint(
                     # The backend NEVER hands the browser plaintext bytes
                     # here; it only re-emits the same safe file card the
                     # user just saw and tags the pending action.
+                    #
+                    # 2026-07-27 architectural gap fix: widened the verb
+                    # tuple to include every verb the pronoun-followup
+                    # detector recognizes. Any bare follow-up on an
+                    # active file entity now returns the file card with
+                    # `pending_action = <verb>`. The frontend uses that
+                    # tag to trigger the matching UI action. Previously
+                    # verbs like `delete`, `rename`, `copy`, `related`,
+                    # `describe`, `move` fell through to the LLM
+                    # planner and behaved non-deterministically.
                     elif (
                         _etype == ENTITY_FILE
-                        and _verb in ("download", "open", "view", "show")
+                        and _verb in (
+                            "download", "open", "view", "show",
+                            "delete", "rename", "copy",
+                            "related", "describe", "move",
+                        )
                     ):
                         try:
                             _ref = _active.get("entity_ref") or {}
