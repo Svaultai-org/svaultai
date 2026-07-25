@@ -75,10 +75,150 @@ async def run_chat_brain(
     user_tier: str = "free",
     features: Optional[dict] = None,
 ) -> BrainResult:
-    """Run the brain. Returns fallthrough if anything goes wrong or
-    if the decider chose to yield to the existing pipeline."""
+    """Dispatch on ``VAULTAI_CHAT_BRAIN_MODE``:
+
+        * ``off``    (default): legacy v1 brain runs; behavior
+                                identical to pre-commit-5.
+        * ``shadow`` : legacy v1 brain is authoritative; v2 runs
+                       read-only alongside and emits a diff record.
+                       Any v2 exception is caught + logged;
+                       user-facing result is unaffected.
+        * ``on``     : v2 is authoritative. Legacy v1 brain does
+                       NOT run. On uncaught v2 exception the
+                       behavior follows the design memo rev 8
+                       failure invariant (V1_FALLBACK env override
+                       vs controlled error). No mixed v1/v2
+                       execution within one request.
+
+    Returns ``BrainResult`` in every mode. Never raises.
+    """
     if not vault_id or not isinstance(user_message, str):
         return FALLTHROUGH
+
+    # Feature-flag dispatch — read once, fail closed to "off".
+    try:
+        from vault_chat_brain_v2 import (
+            MODE_OFF, MODE_SHADOW, MODE_ON,
+            read_brain_mode,
+        )
+        mode = read_brain_mode()
+    except Exception:
+        logger.exception("[BRAIN] mode_read_failed")
+        return await _run_legacy_brain(
+            vault_id=vault_id, session_id=session_id, turn_id=turn_id,
+            vault_name=vault_name, reply_language=reply_language,
+            user_message=user_message, memory=memory, key=key,
+            unlocked=unlocked, user_tier=user_tier, features=features,
+        )
+
+    if mode == MODE_OFF:
+        return await _run_legacy_brain(
+            vault_id=vault_id, session_id=session_id, turn_id=turn_id,
+            vault_name=vault_name, reply_language=reply_language,
+            user_message=user_message, memory=memory, key=key,
+            unlocked=unlocked, user_tier=user_tier, features=features,
+        )
+
+    if mode == MODE_SHADOW:
+        # v1 authoritative; v2 observes read-only.
+        legacy_result = await _run_legacy_brain(
+            vault_id=vault_id, session_id=session_id, turn_id=turn_id,
+            vault_name=vault_name, reply_language=reply_language,
+            user_message=user_message, memory=memory, key=key,
+            unlocked=unlocked, user_tier=user_tier, features=features,
+        )
+        try:
+            from vault_chat_brain_v2 import run_v2_shadow
+            await run_v2_shadow(
+                vault_id=vault_id, session_id=session_id,
+                turn_id=turn_id, user_message=user_message,
+                memory=memory,
+                v1_tool=legacy_result.tool,
+                v1_handled=legacy_result.handled,
+            )
+        except Exception:
+            logger.exception("[BRAIN] shadow_v2_wrapper_failed")
+        return legacy_result
+
+    if mode == MODE_ON:
+        try:
+            from vault_chat_brain_v2 import (
+                CONTROLLED_ERROR_RESULT,
+                run_v2_authoritative,
+            )
+            from vault_chat_integration_v2 import ExecutorRegistry
+            v2_result = await run_v2_authoritative(
+                vault_id=vault_id, session_id=session_id,
+                turn_id=turn_id, user_message=user_message,
+                key=key, memory=memory,
+                executor_registry=_default_v2_executor_registry(),
+                assistant_turn_id=turn_id,
+            )
+        except Exception:
+            logger.exception("[BRAIN] on_v2_top_level_crashed")
+            from vault_chat_brain_v2 import (
+                CONTROLLED_ERROR_RESULT, v1_fallback_enabled,
+            )
+            if v1_fallback_enabled():
+                return BrainResult(
+                    handled=False,
+                    fallthrough_reason=(
+                        "v2_error_v1_fallback:top_level_exception"
+                    ),
+                )
+            v2_result = CONTROLLED_ERROR_RESULT
+        return BrainResult(
+            handled=v2_result.handled,
+            reply_text=v2_result.reply_text,
+            tool=v2_result.tool,
+            fallthrough_reason=v2_result.fallthrough_reason,
+        )
+
+    # Defensive — should be unreachable after read_brain_mode
+    # normalization.
+    logger.warning("[BRAIN] unexpected mode %r; falling back to off", mode)
+    return await _run_legacy_brain(
+        vault_id=vault_id, session_id=session_id, turn_id=turn_id,
+        vault_name=vault_name, reply_language=reply_language,
+        user_message=user_message, memory=memory, key=key,
+        unlocked=unlocked, user_tier=user_tier, features=features,
+    )
+
+
+def _default_v2_executor_registry():
+    """Phase-1 empty registry — no action_kind is wired to a real
+    executor. This is deliberate: mode==on will produce
+    ``INTERNAL_ERROR`` for any confirm/cancel/edit/create until a
+    later commit wires the real executors. The framework is in
+    place for that commit; no user is exposed to it because the
+    flag is off in production.
+
+    Tests inject their own registries to exercise the SUCCESS /
+    EXECUTOR_FAILED / AUTHORIZATION_FAILED / CONSUME_FAILED
+    branches.
+    """
+    from vault_chat_integration_v2 import ExecutorRegistry
+    return ExecutorRegistry()
+
+
+async def _run_legacy_brain(
+    *,
+    vault_id: str,
+    session_id: Optional[str],
+    turn_id: str,
+    vault_name: str,
+    reply_language: str,
+    user_message: str,
+    memory: Any = None,
+    key: bytes = b"",
+    unlocked: bool = True,
+    user_tier: str = "free",
+    features: Optional[dict] = None,
+) -> BrainResult:
+    """The v1 brain body, unchanged. Called when
+    ``VAULTAI_CHAT_BRAIN_MODE == "off"`` or ``"shadow"``. Kept
+    byte-identical to the pre-commit-5 body so the legacy
+    regression suite remains green."""
 
     started = time.time()
 
