@@ -212,6 +212,101 @@ class OutcomeShapeTest(unittest.TestCase):
 
 
 # =====================================================================
+# ALREADY_CANCELLED result code (commit 6a-1)
+# =====================================================================
+
+class AlreadyCancelledCodeTest(unittest.TestCase):
+    """SUCCESS and ALREADY_CANCELLED must be distinguishable at
+    the result-code level, not overloaded on a single SUCCESS."""
+
+    def test_already_cancelled_is_a_successful_code(self):
+        self.assertIn(
+            adapters.RESULT_ALREADY_CANCELLED,
+            adapters.SUCCESSFUL_RESULT_CODES,
+        )
+        self.assertIn(
+            adapters.RESULT_ALREADY_CANCELLED,
+            adapters.RESULT_CODES,
+        )
+
+    def test_ok_factory_accepts_already_cancelled(self):
+        o = adapters._ok(
+            result_code=adapters.RESULT_ALREADY_CANCELLED,
+            cancel_kind="already_gone",
+        )
+        self.assertTrue(o.success)
+        self.assertEqual(
+            o.result_code, adapters.RESULT_ALREADY_CANCELLED,
+        )
+
+    def test_ok_factory_rejects_non_successful_code(self):
+        with self.assertRaises(ValueError):
+            adapters._ok(result_code=adapters.RESULT_TARGET_STALE)
+
+    def test_fail_factory_rejects_successful_code(self):
+        with self.assertRaises(ValueError):
+            adapters._fail(adapters.RESULT_SUCCESS)
+        with self.assertRaises(ValueError):
+            adapters._fail(adapters.RESULT_ALREADY_CANCELLED)
+
+    def test_outcome_success_true_rejects_pure_failure_code(self):
+        # success=True + result_code=TARGET_STALE should still raise.
+        with self.assertRaises(ValueError):
+            adapters.ExecutorOutcomeV2(
+                success=True, result_code=adapters.RESULT_TARGET_STALE,
+            )
+
+    def test_outcome_success_false_rejects_successful_code(self):
+        with self.assertRaises(ValueError):
+            adapters.ExecutorOutcomeV2(
+                success=False,
+                result_code=adapters.RESULT_ALREADY_CANCELLED,
+            )
+
+
+# =====================================================================
+# Deterministic telemetry ordering (commit 6a-5)
+# =====================================================================
+
+class TelemetryOrderingTest(unittest.TestCase):
+    """Same set of telemetry keys must iterate in the same order
+    (alphabetical) regardless of caller insertion order. This makes
+    rollout log analysis grep-stable."""
+
+    def test_same_keys_different_insertion_order_same_iteration(self):
+        a = adapters._ok(
+            action_kind="confirm_save",
+            underlying_band="ok",
+            source_kind="credential_draft",
+        )
+        b = adapters._ok(
+            source_kind="credential_draft",
+            underlying_band="ok",
+            action_kind="confirm_save",
+        )
+        self.assertEqual(
+            list(a.telemetry_metadata.keys()),
+            list(b.telemetry_metadata.keys()),
+        )
+        # And it's canonical (sorted).
+        self.assertEqual(
+            list(a.telemetry_metadata.keys()),
+            sorted(a.telemetry_metadata.keys()),
+        )
+
+    def test_fail_telemetry_also_alphabetical(self):
+        o = adapters._fail(
+            adapters.RESULT_EXECUTOR_EXCEPTION,
+            underlying_band="db_error",
+            action_kind="confirm_delete",
+        )
+        self.assertEqual(
+            list(o.telemetry_metadata.keys()),
+            sorted(o.telemetry_metadata.keys()),
+        )
+
+
+# =====================================================================
 # Registry factory
 # =====================================================================
 
@@ -239,6 +334,132 @@ class RegistryFactoryTest(unittest.TestCase):
         self.assertEqual(
             sorted(missing), sorted(vi.EXECUTOR_REQUIRED_ACTION_KINDS),
         )
+
+
+# =====================================================================
+# Static wiring failure vs runtime dependency failure (6a-2)
+# =====================================================================
+
+class FailFastRegistryConstructionTest(unittest.TestCase):
+    """Static wiring failures (import missing, symbol renamed)
+    MUST raise RegistryConstructionError at build time -- not
+    surface as DEPENDENCY_UNAVAILABLE per-call at runtime. The
+    application must not advertise itself v2-ready if the
+    registry cannot be assembled."""
+
+    def test_import_probe_lists_expected_primitives(self):
+        # The probe table should cover every V1 primitive the
+        # adapters reach for. If a maintainer adds a new adapter
+        # they must also add its imports here.
+        probes = dict(adapters._STATIC_IMPORT_PROBES)
+        # Expect at least these modules present in the probe map.
+        for expected_module in (
+            "main",
+            "vault_secure_item_save",
+            "vault_credential_draft",
+            "vault_chat_upload_binding",
+            "vault_secure_item_draft",
+        ):
+            self.assertIn(expected_module, probes)
+
+    def test_probe_success_returns_empty_failures(self):
+        failures = adapters._probe_static_imports()
+        self.assertEqual(failures, [])
+
+    def test_probe_reports_missing_module(self):
+        original = adapters._STATIC_IMPORT_PROBES
+        try:
+            adapters._STATIC_IMPORT_PROBES = original + (
+                ("this_module_does_not_exist_xyzzy", ("foo",)),
+            )
+            failures = adapters._probe_static_imports()
+            self.assertTrue(any(
+                "this_module_does_not_exist_xyzzy" in f
+                for f in failures
+            ))
+        finally:
+            adapters._STATIC_IMPORT_PROBES = original
+
+    def test_probe_reports_renamed_symbol(self):
+        original = adapters._STATIC_IMPORT_PROBES
+        try:
+            # "main" exists but pick a symbol that doesn't.
+            adapters._STATIC_IMPORT_PROBES = original + (
+                ("main", ("nonexistent_symbol_qqq",)),
+            )
+            failures = adapters._probe_static_imports()
+            self.assertTrue(any(
+                "nonexistent_symbol_qqq" in f and "symbol missing" in f
+                for f in failures
+            ))
+        finally:
+            adapters._STATIC_IMPORT_PROBES = original
+
+    def test_construction_raises_when_probe_fails(self):
+        original = adapters._STATIC_IMPORT_PROBES
+        try:
+            adapters._STATIC_IMPORT_PROBES = original + (
+                ("this_module_does_not_exist_xyzzy2", ("foo",)),
+            )
+            with self.assertRaises(adapters.RegistryConstructionError) as cm:
+                adapters.build_production_executor_registry()
+            self.assertIn(
+                "this_module_does_not_exist_xyzzy2", str(cm.exception),
+            )
+        finally:
+            adapters._STATIC_IMPORT_PROBES = original
+
+
+# =====================================================================
+# Shadow / authoritative action-inventory parity (6a-3)
+# =====================================================================
+
+class ShadowAuthoritativeParityTest(unittest.TestCase):
+    """Shadow mode's observable inventory must equal what a
+    complete authoritative registry can handle. Otherwise shadow
+    could silently miss an action_kind that only exists in
+    authoritative mode (or vice versa)."""
+
+    def test_shadow_inventory_equals_action_kinds(self):
+        from vault_chat_decision_router_v2 import ACTION_KINDS
+        self.assertEqual(
+            vi.get_shadow_observable_inventory(), ACTION_KINDS,
+        )
+
+    def test_v2_action_inventory_is_action_kinds(self):
+        from vault_chat_decision_router_v2 import ACTION_KINDS
+        self.assertEqual(vi.get_v2_action_inventory(), ACTION_KINDS)
+
+    def test_complete_production_registry_has_parity_with_shadow(self):
+        registry = adapters.build_production_executor_registry()
+        is_parity, diff = vi.assert_shadow_authoritative_parity(registry)
+        self.assertTrue(
+            is_parity, msg=f"parity broken: symmetric diff={diff}",
+        )
+        self.assertEqual(diff, [])
+
+    def test_empty_registry_breaks_parity(self):
+        empty = vi.ExecutorRegistry()
+        is_parity, diff = vi.assert_shadow_authoritative_parity(empty)
+        self.assertFalse(is_parity)
+        # The diff should be exactly the EXECUTOR_REQUIRED kinds
+        # (shadow can observe them; authoritative cannot handle
+        # them without wired executors).
+        self.assertEqual(
+            sorted(diff), sorted(vi.EXECUTOR_REQUIRED_ACTION_KINDS),
+        )
+
+    def test_authoritative_inventory_includes_non_executor_natively(self):
+        # Even with only some EXECUTOR_REQUIRED wired,
+        # NON_EXECUTOR_ACTION_KINDS must be present in the
+        # authoritative inventory (integration handles them
+        # natively).
+        registry = vi.ExecutorRegistry(
+            confirm_save=lambda **kw: None,
+        )
+        auth_inv = vi.get_authoritative_action_inventory(registry)
+        for kind in vi.NON_EXECUTOR_ACTION_KINDS:
+            self.assertIn(kind, auth_inv)
 
 
 # =====================================================================
@@ -900,7 +1121,11 @@ class CancelPendingAdapterTest(unittest.TestCase):
             target_kind=TARGET_KIND_PENDING_ACTION, target_id=target_id,
         )
 
-    def test_absent_pending_is_idempotent_success(self):
+    def test_absent_pending_is_already_cancelled_not_success(self):
+        # 6a-1: idempotent no-op reports ALREADY_CANCELLED, not
+        # SUCCESS. The outcome.success flag is still True (nothing
+        # for the user to retry), but the result_code distinguishes
+        # rollout-quality signal.
         with mock.patch(
             "vault_chat_executor_adapters_v2.read_all_pending",
             new=lambda **kw: [],
@@ -908,6 +1133,12 @@ class CancelPendingAdapterTest(unittest.TestCase):
             ctx = _ctx_from_plan(self._plan("p-gone"))
             adapters.adapter_cancel_pending(ctx)
         self.assertTrue(ctx.outcome.success)
+        self.assertEqual(
+            ctx.outcome.result_code, adapters.RESULT_ALREADY_CANCELLED,
+        )
+        self.assertNotEqual(
+            ctx.outcome.result_code, adapters.RESULT_SUCCESS,
+        )
         self.assertEqual(
             ctx.outcome.telemetry_metadata.get("cancel_kind"),
             "already_gone",

@@ -108,6 +108,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 RESULT_SUCCESS:                        str = "SUCCESS"
+RESULT_ALREADY_CANCELLED:              str = "ALREADY_CANCELLED"
 RESULT_TARGET_STALE:                   str = "TARGET_STALE"
 RESULT_VALIDATION_FAILED:              str = "VALIDATION_FAILED"
 RESULT_NOT_FOUND:                      str = "NOT_FOUND"
@@ -118,6 +119,7 @@ RESULT_EXECUTOR_EXCEPTION:             str = "EXECUTOR_EXCEPTION"
 
 RESULT_CODES: frozenset[str] = frozenset({
     RESULT_SUCCESS,
+    RESULT_ALREADY_CANCELLED,
     RESULT_TARGET_STALE,
     RESULT_VALIDATION_FAILED,
     RESULT_NOT_FOUND,
@@ -125,6 +127,17 @@ RESULT_CODES: frozenset[str] = frozenset({
     RESULT_AUTHORIZATION_CONTEXT_INVALID,
     RESULT_DEPENDENCY_UNAVAILABLE,
     RESULT_EXECUTOR_EXCEPTION,
+})
+
+# Codes that count as operationally-successful (the user does not
+# need to retry). SUCCESS represents a real state change;
+# ALREADY_CANCELLED represents a no-op that reached the desired
+# end state via a prior request. Both are OK from integration's
+# perspective, but MUST NOT be conflated in telemetry -- the user's
+# intent-vs-idempotent-retry ratio is a rollout-quality signal.
+SUCCESSFUL_RESULT_CODES: frozenset[str] = frozenset({
+    RESULT_SUCCESS,
+    RESULT_ALREADY_CANCELLED,
 })
 
 # The only user-facing reply text ever produced by an adapter is
@@ -156,12 +169,21 @@ class TelemetryValidationError(Exception):
 
 
 def _validate_telemetry(md: Mapping[str, str]) -> Mapping[str, str]:
+    """Validate every key is on the allowlist, then return a
+    canonically-ordered (sorted by key) dict copy.
+
+    Sorting the keys makes telemetry emission deterministic across
+    runs regardless of caller kwarg order or Python dict-insertion
+    quirks: two calls that pass the same key set always produce
+    the same key iteration order. This makes rollout log analysis
+    grep-stable.
+    """
     for k in md.keys():
         if k not in ALLOWED_TELEMETRY_KEYS:
             raise TelemetryValidationError(
                 f"telemetry key {k!r} not in ALLOWED_TELEMETRY_KEYS"
             )
-    return dict(md)
+    return {k: md[k] for k in sorted(md.keys())}
 
 
 # =====================================================================
@@ -253,25 +275,45 @@ class ExecutorOutcomeV2:
     def __post_init__(self) -> None:
         if self.result_code not in RESULT_CODES:
             raise ValueError(f"unknown result_code {self.result_code!r}")
-        if self.success and self.result_code != RESULT_SUCCESS:
+        # success ⟺ result_code is in the successful set. Enforce
+        # both directions so callers cannot smuggle a failure into a
+        # success telemetry event or vice versa.
+        if self.success and self.result_code not in SUCCESSFUL_RESULT_CODES:
             raise ValueError(
-                "success=True requires result_code=SUCCESS"
+                "success=True requires result_code in "
+                f"SUCCESSFUL_RESULT_CODES; got {self.result_code!r}"
             )
-        if not self.success and self.result_code == RESULT_SUCCESS:
+        if not self.success and self.result_code in SUCCESSFUL_RESULT_CODES:
             raise ValueError(
-                "result_code=SUCCESS requires success=True"
+                f"result_code {self.result_code!r} implies success=True"
             )
         _validate_telemetry(self.telemetry_metadata)
 
 
-def _ok(**telemetry: str) -> ExecutorOutcomeV2:
+def _ok(
+    *, result_code: str = RESULT_SUCCESS, **telemetry: str,
+) -> ExecutorOutcomeV2:
+    """Build a success outcome. ``result_code`` defaults to
+    ``RESULT_SUCCESS`` but may be set to ``RESULT_ALREADY_CANCELLED``
+    for idempotent no-ops that reached the desired end state via a
+    prior request. Do NOT overload SUCCESS with idempotent
+    semantics -- use the appropriate code."""
+    if result_code not in SUCCESSFUL_RESULT_CODES:
+        raise ValueError(
+            f"_ok requires result_code in SUCCESSFUL_RESULT_CODES; "
+            f"got {result_code!r}"
+        )
     return ExecutorOutcomeV2(
-        success=True, result_code=RESULT_SUCCESS,
+        success=True, result_code=result_code,
         telemetry_metadata=MappingProxyType(_validate_telemetry(telemetry)),
     )
 
 
 def _fail(code: str, **telemetry: str) -> ExecutorOutcomeV2:
+    if code in SUCCESSFUL_RESULT_CODES:
+        raise ValueError(
+            f"_fail rejects successful result_code {code!r}"
+        )
     return ExecutorOutcomeV2(
         success=False, result_code=code,
         telemetry_metadata=MappingProxyType(_validate_telemetry(telemetry)),
@@ -288,6 +330,36 @@ def _find_pending_by_id(
     """Re-read every pending source and return the one matching
     ``target_id`` for this vault + session, or None if it is no
     longer visible.
+
+    Identity invariants (commit 6a):
+
+        * ``vault_id`` match: the pending action must belong to
+          the same vault the caller authorized against.
+        * ``action_id`` match: pending action ids are opaque
+          UUID-scale strings that are never re-used across
+          different intents. Same id implies same conceptual
+          slot.
+        * ``session_id`` match (soft): the pending arbiter is
+          already session-scoped via its ``session_id`` argument;
+          this call re-passes ``ctx.session_id`` so a mid-request
+          session change would surface the pending as absent.
+
+    Not yet checked (documented as future enhancement):
+
+        * Object generation / version. The current data model
+          does not carry a ``version`` field on pending actions
+          or on the underlying delete intent / credential draft /
+          upload binding. If a pending action were replaced with
+          a DIFFERENT action under the same ``action_id`` slot
+          between policy time and execution time, the identity
+          check would not catch it. Today this cannot happen --
+          the pending stores are append-only from the caller's
+          perspective; the ids are freshly minted per intent and
+          the same id is never reused. When a versioned data
+          model lands, this function should also verify
+          ``live.version == plan.expected_version``. See
+          ``docs/design_notes/v2_toctou_versioning.md`` for the
+          future contract.
     """
     live = read_all_pending(
         vault_id=ctx.vault_id,
@@ -675,8 +747,13 @@ def adapter_cancel_pending(ctx: ExecutorContextV2) -> None:
 
     live = _find_pending_by_id(ctx, ctx.target_id or "")
     if live is None:
-        # Idempotent: nothing to cancel.
+        # Idempotent no-op: the pending action was already gone
+        # when we looked. Report ALREADY_CANCELLED (not SUCCESS)
+        # so rollout telemetry can distinguish genuine cancels
+        # from idempotent retries. Router still maps both to the
+        # same user-visible reply.
         ctx.record_outcome(_ok(
+            result_code=RESULT_ALREADY_CANCELLED,
             cancel_kind="already_gone",
             action_kind=ACTION_KIND_CANCEL_PENDING,
         ))
@@ -786,26 +863,78 @@ def _make_adapter_executor(
 
 class RegistryConstructionError(Exception):
     """Raised when build_production_executor_registry cannot
-    produce a registration for a required action_kind. The
-    exception carries the missing kinds so operators can see
-    exactly which adapter failed to import."""
+    produce a valid registration for a required action_kind --
+    e.g., an adapter module missing, an underlying V1 primitive's
+    symbol renamed, an import cycle, or an incomplete map. This is
+    a static wiring failure; the process MUST NOT advertise itself
+    as v2-ready until it is resolved.
+
+    RUNTIME dependency failures (vault locked, database
+    unavailable, storage unavailable) do NOT raise this -- they
+    surface as ``RESULT_DEPENDENCY_UNAVAILABLE`` at call time
+    against an otherwise-valid registry.
+    """
+
+
+# Underlying V1 primitives each adapter reaches for. Probing these
+# imports at construction time turns a static wiring failure (import
+# missing / symbol renamed) into an immediate
+# ``RegistryConstructionError`` rather than a runtime
+# ``DEPENDENCY_UNAVAILABLE`` per call.
+_STATIC_IMPORT_PROBES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("main",                              ("save_secret_tool",
+                                            "save_named_uploaded_asset")),
+    ("vault_secure_item_save",            ("_execute_pending_delete",
+                                            "_cancel_pending_delete")),
+    ("vault_credential_draft",            ("consume_draft",)),
+    ("vault_chat_upload_binding",         ("clear_binding",)),
+    ("vault_secure_item_draft",           ("clear_secure_item_drafts_for_vault",)),
+)
+
+
+def _probe_static_imports() -> list[str]:
+    """Attempt each ``(module, symbols)`` probe. Return a list of
+    human-readable failure strings (empty means every probe
+    succeeded)."""
+    failures: list[str] = []
+    for module_name, symbols in _STATIC_IMPORT_PROBES:
+        try:
+            module = __import__(module_name)
+        except Exception as exc:
+            failures.append(f"{module_name}: import failed ({exc!r})")
+            continue
+        for sym in symbols:
+            if not hasattr(module, sym):
+                failures.append(f"{module_name}.{sym}: symbol missing")
+    return failures
 
 
 def build_production_executor_registry() -> ExecutorRegistry:
     """Return the production ``ExecutorRegistry`` with all
     ``EXECUTOR_REQUIRED_ACTION_KINDS`` wired to their adapters.
 
-    Import failures are surfaced (via
-    ``RegistryConstructionError``) rather than hidden -- an
-    incomplete registry would fail the readiness guard anyway,
-    but a construction error names the exact problem for
-    operators.
+    Two failure classes:
 
-    Adapters that reach V1 code (main.save_secret_tool,
-    _execute_pending_delete, save_named_uploaded_asset) do their
-    imports inside the adapter body so this factory can construct
-    a full registry even when the app is not yet booted.
+        * Static wiring failure (import missing, symbol renamed,
+          incomplete map) -> ``RegistryConstructionError``.
+          Registered before the process advertises itself as
+          v2-ready. Callers MUST refuse to enter mode==on if this
+          raises.
+        * Runtime dependency failure (vault locked, DB down)
+          -> ``RESULT_DEPENDENCY_UNAVAILABLE`` at call time
+          against an otherwise-valid registry.
     """
+    # Step 1: probe every underlying V1 primitive import so a
+    # rename or missing module fails HERE (fast) instead of only
+    # at runtime per call.
+    import_failures = _probe_static_imports()
+    if import_failures:
+        raise RegistryConstructionError(
+            "static wiring failure -- unresolved underlying "
+            "primitives: " + "; ".join(import_failures)
+        )
+
+    # Step 2: build the registry.
     try:
         registry = ExecutorRegistry(
             confirm_save=_make_adapter_executor(adapter_confirm_save_login),
@@ -817,9 +946,10 @@ def build_production_executor_registry() -> ExecutorRegistry:
         )
     except Exception as exc:
         raise RegistryConstructionError(
-            f"failed to construct production executor registry: {exc}"
+            f"failed to construct production executor registry: {exc!r}"
         ) from exc
-    # Sanity check: every EXECUTOR_REQUIRED kind maps to a callable.
+
+    # Step 3: sanity-check every EXECUTOR_REQUIRED kind is mapped.
     missing = []
     for kind in sorted(EXECUTOR_REQUIRED_ACTION_KINDS):
         if registry.get(kind) is None:
@@ -834,6 +964,7 @@ def build_production_executor_registry() -> ExecutorRegistry:
 
 __all__ = [
     "RESULT_SUCCESS",
+    "RESULT_ALREADY_CANCELLED",
     "RESULT_TARGET_STALE",
     "RESULT_VALIDATION_FAILED",
     "RESULT_NOT_FOUND",
@@ -842,6 +973,7 @@ __all__ = [
     "RESULT_DEPENDENCY_UNAVAILABLE",
     "RESULT_EXECUTOR_EXCEPTION",
     "RESULT_CODES",
+    "SUCCESSFUL_RESULT_CODES",
     "ALLOWED_TELEMETRY_KEYS",
     "TelemetryValidationError",
     "ExecutorContextV2",

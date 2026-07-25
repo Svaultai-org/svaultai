@@ -253,6 +253,66 @@ _assert_action_kind_partition()
 
 
 # =====================================================================
+# Action inventory (commit 6a)
+#
+# Every mode of the v2 pipeline (shadow, on) must operate over the
+# same closed inventory of action_kinds. Shadow mode does not run
+# executors, but it observes every action_kind the router can
+# emit. The parity guarantees that shadow rollout analysis can
+# never miss an action_kind that only exists in authoritative
+# mode (or vice versa).
+# =====================================================================
+
+def get_v2_action_inventory() -> frozenset[str]:
+    """Closed set of every action_kind the v2 pipeline can emit
+    or observe. Same for shadow and authoritative modes."""
+    return ACTION_KINDS
+
+
+def get_authoritative_action_inventory(
+    registry: "ExecutorRegistry",
+) -> frozenset[str]:
+    """Return the set of action_kinds an authoritative
+    invocation can HANDLE, given ``registry``:
+        * NON_EXECUTOR_ACTION_KINDS -- always handled natively;
+        * EXECUTOR_REQUIRED_ACTION_KINDS -- handled iff mapped in
+          the registry.
+    Callers should verify this equals ``get_v2_action_inventory()``
+    before entering mode==on. The runtime-readiness guard already
+    enforces this (it demands every EXECUTOR_REQUIRED kind be
+    mapped); this function makes the invariant explicit for
+    diagnostic reporting.
+    """
+    handled = set(NON_EXECUTOR_ACTION_KINDS)
+    for kind in EXECUTOR_REQUIRED_ACTION_KINDS:
+        if registry.get(kind) is not None:
+            handled.add(kind)
+    return frozenset(handled)
+
+
+def get_shadow_observable_inventory() -> frozenset[str]:
+    """Return the set of action_kinds shadow mode can observe.
+    Shadow evaluates the same read-only decision stack the
+    authoritative mode does (snapshot -> decider -> policy ->
+    router), so its inventory is every kind the router can
+    emit -- ``ACTION_KINDS`` in full."""
+    return ACTION_KINDS
+
+
+def assert_shadow_authoritative_parity(
+    registry: "ExecutorRegistry",
+) -> tuple[bool, list[str]]:
+    """Return ``(is_parity, diff_sorted)``. ``is_parity`` is True
+    iff shadow's observable inventory equals the authoritative
+    handled inventory. ``diff_sorted`` is the symmetric
+    difference (empty on parity)."""
+    shadow_inv = get_shadow_observable_inventory()
+    auth_inv = get_authoritative_action_inventory(registry)
+    diff = sorted(shadow_inv ^ auth_inv)
+    return (len(diff) == 0, diff)
+
+
+# =====================================================================
 # Runtime-readiness guard for mode==on
 # =====================================================================
 
@@ -744,4 +804,8 @@ __all__ = [
     "ExecutorRegistry",
     "apply_router_result_v2",
     "validate_v2_runtime_readiness",
+    "get_v2_action_inventory",
+    "get_authoritative_action_inventory",
+    "get_shadow_observable_inventory",
+    "assert_shadow_authoritative_parity",
 ]
