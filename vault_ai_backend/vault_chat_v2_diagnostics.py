@@ -87,6 +87,7 @@ from vault_chat_shadow_recorder_v2 import (
     _process_secret,
 )
 from vault_chat_v2_versions import (
+    check_revision_invariants,
     compute_v2_revision_stamp,
     get_v2_revision_dict,
 )
@@ -372,7 +373,41 @@ def run_startup_self_test(
     started = time.time()
     stages: list[SelfTestStage] = []
 
-    # Stage 0: enum consistency. Runs BEFORE the backend swap so
+    # Stage 0a: revision-invariants (commit 8b). A merge conflict
+    # that silently reset a layer revision below its floor would
+    # corrupt rollout-evidence semantics; catch it here.
+    try:
+        ok, violations = check_revision_invariants()
+        if ok:
+            stages.append(SelfTestStage(
+                name="revision_invariants", ok=True,
+                detail=(
+                    "all revisions positive and >= their "
+                    "MIN_LAYER_REVISIONS floors"
+                ),
+            ))
+        else:
+            stages.append(SelfTestStage(
+                name="revision_invariants", ok=False,
+                detail="; ".join(violations),
+            ))
+            return SelfTestReport(
+                ok=False,
+                duration_ms=int((time.time() - started) * 1000),
+                stages=tuple(stages),
+            )
+    except Exception as exc:
+        stages.append(SelfTestStage(
+            name="revision_invariants", ok=False,
+            detail=f"{type(exc).__name__}: {exc}",
+        ))
+        return SelfTestReport(
+            ok=False,
+            duration_ms=int((time.time() - started) * 1000),
+            stages=tuple(stages),
+        )
+
+    # Stage 0b: enum consistency. Runs BEFORE the backend swap so
     # a codebase-level enum drift is diagnosed clearly even when
     # no state store is available.
     try:
@@ -813,6 +848,7 @@ def is_v2_authoritative_ready(
     *,
     require_self_test: bool = True,
     current_environment: Optional[str] = None,
+    current_release_id: Optional[str] = None,
     _evidence_load_result: Optional[Any] = None,
     _validation_now: Optional[Any] = None,
 ) -> ReadinessGateReport:
@@ -879,6 +915,7 @@ def is_v2_authoritative_ready(
         validation = validate_rollout_evidence(
             evidence,
             current_environment=current_environment,
+            current_release_id=current_release_id,
             now=_validation_now,
         )
         if not validation.valid:

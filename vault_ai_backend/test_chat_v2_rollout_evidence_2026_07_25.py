@@ -52,6 +52,9 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+TEST_RELEASE_ID: str = "release-2026-07-25-abcdef0"
+
+
 def _good_evidence(
     *, environment: str = "staging",
     revision_stamp: str = None,
@@ -66,11 +69,12 @@ def _good_evidence(
     observation_started_at: datetime = None,
     observation_ended_at: datetime = None,
     approval_id: str = "approval-2026-07-25-01",
+    release_id: str = TEST_RELEASE_ID,
 ) -> ev.RolloutEvidenceV2:
     now = _now_utc()
     stamp = revision_stamp if revision_stamp is not None else compute_v2_revision_stamp()
     return ev.RolloutEvidenceV2(
-        evidence_version=1,
+        evidence_version=2,
         v2_revision_stamp=stamp,
         environment=environment,
         observation_started_at=(
@@ -91,6 +95,7 @@ def _good_evidence(
         approved_at=(approved_at or (now - timedelta(minutes=30))),
         expires_at=(expires_at or (now + timedelta(days=1))),
         approval_id=approval_id,
+        release_id=release_id,
     )
 
 
@@ -378,6 +383,7 @@ class ValidateEvidenceTest(unittest.TestCase):
     def test_valid_evidence_passes(self):
         r = ev.validate_rollout_evidence(
             _good_evidence(), current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertTrue(r.valid, msg=f"blockers={r.blockers}")
         self.assertEqual(r.blockers, ())
@@ -386,6 +392,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(revision_stamp="b9.p9.r9.s9.q9.i9"),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_REVISION_MISMATCH, r.blockers)
 
@@ -393,6 +400,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(environment="staging"),
             current_environment="prod-canary",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_ENVIRONMENT_MISMATCH, r.blockers)
 
@@ -402,6 +410,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         try:
             r = ev.validate_rollout_evidence(
                 _good_evidence(), current_environment=None,
+                current_release_id=TEST_RELEASE_ID,
             )
             self.assertIn(ev.BLOCKER_ENVIRONMENT_UNSET, r.blockers)
         finally:
@@ -413,6 +422,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(expires_at=now - timedelta(minutes=1)),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_EVIDENCE_EXPIRED, r.blockers)
 
@@ -421,6 +431,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(approved_at=now + timedelta(hours=1)),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_APPROVED_IN_FUTURE, r.blockers)
 
@@ -432,6 +443,7 @@ class ValidateEvidenceTest(unittest.TestCase):
                 observation_ended_at=now + timedelta(hours=3),
             ),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_OBSERVATION_IN_FUTURE, r.blockers)
 
@@ -443,6 +455,7 @@ class ValidateEvidenceTest(unittest.TestCase):
                 observation_ended_at=now - timedelta(hours=5),
             ),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(
             ev.BLOCKER_OBSERVATION_WINDOW_INVERTED, r.blockers,
@@ -456,6 +469,7 @@ class ValidateEvidenceTest(unittest.TestCase):
                 observation_ended_at=now - timedelta(hours=1),
             ),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(
             ev.BLOCKER_OBSERVATION_WINDOW_TOO_SHORT, r.blockers,
@@ -465,6 +479,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(total_diffs=500),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_INSUFFICIENT_DIFFS, r.blockers)
 
@@ -472,6 +487,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(workers_observed=1),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_INSUFFICIENT_WORKERS, r.blockers)
 
@@ -482,6 +498,7 @@ class ValidateEvidenceTest(unittest.TestCase):
                 total_diffs=50_000, pipeline_exception_count=400,
             ),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_EXCESS_EXCEPTION_RATE, r.blockers)
 
@@ -489,6 +506,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(different_semantics_pct=6.0),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(
             ev.BLOCKER_EXCESS_SEMANTIC_DISAGREEMENT, r.blockers,
@@ -498,6 +516,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(validation_error_pct=2.0),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(
             ev.BLOCKER_EXCESS_VALIDATION_ERRORS, r.blockers,
@@ -507,6 +526,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(fingerprint_available_pct=90.0),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(
             ev.BLOCKER_LOW_FINGERPRINT_AVAILABILITY, r.blockers,
@@ -516,6 +536,7 @@ class ValidateEvidenceTest(unittest.TestCase):
         r = ev.validate_rollout_evidence(
             _good_evidence(approval_id="  "),
             current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
         )
         self.assertIn(ev.BLOCKER_APPROVAL_ID_MISSING, r.blockers)
 
@@ -708,6 +729,137 @@ class MemoryBoundsStressTest(unittest.TestCase):
         self.assertEqual(
             snap["exception_window_size"], sm.EXCEPTION_WINDOW_SIZE,
         )
+
+
+# =====================================================================
+# Release / deployment identifier (commit 8b)
+# =====================================================================
+
+class ReleaseIdTest(unittest.TestCase):
+
+    def setUp(self):
+        self._prev = os.environ.pop(ev.ENV_RELEASE_ID, None)
+
+    def tearDown(self):
+        os.environ.pop(ev.ENV_RELEASE_ID, None)
+        if self._prev is not None:
+            os.environ[ev.ENV_RELEASE_ID] = self._prev
+
+    def test_missing_release_id_in_evidence_refused(self):
+        r = ev.validate_rollout_evidence(
+            _good_evidence(release_id="   "),
+            current_environment="staging",
+            current_release_id=TEST_RELEASE_ID,
+        )
+        self.assertIn(ev.BLOCKER_RELEASE_ID_MISSING, r.blockers)
+
+    def test_release_id_mismatch_refused(self):
+        r = ev.validate_rollout_evidence(
+            _good_evidence(release_id="release-XYZ"),
+            current_environment="staging",
+            current_release_id="release-DIFFERENT",
+        )
+        self.assertIn(ev.BLOCKER_RELEASE_ID_MISMATCH, r.blockers)
+
+    def test_env_release_id_unset_refused(self):
+        # current_release_id=None -> falls back to env; env unset -> unset.
+        r = ev.validate_rollout_evidence(
+            _good_evidence(release_id=TEST_RELEASE_ID),
+            current_environment="staging",
+            current_release_id=None,
+        )
+        self.assertIn(ev.BLOCKER_RELEASE_ID_ENV_UNSET, r.blockers)
+
+    def test_env_release_id_used_when_arg_omitted(self):
+        os.environ[ev.ENV_RELEASE_ID] = TEST_RELEASE_ID
+        r = ev.validate_rollout_evidence(
+            _good_evidence(release_id=TEST_RELEASE_ID),
+            current_environment="staging",
+            current_release_id=None,
+        )
+        self.assertTrue(r.valid, msg=f"blockers={r.blockers}")
+
+    def test_release_id_in_signed_evidence_roundtrip(self):
+        evidence = _good_evidence(release_id="rel-signed-abc")
+        payload = ev.evidence_to_payload_dict(evidence)
+        self.assertEqual(payload["release_id"], "rel-signed-abc")
+        rebuilt = ev.payload_dict_to_evidence(payload)
+        self.assertEqual(rebuilt.release_id, "rel-signed-abc")
+
+    def test_evidence_version_bumped_to_2(self):
+        # commit 8b: payload version 1 no longer supported.
+        self.assertEqual(ev.SUPPORTED_EVIDENCE_VERSIONS, frozenset({2}))
+
+
+# =====================================================================
+# Revision invariants (commit 8b)
+# =====================================================================
+
+class RevisionInvariantsTest(unittest.TestCase):
+
+    def test_current_module_passes_invariants(self):
+        from vault_chat_v2_versions import check_revision_invariants
+        ok, viol = check_revision_invariants()
+        self.assertTrue(ok, msg=f"violations={viol}")
+        self.assertEqual(viol, [])
+
+    def test_zero_revision_rejected(self):
+        # Simulate a merge conflict resetting a revision to 0.
+        import vault_chat_v2_versions as vv
+        original = vv.BRAIN_V2_REVISION
+        try:
+            vv.BRAIN_V2_REVISION = 0
+            ok, viol = vv.check_revision_invariants()
+            self.assertFalse(ok)
+            self.assertTrue(any("brain" in v for v in viol))
+        finally:
+            vv.BRAIN_V2_REVISION = original
+
+    def test_negative_revision_rejected(self):
+        import vault_chat_v2_versions as vv
+        original = vv.POLICY_V2_REVISION
+        try:
+            vv.POLICY_V2_REVISION = -3
+            ok, viol = vv.check_revision_invariants()
+            self.assertFalse(ok)
+            self.assertTrue(any("policy" in v for v in viol))
+        finally:
+            vv.POLICY_V2_REVISION = original
+
+    def test_below_min_floor_rejected(self):
+        # Bump the floor above current -> current now below floor.
+        import vault_chat_v2_versions as vv
+        from types import MappingProxyType
+        original_floor = vv.MIN_LAYER_REVISIONS
+        try:
+            elevated = {k: v for k, v in original_floor.items()}
+            elevated["brain"] = 999
+            vv.MIN_LAYER_REVISIONS = MappingProxyType(elevated)
+            ok, viol = vv.check_revision_invariants()
+            self.assertFalse(ok)
+            self.assertTrue(any(
+                "below its floor" in v for v in viol
+            ))
+        finally:
+            vv.MIN_LAYER_REVISIONS = original_floor
+
+    def test_self_test_includes_revision_invariants_stage(self):
+        report = diag.run_startup_self_test()
+        stage_names = [s.name for s in report.stages]
+        self.assertEqual(stage_names[0], "revision_invariants")
+        self.assertTrue(report.stages[0].ok)
+
+    def test_self_test_fails_when_revision_invariants_fail(self):
+        import vault_chat_v2_versions as vv
+        original = vv.PROMPT_REVISION
+        try:
+            vv.PROMPT_REVISION = 0
+            report = diag.run_startup_self_test()
+            self.assertFalse(report.ok)
+            self.assertEqual(report.stages[0].name, "revision_invariants")
+            self.assertFalse(report.stages[0].ok)
+        finally:
+            vv.PROMPT_REVISION = original
 
 
 if __name__ == "__main__":

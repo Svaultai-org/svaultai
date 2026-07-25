@@ -89,7 +89,9 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 EVIDENCE_ENVELOPE_VERSION:                    int = 1
-SUPPORTED_EVIDENCE_VERSIONS: frozenset[int]     = frozenset({1})
+# Payload schema version. Commit 8b bumped v1 -> v2 to add the
+# ``release_id`` field. Only v2 is accepted.
+SUPPORTED_EVIDENCE_VERSIONS: frozenset[int]     = frozenset({2})
 SIGNATURE_ALG_HMAC_SHA256:                    str = "HMAC-SHA256"
 
 MIN_HMAC_SECRET_LEN:                          int = 32
@@ -102,6 +104,12 @@ MIN_HMAC_SECRET_LEN:                          int = 32
 ENV_ROLLOUT_EVIDENCE_PATH:      str = "VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_PATH"
 ENV_ROLLOUT_EVIDENCE_SECRET:    str = "VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_HMAC_SECRET"
 ENV_ENVIRONMENT:                str = "VAULTAI_CHAT_BRAIN_V2_ENVIRONMENT"
+# commit 8b: deployment / release identifier of the running
+# process. Evidence generated for a different release_id is
+# refused even when revision stamps match. Revision stamps
+# describe the architecture; release_id describes the deployed
+# artifact.
+ENV_RELEASE_ID:                 str = "VAULTAI_CHAT_BRAIN_V2_RELEASE_ID"
 
 
 # =====================================================================
@@ -148,6 +156,10 @@ BLOCKER_EXCESS_SEMANTIC_DISAGREEMENT:  str = "evidence.different_semantics_above
 BLOCKER_EXCESS_VALIDATION_ERRORS:      str = "evidence.validation_errors_above_threshold"
 BLOCKER_LOW_FINGERPRINT_AVAILABILITY:  str = "evidence.fingerprint_availability_below_threshold"
 BLOCKER_APPROVAL_ID_MISSING:           str = "evidence.approval_id_missing"
+# commit 8b: release-id (deployment identifier) blockers.
+BLOCKER_RELEASE_ID_MISSING:            str = "evidence.release_id_missing"
+BLOCKER_RELEASE_ID_MISMATCH:           str = "evidence.release_id_mismatch"
+BLOCKER_RELEASE_ID_ENV_UNSET:          str = "evidence.release_id_env_unset"
 
 EVIDENCE_BLOCKERS: frozenset[str] = frozenset({
     BLOCKER_EVIDENCE_MISSING,
@@ -175,6 +187,9 @@ EVIDENCE_BLOCKERS: frozenset[str] = frozenset({
     BLOCKER_EXCESS_VALIDATION_ERRORS,
     BLOCKER_LOW_FINGERPRINT_AVAILABILITY,
     BLOCKER_APPROVAL_ID_MISSING,
+    BLOCKER_RELEASE_ID_MISSING,
+    BLOCKER_RELEASE_ID_MISMATCH,
+    BLOCKER_RELEASE_ID_ENV_UNSET,
 })
 
 
@@ -211,6 +226,10 @@ class RolloutEvidenceV2:
     approved_at:                    datetime
     expires_at:                     datetime
     approval_id:                    str
+    # commit 8b: release / deployment identifier the evidence
+    # was generated against. Refused if the running process's
+    # release identifier does not match.
+    release_id:                     str
 
     def __post_init__(self) -> None:
         if not isinstance(self.evidence_version, int):
@@ -273,6 +292,7 @@ def evidence_to_payload_dict(evidence: RolloutEvidenceV2) -> dict:
         "observation_ended_at":        _dt_to_iso_z(evidence.observation_ended_at),
         "observation_started_at":      _dt_to_iso_z(evidence.observation_started_at),
         "pipeline_exception_count":    int(evidence.pipeline_exception_count),
+        "release_id":                  evidence.release_id,
         "total_diffs":                 int(evidence.total_diffs),
         "v2_revision_stamp":           evidence.v2_revision_stamp,
         "validation_error_pct":        float(evidence.validation_error_pct),
@@ -288,7 +308,7 @@ def payload_dict_to_evidence(d: Mapping[str, Any]) -> RolloutEvidenceV2:
         "disagreement_source_counts", "environment", "evidence_version",
         "expires_at", "fingerprint_available_pct",
         "observation_ended_at", "observation_started_at",
-        "pipeline_exception_count", "total_diffs",
+        "pipeline_exception_count", "release_id", "total_diffs",
         "v2_revision_stamp", "validation_error_pct", "workers_observed",
     }
     missing = required - set(d.keys())
@@ -317,6 +337,7 @@ def payload_dict_to_evidence(d: Mapping[str, Any]) -> RolloutEvidenceV2:
         approved_at=_iso_z_to_dt(d["approved_at"]),
         expires_at=_iso_z_to_dt(d["expires_at"]),
         approval_id=str(d["approval_id"]),
+        release_id=str(d["release_id"]),
     )
 
 
@@ -397,6 +418,11 @@ def _read_hmac_secret_from_env() -> Optional[bytes]:
 
 def _read_environment_name() -> Optional[str]:
     raw = (os.environ.get(ENV_ENVIRONMENT) or "").strip()
+    return raw or None
+
+
+def _read_release_id() -> Optional[str]:
+    raw = (os.environ.get(ENV_RELEASE_ID) or "").strip()
     return raw or None
 
 
@@ -532,6 +558,7 @@ def validate_rollout_evidence(
     evidence: RolloutEvidenceV2,
     *,
     current_environment: Optional[str] = None,
+    current_release_id: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> EvidenceValidationResult:
     """Verify semantic invariants of loaded evidence.
@@ -606,6 +633,19 @@ def validate_rollout_evidence(
     if not evidence.approval_id or not evidence.approval_id.strip():
         blockers.append(BLOCKER_APPROVAL_ID_MISSING)
 
+    # Release / deployment identifier (commit 8b).
+    if not evidence.release_id or not evidence.release_id.strip():
+        blockers.append(BLOCKER_RELEASE_ID_MISSING)
+    else:
+        release_expected = (
+            current_release_id if current_release_id is not None
+            else _read_release_id()
+        )
+        if release_expected is None:
+            blockers.append(BLOCKER_RELEASE_ID_ENV_UNSET)
+        elif evidence.release_id != release_expected:
+            blockers.append(BLOCKER_RELEASE_ID_MISMATCH)
+
     return EvidenceValidationResult(
         valid=(len(blockers) == 0),
         blockers=tuple(sorted(set(blockers))),
@@ -621,6 +661,7 @@ __all__ = [
     "ENV_ROLLOUT_EVIDENCE_PATH",
     "ENV_ROLLOUT_EVIDENCE_SECRET",
     "ENV_ENVIRONMENT",
+    "ENV_RELEASE_ID",
     "MIN_TOTAL_DIFFS_FOR_ROLLOUT",
     "MIN_WORKERS_OBSERVED",
     "MIN_OBSERVATION_WINDOW_HOURS",
@@ -655,6 +696,9 @@ __all__ = [
     "BLOCKER_EXCESS_VALIDATION_ERRORS",
     "BLOCKER_LOW_FINGERPRINT_AVAILABILITY",
     "BLOCKER_APPROVAL_ID_MISSING",
+    "BLOCKER_RELEASE_ID_MISSING",
+    "BLOCKER_RELEASE_ID_MISMATCH",
+    "BLOCKER_RELEASE_ID_ENV_UNSET",
     # types + functions
     "RolloutEvidenceV2",
     "EvidenceLoadResult",

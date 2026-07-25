@@ -44,6 +44,9 @@ combination of layer versions produced a given record.
 
 from __future__ import annotations
 
+from types import MappingProxyType
+from typing import Mapping
+
 
 # =====================================================================
 # Per-layer revisions
@@ -55,6 +58,32 @@ ROUTER_V2_REVISION:          int = 1
 SEMANTIC_DECIDER_REVISION:   int = 1
 PROMPT_REVISION:             int = 1
 INTEGRATION_V2_REVISION:     int = 1
+
+
+# =====================================================================
+# Revision-invariants floor (commit 8b)
+#
+# Each entry is the MINIMUM acceptable value for the matching
+# revision constant above. When you bump a constant per the
+# bump-policy comment at the top of this module, bump the
+# matching floor too. A merge conflict that accidentally resets
+# a constant BELOW its floor fails ``check_revision_invariants``
+# at startup rather than silently downgrading historical
+# evidence.
+#
+# Monotonicity policy: revisions are append-only per repo
+# history. Do NOT decrement. Never re-use a stamp for a
+# different observable behavior.
+# =====================================================================
+
+MIN_LAYER_REVISIONS: Mapping[str, int] = MappingProxyType({
+    "brain":              1,
+    "policy":             1,
+    "router":             1,
+    "semantic_decider":   1,
+    "prompt":             1,
+    "integration":        1,
+})
 
 
 # =====================================================================
@@ -101,6 +130,49 @@ def get_v2_revision_dict() -> dict[str, int]:
     }
 
 
+def check_revision_invariants() -> tuple[bool, list[str]]:
+    """Verify every revision constant satisfies the invariants
+    documented in this module:
+
+        * strictly positive integer (>= 1);
+        * >= its entry in ``MIN_LAYER_REVISIONS`` (defends
+          against a merge conflict silently resetting a
+          revision below its historical floor).
+
+    Returns ``(is_valid, sorted_violations)``. Wired into the
+    startup self-test so a downgrade fails startup rather than
+    corrupting rollout evidence semantics.
+    """
+    violations: list[str] = []
+    revisions = get_v2_revision_dict()
+    for name, value in revisions.items():
+        if not isinstance(value, int) or value < 1:
+            violations.append(
+                f"revision {name!r} must be a positive int, got {value!r}"
+            )
+            continue
+        floor = MIN_LAYER_REVISIONS.get(name)
+        if floor is None:
+            violations.append(
+                f"MIN_LAYER_REVISIONS is missing an entry for {name!r}"
+            )
+            continue
+        if value < floor:
+            violations.append(
+                f"revision {name!r}={value} is below its floor "
+                f"MIN_LAYER_REVISIONS[{name!r}]={floor}; monotonic "
+                "bump policy forbids downgrade"
+            )
+    # Every MIN entry must correspond to a real revision.
+    for name in MIN_LAYER_REVISIONS.keys():
+        if name not in revisions:
+            violations.append(
+                f"MIN_LAYER_REVISIONS[{name!r}] has no matching "
+                "revision constant"
+            )
+    return (len(violations) == 0, sorted(violations))
+
+
 __all__ = [
     "BRAIN_V2_REVISION",
     "POLICY_V2_REVISION",
@@ -108,6 +180,8 @@ __all__ = [
     "SEMANTIC_DECIDER_REVISION",
     "PROMPT_REVISION",
     "INTEGRATION_V2_REVISION",
+    "MIN_LAYER_REVISIONS",
     "compute_v2_revision_stamp",
     "get_v2_revision_dict",
+    "check_revision_invariants",
 ]

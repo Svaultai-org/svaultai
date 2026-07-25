@@ -276,7 +276,14 @@ class StartupSelfTestTest(unittest.TestCase):
         stage_names = [s.name for s in report.stages]
         self.assertEqual(
             stage_names,
-            ["enum_consistency", "snapshot", "decider", "policy", "router"],
+            [
+                "revision_invariants",
+                "enum_consistency",
+                "snapshot",
+                "decider",
+                "policy",
+                "router",
+            ],
         )
         for stage in report.stages:
             self.assertTrue(stage.ok, msg=f"{stage.name} failed: {stage.detail}")
@@ -575,6 +582,8 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             "a-sufficiently-long-fingerprint-secret-for-tests-only"
         )
 
+    TEST_RELEASE_ID = "release-2026-07-25-abcdef0"
+
     def _good_evidence(self):
         # Build a well-formed evidence payload that would pass
         # validation against the current running code.
@@ -583,7 +592,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
         from datetime import datetime, timedelta, timezone
         now = datetime.now(timezone.utc)
         return RolloutEvidenceV2(
-            evidence_version=1,
+            evidence_version=2,
             v2_revision_stamp=compute_v2_revision_stamp(),
             environment="staging",
             observation_started_at=now - timedelta(days=3),
@@ -598,6 +607,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             approved_at=now - timedelta(minutes=30),
             expires_at=now + timedelta(days=1),
             approval_id="approval-2026-07-25-01",
+            release_id=self.TEST_RELEASE_ID,
         )
 
     def test_empty_registry_refused_even_with_valid_evidence(self):
@@ -608,6 +618,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             self._good_evidence(),
             require_self_test=False,
             current_environment="staging",
+            current_release_id=self.TEST_RELEASE_ID,
         )
         self.assertFalse(gate.ready)
         self.assertTrue(any(
@@ -639,6 +650,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             self._good_evidence(),
             require_self_test=True,
             current_environment="staging",
+            current_release_id=self.TEST_RELEASE_ID,
         )
         self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
         self.assertEqual(gate.blockers, ())
@@ -654,6 +666,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             self._good_evidence(),
             require_self_test=True,
             current_environment="staging",
+            current_release_id=self.TEST_RELEASE_ID,
         )
         self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
 
@@ -666,6 +679,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             self._good_evidence(),
             require_self_test=True,
             current_environment="staging",
+            current_release_id=self.TEST_RELEASE_ID,
         )
         self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
 
@@ -739,6 +753,7 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             self._good_evidence(),
             require_self_test=False,
             current_environment="staging",
+            current_release_id=self.TEST_RELEASE_ID,
         )
         d = gate.as_dict()
         self.assertIn("ready", d)

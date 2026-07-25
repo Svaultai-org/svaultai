@@ -167,7 +167,7 @@ An immutable JSON envelope produced by an externally-run
 aggregation + review pipeline (NOT the process that will consume
 it — observation and approval must remain separate operations).
 
-Envelope format:
+Envelope format (payload schema v2, commit 8b):
 
 ```json
 {
@@ -178,12 +178,13 @@ Envelope format:
     "different_semantics_pct":     0.5,
     "disagreement_source_counts":  {"NONE": 49900, "SEMANTIC": 100},
     "environment":                 "prod-canary",
-    "evidence_version":            1,
+    "evidence_version":            2,
     "expires_at":                  "2026-07-26T18:00:00Z",
     "fingerprint_available_pct":   99.9,
     "observation_ended_at":        "2026-07-25T17:00:00Z",
     "observation_started_at":      "2026-07-22T17:00:00Z",
     "pipeline_exception_count":    10,
+    "release_id":                  "release-2026-07-25-abcdef0",
     "total_diffs":                 50000,
     "v2_revision_stamp":           "b1.p1.r1.s1.q1.i1",
     "validation_error_pct":        0.1,
@@ -193,6 +194,14 @@ Envelope format:
   "signature_hex":  "<64 hex characters>"
 }
 ```
+
+`v2_revision_stamp` describes the architecture (per-layer
+revisions). `release_id` describes the deployed artifact
+(git commit / release tag / build id — whatever the
+deployment pipeline uses to identify a specific rollout).
+Evidence is refused when EITHER differs from the running
+process, so a re-deploy without new architecture still requires
+fresh evidence.
 
 The signature is `HMAC-SHA256(secret, canonical_payload_bytes)`
 where `canonical_payload_bytes` is JSON with `sort_keys=True,
@@ -229,7 +238,14 @@ any layer revision → produce fresh evidence.
    export VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_PATH=/etc/vaultai/evidence.json
    export VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_HMAC_SECRET="<≥32-byte random string>"
    export VAULTAI_CHAT_BRAIN_V2_ENVIRONMENT=prod-canary
+   export VAULTAI_CHAT_BRAIN_V2_RELEASE_ID=$(git rev-parse HEAD)
    ```
+
+   `VAULTAI_CHAT_BRAIN_V2_RELEASE_ID` should be set by the
+   deployment pipeline to the specific artifact identifier for
+   this rollout (git commit SHA, semantic-version tag, or
+   deployment id). The evidence must have been produced
+   against the same `release_id`.
 
 2. Verify the gate BEFORE flipping the mode env:
 
