@@ -168,6 +168,30 @@ def run_once(now: datetime | None = None) -> CleanupResult:
     skipped_now_active = 0
     errors = 0
 
+    # 2026-07-30 grace-state enforcer. Runs BEFORE the 180-day
+    # unpaid-inactive deletion pass so any user whose in_grace or
+    # over_quota_grace window has elapsed gets moved to the terminal
+    # state (past_due / over_quota_locked) and receives a
+    # notification. This closes the audit finding that
+    # grace_period_ends_at and over_quota_grace_ends_at were set on
+    # write but never enforced. The sweep is best-effort; failures
+    # are logged but never block the deletion pass.
+    try:
+        from stripe_service import sweep_expired_grace_periods
+        _sweep = sweep_expired_grace_periods()
+        logger.info(
+            "[INACTIVE-CLEANUP] grace-sweep in_grace=%d over_quota=%d "
+            "notifications=%d errors=%d",
+            _sweep.get("in_grace_expired", 0),
+            _sweep.get("over_quota_grace_expired", 0),
+            _sweep.get("notifications_sent", 0),
+            len(_sweep.get("errors") or []),
+        )
+    except Exception:
+        logger.exception(
+            "[INACTIVE-CLEANUP] grace-sweep raised (non-fatal)",
+        )
+
     try:
         candidates = _find_candidate_vault_ids(now)
     except Exception:

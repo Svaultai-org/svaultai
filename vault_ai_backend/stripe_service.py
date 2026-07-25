@@ -1380,6 +1380,46 @@ def _handle_subscription_deleted(event: dict, cur) -> Optional[str]:
             Json({"stripe_status": sub.get("status"), "reason": "subscription_deleted"}),
         ),
     )
+
+    # 2026-07-30 billing notifications. Best-effort — the webhook
+    # write above is authoritative and must not be blocked by a
+    # notification failure. Detect the over-quota branch by
+    # re-reading the row we just updated so the banner copy matches
+    # the real state.
+    try:
+        cur.execute(
+            "SELECT status, over_quota_grace_ends_at "
+            "  FROM account_subscriptions "
+            " WHERE account_id = %s LIMIT 1;",
+            (account_id,),
+        )
+        _post_row = cur.fetchone()
+        _post_status = str((_post_row or {}).get("status") or "")
+        _over_quota = _post_status == "over_quota_grace"
+        _oq_iso = None
+        if _over_quota and _post_row.get("over_quota_grace_ends_at"):
+            try:
+                _oq_iso = _post_row["over_quota_grace_ends_at"].isoformat()
+            except Exception:
+                _oq_iso = None
+    except Exception:
+        _over_quota = False
+        _oq_iso = None
+    try:
+        from vault_billing_notifications import (
+            notify_subscription_cancelled,
+        )
+        notify_subscription_cancelled(
+            account_id,
+            over_quota=_over_quota,
+            over_quota_grace_ends_at_iso=_oq_iso,
+            subscription_id=str(sub.get("id") or "") or None,
+        )
+    except Exception:
+        logger.exception(
+            "[BILLING-NOTIFY] subscription_cancelled dispatch failed "
+            "account=%s", (account_id or "")[:8],
+        )
     return account_id
 
 
@@ -1428,7 +1468,88 @@ def _handle_invoice_payment_failed(event: dict, cur) -> Optional[str]:
                   "amount_due": invoice.get("amount_due")}),
         ),
     )
+
+    # 2026-07-30 billing notifications. Best-effort — never blocks
+    # the webhook write. Users receive an in-app banner per vault and
+    # (once the email pipeline lands) an email describing what
+    # happened and reassuring them their data stays intact during
+    # Stripe's dunning retries.
+    try:
+        cur.execute(
+            "SELECT grace_period_ends_at FROM account_subscriptions "
+            "WHERE account_id = %s LIMIT 1;",
+            (account_id,),
+        )
+        _grace_row = cur.fetchone()
+        _grace_iso = None
+        if _grace_row and _grace_row.get("grace_period_ends_at"):
+            try:
+                _grace_iso = _grace_row["grace_period_ends_at"].isoformat()
+            except Exception:
+                _grace_iso = None
+    except Exception:
+        _grace_iso = None
+    try:
+        from vault_billing_notifications import notify_payment_failed
+        notify_payment_failed(
+            account_id,
+            invoice_id=str(invoice.get("id") or "") or None,
+            amount_due_cents=invoice.get("amount_due"),
+            grace_period_ends_at_iso=_grace_iso,
+        )
+    except Exception:
+        logger.exception(
+            "[BILLING-NOTIFY] payment_failed dispatch failed "
+            "account=%s", (account_id or "")[:8],
+        )
     return account_id
+
+
+def _extract_block_quantity_from_invoice(invoice: dict) -> Optional[int]:
+    """2026-07-30 recovery-bug fix — pull the storage-block quantity
+    from a paid invoice so ``_handle_invoice_payment_succeeded`` can
+    restore ``block_count`` / ``purchased_bytes`` when transitioning a
+    user out of ``expired`` / ``over_quota_grace``.
+
+    Scans ``invoice.lines.data[]`` for a line whose ``price.id``
+    matches the configured storage-block price. Returns the
+    non-negative integer quantity, or ``None`` when the invoice has
+    no matching line (which means the invoice was for something else
+    — e.g. a one-time charge or a metered add-on — and we must NOT
+    infer a subscription quantity from it).
+
+    Idempotent + defensive: any unexpected shape returns ``None``
+    rather than raising. Never touches Stripe over the network.
+    """
+    try:
+        block_price = (get_stripe_block_price_id() or "").strip()
+    except Exception:
+        block_price = ""
+    if not block_price:
+        return None
+    lines = ((invoice.get("lines") or {}).get("data")) or []
+    if not isinstance(lines, list):
+        return None
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        price = line.get("price") or {}
+        price_id = ""
+        if isinstance(price, dict):
+            price_id = str(price.get("id") or "")
+        else:
+            price_id = str(getattr(price, "id", "") or "")
+        if not price_id or price_id != block_price:
+            continue
+        raw_qty = line.get("quantity")
+        try:
+            qty = int(raw_qty)
+        except (TypeError, ValueError):
+            continue
+        if qty < 0:
+            continue
+        return qty
+    return None
 
 
 def _handle_invoice_payment_succeeded(event: dict, cur) -> Optional[str]:
@@ -1451,37 +1572,136 @@ def _handle_invoice_payment_succeeded(event: dict, cur) -> Optional[str]:
     period_start = _iso_or_none(invoice.get("period_start"))
     period_end = _iso_or_none(invoice.get("period_end"))
 
+    # 2026-07-30 recovery-bug fix.
+    # Read the pre-update status + block_count so we can detect
+    # transitions that require restoring purchased_bytes. The audit
+    # found that the prior handler only flipped `in_grace -> active`
+    # — a user whose subscription had already reached `expired` or
+    # `over_quota_grace` stayed on the free tier after paying again,
+    # requiring manual support intervention. That is now fixed:
+    # when the invoice carries a storage-block line item, we
+    # restore block_count + purchased_bytes from its quantity
+    # regardless of the prior status.
     cur.execute(
         """
-        UPDATE account_subscriptions
-           SET status               = CASE
-                   WHEN status = 'in_grace' THEN 'active'
-                   ELSE status
-               END,
-               grace_period_ends_at = NULL,
-               current_period_start = COALESCE(%s, current_period_start),
-               current_period_end   = COALESCE(%s, current_period_end),
-               updated_at           = NOW()
-         WHERE account_id = %s;
+        SELECT status, block_count, purchased_bytes
+          FROM account_subscriptions
+         WHERE account_id = %s
+         FOR UPDATE;
         """,
-        (period_start, period_end, account_id),
+        (account_id,),
     )
+    prior = cur.fetchone()
+    prior_status = str((prior or {}).get("status") or "")
+    prior_blocks = int((prior or {}).get("block_count") or 0)
+
+    invoice_blocks = _extract_block_quantity_from_invoice(invoice)
+    try:
+        block_bytes_val = int(block_bytes())
+    except Exception:
+        block_bytes_val = 53_687_091_200
+    restore_needed = (
+        prior_status in ("expired", "over_quota_grace",
+                         "over_quota_locked", "past_due", "paused",
+                         "refunded")
+        and invoice_blocks is not None
+        and invoice_blocks > 0
+    )
+
+    if restore_needed:
+        # Full restore: status back to active, block_count +
+        # purchased_bytes rebuilt from the invoice, over-quota grace
+        # window cleared, grace_period_ends_at cleared.
+        cur.execute(
+            """
+            UPDATE account_subscriptions
+               SET status                   = 'active',
+                   block_count              = %s,
+                   purchased_bytes          = %s,
+                   cancel_at_period_end     = FALSE,
+                   grace_period_ends_at     = NULL,
+                   over_quota_grace_ends_at = NULL,
+                   current_period_start     = COALESCE(%s, current_period_start),
+                   current_period_end       = COALESCE(%s, current_period_end),
+                   updated_at               = NOW()
+             WHERE account_id = %s;
+            """,
+            (
+                int(invoice_blocks),
+                int(invoice_blocks) * block_bytes_val,
+                period_start, period_end, account_id,
+            ),
+        )
+    else:
+        # Simple recovery (was `in_grace` or `active`): flip to
+        # `active` and clear the grace timer. Unchanged from the
+        # pre-fix behavior for these cases so existing paying
+        # customers see no observable difference.
+        cur.execute(
+            """
+            UPDATE account_subscriptions
+               SET status               = CASE
+                       WHEN status = 'in_grace' THEN 'active'
+                       ELSE status
+                   END,
+                   grace_period_ends_at = NULL,
+                   current_period_start = COALESCE(%s, current_period_start),
+                   current_period_end   = COALESCE(%s, current_period_end),
+                   updated_at           = NOW()
+             WHERE account_id = %s;
+            """,
+            (period_start, period_end, account_id),
+        )
+
     cur.execute(
         """
         INSERT INTO subscription_events (
             account_id, event_type, source, source_event_id,
-            sales_channel, occurred_at, payload_jsonb
+            sales_channel, from_block_count, to_block_count,
+            from_purchased_bytes, to_purchased_bytes,
+            occurred_at, payload_jsonb
         )
         VALUES (%s, 'renewed', 'stripe', %s,
-                'self_service', NOW(), %s);
+                'self_service', %s, %s, %s, %s,
+                NOW(), %s);
         """,
         (
             account_id,
             str(invoice.get("id") or ""),
-            Json({"reason": "invoice_payment_succeeded",
-                  "amount_paid": invoice.get("amount_paid")}),
+            prior_blocks,
+            (int(invoice_blocks) if restore_needed else prior_blocks),
+            prior_blocks * block_bytes_val,
+            ((int(invoice_blocks) if restore_needed else prior_blocks)
+             * block_bytes_val),
+            Json({
+                "reason": "invoice_payment_succeeded",
+                "amount_paid": invoice.get("amount_paid"),
+                "prior_status": prior_status,
+                "restored": bool(restore_needed),
+                "invoice_blocks": invoice_blocks,
+            }),
         ),
     )
+
+    # Notify the user out-of-band. Best-effort — never blocks the
+    # webhook write. Fires whenever the handler flipped ANY status
+    # transition; specifically it does NOT fire when the account was
+    # already `active` (nothing changed).
+    if prior_status and prior_status != "active":
+        try:
+            from vault_billing_notifications import notify_payment_recovered
+            notify_payment_recovered(
+                account_id,
+                invoice_id=str(invoice.get("id") or "") or None,
+                restored_block_count=(
+                    int(invoice_blocks) if restore_needed else None
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "[BILLING-NOTIFY] payment_recovered dispatch failed "
+                "account=%s", (account_id or "")[:8],
+            )
     return account_id
 
 
@@ -1782,6 +2002,420 @@ def build_billing_admin_health_envelope(
     }
 
 
+# ---------------------------------------------------------------------------
+# 2026-07-30 billing lifecycle fixes: cancel_subscription_for_account +
+# grace-period sweep. Both required to close the audit findings
+# without changing the intended product behavior (users retain full
+# read/download/delete access on their existing files after the
+# subscription ends; only new uploads are blocked past the free tier).
+# ---------------------------------------------------------------------------
+
+class CancelSubscriptionResult:
+    """Small typed return for ``cancel_subscription_for_account`` so
+    callers can log and audit the outcome. Never raises across the
+    boundary."""
+
+    __slots__ = ("outcome", "subscription_id", "detail")
+
+    def __init__(
+        self,
+        outcome: str,
+        subscription_id: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        self.outcome = outcome
+        self.subscription_id = subscription_id
+        self.detail = detail
+
+    def to_dict(self) -> dict:
+        return {
+            "outcome":              self.outcome,
+            "subscription_id_prefix": redact_stripe_id(
+                self.subscription_id
+            ) if self.subscription_id else None,
+            "detail":               self.detail,
+        }
+
+
+def cancel_subscription_for_account(
+    account_id: str,
+    *,
+    reason: Optional[str] = None,
+) -> CancelSubscriptionResult:
+    """Cancel the Stripe subscription (if any) attached to this
+    account. Best-effort — never raises. The single caller today is
+    ``vault_deletion_service._cancel_stripe_subscription_best_effort``
+    which fires from the 6-month unpaid-inactive cleanup and from
+    user-initiated vault deletion. Without this function, deleted
+    vaults kept their Stripe subscription live and the customer
+    silently kept getting billed for storage they no longer had —
+    the audit's billing leak.
+
+    Outcomes:
+      * ``cancelled``          — Stripe accepted the delete/cancel.
+      * ``noop_no_customer``   — no Stripe customer row for this account.
+      * ``noop_no_subscription`` — customer exists but no known
+        subscription id.
+      * ``noop_stripe_unconfigured`` — Stripe SDK not initialized
+        (e.g. dev without STRIPE_API_KEY).
+      * ``noop_already_cancelled`` — Stripe reports the subscription
+        is already cancelled/deleted.
+      * ``error``              — Stripe API raised; details in the
+        return.
+
+    Never logs the raw stripe subscription id; only the redacted
+    prefix. Sets ``account_subscriptions.canceled_at = NOW()`` on
+    success so an audit query can spot cancellations that our code
+    (rather than Stripe dunning) initiated.
+    """
+    if not account_id:
+        return CancelSubscriptionResult(
+            outcome="noop_no_customer",
+            detail="missing_account_id",
+        )
+    if not _stripe_initialized():
+        return CancelSubscriptionResult(
+            outcome="noop_stripe_unconfigured",
+        )
+
+    try:
+        stripe_customer_id = get_stripe_customer_id_for_account(account_id)
+    except Exception:
+        logger.exception(
+            "[STRIPE-CANCEL] customer lookup failed account=%s",
+            (account_id or "")[:8],
+        )
+        return CancelSubscriptionResult(
+            outcome="error",
+            detail="customer_lookup_failed",
+        )
+    if not stripe_customer_id:
+        return CancelSubscriptionResult(outcome="noop_no_customer")
+
+    # Look up the last-known subscription id from our own state.
+    subscription_id: Optional[str] = None
+    try:
+        conn = get_db()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT source_subscription_id "
+                    "  FROM account_subscriptions "
+                    " WHERE account_id = %s "
+                    "   AND source = 'stripe' "
+                    " LIMIT 1;",
+                    (account_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    subscription_id = str(
+                        row.get("source_subscription_id") or ""
+                    ) or None
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception(
+            "[STRIPE-CANCEL] subscription id lookup failed account=%s",
+            (account_id or "")[:8],
+        )
+        return CancelSubscriptionResult(
+            outcome="error",
+            detail="subscription_id_lookup_failed",
+        )
+    if not subscription_id:
+        return CancelSubscriptionResult(
+            outcome="noop_no_subscription",
+        )
+
+    # Try the modern SDK method first (Stripe SDK >= 6.x uses
+    # ``Subscription.cancel``; older SDKs expose ``Subscription.delete``).
+    # Both immediately cancel the subscription without proration or a
+    # further invoice. Failures are logged and translated to an
+    # ``error`` outcome — never raised past this boundary.
+    try:
+        cancelled_obj = None
+        _err_details: Optional[str] = None
+        try:
+            cancelled_obj = stripe.Subscription.cancel(subscription_id)
+        except AttributeError:
+            try:
+                cancelled_obj = stripe.Subscription.delete(subscription_id)
+            except Exception as exc:
+                _err_details = f"delete_raised:{type(exc).__name__}"
+        except stripe.error.InvalidRequestError as exc:
+            # Idempotent path: already cancelled on Stripe's side.
+            msg = str(exc).lower()
+            if (
+                "no such subscription" in msg
+                or "already been cancel" in msg
+                or "already been cancele" in msg
+            ):
+                return CancelSubscriptionResult(
+                    outcome="noop_already_cancelled",
+                    subscription_id=subscription_id,
+                )
+            _err_details = f"invalid_request:{type(exc).__name__}"
+        except Exception as exc:
+            _err_details = f"raised:{type(exc).__name__}"
+
+        if _err_details:
+            logger.warning(
+                "[STRIPE-CANCEL] stripe cancel failed account=%s sub=%s "
+                "detail=%s",
+                (account_id or "")[:8],
+                redact_stripe_id(subscription_id),
+                _err_details,
+            )
+            return CancelSubscriptionResult(
+                outcome="error",
+                subscription_id=subscription_id,
+                detail=_err_details,
+            )
+    except Exception as exc:
+        logger.exception(
+            "[STRIPE-CANCEL] stripe cancel unexpected account=%s",
+            (account_id or "")[:8],
+        )
+        return CancelSubscriptionResult(
+            outcome="error",
+            subscription_id=subscription_id,
+            detail=f"unexpected:{type(exc).__name__}",
+        )
+
+    # Local audit stamp — records that OUR code initiated the cancel
+    # (as opposed to Stripe's dunning). Best-effort; the Stripe
+    # cancellation is already the source of truth.
+    try:
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE account_subscriptions
+                       SET canceled_at = NOW(),
+                           updated_at  = NOW()
+                     WHERE account_id = %s
+                       AND source = 'stripe';
+                    """,
+                    (account_id,),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO subscription_events (
+                        account_id, event_type, source, source_event_id,
+                        sales_channel, occurred_at, payload_jsonb
+                    )
+                    VALUES (%s, 'canceled_by_vaultai', 'stripe', %s,
+                            'self_service', NOW(), %s);
+                    """,
+                    (
+                        account_id,
+                        (subscription_id or "")[:64],
+                        Json({
+                            "reason":            reason or "vault_deletion",
+                            "initiator":         "backend",
+                        }),
+                    ),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception(
+            "[STRIPE-CANCEL] local audit stamp failed account=%s",
+            (account_id or "")[:8],
+        )
+
+    logger.info(
+        "[STRIPE-CANCEL] cancelled account=%s sub=%s reason=%s",
+        (account_id or "")[:8],
+        redact_stripe_id(subscription_id),
+        (reason or "vault_deletion"),
+    )
+    return CancelSubscriptionResult(
+        outcome="cancelled",
+        subscription_id=subscription_id,
+    )
+
+
+def sweep_expired_grace_periods(*, now_iso: Optional[str] = None) -> dict:
+    """2026-07-30 grace-state enforcer. Called from the daily
+    ``inactive_unpaid_cleanup`` sweeper at the start of each run.
+
+    Two transitions:
+
+      * ``in_grace`` rows whose ``grace_period_ends_at`` is in the
+        past → transitioned to ``past_due``. This mirrors what
+        Stripe's ``unpaid`` status maps to internally
+        (``stripe_service.py:1607-1616``) but does not depend on
+        Stripe firing a further webhook. Emits a
+        ``billing.payment_failed`` banner (final failure).
+      * ``over_quota_grace`` rows whose
+        ``over_quota_grace_ends_at`` is in the past → transitioned
+        to ``over_quota_locked``. Entitlement is unchanged
+        (already free-tier since block_count=0), but the state
+        transition is now recorded so the DB reflects reality.
+        Emits a ``billing.account_over_quota`` banner.
+
+    Both are read-only for user data; no encrypted content, PIN
+    material, or vault metadata is touched. Idempotent — running
+    the sweep twice back-to-back is a no-op on the second run.
+
+    Returns a dict summarizing how many rows were transitioned and
+    how many notifications were dispatched. Never raises across the
+    boundary.
+    """
+    result = {
+        "in_grace_expired":         0,
+        "over_quota_grace_expired": 0,
+        "notifications_sent":       0,
+        "errors":                   [],
+    }
+    try:
+        conn = get_db()
+    except Exception:
+        try:
+            result["errors"].append("db_connect_failed")
+        except Exception:
+            pass
+        return result
+
+    try:
+        # in_grace -> past_due
+        expired_grace_accounts: list[str] = []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE account_subscriptions
+                       SET status     = 'past_due',
+                           updated_at = NOW()
+                     WHERE status = 'in_grace'
+                       AND grace_period_ends_at IS NOT NULL
+                       AND grace_period_ends_at < NOW()
+                    RETURNING account_id;
+                    """
+                )
+                for row in cur.fetchall() or []:
+                    expired_grace_accounts.append(str(row.get("account_id")))
+                for account_id in expired_grace_accounts:
+                    cur.execute(
+                        """
+                        INSERT INTO subscription_events (
+                            account_id, event_type, source, source_event_id,
+                            sales_channel, occurred_at, payload_jsonb
+                        )
+                        VALUES (%s, 'grace_expired', 'vaultai', %s,
+                                'self_service', NOW(), %s);
+                        """,
+                        (
+                            account_id,
+                            f"grace-sweep-{account_id[:16]}",
+                            Json({
+                                "reason":     "grace_period_elapsed",
+                                "from":       "in_grace",
+                                "to":         "past_due",
+                            }),
+                        ),
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.exception("[STRIPE-SWEEP] in_grace transition failed")
+            result["errors"].append("in_grace_transition_failed")
+            expired_grace_accounts = []
+
+        result["in_grace_expired"] = len(expired_grace_accounts)
+
+        # over_quota_grace -> over_quota_locked
+        expired_oq_accounts: list[str] = []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    UPDATE account_subscriptions
+                       SET status     = 'over_quota_locked',
+                           updated_at = NOW()
+                     WHERE status = 'over_quota_grace'
+                       AND over_quota_grace_ends_at IS NOT NULL
+                       AND over_quota_grace_ends_at < NOW()
+                    RETURNING account_id;
+                    """
+                )
+                for row in cur.fetchall() or []:
+                    expired_oq_accounts.append(str(row.get("account_id")))
+                for account_id in expired_oq_accounts:
+                    cur.execute(
+                        """
+                        INSERT INTO subscription_events (
+                            account_id, event_type, source, source_event_id,
+                            sales_channel, occurred_at, payload_jsonb
+                        )
+                        VALUES (%s, 'over_quota_locked', 'vaultai', %s,
+                                'self_service', NOW(), %s);
+                        """,
+                        (
+                            account_id,
+                            f"oq-sweep-{account_id[:16]}",
+                            Json({
+                                "reason":     "over_quota_grace_elapsed",
+                                "from":       "over_quota_grace",
+                                "to":         "over_quota_locked",
+                            }),
+                        ),
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.exception(
+                "[STRIPE-SWEEP] over_quota_grace transition failed",
+            )
+            result["errors"].append("over_quota_transition_failed")
+            expired_oq_accounts = []
+
+        result["over_quota_grace_expired"] = len(expired_oq_accounts)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # Notifications — done AFTER the transactions commit so a failure
+    # here can't leave the DB in an inconsistent state.
+    try:
+        from vault_billing_notifications import (
+            notify_payment_failed,
+            notify_account_over_quota,
+        )
+    except Exception:
+        return result
+
+    for account_id in expired_grace_accounts:
+        try:
+            notify_payment_failed(
+                account_id,
+                # Sweep produces "final failure" notification with no
+                # grace timer field (grace already elapsed).
+                grace_period_ends_at_iso=None,
+            )
+            result["notifications_sent"] += 1
+        except Exception:
+            logger.exception(
+                "[STRIPE-SWEEP] payment_failed notify failed account=%s",
+                (account_id or "")[:8],
+            )
+    for account_id in expired_oq_accounts:
+        try:
+            notify_account_over_quota(account_id)
+            result["notifications_sent"] += 1
+        except Exception:
+            logger.exception(
+                "[STRIPE-SWEEP] account_over_quota notify failed "
+                "account=%s", (account_id or "")[:8],
+            )
+    return result
+
+
 __all__ = [
     "StripeUnconfiguredError",
     "StripeCeilingExceededError",
@@ -1795,6 +2429,7 @@ __all__ = [
     "WebhookDispatchResult",
     "ActiveStorageSubscription",
     "SubscriptionQuantityUpdate",
+    "CancelSubscriptionResult",
     "BILLING_ADMIN_HEALTH_SCHEMA",
     "create_checkout_session",
     "create_portal_session",
@@ -1804,6 +2439,8 @@ __all__ = [
     "modify_existing_subscription_quantity",
     "backfill_subscription_item_id_from_stripe",
     "cancel_duplicate_storage_subscriptions",
+    "cancel_subscription_for_account",
+    "sweep_expired_grace_periods",
     "get_stripe_customer_id_for_account",
     "upsert_stripe_customer",
     "probe_stripe_price_currency",

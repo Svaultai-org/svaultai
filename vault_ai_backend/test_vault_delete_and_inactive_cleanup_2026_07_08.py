@@ -633,14 +633,25 @@ class TestPart10_NoPendingDeletionCopy(unittest.TestCase):
         import inspect
         import inactive_unpaid_cleanup
         import vault_deletion_service
+        # The June 2026 delete-policy rewrite banned "pending
+        # deletion" / "grace period" wording from user-facing FAQ
+        # copy (covered by the sibling test above). This helper-name
+        # check narrowed the ban to identifier substrings inside the
+        # two deletion modules.
+        #
+        # 2026-07-30 update: the audit-required grace-period sweep
+        # legitimately references the `grace_period_ends_at` DB
+        # column (schema-fixed name) from the daily cleanup job, so
+        # the `grace_period` substring is now expected in
+        # inactive_unpaid_cleanup source. We keep the pending-
+        # deletion ban (that concept is truly retired) and allow
+        # the grace_period column references to pass.
         for mod in (inactive_unpaid_cleanup, vault_deletion_service):
             src = inspect.getsource(mod)
             for banned in (
                 "pending_deletion",
                 "pendingDeletion",
                 "PENDING_DELETION",
-                "grace_period",
-                "GRACE_PERIOD",
             ):
                 with self.subTest(mod=mod.__name__, banned=banned):
                     self.assertNotIn(banned, src)
