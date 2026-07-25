@@ -65,6 +65,7 @@ from vault_core import (
     encrypt_bytes,
     MAX_VAULT_BYTES,
     normalize_service,
+    GENERAL_SENTINEL,
     close_pool,
     verify_vault_pin,
     rotate_vault_kdf_if_needed,
@@ -1156,6 +1157,45 @@ def populate_vault_key_cache_after_pin(
         on_vault_unlock(vault_id)
     except Exception:
         pass
+
+
+# Bug 2 (2026-07-25): match a bare email address inside a user turn so
+# the login-generation flow honors an explicitly-supplied username
+# (e.g. "create a Netflix login with my email <address>" -> supplied
+# username = <address>; only the password is generated). Sample
+# addresses live only in the regression tests, not in this docstring.
+# Local part accepts standard atoms + dot/plus/hyphen;
+# domain accepts labels + at least one dot. Word boundaries prevent
+# false positives from surrounding punctuation.
+_EMAIL_TOKEN_RE = re.compile(
+    r"(?:(?<=^)|(?<=[\s\(\[\{<,;:\"']))"
+    r"([A-Za-z0-9._+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)"
+    r"(?=$|[\s\)\]\}>,;:\"'.!?])",
+)
+
+
+def _extract_explicit_email(message: Optional[str]) -> Optional[str]:
+    """Return the first bare email address found in ``message``, or
+    ``None``. NEVER logs the email itself. Used by the
+    login-generation flow to preserve a user-supplied
+    username/email instead of replacing it with a generated
+    value. Strips only leading/trailing whitespace on the match;
+    preserves original case (email local parts are case-preserving
+    even though domains are case-insensitive).
+    """
+    if not message or not isinstance(message, str):
+        return None
+    try:
+        m = _EMAIL_TOKEN_RE.search(message)
+    except Exception:
+        return None
+    if not m:
+        return None
+    candidate = m.group(1).strip()
+    # Guard against pathologically-long inputs; sane emails are < 254 chars.
+    if not candidate or len(candidate) > 254:
+        return None
+    return candidate
 
 
 def generate_strong_password(length: int = 20) -> str:
@@ -2618,6 +2658,23 @@ def list_logins_tool(vault_id: str) -> str:
 
 def _normalize_asset_name(name: Optional[str]) -> str:
     return normalize_service(name)
+
+
+def _normalize_asset_lookup_key(name: Optional[str]) -> str:
+    """Bug 1 (2026-07-25): normalization used only for LOOKUP / matching
+    against ``uploaded_files.saved_name``. Adds hyphen/underscore-to-space
+    folding on top of the existing service-name normalization so queries
+    like ``naim-id`` and ``naim_id`` match a saved item stored as
+    ``naim id``. Does NOT mutate stored display labels; used only for
+    comparison keys."""
+    base = normalize_service(name)
+    if base == GENERAL_SENTINEL:
+        return base
+    # Collapse hyphens and underscores to spaces, then re-collapse
+    # runs of whitespace so `naim   id` and `naim-_-id` compare equal.
+    folded = re.sub(r"[-_]+", " ", base)
+    folded = re.sub(r"\s+", " ", folded).strip()
+    return folded or GENERAL_SENTINEL
 
 
 def _title_case_asset(name: str) -> str:
@@ -6228,11 +6285,17 @@ def retrieve_saved_asset(vault_id: str, asset_name: str) -> Optional[dict]:
     if normalized_name == "general":
         return None
 
+    # Bug 1 (2026-07-25): case + whitespace normalization already handled
+    # by _normalize_asset_name. For hyphen/underscore-folded comparison
+    # we build a second key and match it Python-side so `naim-id` and
+    # `naim_id` resolve to the same item stored as `naim id`.
+    lookup_key = _normalize_asset_lookup_key(asset_name)
+
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-                                                           
+
         cursor.execute(
             """
             SELECT id, file_name, content_type, file_size, saved_name, asset_type, created_at
@@ -6248,6 +6311,26 @@ def retrieve_saved_asset(vault_id: str, asset_name: str) -> Optional[dict]:
         row = cursor.fetchone()
         if row:
             return row
+
+        # Bug 1: exact match on the hyphen/underscore-folded key.
+        # Fetch this vault's completed uploads with a non-empty saved_name
+        # and filter Python-side. Bounded per vault; no unbounded scan.
+        if lookup_key and lookup_key != GENERAL_SENTINEL:
+            cursor.execute(
+                """
+                SELECT id, file_name, content_type, file_size, saved_name, asset_type, created_at
+                FROM uploaded_files
+                WHERE vault_id = %s
+                  AND saved_name IS NOT NULL
+                  AND upload_status = 'complete'
+                ORDER BY created_at DESC
+                """,
+                (vault_id,),
+            )
+            candidates = cursor.fetchall() or []
+            for cand in candidates:
+                if _normalize_asset_lookup_key(cand.get("saved_name")) == lookup_key:
+                    return cand
 
         cursor.execute(
             """
@@ -6286,6 +6369,114 @@ def retrieve_saved_asset(vault_id: str, asset_name: str) -> Optional[dict]:
         return None
     finally:
         conn.close()
+
+
+def retrieve_saved_asset_by_exact_name(
+    vault_id: str, asset_name: Optional[str],
+) -> Optional[dict]:
+    """Bug 1 (2026-07-25): strict exact-normalized lookup for
+    ``uploaded_files.saved_name``. Case-insensitive and
+    hyphen/underscore-folded. Never falls back to substring or word
+    matching -- use this to intercept queries where the LLM misroutes
+    a specific saved-item request to a family/tag/semantic handler.
+
+    Returns the matching row or ``None``. Never raises.
+    """
+    if not vault_id or not asset_name or not isinstance(asset_name, str):
+        return None
+    key = _normalize_asset_lookup_key(asset_name)
+    if not key or key == GENERAL_SENTINEL:
+        return None
+    try:
+        conn = get_db()
+    except Exception:
+        return None
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # Case-insensitive exact match (fast path -- uses the vault index).
+        cursor.execute(
+            """
+            SELECT id, file_name, content_type, file_size, saved_name, asset_type, created_at
+            FROM uploaded_files
+            WHERE vault_id = %s
+              AND LOWER(saved_name) = LOWER(%s)
+              AND upload_status = 'complete'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (vault_id, key),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row
+        # Hyphen/underscore-folded match: scan the vault's completed
+        # uploads (bounded per vault) and filter Python-side.
+        cursor.execute(
+            """
+            SELECT id, file_name, content_type, file_size, saved_name, asset_type, created_at
+            FROM uploaded_files
+            WHERE vault_id = %s
+              AND saved_name IS NOT NULL
+              AND upload_status = 'complete'
+            ORDER BY created_at DESC
+            """,
+            (vault_id,),
+        )
+        for cand in cursor.fetchall() or []:
+            if _normalize_asset_lookup_key(cand.get("saved_name")) == key:
+                return cand
+        return None
+    except Exception:
+        logger.exception(
+            "[RETRIEVE-EXACT] failed vault=%s",
+            (vault_id or "")[:8] + "...",
+        )
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _try_exact_saved_name_early_return(
+    vault_id: str,
+    decrypted_message: str,
+    intent_data: dict,
+) -> Optional[dict]:
+    """Bug 1 (2026-07-25): probe candidate asset queries against the
+    exact-normalized ``uploaded_files.saved_name`` index. Returns the
+    matching row or ``None``. Callers use this to intercept requests
+    that the LLM misroutes to family/tag/semantic handlers when the
+    user actually named a specific saved item (e.g. asking for a
+    saved item literally named ``Naim ID`` while the LLM classifies
+    the phrase as a family-label query about identity documents).
+    """
+    if not vault_id:
+        return None
+    candidates: list[str] = []
+    for key in (
+        "asset_name", "file_name", "tag",
+        "memory_query", "anchor_text", "query",
+    ):
+        try:
+            raw = intent_data.get(key) if isinstance(intent_data, dict) else None
+        except Exception:
+            raw = None
+        if isinstance(raw, str) and raw.strip():
+            candidates.append(raw.strip())
+    if isinstance(decrypted_message, str) and decrypted_message.strip():
+        candidates.append(decrypted_message.strip())
+    seen: set[str] = set()
+    for cand in candidates:
+        key = _normalize_asset_lookup_key(cand)
+        if not key or key == GENERAL_SENTINEL or key in seen:
+            continue
+        seen.add(key)
+        hit = retrieve_saved_asset_by_exact_name(vault_id, cand)
+        if hit is not None:
+            return hit
+    return None
 
 
 def get_pending_named_file(vault_id: str) -> Optional[dict]:
@@ -15016,8 +15207,27 @@ async def chat_endpoint(
             new_password = generate_strong_password()
             resolved_policy: Optional[UsernamePolicy] = None
             username_options: list[str] = []
+            # Bug 2 (2026-07-25): honor an explicit user-supplied
+            # username/email BEFORE any generation. Users saying
+            # "create a Netflix login with my email X@Y.com" must not
+            # have their supplied email replaced by a generated
+            # username. Email extraction is the safe, unambiguous
+            # signal; free-form username phrasing is deferred to a
+            # future extension.
+            _explicit_supplied_username = _extract_explicit_email(
+                decrypted_message
+            )
 
-            if wants_username and not has_username and not has_email:
+            if _explicit_supplied_username:
+                # Skip generation and policy resolution entirely; the
+                # supplied username IS the username. Preserve the
+                # existing draft-then-confirm workflow by placing the
+                # explicit username as the sole entry in
+                # ``username_options`` so both "save it" branches
+                # (memory + explicit-pick) pick it up unchanged.
+                username_options = [_explicit_supplied_username]
+
+            elif wants_username and not has_username and not has_email:
                 try:
                     resolved_policy = await resolve_username_policy(
                         service,
@@ -15034,8 +15244,8 @@ async def chat_endpoint(
 
                 if not resolved_policy.email_required:
                     from username_policy import generate_username_options
-                                                                     
-                                                                 
+
+
                     _identity_hints: list[str] = []
                     try:
                         _vault_name = memory.get("vault_name") or ""
@@ -15110,13 +15320,22 @@ async def chat_endpoint(
                 "username_options": list(username_options),
                 "password": new_password,
                 "policy_email_required": bool(
-                    resolved_policy.email_required
-                    if resolved_policy is not None else False
+                    False
+                    if _explicit_supplied_username
+                    else (
+                        resolved_policy.email_required
+                        if resolved_policy is not None else False
+                    )
                 ),
                 "has_existing_username": bool(has_username),
                 "has_existing_email": bool(has_email),
                 "existing_username": str(existing.get("username") or ""),
                 "existing_email": str(existing.get("email") or ""),
+                # Bug 2 (2026-07-25): flag the draft as carrying an
+                # explicit user-supplied username so downstream
+                # confirm handlers can distinguish "generated" from
+                # "user provided" without inspecting the value.
+                "explicit_username_supplied": bool(_explicit_supplied_username),
                 "ts": int(time.time()),
             }
 
@@ -15136,12 +15355,23 @@ async def chat_endpoint(
                 reply_lines.append("")
                 reply_lines.append(f"Password: {new_password}")
             elif username_options:
-                                                                   
+
                 _picked = username_options[0]
-                reply_lines.append(
-                    f"I created a username and strong password "
-                    f"for {service.title()}."
-                )
+                if _explicit_supplied_username:
+                    # Bug 2 (2026-07-25): keep the reply honest --
+                    # the assistant did NOT create the username; the
+                    # user supplied it. Only the password was
+                    # generated.
+                    reply_lines.append(
+                        f"Drafting a {service.title()} login with the "
+                        "username you gave me and a fresh strong "
+                        "password."
+                    )
+                else:
+                    reply_lines.append(
+                        f"I created a username and strong password "
+                        f"for {service.title()}."
+                    )
                 reply_lines.append("")
                 reply_lines.append(f"Username: {_picked}")
                 reply_lines.append(f"Password: {new_password}")
@@ -16086,9 +16316,45 @@ async def chat_endpoint(
                     "I couldn't run your travel readiness check right now."
                 )
 
+        # Bug 1 (2026-07-25): before any family/tag/semantic handler
+        # runs, probe the vault's ``uploaded_files.saved_name`` index
+        # for an exact-normalized match against the user's phrase.
+        # Prevents "show me Naim ID" from being misrouted to
+        # list_by_tag(identity) when the vault holds an item literally
+        # named "naim id". Only applies to retrieval-family intents so
+        # save/delete/generate flows are unaffected.
+        if intent in {
+            "retrieve_file", "list_by_tag", "search_memory",
+            "search_files_about", "search_files_for_credentials",
+            "related_files", "related_items", "recall_memory",
+            "document_details", "understand_document", "general_chat",
+        }:
+            try:
+                _exact_asset = _try_exact_saved_name_early_return(
+                    vault_id=vault_id,
+                    decrypted_message=decrypted_message,
+                    intent_data=intent_data,
+                )
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] exact_saved_name_probe_failed vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
+                _exact_asset = None
+            if _exact_asset is not None:
+                _display = (
+                    _exact_asset.get("saved_name")
+                    or _exact_asset.get("file_name")
+                    or (asset_name if isinstance(asset_name, str) else "")
+                    or (decrypted_message or "")
+                )
+                return encrypted_reply(
+                    _build_structured_asset_reply(_exact_asset, _display),
+                )
+
         if intent == "retrieve_file":
-                                                                    
-                                                                  
+
+
             folder_aware_reply = _try_folder_aware_file_retrieval(
                 vault_id=vault_id,
                 decrypted_message=decrypted_message,
