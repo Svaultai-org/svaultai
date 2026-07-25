@@ -575,11 +575,39 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             "a-sufficiently-long-fingerprint-secret-for-tests-only"
         )
 
-    def test_empty_registry_refused(self):
+    def _good_evidence(self):
+        # Build a well-formed evidence payload that would pass
+        # validation against the current running code.
+        from vault_chat_v2_rollout_evidence import RolloutEvidenceV2
+        from vault_chat_v2_versions import compute_v2_revision_stamp
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        return RolloutEvidenceV2(
+            evidence_version=1,
+            v2_revision_stamp=compute_v2_revision_stamp(),
+            environment="staging",
+            observation_started_at=now - timedelta(days=3),
+            observation_ended_at=now - timedelta(hours=1),
+            total_diffs=50_000,
+            workers_observed=8,
+            pipeline_exception_count=10,       # 0.02% rate
+            different_semantics_pct=0.5,
+            validation_error_pct=0.1,
+            fingerprint_available_pct=99.9,
+            disagreement_source_counts={"NONE": 49_900, "SEMANTIC": 100},
+            approved_at=now - timedelta(minutes=30),
+            expires_at=now + timedelta(days=1),
+            approval_id="approval-2026-07-25-01",
+        )
+
+    def test_empty_registry_refused_even_with_valid_evidence(self):
+        self._pass_config()
         import vault_chat_integration_v2 as vi
         gate = diag.is_v2_authoritative_ready(
             vi.ExecutorRegistry(),
-            require_confidence=diag.CONFIDENCE_LOW,
+            self._good_evidence(),
+            require_self_test=False,
+            current_environment="staging",
         )
         self.assertFalse(gate.ready)
         self.assertTrue(any(
@@ -587,53 +615,113 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             for b in gate.blockers
         ))
 
-    def test_zero_samples_refused_at_high_confidence(self):
+    def test_missing_evidence_refuses_even_with_full_registry(self):
         self._pass_config()
-        gate = diag.is_v2_authoritative_ready(
-            self.registry, require_confidence=diag.CONFIDENCE_HIGH,
-        )
-        self.assertFalse(gate.ready)
-        # Blocker mentions confidence.
-        self.assertTrue(any(
-            b.startswith("confidence=") for b in gate.blockers
-        ))
-
-    def test_ready_with_full_registry_high_samples_no_errors(self):
-        self._pass_config()
-        # Push metrics above HIGH threshold with only agreements.
-        for _ in range(10_000):
-            sm.record_shadow_diff(_fresh_diff(
-                match=sr.MATCH_INTENT_EQUIVALENT,
-            ))
+        # No env vars set for evidence -> load path returns
+        # missing.
+        for k in (
+            "VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_PATH",
+            "VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_HMAC_SECRET",
+        ):
+            os.environ.pop(k, None)
         gate = diag.is_v2_authoritative_ready(
             self.registry,
-            require_confidence=diag.CONFIDENCE_HIGH,
+            None,
+            require_self_test=False,
+        )
+        self.assertFalse(gate.ready)
+        self.assertIn("evidence.missing", gate.blockers)
+
+    def test_ready_with_valid_evidence_and_full_registry(self):
+        self._pass_config()
+        gate = diag.is_v2_authoritative_ready(
+            self.registry,
+            self._good_evidence(),
             require_self_test=True,
+            current_environment="staging",
         )
         self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
         self.assertEqual(gate.blockers, ())
 
-    def test_pipeline_exception_refuses_readiness(self):
+    def test_local_pipeline_exception_does_not_block_valid_evidence(self):
+        # Commit 8a: local metrics are process-local; a single
+        # transient exception must NOT block the authoritative
+        # gate when the durable evidence is clean.
         self._pass_config()
-        for _ in range(10_000):
-            sm.record_shadow_diff(_fresh_diff())
         sm.record_pipeline_exception("router", "AssertionError")
         gate = diag.is_v2_authoritative_ready(
             self.registry,
-            require_confidence=diag.CONFIDENCE_HIGH,
+            self._good_evidence(),
+            require_self_test=True,
+            current_environment="staging",
+        )
+        self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
+
+    def test_zero_local_samples_ready_when_evidence_valid(self):
+        # New worker with zero local diffs -- fleet evidence is
+        # what matters.
+        self._pass_config()
+        gate = diag.is_v2_authoritative_ready(
+            self.registry,
+            self._good_evidence(),
+            require_self_test=True,
+            current_environment="staging",
+        )
+        self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
+
+    def test_high_local_samples_cannot_replace_missing_evidence(self):
+        # A worker with abundant local samples MUST NOT bypass
+        # the evidence requirement.
+        self._pass_config()
+        for _ in range(50_000):
+            sm.record_shadow_diff(_fresh_diff())
+        for k in (
+            "VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_PATH",
+            "VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_HMAC_SECRET",
+        ):
+            os.environ.pop(k, None)
+        gate = diag.is_v2_authoritative_ready(
+            self.registry,
+            None,
+            require_self_test=False,
         )
         self.assertFalse(gate.ready)
+        self.assertIn("evidence.missing", gate.blockers)
+
+    def test_startup_selftest_failure_still_blocks_with_valid_evidence(self):
+        self._pass_config()
+        # Force the self-test to fail by injecting an enum drift
+        # that check_enum_consistency will catch.
+        from types import MappingProxyType
+        original = diag.ACTION_KIND_CLASSIFICATION
+        try:
+            partial = {k: v for k, v in original.items()}
+            some_key = next(iter(partial.keys()))
+            del partial[some_key]
+            diag.ACTION_KIND_CLASSIFICATION = MappingProxyType(partial)
+            gate = diag.is_v2_authoritative_ready(
+                self.registry,
+                self._good_evidence(),
+                require_self_test=True,
+                current_environment="staging",
+            )
+            self.assertFalse(gate.ready)
+            self.assertTrue(any(
+                "self_test.enum_consistency_failed" in b
+                for b in gate.blockers
+            ))
+        finally:
+            diag.ACTION_KIND_CLASSIFICATION = original
 
     def test_configuration_error_refuses_readiness(self):
-        # Set mode=shadow AND reset the injected secret so the
-        # validator errors on missing fingerprint secret.
         os.environ["VAULTAI_CHAT_BRAIN_MODE"] = "shadow"
         sr.reset_fingerprint_secret_for_tests()
         try:
             gate = diag.is_v2_authoritative_ready(
                 self.registry,
-                require_confidence=diag.CONFIDENCE_LOW,
+                self._good_evidence(),
                 require_self_test=False,
+                current_environment="staging",
             )
             self.assertFalse(gate.ready)
             self.assertTrue(any(
@@ -644,30 +732,19 @@ class AuthoritativeReadinessGateTest(unittest.TestCase):
             os.environ.pop("VAULTAI_CHAT_BRAIN_MODE", None)
             sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
 
-    def test_medium_confidence_accepted_when_required(self):
+    def test_gate_as_dict_serializable(self):
         self._pass_config()
-        for _ in range(1000):
-            sm.record_shadow_diff(_fresh_diff())
         gate = diag.is_v2_authoritative_ready(
             self.registry,
-            require_confidence=diag.CONFIDENCE_MEDIUM,
-        )
-        self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
-
-    def test_gate_as_dict_serializable(self):
-        gate = diag.is_v2_authoritative_ready(
-            self.registry, require_confidence=diag.CONFIDENCE_LOW,
+            self._good_evidence(),
+            require_self_test=False,
+            current_environment="staging",
         )
         d = gate.as_dict()
         self.assertIn("ready", d)
         self.assertIn("blockers", d)
-        self.assertIn("required_confidence_tier", d)
-
-    def test_invalid_confidence_raises(self):
-        with self.assertRaises(ValueError):
-            diag.is_v2_authoritative_ready(
-                self.registry, require_confidence="MYSTERY",
-            )
+        self.assertIn("evidence_present", d)
+        self.assertIn("evidence_valid", d)
 
 
 # =====================================================================

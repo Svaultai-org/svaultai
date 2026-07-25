@@ -142,43 +142,153 @@ Returns a plain dict with:
 - `action_kind_counts`
 - `revision_stamps` (which v2 revisions have produced records)
 
-## Enabling ON mode
+## Enabling ON mode (commit 8a: evidence-driven)
 
-**Do NOT flip `VAULTAI_CHAT_BRAIN_MODE=on` without verifying the
-readiness gate.** The gate is a hard STOP:
+**Do NOT flip `VAULTAI_CHAT_BRAIN_MODE=on` without a signed
+rollout evidence artifact.** The readiness gate is a hard STOP
+that consumes durable, externally-produced evidence — not the
+process-local metrics of whichever worker happens to be running.
 
-```python
-from vault_chat_v2_diagnostics import is_v2_authoritative_ready, CONFIDENCE_HIGH
-from vault_chat_executor_adapters_v2 import build_production_executor_registry
+### Why local metrics do not authorize rollout
 
-registry = build_production_executor_registry()
-gate = is_v2_authoritative_ready(
-    registry,
-    require_confidence=CONFIDENCE_HIGH,
-    require_self_test=True,
-)
-if not gate.ready:
-    for blocker in gate.blockers:
-        print("BLOCKER:", blocker)
-    raise SystemExit("v2 authoritative activation refused")
+- reset every process restart
+- isolated per worker / server / container
+- unavailable to a newly-started authoritative process
+- cannot represent the full production fleet
+
+Example failure mode: 200 000 clean shadow observations collected
+across the fleet, then deployment restarts every worker. The new
+processes each start with `diff_count = 0`. Without evidence they
+would refuse rollout despite the fleet-wide history.
+
+### Rollout evidence artifact
+
+An immutable JSON envelope produced by an externally-run
+aggregation + review pipeline (NOT the process that will consume
+it — observation and approval must remain separate operations).
+
+Envelope format:
+
+```json
+{
+  "envelope_version": 1,
+  "payload": {
+    "approval_id":                 "approval-2026-07-25-01",
+    "approved_at":                 "2026-07-25T18:00:00Z",
+    "different_semantics_pct":     0.5,
+    "disagreement_source_counts":  {"NONE": 49900, "SEMANTIC": 100},
+    "environment":                 "prod-canary",
+    "evidence_version":            1,
+    "expires_at":                  "2026-07-26T18:00:00Z",
+    "fingerprint_available_pct":   99.9,
+    "observation_ended_at":        "2026-07-25T17:00:00Z",
+    "observation_started_at":      "2026-07-22T17:00:00Z",
+    "pipeline_exception_count":    10,
+    "total_diffs":                 50000,
+    "v2_revision_stamp":           "b1.p1.r1.s1.q1.i1",
+    "validation_error_pct":        0.1,
+    "workers_observed":            8
+  },
+  "signature_alg":  "HMAC-SHA256",
+  "signature_hex":  "<64 hex characters>"
+}
 ```
 
-Gate refuses if any of the following:
+The signature is `HMAC-SHA256(secret, canonical_payload_bytes)`
+where `canonical_payload_bytes` is JSON with `sort_keys=True,
+separators=(',', ':')` and UTC ISO-8601 'Z' datetimes.
 
-- Executor registry missing any `EXECUTOR_REQUIRED_ACTION_KINDS` member
-- `configuration` status != `PASS`
-- Parity broken between shadow and authoritative inventories
-- Startup self-test failed
-- Any pipeline exception counter > 0
-- `behavior` status != `PASS` (INSUFFICIENT_SAMPLES also refuses)
-- `confidence_tier` below `require_confidence` (default HIGH = ≥10 000 diffs)
+### Rollout thresholds
 
-Also set the fallback env explicitly (default is disabled; the
-validator warns if it is unset in mode==on):
+The gate refuses the envelope if any of:
 
-```bash
-export VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK=off   # or on, chosen deliberately
-```
+| Field | Threshold |
+|---|---|
+| `total_diffs` | `>= 10 000` |
+| `workers_observed` | `>= 3` |
+| observation window (`ended - started`) | `>= 24 hours` |
+| `pipeline_exception_count / total_diffs` | `<= 0.5%` |
+| `different_semantics_pct` | `<= 5.0%` |
+| `validation_error_pct` | `<= 1.0%` |
+| `fingerprint_available_pct` | `>= 99.0%` |
+| `approval_id` | present, non-empty |
+| `v2_revision_stamp` | must equal `compute_v2_revision_stamp()` |
+| `environment` | must equal `VAULTAI_CHAT_BRAIN_V2_ENVIRONMENT` env |
+| `approved_at` / `observation_ended_at` | must not be in the future |
+| `expires_at` | must be in the future |
+
+Any stale evidence — even one revision behind — is refused. Bump
+any layer revision → produce fresh evidence.
+
+### Enabling ON procedure
+
+1. Provision the deployment secret + evidence file on the target
+   host. Both are secrets — do NOT commit them.
+
+   ```bash
+   export VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_PATH=/etc/vaultai/evidence.json
+   export VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_HMAC_SECRET="<≥32-byte random string>"
+   export VAULTAI_CHAT_BRAIN_V2_ENVIRONMENT=prod-canary
+   ```
+
+2. Verify the gate BEFORE flipping the mode env:
+
+   ```python
+   from vault_chat_v2_diagnostics import is_v2_authoritative_ready
+   from vault_chat_executor_adapters_v2 import build_production_executor_registry
+
+   registry = build_production_executor_registry()
+   gate = is_v2_authoritative_ready(
+       registry,
+       None,                     # load evidence from env
+       require_self_test=True,
+   )
+   if not gate.ready:
+       for b in gate.blockers:
+           print("BLOCKER:", b)
+       raise SystemExit("authoritative activation refused")
+   ```
+
+3. Only after `gate.ready` is True, set the mode + fallback env:
+
+   ```bash
+   export VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK=off   # explicit choice
+   export VAULTAI_CHAT_BRAIN_MODE=on
+   ```
+
+### Observation ≠ approval
+
+The process that consumes evidence MUST NOT also produce it. In
+production, `sign_rollout_evidence` is called by an external
+tool (deployment pipeline, operator's laptop, an approval
+service). Never call it in-process before consumption.
+
+### Secret rotation
+
+Rotate `VAULTAI_CHAT_BRAIN_V2_ROLLOUT_EVIDENCE_HMAC_SECRET`
+by:
+
+1. issuing new evidence signed with the new secret;
+2. rolling out the new secret to every worker;
+3. removing old evidence.
+
+Do NOT keep multiple secrets in circulation; there is no
+key-id trailer in the envelope.
+
+### Rollback: local pipeline exceptions
+
+The process-local metrics report `exceptions_in_current_window`,
+`exception_rate_pct`, and `last_exception_at`. These are a
+worker-level early-warning signal, not a rollout gate. If a
+worker sees a sustained exception rate above `0.5%` in shadow:
+
+- alert the on-call
+- investigate the underlying dependency (LLM provider,
+  Redis, etc.)
+- if unresolved, flip that worker back to `off`
+- do NOT re-enable `on` on the fleet until the next signed
+  evidence artifact reports a clean window that includes the
+  fix
 
 ## Rollback procedures
 

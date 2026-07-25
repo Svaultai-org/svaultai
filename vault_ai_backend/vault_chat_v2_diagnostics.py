@@ -765,66 +765,134 @@ def shadow_health_summary(
 
 
 # =====================================================================
-# Authoritative readiness gate (commit 8-f)
+# Authoritative readiness gate (commit 8a: evidence-driven)
 # =====================================================================
 
 @dataclass(frozen=True)
 class ReadinessGateReport:
-    ready:            bool
-    blockers:         tuple = ()
-    health:           Optional[HealthReport] = None
-    required_min_diffs:            int = _MIN_DIFFS_FOR_QUALITY
-    required_confidence_tier:      str = CONFIDENCE_HIGH
+    """Structured outcome of ``is_v2_authoritative_ready``.
+
+    ``blockers`` are sorted, unique, closed-set-shaped strings.
+    ``health`` is the live process-local rollup (debugging info
+    ONLY -- authoritative approval comes from
+    ``evidence_validation``, not ``health``).
+    ``evidence_validation`` names the exact evidence-side
+    blockers when the evidence file failed to load or validate.
+    """
+    ready:                       bool
+    blockers:                    tuple = ()
+    health:                      Optional[HealthReport] = None
+    evidence:                    Optional[Any] = None  # RolloutEvidenceV2
+    evidence_validation:         Optional[Any] = None  # EvidenceValidationResult
+    evidence_load:               Optional[Any] = None  # EvidenceLoadResult
 
     def as_dict(self) -> dict:
         return {
-            "ready":                     self.ready,
-            "blockers":                  list(self.blockers),
-            "health":                    self.health.as_dict() if self.health else None,
-            "required_min_diffs":        self.required_min_diffs,
-            "required_confidence_tier":  self.required_confidence_tier,
+            "ready":                self.ready,
+            "blockers":             list(self.blockers),
+            "health":               self.health.as_dict() if self.health else None,
+            "evidence_present":     self.evidence is not None,
+            "evidence_valid": (
+                self.evidence_validation.valid
+                if self.evidence_validation else False
+            ),
+            "evidence_blockers": (
+                list(self.evidence_validation.blockers)
+                if self.evidence_validation else []
+            ),
+            "evidence_load_blockers": (
+                list(self.evidence_load.blockers)
+                if self.evidence_load else []
+            ),
         }
 
 
 def is_v2_authoritative_ready(
     registry: ExecutorRegistry,
+    rollout_evidence: Optional[Any] = None,
     *,
-    require_confidence: str = CONFIDENCE_HIGH,
     require_self_test: bool = True,
+    current_environment: Optional[str] = None,
+    _evidence_load_result: Optional[Any] = None,
+    _validation_now: Optional[Any] = None,
 ) -> ReadinessGateReport:
     """Explicit gate for authoritative (mode==on) activation.
 
+    Commit 8a: the gate now REQUIRES external rollout evidence
+    signed by a deployment-provided HMAC secret. The
+    process-local metrics aggregator is treated as debugging
+    information only -- it never approves rollout.
+
+    Parameters:
+        registry:            production ExecutorRegistry.
+        rollout_evidence:    a validated RolloutEvidenceV2, or
+                             None to load from the deployment
+                             env (VAULTAI_CHAT_BRAIN_V2_
+                             ROLLOUT_EVIDENCE_PATH +
+                             _HMAC_SECRET).
+        require_self_test:   whether to run the startup
+                             self-test.
+        current_environment: overrides the environment env var
+                             for tests.
+
     Refuses on ANY of:
 
+        * evidence missing / unreadable / malformed
+        * evidence signature invalid or algorithm unsupported
+        * evidence semantically invalid (see
+          RolloutEvidenceV2 blockers)
+        * executor registry missing an EXECUTOR_REQUIRED
+          adapter (static wiring failure)
         * configuration status != PASS
         * parity broken
         * startup self-test failed (unless require_self_test=False)
-        * runtime pipeline exceptions non-zero
-        * behavior status != PASS (INSUFFICIENT_SAMPLES also refuses)
-        * confidence tier below ``require_confidence``
-        * runtime-readiness guard reports missing executors
 
-    Callers should treat a non-ready gate as a hard STOP -- do
-    NOT flip mode to ``on`` when this returns False.
+    NOTE: process-local pipeline_exceptions counters and
+    confidence_tier are NOT used for the authoritative decision.
+    Cross-fleet exception rate and observation sample size come
+    from the signed evidence payload.
     """
-    if require_confidence not in _CONFIDENCE_TIERS:
-        raise ValueError(
-            f"require_confidence must be one of {sorted(_CONFIDENCE_TIERS)}"
-        )
+    from vault_chat_v2_rollout_evidence import (
+        EvidenceLoadResult, EvidenceValidationResult,
+        load_rollout_evidence_from_env,
+        validate_rollout_evidence,
+    )
 
     blockers: list[str] = []
     health = shadow_health_summary(
         registry=registry, run_self_test=require_self_test,
     )
 
-    # 1. Executor registry completeness (fast fail).
+    # 1. Evidence: load if not supplied.
+    load_result: Optional[EvidenceLoadResult] = _evidence_load_result
+    evidence = rollout_evidence
+    if evidence is None:
+        if load_result is None:
+            load_result = load_rollout_evidence_from_env()
+        for b in load_result.blockers:
+            blockers.append(b)
+        evidence = load_result.evidence
+
+    # 2. Evidence: validate if we have one.
+    validation: Optional[EvidenceValidationResult] = None
+    if evidence is not None:
+        validation = validate_rollout_evidence(
+            evidence,
+            current_environment=current_environment,
+            now=_validation_now,
+        )
+        if not validation.valid:
+            for b in validation.blockers:
+                blockers.append(b)
+
+    # 3. Registry completeness (static wiring).
     reg_ready, missing = validate_v2_runtime_readiness(registry)
     if not reg_ready:
         blockers.append(
             f"registry.missing_executors={sorted(missing)}"
         )
 
-    # 2. Configuration.
+    # 4. Configuration.
     if health.configuration_status != DIM_CONFIG_PASS:
         blockers.append(
             f"configuration={health.configuration_status}"
@@ -832,13 +900,13 @@ def is_v2_authoritative_ready(
         for r in health.reasons_by_dimension.get("configuration", ()):
             blockers.append(f"config.{r}")
 
-    # 3. Parity.
+    # 5. Parity.
     if not health.parity_ok:
         blockers.append(
             f"parity.symmetric_diff={list(health.parity_diff)}"
         )
 
-    # 4. Startup self-test.
+    # 6. Startup self-test.
     if require_self_test:
         if health.startup_status == DIM_STARTUP_SKIP:
             blockers.append("startup.self_test_not_run")
@@ -847,41 +915,15 @@ def is_v2_authoritative_ready(
             for r in health.reasons_by_dimension.get("startup", ()):
                 blockers.append(r)
 
-    # 5. Runtime.
-    if health.runtime_status != DIM_RUNTIME_PASS:
-        blockers.append(f"runtime={health.runtime_status}")
-        for r in health.reasons_by_dimension.get("runtime", ()):
-            blockers.append(r)
-
-    # 6. Behavior.
-    if health.behavior_status != DIM_BEHAVIOR_PASS:
-        blockers.append(f"behavior={health.behavior_status}")
-        for r in health.reasons_by_dimension.get("behavior", ()):
-            blockers.append(r)
-
-    # 7. Sample-size confidence.
-    if _confidence_rank(health.confidence_tier) < _confidence_rank(require_confidence):
-        blockers.append(
-            f"confidence={health.confidence_tier} "
-            f"(required={require_confidence})"
-        )
-
     ready = len(blockers) == 0
     return ReadinessGateReport(
         ready=ready,
         blockers=tuple(sorted(set(blockers))),
         health=health,
-        required_min_diffs=_MIN_DIFFS_FOR_QUALITY,
-        required_confidence_tier=require_confidence,
+        evidence=evidence,
+        evidence_validation=validation,
+        evidence_load=load_result,
     )
-
-
-def _confidence_rank(tier: str) -> int:
-    if tier == CONFIDENCE_HIGH:
-        return 2
-    if tier == CONFIDENCE_MEDIUM:
-        return 1
-    return 0
 
 
 __all__ = [

@@ -1,56 +1,60 @@
-"""In-process metrics aggregator for shadow-mode v2 (commit 7).
+"""PROCESS-LOCAL metrics aggregator for shadow-mode v2 (commits 7 + 8a).
 
-Shadow mode emits one ``ShadowDiffRecordV2`` per turn. This module
-aggregates those records into thread-safe counters that an
-operator can snapshot at any point to answer:
+This module is PROCESS-LOCAL by design. Its counters:
 
-    * how many turns has shadow observed?
-    * what percentage of those matched v1 semantically?
-    * what percentage disagreed materially (different_semantics)?
-    * what percentage were v2 validation errors (a v2 defect)?
-    * what percentage were insufficient-context artifacts (not a
-      v2 defect -- shadow lacks focus state that on-mode has)?
-    * what percentage produced fingerprints vs degraded records?
-    * how many v2-side exceptions did shadow catch, broken down
-      by pipeline stage (snapshot / decider / policy / router)?
-    * how many turns did each router-observable action_kind
-      produce (rate-of-use for each action)?
+    * reset every process restart;
+    * are isolated per worker / server / container;
+    * are unavailable to a newly-started authoritative process;
+    * are NOT durable rollout evidence and MUST NOT be used to
+      approve production activation.
 
-Design choices:
+For fleet-wide rollout approval use
+``vault_chat_v2_rollout_evidence`` -- a signed, immutable
+evidence artifact produced by an externally-run aggregation
+pipeline. The authoritative readiness gate consumes evidence,
+not local counters.
 
-    * Pure Python, no external metrics dependency.
-    * Thread-safe via a single lock guarding a plain-dict shape.
-    * ``snapshot()`` returns a deep copy so callers can iterate
-      without holding the lock.
-    * ``reset_for_tests()`` clears every counter. Never called
-      from production code paths.
-    * NEVER stores or forwards raw user text, target ids,
-      usernames, or vault ids -- only the closed-set match
-      categories, closed-set stage names, and closed-set
-      action_kinds.
-    * NEVER writes to Redis, disk, or any external store; every
-      counter is process-local. Operators query the metrics via
-      ``get_metrics_snapshot()`` and export them however they
-      wish.
+What this module IS useful for:
 
-Usage:
+    * debugging and per-worker diagnostics;
+    * immediate exception detection while shadow is enabled;
+    * verifying zero-write invariants during staging;
+    * populating the process-local dimension of health reports.
 
-    from vault_chat_shadow_metrics_v2 import (
-        record_shadow_diff, record_pipeline_exception,
-        get_metrics_snapshot, reset_metrics_for_tests,
-    )
+The snapshot dataclass ``ProcessShadowMetricsSnapshotV2`` labels
+its output with process correlation fields (an HMAC of pid +
+start time, the worker start timestamp, the sample-window start
+timestamp) so a naive fleet-wide sum cannot accidentally
+double-count or elide observations.
 
-The shadow recorder is wired to call ``record_shadow_diff(record)``
-after every ``build_and_log_diff``; the brain-v2 shadow path
-calls ``record_pipeline_exception(stage, exc_type_name)`` at each
-try/except boundary that would otherwise swallow the exception.
+Bounded histograms
+------------------
+
+Every long-running counter uses a bounded map:
+
+    * ``pipeline_exception_types``: type names truncated to 64
+      chars, keyed per stage;
+    * ``revision_stamps``: at most 32 distinct stamps stored;
+    * ``recent_decisions_window``: deque bounded to
+      ``EXCEPTION_WINDOW_SIZE = 10 000``.
+
+Adversarial input cannot bloat memory beyond these caps.
+
+Never stores raw user content, target ids, usernames, or vault
+ids -- only the closed-set match categories, stage names,
+action_kinds, and disagreement sources.
 """
 
 from __future__ import annotations
 
+import collections
+import hashlib
+import hmac
 import logging
+import os
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
 from vault_chat_decision_router_v2 import ACTION_KINDS
@@ -58,6 +62,7 @@ from vault_chat_shadow_recorder_v2 import (
     DISAGREEMENT_SOURCES,
     MATCH_CATEGORIES,
     ShadowDiffRecordV2,
+    _process_secret,
 )
 
 
@@ -65,9 +70,7 @@ logger = logging.getLogger(__name__)
 
 
 # Closed set of pipeline stages a shadow-mode exception may occur
-# at. Any string reported to record_pipeline_exception outside
-# this set is rejected (raises ValueError in strict mode; logs a
-# warning and drops in permissive/production mode).
+# at.
 SHADOW_PIPELINE_STAGES: frozenset[str] = frozenset({
     "snapshot",
     "decider",
@@ -76,6 +79,81 @@ SHADOW_PIPELINE_STAGES: frozenset[str] = frozenset({
     "log",       # build_and_log_diff itself raising
     "metrics",   # this aggregator itself raising (self-report)
 })
+
+
+# Exception windowing (commit 8a). The rate view uses the last
+# ``EXCEPTION_WINDOW_SIZE`` shadow events (diffs + exceptions).
+# Bounded via ``collections.deque(maxlen=...)`` so memory stays
+# capped regardless of traffic volume.
+EXCEPTION_WINDOW_SIZE: int = 10_000
+
+# Bound distinct exception-type histograms + revision-stamp
+# histogram to prevent adversarial input from bloating the map.
+_MAX_DISTINCT_EXCEPTION_TYPES_PER_STAGE: int = 32
+_MAX_DISTINCT_REVISION_STAMPS:           int = 32
+_EXCEPTION_TYPE_NAME_MAX_LEN:            int = 64
+
+
+# =====================================================================
+# Process correlation
+# =====================================================================
+
+def _compute_process_id_hmac() -> str:
+    """HMAC of (pid, worker_started_at). Uses the shadow
+    fingerprint secret when available so cross-process aggregation
+    can safely correlate replays without exposing raw ids. Returns
+    ``'-'`` when no secret is configured (process-local snapshot
+    still labels itself as such).
+    """
+    secret = _process_secret()
+    if secret is None:
+        return "-"
+    material = f"{os.getpid()}|{_WORKER_STARTED_AT}".encode("utf-8")
+    return hmac.new(secret, material, hashlib.sha256).hexdigest()[:16]
+
+
+_WORKER_STARTED_AT: float = time.time()
+
+
+@dataclass(frozen=True)
+class ProcessShadowMetricsSnapshotV2:
+    """A single worker's shadow-metrics view AT A POINT IN TIME.
+
+    Explicitly labeled ``process-local``. Every consumer MUST
+    treat this as one worker's private view, NOT as fleet-wide
+    evidence. See ``vault_chat_v2_rollout_evidence`` for the
+    fleet-wide aggregation contract.
+
+    Fields:
+        process_id_hmac:            HMAC-64 of (pid, start_ts).
+                                    "-" if no fingerprint secret.
+        worker_started_at:          epoch seconds when the worker
+                                    booted.
+        sample_window_started_at:   epoch seconds when the current
+                                    metrics window started (reset
+                                    to ``time.time()`` on
+                                    ``reset_metrics_for_tests``).
+        snapshot_at:                epoch seconds when this
+                                    snapshot was taken.
+        data:                       the plain-dict metrics view
+                                    (backward-compatible with
+                                    ``get_metrics_snapshot()``).
+    """
+    process_id_hmac:           str
+    worker_started_at:         float
+    sample_window_started_at:  float
+    snapshot_at:               float
+    data:                      dict
+
+    def as_dict(self) -> dict:
+        return {
+            "scope":                    "process-local",
+            "process_id_hmac":          self.process_id_hmac,
+            "worker_started_at":        self.worker_started_at,
+            "sample_window_started_at": self.sample_window_started_at,
+            "snapshot_at":              self.snapshot_at,
+            "data":                     dict(self.data),
+        }
 
 
 class _Metrics:
@@ -108,15 +186,20 @@ class _Metrics:
         self._router_fallthrough_count: int = 0
         self._v1_handled_count: int = 0
         self._v1_fallthrough_count: int = 0
-        # commit 8: per-source disagreement attribution counts
-        # so operators can prioritize which layer to investigate.
         self._disagreement_sources: dict[str, int] = {
             src: 0 for src in DISAGREEMENT_SOURCES
         }
-        # commit 8: revision-stamp histogram so an operator can
-        # see when historical records were produced against a
-        # different layer revision than the running process.
         self._revision_stamps: dict[str, int] = {}
+        # commit 8a: exception rate is meaningless as a lifetime
+        # counter for a long-running process. Track the last
+        # EXCEPTION_WINDOW_SIZE shadow events (each entry is 1
+        # for exception, 0 for normal diff) so a rolling rate
+        # can be computed.
+        self._recent_window: collections.deque[int] = collections.deque(
+            maxlen=EXCEPTION_WINDOW_SIZE,
+        )
+        self._exceptions_total: int = 0
+        self._last_exception_at: float = 0.0
 
     def reset(self) -> None:
         with self._lock:
@@ -148,33 +231,36 @@ class _Metrics:
             if src in self._disagreement_sources:
                 self._disagreement_sources[src] += 1
             stamp = record.v2_revision_stamp or "-"
-            # Bound the histogram to prevent an untrusted stamp
-            # source from bloating the dict (defense in depth --
-            # stamps come from compute_v2_revision_stamp() which
-            # produces a bounded shape).
-            if len(self._revision_stamps) < 32 or stamp in self._revision_stamps:
+            if len(self._revision_stamps) < _MAX_DISTINCT_REVISION_STAMPS \
+                    or stamp in self._revision_stamps:
                 self._revision_stamps[stamp] = (
                     self._revision_stamps.get(stamp, 0) + 1
                 )
+            self._recent_window.append(0)  # 0 = normal diff
 
     def record_pipeline_exception(
         self, stage: str, exc_type_name: str,
     ) -> None:
-        # Strict on stage; permissive on exception type name (still
-        # a bounded string).
         if stage not in SHADOW_PIPELINE_STAGES:
             logger.warning(
                 "[SHADOW_METRICS] unknown pipeline stage %r; dropping",
                 stage,
             )
             return
-        # Bound the type name length so a pathological exception
-        # class name cannot bloat the dict.
-        safe_name = (exc_type_name or "unknown")[:64]
+        safe_name = (exc_type_name or "unknown")[:_EXCEPTION_TYPE_NAME_MAX_LEN]
         with self._lock:
             self._pipeline_exceptions[stage] += 1
+            self._exceptions_total += 1
+            self._last_exception_at = time.time()
             m = self._pipeline_exception_types[stage]
-            m[safe_name] = m.get(safe_name, 0) + 1
+            # Bounded histogram: cap distinct type names per
+            # stage. If cap reached, fold further into a
+            # sentinel bucket -- never grow.
+            if safe_name in m or len(m) < _MAX_DISTINCT_EXCEPTION_TYPES_PER_STAGE:
+                m[safe_name] = m.get(safe_name, 0) + 1
+            else:
+                m["__other__"] = m.get("__other__", 0) + 1
+            self._recent_window.append(1)  # 1 = exception
 
     def snapshot(self) -> dict:
         """Return a plain-dict deep copy of the current counters.
@@ -187,7 +273,16 @@ class _Metrics:
                 if total == 0:
                     return 0.0
                 return round(100.0 * numerator / total, 3)
+            window_size = len(self._recent_window)
+            exceptions_in_window = sum(self._recent_window)
+            if window_size > 0:
+                exception_rate_pct = round(
+                    100.0 * exceptions_in_window / window_size, 3,
+                )
+            else:
+                exception_rate_pct = 0.0
             return {
+                "scope":                       "process-local",
                 "uptime_seconds":              round(uptime, 3),
                 "diff_count":                  self._diff_count,
                 "matches":                     dict(self._matches),
@@ -214,6 +309,12 @@ class _Metrics:
                     for src, v in self._disagreement_sources.items()
                 },
                 "revision_stamps":             dict(self._revision_stamps),
+                "exceptions_total":            self._exceptions_total,
+                "exceptions_in_current_window": exceptions_in_window,
+                "exception_window_size":       window_size,
+                "exception_rate_pct":          exception_rate_pct,
+                "last_exception_at":           self._last_exception_at,
+                "sample_window_started_at":    self._start_time,
             }
 
 
@@ -243,8 +344,29 @@ def record_pipeline_exception(stage: str, exc_type_name: str) -> None:
 
 def get_metrics_snapshot() -> dict:
     """Return a plain-dict snapshot of every counter. Safe to
-    call at any time from any thread."""
+    call at any time from any thread. The snapshot is labeled
+    ``scope=process-local`` -- callers MUST NOT interpret it as
+    fleet-wide evidence."""
     return _METRICS.snapshot()
+
+
+def get_process_local_snapshot() -> ProcessShadowMetricsSnapshotV2:
+    """Return the same data as ``get_metrics_snapshot`` wrapped
+    in a labeled ``ProcessShadowMetricsSnapshotV2`` dataclass.
+    Callers that build fleet-level views MUST label each
+    observation with the ``process_id_hmac`` +
+    ``worker_started_at`` so aggregation cannot accidentally
+    double-count or elide observations."""
+    data = _METRICS.snapshot()
+    return ProcessShadowMetricsSnapshotV2(
+        process_id_hmac=_compute_process_id_hmac(),
+        worker_started_at=_WORKER_STARTED_AT,
+        sample_window_started_at=data.get(
+            "sample_window_started_at", _WORKER_STARTED_AT,
+        ),
+        snapshot_at=time.time(),
+        data=data,
+    )
 
 
 def reset_metrics_for_tests() -> None:
@@ -255,8 +377,11 @@ def reset_metrics_for_tests() -> None:
 
 __all__ = [
     "SHADOW_PIPELINE_STAGES",
+    "EXCEPTION_WINDOW_SIZE",
+    "ProcessShadowMetricsSnapshotV2",
     "record_shadow_diff",
     "record_pipeline_exception",
     "get_metrics_snapshot",
+    "get_process_local_snapshot",
     "reset_metrics_for_tests",
 ]
