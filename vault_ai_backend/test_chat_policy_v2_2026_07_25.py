@@ -287,7 +287,12 @@ class PassthroughIntentsTest(unittest.TestCase):
 
 class TargetLookupTest(unittest.TestCase):
 
-    def test_unknown_target_id_rejects_at_confidence_1(self):
+    def test_unknown_target_id_clarifies_at_confidence_1(self):
+        # Case A distinction (design memo rev 6): an unknown ID
+        # is a conversational mismatch, not an authorization
+        # failure. Even at confidence 1.0, policy asks to clarify
+        # rather than rejecting outright — the user should be able
+        # to restate or recreate.
         r = vp.authorize_v2(
             snapshot=_snapshot(),  # no drafts
             decision=_decision(
@@ -299,7 +304,7 @@ class TargetLookupTest(unittest.TestCase):
                 confidence=1.0,
             ),
         )
-        self.assertEqual(r.outcome, vp.OUTCOME_REJECT)
+        self.assertEqual(r.outcome, vp.OUTCOME_CLARIFY)
         self.assertEqual(r.reason_code, vp.REASON_TARGET_NOT_FOUND)
 
     def test_wrong_target_kind_rejects(self):
@@ -367,7 +372,37 @@ class TargetLookupTest(unittest.TestCase):
         self.assertEqual(r.outcome, vp.OUTCOME_CLARIFY)
         self.assertEqual(r.reason_code, vp.REASON_TARGET_EXPIRED)
 
-    def test_high_confidence_cannot_bypass_unknown_target(self):
+    def test_case_a_vs_case_b_distinction_preserved(self):
+        # Case A: pending action with unknown id → clarify.
+        r_a = vp.authorize_v2(
+            snapshot=_snapshot(),
+            decision=_decision(
+                intent=INTENT_CANCEL_PENDING_ACTION,
+                target_kind=TARGET_KIND_PENDING_ACTION,
+                target_id="p-NEVER",
+            ),
+        )
+        self.assertEqual(r_a.outcome, vp.OUTCOME_CLARIFY)
+        self.assertEqual(r_a.reason_code, vp.REASON_TARGET_NOT_FOUND)
+
+        # Case B: draft in snapshot but wrong vault → reject.
+        d = _draft("d-1", vault_id="other-vault")
+        r_b = vp.authorize_v2(
+            snapshot=_snapshot(active_drafts=(d,)),
+            decision=_decision(
+                intent=INTENT_CANCEL_DRAFT,
+                target_kind=TARGET_KIND_DRAFT, target_id="d-1",
+            ),
+        )
+        self.assertEqual(r_b.outcome, vp.OUTCOME_REJECT)
+        self.assertEqual(r_b.reason_code, vp.REASON_WRONG_VAULT)
+
+    def test_high_confidence_unknown_target_still_clarifies(self):
+        # High confidence does NOT let the model invent target
+        # ids. But because an unknown id is Case A (not Case B),
+        # the outcome is clarify, not reject. Case B — id belongs
+        # to another vault/session — is exercised by
+        # test_wrong_vault_rejects / test_wrong_session_rejects.
         r = vp.authorize_v2(
             snapshot=_snapshot(),
             decision=_decision(
@@ -377,7 +412,7 @@ class TargetLookupTest(unittest.TestCase):
                 scope_action=ACTION_SAVE, confidence=1.0,
             ),
         )
-        self.assertEqual(r.outcome, vp.OUTCOME_REJECT)
+        self.assertEqual(r.outcome, vp.OUTCOME_CLARIFY)
         self.assertEqual(r.reason_code, vp.REASON_TARGET_NOT_FOUND)
 
 

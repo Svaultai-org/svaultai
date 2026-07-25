@@ -492,7 +492,12 @@ def _authorize_edit_draft(
         )
     target = snapshot.find_draft(decision.target.id)  # type: ignore[arg-type]
     if target is None:
-        return _reject(
+        # Case A: model referenced an ID that does not exist. Not
+        # an authorization failure — a conversational mismatch.
+        # Ask the user to clarify or restart. Case B (ID exists but
+        # belongs to a different vault/session) is caught below by
+        # the ownership check and remains a hard reject.
+        return _clarify(
             INTENT_EDIT_DRAFT, REASON_TARGET_NOT_FOUND,
             target_kind=TARGET_KIND_DRAFT,
             target_id=decision.target.id,
@@ -543,7 +548,8 @@ def _authorize_confirm_draft(
         )
     target = snapshot.find_draft(decision.target.id)  # type: ignore[arg-type]
     if target is None:
-        return _reject(
+        # Case A: unknown ID → clarify, not reject.
+        return _clarify(
             INTENT_CONFIRM_DRAFT, REASON_TARGET_NOT_FOUND,
             target_kind=TARGET_KIND_DRAFT,
             target_id=decision.target.id,
@@ -637,7 +643,10 @@ def _authorize_cancel_draft(
         )
     target = snapshot.find_draft(decision.target.id)  # type: ignore[arg-type]
     if target is None:
-        return _reject(
+        # Case A: unknown ID → clarify. Cancelling something that
+        # is not there is a no-op from the user's perspective, but
+        # asking for confirmation is safer than a silent success.
+        return _clarify(
             INTENT_CANCEL_DRAFT, REASON_TARGET_NOT_FOUND,
             target_kind=TARGET_KIND_DRAFT,
             target_id=decision.target.id,
@@ -668,7 +677,8 @@ def _authorize_confirm_pending(
         )
     target = snapshot.find_pending(decision.target.id)  # type: ignore[arg-type]
     if target is None:
-        return _reject(
+        # Case A: unknown ID → clarify, not reject.
+        return _clarify(
             INTENT_CONFIRM_PENDING_ACTION, REASON_TARGET_NOT_FOUND,
             target_kind=TARGET_KIND_PENDING_ACTION,
             target_id=decision.target.id,
@@ -760,7 +770,8 @@ def _authorize_cancel_pending(
         )
     target = snapshot.find_pending(decision.target.id)  # type: ignore[arg-type]
     if target is None:
-        return _reject(
+        # Case A: unknown ID → clarify.
+        return _clarify(
             INTENT_CANCEL_PENDING_ACTION, REASON_TARGET_NOT_FOUND,
             target_kind=TARGET_KIND_PENDING_ACTION,
             target_id=decision.target.id,
