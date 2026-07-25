@@ -492,7 +492,196 @@ class ScenarioC_RenewalRestoresAutomatically(unittest.TestCase):
 class ScenarioD_VaultDeletionCancelsStripe(unittest.TestCase):
     """The 6-month unpaid-inactive cleanup path MUST cancel the
     linked Stripe subscription; leaving it live would keep charging
-    a card for a vault whose data has been irreversibly deleted."""
+    a card for a vault whose data has been irreversibly deleted.
+
+    2026-07-30 audit-review safety: additionally the vault delete
+    MUST be blocked when the Stripe cancel returns an error
+    outcome (transient API failure). Prior version discarded the
+    outcome and deleted anyway — customer could keep being billed
+    for a permanently-deleted vault.
+    """
+
+    def _run_delete_with_cancel_outcome(self, cancel_result_kwargs):
+        """Helper: exercise delete_vault_and_all_data with the
+        Stripe cancel returning the specified CancelSubscriptionResult
+        kwargs. Returns (raised_exception_or_none, delete_row_called).
+        """
+        import vault_deletion_service as vds
+        from stripe_service import CancelSubscriptionResult
+        delete_row_calls: list = []
+
+        def stub_delete_row(vault_id):
+            delete_row_calls.append(vault_id)
+            return True
+
+        with mock.patch(
+            "billing.get_account_id_for_vault",
+            return_value=ACCOUNT_A,
+        ), mock.patch(
+            "stripe_service.cancel_subscription_for_account",
+            return_value=CancelSubscriptionResult(**cancel_result_kwargs),
+        ), mock.patch(
+            "vault_deletion_service._delete_vault_row",
+            side_effect=stub_delete_row,
+        ), mock.patch(
+            "vault_deletion_service._insert_tombstone",
+            return_value=None,
+        ), mock.patch(
+            "vault_deletion_service._account_has_other_vaults",
+            return_value=True,
+        ):
+            raised = None
+            try:
+                vds.delete_vault_and_all_data(
+                    "vault-blocked-by-stripe",
+                    reason=vds.REASON_USER_REQUESTED,
+                )
+            except Exception as exc:
+                raised = exc
+        return raised, delete_row_calls
+
+    def test_delete_blocked_when_stripe_cancel_errors(self):
+        # THE AUDIT-REVIEW DEFECT FIX. When Stripe returns
+        # outcome='error' (network failure, 5xx, etc.), the vault
+        # row MUST NOT be deleted — otherwise the customer could
+        # keep being billed for a permanently-deleted vault.
+        raised, delete_calls = self._run_delete_with_cancel_outcome({
+            "outcome":         "error",
+            "subscription_id": SUB_A,
+            "detail":          "raised:APIConnectionError",
+        })
+        from vault_deletion_service import (
+            VaultDeletionBlockedByStripeError,
+        )
+        self.assertIsInstance(raised, VaultDeletionBlockedByStripeError)
+        # Critical assertion: the local vault row was NOT deleted.
+        self.assertEqual(
+            delete_calls, [],
+            "vault MUST NOT be deleted when Stripe cancel errors",
+        )
+        # The exception carries the hashed prefix + detail so ops
+        # traces are meaningful.
+        self.assertTrue(raised.vault_id_hashed_prefix)
+        self.assertIn("stripe_error", raised.detail)
+
+    def test_delete_proceeds_on_cancelled_outcome(self):
+        raised, delete_calls = self._run_delete_with_cancel_outcome({
+            "outcome":         "cancelled",
+            "subscription_id": SUB_A,
+        })
+        self.assertIsNone(raised)
+        self.assertEqual(delete_calls, ["vault-blocked-by-stripe"])
+
+    def test_delete_proceeds_on_noop_no_customer(self):
+        # Never subscribed → nothing to cancel → safe to proceed.
+        raised, delete_calls = self._run_delete_with_cancel_outcome({
+            "outcome": "noop_no_customer",
+        })
+        self.assertIsNone(raised)
+        self.assertEqual(delete_calls, ["vault-blocked-by-stripe"])
+
+    def test_delete_proceeds_on_noop_no_subscription(self):
+        # Stripe customer exists but no subscription id on file →
+        # nothing to cancel → safe to proceed.
+        raised, delete_calls = self._run_delete_with_cancel_outcome({
+            "outcome": "noop_no_subscription",
+        })
+        self.assertIsNone(raised)
+        self.assertEqual(delete_calls, ["vault-blocked-by-stripe"])
+
+    def test_delete_proceeds_on_noop_already_cancelled(self):
+        # Stripe reports subscription is already gone (idempotent) →
+        # safe to proceed.
+        raised, delete_calls = self._run_delete_with_cancel_outcome({
+            "outcome":         "noop_already_cancelled",
+            "subscription_id": SUB_A,
+        })
+        self.assertIsNone(raised)
+        self.assertEqual(delete_calls, ["vault-blocked-by-stripe"])
+
+    def test_delete_proceeds_on_noop_stripe_unconfigured(self):
+        # Dev / CI mode without STRIPE_API_KEY → we can't cancel
+        # but nothing on Stripe side to charge either. Safe.
+        raised, delete_calls = self._run_delete_with_cancel_outcome({
+            "outcome": "noop_stripe_unconfigured",
+        })
+        self.assertIsNone(raised)
+        self.assertEqual(delete_calls, ["vault-blocked-by-stripe"])
+
+    def test_delete_blocked_when_cancel_raises(self):
+        # If cancel_subscription_for_account itself raises (rather
+        # than returning an error result) the block MUST still fire.
+        import vault_deletion_service as vds
+        delete_row_calls: list = []
+
+        def stub_delete_row(vault_id):
+            delete_row_calls.append(vault_id)
+            return True
+
+        with mock.patch(
+            "billing.get_account_id_for_vault",
+            return_value=ACCOUNT_A,
+        ), mock.patch(
+            "stripe_service.cancel_subscription_for_account",
+            side_effect=RuntimeError("network partition"),
+        ), mock.patch(
+            "vault_deletion_service._delete_vault_row",
+            side_effect=stub_delete_row,
+        ), mock.patch(
+            "vault_deletion_service._insert_tombstone",
+            return_value=None,
+        ), mock.patch(
+            "vault_deletion_service._account_has_other_vaults",
+            return_value=True,
+        ):
+            with self.assertRaises(
+                vds.VaultDeletionBlockedByStripeError,
+            ):
+                vds.delete_vault_and_all_data(
+                    "vault-cancel-raised",
+                    reason=vds.REASON_USER_REQUESTED,
+                )
+        self.assertEqual(
+            delete_row_calls, [],
+            "delete must be blocked when cancel raises",
+        )
+
+    def test_cleanup_job_defers_when_delete_is_blocked(self):
+        # inactive_unpaid_cleanup.run_once MUST treat
+        # VaultDeletionBlockedByStripeError as a deferred deletion,
+        # not a hard error. The row stays and tomorrow's job retries.
+        import inactive_unpaid_cleanup as iuc
+        from vault_deletion_service import (
+            VaultDeletionBlockedByStripeError,
+        )
+        with mock.patch(
+            "inactive_unpaid_cleanup._find_candidate_vault_ids",
+            return_value=["vault-idle-unpaid"],
+        ), mock.patch(
+            "inactive_unpaid_cleanup._recheck_unpaid",
+            return_value=(True, "past_due"),
+        ), mock.patch(
+            "inactive_unpaid_cleanup._recheck_inactive",
+            return_value=True,
+        ), mock.patch(
+            "inactive_unpaid_cleanup.delete_vault_and_all_data",
+            side_effect=VaultDeletionBlockedByStripeError(
+                vault_id_hashed_prefix="deadbeef1234",
+                detail="stripe_error:APIConnectionError",
+            ),
+        ), mock.patch(
+            "stripe_service.sweep_expired_grace_periods",
+            return_value={"in_grace_expired": 0,
+                          "over_quota_grace_expired": 0,
+                          "notifications_sent": 0, "errors": []},
+        ):
+            result = iuc.run_once()
+        # Vault was scanned but NOT deleted; error count reflects
+        # the deferral so ops metrics catch persistent Stripe
+        # outages.
+        self.assertEqual(result.scanned, 1)
+        self.assertEqual(result.deleted, 0)
+        self.assertGreaterEqual(result.errors, 1)
 
     def test_cancel_subscription_for_account_reachable_from_deletion(self):
         # vault_deletion_service._cancel_stripe_subscription_best_effort

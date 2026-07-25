@@ -60,6 +60,7 @@ from vault_core import (
 from vault_deletion_service import (
     CONFIRMATION_PHRASE,
     REASON_USER_REQUESTED,
+    VaultDeletionBlockedByStripeError,
     delete_vault_and_all_data,
 )
 
@@ -368,6 +369,31 @@ def confirm_delete(
     try:
         delete_vault_and_all_data(
             vault_id, reason=REASON_USER_REQUESTED,
+        )
+    except VaultDeletionBlockedByStripeError as _blocked:
+        # 2026-07-30 audit-review safety: the Stripe cancellation
+        # attempt returned an error outcome (transient API failure).
+        # The vault row is UNTOUCHED. Return 503 so the client can
+        # ask the user to try again in a moment — retrying is safe
+        # because both the Stripe cancel and the vault delete are
+        # idempotent.
+        logger.warning(
+            "[VAULT-DELETE] user-requested deletion blocked: stripe "
+            "cancel unavailable hashed=%s detail=%s",
+            _blocked.vault_id_hashed_prefix, _blocked.detail,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code":    "delete_deferred_stripe_unavailable",
+                "message": (
+                    "We couldn't confirm the payment provider "
+                    "cancellation right now. Your vault has NOT "
+                    "been deleted. Please try again in a few "
+                    "minutes."
+                ),
+                "retry_after_seconds": 300,
+            },
         )
     except Exception:
         logger.exception(

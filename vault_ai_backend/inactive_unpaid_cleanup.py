@@ -34,6 +34,7 @@ import security_event_log as sec_log
 from vault_core import get_db
 from vault_deletion_service import (
     REASON_UNPAID_INACTIVE_6_MONTHS,
+    VaultDeletionBlockedByStripeError,
     VaultNotFoundError,
     delete_vault_and_all_data,
 )
@@ -224,6 +225,23 @@ def run_once(now: datetime | None = None) -> CleanupResult:
             )
             deleted += 1
         except VaultNotFoundError:
+            continue
+        except VaultDeletionBlockedByStripeError as exc:
+            # 2026-07-30 audit-review safety: Stripe cancellation
+            # returned an error outcome (transient API failure). The
+            # vault row is UNTOUCHED. We log for ops visibility and
+            # skip — tomorrow's daily run will re-attempt (both
+            # cancel_subscription_for_account and the vault delete
+            # are idempotent, so a retry is safe even if the Stripe
+            # cancel actually did succeed on the prior attempt).
+            errors += 1
+            logger.warning(
+                "[INACTIVE-CLEANUP] deletion deferred: stripe "
+                "cancel could not be confirmed hashed=%s "
+                "detail=%s — will retry next daily run",
+                exc.vault_id_hashed_prefix,
+                exc.detail,
+            )
             continue
         except Exception:
             errors += 1
