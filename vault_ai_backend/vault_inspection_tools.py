@@ -519,22 +519,35 @@ INSPECTION_FUNCTIONS = [
         "function": {
             "name": "generate_credential_draft",
             "description": (
-                "Generate ONE secure credential draft when the "
-                "user asks to create a username and password for "
-                "a service. The backend generates a strong "
-                "anonymous username + strong random password and "
-                "stores them as a pending draft (NOT saved). "
+                "Generate a secure credential draft. When the user "
+                "supplied an explicit username / password / email / "
+                "url / title in their message, PASS THOSE VALUES "
+                "along with the service name — the backend uses the "
+                "supplied values verbatim (case, punctuation, and "
+                "special characters preserved) and generates ONLY "
+                "the fields the user did not provide. Explicit "
+                "user value > generated value, always. Never "
+                "substitute or 'normalize' a user-supplied value.\n\n"
                 "Returns ``{service_name, username, password, "
-                "draft_id, expires_at, saved: false}``. Surface "
+                "email?, url?, title?, draft_id, expires_at, "
+                "saved: false, explicit_fields: [...]}``. Surface "
                 "the returned username and password to the user "
                 "exactly once in the CREDENTIAL CREATION DRAFT "
                 "shape and ask them to say 'save it now'. NEVER "
                 "claim the credential is saved after this tool "
                 "call — only "
                 "``save_generated_credential_after_confirmation`` "
-                "actually saves. The username NEVER contains the "
-                "service name, the word 'vault', the user's "
-                "name/handle, or any personal info."
+                "actually saves. When generating a username (i.e. "
+                "the user did NOT supply one), the generated value "
+                "NEVER contains the service name, the word 'vault', "
+                "the user's name/handle, or any personal info.\n\n"
+                "USERNAME KINDS ACCEPTED: any string the user "
+                "supplied — email addresses ('alice@example.com'), "
+                "plain handles ('alice42'), dotted / underscored "
+                "handles ('alice.smith', 'alice_smith'), phone-"
+                "number style handles ('+15551234567'), or quoted "
+                "multi-word handles ('\"alice smith\"'). Do NOT "
+                "restrict to email format."
             ),
             "parameters": {
                 "type": "object",
@@ -548,6 +561,57 @@ INSPECTION_FUNCTIONS = [
                             "lookup key for the per-service "
                             "username policy and as the display "
                             "label."
+                        ),
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": (
+                            "Optional. The username the user "
+                            "explicitly supplied in their message "
+                            "('use alice@example.com as my "
+                            "username', 'username: alice42', "
+                            "'account name is alice.smith'). When "
+                            "provided, the backend uses this "
+                            "value VERBATIM and does NOT generate "
+                            "a username. Omit ONLY when the user "
+                            "did not supply one — do NOT invent."
+                        ),
+                    },
+                    "password": {
+                        "type": "string",
+                        "description": (
+                            "Optional. The password the user "
+                            "explicitly supplied ('use \"Secr3t!\" "
+                            "as the password', 'password: X'). "
+                            "When provided, the backend uses this "
+                            "value VERBATIM and does NOT generate "
+                            "one. Omit ONLY when the user did not "
+                            "supply one — do NOT invent."
+                        ),
+                    },
+                    "email": {
+                        "type": "string",
+                        "description": (
+                            "Optional. Explicit email if the user "
+                            "gave one AND intends it as an email "
+                            "field alongside a separate username. "
+                            "Most 'use my email X as my username' "
+                            "cases should pass X in username, not "
+                            "email."
+                        ),
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": (
+                            "Optional. Explicit URL / login site "
+                            "the user supplied."
+                        ),
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": (
+                            "Optional. Explicit title / label the "
+                            "user gave for this credential (rare)."
                         ),
                     },
                 },
@@ -1380,9 +1444,41 @@ def get_credential_metadata(
     }, ensure_ascii=False)
 
 
+def _clean_supplied_field(value: Optional[str]) -> Optional[str]:
+    """2026-07-26 explicit-field acceptance: strip outer whitespace and
+    matched outer quotes, drop obvious sentinel/None/empty values.
+    Preserves case and punctuation. Rejects values that look like
+    the LLM parroted a placeholder (e.g. 'null', 'None')."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    # Trim outer matching quotes if the LLM added them.
+    for lq, rq in (("\"", "\""), ("'", "'"), ("`", "`")):
+        if len(s) >= 2 and s.startswith(lq) and s.endswith(rq):
+            s = s[1:-1].strip()
+            break
+    if not s:
+        return None
+    # Reject placeholder tokens.
+    if s.lower() in {"none", "null", "n/a", "na", "undefined", "-"}:
+        return None
+    # Cap length to prevent pathological inputs from being written to
+    # the credential store.
+    return s[:512]
+
+
 def generate_credential_draft(
     *, vault_id: str, key: bytes,
     service_name: str,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    email:    Optional[str] = None,
+    url:      Optional[str] = None,
+    title:    Optional[str] = None,
 ) -> str:
 
 
@@ -1393,11 +1489,25 @@ def generate_credential_draft(
     # generate_login handler in main.py). Never logs the service name
     # verbatim — only its length. The generated draft's username and
     # password are already redacted by the caller's telemetry.
-    logger.info(
-        "[BRAIN-TRACE-DXR] site=generate_credential_draft "
-        "vault=%s service_len=%d",
-        (vault_id or "")[:8],
-        len((service_name or "").strip()),
+    #
+    # 2026-07-26 explicit-fields extension: log booleans indicating
+    # whether the LLM passed each optional field. Never logs the
+    # values themselves — only presence.
+    _supplied_username = _clean_supplied_field(username)
+    _supplied_password = _clean_supplied_field(password)
+    _supplied_email    = _clean_supplied_field(email)
+    _supplied_url      = _clean_supplied_field(url)
+    _supplied_title    = _clean_supplied_field(title)
+    print(
+        f"[BRAIN-TRACE-DXR] site=generate_credential_draft "
+        f"vault={(vault_id or '')[:8]} "
+        f"service_len={len((service_name or '').strip())} "
+        f"supplied_username={_supplied_username is not None} "
+        f"supplied_password={_supplied_password is not None} "
+        f"supplied_email={_supplied_email is not None} "
+        f"supplied_url={_supplied_url is not None} "
+        f"supplied_title={_supplied_title is not None}",
+        flush=True,
     )
 
     if not _key_ok(key):
@@ -1419,26 +1529,54 @@ def generate_credential_draft(
         logger.exception("[INSPECT] draft generator import failed")
         return _err("unavailable")
 
-    policy = conservative_default(svc_display)
-    try:
-        username = generate_username(
-            policy,
-                                                      
-                                                        
-            forbidden_substrings={svc_display.lower()},
-        )
-    except Exception:
-        logger.exception("[INSPECT] username generation failed")
-        return _err("unavailable")
+    # 2026-07-26 explicit > generated. If the user supplied a
+    # username, use it VERBATIM (case, dots, hyphens, +digits, quoted
+    # words — all preserved). Only generate when the user did NOT
+    # supply one. Same rule for password.
+    explicit_fields: list[str] = []
+    if _supplied_username:
+        username = _supplied_username
+        explicit_fields.append("username")
+    else:
+        policy = conservative_default(svc_display)
+        try:
+            username = generate_username(
+                policy,
+                # never leak the service name into the generated
+                # handle (existing behavior).
+                forbidden_substrings={svc_display.lower()},
+            )
+        except Exception:
+            logger.exception("[INSPECT] username generation failed")
+            return _err("unavailable")
+        if not username:
+            return _err("unavailable")
 
-    if not username:
-        return _err("unavailable")
+    if _supplied_password:
+        password = _supplied_password
+        explicit_fields.append("password")
+    else:
+        try:
+            password = generate_strong_password(length=20)
+        except Exception:
+            logger.exception("[INSPECT] password generation failed")
+            return _err("unavailable")
 
-    try:
-        password = generate_strong_password(length=20)
-    except Exception:
-        logger.exception("[INSPECT] password generation failed")
-        return _err("unavailable")
+    # Additional user-supplied fields flow into the draft as-is.
+    # The current store_draft signature only accepts service /
+    # username / password; email/url/title are surfaced back to the
+    # planner via the returned dict so the DRAFT reply reflects them
+    # and the confirmation-save path can pick them up when we extend
+    # the store schema. Stored durably by save_secret_tool at
+    # confirmation time (kept in the returned dict for symmetry now;
+    # a follow-up commit will thread them through store_draft when
+    # the schema is extended).
+    if _supplied_email:
+        explicit_fields.append("email")
+    if _supplied_url:
+        explicit_fields.append("url")
+    if _supplied_title:
+        explicit_fields.append("title")
 
     try:
         draft = store_draft(
@@ -1451,19 +1589,31 @@ def generate_credential_draft(
         logger.exception("[INSPECT] draft store failed")
         return _err("unavailable")
 
-                                                             
     logger.info(
         "[INSPECT] credential_draft_generated vault=%s "
         "service_len=%d username_len=%d password_len=%d "
-        "draft_id_prefix=%s",
+        "draft_id_prefix=%s explicit_fields=%s",
         (vault_id or "")[:8] + "...",
         len(svc_display),
         len(username),
         len(password),
         draft.draft_id[:8],
+        ",".join(explicit_fields) or "none",
     )
 
-    return json.dumps(draft.to_public_dict(), ensure_ascii=False)
+    # Attach explicit_fields + optional supplied values to the returned
+    # payload so the LLM can format the DRAFT reply honestly ("you
+    # supplied X" vs "I generated X") and the future confirm-save can
+    # surface all supplied fields.
+    payload = dict(draft.to_public_dict())
+    payload["explicit_fields"] = list(explicit_fields)
+    if _supplied_email:
+        payload["email"] = _supplied_email
+    if _supplied_url:
+        payload["url"] = _supplied_url
+    if _supplied_title:
+        payload["title"] = _supplied_title
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def save_generated_credential_after_confirmation(
@@ -1558,12 +1708,12 @@ def _find_in_vault_proxy(*, vault_id, key, query, doc_kind=None, fuzzy_distance=
     # appears in prod logs for the naim test, the intent-branch
     # _try_exact_saved_name_early_return probe never got a chance to
     # run and the fix must live earlier in the pipeline.
-    logger.info(
-        "[BRAIN-TRACE-DXR] site=find_in_vault_proxy "
-        "vault=%s query_len=%d doc_kind=%s",
-        (vault_id or "")[:8],
-        len((query or "").strip()),
-        doc_kind or "none",
+    print(
+        f"[BRAIN-TRACE-DXR] site=find_in_vault_proxy "
+        f"vault={(vault_id or '')[:8]} "
+        f"query_len={len((query or '').strip())} "
+        f"doc_kind={doc_kind or 'none'}",
+        flush=True,
     )
     from vault_complete_search import find_in_vault
     return find_in_vault(

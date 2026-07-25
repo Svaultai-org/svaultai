@@ -155,12 +155,12 @@ def resolve_saved_name(
 ) -> ResolveResult:
     # 2026-07-25 diagnostic entry marker.
     try:
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=resolve_saved_name "
-            "vault=%s msg_len=%d intent_cands=%d",
-            (vault_id or "")[:8],
-            len(decrypted_message) if isinstance(decrypted_message, str) else 0,
-            len(intent_candidates or []),
+        _dxr_mlen = len(decrypted_message) if isinstance(decrypted_message, str) else 0
+        print(
+            f"[BRAIN-TRACE-DXR] site=resolve_saved_name "
+            f"vault={(vault_id or '')[:8]} msg_len={_dxr_mlen} "
+            f"intent_cands={len(intent_candidates or [])}",
+            flush=True,
         )
     except Exception:
         pass

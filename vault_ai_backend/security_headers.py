@@ -67,6 +67,38 @@ PERMISSIONS_POLICY: str = (
 HSTS_VALUE: str = "max-age=63072000; includeSubDomains; preload"
 
 
+# 2026-07-26 diagnostic build headers. Non-sensitive by design — they
+# expose only the currently-running backend release and, for /chat,
+# the exit-path enum chat_endpoint took. Purpose: give the operator a
+# per-response ground-truth signal about which build actually handled
+# the request. Even if logs are being silenced or routed elsewhere,
+# a `curl -I` (or the browser dev-tools Network tab) reveals the
+# release SHA and the exact chat path.
+#
+# Values are drawn from environment variables set at container start
+# so a rebuild is not required to update them:
+#   VAULTAI_RELEASE_SHA — short git SHA of the currently-running
+#                        image. Defaults to "dev" when unset.
+_RELEASE_HEADER: str = "X-VaultAI-Backend-Release"
+_CHAT_PATH_HEADER: str = "X-VaultAI-Chat-Path"
+
+# Fixed enum of chat-path values a request can be tagged with. Kept
+# small and stable so operators can build monitors around them.
+CHAT_PATH_STATE_MACHINE_UPDATED   = "state_machine_updated"
+CHAT_PATH_STATE_MACHINE_SHOWN     = "state_machine_shown"
+CHAT_PATH_STATE_MACHINE_CANCELLED = "state_machine_cancelled"
+CHAT_PATH_STATE_MACHINE_REPLACED  = "state_machine_replaced"
+CHAT_PATH_STATE_MACHINE_SAVED     = "state_machine_saved"
+CHAT_PATH_AI_PLANNER_DIRECT       = "ai_planner_direct"
+CHAT_PATH_AI_PLANNER_FALLBACK     = "ai_planner_fallback"
+CHAT_PATH_ENCRYPTED_REPLY         = "encrypted_reply"
+CHAT_PATH_UNKNOWN                 = "unknown"
+
+
+def _release_sha() -> str:
+    return os.getenv("VAULTAI_RELEASE_SHA", "dev").strip()[:16] or "dev"
+
+
 SENSITIVE_PATH_PREFIXES: tuple[str, ...] = (
     "/auth/",
     "/verify-pin",
@@ -163,6 +195,11 @@ def apply_security_headers(response: Response, path: str) -> None:
         for k, v in NO_STORE_CACHE_HEADERS.items():
             response.headers[k] = v
 
+    # 2026-07-26 diagnostic — always tag every response with the
+    # running backend release SHA. Non-sensitive; the value is chosen
+    # per deploy and does not depend on the request.
+    response.headers.setdefault(_RELEASE_HEADER, _release_sha())
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
@@ -178,6 +215,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
             return response
         apply_security_headers(response, request.url.path or "")
+
+        # 2026-07-26 diagnostic — if chat_endpoint tagged the request
+        # with a chat_path enum, surface it as a response header. Read
+        # via getattr because Starlette's request.state is a lazy
+        # SimpleNamespace and may not have the attribute for non-chat
+        # requests. Never touches sensitive content — the value is a
+        # closed-set enum from security_headers.CHAT_PATH_*.
+        try:
+            _chat_path = getattr(
+                request.state, "chat_path",
+                CHAT_PATH_UNKNOWN,
+            )
+        except Exception:
+            _chat_path = CHAT_PATH_UNKNOWN
+        if isinstance(_chat_path, str) and _chat_path:
+            response.headers.setdefault(_CHAT_PATH_HEADER, _chat_path)
+
         return response
 
 
@@ -189,4 +243,13 @@ __all__ = [
     "NO_STORE_CACHE_HEADERS",
     "apply_security_headers",
     "SecurityHeadersMiddleware",
+    "CHAT_PATH_STATE_MACHINE_UPDATED",
+    "CHAT_PATH_STATE_MACHINE_SHOWN",
+    "CHAT_PATH_STATE_MACHINE_CANCELLED",
+    "CHAT_PATH_STATE_MACHINE_REPLACED",
+    "CHAT_PATH_STATE_MACHINE_SAVED",
+    "CHAT_PATH_AI_PLANNER_DIRECT",
+    "CHAT_PATH_AI_PLANNER_FALLBACK",
+    "CHAT_PATH_ENCRYPTED_REPLY",
+    "CHAT_PATH_UNKNOWN",
 ]

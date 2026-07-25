@@ -706,7 +706,17 @@ app.add_middleware(
 )
 
 
-from security_headers import SecurityHeadersMiddleware
+from security_headers import (
+    SecurityHeadersMiddleware,
+    CHAT_PATH_AI_PLANNER_DIRECT,
+    CHAT_PATH_AI_PLANNER_FALLBACK,
+    CHAT_PATH_ENCRYPTED_REPLY,
+    CHAT_PATH_STATE_MACHINE_CANCELLED,
+    CHAT_PATH_STATE_MACHINE_REPLACED,
+    CHAT_PATH_STATE_MACHINE_SAVED,
+    CHAT_PATH_STATE_MACHINE_SHOWN,
+    CHAT_PATH_STATE_MACHINE_UPDATED,
+)
 app.add_middleware(SecurityHeadersMiddleware)
 
 
@@ -6719,23 +6729,29 @@ async def handle_tool_call(
     tool_name: str, args: dict, vault_id: str, key: bytes,
     token_id: str = "",
 ):
-    # 2026-07-25 diagnostic: this handler is the only entry point for
+    # 2026-07-26 diagnostic: this handler is the only entry point for
     # every OpenAI-planner tool. Logging tool_name here proves which
     # tool the LLM actually called for each production turn. Never
     # logs args values — only key presence and length. Prefix
-    # [BRAIN-TRACE-DXR] so it can be greppped and stripped after
-    # diagnosis.
+    # [BRAIN-TRACE-DXR] so it can be grepped and stripped after
+    # diagnosis. Uses print(..., flush=True) rather than logger.info
+    # because production logs show no [BRAIN-TRACE-DXR] lines despite
+    # 8291a5c being deployed — the logging module is presumed silenced
+    # (likely by an early transitive import auto-configuring root at
+    # WARNING before main.py:139's basicConfig fires). print() bypasses
+    # the logging module entirely and reaches Docker stdout under
+    # PYTHONUNBUFFERED=1.
     try:
         _dxr_arg_keys = sorted(
             k for k in (args.keys() if isinstance(args, dict) else [])
         )
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=handle_tool_call req=%s "
-            "vault=%s tool=%s arg_keys=%s",
-            (token_id or "")[:16],
-            (vault_id or "")[:8],
-            tool_name,
-            ",".join(_dxr_arg_keys),
+        print(
+            f"[BRAIN-TRACE-DXR] site=handle_tool_call "
+            f"req={(token_id or '')[:16]} "
+            f"vault={(vault_id or '')[:8]} "
+            f"tool={tool_name} "
+            f"arg_keys={','.join(_dxr_arg_keys)}",
+            flush=True,
         )
     except Exception:
         pass
@@ -12713,28 +12729,48 @@ async def chat_endpoint(
             except Exception:
                 _dxr_caller_line = -1
                 _dxr_caller_fn = "unknown"
-            logger.info(
-                "[BRAIN-TRACE-DXR] site=encrypted_reply_return "
-                "req=%s vault=%s caller_fn=%s caller_line=%d "
-                "reply_len=%d",
-                str(_chat_request_id or "")[:16],
-                (vault_id or "")[:8],
-                _dxr_caller_fn,
-                _dxr_caller_line,
-                len(text or ""),
+            print(
+                f"[BRAIN-TRACE-DXR] site=encrypted_reply_return "
+                f"req={str(_chat_request_id or '')[:16]} "
+                f"vault={(vault_id or '')[:8]} "
+                f"caller_fn={_dxr_caller_fn} "
+                f"caller_line={_dxr_caller_line} "
+                f"reply_len={len(text or '')}",
+                flush=True,
             )
             print(
                 f"[CHAT-DEBUG] encrypted_reply_start reply_text_len={len(text or '')}",
                 flush=True,
             )
+            # 2026-07-26 diagnostic headers: expose the currently-
+            # running backend release and the chat exit-path enum so
+            # operators can verify the correct build handled the
+            # request even when logs are silenced. Values are
+            # non-sensitive (short SHA, closed-set enum).
+            _dxr_headers = {
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+            try:
+                from security_headers import _release_sha as _dxr_release
+                _dxr_headers["X-VaultAI-Backend-Release"] = _dxr_release()
+            except Exception:
+                pass
+            try:
+                _dxr_path = getattr(
+                    request.state, "chat_path",
+                    CHAT_PATH_ENCRYPTED_REPLY,
+                )
+            except Exception:
+                _dxr_path = CHAT_PATH_ENCRYPTED_REPLY
+            _dxr_headers["X-VaultAI-Chat-Path"] = str(
+                _dxr_path or CHAT_PATH_ENCRYPTED_REPLY,
+            )
             resp = StreamingResponse(
                 _stream_single_message(text, key),
                 media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
+                headers=_dxr_headers,
             )
             print("[CHAT-DEBUG] encrypted_reply_ok", flush=True)
             return resp
@@ -14554,10 +14590,11 @@ async def chat_endpoint(
         _dxr_ml  = len(decrypted_message or "")
         _dxr_hpd = isinstance(memory.get("pending_login_draft"), dict) and \
                    bool((memory.get("pending_login_draft") or {}).get("service"))
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=state_machine_precheck req=%s "
-            "vault=%s msg_len=%d has_pending_draft=%s",
-            _dxr_req, _dxr_vh, _dxr_ml, _dxr_hpd,
+        print(
+            f"[BRAIN-TRACE-DXR] site=state_machine_precheck "
+            f"req={_dxr_req} vault={_dxr_vh} msg_len={_dxr_ml} "
+            f"has_pending_draft={_dxr_hpd}",
+            flush=True,
         )
 
         # -----------------------------------------------------------
@@ -14582,11 +14619,11 @@ async def chat_endpoint(
         except Exception:
             _sm_draft = None
         if isinstance(_sm_draft, dict) and _sm_draft.get("service"):
-            logger.info(
-                "[BRAIN-TRACE-DXR] site=state_machine_entered req=%s "
-                "vault=%s draft_service_len=%d",
-                _dxr_req, _dxr_vh,
-                len(str(_sm_draft.get("service") or "")),
+            print(
+                f"[BRAIN-TRACE-DXR] site=state_machine_entered "
+                f"req={_dxr_req} vault={_dxr_vh} "
+                f"draft_service_len={len(str(_sm_draft.get('service') or ''))}",
+                flush=True,
             )
             try:
                 _sm_outcome = _apply_to_pending_draft(
@@ -14604,10 +14641,10 @@ async def chat_endpoint(
 
             if _sm_outcome is not None:
                 _outcome_kind = _sm_outcome.kind
-                logger.info(
-                    "[BRAIN-TRACE-DXR] site=state_machine_outcome req=%s "
-                    "vault=%s kind=%s",
-                    _dxr_req, _dxr_vh, _outcome_kind,
+                print(
+                    f"[BRAIN-TRACE-DXR] site=state_machine_outcome "
+                    f"req={_dxr_req} vault={_dxr_vh} kind={_outcome_kind}",
+                    flush=True,
                 )
 
                 if _outcome_kind == _DS_UPDATED:
@@ -14621,9 +14658,17 @@ async def chat_endpoint(
                         str(_sm_outcome.draft.get("service", ""))[:16],
                         ",".join(sorted(_sm_outcome.changed_fields)),
                     )
+                    try:
+                        request.state.chat_path = CHAT_PATH_STATE_MACHINE_UPDATED
+                    except Exception:
+                        pass
                     return encrypted_reply(_sm_outcome.reply_text)
 
                 if _outcome_kind == _DS_SHOWN:
+                    try:
+                        request.state.chat_path = CHAT_PATH_STATE_MACHINE_SHOWN
+                    except Exception:
+                        pass
                     return encrypted_reply(_sm_outcome.reply_text)
 
                 if _outcome_kind == _DS_CANCELLED:
@@ -14642,6 +14687,10 @@ async def chat_endpoint(
                         "[CHAT-TRACE] draft_state_cancelled vault=%s",
                         (vault_id or "")[:8] + "...",
                     )
+                    try:
+                        request.state.chat_path = CHAT_PATH_STATE_MACHINE_CANCELLED
+                    except Exception:
+                        pass
                     return encrypted_reply(_sm_outcome.reply_text)
 
                 if _outcome_kind == _DS_REPLACED:
@@ -14654,6 +14703,10 @@ async def chat_endpoint(
                             clear_active_context as _clear_active_ctx_sm,
                         )
                         _clear_active_ctx_sm(vault_id)
+                    except Exception:
+                        pass
+                    try:
+                        request.state.chat_path = CHAT_PATH_STATE_MACHINE_REPLACED
                     except Exception:
                         pass
                     return encrypted_reply(_sm_outcome.reply_text)
@@ -14729,6 +14782,10 @@ async def chat_endpoint(
                         _sm_service[:16],
                         bool(_sm_draft.get("explicit_username_supplied")),
                     )
+                    try:
+                        request.state.chat_path = CHAT_PATH_STATE_MACHINE_SAVED
+                    except Exception:
+                        pass
                     return encrypted_reply(
                         f"Saved your {_sm_service.title()} login to "
                         "your vault \U0001F510"
@@ -14911,12 +14968,17 @@ async def chat_endpoint(
             # confirmed bypassed and the real fix must live inside
             # handle_tool_call / vault_inspection_tools /
             # vault_complete_search — NOT the intent branches.
-            logger.info(
-                "[BRAIN-TRACE-DXR] site=route_to_ai_planner_stream "
-                "req=%s vault=%s msg_len=%d has_pending_draft=%s "
-                "reason=direct_ai_tools_enabled_true",
-                _dxr_req, _dxr_vh, _dxr_ml, _dxr_hpd,
+            print(
+                f"[BRAIN-TRACE-DXR] site=route_to_ai_planner_stream "
+                f"req={_dxr_req} vault={_dxr_vh} msg_len={_dxr_ml} "
+                f"has_pending_draft={_dxr_hpd} "
+                f"reason=direct_ai_tools_enabled_true",
+                flush=True,
             )
+            try:
+                request.state.chat_path = CHAT_PATH_AI_PLANNER_DIRECT
+            except Exception:
+                pass
             return _route_to_ai_planner_stream()
 
                                                                     
@@ -17005,12 +17067,17 @@ async def chat_endpoint(
 
 
         # Final fallback exit — all earlier branches fell through.
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=route_to_ai_planner_stream_fallback "
-            "req=%s vault=%s reason=all_branches_fell_through",
-            str(_chat_request_id or "")[:16],
-            (vault_id or "")[:8],
+        print(
+            f"[BRAIN-TRACE-DXR] site=route_to_ai_planner_stream_fallback "
+            f"req={str(_chat_request_id or '')[:16]} "
+            f"vault={(vault_id or '')[:8]} "
+            f"reason=all_branches_fell_through",
+            flush=True,
         )
+        try:
+            request.state.chat_path = CHAT_PATH_AI_PLANNER_FALLBACK
+        except Exception:
+            pass
         return _route_to_ai_planner_stream()
 
     except HTTPException:

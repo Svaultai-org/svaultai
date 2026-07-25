@@ -674,10 +674,10 @@ def extract_credential_command(
     # diagnosis.
     try:
         _msg_len = len(message) if isinstance(message, str) else 0
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=extract_credential_command "
-            "msg_len=%d has_pending_draft=%s",
-            _msg_len, bool(has_pending_draft),
+        print(
+            f"[BRAIN-TRACE-DXR] site=extract_credential_command "
+            f"msg_len={_msg_len} has_pending_draft={bool(has_pending_draft)}",
+            flush=True,
         )
     except Exception:
         pass
@@ -703,12 +703,12 @@ def extract_credential_command(
     generate = _detect_generate_hints(raw)
     preserve = _detect_preserve_hints(raw)
     try:
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=extract_credential_command_fields "
-            "explicit_field_keys=%s generate=%s preserve=%s",
-            ",".join(sorted(explicit.keys())),
-            ",".join(sorted(generate)),
-            ",".join(sorted(preserve)),
+        print(
+            f"[BRAIN-TRACE-DXR] site=extract_credential_command_fields "
+            f"explicit_field_keys={','.join(sorted(explicit.keys()))} "
+            f"generate={','.join(sorted(generate))} "
+            f"preserve={','.join(sorted(preserve))}",
+            flush=True,
         )
     except Exception:
         pass

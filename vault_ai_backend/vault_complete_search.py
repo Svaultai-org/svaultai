@@ -1066,6 +1066,126 @@ def _build_vision_question(
     )
 
 
+def _normalize_lookup_key(name: Optional[str]) -> str:
+    """2026-07-26 named-object resolution normalization. Mirror
+    ``main._normalize_asset_lookup_key``: lowercase, collapse
+    whitespace, drop punctuation the user might vary on, fold
+    hyphens/underscores to space. Used ONLY for comparison; stored
+    display labels are preserved verbatim by the writer.
+    """
+    if not name or not isinstance(name, str):
+        return ""
+    s = name.strip().lower()
+    s = re.sub(r"[^\w\-\.\s]", "", s)
+    s = re.sub(r"[-_]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    # Drop a trailing file extension so "naim id" matches
+    # "naim_id.jpg" — the LLM's query rarely includes the extension.
+    s = re.sub(r"\.[a-z0-9]{1,6}$", "", s).strip()
+    return s
+
+
+# Category words that are broad-family queries, NOT specific named
+# items. The named-object resolver bows out when the whole normalized
+# query is one of these so ``list_by_tag`` / broad ID search stays
+# in charge.
+_NAMED_OBJECT_CATEGORY_STOP: frozenset[str] = frozenset({
+    "id", "ids", "identity", "identities",
+    "photo", "photos", "image", "images",
+    "document", "documents", "file", "files",
+    "receipt", "receipts", "note", "notes",
+    "passport", "passports", "license", "licenses",
+    "driver license", "driver licenses",
+    "tax", "taxes", "medical", "finance", "financial",
+    "travel", "legal", "personal", "business",
+})
+
+
+# Very short labels are unsafe to substring-match against arbitrary
+# messages ("id" would match every message containing the word).
+_NAMED_OBJECT_MIN_KEY_LEN = 3
+
+
+def _resolve_named_object(
+    vault_id: str,
+    query: str,
+    rows: list[dict],
+) -> Optional[dict]:
+    """2026-07-26 named-object resolution. Before running the
+    extracted-text + vision search, check whether the user's message
+    literally names a specific uploaded file — by ``saved_name`` (the
+    UI label the user gave the file) or by ``file_name`` (the
+    original upload filename).
+
+    Returns the matching row when a unique-longest match is found.
+    Returns ``None`` when:
+      * the vault has no rows, or
+      * the normalized query is a broad category label, or
+      * no row's saved_name / file_name appears as a substring of
+        the normalized query, or
+      * multiple equally-long candidates match (ambiguous — better
+        to let the LLM ask, or to fall through to the broader search).
+
+    ZK-adopted vault caveat: for rows where saved_name is NULL and
+    only saved_name_ciphertext exists, this resolver cannot see the
+    label — the backend has no plaintext to compare against. Those
+    rows fall through to the existing extracted-text/vision search,
+    which is the same behavior as pre-2026-07-26. A follow-up commit
+    will thread client-side plaintext labels through the chat
+    request for ZK vaults.
+    """
+    if not vault_id or not query or not rows:
+        return None
+    normalized_query = _normalize_lookup_key(query)
+    if not normalized_query:
+        return None
+    if normalized_query in _NAMED_OBJECT_CATEGORY_STOP:
+        return None
+
+    # (normalized_label, row, source_label) for each candidate.
+    candidates: list[tuple[str, dict, str]] = []
+    seen_keys: set[str] = set()
+
+    for row in rows:
+        for source_label in ("saved_name", "file_name"):
+            raw = row.get(source_label)
+            if not raw or not isinstance(raw, str):
+                continue
+            key = _normalize_lookup_key(raw)
+            if not key or len(key) < _NAMED_OBJECT_MIN_KEY_LEN:
+                continue
+            if key in seen_keys:
+                continue
+            if key in _NAMED_OBJECT_CATEGORY_STOP:
+                continue
+            # Whole-query exact match wins immediately.
+            if key == normalized_query:
+                return row
+            # Word-boundary substring: label appears as a token
+            # inside the query.
+            pat = re.compile(
+                r"(?:^|(?<=\s))" + re.escape(key)
+                + r"(?=$|\s|[.,;:!?])",
+                re.IGNORECASE,
+            )
+            if pat.search(normalized_query):
+                candidates.append((key, row, source_label))
+                seen_keys.add(key)
+
+    if not candidates:
+        return None
+
+    # Prefer the LONGEST matched label — more specific wins.
+    candidates.sort(key=lambda t: len(t[0]), reverse=True)
+    top_len = len(candidates[0][0])
+    top = [c for c in candidates if len(c[0]) == top_len]
+    if len(top) != 1:
+        # Ambiguous — let the LLM disambiguate via the broader
+        # search rather than picking arbitrarily.
+        return None
+    return top[0][1]
+
+
 def find_in_vault(
     *, vault_id: str, key: bytes,
     query: str,
@@ -1121,6 +1241,78 @@ def find_in_vault(
     except Exception:
         logger.exception("[FIND] file list failed")
         return _err("unavailable")
+
+    # 2026-07-26 named-object resolution — CRITICAL BUG 1 FIX.
+    # Before running the extracted-text + vision search (which only
+    # matches strings appearing INSIDE the file content), check
+    # whether the user's message literally names a specific uploaded
+    # file by its ``saved_name`` (UI label the user gave) or by its
+    # ``file_name`` (original upload). Prior to this fix, "show me
+    # naim id" required "naim" to appear in the OCR text of an
+    # ID-classified image — so a file the user labelled "Naim ID"
+    # was invisible unless its content happened to also spell out
+    # the name.
+    #
+    # On a unique-longest match we return immediately with a
+    # synthesized envelope shaped like the normal find_in_vault
+    # result. Category-label queries ("show my id documents") are
+    # filtered out by the resolver so ``list_by_tag`` /
+    # broad-family search stays in charge for those.
+    _named_hit = _resolve_named_object(vault_id, q, rows)
+    if _named_hit is not None:
+        _named_subkind = (
+            _named_hit.get("_subkind") or _row_subkind(_named_hit)
+        )
+        _named_doc_type = (
+            (_named_hit.get("detected_type") or "").strip()
+            or DOC_TYPE_UNKNOWN
+        )
+        _named_label = _row_label(_named_hit)
+        _named_hit_dict = {
+            "file_id":       _row_id(_named_hit),
+            "file_name":     _named_label,
+            "file_kind":     _named_subkind,
+            "evidence_type": EVIDENCE_EXTRACTED_TEXT,
+            "match_type":    MATCH_EXACT_TEXT,
+            "document_type": _named_doc_type,
+            "matched_name":  _named_label,
+            "confidence":    0.99,
+            "evidence":      f"named-object match on '{_named_label}'",
+            "classification_strength": "strong",
+            "match_status":  MATCH_STATUS_EXACT_NAME_MATCH,
+        }
+        print(
+            f"[FIND-CALL] named_object_hit vault={(vault_id or '')[:8]}... "
+            f"file_id={(_row_id(_named_hit) or '')[:8]}... "
+            f"file_kind={_named_subkind}",
+            flush=True,
+        )
+        return json.dumps({
+            "query":                    q,
+            "doc_kind":                 effective_kind,
+            "query_kind":               query_kind,
+            "is_id_class_search":       is_id_class,
+            "complete":                 True,
+            "partial_inspection":       False,
+            "hits":                     [_named_hit_dict],
+            "files_inspected":          1,
+            "files_via_text":           1,
+            "files_via_vision":         0,
+            "candidate_id_docs_count":  1 if _named_doc_type in ID_CLASS_DOC_TYPES else 0,
+            "name_mismatch_count":      0,
+            "requested_person_name":    None,
+            "requested_doc_type":       None,
+            "requested_doc_type_label": None,
+            "other_id_docs_count":      0,
+            "other_id_doc_types":       [],
+            "coverage":                 {
+                "vision_budget_remaining": None,
+                "vision_used":              0,
+                "text_scanned":             1,
+                "relevant_rows":            1,
+                "named_object_resolution":  True,
+            },
+        }, ensure_ascii=False)
 
     seen_ids: set[str] = set()
     relevant_rows: list[dict] = []

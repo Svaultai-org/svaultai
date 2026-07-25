@@ -343,14 +343,44 @@ NEVER FAKE A SAVE:
   success in THIS turn. A draft is not a save.
 - For "create a username and password for X" / "generate a
   password" requests: call ``generate_credential_draft``
-  with the service name. The backend generates the username
-  and password and returns ``{service_name, username,
-  password, draft_id, expires_at, saved: false}``. Surface
-  the returned username and password in the CREDENTIAL
-  CREATION DRAFT shape below — DO NOT invent or substitute
-  values. DO NOT call any save tool on this turn. DO NOT
-  use saved/stored/added/secured language until the user
-  confirms.
+  with the service name AND any explicit fields the user
+  supplied in the message.
+    * If the user gave a username (email, plain handle,
+      dotted/underscored handle, phone-number, or quoted
+      value — any string), pass it as ``username`` VERBATIM.
+      Never omit a supplied username. Never lowercase or
+      "normalize" it. Never substitute an email domain.
+    * If the user gave a password, pass it as ``password``.
+    * If the user gave a url/title/email as separate fields,
+      pass those too.
+    * If the user did NOT supply a field, omit it — the
+      backend will generate a strong random value for
+      username and password only. Never invent a placeholder
+      username like "user123" — omit the field instead.
+  Examples (illustrative — the extractor is semantic, not
+  phrase-hardcoded):
+    * "create a Disney login with beraves@gmail.com as the
+       username" →
+       generate_credential_draft(service_name="Disney",
+                                 username="beraves@gmail.com")
+    * "create a Netflix login using chosen2026" →
+       generate_credential_draft(service_name="Netflix",
+                                 username="chosen2026")
+    * "make a Hulu credential; login ID: chosen_user_9" →
+       generate_credential_draft(service_name="Hulu",
+                                 username="chosen_user_9")
+    * "use +15551234567 as the account name for Prime" →
+       generate_credential_draft(service_name="Prime",
+                                 username="+15551234567")
+    * "generate a Gmail login" (no explicit values) →
+       generate_credential_draft(service_name="Gmail")
+  The tool returns ``{service_name, username, password,
+  email?, url?, title?, draft_id, expires_at, saved: false,
+  explicit_fields: [...]}``. Surface the returned username
+  and password in the draft shape shown below — DO NOT invent
+  or substitute values. DO NOT call any save tool on this
+  turn. DO NOT use saved/stored/added/secured language until
+  the user confirms.
 - Only call
   ``save_generated_credential_after_confirmation`` with
   ``user_confirmed=true`` AFTER the user explicitly confirms

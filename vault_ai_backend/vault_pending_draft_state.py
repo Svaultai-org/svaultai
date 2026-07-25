@@ -128,11 +128,11 @@ def apply_to_pending_draft(
     """
     # 2026-07-25 diagnostic entry marker.
     try:
-        logger.info(
-            "[BRAIN-TRACE-DXR] site=apply_to_pending_draft "
-            "msg_len=%d draft_has_service=%s",
-            len(user_message) if isinstance(user_message, str) else 0,
-            _has_service(draft),
+        _dxr_len = len(user_message) if isinstance(user_message, str) else 0
+        print(
+            f"[BRAIN-TRACE-DXR] site=apply_to_pending_draft "
+            f"msg_len={_dxr_len} draft_has_service={_has_service(draft)}",
+            flush=True,
         )
     except Exception:
         pass
