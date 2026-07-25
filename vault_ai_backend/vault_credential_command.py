@@ -35,9 +35,12 @@ fields.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -665,6 +668,19 @@ def extract_credential_command(
     has_pending_draft: bool = False,
     pending_draft: Optional[dict] = None,
 ) -> CredentialCommand:
+    # 2026-07-25 diagnostic entry-marker: prove that this extractor
+    # was actually reached in production. Logs only booleans and
+    # counts — no message content, no field values. Remove after
+    # diagnosis.
+    try:
+        _msg_len = len(message) if isinstance(message, str) else 0
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=extract_credential_command "
+            "msg_len=%d has_pending_draft=%s",
+            _msg_len, bool(has_pending_draft),
+        )
+    except Exception:
+        pass
     """Build a ``CredentialCommand`` from a chat message.
 
     When ``has_pending_draft`` is False the extractor only classifies
@@ -686,6 +702,16 @@ def extract_credential_command(
     explicit = extract_explicit_fields(raw)
     generate = _detect_generate_hints(raw)
     preserve = _detect_preserve_hints(raw)
+    try:
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=extract_credential_command_fields "
+            "explicit_field_keys=%s generate=%s preserve=%s",
+            ",".join(sorted(explicit.keys())),
+            ",".join(sorted(generate)),
+            ",".join(sorted(preserve)),
+        )
+    except Exception:
+        pass
 
     # ---- edit_pending / regenerate_field / cancel / confirm_save
     # ---- checks fire only when a pending draft exists.

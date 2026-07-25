@@ -6719,9 +6719,29 @@ async def handle_tool_call(
     tool_name: str, args: dict, vault_id: str, key: bytes,
     token_id: str = "",
 ):
+    # 2026-07-25 diagnostic: this handler is the only entry point for
+    # every OpenAI-planner tool. Logging tool_name here proves which
+    # tool the LLM actually called for each production turn. Never
+    # logs args values — only key presence and length. Prefix
+    # [BRAIN-TRACE-DXR] so it can be greppped and stripped after
+    # diagnosis.
     try:
-                                                            
-                                                                 
+        _dxr_arg_keys = sorted(
+            k for k in (args.keys() if isinstance(args, dict) else [])
+        )
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=handle_tool_call req=%s "
+            "vault=%s tool=%s arg_keys=%s",
+            (token_id or "")[:16],
+            (vault_id or "")[:8],
+            tool_name,
+            ",".join(_dxr_arg_keys),
+        )
+    except Exception:
+        pass
+    try:
+
+
         try:
             from vault_tool_result_cache import (
                 maybe_get_cached, maybe_store,
@@ -14497,6 +14517,26 @@ async def chat_endpoint(
             return encrypted_reply(_crypto_result["message"])
 
         # -----------------------------------------------------------
+        # 2026-07-25 diagnostic instrumentation: emit a compact trace
+        # line at every major decision boundary in chat_endpoint. Never
+        # logs message content, usernames, emails, passwords, or vault
+        # contents — only handler names, boolean flags, and length
+        # fingerprints. Prefix [BRAIN-TRACE-DXR] so grep can filter and
+        # sed can remove after diagnosis. The user has confirmed
+        # production release 377d9c2 still shows the two bugs; these
+        # logs pin down which code path actually handles the request.
+        _dxr_req = str(_chat_request_id or "")[:16]
+        _dxr_vh  = (vault_id or "")[:8]
+        _dxr_ml  = len(decrypted_message or "")
+        _dxr_hpd = isinstance(memory.get("pending_login_draft"), dict) and \
+                   bool((memory.get("pending_login_draft") or {}).get("service"))
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=state_machine_precheck req=%s "
+            "vault=%s msg_len=%d has_pending_draft=%s",
+            _dxr_req, _dxr_vh, _dxr_ml, _dxr_hpd,
+        )
+
+        # -----------------------------------------------------------
         # Bug 2 (2026-07-25 deep fix): pending-draft state machine.
         #
         # BEFORE the LLM intent classifier can misroute a "change the
@@ -14518,6 +14558,12 @@ async def chat_endpoint(
         except Exception:
             _sm_draft = None
         if isinstance(_sm_draft, dict) and _sm_draft.get("service"):
+            logger.info(
+                "[BRAIN-TRACE-DXR] site=state_machine_entered req=%s "
+                "vault=%s draft_service_len=%d",
+                _dxr_req, _dxr_vh,
+                len(str(_sm_draft.get("service") or "")),
+            )
             try:
                 _sm_outcome = _apply_to_pending_draft(
                     user_message=decrypted_message or "",
@@ -14534,6 +14580,11 @@ async def chat_endpoint(
 
             if _sm_outcome is not None:
                 _outcome_kind = _sm_outcome.kind
+                logger.info(
+                    "[BRAIN-TRACE-DXR] site=state_machine_outcome req=%s "
+                    "vault=%s kind=%s",
+                    _dxr_req, _dxr_vh, _outcome_kind,
+                )
 
                 if _outcome_kind == _DS_UPDATED:
                     # Draft mutated (explicit field edit or password
@@ -14828,6 +14879,19 @@ async def chat_endpoint(
                 "[CHAT-TRACE] direct_ai_tools_path vault=%s msg_len=%d",
                 (vault_id or "")[:8] + "...",
                 len(decrypted_message or ""),
+            )
+            # 2026-07-25 diagnostic: this is the branch we suspect is
+            # the actual production path for BOTH bug reports. If this
+            # line appears in prod logs for the "show me naim id" and
+            # Disney credential turns, the intent-dispatch fixes are
+            # confirmed bypassed and the real fix must live inside
+            # handle_tool_call / vault_inspection_tools /
+            # vault_complete_search — NOT the intent branches.
+            logger.info(
+                "[BRAIN-TRACE-DXR] site=route_to_ai_planner_stream "
+                "req=%s vault=%s msg_len=%d has_pending_draft=%s "
+                "reason=direct_ai_tools_enabled_true",
+                _dxr_req, _dxr_vh, _dxr_ml, _dxr_hpd,
             )
             return _route_to_ai_planner_stream()
 

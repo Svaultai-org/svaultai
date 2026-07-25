@@ -153,6 +153,17 @@ def resolve_saved_name(
     ] = None,
     intent_candidates: Optional[list[str]] = None,
 ) -> ResolveResult:
+    # 2026-07-25 diagnostic entry marker.
+    try:
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=resolve_saved_name "
+            "vault=%s msg_len=%d intent_cands=%d",
+            (vault_id or "")[:8],
+            len(decrypted_message) if isinstance(decrypted_message, str) else 0,
+            len(intent_candidates or []),
+        )
+    except Exception:
+        pass
     """Resolve a chat message to a specific saved item, or None.
 
     Parameters

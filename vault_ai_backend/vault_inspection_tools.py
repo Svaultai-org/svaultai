@@ -1386,6 +1386,20 @@ def generate_credential_draft(
 ) -> str:
 
 
+    # 2026-07-25 diagnostic: this tool is where the OpenAI planner
+    # produces the "birchcove2083" style random username seen in the
+    # production Bug 2 reproduction. Log entry so prod traces confirm
+    # this is the true code path (not the intent-branch
+    # generate_login handler in main.py). Never logs the service name
+    # verbatim — only its length. The generated draft's username and
+    # password are already redacted by the caller's telemetry.
+    logger.info(
+        "[BRAIN-TRACE-DXR] site=generate_credential_draft "
+        "vault=%s service_len=%d",
+        (vault_id or "")[:8],
+        len((service_name or "").strip()),
+    )
+
     if not _key_ok(key):
         return _err("vault_locked")
     svc_display = (service_name or "").strip()
@@ -1537,6 +1551,20 @@ def save_generated_credential_after_confirmation(
 def _find_in_vault_proxy(*, vault_id, key, query, doc_kind=None, fuzzy_distance=None):
 
 
+    # 2026-07-25 diagnostic: this is the OpenAI planner's entry into
+    # the semantic/vision search. Log with query length only (not the
+    # phrase itself) so we can confirm this is the true production
+    # path for the "show me naim id" retrieval bug. If this trace
+    # appears in prod logs for the naim test, the intent-branch
+    # _try_exact_saved_name_early_return probe never got a chance to
+    # run and the fix must live earlier in the pipeline.
+    logger.info(
+        "[BRAIN-TRACE-DXR] site=find_in_vault_proxy "
+        "vault=%s query_len=%d doc_kind=%s",
+        (vault_id or "")[:8],
+        len((query or "").strip()),
+        doc_kind or "none",
+    )
     from vault_complete_search import find_in_vault
     return find_in_vault(
         vault_id=vault_id, key=key, query=query,

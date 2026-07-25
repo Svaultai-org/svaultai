@@ -20,8 +20,11 @@ Never logs plaintext credentials, PIN, email, or vault content.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 from vault_credential_command import (
     ACTION_CANCEL,
@@ -123,6 +126,16 @@ def apply_to_pending_draft(
     request (that handler owns policy tightening). When supplied
     we call it directly.
     """
+    # 2026-07-25 diagnostic entry marker.
+    try:
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=apply_to_pending_draft "
+            "msg_len=%d draft_has_service=%s",
+            len(user_message) if isinstance(user_message, str) else 0,
+            _has_service(draft),
+        )
+    except Exception:
+        pass
     if not _has_service(draft):
         return DraftOutcome(kind=OUTCOME_NO_ACTION, draft=draft or {})
 
