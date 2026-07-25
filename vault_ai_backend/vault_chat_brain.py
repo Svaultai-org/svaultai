@@ -210,12 +210,23 @@ async def run_chat_brain(
 
 
 def _default_v2_executor_registry():
-    """Phase-1 empty registry — no action_kind is wired to a real
-    executor. This is deliberate: mode==on will produce
-    ``INTERNAL_ERROR`` for any confirm/cancel/edit/create until a
-    later commit wires the real executors. The framework is in
-    place for that commit; no user is exposed to it because the
-    flag is off in production.
+    """Phase-1 empty registry.
+
+    Real production adapters exist in
+    ``vault_chat_executor_adapters_v2.build_production_executor_registry``
+    but are NOT wired here yet. Returning an empty registry means
+    the readiness guard refuses ``mode==on`` at startup
+    (``CONTROLLED_UNAVAILABLE_RESULT``) -- the flag cannot be
+    turned on accidentally against an unwired build. A follow-up
+    commit will replace this body with:
+
+        from vault_chat_executor_adapters_v2 import (
+            build_production_executor_registry,
+        )
+        return build_production_executor_registry()
+
+    once shadow-mode has run in staging long enough to validate
+    the semantic decider.
 
     Tests inject their own registries to exercise the SUCCESS /
     EXECUTOR_FAILED / AUTHORIZATION_FAILED / CONSUME_FAILED

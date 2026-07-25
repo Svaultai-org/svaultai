@@ -513,6 +513,7 @@ def apply_router_result_v2(
     memory:              Any = None,
     assistant_turn_id:   str = "",
     created_target_id:   Optional[str] = None,
+    db_executor:         Optional[Any] = None,
 ) -> IntegrationResultV2:
     """Apply the router's declared intent. Owns focus persistence,
     authorization minting + CAS-consumption, and executor
@@ -671,6 +672,7 @@ def apply_router_result_v2(
             "memory":            memory,
             "vault_id":          vault_id,
             "session_id":        session_id,
+            "db_executor":       db_executor,
         }
 
         executor_ok = True
