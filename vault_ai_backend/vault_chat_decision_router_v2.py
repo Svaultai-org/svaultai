@@ -1,48 +1,65 @@
 """Pure orchestration router for the chat-brain v2 semantic
-reasoning path.
+reasoning path — rev 2 (commit 4a corrections).
 
 Given a validated ``SemanticDecisionV2`` and its
 ``PolicyResultV2``, the router produces a ``RouterResultV2``
 describing WHAT should happen next:
 
-    * reply_kind + reply_text        (deterministic template)
-    * focus_update                    (set / clear / clear_if_matches / preserve)
-    * authorization_intent            (handoff from policy — router does NOT mint)
-    * validated_patch                 (handoff for edit/create — router does NOT apply)
-    * next_state                      (execute / apply_patch / apply_cancel / fallthrough)
+    * reply_kind + reply_text        (deterministic template, empty
+                                       for execution-required paths)
+    * focus_update                    (IMMEDIATE — applied before
+                                       any executor runs)
+    * execution_plan                  (optional; carries staged focus
+                                       + auth handoff + deferred
+                                       reply keys)
+    * next_state                      (execute / apply_patch / apply_cancel /
+                                       apply_create / fallthrough / await_user)
 
-Scope of this module (commit 4)
--------------------------------
+Scope of this module (commit 4 + 4a)
+------------------------------------
 This module is the *single owner* of:
 
-    * focus creation, clearing, preservation
+    * focus creation, clearing, preservation, and SET intent
     * routing decisions
     * authorization-intent handoff
+    * reply-template choice
 
 It has NO side effects: no Redis writes, no
 ``mint_authorization`` calls, no executor invocations, no
 mutation of the decision or policy result. The integration layer
-(commit 5) applies the focus updates, mints the authorization,
-applies the patch, calls the executor — it is the only place
-that touches state.
+(commit 5) applies the router's declared intent — it never
+decides what to focus or when to say "Saved.".
+
+Staged focus + deferred replies (commit 4a rev 7)
+-------------------------------------------------
+Confirmation / cancel / edit / create paths carry an
+``ExecutionPlanV2`` with:
+
+    * ``success_focus_update`` — applied after successful execution
+    * ``failure_focus_update`` — applied on failure
+    * ``success_reply_key`` / ``failure_reply_key`` — deferred
+      template keys the integration looks up via
+      ``get_success_reply`` / ``get_failure_reply``
+
+The router's ``RouterResultV2.focus_update`` is the IMMEDIATE
+focus decision — typically ``PRESERVE_FOCUS`` for execute paths.
+The router's ``RouterResultV2.reply_text`` is ``""`` for
+execution-required paths (``reply_kind=REPLY_KIND_EXECUTION_REQUIRED``)
+so no "Saved." text ever escapes before the save actually happens.
 
 Reply-text guarantees
 ---------------------
 * Deterministic — depends only on ``(outcome, normalized_intent,
-  reason_code)``, plus (for allow-confirm variants) the
-  ``authorization_intent.action`` shape.
+  reason_code)``, plus (for confirms) the action shape.
 * Independent of the free-form ``diagnostic`` on
   ``PolicyResultV2``. The diagnostic is dev-facing text only.
-* Never inspects the LLM's ``decision.reason`` field. That is
-  debug-only per the security posture in the design memo.
+* Never inspects the LLM's ``decision.reason`` field.
 
 Fallthrough intents
 -------------------
 Phase 1 routes ``INTENT_FALLTHROUGH``, ``INTENT_CHAT``, and
 ``INTENT_ANSWER_QUESTION`` back to the legacy pipeline
-(``handled=False``, ``next_state=NEXT_STATE_FALLTHROUGH``). The
-legacy pipeline already handles chat, greetings, and vault-state
-questions, and this keeps commit-4 templates minimal and safe.
+(``handled=False``, ``next_state=NEXT_STATE_FALLTHROUGH``).
 """
 
 from __future__ import annotations
@@ -52,6 +69,7 @@ from types import MappingProxyType
 from typing import Mapping, Optional
 
 from vault_chat_focus import (
+    FOCUS_ACT_ASKED_CLARIFICATION,
     FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
     FOCUS_KIND_DRAFT,
     FOCUS_KIND_PENDING_ACTION,
@@ -117,34 +135,32 @@ from vault_chat_semantic_decision_v2 import (
 REPLY_KIND_NONE:                str = "none"
 REPLY_KIND_CLARIFICATION:       str = "clarification"
 REPLY_KIND_REJECTION:           str = "rejection"
-REPLY_KIND_CONFIRMATION_ACK:    str = "confirmation_ack"
-REPLY_KIND_CANCELLATION_ACK:    str = "cancellation_ack"
-REPLY_KIND_DRAFT_PRESENTATION:  str = "draft_presentation"
+REPLY_KIND_EXECUTION_REQUIRED:  str = "execution_required"
 REPLY_KIND_CHAT:                str = "chat"
 
 REPLY_KINDS: frozenset[str] = frozenset({
     REPLY_KIND_NONE,
     REPLY_KIND_CLARIFICATION,
     REPLY_KIND_REJECTION,
-    REPLY_KIND_CONFIRMATION_ACK,
-    REPLY_KIND_CANCELLATION_ACK,
-    REPLY_KIND_DRAFT_PRESENTATION,
+    REPLY_KIND_EXECUTION_REQUIRED,
     REPLY_KIND_CHAT,
 })
 
 
 # =====================================================================
-# Focus updates (closed set)
+# Focus actions (closed set)
 # =====================================================================
 
 FOCUS_ACTION_PRESERVE:           str = "preserve"
 FOCUS_ACTION_SET:                str = "set"
+FOCUS_ACTION_SET_ON_CREATE:      str = "set_on_create"
 FOCUS_ACTION_CLEAR:              str = "clear"
 FOCUS_ACTION_CLEAR_IF_MATCHES:   str = "clear_if_matches"
 
 FOCUS_ACTIONS: frozenset[str] = frozenset({
     FOCUS_ACTION_PRESERVE,
     FOCUS_ACTION_SET,
+    FOCUS_ACTION_SET_ON_CREATE,
     FOCUS_ACTION_CLEAR,
     FOCUS_ACTION_CLEAR_IF_MATCHES,
 })
@@ -152,10 +168,18 @@ FOCUS_ACTIONS: frozenset[str] = frozenset({
 
 @dataclass(frozen=True)
 class FocusUpdate:
+    """Router-declared focus intent. Integration applies it —
+    integration NEVER chooses target_kind or assistant_act.
+
+    For ``SET_ON_CREATE``, the router knows the assistant will
+    present a to-be-created target of a given kind, but the
+    target_id will only exist after integration mints the entity.
+    Integration fills in the target_id at apply time.
+    """
     action:         str
-    kind:           Optional[str] = None    # required for set / clear_if_matches
-    id:             Optional[str] = None    # required for set / clear_if_matches
-    assistant_act:  Optional[str] = None    # required for set
+    kind:           Optional[str] = None
+    id:             Optional[str] = None
+    assistant_act:  Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.action not in FOCUS_ACTIONS:
@@ -164,6 +188,17 @@ class FocusUpdate:
             if not self.kind or not self.id or not self.assistant_act:
                 raise ValueError(
                     "focus set requires kind + id + assistant_act"
+                )
+        elif self.action == FOCUS_ACTION_SET_ON_CREATE:
+            # id is deliberately absent — integration mints it.
+            if not self.kind or not self.assistant_act:
+                raise ValueError(
+                    "focus set_on_create requires kind + assistant_act"
+                )
+            if self.id is not None:
+                raise ValueError(
+                    "focus set_on_create must not carry an id "
+                    "(integration mints it)"
                 )
         elif self.action == FOCUS_ACTION_CLEAR_IF_MATCHES:
             if not self.kind or not self.id:
@@ -201,40 +236,139 @@ NEXT_STATES: frozenset[str] = frozenset({
     NEXT_STATE_FALLTHROUGH,
 })
 
+_EXECUTE_NEXT_STATES: frozenset[str] = frozenset({
+    NEXT_STATE_EXECUTE,
+    NEXT_STATE_APPLY_PATCH,
+    NEXT_STATE_APPLY_CANCEL,
+    NEXT_STATE_APPLY_CREATE,
+})
+
 
 # =====================================================================
-# RouterResultV2
+# Action kinds inside ExecutionPlanV2
+# =====================================================================
+
+ACTION_KIND_CONFIRM_SAVE:            str = "confirm_save"
+ACTION_KIND_CONFIRM_DELETE:          str = "confirm_delete"
+ACTION_KIND_CONFIRM_SAVE_ATTACHMENT: str = "confirm_save_attachment"
+ACTION_KIND_CANCEL_DRAFT:            str = "cancel_draft"
+ACTION_KIND_CANCEL_PENDING:          str = "cancel_pending"
+ACTION_KIND_APPLY_EDIT:              str = "apply_edit"
+ACTION_KIND_APPLY_CREATE:            str = "apply_create"
+
+ACTION_KINDS: frozenset[str] = frozenset({
+    ACTION_KIND_CONFIRM_SAVE,
+    ACTION_KIND_CONFIRM_DELETE,
+    ACTION_KIND_CONFIRM_SAVE_ATTACHMENT,
+    ACTION_KIND_CANCEL_DRAFT,
+    ACTION_KIND_CANCEL_PENDING,
+    ACTION_KIND_APPLY_EDIT,
+    ACTION_KIND_APPLY_CREATE,
+})
+
+
+# =====================================================================
+# Deferred reply templates
+#
+# Integration calls get_success_reply(key) / get_failure_reply(key)
+# AFTER the executor completes. The router itself never sends
+# "Saved." text before the save actually happens.
+# =====================================================================
+
+_REPLY_KEY_SAVE_DRAFT:       str = "save_draft"
+_REPLY_KEY_SAVE_PENDING:     str = "save_pending"
+_REPLY_KEY_DELETE_PENDING:   str = "delete_pending"
+_REPLY_KEY_SAVE_ATTACHMENT:  str = "save_attachment_pending"
+_REPLY_KEY_CANCEL_DRAFT:     str = "cancel_draft"
+_REPLY_KEY_CANCEL_PENDING:   str = "cancel_pending"
+_REPLY_KEY_APPLY_EDIT:       str = "apply_edit"
+_REPLY_KEY_APPLY_CREATE:     str = "apply_create"
+
+
+SUCCESS_REPLY_TEMPLATES: Mapping[str, str] = MappingProxyType({
+    _REPLY_KEY_SAVE_DRAFT:      "Saved your draft to your vault.",
+    _REPLY_KEY_SAVE_PENDING:    "Saved.",
+    _REPLY_KEY_DELETE_PENDING:  "Deleted.",
+    _REPLY_KEY_SAVE_ATTACHMENT: "Saved your file.",
+    _REPLY_KEY_CANCEL_DRAFT:    "Okay, cancelled.",
+    _REPLY_KEY_CANCEL_PENDING:  "Okay, cancelled.",
+    _REPLY_KEY_APPLY_EDIT:      "Updated the draft.",
+    _REPLY_KEY_APPLY_CREATE:    "Started a new draft.",
+})
+
+
+FAILURE_REPLY_TEMPLATES: Mapping[str, str] = MappingProxyType({
+    _REPLY_KEY_SAVE_DRAFT:      "I couldn't save that right now. Would you like to try again?",
+    _REPLY_KEY_SAVE_PENDING:    "I couldn't save that right now. Would you like to try again?",
+    _REPLY_KEY_DELETE_PENDING:  "I couldn't delete that right now. Would you like to try again?",
+    _REPLY_KEY_SAVE_ATTACHMENT: "I couldn't save your file right now. Would you like to try again?",
+    _REPLY_KEY_CANCEL_DRAFT:    "I couldn't cancel that right now.",
+    _REPLY_KEY_CANCEL_PENDING:  "I couldn't cancel that right now.",
+    _REPLY_KEY_APPLY_EDIT:      "I couldn't update the draft right now.",
+    _REPLY_KEY_APPLY_CREATE:    "I couldn't start that draft right now.",
+})
+
+
+REPLY_KEYS: frozenset[str] = frozenset(SUCCESS_REPLY_TEMPLATES.keys())
+
+
+def get_success_reply(reply_key: str) -> str:
+    """Look up the success reply template for a key returned by
+    the router in ``ExecutionPlanV2.success_reply_key``. Returns
+    an empty string if the key is unknown — integration should
+    never see an unknown key from a router that produced the
+    plan.
+    """
+    return SUCCESS_REPLY_TEMPLATES.get(reply_key, "")
+
+
+def get_failure_reply(reply_key: str) -> str:
+    """Look up the failure reply template. Same contract as
+    ``get_success_reply``."""
+    return FAILURE_REPLY_TEMPLATES.get(reply_key, "")
+
+
+# =====================================================================
+# ExecutionPlanV2
 # =====================================================================
 
 @dataclass(frozen=True)
-class RouterResultV2:
-    handled:               bool
-    reply_kind:            str
-    reply_text:            str
-    focus_update:          FocusUpdate
-    authorization_intent:  Optional[AuthorizationIntent]
-    validated_patch:       Optional[Mapping[str, FieldPatchItem]]
-    next_state:            str
-    normalized_intent:     str
-    reason_code:           str
-    diagnostic:            str = ""
+class ExecutionPlanV2:
+    """Router's typed description of the execute path.
+
+    The integration layer (commit 5) uses this plan to:
+      1. mint an ``AuthorizationRecord`` (only for confirm-*
+         action_kinds, i.e. when ``authorization_intent`` is set)
+      2. atomically CAS-consume that record
+      3. execute the underlying action exactly once (save, delete,
+         cancel, or apply-patch)
+      4. apply ``success_focus_update`` on success or
+         ``failure_focus_update`` on failure
+      5. render the reply via ``get_success_reply(success_reply_key)``
+         or ``get_failure_reply(failure_reply_key)``
+
+    None of the above steps happen inside the router.
+    """
+    action_kind:             str
+    target_kind:             str
+    target_id:               Optional[str]
+    authorization_intent:    Optional[AuthorizationIntent]
+    validated_patch:         Optional[Mapping[str, FieldPatchItem]]
+    success_focus_update:    FocusUpdate
+    failure_focus_update:    FocusUpdate
+    success_reply_key:       str
+    failure_reply_key:       str
 
     def __post_init__(self) -> None:
-        if self.reply_kind not in REPLY_KINDS:
-            raise ValueError(f"unknown reply_kind {self.reply_kind!r}")
-        if self.next_state not in NEXT_STATES:
-            raise ValueError(f"unknown next_state {self.next_state!r}")
-        if self.reason_code not in REASON_CODES:
-            raise ValueError(f"unknown reason_code {self.reason_code!r}")
-        # handled=True MUST come with a producing reply_kind or an
-        # explicit next-state action; handled=False MUST be fallthrough.
-        if not self.handled and self.next_state != NEXT_STATE_FALLTHROUGH:
+        if self.action_kind not in ACTION_KINDS:
+            raise ValueError(f"unknown action_kind {self.action_kind!r}")
+        if self.success_reply_key not in REPLY_KEYS:
             raise ValueError(
-                "handled=False requires next_state=fallthrough"
+                f"unknown success_reply_key {self.success_reply_key!r}"
             )
-        if self.handled and self.next_state == NEXT_STATE_FALLTHROUGH:
+        if self.failure_reply_key not in REPLY_KEYS:
             raise ValueError(
-                "handled=True must not have next_state=fallthrough"
+                f"unknown failure_reply_key {self.failure_reply_key!r}"
             )
         # Freeze the patch mapping.
         if self.validated_patch is not None and not isinstance(
@@ -247,12 +381,67 @@ class RouterResultV2:
 
 
 # =====================================================================
-# Reply templates (deterministic)
-#
-# Keys are stable machine-readable reason codes / intent+action
-# tuples. Templates are short, neutral, and safe to render for
-# any user without leaking snapshot state. Adding a new phrase or
-# tone here requires an intentional edit, not a model influence.
+# RouterResultV2
+# =====================================================================
+
+@dataclass(frozen=True)
+class RouterResultV2:
+    handled:               bool
+    reply_kind:            str
+    reply_text:            str
+    focus_update:          FocusUpdate                 # IMMEDIATE
+    execution_plan:        Optional[ExecutionPlanV2]
+    next_state:            str
+    normalized_intent:     str
+    reason_code:           str
+    diagnostic:            str = ""
+
+    def __post_init__(self) -> None:
+        if self.reply_kind not in REPLY_KINDS:
+            raise ValueError(f"unknown reply_kind {self.reply_kind!r}")
+        if self.next_state not in NEXT_STATES:
+            raise ValueError(f"unknown next_state {self.next_state!r}")
+        if self.reason_code not in REASON_CODES:
+            raise ValueError(f"unknown reason_code {self.reason_code!r}")
+        # handled=False ⟺ next_state=FALLTHROUGH
+        if not self.handled and self.next_state != NEXT_STATE_FALLTHROUGH:
+            raise ValueError(
+                "handled=False requires next_state=fallthrough"
+            )
+        if self.handled and self.next_state == NEXT_STATE_FALLTHROUGH:
+            raise ValueError(
+                "handled=True must not have next_state=fallthrough"
+            )
+        # Execution-required MUST carry an execution_plan.
+        if self.reply_kind == REPLY_KIND_EXECUTION_REQUIRED:
+            if self.execution_plan is None:
+                raise ValueError(
+                    "reply_kind=execution_required requires an "
+                    "execution_plan"
+                )
+            if self.reply_text != "":
+                raise ValueError(
+                    "reply_kind=execution_required must have empty "
+                    "reply_text (deferred to integration)"
+                )
+        # Non-execute reply_kinds MUST NOT carry an execution_plan.
+        if self.reply_kind != REPLY_KIND_EXECUTION_REQUIRED \
+                and self.execution_plan is not None:
+            raise ValueError(
+                f"reply_kind={self.reply_kind!r} must not carry an "
+                "execution_plan"
+            )
+        # execution_plan must appear only on execute-family next_states.
+        if self.execution_plan is not None \
+                and self.next_state not in _EXECUTE_NEXT_STATES:
+            raise ValueError(
+                f"execution_plan requires an execute-family "
+                f"next_state, got {self.next_state!r}"
+            )
+
+
+# =====================================================================
+# Immediate reply templates (clarify + reject)
 # =====================================================================
 
 _CLARIFICATION_TEMPLATES: Mapping[str, str] = MappingProxyType({
@@ -272,8 +461,6 @@ _CLARIFICATION_TEMPLATES: Mapping[str, str] = MappingProxyType({
         "I don't have that item on hand. Could you clarify or start fresh?",
     REASON_AUTH_MISSING_GRANT:
         "Are you sure? Please say yes or no.",
-    # INTENT_ASK_CLARIFICATION on outcome=ALLOW uses REASON_ALLOWED
-    # since the policy assigned no specific reason.
     REASON_ALLOWED:
         "Could you clarify what you'd like to do?",
 })
@@ -318,24 +505,6 @@ _REJECTION_TEMPLATES: Mapping[str, str] = MappingProxyType({
 _GENERIC_REJECTION: str = "I can't process that request."
 
 
-# Allow-confirm ACK templates. Keys are (intent, action).
-_CONFIRM_ACK_TEMPLATES: Mapping[tuple, str] = MappingProxyType({
-    (INTENT_CONFIRM_DRAFT,          ACTION_SAVE):
-        "Okay, saving your draft.",
-    (INTENT_CONFIRM_PENDING_ACTION, ACTION_SAVE):
-        "Okay, saving.",
-    (INTENT_CONFIRM_PENDING_ACTION, ACTION_DELETE):
-        "Okay, deleting.",
-    (INTENT_CONFIRM_PENDING_ACTION, ACTION_SAVE_ATTACHMENT):
-        "Okay, saving your file.",
-})
-
-
-_CANCEL_ACK_TEMPLATE: str = "Okay, cancelled."
-_EDIT_ACK_TEMPLATE:   str = "Updated the draft."
-_CREATE_ACK_TEMPLATE: str = "Started a new draft."
-
-
 # =====================================================================
 # Public entry point
 # =====================================================================
@@ -346,43 +515,28 @@ def route_v2(
 ) -> RouterResultV2:
     """Pure orchestration. Produces a ``RouterResultV2`` from the
     policy result. Never writes to Redis, never mints an
-    ``AuthorizationRecord``, never touches focus storage. The
-    integration layer (commit 5) applies the router's declared
-    intent.
+    ``AuthorizationRecord``, never touches focus storage.
     """
     if policy_result.outcome not in OUTCOMES:
-        # Defensive — should not happen with a validated PolicyResultV2
         return _reject_generic(
             policy_result, override_reason=REASON_INTENT_UNKNOWN,
         )
 
     intent = policy_result.normalized_intent
 
-    # -----------------------------------------------------------------
-    # Fallthrough intents (phase 1 also routes chat / answer_question
-    # back to the legacy pipeline).
-    # -----------------------------------------------------------------
     if intent == INTENT_FALLTHROUGH:
         return _fallthrough_result(policy_result)
     if intent in (INTENT_CHAT, INTENT_ANSWER_QUESTION):
         return _fallthrough_result(policy_result)
-
-    # -----------------------------------------------------------------
-    # ASK_CLARIFICATION always emits a clarification reply,
-    # regardless of the policy outcome (typically allow).
-    # -----------------------------------------------------------------
     if intent == INTENT_ASK_CLARIFICATION:
         return _clarify_result(policy_result)
 
-    # -----------------------------------------------------------------
-    # Non-passthrough outcomes.
-    # -----------------------------------------------------------------
     if policy_result.outcome == OUTCOME_CLARIFY:
         return _clarify_result(policy_result)
     if policy_result.outcome == OUTCOME_REJECT:
         return _reject_result(policy_result)
 
-    # OUTCOME_ALLOW below.
+    # OUTCOME_ALLOW for target-carrying intents.
     if intent == INTENT_CONFIRM_DRAFT:
         return _allow_confirm_draft(policy_result)
     if intent == INTENT_CONFIRM_PENDING_ACTION:
@@ -402,7 +556,7 @@ def route_v2(
 
 
 # =====================================================================
-# Result builders — one per outcome branch
+# Result builders — clarify / reject / fallthrough
 # =====================================================================
 
 def _fallthrough_result(policy_result: PolicyResultV2) -> RouterResultV2:
@@ -411,8 +565,7 @@ def _fallthrough_result(policy_result: PolicyResultV2) -> RouterResultV2:
         reply_kind=REPLY_KIND_NONE,
         reply_text="",
         focus_update=PRESERVE_FOCUS,
-        authorization_intent=None,
-        validated_patch=None,
+        execution_plan=None,
         next_state=NEXT_STATE_FALLTHROUGH,
         normalized_intent=policy_result.normalized_intent,
         reason_code=policy_result.reason_code,
@@ -420,28 +573,85 @@ def _fallthrough_result(policy_result: PolicyResultV2) -> RouterResultV2:
 
 
 def _clarify_result(policy_result: PolicyResultV2) -> RouterResultV2:
-    template = _CLARIFICATION_TEMPLATES.get(
-        policy_result.reason_code, _GENERIC_CLARIFICATION,
-    )
-    # For EXPIRED_FOCUS, the focus is known-stale — clear it so
-    # the next turn does not use a phantom bind. For other clarify
-    # reasons, preserve focus (user may still be talking about the
-    # same object).
-    focus = (
-        CLEAR_FOCUS if policy_result.reason_code == REASON_EXPIRED_FOCUS
-        else PRESERVE_FOCUS
-    )
+    """Reason-code-driven clarification with a matching focus rule
+    (design memo rev 7 table).
+    """
+    reason = policy_result.reason_code
+    reply_text = _CLARIFICATION_TEMPLATES.get(reason, _GENERIC_CLARIFICATION)
+
+    # Determine the focus update per-reason.
+    focus_update = _clarify_focus_for(policy_result)
+
     return RouterResultV2(
         handled=True,
         reply_kind=REPLY_KIND_CLARIFICATION,
-        reply_text=template,
-        focus_update=focus,
-        authorization_intent=None,
-        validated_patch=None,
+        reply_text=reply_text,
+        focus_update=focus_update,
+        execution_plan=None,
         next_state=NEXT_STATE_AWAIT_USER,
         normalized_intent=policy_result.normalized_intent,
-        reason_code=policy_result.reason_code,
+        reason_code=reason,
     )
+
+
+def _clarify_focus_for(policy_result: PolicyResultV2) -> FocusUpdate:
+    reason = policy_result.reason_code
+    target_kind = policy_result.target_kind
+    target_id = policy_result.target_id
+
+    if reason == REASON_EXPIRED_FOCUS:
+        return CLEAR_FOCUS
+    if reason == REASON_AMBIGUOUS_TARGET:
+        # Never pick an arbitrary candidate. Router lacks the snapshot
+        # to check whether the existing focus is still one of the
+        # candidates, so CLEAR is the safe deterministic default.
+        return CLEAR_FOCUS
+    if reason in (REASON_TARGET_NOT_FOUND, REASON_TARGET_EXPIRED):
+        # Only clear if the current focus actually points at the
+        # missing/dead target. Preserves other focus that may still
+        # be relevant.
+        if target_kind and target_id:
+            return FocusUpdate(
+                action=FOCUS_ACTION_CLEAR_IF_MATCHES,
+                kind=_focus_kind_for(target_kind),
+                id=target_id,
+            )
+        return PRESERVE_FOCUS
+    if reason == REASON_TARGET_NOT_FOCUSED:
+        # Router asks the user about the specific target they
+        # referenced. SET focus to that target with
+        # asked_clarification.
+        if target_kind and target_id:
+            return FocusUpdate(
+                action=FOCUS_ACTION_SET,
+                kind=_focus_kind_for(target_kind),
+                id=target_id,
+                assistant_act=FOCUS_ACT_ASKED_CLARIFICATION,
+            )
+        return PRESERVE_FOCUS
+    if reason == REASON_ALLOWED:
+        # INTENT_ASK_CLARIFICATION with outcome=allow — model chose
+        # to ask. If it named a target, SET focus to that target.
+        if target_kind and target_id:
+            return FocusUpdate(
+                action=FOCUS_ACTION_SET,
+                kind=_focus_kind_for(target_kind),
+                id=target_id,
+                assistant_act=FOCUS_ACT_ASKED_CLARIFICATION,
+            )
+        return PRESERVE_FOCUS
+    # INSUFFICIENT_CONTEXT, LOW_CONFIDENCE, AUTH_MISSING_GRANT, etc.
+    return PRESERVE_FOCUS
+
+
+def _focus_kind_for(policy_target_kind: str) -> str:
+    if policy_target_kind == TARGET_KIND_DRAFT:
+        return FOCUS_KIND_DRAFT
+    if policy_target_kind == TARGET_KIND_PENDING_ACTION:
+        return FOCUS_KIND_PENDING_ACTION
+    # active_entity or none — clarify handlers won't stamp SET for
+    # those. Callers guard the SET emit above.
+    return FOCUS_KIND_DRAFT
 
 
 def _reject_result(policy_result: PolicyResultV2) -> RouterResultV2:
@@ -453,8 +663,7 @@ def _reject_result(policy_result: PolicyResultV2) -> RouterResultV2:
         reply_kind=REPLY_KIND_REJECTION,
         reply_text=template,
         focus_update=PRESERVE_FOCUS,
-        authorization_intent=None,
-        validated_patch=None,
+        execution_plan=None,
         next_state=NEXT_STATE_AWAIT_USER,
         normalized_intent=policy_result.normalized_intent,
         reason_code=policy_result.reason_code,
@@ -464,9 +673,6 @@ def _reject_result(policy_result: PolicyResultV2) -> RouterResultV2:
 def _reject_generic(
     policy_result: PolicyResultV2, *, override_reason: str,
 ) -> RouterResultV2:
-    """Fallback reject for defensive branches (unknown outcome or
-    intent). Uses the override reason so callers get the same
-    template family."""
     return RouterResultV2(
         handled=True,
         reply_kind=REPLY_KIND_REJECTION,
@@ -474,123 +680,199 @@ def _reject_generic(
             override_reason, _GENERIC_REJECTION,
         ),
         focus_update=PRESERVE_FOCUS,
-        authorization_intent=None,
-        validated_patch=None,
+        execution_plan=None,
         next_state=NEXT_STATE_AWAIT_USER,
         normalized_intent=policy_result.normalized_intent,
         reason_code=override_reason,
     )
 
 
+# =====================================================================
+# Result builders — allow paths (produce ExecutionPlanV2)
+#
+# Each allow builder returns:
+#     RouterResultV2.focus_update = PRESERVE_FOCUS (IMMEDIATE)
+#     RouterResultV2.reply_kind   = REPLY_KIND_EXECUTION_REQUIRED
+#     RouterResultV2.reply_text   = ""
+#     RouterResultV2.execution_plan = ExecutionPlanV2(...)
+#
+# Integration reads the plan's success/failure focus + reply key
+# after executing.
+# =====================================================================
+
 def _allow_confirm_draft(policy_result: PolicyResultV2) -> RouterResultV2:
-    auth = policy_result.authorization_to_mint
-    reply_text = _CONFIRM_ACK_TEMPLATES.get(
-        (INTENT_CONFIRM_DRAFT, ACTION_SAVE),
-        "Okay.",
-    )
-    return RouterResultV2(
-        handled=True,
-        reply_kind=REPLY_KIND_CONFIRMATION_ACK,
-        reply_text=reply_text,
-        focus_update=FocusUpdate(
-            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
-            kind=FOCUS_KIND_DRAFT,
-            id=policy_result.target_id or "",
-        ),
-        authorization_intent=auth,
+    tid = policy_result.target_id or ""
+    plan = ExecutionPlanV2(
+        action_kind=ACTION_KIND_CONFIRM_SAVE,
+        target_kind=TARGET_KIND_DRAFT,
+        target_id=tid,
+        authorization_intent=policy_result.authorization_to_mint,
         validated_patch=None,
-        next_state=NEXT_STATE_EXECUTE,
-        normalized_intent=INTENT_CONFIRM_DRAFT,
-        reason_code=policy_result.reason_code,
+        success_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
+            kind=FOCUS_KIND_DRAFT, id=tid,
+        ),
+        failure_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_SET,
+            kind=FOCUS_KIND_DRAFT, id=tid,
+            assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+        ),
+        success_reply_key=_REPLY_KEY_SAVE_DRAFT,
+        failure_reply_key=_REPLY_KEY_SAVE_DRAFT,
+    )
+    return _execution_required_result(
+        policy_result, plan, NEXT_STATE_EXECUTE,
     )
 
 
 def _allow_confirm_pending(policy_result: PolicyResultV2) -> RouterResultV2:
+    tid = policy_result.target_id or ""
     auth = policy_result.authorization_to_mint
     action = auth.action if auth is not None else None
-    reply_text = _CONFIRM_ACK_TEMPLATES.get(
-        (INTENT_CONFIRM_PENDING_ACTION, action),
-        "Okay.",
-    )
-    return RouterResultV2(
-        handled=True,
-        reply_kind=REPLY_KIND_CONFIRMATION_ACK,
-        reply_text=reply_text,
-        focus_update=FocusUpdate(
-            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
-            kind=FOCUS_KIND_PENDING_ACTION,
-            id=policy_result.target_id or "",
-        ),
+    action_kind, reply_key = _pending_confirm_action_and_key(action)
+    plan = ExecutionPlanV2(
+        action_kind=action_kind,
+        target_kind=TARGET_KIND_PENDING_ACTION,
+        target_id=tid,
         authorization_intent=auth,
         validated_patch=None,
-        next_state=NEXT_STATE_EXECUTE,
-        normalized_intent=INTENT_CONFIRM_PENDING_ACTION,
-        reason_code=policy_result.reason_code,
+        success_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
+            kind=FOCUS_KIND_PENDING_ACTION, id=tid,
+        ),
+        failure_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_SET,
+            kind=FOCUS_KIND_PENDING_ACTION, id=tid,
+            assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+        ),
+        success_reply_key=reply_key,
+        failure_reply_key=reply_key,
     )
+    return _execution_required_result(
+        policy_result, plan, NEXT_STATE_EXECUTE,
+    )
+
+
+def _pending_confirm_action_and_key(action: Optional[str]) -> tuple:
+    if action == ACTION_DELETE:
+        return ACTION_KIND_CONFIRM_DELETE, _REPLY_KEY_DELETE_PENDING
+    if action == ACTION_SAVE_ATTACHMENT:
+        return ACTION_KIND_CONFIRM_SAVE_ATTACHMENT, _REPLY_KEY_SAVE_ATTACHMENT
+    # ACTION_SAVE fallback for the credential/login-draft/secure-item
+    # save-flavored kinds.
+    return ACTION_KIND_CONFIRM_SAVE, _REPLY_KEY_SAVE_PENDING
 
 
 def _allow_cancel_draft(policy_result: PolicyResultV2) -> RouterResultV2:
-    return RouterResultV2(
-        handled=True,
-        reply_kind=REPLY_KIND_CANCELLATION_ACK,
-        reply_text=_CANCEL_ACK_TEMPLATE,
-        focus_update=FocusUpdate(
-            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
-            kind=FOCUS_KIND_DRAFT,
-            id=policy_result.target_id or "",
-        ),
+    tid = policy_result.target_id or ""
+    plan = ExecutionPlanV2(
+        action_kind=ACTION_KIND_CANCEL_DRAFT,
+        target_kind=TARGET_KIND_DRAFT,
+        target_id=tid,
         authorization_intent=None,
         validated_patch=None,
-        next_state=NEXT_STATE_APPLY_CANCEL,
-        normalized_intent=INTENT_CANCEL_DRAFT,
-        reason_code=policy_result.reason_code,
+        success_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
+            kind=FOCUS_KIND_DRAFT, id=tid,
+        ),
+        # Cancel failure: the target still exists; if focus already
+        # points at it, keep it there. Preserve.
+        failure_focus_update=PRESERVE_FOCUS,
+        success_reply_key=_REPLY_KEY_CANCEL_DRAFT,
+        failure_reply_key=_REPLY_KEY_CANCEL_DRAFT,
+    )
+    return _execution_required_result(
+        policy_result, plan, NEXT_STATE_APPLY_CANCEL,
     )
 
 
 def _allow_cancel_pending(policy_result: PolicyResultV2) -> RouterResultV2:
-    return RouterResultV2(
-        handled=True,
-        reply_kind=REPLY_KIND_CANCELLATION_ACK,
-        reply_text=_CANCEL_ACK_TEMPLATE,
-        focus_update=FocusUpdate(
-            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
-            kind=FOCUS_KIND_PENDING_ACTION,
-            id=policy_result.target_id or "",
-        ),
+    tid = policy_result.target_id or ""
+    plan = ExecutionPlanV2(
+        action_kind=ACTION_KIND_CANCEL_PENDING,
+        target_kind=TARGET_KIND_PENDING_ACTION,
+        target_id=tid,
         authorization_intent=None,
         validated_patch=None,
-        next_state=NEXT_STATE_APPLY_CANCEL,
-        normalized_intent=INTENT_CANCEL_PENDING_ACTION,
-        reason_code=policy_result.reason_code,
+        success_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_CLEAR_IF_MATCHES,
+            kind=FOCUS_KIND_PENDING_ACTION, id=tid,
+        ),
+        failure_focus_update=PRESERVE_FOCUS,
+        success_reply_key=_REPLY_KEY_CANCEL_PENDING,
+        failure_reply_key=_REPLY_KEY_CANCEL_PENDING,
+    )
+    return _execution_required_result(
+        policy_result, plan, NEXT_STATE_APPLY_CANCEL,
     )
 
 
 def _allow_edit_draft(policy_result: PolicyResultV2) -> RouterResultV2:
-    return RouterResultV2(
-        handled=True,
-        reply_kind=REPLY_KIND_DRAFT_PRESENTATION,
-        reply_text=_EDIT_ACK_TEMPLATE,
-        focus_update=PRESERVE_FOCUS,
+    tid = policy_result.target_id or ""
+    plan = ExecutionPlanV2(
+        action_kind=ACTION_KIND_APPLY_EDIT,
+        target_kind=TARGET_KIND_DRAFT,
+        target_id=tid,
         authorization_intent=None,
         validated_patch=policy_result.validated_patch,
-        next_state=NEXT_STATE_APPLY_PATCH,
-        normalized_intent=INTENT_EDIT_DRAFT,
-        reason_code=policy_result.reason_code,
+        # On successful edit, the assistant is presenting the
+        # updated draft — SET focus to it.
+        success_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_SET,
+            kind=FOCUS_KIND_DRAFT, id=tid,
+            assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+        ),
+        failure_focus_update=PRESERVE_FOCUS,
+        success_reply_key=_REPLY_KEY_APPLY_EDIT,
+        failure_reply_key=_REPLY_KEY_APPLY_EDIT,
+    )
+    return _execution_required_result(
+        policy_result, plan, NEXT_STATE_APPLY_PATCH,
     )
 
 
 def _allow_create_draft(policy_result: PolicyResultV2) -> RouterResultV2:
-    # A new draft has no id yet — integration will stamp focus
-    # after creating it. Router preserves focus for now.
-    return RouterResultV2(
-        handled=True,
-        reply_kind=REPLY_KIND_DRAFT_PRESENTATION,
-        reply_text=_CREATE_ACK_TEMPLATE,
-        focus_update=PRESERVE_FOCUS,
+    # target_id is None here — the draft doesn't exist yet.
+    # Integration mints the id and fills it in when applying the
+    # SET_ON_CREATE focus intent.
+    plan = ExecutionPlanV2(
+        action_kind=ACTION_KIND_APPLY_CREATE,
+        target_kind=TARGET_KIND_DRAFT,
+        target_id=None,
         authorization_intent=None,
         validated_patch=policy_result.validated_patch,
-        next_state=NEXT_STATE_APPLY_CREATE,
-        normalized_intent=INTENT_CREATE_DRAFT,
+        success_focus_update=FocusUpdate(
+            action=FOCUS_ACTION_SET_ON_CREATE,
+            kind=FOCUS_KIND_DRAFT,
+            assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+        ),
+        failure_focus_update=PRESERVE_FOCUS,
+        success_reply_key=_REPLY_KEY_APPLY_CREATE,
+        failure_reply_key=_REPLY_KEY_APPLY_CREATE,
+    )
+    return _execution_required_result(
+        policy_result, plan, NEXT_STATE_APPLY_CREATE,
+    )
+
+
+def _execution_required_result(
+    policy_result: PolicyResultV2,
+    plan: ExecutionPlanV2,
+    next_state: str,
+) -> RouterResultV2:
+    """All allow-through-integration paths share this shape.
+
+    IMMEDIATE focus is PRESERVE. Reply text is empty. The plan
+    carries success/failure focus and deferred reply keys.
+    """
+    return RouterResultV2(
+        handled=True,
+        reply_kind=REPLY_KIND_EXECUTION_REQUIRED,
+        reply_text="",
+        focus_update=PRESERVE_FOCUS,
+        execution_plan=plan,
+        next_state=next_state,
+        normalized_intent=policy_result.normalized_intent,
         reason_code=policy_result.reason_code,
     )
 
@@ -598,12 +880,12 @@ def _allow_create_draft(policy_result: PolicyResultV2) -> RouterResultV2:
 __all__ = [
     # reply kinds
     "REPLY_KIND_NONE", "REPLY_KIND_CLARIFICATION",
-    "REPLY_KIND_REJECTION", "REPLY_KIND_CONFIRMATION_ACK",
-    "REPLY_KIND_CANCELLATION_ACK", "REPLY_KIND_DRAFT_PRESENTATION",
+    "REPLY_KIND_REJECTION", "REPLY_KIND_EXECUTION_REQUIRED",
     "REPLY_KIND_CHAT",
     "REPLY_KINDS",
     # focus actions
     "FOCUS_ACTION_PRESERVE", "FOCUS_ACTION_SET",
+    "FOCUS_ACTION_SET_ON_CREATE",
     "FOCUS_ACTION_CLEAR", "FOCUS_ACTION_CLEAR_IF_MATCHES",
     "FOCUS_ACTIONS",
     "FocusUpdate", "PRESERVE_FOCUS", "CLEAR_FOCUS",
@@ -612,7 +894,18 @@ __all__ = [
     "NEXT_STATE_APPLY_PATCH", "NEXT_STATE_APPLY_CANCEL",
     "NEXT_STATE_APPLY_CREATE", "NEXT_STATE_FALLTHROUGH",
     "NEXT_STATES",
-    # dataclass + entry point
+    # execution plan
+    "ACTION_KIND_CONFIRM_SAVE", "ACTION_KIND_CONFIRM_DELETE",
+    "ACTION_KIND_CONFIRM_SAVE_ATTACHMENT",
+    "ACTION_KIND_CANCEL_DRAFT", "ACTION_KIND_CANCEL_PENDING",
+    "ACTION_KIND_APPLY_EDIT", "ACTION_KIND_APPLY_CREATE",
+    "ACTION_KINDS",
+    "ExecutionPlanV2",
+    # deferred reply templates
+    "SUCCESS_REPLY_TEMPLATES", "FAILURE_REPLY_TEMPLATES",
+    "REPLY_KEYS",
+    "get_success_reply", "get_failure_reply",
+    # main dataclass + entry point
     "RouterResultV2",
     "route_v2",
 ]
