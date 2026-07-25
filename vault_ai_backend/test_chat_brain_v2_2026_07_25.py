@@ -854,6 +854,41 @@ class PhaseAwareFallbackTest(unittest.TestCase):
 # Runtime-readiness guard (commit 5a)
 # =====================================================================
 
+class ActionKindPartitionTest(unittest.TestCase):
+    """The action-kind partition MUST cover ACTION_KINDS exactly
+    with no overlap and no unknown entries (asserted at import
+    time in vault_chat_integration_v2). These tests re-assert the
+    invariants at test time so a subsequent commit that adds a
+    new action_kind but forgets the partition fails loudly."""
+
+    def test_partition_covers_every_action_kind(self):
+        union = (vi.EXECUTOR_REQUIRED_ACTION_KINDS
+                 | vi.NON_EXECUTOR_ACTION_KINDS)
+        self.assertEqual(union, ACTION_KINDS)
+
+    def test_partition_has_no_overlap(self):
+        overlap = (vi.EXECUTOR_REQUIRED_ACTION_KINDS
+                   & vi.NON_EXECUTOR_ACTION_KINDS)
+        self.assertEqual(overlap, frozenset())
+
+    def test_partition_has_no_unknown_kind(self):
+        strays = (
+            (vi.EXECUTOR_REQUIRED_ACTION_KINDS
+             | vi.NON_EXECUTOR_ACTION_KINDS)
+            - ACTION_KINDS
+        )
+        self.assertEqual(strays, frozenset())
+
+    def test_classification_maps_every_action_kind(self):
+        self.assertEqual(
+            set(vi.ACTION_KIND_CLASSIFICATION.keys()),
+            set(ACTION_KINDS),
+        )
+        allowed = {"executor_required", "non_executor"}
+        for k, v in vi.ACTION_KIND_CLASSIFICATION.items():
+            self.assertIn(v, allowed)
+
+
 class RuntimeReadinessTest(unittest.TestCase):
 
     def test_empty_registry_is_not_ready(self):
@@ -861,33 +896,50 @@ class RuntimeReadinessTest(unittest.TestCase):
             vi.ExecutorRegistry(),
         )
         self.assertFalse(ready)
-        # every ACTION_KIND appears in the missing list
-        self.assertEqual(sorted(missing), sorted(ACTION_KINDS))
+        # readiness demands EXECUTOR_REQUIRED kinds; NON_EXECUTOR
+        # kinds are handled natively and are not "missing".
+        self.assertEqual(
+            sorted(missing), sorted(vi.EXECUTOR_REQUIRED_ACTION_KINDS),
+        )
 
-    def test_partial_registry_reports_only_missing_kinds(self):
+    def test_partial_registry_reports_only_missing_required_kinds(self):
+        # Register 2 of the 4 EXECUTOR_REQUIRED kinds.
         registry = vi.ExecutorRegistry(
             confirm_save=lambda **kw: None,
             confirm_delete=lambda **kw: None,
-            confirm_save_attachment=lambda **kw: None,
-            cancel_draft=lambda **kw: None,
-            cancel_pending=lambda **kw: None,
         )
         ready, missing = vi.validate_v2_runtime_readiness(registry)
         self.assertFalse(ready)
         self.assertEqual(
             sorted(missing),
-            sorted([ACTION_KIND_APPLY_CREATE, ACTION_KIND_APPLY_EDIT]),
+            sorted([ACTION_KIND_CANCEL_PENDING,
+                    ACTION_KIND_CONFIRM_SAVE_ATTACHMENT]),
         )
 
-    def test_complete_registry_is_ready(self):
+    def test_non_executor_registrations_do_not_satisfy_readiness(self):
+        # Only NON_EXECUTOR kinds registered -- readiness still
+        # fails because none of the EXECUTOR_REQUIRED ones are
+        # present.
+        registry = vi.ExecutorRegistry(
+            apply_edit=lambda **kw: None,
+            apply_create=lambda **kw: None,
+            cancel_draft=lambda **kw: None,
+        )
+        ready, missing = vi.validate_v2_runtime_readiness(registry)
+        self.assertFalse(ready)
+        self.assertEqual(
+            sorted(missing), sorted(vi.EXECUTOR_REQUIRED_ACTION_KINDS),
+        )
+
+    def test_complete_required_registry_is_ready_even_without_non_executor(self):
+        # All four EXECUTOR_REQUIRED are present; NON_EXECUTOR
+        # registrations are omitted deliberately (they aren't
+        # required) -- readiness must still pass.
         registry = vi.ExecutorRegistry(
             confirm_save=lambda **kw: None,
             confirm_delete=lambda **kw: None,
             confirm_save_attachment=lambda **kw: None,
-            cancel_draft=lambda **kw: None,
             cancel_pending=lambda **kw: None,
-            apply_edit=lambda **kw: None,
-            apply_create=lambda **kw: None,
         )
         ready, missing = vi.validate_v2_runtime_readiness(registry)
         self.assertTrue(ready)

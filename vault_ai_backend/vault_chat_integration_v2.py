@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional
 
 from vault_chat_authorization_record import (
@@ -174,6 +175,84 @@ class ExecutorRegistry:
 
 
 # =====================================================================
+# Action-kind classification (commit 5b)
+#
+# Every action_kind the router can emit belongs to exactly ONE of
+# these closed sets. The classification governs whether the
+# runtime-readiness guard demands an executor for that kind, and
+# whether integration dispatches through the ExecutorRegistry or
+# through its native handlers.
+#
+# EXECUTOR_REQUIRED_ACTION_KINDS
+#     Actions that cross out of v2 into external side effects --
+#     database writes, cancellation of DB-backed pending intents,
+#     etc. These are wrapped by adapters in a later commit. The
+#     readiness guard REFUSES on-mode when any of these is
+#     unmapped.
+#
+# NON_EXECUTOR_ACTION_KINDS
+#     Actions that are purely v2-native state transformations on
+#     the Redis-backed Draft store. Integration handles them
+#     directly via ``vault_chat_draft`` primitives; the executor
+#     registry is not consulted for them. The readiness guard does
+#     NOT demand an executor for these.
+#
+# Partition invariants (asserted at import time):
+#     * the two sets are disjoint;
+#     * their union equals ACTION_KINDS;
+#     * no unknown string appears in either.
+# =====================================================================
+
+EXECUTOR_REQUIRED_ACTION_KINDS: frozenset[str] = frozenset({
+    ACTION_KIND_CONFIRM_SAVE,
+    ACTION_KIND_CONFIRM_DELETE,
+    ACTION_KIND_CONFIRM_SAVE_ATTACHMENT,
+    ACTION_KIND_CANCEL_PENDING,
+})
+
+NON_EXECUTOR_ACTION_KINDS: frozenset[str] = frozenset({
+    ACTION_KIND_APPLY_EDIT,
+    ACTION_KIND_APPLY_CREATE,
+    ACTION_KIND_CANCEL_DRAFT,
+})
+
+ACTION_KIND_CLASSIFICATION: Mapping[str, str] = MappingProxyType({
+    ACTION_KIND_CONFIRM_SAVE:            "executor_required",
+    ACTION_KIND_CONFIRM_DELETE:          "executor_required",
+    ACTION_KIND_CONFIRM_SAVE_ATTACHMENT: "executor_required",
+    ACTION_KIND_CANCEL_PENDING:          "executor_required",
+    ACTION_KIND_APPLY_EDIT:              "non_executor",
+    ACTION_KIND_APPLY_CREATE:            "non_executor",
+    ACTION_KIND_CANCEL_DRAFT:            "non_executor",
+})
+
+
+def _assert_action_kind_partition() -> None:
+    overlap = EXECUTOR_REQUIRED_ACTION_KINDS & NON_EXECUTOR_ACTION_KINDS
+    if overlap:
+        raise AssertionError(
+            f"action-kind partition overlaps: {sorted(overlap)}"
+        )
+    union = EXECUTOR_REQUIRED_ACTION_KINDS | NON_EXECUTOR_ACTION_KINDS
+    if union != ACTION_KINDS:
+        missing_from_partition = ACTION_KINDS - union
+        extra_in_partition = union - ACTION_KINDS
+        raise AssertionError(
+            f"action-kind partition does not cover ACTION_KINDS: "
+            f"missing={sorted(missing_from_partition)} "
+            f"extra={sorted(extra_in_partition)}"
+        )
+    unclassified = ACTION_KINDS - set(ACTION_KIND_CLASSIFICATION.keys())
+    if unclassified:
+        raise AssertionError(
+            f"ACTION_KIND_CLASSIFICATION missing: {sorted(unclassified)}"
+        )
+
+
+_assert_action_kind_partition()
+
+
+# =====================================================================
 # Runtime-readiness guard for mode==on
 # =====================================================================
 
@@ -184,14 +263,16 @@ def validate_v2_runtime_readiness(
 
     The caller should refuse to enter mode==on unless
     ``is_ready`` is True. The registry is considered ready only
-    when every ``ACTION_KIND_*`` the router can emit maps to a
-    non-None executor.
+    when every ``EXECUTOR_REQUIRED_ACTION_KINDS`` member maps to
+    a non-None executor. ``NON_EXECUTOR_ACTION_KINDS`` members
+    are handled natively by integration and do NOT need an entry
+    in the registry.
 
     Off and shadow modes do NOT need this check -- shadow never
     dispatches an executor, and off never invokes v2 at all.
     """
     missing: list[str] = []
-    for action_kind in sorted(ACTION_KINDS):
+    for action_kind in sorted(EXECUTOR_REQUIRED_ACTION_KINDS):
         if registry.get(action_kind) is None:
             missing.append(action_kind)
     return (len(missing) == 0, missing)
@@ -252,6 +333,171 @@ def _apply_focus(
     logger.warning(
         "[INTEGRATION_V2] unknown focus action %r", focus.action,
     )
+
+
+# =====================================================================
+# Native handlers for NON_EXECUTOR_ACTION_KINDS (commit 5b)
+#
+# These are pure v2 draft operations -- they touch only the
+# Redis-backed Draft store via ``vault_chat_draft`` primitives.
+# No executor lookup, no v1 code path, no external DB call.
+# Integration owns them so the readiness guard does not have to
+# demand an artificial executor for pure state transformation.
+# =====================================================================
+
+def _run_native_handler(
+    *,
+    plan,
+    snapshot:            "PolicySnapshotV2",
+    vault_id:            str,
+    session_id:          Optional[str],
+    assistant_turn_id:   str,
+    created_target_id:   Optional[str],
+) -> tuple[bool, str, Optional[str]]:
+    """Dispatch a NON_EXECUTOR action_kind to its native handler.
+
+    Returns ``(ok, telemetry_reason, created_target_id)``. The
+    third element is only meaningful for APPLY_CREATE, which may
+    mint a new draft_id that the caller then feeds to
+    SET_ON_CREATE focus.
+
+    Native handlers never raise; every failure resolves into
+    ``ok=False`` with a stable reason string.
+    """
+    from vault_chat_decision_router_v2 import (
+        ACTION_KIND_APPLY_CREATE,
+        ACTION_KIND_APPLY_EDIT,
+        ACTION_KIND_CANCEL_DRAFT,
+    )
+    kind = plan.action_kind
+    try:
+        if kind == ACTION_KIND_CANCEL_DRAFT:
+            return _native_cancel_draft(plan, vault_id)
+        if kind == ACTION_KIND_APPLY_EDIT:
+            return _native_apply_edit(
+                plan, snapshot, vault_id, assistant_turn_id,
+            )
+        if kind == ACTION_KIND_APPLY_CREATE:
+            return _native_apply_create(
+                plan, snapshot, vault_id, session_id,
+                assistant_turn_id,
+            )
+    except Exception as exc:
+        logger.exception(
+            "[INTEGRATION_V2] native_handler_uncontrolled_failure "
+            "action=%s", kind,
+        )
+        return (False, f"native_exception:{type(exc).__name__}",
+                created_target_id)
+    # Should not happen: partition asserts every action_kind is
+    # classified. Defensive branch keeps returns typed.
+    return (False, f"native_unknown_kind:{kind}", created_target_id)
+
+
+def _native_cancel_draft(
+    plan, vault_id: str,
+) -> tuple[bool, str, Optional[str]]:
+    from vault_chat_draft import cancel_draft
+    target_id = plan.target_id or ""
+    if not target_id:
+        return (False, "native_cancel_draft:missing_target_id", None)
+    removed = cancel_draft(vault_id=vault_id, draft_id=target_id)
+    if not removed:
+        # Idempotent from the user's perspective -- the draft is
+        # already gone. Report ok so the router's success focus
+        # (which typically clears any lingering matching focus)
+        # still applies. Telemetry marks the no-op explicitly.
+        return (True, "native_cancel_draft:already_gone", None)
+    return (True, "native_cancel_draft:ok", None)
+
+
+def _native_apply_edit(
+    plan, snapshot, vault_id: str, assistant_turn_id: str,
+) -> tuple[bool, str, Optional[str]]:
+    from vault_chat_draft import get_draft, store_draft
+    from vault_chat_draft_merge import merge, PatchError
+    target_id = plan.target_id or ""
+    if not target_id:
+        return (False, "native_apply_edit:missing_target_id", None)
+    draft = get_draft(vault_id, target_id)
+    if draft is None:
+        return (False, "native_apply_edit:draft_not_found", None)
+    if plan.validated_patch is None:
+        return (False, "native_apply_edit:missing_patch", None)
+    # Rebuild the patch as merge() expects a
+    # ``{field_name -> {op, value?}}`` mapping. The plan carries
+    # FieldPatchItem instances; convert without leaking values.
+    patch_dict: dict = {}
+    for field_name, item in plan.validated_patch.items():
+        entry: dict = {"op": item.op}
+        if item.value is not None:
+            entry["value"] = item.value
+        patch_dict[field_name] = entry
+    try:
+        new_draft = merge(
+            existing=draft,
+            patch=patch_dict,
+            patch_source="user_explicit",
+            patch_turn_id=assistant_turn_id or "u-native",
+        )
+    except PatchError as exc:
+        return (False, f"native_apply_edit:patch_error:{exc}", None)
+    try:
+        store_draft(new_draft)
+    except Exception:
+        logger.exception("[INTEGRATION_V2] native_apply_edit_store_failed")
+        return (False, "native_apply_edit:store_failed", None)
+    return (True, "native_apply_edit:ok", None)
+
+
+def _native_apply_create(
+    plan, snapshot, vault_id: str, session_id: Optional[str],
+    assistant_turn_id: str,
+) -> tuple[bool, str, Optional[str]]:
+    # APPLY_CREATE requires the router to have supplied a full
+    # initial-field patch. draft_kind must be derivable; today the
+    # router only creates login drafts, so DRAFT_LOGIN is the
+    # default. If a future router emits create for other kinds we
+    # must plumb draft_kind through the plan explicitly. Refuse
+    # rather than guess.
+    from vault_chat_draft import (
+        DRAFT_LOGIN, DraftField, SOURCE_USER_EXPLICIT,
+        new_draft, store_draft,
+    )
+    if plan.validated_patch is None:
+        return (False, "native_apply_create:missing_patch", None)
+    fields: dict = {}
+    for field_name, item in plan.validated_patch.items():
+        if item.op != "replace" or item.value is None:
+            # Create only accepts a replace-with-value patch; any
+            # other op has no create semantics.
+            continue
+        fields[field_name] = DraftField(
+            value=item.value,
+            source=SOURCE_USER_EXPLICIT,
+            turn_id=assistant_turn_id or "u-native",
+            at=snapshot.now,
+        )
+    if not fields:
+        return (False, "native_apply_create:empty_patch", None)
+    try:
+        draft = new_draft(
+            vault_id=vault_id, session_id=session_id,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields=fields,
+            origin_turn_id=assistant_turn_id or "u-native",
+            now=snapshot.now,
+        )
+    except Exception as exc:
+        logger.exception("[INTEGRATION_V2] native_apply_create_build_failed")
+        return (False, f"native_apply_create:build:{type(exc).__name__}",
+                None)
+    try:
+        store_draft(draft)
+    except Exception:
+        logger.exception("[INTEGRATION_V2] native_apply_create_store_failed")
+        return (False, "native_apply_create:store_failed", None)
+    return (True, "native_apply_create:ok", draft.draft_id)
 
 
 # =====================================================================
@@ -395,43 +641,54 @@ def apply_router_result_v2(
             )
 
     # -----------------------------------------------------------------
-    # Step 4: dispatch executor.
+    # Step 4: dispatch -- executor for EXECUTOR_REQUIRED kinds, or
+    # native handler for NON_EXECUTOR kinds. The partition is
+    # verified at import time; any action_kind reaching this point
+    # is in exactly one set.
     # -----------------------------------------------------------------
-    executor = executor_registry.get(plan.action_kind)
-    if executor is None:
-        return IntegrationResultV2(
-            execution_status=STATUS_INTERNAL_ERROR,
-            executed_action_kind=plan.action_kind,
-            applied_focus_update=immediate_focus,
-            reply_key=plan.failure_reply_key,
-            telemetry_reason=f"no_executor:{plan.action_kind}",
+    if plan.action_kind in NON_EXECUTOR_ACTION_KINDS:
+        executor_ok, executor_reason, created_target_id = _run_native_handler(
+            plan=plan, snapshot=snapshot,
+            vault_id=vault_id, session_id=session_id,
+            assistant_turn_id=assistant_turn_id,
+            created_target_id=created_target_id,
         )
+    else:
+        executor = executor_registry.get(plan.action_kind)
+        if executor is None:
+            return IntegrationResultV2(
+                execution_status=STATUS_INTERNAL_ERROR,
+                executed_action_kind=plan.action_kind,
+                applied_focus_update=immediate_focus,
+                reply_key=plan.failure_reply_key,
+                telemetry_reason=f"no_executor:{plan.action_kind}",
+            )
 
-    exec_kwargs = {
-        "plan":              plan,
-        "snapshot":          snapshot,
-        "key":               key,
-        "memory":            memory,
-        "vault_id":          vault_id,
-        "session_id":        session_id,
-    }
+        exec_kwargs = {
+            "plan":              plan,
+            "snapshot":          snapshot,
+            "key":               key,
+            "memory":            memory,
+            "vault_id":          vault_id,
+            "session_id":        session_id,
+        }
 
-    executor_ok = True
-    executor_reason = ""
-    try:
-        executor(**exec_kwargs)
-    except ExecutorError as exc:
-        executor_ok = False
-        executor_reason = f"executor:{exc}"
-        logger.warning(
-            "[INTEGRATION_V2] executor_controlled_failure action=%s "
-            "reason=%s",
-            plan.action_kind, executor_reason,
-        )
-    except Exception as exc:
-        executor_ok = False
-        executor_reason = f"executor_exception:{type(exc).__name__}"
-        logger.exception("[INTEGRATION_V2] executor_uncontrolled_failure")
+        executor_ok = True
+        executor_reason = ""
+        try:
+            executor(**exec_kwargs)
+        except ExecutorError as exc:
+            executor_ok = False
+            executor_reason = f"executor:{exc}"
+            logger.warning(
+                "[INTEGRATION_V2] executor_controlled_failure action=%s "
+                "reason=%s",
+                plan.action_kind, executor_reason,
+            )
+        except Exception as exc:
+            executor_ok = False
+            executor_reason = f"executor_exception:{type(exc).__name__}"
+            logger.exception("[INTEGRATION_V2] executor_uncontrolled_failure")
 
     # -----------------------------------------------------------------
     # Step 5: apply success or failure focus + return.
@@ -477,6 +734,9 @@ __all__ = [
     "STATUS_INTERNAL_ERROR",
     "STATUS_NO_EXECUTION",
     "EXECUTION_STATUSES",
+    "EXECUTOR_REQUIRED_ACTION_KINDS",
+    "NON_EXECUTOR_ACTION_KINDS",
+    "ACTION_KIND_CLASSIFICATION",
     "IntegrationResultV2",
     "ExecutorError",
     "ExecutorRegistry",

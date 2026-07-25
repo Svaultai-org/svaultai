@@ -210,19 +210,74 @@ class SuccessPathTest(unittest.TestCase):
         self.assertEqual(result.reply_key, "save_draft")
         self.assertEqual(len(counter.calls), 1)
 
-    def test_apply_edit_success_no_auth(self):
+    def test_apply_edit_success_no_auth_native_handler(self):
+        # apply_edit is NON_EXECUTOR (commit 5b): integration
+        # handles it natively via draft.merge + store_draft. The
+        # test seeds a real draft, then verifies the native path
+        # applies a patch without any executor being called.
+        import time
+        from vault_chat_draft import (
+            DRAFT_LOGIN, DraftField, SOURCE_USER_EXPLICIT,
+            get_draft, new_draft, store_draft,
+        )
+        from vault_chat_semantic_decision_v2 import FieldPatchItem
+
+        now = time.time()
+        seed = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Netflix", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=now,
+                ),
+            },
+            origin_turn_id="t0", now=now,
+        )
+        store_draft(seed)
+
+        # Build a patch that adds a username via replace op.
+        from types import MappingProxyType
+        patch = MappingProxyType({
+            "username": FieldPatchItem(op="replace",
+                                        value="alice@example.org"),
+        })
+        plan = ExecutionPlanV2(
+            action_kind=ACTION_KIND_APPLY_EDIT,
+            target_kind=TARGET_KIND_DRAFT, target_id=seed.draft_id,
+            authorization_intent=None, validated_patch=patch,
+            success_focus_update=FocusUpdate(
+                action=FOCUS_ACTION_SET,
+                kind=FOCUS_KIND_DRAFT, id=seed.draft_id,
+                assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+            ),
+            failure_focus_update=PRESERVE_FOCUS,
+            success_reply_key="apply_edit",
+            failure_reply_key="apply_edit",
+        )
+        rr = _router_execution_required(
+            plan, next_state=NEXT_STATE_APPLY_PATCH,
+        )
+        # No executor for apply_edit -- readiness contract now
+        # says apply_edit does not need one.
         counter = _ExecutorCallCounter()
         registry = vi.ExecutorRegistry(apply_edit=counter)
-        rr = _router_execution_required(
-            _plan_apply_edit(), next_state=NEXT_STATE_APPLY_PATCH,
-        )
         result = vi.apply_router_result_v2(
-            router_result=rr, snapshot=_snap(),
+            router_result=rr, snapshot=_snap(now=now),
             executor_registry=registry,
+            assistant_turn_id="a-1",
         )
         self.assertEqual(result.execution_status, vi.STATUS_SUCCESS)
         self.assertEqual(
             result.executed_action_kind, ACTION_KIND_APPLY_EDIT,
+        )
+        # The fake executor was NOT called -- native handler ran.
+        self.assertEqual(len(counter.calls), 0)
+        # The draft was actually mutated.
+        updated = get_draft(VAULT, seed.draft_id)
+        self.assertIsNotNone(updated)
+        self.assertEqual(
+            updated.fields["username"].value, "alice@example.org",
         )
 
 
@@ -377,12 +432,45 @@ class InternalErrorPathTest(unittest.TestCase):
     def tearDown(self):
         reset_chat_state_backend_for_tests()
 
-    def test_no_executor_for_action_kind_returns_internal_error(self):
-        # Plan has no auth so mint/consume are skipped; go straight
-        # to executor dispatch which finds no callable.
+    def test_no_executor_for_executor_required_kind_returns_internal_error(self):
+        # cancel_pending is EXECUTOR_REQUIRED. With no executor
+        # mapped and no auth (mint/consume skipped), integration
+        # goes straight to executor dispatch which finds no
+        # callable -> INTERNAL_ERROR.
+        from vault_chat_decision_router_v2 import (
+            ACTION_KIND_CANCEL_PENDING,
+            NEXT_STATE_APPLY_CANCEL,
+        )
+        from vault_chat_semantic_decision_v2 import TARGET_KIND_PENDING_ACTION
+        plan = ExecutionPlanV2(
+            action_kind=ACTION_KIND_CANCEL_PENDING,
+            target_kind=TARGET_KIND_PENDING_ACTION, target_id="p-1",
+            authorization_intent=None, validated_patch=None,
+            success_focus_update=PRESERVE_FOCUS,
+            failure_focus_update=PRESERVE_FOCUS,
+            success_reply_key="cancel_pending",
+            failure_reply_key="cancel_pending",
+        )
+        rr = _router_execution_required(plan, next_state=NEXT_STATE_APPLY_CANCEL)
+        result = vi.apply_router_result_v2(
+            router_result=rr, snapshot=_snap(),
+            executor_registry=vi.ExecutorRegistry(),  # empty
+        )
+        self.assertEqual(result.execution_status, vi.STATUS_INTERNAL_ERROR)
+        self.assertTrue(result.telemetry_reason.startswith("no_executor:"))
+
+    def test_non_executor_kind_handled_natively_without_executor(self):
+        # cancel_draft is NON_EXECUTOR: integration MUST run its
+        # native handler even when no executor is registered.
+        # For an already-absent draft, the handler treats it as
+        # idempotent SUCCESS (no-op).
+        from vault_chat_decision_router_v2 import (
+            ACTION_KIND_CANCEL_DRAFT,
+            NEXT_STATE_APPLY_CANCEL,
+        )
         plan = ExecutionPlanV2(
             action_kind=ACTION_KIND_CANCEL_DRAFT,
-            target_kind=TARGET_KIND_DRAFT, target_id="d-1",
+            target_kind=TARGET_KIND_DRAFT, target_id="d-absent",
             authorization_intent=None, validated_patch=None,
             success_focus_update=PRESERVE_FOCUS,
             failure_focus_update=PRESERVE_FOCUS,
@@ -392,10 +480,12 @@ class InternalErrorPathTest(unittest.TestCase):
         rr = _router_execution_required(plan, next_state=NEXT_STATE_APPLY_CANCEL)
         result = vi.apply_router_result_v2(
             router_result=rr, snapshot=_snap(),
-            executor_registry=vi.ExecutorRegistry(),  # empty
+            executor_registry=vi.ExecutorRegistry(),  # empty on purpose
         )
-        self.assertEqual(result.execution_status, vi.STATUS_INTERNAL_ERROR)
-        self.assertTrue(result.telemetry_reason.startswith("no_executor:"))
+        self.assertEqual(result.execution_status, vi.STATUS_SUCCESS)
+        self.assertEqual(
+            result.executed_action_kind, ACTION_KIND_CANCEL_DRAFT,
+        )
 
 
 # =====================================================================
@@ -451,11 +541,24 @@ class FocusPersistenceTest(unittest.TestCase):
             focus.assistant_act, FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
         )
 
-    def test_set_on_create_uses_created_target_id_override(self):
+    def test_set_on_create_uses_native_minted_target_id(self):
+        # apply_create is NON_EXECUTOR (commit 5b). The native
+        # handler creates a new draft (minting its own draft_id)
+        # and returns that id, which apply_router_result_v2 then
+        # threads into SET_ON_CREATE focus. The `created_target_id`
+        # kwarg passed to apply_router_result_v2 is overridden by
+        # the native mint -- the freshly-minted draft is the
+        # source of truth.
+        import time
+        from vault_chat_semantic_decision_v2 import FieldPatchItem
+        now = time.time()
+        patch = MappingProxyType({
+            "service": FieldPatchItem(op="replace", value="Netflix"),
+        })
         plan = ExecutionPlanV2(
             action_kind=ACTION_KIND_APPLY_CREATE,
             target_kind=TARGET_KIND_DRAFT, target_id=None,
-            authorization_intent=None, validated_patch=None,
+            authorization_intent=None, validated_patch=patch,
             success_focus_update=FocusUpdate(
                 action=FOCUS_ACTION_SET_ON_CREATE,
                 kind=FOCUS_KIND_DRAFT,
@@ -467,17 +570,29 @@ class FocusPersistenceTest(unittest.TestCase):
         )
         rr = _router_execution_required(plan,
                                          next_state=NEXT_STATE_APPLY_CREATE)
+        # Even though an "apply_create" executor is registered, the
+        # NON_EXECUTOR partition routes to the native handler.
         counter = _ExecutorCallCounter()
         registry = vi.ExecutorRegistry(apply_create=counter)
         vi.apply_router_result_v2(
-            router_result=rr, snapshot=_snap(),
+            router_result=rr, snapshot=_snap(now=now),
             executor_registry=registry,
             assistant_turn_id="a-1",
-            created_target_id="d-FRESH",
         )
+        # Executor was NOT called.
+        self.assertEqual(len(counter.calls), 0)
+        # Focus was stamped on the freshly-minted draft.
         focus = read_focus(vault_id=VAULT, session_id=SESSION)
         self.assertIsNotNone(focus)
-        self.assertEqual(focus.id, "d-FRESH")
+        self.assertEqual(focus.kind, FOCUS_KIND_DRAFT)
+        # The id is native-minted; it's a hex string, not our
+        # sentinel. Non-empty and reasonably long.
+        self.assertTrue(len(focus.id) >= 16)
+        # The draft actually exists in the store.
+        from vault_chat_draft import get_draft
+        got = get_draft(VAULT, focus.id)
+        self.assertIsNotNone(got)
+        self.assertEqual(got.fields["service"].value, "Netflix")
 
 
 class IntegrationResultShapeTest(unittest.TestCase):
