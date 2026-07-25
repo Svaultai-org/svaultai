@@ -93,6 +93,15 @@ CHAT_PATH_AI_PLANNER_DIRECT       = "ai_planner_direct"
 CHAT_PATH_AI_PLANNER_FALLBACK     = "ai_planner_fallback"
 CHAT_PATH_ENCRYPTED_REPLY         = "encrypted_reply"
 CHAT_PATH_UNKNOWN                 = "unknown"
+# 2026-07-27 deterministic-router chat paths. Emitted by
+# vault_chat_deterministic_router when it fully resolves a chat turn
+# before the OpenAI planner runs. The four values are a closed set;
+# any router branch that does not fit falls through with no header
+# change and the existing planner tags it.
+CHAT_PATH_DETERMINISTIC_FOLLOWUP          = "deterministic_followup"
+CHAT_PATH_DETERMINISTIC_NAMED_OBJECT      = "deterministic_named_object"
+CHAT_PATH_DETERMINISTIC_NAMED_AMBIGUOUS   = "deterministic_named_ambiguous"
+CHAT_PATH_DETERMINISTIC_CREDENTIAL_CREATE = "deterministic_credential_create"
 
 
 def _release_sha() -> str:
@@ -252,4 +261,8 @@ __all__ = [
     "CHAT_PATH_AI_PLANNER_FALLBACK",
     "CHAT_PATH_ENCRYPTED_REPLY",
     "CHAT_PATH_UNKNOWN",
+    "CHAT_PATH_DETERMINISTIC_FOLLOWUP",
+    "CHAT_PATH_DETERMINISTIC_NAMED_OBJECT",
+    "CHAT_PATH_DETERMINISTIC_NAMED_AMBIGUOUS",
+    "CHAT_PATH_DETERMINISTIC_CREDENTIAL_CREATE",
 ]
