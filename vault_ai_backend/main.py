@@ -88,6 +88,43 @@ from username_policy import (
     resolve_username_policy,
     tighten_policy as tighten_username_policy,
 )
+# Bug 1 + Bug 2 (2026-07-25 deep fix): shared modules that give the
+# chat handler a deterministic credential-command extractor, a
+# pending-draft state machine, and an exact-name resolver that
+# tokenizes user phrases rather than trying whole-string equality.
+# Kept as top-level imports so any handler on the /chat path can
+# call them without a lazy import that could silently no-op inside
+# a try/except.
+from vault_credential_command import (
+    ACTION_CANCEL as _CMD_CANCEL,
+    ACTION_CONFIRM_SAVE as _CMD_CONFIRM_SAVE,
+    ACTION_CREATE as _CMD_CREATE,
+    ACTION_EDIT_PENDING as _CMD_EDIT_PENDING,
+    ACTION_REGENERATE as _CMD_REGENERATE,
+    ACTION_REPLACE_DRAFT as _CMD_REPLACE_DRAFT,
+    ACTION_SHOW_DRAFT as _CMD_SHOW_DRAFT,
+    ACTION_UNRELATED as _CMD_UNRELATED,
+    FIELD_EMAIL as _FIELD_EMAIL,
+    FIELD_PASSWORD as _FIELD_PASSWORD,
+    FIELD_USERNAME as _FIELD_USERNAME,
+    extract_credential_command as _extract_credential_command,
+    extract_explicit_fields as _extract_explicit_fields,
+)
+from vault_pending_draft_state import (
+    OUTCOME_CANCELLED as _DS_CANCELLED,
+    OUTCOME_NO_ACTION as _DS_NO_ACTION,
+    OUTCOME_REPLACED as _DS_REPLACED,
+    OUTCOME_SAVE_NOW as _DS_SAVE_NOW,
+    OUTCOME_SHOWN as _DS_SHOWN,
+    OUTCOME_UPDATED as _DS_UPDATED,
+    apply_to_pending_draft as _apply_to_pending_draft,
+)
+from vault_exact_name_resolver import (
+    STATUS_AMBIGUOUS as _RESOLVER_AMBIGUOUS,
+    STATUS_HIT as _RESOLVER_HIT,
+    STATUS_MISS as _RESOLVER_MISS,
+    resolve_saved_name as _resolve_saved_name,
+)
 try:
     import PyPDF2
 except Exception:
@@ -6439,24 +6476,77 @@ def retrieve_saved_asset_by_exact_name(
             pass
 
 
+def _fetch_all_saved_names_for_vault(
+    vault_id: str, limit: int,
+) -> list[dict]:
+    """Bug 1 (2026-07-25 deep fix): return completed uploaded_files
+    for this vault that carry a saved_name. Vault-scoped by primary
+    predicate. Used by the exact-name resolver to test each saved_name
+    as a word-boundary substring of the user's phrase (rather than
+    the old approach of testing the whole phrase for exact equality
+    against a single saved_name, which misses "show me naim id" vs
+    "naim id"). Bounded by ``limit`` so a very large vault does not
+    OOM the chat handler.
+    """
+    if not vault_id:
+        return []
+    try:
+        conn = get_db()
+    except Exception:
+        return []
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            SELECT id, file_name, content_type, file_size,
+                   saved_name, asset_type, created_at
+            FROM uploaded_files
+            WHERE vault_id = %s
+              AND saved_name IS NOT NULL
+              AND saved_name <> ''
+              AND upload_status = 'complete'
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (vault_id, int(max(1, limit))),
+        )
+        return cursor.fetchall() or []
+    except Exception:
+        logger.exception(
+            "[EXACT-NAME] fetch failed vault=%s",
+            (vault_id or "")[:8] + "...",
+        )
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _try_exact_saved_name_early_return(
     vault_id: str,
     decrypted_message: str,
     intent_data: dict,
 ) -> Optional[dict]:
-    """Bug 1 (2026-07-25): probe candidate asset queries against the
-    exact-normalized ``uploaded_files.saved_name`` index. Returns the
-    matching row or ``None``. Callers use this to intercept requests
-    that the LLM misroutes to family/tag/semantic handlers when the
-    user actually named a specific saved item (e.g. asking for a
-    saved item literally named ``Naim ID`` while the LLM classifies
-    the phrase as a family-label query about identity documents).
+    """Bug 1 (2026-07-25 deep fix): resolve the user's phrase to a
+    specific saved item BEFORE the LLM's family/tag routing runs.
+
+    Delegates to ``vault_exact_name_resolver.resolve_saved_name``,
+    which fetches the vault's completed saved names (bounded scan)
+    and tests each one as a word-boundary substring of the normalized
+    phrase. Only returns a match when it is unambiguous — multiple
+    same-length matches return None here so the caller can fall
+    through to a broader search or ask a clarifying question.
+
+    Backward-compatible signature: same return type (row dict or
+    None) as the pre-2026-07-25 implementation. Never raises.
     """
     if not vault_id:
         return None
     candidates: list[str] = []
     for key in (
-        "asset_name", "file_name", "tag",
+        "asset_name", "file_name",
         "memory_query", "anchor_text", "query",
     ):
         try:
@@ -6465,17 +6555,23 @@ def _try_exact_saved_name_early_return(
             raw = None
         if isinstance(raw, str) and raw.strip():
             candidates.append(raw.strip())
-    if isinstance(decrypted_message, str) and decrypted_message.strip():
-        candidates.append(decrypted_message.strip())
-    seen: set[str] = set()
-    for cand in candidates:
-        key = _normalize_asset_lookup_key(cand)
-        if not key or key == GENERAL_SENTINEL or key in seen:
-            continue
-        seen.add(key)
-        hit = retrieve_saved_asset_by_exact_name(vault_id, cand)
-        if hit is not None:
-            return hit
+    try:
+        result = _resolve_saved_name(
+            vault_id=vault_id,
+            decrypted_message=decrypted_message,
+            fetch_saved_names=_fetch_all_saved_names_for_vault,
+            normalize_key=_normalize_asset_lookup_key,
+            exact_match_lookup=retrieve_saved_asset_by_exact_name,
+            intent_candidates=candidates,
+        )
+    except Exception:
+        logger.exception(
+            "[EXACT-NAME] resolve failed vault=%s",
+            (vault_id or "")[:8] + "...",
+        )
+        return None
+    if result.status == _RESOLVER_HIT:
+        return result.hit
     return None
 
 
@@ -14400,6 +14496,170 @@ async def chat_endpoint(
             )
             return encrypted_reply(_crypto_result["message"])
 
+        # -----------------------------------------------------------
+        # Bug 2 (2026-07-25 deep fix): pending-draft state machine.
+        #
+        # BEFORE the LLM intent classifier can misroute a "change the
+        # username to X" follow-up to ``generated_login_repair`` (which
+        # blindly regenerates and auto-saves), consult the deterministic
+        # state machine. If a live ``pending_login_draft`` exists, the
+        # machine classifies the message as edit / save / cancel /
+        # regenerate / show / replace / unrelated and applies the update
+        # to the draft in memory. Only ``unrelated`` falls through to
+        # the existing cascade.
+        #
+        # Never fires when no draft exists — pure fall-through in that
+        # case. Never persists to the DB by itself: the caller performs
+        # the actual save via the existing save path so the audit,
+        # storage-limit, and last_generated_login bookkeeping stay in
+        # one place.
+        try:
+            _sm_draft = memory.get("pending_login_draft")
+        except Exception:
+            _sm_draft = None
+        if isinstance(_sm_draft, dict) and _sm_draft.get("service"):
+            try:
+                _sm_outcome = _apply_to_pending_draft(
+                    user_message=decrypted_message or "",
+                    draft=dict(_sm_draft),
+                    generate_password=generate_strong_password,
+                    generate_username=None,
+                )
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] draft_state_machine_failed vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
+                _sm_outcome = None
+
+            if _sm_outcome is not None:
+                _outcome_kind = _sm_outcome.kind
+
+                if _outcome_kind == _DS_UPDATED:
+                    # Draft mutated (explicit field edit or password
+                    # regen). Persist to memory, reply, do NOT save.
+                    memory["pending_login_draft"] = _sm_outcome.draft
+                    logger.info(
+                        "[CHAT-TRACE] draft_state_updated vault=%s "
+                        "service=%s changed=%s",
+                        (vault_id or "")[:8] + "...",
+                        str(_sm_outcome.draft.get("service", ""))[:16],
+                        ",".join(sorted(_sm_outcome.changed_fields)),
+                    )
+                    return encrypted_reply(_sm_outcome.reply_text)
+
+                if _outcome_kind == _DS_SHOWN:
+                    return encrypted_reply(_sm_outcome.reply_text)
+
+                if _outcome_kind == _DS_CANCELLED:
+                    try:
+                        memory.pop("pending_login_draft", None)
+                    except Exception:
+                        pass
+                    try:
+                        from vault_active_context import (
+                            clear_active_context as _clear_active_ctx_sm,
+                        )
+                        _clear_active_ctx_sm(vault_id)
+                    except Exception:
+                        pass
+                    logger.info(
+                        "[CHAT-TRACE] draft_state_cancelled vault=%s",
+                        (vault_id or "")[:8] + "...",
+                    )
+                    return encrypted_reply(_sm_outcome.reply_text)
+
+                if _outcome_kind == _DS_REPLACED:
+                    try:
+                        memory.pop("pending_login_draft", None)
+                    except Exception:
+                        pass
+                    try:
+                        from vault_active_context import (
+                            clear_active_context as _clear_active_ctx_sm,
+                        )
+                        _clear_active_ctx_sm(vault_id)
+                    except Exception:
+                        pass
+                    return encrypted_reply(_sm_outcome.reply_text)
+
+                if _outcome_kind == _DS_SAVE_NOW:
+                    # Persist the pending draft NOW. Uses the same save
+                    # path as site A/B so the audit log, storage-limit
+                    # gate, and last_generated_login bookkeeping run.
+                    _sm_service = str(_sm_draft.get("service") or "")
+                    _sm_password = str(_sm_draft.get("password") or "")
+                    _sm_opts = list(
+                        _sm_draft.get("username_options") or []
+                    )
+                    _sm_username = _sm_opts[0] if _sm_opts else None
+                    _sm_email_required = bool(
+                        _sm_draft.get("policy_email_required")
+                    )
+                    if (
+                        _sm_email_required
+                        and not _sm_draft.get("existing_email")
+                        and not _sm_draft.get("explicit_username_supplied")
+                    ):
+                        return encrypted_reply(
+                            f"{_sm_service.title()} needs an email "
+                            "address as the username — send me the "
+                            "email you want to use and I'll save it "
+                            "with this password."
+                        )
+                    _sm_new_fields: dict = {"password": _sm_password}
+                    if _sm_username:
+                        _sm_new_fields["username"] = _sm_username
+                    try:
+                        save_secret_tool(
+                            vault_id,
+                            {
+                                "secret_type": "login",
+                                "service": _sm_service,
+                                "fields": _sm_new_fields,
+                            },
+                            key,
+                            generated=True,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[CHAT-DEBUG] draft_state_save_failed "
+                            "vault=%s",
+                            (vault_id or "")[:8] + "...",
+                        )
+                        return encrypted_reply(
+                            f"I couldn't save the {_sm_service.title()} "
+                            "login right now. Try again in a moment."
+                        )
+                    try:
+                        memory.pop("pending_login_draft", None)
+                    except Exception:
+                        pass
+                    try:
+                        from vault_active_context import (
+                            clear_active_context as _clear_active_ctx_sm,
+                        )
+                        _clear_active_ctx_sm(vault_id)
+                    except Exception:
+                        pass
+                    memory["last_generated_login"] = {
+                        "service": _sm_service,
+                        "generated_fields": list(_sm_new_fields.keys()),
+                        "ts": int(time.time()),
+                    }
+                    logger.info(
+                        "[CHAT-TRACE] draft_state_saved vault=%s "
+                        "service=%s explicit=%s",
+                        (vault_id or "")[:8] + "...",
+                        _sm_service[:16],
+                        bool(_sm_draft.get("explicit_username_supplied")),
+                    )
+                    return encrypted_reply(
+                        f"Saved your {_sm_service.title()} login to "
+                        "your vault \U0001F510"
+                    )
+
+                # OUTCOME_NO_ACTION — fall through to existing cascade.
 
         try:
             _draft = memory.get("pending_login_draft")
@@ -15207,16 +15467,32 @@ async def chat_endpoint(
             new_password = generate_strong_password()
             resolved_policy: Optional[UsernamePolicy] = None
             username_options: list[str] = []
-            # Bug 2 (2026-07-25): honor an explicit user-supplied
-            # username/email BEFORE any generation. Users saying
-            # "create a Netflix login with my email X@Y.com" must not
-            # have their supplied email replaced by a generated
-            # username. Email extraction is the safe, unambiguous
-            # signal; free-form username phrasing is deferred to a
-            # future extension.
-            _explicit_supplied_username = _extract_explicit_email(
-                decrypted_message
+            # Bug 2 (2026-07-25 deep fix): honor ANY user-supplied
+            # username/email/password BEFORE generation. Uses the
+            # shared credential-command extractor so email, arbitrary
+            # usernames (chosen2026, chosen.abdullahi, cobalt-user-21),
+            # quoted values, and field:value syntax are all covered
+            # from one code path. Previous email-only shortcut left a
+            # gap: "create a Netflix login and use chosen2026 as the
+            # username" would ignore the supplied username.
+            _cmd = _extract_credential_command(
+                decrypted_message or "",
+                has_pending_draft=False,
             )
+            _explicit_username_value = (
+                _cmd.explicit_fields.get(_FIELD_USERNAME)
+                or _cmd.explicit_fields.get(_FIELD_EMAIL)
+            )
+            _explicit_password_value = _cmd.explicit_fields.get(
+                _FIELD_PASSWORD
+            )
+            # Kept for legacy field name references below.
+            _explicit_supplied_username = _explicit_username_value
+
+            # If the user supplied a password, respect it. Password
+            # generation only fires when the user did NOT provide one.
+            if _explicit_password_value:
+                new_password = _explicit_password_value
 
             if _explicit_supplied_username:
                 # Skip generation and policy resolution entirely; the
@@ -15438,6 +15714,99 @@ async def chat_endpoint(
                 f"last_gen={memory.get('last_generated_login')!r}",
                 flush=True,
             )
+            # Bug 2 (2026-07-25 deep fix): before running the LLM's
+            # auto-save regeneration, check whether the user actually
+            # supplied an explicit replacement value. The classifier's
+            # prompt at main.py:1322 literally lists "change the
+            # username" as an example that MUST route here — so a
+            # message like "change the username to be <address>"
+            # lands in this handler with a supplied email that the
+            # legacy code path discarded. When explicit fields are
+            # present, we convert the request into a pending-draft
+            # edit + save-confirmation flow instead of persisting
+            # directly. The pre-cascade state machine catches most of
+            # these upstream (when a live draft already exists); this
+            # branch handles the edge case where the classifier
+            # inferred a repair from ``last_generated_login`` alone.
+            _repair_cmd = _extract_credential_command(
+                decrypted_message or "",
+                has_pending_draft=False,
+            )
+            _repair_username_value = (
+                _repair_cmd.explicit_fields.get(_FIELD_USERNAME)
+                or _repair_cmd.explicit_fields.get(_FIELD_EMAIL)
+            )
+            _repair_password_value = _repair_cmd.explicit_fields.get(
+                _FIELD_PASSWORD
+            )
+            if _repair_username_value or _repair_password_value:
+                _last_gen = memory.get("last_generated_login") or {}
+                _repair_service = (
+                    service
+                    if service != "general"
+                    else _normalize_service_name(
+                        _last_gen.get("service") or "",
+                    )
+                )
+                if not _repair_service or _repair_service == "general":
+                    return encrypted_reply(
+                        "Which login should I update? Tell me the "
+                        "service."
+                    )
+                _repair_new_password = (
+                    _repair_password_value
+                    or str(_last_gen.get("last_password") or "")
+                    or generate_strong_password()
+                )
+                _repair_username_opts: list[str] = []
+                if _repair_username_value:
+                    _repair_username_opts = [_repair_username_value]
+                memory["pending_login_draft"] = {
+                    "service": _repair_service,
+                    "username_options": list(_repair_username_opts),
+                    "password": _repair_new_password,
+                    "policy_email_required": False,
+                    "has_existing_username": False,
+                    "has_existing_email": False,
+                    "existing_username": "",
+                    "existing_email": "",
+                    "explicit_username_supplied": bool(
+                        _repair_username_value
+                    ),
+                    "ts": int(time.time()),
+                }
+                try:
+                    from vault_active_context import (
+                        set_active_context as _set_ctx_repair,
+                        CONTEXT_CREDENTIAL_DRAFT as _CTX_REPAIR_DRAFT,
+                    )
+                    _set_ctx_repair(vault_id, _CTX_REPAIR_DRAFT)
+                except Exception:
+                    pass
+                _repair_lines: list[str] = [
+                    f"Updated the {_repair_service.title()} login draft."
+                ]
+                _repair_lines.append("")
+                if _repair_username_value:
+                    _repair_lines.append(
+                        f"Username: {_repair_username_value}"
+                    )
+                _repair_lines.append(f"Password: {_repair_new_password}")
+                _repair_lines.append("")
+                _repair_lines.append(
+                    "Say \"save it\" when you want me to store it."
+                )
+                logger.info(
+                    "[CHAT-TRACE] generated_login_repair_became_draft "
+                    "vault=%s service=%s explicit_username=%s "
+                    "explicit_password=%s",
+                    (vault_id or "")[:8] + "...",
+                    _repair_service[:16],
+                    bool(_repair_username_value),
+                    bool(_repair_password_value),
+                )
+                return encrypted_reply("\n".join(_repair_lines))
+
             raw_fields = intent_data.get("fields_to_regenerate") or []
             if not isinstance(raw_fields, list):
                 raw_fields = []
