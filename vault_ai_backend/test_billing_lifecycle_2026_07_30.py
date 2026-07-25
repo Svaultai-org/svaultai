@@ -966,5 +966,441 @@ class ReadPathsRemainUnguardedTest(unittest.TestCase):
         self.assertNotIn("has_active_subscription", body)
 
 
+# ---------------------------------------------------------------------------
+# Pre-deployment focused test #1 — multi-block recovery quantity
+# ---------------------------------------------------------------------------
+#
+# Delayed payment recovery must restore the exact block quantity from
+# the Stripe invoice line item. Bug pattern to catch: any place the
+# handler treats "1 block" as a default or ignores the quantity.
+#   1 block   =  50 GB
+#   2 blocks  = 100 GB
+#   5 blocks  = 250 GB
+# 100 blocks  =   5 TB
+# For each, block_count MUST equal the invoice-line quantity exactly
+# and purchased_bytes MUST equal quantity * 53_687_091_200 exactly.
+# ---------------------------------------------------------------------------
+
+class MultiBlockRecoveryExactQuantityTest(unittest.TestCase):
+    """The audit's Bug #1 fix depends on
+    ``_extract_block_quantity_from_invoice`` returning EXACTLY the
+    line-item quantity and ``_handle_invoice_payment_succeeded``
+    writing that quantity verbatim into ``block_count`` and
+    ``block_count * 50GB`` into ``purchased_bytes``. This test
+    exercises the whole path with four representative quantities."""
+
+    _BLOCK_BYTES = 53_687_091_200  # 50 GB — must match billing.block_bytes()
+
+    def _run_recovery(self, invoice_blocks, prior_status="expired"):
+        import stripe_service as ss
+        rows = {
+            "SELECT account_id FROM stripe_customers":
+                [{"account_id": ACCOUNT_A}],
+            "SELECT status, block_count, purchased_bytes":
+                [{"status": prior_status, "block_count": 0,
+                  "purchased_bytes": 0}],
+        }
+        conn = _FakeConn(rows)
+        cur = conn.cursor()
+        prev = _billing_setup_env()
+        try:
+            with mock.patch(
+                "vault_billing_notifications.notify_payment_recovered",
+                side_effect=lambda *a, **k: None,
+            ):
+                account_id = ss._handle_invoice_payment_succeeded(
+                    _fake_invoice_paid(blocks=invoice_blocks),
+                    cur,
+                )
+        finally:
+            _restore_env(prev)
+        return account_id, cur
+
+    def _restore_params(self, cur):
+        """Locate the restore UPDATE and return its bound params.
+        Raises AssertionError if no restore UPDATE was issued (that
+        would itself be a recovery-bug regression)."""
+        for sql, params in cur.executed:
+            if ("UPDATE account_subscriptions" in sql
+                    and "block_count" in sql
+                    and "'active'" in sql):
+                return sql, params
+        raise AssertionError(
+            "no restore UPDATE fired — recovery-bug regression"
+        )
+
+    def test_extractor_returns_exact_quantity_1(self):
+        import stripe_service as ss
+        prev = _billing_setup_env()
+        try:
+            invoice = _fake_invoice_paid(blocks=1)["data"]["object"]
+            self.assertEqual(
+                ss._extract_block_quantity_from_invoice(invoice), 1,
+            )
+        finally:
+            _restore_env(prev)
+
+    def test_extractor_returns_exact_quantity_2(self):
+        import stripe_service as ss
+        prev = _billing_setup_env()
+        try:
+            invoice = _fake_invoice_paid(blocks=2)["data"]["object"]
+            self.assertEqual(
+                ss._extract_block_quantity_from_invoice(invoice), 2,
+            )
+        finally:
+            _restore_env(prev)
+
+    def test_extractor_returns_exact_quantity_5(self):
+        import stripe_service as ss
+        prev = _billing_setup_env()
+        try:
+            invoice = _fake_invoice_paid(blocks=5)["data"]["object"]
+            self.assertEqual(
+                ss._extract_block_quantity_from_invoice(invoice), 5,
+            )
+        finally:
+            _restore_env(prev)
+
+    def test_extractor_returns_exact_quantity_100(self):
+        import stripe_service as ss
+        prev = _billing_setup_env()
+        try:
+            invoice = _fake_invoice_paid(blocks=100)["data"]["object"]
+            self.assertEqual(
+                ss._extract_block_quantity_from_invoice(invoice), 100,
+            )
+        finally:
+            _restore_env(prev)
+
+    def test_recovery_restores_exact_1_block_50gb(self):
+        _acct, cur = self._run_recovery(invoice_blocks=1)
+        _sql, params = self._restore_params(cur)
+        self.assertEqual(params[0], 1,
+                         "block_count must be exactly 1")
+        self.assertEqual(params[1], 1 * self._BLOCK_BYTES,
+                         "purchased_bytes must be exactly 50 GB")
+        self.assertEqual(params[-1], ACCOUNT_A)
+
+    def test_recovery_restores_exact_2_blocks_100gb(self):
+        _acct, cur = self._run_recovery(invoice_blocks=2)
+        _sql, params = self._restore_params(cur)
+        self.assertEqual(params[0], 2,
+                         "block_count must be exactly 2")
+        self.assertEqual(params[1], 2 * self._BLOCK_BYTES,
+                         "purchased_bytes must be exactly 100 GB")
+
+    def test_recovery_restores_exact_5_blocks_250gb(self):
+        _acct, cur = self._run_recovery(invoice_blocks=5)
+        _sql, params = self._restore_params(cur)
+        self.assertEqual(params[0], 5,
+                         "block_count must be exactly 5")
+        self.assertEqual(params[1], 5 * self._BLOCK_BYTES,
+                         "purchased_bytes must be exactly 250 GB")
+
+    def test_recovery_restores_exact_100_blocks_5tb(self):
+        _acct, cur = self._run_recovery(invoice_blocks=100)
+        _sql, params = self._restore_params(cur)
+        self.assertEqual(params[0], 100,
+                         "block_count must be exactly 100")
+        self.assertEqual(params[1], 100 * self._BLOCK_BYTES,
+                         "purchased_bytes must be exactly 5 TB "
+                         "(100 * 50 GB)")
+        # Sanity: 5 TB in bytes.
+        self.assertEqual(params[1], 5_368_709_120_000)
+
+    def test_subscription_events_row_carries_exact_to_block_count(self):
+        # The audit trail row (subscription_events) is what support
+        # uses to confirm what a user was granted. It MUST also record
+        # the exact restored quantity, not the pre-existing 0.
+        _acct, cur = self._run_recovery(invoice_blocks=100)
+        found = False
+        for sql, params in cur.executed:
+            if ("INSERT INTO subscription_events" in sql
+                    and "'renewed'" in sql):
+                found = True
+                # Ordered params in the INSERT:
+                #   (account_id, source_event_id, from_block_count,
+                #    to_block_count, from_purchased_bytes,
+                #    to_purchased_bytes, payload_jsonb)
+                # from_block_count = prior (0), to_block_count = 100.
+                self.assertEqual(params[2], 0,
+                                 "from_block_count must equal prior")
+                self.assertEqual(params[3], 100,
+                                 "to_block_count must equal restored")
+                self.assertEqual(params[5], 100 * self._BLOCK_BYTES,
+                                 "to_purchased_bytes exact")
+        self.assertTrue(
+            found, "renewed audit row must be inserted",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pre-deployment focused test #2 — duplicate webhook idempotency
+# ---------------------------------------------------------------------------
+#
+# Stripe delivers webhooks at-least-once. Delivering the same
+# invoice.payment_succeeded event twice must not double-grant
+# storage. Idempotency is enforced by the UNIQUE (source,
+# source_event_id) constraint on provider_event_log — the second
+# INSERT raises psycopg2.errors.UniqueViolation and the dispatcher
+# returns outcome='ignored_duplicate' WITHOUT invoking the handler.
+# ---------------------------------------------------------------------------
+
+class _FakeConnWithEventLogUnique:
+    """Fake connection whose cursor rejects a second INSERT with the
+    same event_id on ``provider_event_log`` — the exact behavior of
+    the real UNIQUE (source, source_event_id) constraint. Everything
+    else executes normally against a shared per-cursor rows fixture.
+
+    A single instance is reused across dispatch_webhook_event calls
+    (dispatch_webhook_event does one get_db() per call), so the
+    seen-events set persists across calls just like the real DB."""
+
+    def __init__(self, rows_by_query_fragment):
+        self._rows = rows_by_query_fragment
+        self._seen_event_ids: set[str] = set()
+        self.commits = 0
+        self.rollbacks = 0
+        self.cursors: list = []
+        self.handler_reached_count = 0
+
+    def cursor(self, cursor_factory=None):
+        cur = _EventLogAwareCursor(
+            self._rows, self._seen_event_ids, self,
+        )
+        self.cursors.append(cur)
+        return cur
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        pass
+
+
+class _EventLogAwareCursor(_FakeCursor):
+    """_FakeCursor that raises UniqueViolation on repeated event_id
+    INSERTs. Also tracks whenever a handler-side SQL runs so the
+    test can assert the handler was NEVER invoked for the duplicate."""
+
+    def __init__(self, rows, seen_event_ids, owner_conn):
+        super().__init__(rows)
+        self._seen_event_ids = seen_event_ids
+        self._owner_conn = owner_conn
+
+    def execute(self, sql, params=()):
+        # Detect the provider_event_log INSERT specifically.
+        if "INSERT INTO provider_event_log" in sql:
+            event_id = str(params[0]) if params else ""
+            if event_id and event_id in self._seen_event_ids:
+                from psycopg2 import errors as _pg_errors
+                # Raise the same class the dispatcher catches.
+                raise _pg_errors.UniqueViolation(
+                    "duplicate key value violates unique constraint "
+                    "\"provider_event_log_source_source_event_id_key\"",
+                )
+            if event_id:
+                self._seen_event_ids.add(event_id)
+        # Track any handler-side SQL. The handler for
+        # invoice.payment_succeeded issues either
+        # "SELECT account_id FROM stripe_customers" or
+        # "UPDATE account_subscriptions" — both are unambiguous
+        # signals the handler ran.
+        if ("SELECT account_id FROM stripe_customers" in sql
+                or "UPDATE account_subscriptions" in sql
+                or "INSERT INTO subscription_events" in sql):
+            self._owner_conn.handler_reached_count += 1
+        return super().execute(sql, params)
+
+
+class DuplicateWebhookIdempotencyTest(unittest.TestCase):
+    """Stripe's at-least-once delivery guarantee means the same
+    event id can arrive N times. The dispatcher must apply it
+    exactly once and no-op on every subsequent delivery."""
+
+    def _paid_event(self, blocks=2):
+        # Give this test its own event id so it can't collide with
+        # any other test's fake webhook state.
+        ev = _fake_invoice_paid(blocks=blocks)
+        ev["id"] = "evt_test_dup_idempotency"
+        ev["type"] = "invoice.payment_succeeded"
+        ev["livemode"] = False
+        return ev
+
+    def _dispatch_twice(self, event, rows):
+        import stripe_service as ss
+        shared_conn = _FakeConnWithEventLogUnique(rows)
+        prev = _billing_setup_env()
+        try:
+            with mock.patch(
+                "stripe_service.get_db", return_value=shared_conn,
+            ), mock.patch(
+                "vault_billing_notifications.notify_payment_recovered",
+                side_effect=lambda *a, **k: None,
+            ):
+                first = ss.dispatch_webhook_event(event)
+                second = ss.dispatch_webhook_event(event)
+        finally:
+            _restore_env(prev)
+        return first, second, shared_conn
+
+    def test_duplicate_dispatch_returns_ignored_duplicate(self):
+        event = self._paid_event(blocks=2)
+        rows = {
+            "SELECT account_id FROM stripe_customers":
+                [{"account_id": ACCOUNT_A}],
+            "SELECT status, block_count, purchased_bytes":
+                [{"status": "expired", "block_count": 0,
+                  "purchased_bytes": 0}],
+        }
+        first, second, _conn = self._dispatch_twice(event, rows)
+        self.assertEqual(first.outcome, "applied",
+                         "first delivery must apply the event")
+        self.assertEqual(second.outcome, "ignored_duplicate",
+                         "second delivery must be an idempotent no-op")
+        # event_id preserved so ops traces are consistent.
+        self.assertEqual(first.event_id, event["id"])
+        self.assertEqual(second.event_id, event["id"])
+
+    def test_handler_not_invoked_on_duplicate(self):
+        # The critical invariant: on the second delivery, the handler
+        # (which would issue SELECT account_id FROM stripe_customers
+        # and UPDATE account_subscriptions) MUST NOT execute at all.
+        event = self._paid_event(blocks=2)
+        rows = {
+            "SELECT account_id FROM stripe_customers":
+                [{"account_id": ACCOUNT_A}],
+            "SELECT status, block_count, purchased_bytes":
+                [{"status": "expired", "block_count": 0,
+                  "purchased_bytes": 0}],
+        }
+        _first, second, conn = self._dispatch_twice(event, rows)
+        # Snapshot the handler-reached counter after both dispatches.
+        # The first call reached the handler (SELECT + UPDATE + INSERT
+        # subscription_events → 3 hits). The second call must have
+        # added ZERO further hits.
+        # We can't split the counter per-call from outside, but we
+        # can assert an upper bound: the first-call handler-side SQL
+        # count in this scenario is exactly 3 (customer lookup, prior
+        # status lookup, subscription_events audit insert) — plus one
+        # UPDATE. So total after two dispatches must equal the same
+        # count as after one, not double it.
+        one_call_count = conn.handler_reached_count
+        # Re-dispatch a THIRD time — must still not invoke handler.
+        import stripe_service as ss
+        prev = _billing_setup_env()
+        try:
+            with mock.patch(
+                "stripe_service.get_db", return_value=conn,
+            ):
+                third = ss.dispatch_webhook_event(event)
+        finally:
+            _restore_env(prev)
+        self.assertEqual(third.outcome, "ignored_duplicate")
+        # Counter unchanged between second and third dispatch = the
+        # handler was NOT reached on either duplicate.
+        self.assertEqual(
+            conn.handler_reached_count, one_call_count,
+            "handler-side SQL executed on a duplicate delivery — "
+            "idempotency broken",
+        )
+
+    def test_duplicate_dispatch_does_not_double_storage(self):
+        # End-to-end assertion: track every UPDATE that mentions
+        # block_count and confirm exactly ONE fires across two
+        # dispatches. If the handler ran twice, we'd see two.
+        event = self._paid_event(blocks=5)
+        rows = {
+            "SELECT account_id FROM stripe_customers":
+                [{"account_id": ACCOUNT_A}],
+            "SELECT status, block_count, purchased_bytes":
+                [{"status": "expired", "block_count": 0,
+                  "purchased_bytes": 0}],
+        }
+        _first, _second, conn = self._dispatch_twice(event, rows)
+        # Aggregate every UPDATE across every cursor the shared conn
+        # handed out.
+        restore_updates = []
+        for cur in conn.cursors:
+            for sql, params in cur.executed:
+                if ("UPDATE account_subscriptions" in sql
+                        and "block_count" in sql
+                        and "'active'" in sql):
+                    restore_updates.append(params)
+        self.assertEqual(
+            len(restore_updates), 1,
+            f"expected exactly ONE restore UPDATE across duplicate "
+            f"deliveries, got {len(restore_updates)} — storage "
+            f"double-grant risk",
+        )
+        # And the single restore that fired carried the correct
+        # quantity (5 blocks = 250 GB) so we're not silently masking
+        # a wrong-quantity write.
+        self.assertEqual(restore_updates[0][0], 5)
+        self.assertEqual(
+            restore_updates[0][1], 5 * 53_687_091_200,
+        )
+
+    def test_duplicate_dispatch_no_extra_subscription_events_row(self):
+        # The audit trail (subscription_events) must not double up
+        # either — a duplicated 'renewed' row would mislead support
+        # into thinking the customer paid twice.
+        event = self._paid_event(blocks=2)
+        rows = {
+            "SELECT account_id FROM stripe_customers":
+                [{"account_id": ACCOUNT_A}],
+            "SELECT status, block_count, purchased_bytes":
+                [{"status": "expired", "block_count": 0,
+                  "purchased_bytes": 0}],
+        }
+        _first, _second, conn = self._dispatch_twice(event, rows)
+        renewed_rows = []
+        for cur in conn.cursors:
+            for sql, params in cur.executed:
+                if ("INSERT INTO subscription_events" in sql
+                        and "'renewed'" in sql):
+                    renewed_rows.append(params)
+        self.assertEqual(
+            len(renewed_rows), 1,
+            "duplicate delivery produced a second 'renewed' audit "
+            "row — audit trail integrity broken",
+        )
+
+    def test_duplicate_dispatch_only_one_provider_event_log_row(self):
+        # provider_event_log itself must have exactly ONE row per
+        # event_id — the first INSERT succeeds, subsequent INSERTs
+        # raise UniqueViolation which the dispatcher catches.
+        event = self._paid_event(blocks=1)
+        rows = {
+            "SELECT account_id FROM stripe_customers":
+                [{"account_id": ACCOUNT_A}],
+            "SELECT status, block_count, purchased_bytes":
+                [{"status": "expired", "block_count": 0,
+                  "purchased_bytes": 0}],
+        }
+        _first, _second, conn = self._dispatch_twice(event, rows)
+        successful_inserts = 0
+        raised_inserts = 0
+        for cur in conn.cursors:
+            for sql, _params in cur.executed:
+                if "INSERT INTO provider_event_log" in sql:
+                    successful_inserts += 1
+        # The raised INSERT is not recorded in `executed` (our fake
+        # raises BEFORE super().execute appends). So `successful`
+        # counts only the ones that got past the unique check.
+        self.assertEqual(
+            successful_inserts, 1,
+            "only the first delivery may insert into "
+            "provider_event_log",
+        )
+        # A duplicate-triggered rollback is expected on the second
+        # delivery (the dispatcher rolls back after UniqueViolation).
+        self.assertGreaterEqual(conn.rollbacks, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
