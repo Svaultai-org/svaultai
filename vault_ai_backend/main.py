@@ -12699,6 +12699,30 @@ async def chat_endpoint(
 
 
         def encrypted_reply(text: str):
+            # 2026-07-25 diagnostic: log the CALLER's line number so
+            # every `return encrypted_reply(...)` in chat_endpoint
+            # emits a distinct exit-path fingerprint without touching
+            # 100+ call sites. Cross-reference the line number against
+            # source to identify which branch produced the reply.
+            # Only logs the caller's line number and text length —
+            # never the reply text itself.
+            try:
+                import sys as _dxr_sys
+                _dxr_caller_line = _dxr_sys._getframe(1).f_lineno
+                _dxr_caller_fn = _dxr_sys._getframe(1).f_code.co_name
+            except Exception:
+                _dxr_caller_line = -1
+                _dxr_caller_fn = "unknown"
+            logger.info(
+                "[BRAIN-TRACE-DXR] site=encrypted_reply_return "
+                "req=%s vault=%s caller_fn=%s caller_line=%d "
+                "reply_len=%d",
+                str(_chat_request_id or "")[:16],
+                (vault_id or "")[:8],
+                _dxr_caller_fn,
+                _dxr_caller_line,
+                len(text or ""),
+            )
             print(
                 f"[CHAT-DEBUG] encrypted_reply_start reply_text_len={len(text or '')}",
                 flush=True,
@@ -16978,8 +17002,15 @@ async def chat_endpoint(
             )
             if search_reply:
                 return encrypted_reply(search_reply)
-                                                                 
 
+
+        # Final fallback exit — all earlier branches fell through.
+        logger.info(
+            "[BRAIN-TRACE-DXR] site=route_to_ai_planner_stream_fallback "
+            "req=%s vault=%s reason=all_branches_fell_through",
+            str(_chat_request_id or "")[:16],
+            (vault_id or "")[:8],
+        )
         return _route_to_ai_planner_stream()
 
     except HTTPException:
