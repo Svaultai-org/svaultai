@@ -550,6 +550,17 @@ async def run_v2_shadow(
     Any exception is caught + logged; the caller's v1 result is
     unaffected.
     """
+    def _record_metric(stage: str, exc: BaseException) -> None:
+        # Localized helper -- swallow any metrics-side failure so
+        # a metrics module bug never affects shadow correctness.
+        try:
+            from vault_chat_shadow_metrics_v2 import (
+                record_pipeline_exception,
+            )
+            record_pipeline_exception(stage, type(exc).__name__)
+        except Exception:
+            logger.exception("[BRAIN_V2] shadow_metric_record_failed")
+
     try:
         snap = _build_v2_snapshot(
             vault_id=vault_id, session_id=session_id,
@@ -558,8 +569,9 @@ async def run_v2_shadow(
             preceding_assistant_turn_id=preceding_assistant_turn_id,
             memory=memory,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("[BRAIN_V2] shadow_snapshot_failed")
+        _record_metric("snapshot", exc)
         return
 
     ai = ai_provider or _default_ai_provider()
@@ -571,16 +583,18 @@ async def run_v2_shadow(
         decision = await decide_v2(
             snap.decider_context, ai_provider=ai,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("[BRAIN_V2] shadow_decide_failed")
+        _record_metric("decider", exc)
         decision = make_fallthrough(error="shadow_decider_exception")
 
     try:
         policy_result = authorize_v2(
             snapshot=snap.policy_snapshot, decision=decision,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("[BRAIN_V2] shadow_policy_failed")
+        _record_metric("policy", exc)
         policy_result = None
 
     if policy_result is not None:
@@ -588,8 +602,9 @@ async def run_v2_shadow(
             router_result = route_v2(
                 policy_result=policy_result, decision=decision,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("[BRAIN_V2] shadow_router_failed")
+            _record_metric("router", exc)
             router_result = None
 
     try:
@@ -599,8 +614,9 @@ async def run_v2_shadow(
             v2_decision=decision, v2_policy=policy_result,
             v2_router=router_result,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("[BRAIN_V2] shadow_log_failed")
+        _record_metric("log", exc)
 
 
 __all__ = [

@@ -465,6 +465,13 @@ def build_and_log_diff(
         note=note,
     )
     logger.info("[SHADOW_V2] %s", record.to_log_line())
+    # Increment the in-process aggregator. Never fatal on failure
+    # -- metrics degrading is preferable to shadow-mode failing.
+    try:
+        from vault_chat_shadow_metrics_v2 import record_shadow_diff
+        record_shadow_diff(record)
+    except Exception:
+        logger.exception("[SHADOW_V2] metrics_dispatch_failed")
     return record
 
 
