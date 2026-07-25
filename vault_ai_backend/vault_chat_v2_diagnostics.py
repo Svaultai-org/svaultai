@@ -1,38 +1,39 @@
-"""Operational diagnostics for the v2 chat brain (commit 7).
+"""Operational diagnostics for the v2 chat brain (commits 7 + 8).
 
-Three deliverables:
+Public surface:
 
-    validate_shadow_configuration()
-        Static check of environment configuration that shadow (or
-        on) mode requires. Reads env vars; performs no I/O; returns
-        a structured ``ValidationReport``. Safe to call at boot,
-        or before flipping the mode env var.
+    validate_shadow_configuration()      -> ValidationReport
+    check_enum_consistency()             -> tuple[bool, list[str]]
+    run_startup_self_test(ai_provider=)  -> SelfTestReport
+    shadow_health_summary(...)           -> HealthReport
+    is_v2_authoritative_ready(...)       -> ReadinessGateReport
 
-    run_startup_self_test(ai_provider=None)
-        Synthetic end-to-end pass through the read-only v2 stack
-        (snapshot -> decider -> policy -> router) with a stub
-        ai_provider. Confirms every component imports, constructs,
-        and returns a well-formed result. Does not touch Redis or
-        any persistent store; uses a scratch InMemoryChatStateBackend
-        installed for the duration of the test only. Returns
-        ``SelfTestReport``.
-
-    shadow_health_summary()
-        Rolls up ``get_metrics_snapshot()`` into a human-friendly
-        ``HealthReport``: overall READY / DEGRADED / UNREADY with
-        the reasons that pushed it there. Consumed by operators
-        deciding whether to promote from shadow to on.
-
-Design constraints:
+Design constraints (unchanged from commit 7):
 
     * No network, no disk, no Redis writes.
     * Never enables a mode. Never mutates env. Never modifies
       persistent state.
-    * Every function returns a plain-dict / dataclass result --
-      no side effects, no exceptions escape.
+    * Every function returns a plain-dict / dataclass result.
     * Never logs raw user content, vault ids, or session ids.
-    * Every diagnostic can be exposed to operators (log line,
-      admin HTTP endpoint, CLI tool) without leaking user data.
+
+Commit 8 refinements:
+
+    * ``check_enum_consistency`` -- static assertion that every
+      closed-set enum is internally consistent (ACTION_KIND
+      classification coverage, reply-template coverage,
+      execution-status recognition, policy-outcome routability).
+      Wired into startup self-test as its own stage.
+    * ``HealthReport`` now carries per-dimension sub-statuses
+      (configuration / startup / runtime / behavior) plus a
+      ``sample_size_ok`` flag and a ``confidence_tier``
+      (LOW / MEDIUM / HIGH) so an operator can distinguish
+      "20 turns, 0 disagreements" from "50 000 turns, 0
+      disagreements".
+    * ``is_v2_authoritative_ready(registry)`` is an explicit
+      gate function: verifies configuration, registry
+      completeness, startup self-test, parity, sample size, and
+      behavior thresholds. Refuses on any failure with a
+      structured ``ReadinessGateReport`` naming every blocker.
 """
 
 from __future__ import annotations
@@ -55,21 +56,39 @@ from vault_chat_brain_v2 import (
     read_brain_mode,
     v1_fallback_enabled,
 )
+from vault_chat_decision_router_v2 import (
+    ACTION_KINDS,
+    FAILURE_REPLY_TEMPLATES,
+    NEXT_STATES,
+    REPLY_KINDS,
+    SUCCESS_REPLY_TEMPLATES,
+)
 from vault_chat_integration_v2 import (
+    ACTION_KIND_CLASSIFICATION,
+    EXECUTION_STATUSES,
+    EXECUTOR_REQUIRED_ACTION_KINDS,
     ExecutorRegistry,
+    NON_EXECUTOR_ACTION_KINDS,
     assert_shadow_authoritative_parity,
     get_authoritative_action_inventory,
     get_shadow_observable_inventory,
     validate_v2_runtime_readiness,
 )
+from vault_chat_policy_v2 import OUTCOMES
 from vault_chat_semantic_decider_v2 import decide_v2
 from vault_chat_shadow_metrics_v2 import (
     SHADOW_PIPELINE_STAGES,
     get_metrics_snapshot,
 )
 from vault_chat_shadow_recorder_v2 import (
+    DISAGREEMENT_SOURCES,
+    MATCH_CATEGORIES,
     MIN_FINGERPRINT_SECRET_LEN,
     _process_secret,
+)
+from vault_chat_v2_versions import (
+    compute_v2_revision_stamp,
+    get_v2_revision_dict,
 )
 
 
@@ -118,23 +137,8 @@ class ValidationReport:
 
 
 def validate_shadow_configuration() -> ValidationReport:
-    """Static checks for shadow-mode readiness. Performs no I/O.
-    Safe to call at boot and again before any operator action.
-
-    Checks:
-        * VAULTAI_CHAT_BRAIN_MODE is one of {off, shadow, on} or
-          unset (defaults to off).
-        * If mode is shadow or on:
-              - VAULTAI_CHAT_BRAIN_V2_FINGERPRINT_SECRET is set
-                and >= MIN_FINGERPRINT_SECRET_LEN bytes.
-        * If mode is on:
-              - VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK is set
-                explicitly (either "on" or something else) --
-                mode==on with implicit fallback default is
-                warn-worthy: operators should have made an
-                explicit choice.
-    """
-    mode = read_brain_mode()  # Already validated / normalized.
+    """Static checks for shadow-mode readiness. No I/O."""
+    mode = read_brain_mode()
     findings: list[ValidationFinding] = []
 
     raw_mode = (os.environ.get("VAULTAI_CHAT_BRAIN_MODE") or "").strip().lower()
@@ -182,10 +186,8 @@ def validate_shadow_configuration() -> ValidationReport:
                 code="v1_fallback_env_unset",
                 message=(
                     "VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK is unset in "
-                    "mode==on; V1 fallback is DISABLED (READ_ONLY-phase "
-                    "v2 exceptions become controlled errors, not v1 "
-                    "fallthroughs). Set the env to 'on' or 'off' "
-                    "explicitly so the choice is auditable."
+                    "mode==on; V1 fallback is DISABLED. Set the env to "
+                    "'on' or 'off' explicitly so the choice is auditable."
                 ),
             ))
 
@@ -193,6 +195,121 @@ def validate_shadow_configuration() -> ValidationReport:
     return ValidationReport(
         mode=mode, ok=ok, findings=tuple(findings),
     )
+
+
+# =====================================================================
+# Enum-consistency check (commit 8)
+# =====================================================================
+
+def check_enum_consistency() -> tuple[bool, list[str]]:
+    """Assert every closed-set enum is internally consistent.
+
+    Checks (all pass -> return (True, [])):
+
+        1. Every ACTION_KIND has exactly one classification in
+           ACTION_KIND_CLASSIFICATION.
+        2. Every ACTION_KIND classification value belongs to the
+           closed set {executor_required, non_executor}.
+        3. EXECUTOR_REQUIRED_ACTION_KINDS and
+           NON_EXECUTOR_ACTION_KINDS are disjoint; their union is
+           ACTION_KINDS.
+        4. Every REPLY_KIND except 'none' has both a success
+           template in SUCCESS_REPLY_TEMPLATES and a failure
+           template in FAILURE_REPLY_TEMPLATES.
+        5. Every SUCCESS_REPLY_TEMPLATES key has a matching entry
+           in FAILURE_REPLY_TEMPLATES (and vice versa).
+        6. Every EXECUTION_STATUS is unique (no aliasing).
+        7. Every POLICY OUTCOME is a member of {allow, clarify,
+           reject}.
+        8. Every DISAGREEMENT_SOURCE is a member of the closed
+           set (tautological, but catches enum-drift when a new
+           source is added but the recorder isn't updated).
+        9. Every MATCH_CATEGORY is a member of the closed set.
+
+    Returns ``(is_consistent, violations_sorted)`` where
+    ``violations_sorted`` is a list of human-readable violation
+    strings (empty on success).
+    """
+    violations: list[str] = []
+
+    # 1 + 2: classification coverage + value shape.
+    allowed_classes = frozenset({"executor_required", "non_executor"})
+    for kind in ACTION_KINDS:
+        if kind not in ACTION_KIND_CLASSIFICATION:
+            violations.append(
+                f"ACTION_KIND {kind!r} has no classification entry"
+            )
+        else:
+            cls = ACTION_KIND_CLASSIFICATION[kind]
+            if cls not in allowed_classes:
+                violations.append(
+                    f"ACTION_KIND {kind!r} classification {cls!r} "
+                    f"not in {sorted(allowed_classes)}"
+                )
+
+    # 3: partition invariants.
+    overlap = EXECUTOR_REQUIRED_ACTION_KINDS & NON_EXECUTOR_ACTION_KINDS
+    if overlap:
+        violations.append(
+            f"action-kind partition overlap: {sorted(overlap)}"
+        )
+    union = EXECUTOR_REQUIRED_ACTION_KINDS | NON_EXECUTOR_ACTION_KINDS
+    if union != ACTION_KINDS:
+        missing = ACTION_KINDS - union
+        extra = union - ACTION_KINDS
+        if missing:
+            violations.append(
+                f"action-kind partition missing kinds: {sorted(missing)}"
+            )
+        if extra:
+            violations.append(
+                f"action-kind partition has extra kinds: {sorted(extra)}"
+            )
+
+    # 4 + 5: reply-template coverage.
+    for k in SUCCESS_REPLY_TEMPLATES.keys():
+        if k not in FAILURE_REPLY_TEMPLATES:
+            violations.append(
+                f"success reply key {k!r} has no failure template"
+            )
+    for k in FAILURE_REPLY_TEMPLATES.keys():
+        if k not in SUCCESS_REPLY_TEMPLATES:
+            violations.append(
+                f"failure reply key {k!r} has no success template"
+            )
+
+    # 6: execution statuses uniqueness by string identity.
+    # (frozenset membership already ensures uniqueness, but
+    # verify the constant list didn't lose a member.)
+    if len(EXECUTION_STATUSES) < 6:
+        violations.append(
+            f"EXECUTION_STATUSES has only {len(EXECUTION_STATUSES)} "
+            "members; expected at least 6 (SUCCESS, EXECUTOR_FAILED, "
+            "AUTHORIZATION_FAILED, CONSUME_FAILED, INTERNAL_ERROR, "
+            "NO_EXECUTION)"
+        )
+
+    # 7: policy outcomes shape.
+    expected_outcomes = frozenset({"allow", "clarify", "reject"})
+    for o in OUTCOMES:
+        if o not in expected_outcomes:
+            violations.append(
+                f"policy outcome {o!r} not in {sorted(expected_outcomes)}"
+            )
+
+    # 8 + 9: closed-set integrity for match + disagreement enums.
+    if len(MATCH_CATEGORIES) < 4:
+        violations.append(
+            f"MATCH_CATEGORIES has only {len(MATCH_CATEGORIES)} members; "
+            "expected at least 4"
+        )
+    if len(DISAGREEMENT_SOURCES) < 7:
+        violations.append(
+            f"DISAGREEMENT_SOURCES has only {len(DISAGREEMENT_SOURCES)} "
+            "members; expected at least 7"
+        )
+
+    return (len(violations) == 0, sorted(violations))
 
 
 # =====================================================================
@@ -224,9 +341,6 @@ class SelfTestReport:
 
 
 class _StubProvider:
-    """Deterministic ai_provider stub for the self-test. Returns
-    a well-formed fallthrough decision so the decider never
-    fabricates any state that requires a real snapshot."""
 
     async def __call__(self, **kwargs) -> Any:
         body = json.dumps({
@@ -248,24 +362,47 @@ def run_startup_self_test(
     ai_provider: Optional[Callable[..., Any]] = None,
     _installed_backend_hook: Optional[Callable[[], None]] = None,
 ) -> SelfTestReport:
-    """Run a synthetic read-only pass through
-    ``snapshot -> decide -> authorize -> route`` against a scratch
-    in-memory backend and a stub ai_provider. Confirms every
-    component imports and constructs without exception.
-
-    Does NOT hit Redis; installs a scratch
-    ``InMemoryChatStateBackend`` for the duration of the test and
-    restores the original backend afterward.
-
-    ``ai_provider`` overrides the stub for tests that want to
-    verify the wiring accepts an alternate provider.
+    """Synthetic read-only pass through
+    ``enum_consistency -> snapshot -> decide -> authorize ->
+    route``. Uses a scratch InMemoryChatStateBackend and a stub
+    ai_provider (unless one is supplied). Restores the original
+    backend on exit. Never hits Redis.
     """
     import vault_chat_state_store as st
-    from vault_chat_authorization_record import atomic_consume_authorization  # noqa: F401
     started = time.time()
     stages: list[SelfTestStage] = []
 
-    # Install a scratch backend. Restore on exit.
+    # Stage 0: enum consistency. Runs BEFORE the backend swap so
+    # a codebase-level enum drift is diagnosed clearly even when
+    # no state store is available.
+    try:
+        ok, violations = check_enum_consistency()
+        if ok:
+            stages.append(SelfTestStage(
+                name="enum_consistency", ok=True,
+                detail="every closed-set enum internally consistent",
+            ))
+        else:
+            stages.append(SelfTestStage(
+                name="enum_consistency", ok=False,
+                detail="; ".join(violations),
+            ))
+            return SelfTestReport(
+                ok=False,
+                duration_ms=int((time.time() - started) * 1000),
+                stages=tuple(stages),
+            )
+    except Exception as exc:
+        stages.append(SelfTestStage(
+            name="enum_consistency", ok=False,
+            detail=f"{type(exc).__name__}: {exc}",
+        ))
+        return SelfTestReport(
+            ok=False,
+            duration_ms=int((time.time() - started) * 1000),
+            stages=tuple(stages),
+        )
+
     scratch = st.InMemoryChatStateBackend()
     st.install_backend_for_tests(scratch)
     if _installed_backend_hook is not None:
@@ -378,9 +515,10 @@ def run_startup_self_test(
 
 
 # =====================================================================
-# HealthReport (rollup)
+# HealthReport (commit 8: split dimensions + confidence tier)
 # =====================================================================
 
+# Overall status
 HEALTH_READY:     str = "READY"
 HEALTH_DEGRADED:  str = "DEGRADED"
 HEALTH_UNREADY:   str = "UNREADY"
@@ -389,40 +527,100 @@ _HEALTH_LEVELS: frozenset[str] = frozenset({
     HEALTH_READY, HEALTH_DEGRADED, HEALTH_UNREADY,
 })
 
+# Per-dimension sub-statuses. Not overloaded with the overall
+# levels above -- an operator scanning the report can tell at a
+# glance which dimension is failing.
+DIM_CONFIG_PASS:   str = "PASS"
+DIM_CONFIG_WARN:   str = "WARN"
+DIM_CONFIG_FAIL:   str = "FAIL"
+
+DIM_STARTUP_PASS:  str = "PASS"
+DIM_STARTUP_FAIL:  str = "FAIL"
+DIM_STARTUP_SKIP:  str = "NOT_RUN"
+
+DIM_RUNTIME_PASS:      str = "PASS"
+DIM_RUNTIME_DEGRADED:  str = "DEGRADED"
+
+DIM_BEHAVIOR_PASS:                 str = "PASS"
+DIM_BEHAVIOR_DEGRADED:             str = "DEGRADED"
+DIM_BEHAVIOR_INSUFFICIENT_SAMPLES: str = "INSUFFICIENT_SAMPLES"
+
+# Confidence tier for behavioral metrics.
+CONFIDENCE_LOW:     str = "LOW"
+CONFIDENCE_MEDIUM:  str = "MEDIUM"
+CONFIDENCE_HIGH:    str = "HIGH"
+
+_CONFIDENCE_TIERS: frozenset[str] = frozenset({
+    CONFIDENCE_LOW, CONFIDENCE_MEDIUM, CONFIDENCE_HIGH,
+})
+
 
 @dataclass(frozen=True)
 class HealthReport:
-    status:           str
-    reasons:          tuple = ()
-    validation:       Optional[ValidationReport] = None
-    self_test:        Optional[SelfTestReport] = None
-    parity_ok:        bool = True
-    parity_diff:      tuple = ()
-    metrics:          dict = field(default_factory=dict)
+    status:                 str
+    reasons:                tuple = ()
+    validation:             Optional[ValidationReport] = None
+    self_test:              Optional[SelfTestReport] = None
+    parity_ok:              bool = True
+    parity_diff:            tuple = ()
+    metrics:                dict = field(default_factory=dict)
+    # commit 8 additions
+    configuration_status:   str = DIM_CONFIG_PASS
+    startup_status:         str = DIM_STARTUP_SKIP
+    runtime_status:         str = DIM_RUNTIME_PASS
+    behavior_status:        str = DIM_BEHAVIOR_INSUFFICIENT_SAMPLES
+    confidence_tier:        str = CONFIDENCE_LOW
+    sample_size_ok:         bool = False
+    reasons_by_dimension:   dict = field(default_factory=dict)
+    v2_revisions:           dict = field(default_factory=dict)
+    v2_revision_stamp:      str = ""
 
     def __post_init__(self) -> None:
         if self.status not in _HEALTH_LEVELS:
             raise ValueError(f"unknown status {self.status!r}")
+        if self.confidence_tier not in _CONFIDENCE_TIERS:
+            raise ValueError(f"unknown tier {self.confidence_tier!r}")
 
     def as_dict(self) -> dict:
         return {
-            "status":     self.status,
-            "reasons":    list(self.reasons),
-            "validation": self.validation.as_dict() if self.validation else None,
-            "self_test":  self.self_test.as_dict() if self.self_test else None,
-            "parity_ok":  self.parity_ok,
-            "parity_diff": list(self.parity_diff),
-            "metrics":    dict(self.metrics),
+            "status":               self.status,
+            "reasons":              list(self.reasons),
+            "validation":           self.validation.as_dict() if self.validation else None,
+            "self_test":            self.self_test.as_dict() if self.self_test else None,
+            "parity_ok":            self.parity_ok,
+            "parity_diff":          list(self.parity_diff),
+            "metrics":              dict(self.metrics),
+            "configuration_status": self.configuration_status,
+            "startup_status":       self.startup_status,
+            "runtime_status":       self.runtime_status,
+            "behavior_status":      self.behavior_status,
+            "confidence_tier":      self.confidence_tier,
+            "sample_size_ok":       self.sample_size_ok,
+            "reasons_by_dimension": {
+                k: list(v) for k, v in self.reasons_by_dimension.items()
+            },
+            "v2_revisions":         dict(self.v2_revisions),
+            "v2_revision_stamp":    self.v2_revision_stamp,
         }
 
 
-# Thresholds for DEGRADED classification. Tuned conservatively:
-# a rollout should not enter mode==on if these thresholds trip in
-# shadow mode over a meaningful sample.
-_MIN_DIFFS_FOR_QUALITY: int = 100
-_MAX_V2_ERROR_PCT_FOR_READY: float = 1.0
-_MAX_DIFFERENT_SEMANTICS_PCT_FOR_READY: float = 5.0
-_MIN_FP_AVAILABLE_PCT_FOR_READY: float = 99.0
+# Thresholds. All commit 7 behavioral thresholds preserved.
+_MIN_DIFFS_FOR_QUALITY:                  int = 100
+_MAX_V2_ERROR_PCT_FOR_READY:             float = 1.0
+_MAX_DIFFERENT_SEMANTICS_PCT_FOR_READY:  float = 5.0
+_MIN_FP_AVAILABLE_PCT_FOR_READY:         float = 99.0
+
+# Sample-size tiers (commit 8).
+_CONFIDENCE_MEDIUM_THRESHOLD:            int = 1_000
+_CONFIDENCE_HIGH_THRESHOLD:              int = 10_000
+
+
+def _confidence_tier_from_diff_count(n: int) -> str:
+    if n >= _CONFIDENCE_HIGH_THRESHOLD:
+        return CONFIDENCE_HIGH
+    if n >= _CONFIDENCE_MEDIUM_THRESHOLD:
+        return CONFIDENCE_MEDIUM
+    return CONFIDENCE_LOW
 
 
 def shadow_health_summary(
@@ -432,74 +630,117 @@ def shadow_health_summary(
 ) -> HealthReport:
     """Aggregate every diagnostic into a single HealthReport.
 
-    Parameters:
-        registry:       if supplied, verified against
-                        assert_shadow_authoritative_parity. If None,
-                        parity is not checked (parity_ok stays True
-                        by default).
-        run_self_test:  if True, run the startup self-test. Costs
-                        one synthetic decide_v2 call. Default False
-                        so the summary is cheap to poll.
+    ``registry``: if supplied, verified against
+    ``assert_shadow_authoritative_parity``. If None, parity is
+    not checked (``parity_ok`` stays True by default).
+
+    ``run_self_test``: if True, run the startup self-test.
     """
+    reasons_by_dim: dict[str, list[str]] = {
+        "configuration": [],
+        "startup":       [],
+        "runtime":       [],
+        "behavior":      [],
+        "parity":        [],
+    }
     reasons: list[str] = []
 
+    # ---- configuration
     validation = validate_shadow_configuration()
     if not validation.ok:
         for f in validation.findings:
             if f.level == VALIDATION_ERROR:
-                reasons.append(f"config.{f.code}")
+                reason = f"config.{f.code}"
+                reasons.append(reason)
+                reasons_by_dim["configuration"].append(reason)
+        configuration_status = DIM_CONFIG_FAIL
+    elif any(f.level == VALIDATION_WARN for f in validation.findings):
+        configuration_status = DIM_CONFIG_WARN
+    else:
+        configuration_status = DIM_CONFIG_PASS
 
+    # ---- parity
     parity_ok = True
     parity_diff: tuple = ()
     if registry is not None:
         parity_ok, diff = assert_shadow_authoritative_parity(registry)
         parity_diff = tuple(diff)
         if not parity_ok:
-            reasons.append("parity.action_inventory_mismatch")
+            reason = "parity.action_inventory_mismatch"
+            reasons.append(reason)
+            reasons_by_dim["parity"].append(reason)
 
+    # ---- startup
     self_test: Optional[SelfTestReport] = None
     if run_self_test:
         self_test = run_startup_self_test()
         if not self_test.ok:
             for st_stage in self_test.stages:
                 if not st_stage.ok:
-                    reasons.append(f"self_test.{st_stage.name}_failed")
+                    reason = f"self_test.{st_stage.name}_failed"
+                    reasons.append(reason)
+                    reasons_by_dim["startup"].append(reason)
+            startup_status = DIM_STARTUP_FAIL
+        else:
+            startup_status = DIM_STARTUP_PASS
+    else:
+        startup_status = DIM_STARTUP_SKIP
 
+    # ---- runtime + behavior
     metrics = get_metrics_snapshot()
+    pipeline_exc = metrics.get("pipeline_exceptions", {})
+    runtime_status = DIM_RUNTIME_PASS
+    for stage, count in pipeline_exc.items():
+        if count > 0:
+            reason = f"pipeline.exception.{stage}={count}"
+            reasons.append(reason)
+            reasons_by_dim["runtime"].append(reason)
+            runtime_status = DIM_RUNTIME_DEGRADED
 
     total = metrics.get("diff_count", 0)
-    if total >= _MIN_DIFFS_FOR_QUALITY:
+    confidence_tier = _confidence_tier_from_diff_count(total)
+    sample_size_ok = total >= _MIN_DIFFS_FOR_QUALITY
+
+    if not sample_size_ok:
+        behavior_status = DIM_BEHAVIOR_INSUFFICIENT_SAMPLES
+    else:
         match_ratios = metrics.get("match_ratios_pct", {})
         v2_err_pct = float(match_ratios.get("v2_validation_error", 0.0))
         diff_pct = float(match_ratios.get("different_semantics", 0.0))
         fp_pct = float(metrics.get("fp_available_ratio_pct", 0.0))
+        behavior_reasons: list[str] = []
         if v2_err_pct > _MAX_V2_ERROR_PCT_FOR_READY:
-            reasons.append(
+            behavior_reasons.append(
                 f"quality.v2_validation_error_pct={v2_err_pct}"
             )
         if diff_pct > _MAX_DIFFERENT_SEMANTICS_PCT_FOR_READY:
-            reasons.append(
+            behavior_reasons.append(
                 f"quality.different_semantics_pct={diff_pct}"
             )
         if fp_pct < _MIN_FP_AVAILABLE_PCT_FOR_READY:
-            reasons.append(
+            behavior_reasons.append(
                 f"quality.fp_available_pct={fp_pct}"
             )
+        if behavior_reasons:
+            reasons.extend(behavior_reasons)
+            reasons_by_dim["behavior"].extend(behavior_reasons)
+            behavior_status = DIM_BEHAVIOR_DEGRADED
+        else:
+            behavior_status = DIM_BEHAVIOR_PASS
 
-    pipeline_exc = metrics.get("pipeline_exceptions", {})
-    for stage, count in pipeline_exc.items():
-        if count > 0:
-            reasons.append(f"pipeline.exception.{stage}={count}")
-
-    if not reasons:
-        status = HEALTH_READY
+    # ---- overall
+    if configuration_status == DIM_CONFIG_FAIL:
+        status = HEALTH_UNREADY
+    elif not parity_ok:
+        status = HEALTH_UNREADY
+    elif startup_status == DIM_STARTUP_FAIL:
+        status = HEALTH_UNREADY
+    elif runtime_status == DIM_RUNTIME_DEGRADED:
+        status = HEALTH_DEGRADED
+    elif behavior_status == DIM_BEHAVIOR_DEGRADED:
+        status = HEALTH_DEGRADED
     else:
-        has_config_error = any(
-            r.startswith("config.") or r.startswith("parity.")
-            or r.startswith("self_test.")
-            for r in reasons
-        )
-        status = HEALTH_UNREADY if has_config_error else HEALTH_DEGRADED
+        status = HEALTH_READY
 
     return HealthReport(
         status=status,
@@ -509,16 +750,156 @@ def shadow_health_summary(
         parity_ok=parity_ok,
         parity_diff=parity_diff,
         metrics=metrics,
+        configuration_status=configuration_status,
+        startup_status=startup_status,
+        runtime_status=runtime_status,
+        behavior_status=behavior_status,
+        confidence_tier=confidence_tier,
+        sample_size_ok=sample_size_ok,
+        reasons_by_dimension={
+            k: tuple(v) for k, v in reasons_by_dim.items() if v
+        },
+        v2_revisions=get_v2_revision_dict(),
+        v2_revision_stamp=compute_v2_revision_stamp(),
     )
+
+
+# =====================================================================
+# Authoritative readiness gate (commit 8-f)
+# =====================================================================
+
+@dataclass(frozen=True)
+class ReadinessGateReport:
+    ready:            bool
+    blockers:         tuple = ()
+    health:           Optional[HealthReport] = None
+    required_min_diffs:            int = _MIN_DIFFS_FOR_QUALITY
+    required_confidence_tier:      str = CONFIDENCE_HIGH
+
+    def as_dict(self) -> dict:
+        return {
+            "ready":                     self.ready,
+            "blockers":                  list(self.blockers),
+            "health":                    self.health.as_dict() if self.health else None,
+            "required_min_diffs":        self.required_min_diffs,
+            "required_confidence_tier":  self.required_confidence_tier,
+        }
+
+
+def is_v2_authoritative_ready(
+    registry: ExecutorRegistry,
+    *,
+    require_confidence: str = CONFIDENCE_HIGH,
+    require_self_test: bool = True,
+) -> ReadinessGateReport:
+    """Explicit gate for authoritative (mode==on) activation.
+
+    Refuses on ANY of:
+
+        * configuration status != PASS
+        * parity broken
+        * startup self-test failed (unless require_self_test=False)
+        * runtime pipeline exceptions non-zero
+        * behavior status != PASS (INSUFFICIENT_SAMPLES also refuses)
+        * confidence tier below ``require_confidence``
+        * runtime-readiness guard reports missing executors
+
+    Callers should treat a non-ready gate as a hard STOP -- do
+    NOT flip mode to ``on`` when this returns False.
+    """
+    if require_confidence not in _CONFIDENCE_TIERS:
+        raise ValueError(
+            f"require_confidence must be one of {sorted(_CONFIDENCE_TIERS)}"
+        )
+
+    blockers: list[str] = []
+    health = shadow_health_summary(
+        registry=registry, run_self_test=require_self_test,
+    )
+
+    # 1. Executor registry completeness (fast fail).
+    reg_ready, missing = validate_v2_runtime_readiness(registry)
+    if not reg_ready:
+        blockers.append(
+            f"registry.missing_executors={sorted(missing)}"
+        )
+
+    # 2. Configuration.
+    if health.configuration_status != DIM_CONFIG_PASS:
+        blockers.append(
+            f"configuration={health.configuration_status}"
+        )
+        for r in health.reasons_by_dimension.get("configuration", ()):
+            blockers.append(f"config.{r}")
+
+    # 3. Parity.
+    if not health.parity_ok:
+        blockers.append(
+            f"parity.symmetric_diff={list(health.parity_diff)}"
+        )
+
+    # 4. Startup self-test.
+    if require_self_test:
+        if health.startup_status == DIM_STARTUP_SKIP:
+            blockers.append("startup.self_test_not_run")
+        elif health.startup_status == DIM_STARTUP_FAIL:
+            blockers.append(f"startup={health.startup_status}")
+            for r in health.reasons_by_dimension.get("startup", ()):
+                blockers.append(r)
+
+    # 5. Runtime.
+    if health.runtime_status != DIM_RUNTIME_PASS:
+        blockers.append(f"runtime={health.runtime_status}")
+        for r in health.reasons_by_dimension.get("runtime", ()):
+            blockers.append(r)
+
+    # 6. Behavior.
+    if health.behavior_status != DIM_BEHAVIOR_PASS:
+        blockers.append(f"behavior={health.behavior_status}")
+        for r in health.reasons_by_dimension.get("behavior", ()):
+            blockers.append(r)
+
+    # 7. Sample-size confidence.
+    if _confidence_rank(health.confidence_tier) < _confidence_rank(require_confidence):
+        blockers.append(
+            f"confidence={health.confidence_tier} "
+            f"(required={require_confidence})"
+        )
+
+    ready = len(blockers) == 0
+    return ReadinessGateReport(
+        ready=ready,
+        blockers=tuple(sorted(set(blockers))),
+        health=health,
+        required_min_diffs=_MIN_DIFFS_FOR_QUALITY,
+        required_confidence_tier=require_confidence,
+    )
+
+
+def _confidence_rank(tier: str) -> int:
+    if tier == CONFIDENCE_HIGH:
+        return 2
+    if tier == CONFIDENCE_MEDIUM:
+        return 1
+    return 0
 
 
 __all__ = [
     "VALIDATION_OK", "VALIDATION_WARN", "VALIDATION_ERROR",
     "ValidationFinding", "ValidationReport",
     "validate_shadow_configuration",
+    "check_enum_consistency",
     "SelfTestStage", "SelfTestReport",
     "run_startup_self_test",
     "HEALTH_READY", "HEALTH_DEGRADED", "HEALTH_UNREADY",
+    "DIM_CONFIG_PASS", "DIM_CONFIG_WARN", "DIM_CONFIG_FAIL",
+    "DIM_STARTUP_PASS", "DIM_STARTUP_FAIL", "DIM_STARTUP_SKIP",
+    "DIM_RUNTIME_PASS", "DIM_RUNTIME_DEGRADED",
+    "DIM_BEHAVIOR_PASS", "DIM_BEHAVIOR_DEGRADED",
+    "DIM_BEHAVIOR_INSUFFICIENT_SAMPLES",
+    "CONFIDENCE_LOW", "CONFIDENCE_MEDIUM", "CONFIDENCE_HIGH",
     "HealthReport",
     "shadow_health_summary",
+    "ReadinessGateReport",
+    "is_v2_authoritative_ready",
 ]

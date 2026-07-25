@@ -55,6 +55,7 @@ from typing import Any, Mapping, Optional
 
 from vault_chat_decision_router_v2 import ACTION_KINDS
 from vault_chat_shadow_recorder_v2 import (
+    DISAGREEMENT_SOURCES,
     MATCH_CATEGORIES,
     ShadowDiffRecordV2,
 )
@@ -107,6 +108,15 @@ class _Metrics:
         self._router_fallthrough_count: int = 0
         self._v1_handled_count: int = 0
         self._v1_fallthrough_count: int = 0
+        # commit 8: per-source disagreement attribution counts
+        # so operators can prioritize which layer to investigate.
+        self._disagreement_sources: dict[str, int] = {
+            src: 0 for src in DISAGREEMENT_SOURCES
+        }
+        # commit 8: revision-stamp histogram so an operator can
+        # see when historical records were produced against a
+        # different layer revision than the running process.
+        self._revision_stamps: dict[str, int] = {}
 
     def reset(self) -> None:
         with self._lock:
@@ -134,6 +144,18 @@ class _Metrics:
                 action_kind = record.router_view.action_kind
                 if action_kind and action_kind in self._action_kind_counts:
                     self._action_kind_counts[action_kind] += 1
+            src = record.disagreement_source
+            if src in self._disagreement_sources:
+                self._disagreement_sources[src] += 1
+            stamp = record.v2_revision_stamp or "-"
+            # Bound the histogram to prevent an untrusted stamp
+            # source from bloating the dict (defense in depth --
+            # stamps come from compute_v2_revision_stamp() which
+            # produces a bounded shape).
+            if len(self._revision_stamps) < 32 or stamp in self._revision_stamps:
+                self._revision_stamps[stamp] = (
+                    self._revision_stamps.get(stamp, 0) + 1
+                )
 
     def record_pipeline_exception(
         self, stage: str, exc_type_name: str,
@@ -186,6 +208,12 @@ class _Metrics:
                 "router_fallthrough_count":    self._router_fallthrough_count,
                 "v1_handled_count":            self._v1_handled_count,
                 "v1_fallthrough_count":        self._v1_fallthrough_count,
+                "disagreement_sources":        dict(self._disagreement_sources),
+                "disagreement_source_ratios_pct": {
+                    src: pct(v)
+                    for src, v in self._disagreement_sources.items()
+                },
+                "revision_stamps":             dict(self._revision_stamps),
             }
 
 

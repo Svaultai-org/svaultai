@@ -70,6 +70,7 @@ from vault_chat_policy_v2 import (
     PolicyResultV2,
 )
 from vault_chat_semantic_decision_v2 import SemanticDecisionV2
+from vault_chat_v2_versions import compute_v2_revision_stamp
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,35 @@ MATCH_CATEGORIES: frozenset[str] = frozenset({
     MATCH_DIFFERENT_SEMANTICS,
     MATCH_INSUFFICIENT_CONTEXT,
     MATCH_V2_VALIDATION_ERROR,
+})
+
+
+# =====================================================================
+# Disagreement source attribution (closed set)
+#
+# For every diff record we attribute the layer at which v1 and v2
+# started to diverge. Analysts investigate different sources with
+# different playbooks (semantic disagreement -> LLM prompt work;
+# router disagreement -> action-kind wiring; policy disagreement
+# -> reason-code semantics; etc.).
+# =====================================================================
+
+DISAGREEMENT_SOURCE_NONE:                      str = "NONE"
+DISAGREEMENT_SOURCE_SEMANTIC:                  str = "SEMANTIC"
+DISAGREEMENT_SOURCE_POLICY:                    str = "POLICY"
+DISAGREEMENT_SOURCE_ROUTER:                    str = "ROUTER"
+DISAGREEMENT_SOURCE_INSUFFICIENT_CONTEXT:      str = "INSUFFICIENT_CONTEXT"
+DISAGREEMENT_SOURCE_V2_ERROR:                  str = "V2_ERROR"
+DISAGREEMENT_SOURCE_UNKNOWN:                   str = "UNKNOWN"
+
+DISAGREEMENT_SOURCES: frozenset[str] = frozenset({
+    DISAGREEMENT_SOURCE_NONE,
+    DISAGREEMENT_SOURCE_SEMANTIC,
+    DISAGREEMENT_SOURCE_POLICY,
+    DISAGREEMENT_SOURCE_ROUTER,
+    DISAGREEMENT_SOURCE_INSUFFICIENT_CONTEXT,
+    DISAGREEMENT_SOURCE_V2_ERROR,
+    DISAGREEMENT_SOURCE_UNKNOWN,
 })
 
 
@@ -289,7 +319,21 @@ class ShadowDiffRecordV2:
     match:                   str            # one of MATCH_CATEGORIES
     router_view:             Optional[ShadowRouterView] = None
     fp_available:            bool = True
+    # commit 8: closed-set enum naming the layer at which v1 and
+    # v2 diverged. NONE for equivalent turns.
+    disagreement_source:     str = DISAGREEMENT_SOURCE_NONE
+    # commit 8: multi-layer revision stamp. Historical shadow
+    # logs remain interpretable after later architectural changes.
+    v2_revision_stamp:       str = ""
     note:                    str = ""
+
+    def __post_init__(self) -> None:
+        if self.disagreement_source not in DISAGREEMENT_SOURCES:
+            raise ValueError(
+                f"unknown disagreement_source {self.disagreement_source!r}"
+            )
+        if self.match not in MATCH_CATEGORIES:
+            raise ValueError(f"unknown match category {self.match!r}")
 
     def to_log_line(self) -> str:
         rv = self.router_view
@@ -313,7 +357,9 @@ class ShadowDiffRecordV2:
             f"v2_conf_bucket={self.v2_confidence_bucket} "
             f"v2_fp={self.v2_fingerprint} "
             f"fp_available={int(self.fp_available)} "
-            f"match={self.match}"
+            f"match={self.match} "
+            f"disagreement_source={self.disagreement_source} "
+            f"v2_rev={self.v2_revision_stamp or '-'}"
             + router_part
             + (f" note={self.note}" if self.note else "")
         )
@@ -385,6 +431,85 @@ def _classify_match(
     return MATCH_DIFFERENT_SEMANTICS
 
 
+def _attribute_disagreement_source(
+    match:        str,
+    v1_tool:      str,
+    v1_handled:   bool,
+    v2_decision:  Optional[SemanticDecisionV2],
+    v2_policy:    Optional[PolicyResultV2],
+    v2_router:    Optional[object],
+) -> str:
+    """Attribute the layer at which v1 and v2 started to diverge.
+
+    Attribution rules (in evaluation order):
+
+        * match category is intent_equivalent -> NONE.
+        * match category is v2_validation_error -> V2_ERROR.
+        * match category is insufficient_shadow_context ->
+          INSUFFICIENT_CONTEXT (a real POLICY-side reason but
+          shadow-mode specific; NOT counted as a v2 defect).
+        * v2 intent is not in v1's tool family -> SEMANTIC (the
+          semantic decider chose a materially different intent).
+        * v2 intent matches v1's family but v2 policy did NOT
+          allow (outcome != allow) -> POLICY (policy layer
+          rejected/clarified where v1 handled).
+        * v2 intent + policy allow but the router chose an
+          action_kind or reply_kind incompatible with v1's
+          dispatch -> ROUTER.
+        * fallback -> UNKNOWN (defensive; should be rare).
+
+    The attribution never inspects reply text, user-facing
+    content, or raw target ids. Only the layer verdict shapes.
+    """
+    if match == MATCH_V2_VALIDATION_ERROR:
+        return DISAGREEMENT_SOURCE_V2_ERROR
+    if match == MATCH_INSUFFICIENT_CONTEXT:
+        return DISAGREEMENT_SOURCE_INSUFFICIENT_CONTEXT
+
+    if match == MATCH_INTENT_EQUIVALENT:
+        # Intent family agrees. But v1 handled and v2's policy
+        # would have rejected/clarified? That's a POLICY-layer
+        # disagreement even though the intents look equivalent.
+        if (
+            v1_handled
+            and v2_policy is not None
+            and v2_policy.outcome != OUTCOME_ALLOW
+        ):
+            return DISAGREEMENT_SOURCE_POLICY
+        return DISAGREEMENT_SOURCE_NONE
+
+    # match == MATCH_DIFFERENT_SEMANTICS: figure out which layer.
+    if v2_decision is None:
+        return DISAGREEMENT_SOURCE_UNKNOWN
+    intent = v2_decision.intent
+    family = _V1_TOOL_TO_V2_INTENT_FAMILY.get(v1_tool, frozenset())
+
+    # Special case: v1 didn't handle (fallthrough) but v2 chose a
+    # concrete intent. That's a semantic-level disagreement --
+    # v2's decider is claiming coverage where v1 handed off.
+    if not v1_handled and intent != "fallthrough":
+        return DISAGREEMENT_SOURCE_SEMANTIC
+
+    if intent not in family:
+        return DISAGREEMENT_SOURCE_SEMANTIC
+
+    # From here, intents agree at the family level.
+    if v2_policy is not None and v2_policy.outcome != OUTCOME_ALLOW:
+        return DISAGREEMENT_SOURCE_POLICY
+
+    # v2 router disagreed on action shape despite intent + policy
+    # agreement. Requires a shadow_router summary to attribute
+    # confidently; without it we fall through to UNKNOWN.
+    if v2_router is not None:
+        handled = getattr(v2_router, "handled", None)
+        if handled is False and v1_handled:
+            return DISAGREEMENT_SOURCE_ROUTER
+        if handled is True and not v1_handled:
+            return DISAGREEMENT_SOURCE_ROUTER
+
+    return DISAGREEMENT_SOURCE_UNKNOWN
+
+
 # =====================================================================
 # Public entry point
 # =====================================================================
@@ -446,6 +571,14 @@ def build_and_log_diff(
             logger.exception("[SHADOW_V2] router_view_build_failed")
             router_view = None
 
+    match_category = _classify_match(
+        v1_tool, v1_handled, v2_decision, v2_policy,
+    )
+    disagreement_source = _attribute_disagreement_source(
+        match=match_category, v1_tool=v1_tool, v1_handled=v1_handled,
+        v2_decision=v2_decision, v2_policy=v2_policy,
+        v2_router=router_view,
+    )
     record = ShadowDiffRecordV2(
         vault_hmac64=_short_correlation(vault_id),
         session_hmac64=_short_correlation(session_id or ""),
@@ -459,9 +592,11 @@ def build_and_log_diff(
         v2_reason_code=v2_reason,
         v2_confidence_bucket=v2_conf_bucket,
         v2_fingerprint=fp,
-        match=_classify_match(v1_tool, v1_handled, v2_decision, v2_policy),
+        match=match_category,
         router_view=router_view,
         fp_available=fp_key_present,
+        disagreement_source=disagreement_source,
+        v2_revision_stamp=compute_v2_revision_stamp(),
         note=note,
     )
     logger.info("[SHADOW_V2] %s", record.to_log_line())
@@ -481,6 +616,14 @@ __all__ = [
     "MATCH_INSUFFICIENT_CONTEXT",
     "MATCH_V2_VALIDATION_ERROR",
     "MATCH_CATEGORIES",
+    "DISAGREEMENT_SOURCE_NONE",
+    "DISAGREEMENT_SOURCE_SEMANTIC",
+    "DISAGREEMENT_SOURCE_POLICY",
+    "DISAGREEMENT_SOURCE_ROUTER",
+    "DISAGREEMENT_SOURCE_INSUFFICIENT_CONTEXT",
+    "DISAGREEMENT_SOURCE_V2_ERROR",
+    "DISAGREEMENT_SOURCE_UNKNOWN",
+    "DISAGREEMENT_SOURCES",
     "MIN_FINGERPRINT_SECRET_LEN",
     "NOFP_SENTINEL",
     "configure_fingerprint_secret_for_tests",

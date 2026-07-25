@@ -45,6 +45,7 @@ def _fresh_diff(
     v1_handled: bool = True,
     with_router_view: bool = True,
 ) -> sr.ShadowDiffRecordV2:
+    from vault_chat_v2_versions import compute_v2_revision_stamp
     router_view = None
     if with_router_view:
         router_view = sr.ShadowRouterView(
@@ -62,6 +63,7 @@ def _fresh_diff(
         v2_confidence_bucket="gte95", v2_fingerprint="ffff",
         match=match, router_view=router_view,
         fp_available=fp_available,
+        v2_revision_stamp=compute_v2_revision_stamp(),
     )
 
 
@@ -273,7 +275,8 @@ class StartupSelfTestTest(unittest.TestCase):
         self.assertTrue(report.ok, msg=str(report.as_dict()))
         stage_names = [s.name for s in report.stages]
         self.assertEqual(
-            stage_names, ["snapshot", "decider", "policy", "router"],
+            stage_names,
+            ["enum_consistency", "snapshot", "decider", "policy", "router"],
         )
         for stage in report.stages:
             self.assertTrue(stage.ok, msg=f"{stage.name} failed: {stage.detail}")
@@ -389,6 +392,418 @@ class ShadowHealthSummaryTest(unittest.TestCase):
         self.assertIn("reasons", d)
         self.assertIn("validation", d)
         self.assertIn("metrics", d)
+
+
+# =====================================================================
+# check_enum_consistency (commit 8-c)
+# =====================================================================
+
+class CheckEnumConsistencyTest(unittest.TestCase):
+
+    def test_current_codebase_is_consistent(self):
+        ok, violations = diag.check_enum_consistency()
+        self.assertTrue(ok, msg=f"violations: {violations}")
+        self.assertEqual(violations, [])
+
+    def test_detects_missing_classification(self):
+        # diag imported ACTION_KIND_CLASSIFICATION at module load;
+        # patch its local binding.
+        original = diag.ACTION_KIND_CLASSIFICATION
+        try:
+            from types import MappingProxyType
+            partial = {k: v for k, v in original.items()}
+            some_key = next(iter(partial.keys()))
+            del partial[some_key]
+            diag.ACTION_KIND_CLASSIFICATION = MappingProxyType(partial)
+            ok, violations = diag.check_enum_consistency()
+            self.assertFalse(ok)
+            self.assertTrue(any("no classification entry" in v for v in violations))
+        finally:
+            diag.ACTION_KIND_CLASSIFICATION = original
+
+    def test_detects_missing_reply_template(self):
+        # Same import-binding caveat as above.
+        from types import MappingProxyType
+        original_success = diag.SUCCESS_REPLY_TEMPLATES
+        original_failure = diag.FAILURE_REPLY_TEMPLATES
+        try:
+            # Drop 'save_draft' from success but leave failure
+            # side intact -- that creates a mismatch the checker
+            # must catch.
+            reduced_success = {
+                k: v for k, v in original_success.items() if k != "save_draft"
+            }
+            diag.SUCCESS_REPLY_TEMPLATES = MappingProxyType(reduced_success)
+            ok, violations = diag.check_enum_consistency()
+            self.assertFalse(ok)
+            self.assertTrue(any(
+                "'save_draft'" in v and "no success template" in v
+                for v in violations
+            ))
+        finally:
+            diag.SUCCESS_REPLY_TEMPLATES = original_success
+            diag.FAILURE_REPLY_TEMPLATES = original_failure
+
+
+# =====================================================================
+# Split HealthReport dimensions (commit 8-d)
+# =====================================================================
+
+class HealthReportDimensionsTest(unittest.TestCase):
+
+    def setUp(self):
+        sm.reset_metrics_for_tests()
+        for k in (
+            "VAULTAI_CHAT_BRAIN_MODE",
+            "VAULTAI_CHAT_BRAIN_V2_FINGERPRINT_SECRET",
+            "VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK",
+        ):
+            os.environ.pop(k, None)
+        sr.reset_fingerprint_secret_for_tests()
+
+    def tearDown(self):
+        self.setUp()
+
+    def test_default_all_dimensions_present(self):
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.configuration_status, diag.DIM_CONFIG_PASS)
+        self.assertEqual(report.startup_status, diag.DIM_STARTUP_SKIP)
+        self.assertEqual(report.runtime_status, diag.DIM_RUNTIME_PASS)
+        # No samples -> insufficient samples, not degraded.
+        self.assertEqual(
+            report.behavior_status,
+            diag.DIM_BEHAVIOR_INSUFFICIENT_SAMPLES,
+        )
+
+    def test_configuration_fail_flips_only_config_dimension(self):
+        os.environ["VAULTAI_CHAT_BRAIN_MODE"] = "shadow"
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.configuration_status, diag.DIM_CONFIG_FAIL)
+        # Runtime + behavior separately -- still fine.
+        self.assertEqual(report.runtime_status, diag.DIM_RUNTIME_PASS)
+
+    def test_pipeline_exception_flips_only_runtime_dimension(self):
+        os.environ["VAULTAI_CHAT_BRAIN_V2_FINGERPRINT_SECRET"] = (
+            "a-sufficiently-long-fingerprint-secret-for-tests-only"
+        )
+        sm.record_pipeline_exception("decider", "TimeoutError")
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.runtime_status, diag.DIM_RUNTIME_DEGRADED)
+        # Configuration unaffected.
+        self.assertEqual(report.configuration_status, diag.DIM_CONFIG_PASS)
+
+    def test_reasons_by_dimension_shape(self):
+        os.environ["VAULTAI_CHAT_BRAIN_MODE"] = "shadow"
+        sm.record_pipeline_exception("decider", "TimeoutError")
+        report = diag.shadow_health_summary()
+        # Both dimensions have reasons.
+        self.assertIn("configuration", report.reasons_by_dimension)
+        self.assertIn("runtime", report.reasons_by_dimension)
+
+
+# =====================================================================
+# Sample-size confidence tier (commit 8-e)
+# =====================================================================
+
+class ConfidenceTierTest(unittest.TestCase):
+
+    def setUp(self):
+        sm.reset_metrics_for_tests()
+        sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
+
+    def tearDown(self):
+        sm.reset_metrics_for_tests()
+        sr.reset_fingerprint_secret_for_tests()
+
+    def test_zero_diffs_is_low_confidence(self):
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.confidence_tier, diag.CONFIDENCE_LOW)
+        self.assertFalse(report.sample_size_ok)
+
+    def test_below_min_samples_is_low_and_sample_not_ok(self):
+        for _ in range(50):
+            sm.record_shadow_diff(_fresh_diff())
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.confidence_tier, diag.CONFIDENCE_LOW)
+        self.assertFalse(report.sample_size_ok)
+
+    def test_at_min_samples_is_low_but_sample_ok(self):
+        for _ in range(100):
+            sm.record_shadow_diff(_fresh_diff())
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.confidence_tier, diag.CONFIDENCE_LOW)
+        self.assertTrue(report.sample_size_ok)
+
+    def test_medium_confidence_at_1k(self):
+        for _ in range(1000):
+            sm.record_shadow_diff(_fresh_diff())
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.confidence_tier, diag.CONFIDENCE_MEDIUM)
+
+    def test_high_confidence_at_10k(self):
+        for _ in range(10_000):
+            sm.record_shadow_diff(_fresh_diff())
+        report = diag.shadow_health_summary()
+        self.assertEqual(report.confidence_tier, diag.CONFIDENCE_HIGH)
+
+
+# =====================================================================
+# Authoritative readiness gate (commit 8-f)
+# =====================================================================
+
+class AuthoritativeReadinessGateTest(unittest.TestCase):
+
+    def setUp(self):
+        sm.reset_metrics_for_tests()
+        for k in (
+            "VAULTAI_CHAT_BRAIN_MODE",
+            "VAULTAI_CHAT_BRAIN_V2_FINGERPRINT_SECRET",
+            "VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK",
+        ):
+            os.environ.pop(k, None)
+        sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
+        # Complete production registry.
+        import vault_chat_executor_adapters_v2 as adapters
+        self.registry = adapters.build_production_executor_registry()
+
+    def tearDown(self):
+        sm.reset_metrics_for_tests()
+        sr.reset_fingerprint_secret_for_tests()
+
+    def _pass_config(self):
+        os.environ["VAULTAI_CHAT_BRAIN_V2_FINGERPRINT_SECRET"] = (
+            "a-sufficiently-long-fingerprint-secret-for-tests-only"
+        )
+
+    def test_empty_registry_refused(self):
+        import vault_chat_integration_v2 as vi
+        gate = diag.is_v2_authoritative_ready(
+            vi.ExecutorRegistry(),
+            require_confidence=diag.CONFIDENCE_LOW,
+        )
+        self.assertFalse(gate.ready)
+        self.assertTrue(any(
+            b.startswith("registry.missing_executors")
+            for b in gate.blockers
+        ))
+
+    def test_zero_samples_refused_at_high_confidence(self):
+        self._pass_config()
+        gate = diag.is_v2_authoritative_ready(
+            self.registry, require_confidence=diag.CONFIDENCE_HIGH,
+        )
+        self.assertFalse(gate.ready)
+        # Blocker mentions confidence.
+        self.assertTrue(any(
+            b.startswith("confidence=") for b in gate.blockers
+        ))
+
+    def test_ready_with_full_registry_high_samples_no_errors(self):
+        self._pass_config()
+        # Push metrics above HIGH threshold with only agreements.
+        for _ in range(10_000):
+            sm.record_shadow_diff(_fresh_diff(
+                match=sr.MATCH_INTENT_EQUIVALENT,
+            ))
+        gate = diag.is_v2_authoritative_ready(
+            self.registry,
+            require_confidence=diag.CONFIDENCE_HIGH,
+            require_self_test=True,
+        )
+        self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
+        self.assertEqual(gate.blockers, ())
+
+    def test_pipeline_exception_refuses_readiness(self):
+        self._pass_config()
+        for _ in range(10_000):
+            sm.record_shadow_diff(_fresh_diff())
+        sm.record_pipeline_exception("router", "AssertionError")
+        gate = diag.is_v2_authoritative_ready(
+            self.registry,
+            require_confidence=diag.CONFIDENCE_HIGH,
+        )
+        self.assertFalse(gate.ready)
+
+    def test_configuration_error_refuses_readiness(self):
+        # Set mode=shadow AND reset the injected secret so the
+        # validator errors on missing fingerprint secret.
+        os.environ["VAULTAI_CHAT_BRAIN_MODE"] = "shadow"
+        sr.reset_fingerprint_secret_for_tests()
+        try:
+            gate = diag.is_v2_authoritative_ready(
+                self.registry,
+                require_confidence=diag.CONFIDENCE_LOW,
+                require_self_test=False,
+            )
+            self.assertFalse(gate.ready)
+            self.assertTrue(any(
+                b == "configuration=FAIL" or "config." in b
+                for b in gate.blockers
+            ))
+        finally:
+            os.environ.pop("VAULTAI_CHAT_BRAIN_MODE", None)
+            sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
+
+    def test_medium_confidence_accepted_when_required(self):
+        self._pass_config()
+        for _ in range(1000):
+            sm.record_shadow_diff(_fresh_diff())
+        gate = diag.is_v2_authoritative_ready(
+            self.registry,
+            require_confidence=diag.CONFIDENCE_MEDIUM,
+        )
+        self.assertTrue(gate.ready, msg=f"blockers={gate.blockers}")
+
+    def test_gate_as_dict_serializable(self):
+        gate = diag.is_v2_authoritative_ready(
+            self.registry, require_confidence=diag.CONFIDENCE_LOW,
+        )
+        d = gate.as_dict()
+        self.assertIn("ready", d)
+        self.assertIn("blockers", d)
+        self.assertIn("required_confidence_tier", d)
+
+    def test_invalid_confidence_raises(self):
+        with self.assertRaises(ValueError):
+            diag.is_v2_authoritative_ready(
+                self.registry, require_confidence="MYSTERY",
+            )
+
+
+# =====================================================================
+# Revision stamp (commit 8-a)
+# =====================================================================
+
+class RevisionStampTest(unittest.TestCase):
+
+    def test_stamp_shape(self):
+        from vault_chat_v2_versions import compute_v2_revision_stamp
+        s = compute_v2_revision_stamp()
+        # Format: b<n>.p<n>.r<n>.s<n>.q<n>.i<n>
+        parts = s.split(".")
+        self.assertEqual(len(parts), 6)
+        for prefix, part in zip("bprsqi", parts):
+            self.assertTrue(part.startswith(prefix))
+            int(part[1:])  # tail is numeric
+
+    def test_shadow_diff_record_carries_stamp(self):
+        rec = _fresh_diff()
+        # commit 8: every fresh diff carries the stamp.
+        self.assertNotEqual(rec.v2_revision_stamp, "")
+
+    def test_metrics_track_revision_stamps(self):
+        sm.reset_metrics_for_tests()
+        sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
+        try:
+            for _ in range(5):
+                sm.record_shadow_diff(_fresh_diff())
+            snap = sm.get_metrics_snapshot()
+            self.assertIn("revision_stamps", snap)
+            # exactly one stamp seen.
+            self.assertEqual(sum(snap["revision_stamps"].values()), 5)
+        finally:
+            sm.reset_metrics_for_tests()
+            sr.reset_fingerprint_secret_for_tests()
+
+
+# =====================================================================
+# Disagreement source attribution (commit 8-b)
+# =====================================================================
+
+class DisagreementSourceAttributionTest(unittest.TestCase):
+
+    def setUp(self):
+        sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
+
+    def tearDown(self):
+        sr.reset_fingerprint_secret_for_tests()
+
+    def _decision(self, intent="confirm_draft", target_id="d-1"):
+        from vault_chat_semantic_decision_v2 import (
+            Authorization, SEMANTIC_DECISION_V2_SCHEMA_VERSION,
+            SemanticDecisionV2, TARGET_KIND_DRAFT, TargetRef,
+        )
+        return SemanticDecisionV2(
+            schema_version=SEMANTIC_DECISION_V2_SCHEMA_VERSION,
+            intent=intent,
+            target=TargetRef(kind=TARGET_KIND_DRAFT, id=target_id),
+            field_patch={}, requested_operations=(),
+            authorization=Authorization(granted=False),
+            confidence=0.95, reason="",
+        )
+
+    def _policy(self, outcome="allow", reason="ALLOWED"):
+        from vault_chat_policy_v2 import PolicyResultV2
+        return PolicyResultV2(
+            allowed=(outcome == "allow"),
+            outcome=outcome, normalized_intent="confirm_draft",
+            target_kind="draft", target_id="d-1",
+            authorization_to_mint=None, validated_patch=None,
+            reason_code=reason,
+        )
+
+    def test_agreement_yields_source_none(self):
+        rec = sr.build_and_log_diff(
+            vault_id="v", session_id="s", turn_id="t",
+            v1_tool="confirm_pending_save", v1_handled=True,
+            v2_decision=self._decision(),
+            v2_policy=self._policy(),
+        )
+        self.assertEqual(
+            rec.disagreement_source, sr.DISAGREEMENT_SOURCE_NONE,
+        )
+
+    def test_semantic_disagreement_when_intent_differs(self):
+        # v1 chose confirm_pending_save; v2 chose cancel_draft.
+        rec = sr.build_and_log_diff(
+            vault_id="v", session_id="s", turn_id="t",
+            v1_tool="confirm_pending_save", v1_handled=True,
+            v2_decision=self._decision(intent="cancel_draft"),
+            v2_policy=self._policy(),
+        )
+        self.assertEqual(
+            rec.disagreement_source, sr.DISAGREEMENT_SOURCE_SEMANTIC,
+        )
+
+    def test_policy_disagreement_when_intent_agrees_but_policy_rejects(self):
+        rec = sr.build_and_log_diff(
+            vault_id="v", session_id="s", turn_id="t",
+            v1_tool="confirm_pending_save", v1_handled=True,
+            v2_decision=self._decision(intent="confirm_draft"),
+            v2_policy=self._policy(
+                outcome="reject", reason="TARGET_KIND_MISMATCH",
+            ),
+        )
+        # intent agrees (family map), but policy rejected.
+        self.assertEqual(
+            rec.disagreement_source, sr.DISAGREEMENT_SOURCE_POLICY,
+        )
+
+    def test_v2_error_disagreement(self):
+        from vault_chat_semantic_decision_v2 import make_fallthrough
+        rec = sr.build_and_log_diff(
+            vault_id="v", session_id="s", turn_id="t",
+            v1_tool="fallthrough", v1_handled=False,
+            v2_decision=make_fallthrough(error="bad_json"),
+            v2_policy=None,
+        )
+        self.assertEqual(
+            rec.disagreement_source, sr.DISAGREEMENT_SOURCE_V2_ERROR,
+        )
+
+    def test_insufficient_context_source(self):
+        rec = sr.build_and_log_diff(
+            vault_id="v", session_id="s", turn_id="t",
+            v1_tool="confirm_pending_save", v1_handled=True,
+            v2_decision=self._decision(),
+            v2_policy=self._policy(
+                outcome="clarify", reason="INSUFFICIENT_CONTEXT",
+            ),
+        )
+        self.assertEqual(
+            rec.disagreement_source,
+            sr.DISAGREEMENT_SOURCE_INSUFFICIENT_CONTEXT,
+        )
 
 
 if __name__ == "__main__":
