@@ -174,6 +174,30 @@ class ExecutorRegistry:
 
 
 # =====================================================================
+# Runtime-readiness guard for mode==on
+# =====================================================================
+
+def validate_v2_runtime_readiness(
+    registry: ExecutorRegistry,
+) -> tuple[bool, list[str]]:
+    """Return ``(is_ready, missing_action_kinds_sorted)``.
+
+    The caller should refuse to enter mode==on unless
+    ``is_ready`` is True. The registry is considered ready only
+    when every ``ACTION_KIND_*`` the router can emit maps to a
+    non-None executor.
+
+    Off and shadow modes do NOT need this check -- shadow never
+    dispatches an executor, and off never invokes v2 at all.
+    """
+    missing: list[str] = []
+    for action_kind in sorted(ACTION_KINDS):
+        if registry.get(action_kind) is None:
+            missing.append(action_kind)
+    return (len(missing) == 0, missing)
+
+
+# =====================================================================
 # Focus application
 # =====================================================================
 
@@ -457,4 +481,5 @@ __all__ = [
     "ExecutorError",
     "ExecutorRegistry",
     "apply_router_result_v2",
+    "validate_v2_runtime_readiness",
 ]

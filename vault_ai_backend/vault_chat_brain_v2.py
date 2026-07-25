@@ -1,33 +1,70 @@
 """Top-level v2 orchestrator + feature flag reader.
 
 Called by ``vault_chat_brain.run_chat_brain`` when
-``VAULTAI_CHAT_BRAIN_MODE ∈ {"shadow", "on"}``. Owns:
+``VAULTAI_CHAT_BRAIN_MODE in {"shadow", "on"}``. Owns:
 
-    * feature-flag reading + validation (fails closed to "off");
+    * feature-flag reading + validation (fails closed to ``off``);
     * snapshot construction from live Redis + memory state
-      (redacted per design memo rev 8);
-    * pipeline invocation: decider_v2 → policy_v2 → router_v2 →
+      (redacted -- see snapshot-redaction rules below);
+    * pipeline invocation: decider_v2 -> policy_v2 -> router_v2 ->
       integration_v2;
     * reply rendering from ``RouterResultV2`` +
       ``IntegrationResultV2`` (deferred templates from router_v2).
 
 Never modifies ``main.py``, ``vault_chat_decision_router.py`` (v1),
 or ``vault_chat_policy.py`` (v1). Never invokes v1 within a v2
-request — mixed execution is forbidden.
+request -- mixed execution is forbidden.
 
-Failure invariant
------------------
-If any component (decider / policy / router / integration) raises
-unexpectedly in ``mode == on``:
+Snapshot redaction rules (commit 5a)
+------------------------------------
+The decider prompt payload NEVER contains:
 
-    * if ``VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK == "on"`` (rollout
-      override): return a fallthrough BrainResult so main.py's
-      legacy pipeline handles the whole request from scratch;
-    * otherwise: return a controlled error BrainResult (single-turn
-      user-facing message; legacy pipeline NOT invoked).
+    * raw ``vault_id`` or ``session_id`` (the caller keeps them for
+      side effects; the prompt payload omits them);
+    * password_ref values (Draft.to_prompt_dict(redact_secrets=True)
+      returns ``{present, source}`` only);
+    * decrypted vault content, ciphertext, tokens, PINs, encryption
+      keys, attachment ciphertext, attachment extraction text;
+    * authorization record ids or Redis keys.
 
-In shadow mode any exception is caught, logged, and squashed —
-the v1 result stands.
+The decider prompt payload MAY contain (deliberate, per design):
+
+    * usernames, email addresses, and service names embedded in
+      draft fields -- required so the model can honor edits like
+      "use my email as the username". These values MUST NEVER
+      appear in shadow logs, fingerprints, or telemetry.
+    * ``PendingAction.target_label`` -- short human-readable labels
+      (e.g. "Instagram login") already curated as safe-to-show;
+      they never appear in shadow logs / telemetry.
+
+Failure invariant (commit 5a: V2ExecutionPhase)
+-----------------------------------------------
+``run_v2_authoritative`` tracks an execution phase:
+
+    PHASE_READ_ONLY          -- snapshot / decider / policy / router
+    PHASE_INTEGRATION_STARTED-- apply_router_result_v2 has been called
+                                (any immediate focus write may have
+                                landed; auth mint/consume may follow)
+    PHASE_EXECUTOR_STARTED   -- integration reported the executor was
+                                dispatched
+    PHASE_EXECUTOR_COMPLETED -- executor returned (success or error);
+                                integration produced a result
+
+V1 fallback via ``VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK=on`` is honored
+ONLY when the phase is ``PHASE_READ_ONLY`` at the moment the
+exception is caught. In every later phase, an uncontrolled failure
+resolves to a controlled error reply -- never a V1 fallthrough,
+because at that point state mutation may already have happened and
+a second V1 pass would risk a duplicate operation.
+
+Runtime readiness guard (commit 5a)
+-----------------------------------
+Mode ``on`` requires that every ``ACTION_KIND_*`` the router can
+emit maps to a real executor in the injected registry. The brain
+calls ``validate_v2_runtime_readiness(registry)`` before entering
+authoritative execution; if the registry is incomplete, mode-on
+is refused with a controlled unavailable response, not silently
+downgraded.
 """
 
 from __future__ import annotations
@@ -36,6 +73,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Optional, Tuple
 
 from vault_chat_authorization_record import AuthorizationRecord  # noqa: F401
@@ -65,6 +103,7 @@ from vault_chat_integration_v2 import (
     STATUS_NO_EXECUTION,
     STATUS_SUCCESS,
     apply_router_result_v2,
+    validate_v2_runtime_readiness,
 )
 from vault_chat_pending_action import (
     PendingAction,
@@ -120,11 +159,37 @@ def v1_fallback_enabled() -> bool:
 
 
 # =====================================================================
+# Execution phase (V2ExecutionPhase) -- side-effect boundary for
+# V1 fallback eligibility.
+# =====================================================================
+
+class V2ExecutionPhase(str, Enum):
+    READ_ONLY            = "READ_ONLY"
+    INTEGRATION_STARTED  = "INTEGRATION_STARTED"
+    EXECUTOR_STARTED     = "EXECUTOR_STARTED"
+    EXECUTOR_COMPLETED   = "EXECUTOR_COMPLETED"
+
+
+# Only READ_ONLY is fallback-eligible. Every later phase means a
+# state mutation (immediate focus write, auth mint, consume,
+# executor call, etc.) may have landed; a second V1 pass could
+# duplicate the operation.
+_FALLBACK_ELIGIBLE_PHASES: frozenset[V2ExecutionPhase] = frozenset({
+    V2ExecutionPhase.READ_ONLY,
+})
+
+
+# =====================================================================
 # Reply rendering
 # =====================================================================
 
 CONTROLLED_ERROR_REPLY: str = (
-    "Sorry — I ran into a problem handling that. Please try again."
+    "Sorry - I ran into a problem handling that. Please try again."
+)
+
+CONTROLLED_UNAVAILABLE_REPLY: str = (
+    "Sorry - this feature isn't ready in this environment yet. "
+    "Please try again shortly."
 )
 
 
@@ -132,10 +197,6 @@ def _render_reply(
     router_result: RouterResultV2,
     integration_result: Optional[IntegrationResultV2],
 ) -> str:
-    """Turn a (router, integration) pair into the final user-facing
-    text. Deterministic, template-driven. Never inspects diagnostic
-    or telemetry.
-    """
     if router_result.reply_kind == REPLY_KIND_NONE:
         return ""
     if router_result.reply_kind == REPLY_KIND_CLARIFICATION:
@@ -144,33 +205,22 @@ def _render_reply(
         return router_result.reply_text
     if router_result.reply_kind == REPLY_KIND_EXECUTION_REQUIRED:
         if integration_result is None:
-            # Should not happen — every execution-required router
-            # result must be paired with an integration attempt.
             return CONTROLLED_ERROR_REPLY
         key = integration_result.reply_key or ""
         if integration_result.execution_status == STATUS_SUCCESS:
             text = get_success_reply(key)
             return text or CONTROLLED_ERROR_REPLY
-        # Any non-success execution status → failure template.
         text = get_failure_reply(key)
         return text or CONTROLLED_ERROR_REPLY
-    # Chat / etc. — phase 1 shouldn't reach here (chat falls through
-    # via router), but be defensive.
     return router_result.reply_text or CONTROLLED_ERROR_REPLY
 
 
 # =====================================================================
-# Snapshot construction (redacted per design memo rev 8)
+# Snapshot construction (redacted)
 # =====================================================================
 
 @dataclass(frozen=True)
 class _V2Snapshot:
-    """Combined snapshot for decider context + policy input.
-
-    Split so callers can build once and re-use — decider needs
-    prompt-facing views (redacted), policy needs the full
-    ``PolicySnapshotV2`` with typed dataclasses.
-    """
     policy_snapshot:     PolicySnapshotV2
     decider_context:     SemanticDecisionV2Context
 
@@ -187,11 +237,13 @@ def _build_v2_snapshot(
 ) -> _V2Snapshot:
     """Build a redacted snapshot from live state.
 
-    Never puts these in the snapshot: passwords, decrypted vault
-    content, tokens, PIN, encryption keys, attachment ciphertext,
-    or raw sensitive credential fields. The Draft / PendingAction /
-    Focus classes already return safe views via their
-    ``to_prompt_dict`` methods; this function just aggregates.
+    The decider context deliberately carries ``vault_id=""`` and
+    ``session_id=None`` -- policy still holds the real values so
+    side effects and correlation work, but the prompt-serialized
+    payload the model sees never contains them. Any Redis key,
+    authorization id, ciphertext, or token is likewise absent by
+    construction (source dataclasses' ``to_prompt_dict`` methods
+    do not expose them).
     """
     when = float(now) if now is not None else time.time()
 
@@ -217,7 +269,6 @@ def _build_v2_snapshot(
         focus=focus_record,
     )
 
-    # Decider context uses redacted views only.
     active_draft_views = tuple(
         d.to_prompt_dict(redact_secrets=True) for d in live_drafts
     )
@@ -230,14 +281,17 @@ def _build_v2_snapshot(
         + [p.action_id for p in live_pending]
     )
 
+    # NOTE: vault_id / session_id deliberately blanked in the
+    # decider context so build_prompt_v2's payload cannot leak
+    # them into the LLM prompt.
     decider_context = SemanticDecisionV2Context(
-        vault_id=vault_id,
-        session_id=session_id,
+        vault_id="",
+        session_id=None,
         user_message=user_message,
         active_drafts=active_draft_views,
         pending_actions=pending_views,
         focus=focus_view,
-        recent_turns=(),      # phase-1: not wired
+        recent_turns=(),
         conversation_digest="",
         known_target_ids=known_ids,
     )
@@ -261,8 +315,7 @@ def _focus_to_view(focus: Optional[ConversationalFocus]) -> Optional[dict]:
 
 
 # =====================================================================
-# BrainResult-like return type (kept structurally compatible with
-# vault_chat_brain.BrainResult — brain.py just re-wraps this).
+# BrainResult-like return type
 # =====================================================================
 
 @dataclass(frozen=True)
@@ -278,6 +331,13 @@ CONTROLLED_ERROR_RESULT: BrainV2Result = BrainV2Result(
     reply_text=CONTROLLED_ERROR_REPLY,
     tool="",
     fallthrough_reason="v2_controlled_error",
+)
+
+CONTROLLED_UNAVAILABLE_RESULT: BrainV2Result = BrainV2Result(
+    handled=True,
+    reply_text=CONTROLLED_UNAVAILABLE_REPLY,
+    tool="",
+    fallthrough_reason="v2_not_ready_on_mode",
 )
 
 
@@ -309,13 +369,13 @@ async def run_v2_authoritative(
 ) -> BrainV2Result:
     """Run v2 end-to-end when the mode is ``on``.
 
-    Every exception is caught here — never propagates to the
-    caller. Mode-on failure semantics:
-
-        * V1_FALLBACK env == "on"  → return fallthrough so main.py
-                                     runs the legacy pipeline fresh.
-        * otherwise                → controlled error BrainV2Result.
+    Every exception is caught here -- never propagates to the
+    caller. V1 fallback is honored ONLY when the exception was
+    caught while phase == READ_ONLY. Later-phase failures always
+    become a controlled error reply.
     """
+    phase = V2ExecutionPhase.READ_ONLY
+
     try:
         snap = _build_v2_snapshot(
             vault_id=vault_id, session_id=session_id,
@@ -326,7 +386,7 @@ async def run_v2_authoritative(
         )
     except Exception:
         logger.exception("[BRAIN_V2] snapshot_build_failed_on")
-        return _handle_on_exception("snapshot_build_failed")
+        return _handle_on_exception("snapshot_build_failed", phase)
 
     ai = ai_provider or _default_ai_provider()
 
@@ -336,7 +396,7 @@ async def run_v2_authoritative(
         )
     except Exception:
         logger.exception("[BRAIN_V2] decider_v2_failed_on")
-        return _handle_on_exception("decider_failed")
+        return _handle_on_exception("decider_failed", phase)
 
     try:
         policy_result = authorize_v2(
@@ -344,7 +404,7 @@ async def run_v2_authoritative(
         )
     except Exception:
         logger.exception("[BRAIN_V2] policy_v2_failed_on")
-        return _handle_on_exception("policy_failed")
+        return _handle_on_exception("policy_failed", phase)
 
     try:
         router_result = route_v2(
@@ -352,9 +412,13 @@ async def run_v2_authoritative(
         )
     except Exception:
         logger.exception("[BRAIN_V2] router_v2_failed_on")
-        return _handle_on_exception("router_failed")
+        return _handle_on_exception("router_failed", phase)
 
     if not router_result.handled:
+        # Router explicitly deferred to fallthrough -- still
+        # READ_ONLY, so this is a legitimate hand-off. Not a V2
+        # error; the caller (brain.py) treats the return as a
+        # normal v2 fallthrough.
         return BrainV2Result(
             handled=False,
             fallthrough_reason=(
@@ -362,7 +426,10 @@ async def run_v2_authoritative(
             ),
         )
 
-    # Apply router intent via integration.
+    # -------------------------------------------------------------
+    # Cross the side-effect boundary. From here on, no fallback.
+    # -------------------------------------------------------------
+    phase = V2ExecutionPhase.INTEGRATION_STARTED
     try:
         integration_result = apply_router_result_v2(
             router_result=router_result,
@@ -371,13 +438,27 @@ async def run_v2_authoritative(
             key=key,
             memory=memory,
             assistant_turn_id=assistant_turn_id or turn_id,
-            created_target_id=None,   # populated by executor for create
+            created_target_id=None,
         )
     except Exception:
         logger.exception("[BRAIN_V2] integration_v2_failed_on")
-        return _handle_on_exception("integration_failed")
+        return _handle_on_exception("integration_failed", phase)
 
-    reply = _render_reply(router_result, integration_result)
+    # Integration always returns a stable result. Executor may or
+    # may not have been called -- integration reports that via
+    # execution_status. Regardless, we are no longer READ_ONLY:
+    # the integration attempted its immediate focus write.
+    if integration_result.execution_status in (
+        STATUS_SUCCESS, STATUS_EXECUTOR_FAILED,
+    ):
+        phase = V2ExecutionPhase.EXECUTOR_COMPLETED
+
+    try:
+        reply = _render_reply(router_result, integration_result)
+    except Exception:
+        logger.exception("[BRAIN_V2] render_reply_failed_on")
+        return _handle_on_exception("render_reply_failed", phase)
+
     tool = (
         integration_result.executed_action_kind
         or router_result.normalized_intent
@@ -391,23 +472,47 @@ async def run_v2_authoritative(
     )
 
 
-def _handle_on_exception(reason: str) -> BrainV2Result:
-    """Failure handling per the design-memo rev-8 invariant."""
-    if v1_fallback_enabled():
+def _handle_on_exception(
+    reason: str, phase: V2ExecutionPhase,
+) -> BrainV2Result:
+    """Failure handling per the phase-boundary invariant.
+
+    V1 fallback is honored only when phase is READ_ONLY at the
+    moment of the exception AND the operator explicitly enabled
+    fallback via env var. In every later phase, the failure
+    becomes a controlled error reply regardless of the env var
+    -- state mutation may already have landed and a second V1
+    pass could duplicate the operation.
+    """
+    fallback_eligible = phase in _FALLBACK_ELIGIBLE_PHASES
+    if fallback_eligible and v1_fallback_enabled():
         return BrainV2Result(
             handled=False,
-            fallthrough_reason=f"v2_error_v1_fallback:{reason}",
+            fallthrough_reason=(
+                f"v2_error_v1_fallback:{reason}:phase={phase.value}"
+            ),
+        )
+    # Not eligible OR env not set -> controlled error.
+    if not fallback_eligible and v1_fallback_enabled():
+        # Log the refusal so operators can see why the fallback env
+        # did not take effect for a given failure.
+        logger.warning(
+            "[BRAIN_V2] v1_fallback_refused reason=%s phase=%s "
+            "(post-side-effect phase not fallback-eligible)",
+            reason, phase.value,
         )
     return BrainV2Result(
         handled=True,
         reply_text=CONTROLLED_ERROR_REPLY,
         tool="",
-        fallthrough_reason=f"v2_controlled_error:{reason}",
+        fallthrough_reason=(
+            f"v2_controlled_error:{reason}:phase={phase.value}"
+        ),
     )
 
 
 # =====================================================================
-# Shadow run (read-only)
+# Shadow run (read-only, full stack)
 # =====================================================================
 
 async def run_v2_shadow(
@@ -422,10 +527,25 @@ async def run_v2_shadow(
     v1_handled:                     bool = False,
     preceding_assistant_turn_id:    str = "",
 ) -> None:
-    """Read-only v2 evaluation for shadow mode. Never writes.
-    Never mints. Never applies focus. Only builds the snapshot,
-    runs decider + policy + router, and emits a shadow diff
-    record via ``vault_chat_shadow_recorder_v2.build_and_log_diff``.
+    """Read-only v2 evaluation for shadow mode. Runs the FULL
+    decision stack up to (but not including) integration:
+
+        _build_v2_snapshot
+        -> decide_v2 (LLM call)
+        -> authorize_v2 (policy)
+        -> route_v2 (router)
+
+    Emits one ``[SHADOW_V2]`` log line summarizing the router's
+    verdict and the disagreement category against v1.
+
+    STRICT invariant: this function MUST NOT
+        * call ``apply_router_result_v2``,
+        * mint_authorization,
+        * atomic_consume_authorization,
+        * dispatch an executor,
+        * persist focus,
+        * persist a draft,
+        * mutate any pending-action row.
 
     Any exception is caught + logged; the caller's v1 result is
     unaffected.
@@ -445,6 +565,8 @@ async def run_v2_shadow(
     ai = ai_provider or _default_ai_provider()
     decision: Optional[SemanticDecisionV2] = None
     policy_result: Optional[PolicyResultV2] = None
+    router_result: Optional[RouterResultV2] = None
+
     try:
         decision = await decide_v2(
             snap.decider_context, ai_provider=ai,
@@ -461,16 +583,21 @@ async def run_v2_shadow(
         logger.exception("[BRAIN_V2] shadow_policy_failed")
         policy_result = None
 
-    # We DELIBERATELY do not call route_v2 for shadow — the diff
-    # only needs the decision + policy verdict. Not calling
-    # route_v2 also guarantees no chance of an ExecutionPlanV2
-    # leaking into a caller that might act on it by mistake.
+    if policy_result is not None:
+        try:
+            router_result = route_v2(
+                policy_result=policy_result, decision=decision,
+            )
+        except Exception:
+            logger.exception("[BRAIN_V2] shadow_router_failed")
+            router_result = None
 
     try:
         build_and_log_diff(
             vault_id=vault_id, session_id=session_id, turn_id=turn_id,
             v1_tool=v1_tool, v1_handled=v1_handled,
             v2_decision=decision, v2_policy=policy_result,
+            v2_router=router_result,
         )
     except Exception:
         logger.exception("[BRAIN_V2] shadow_log_failed")
@@ -478,8 +605,10 @@ async def run_v2_shadow(
 
 __all__ = [
     "MODE_OFF", "MODE_SHADOW", "MODE_ON", "MODES",
+    "V2ExecutionPhase",
     "read_brain_mode", "v1_fallback_enabled",
     "CONTROLLED_ERROR_REPLY", "CONTROLLED_ERROR_RESULT",
+    "CONTROLLED_UNAVAILABLE_REPLY", "CONTROLLED_UNAVAILABLE_RESULT",
     "BrainV2Result",
     "run_v2_authoritative",
     "run_v2_shadow",

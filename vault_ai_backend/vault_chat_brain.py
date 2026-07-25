@@ -141,31 +141,55 @@ async def run_chat_brain(
         return legacy_result
 
     if mode == MODE_ON:
+        # Readiness guard: mode==on requires a complete executor
+        # registry. If any action_kind is unmapped we refuse to
+        # enter on mode (which would produce INTERNAL_ERROR for
+        # ordinary saves/deletes) and return a controlled
+        # unavailable response instead. The brain does NOT fall
+        # through to v1 here -- an operator turning on the flag
+        # against an unwired build must see this as a real
+        # deployment error, not a silent v1 handling.
         try:
             from vault_chat_brain_v2 import (
                 CONTROLLED_ERROR_RESULT,
+                CONTROLLED_UNAVAILABLE_RESULT,
                 run_v2_authoritative,
             )
-            from vault_chat_integration_v2 import ExecutorRegistry
+            from vault_chat_integration_v2 import (
+                validate_v2_runtime_readiness,
+            )
+            registry = _default_v2_executor_registry()
+            ready, missing = validate_v2_runtime_readiness(registry)
+            if not ready:
+                logger.error(
+                    "[BRAIN] on_mode_refused executors_missing=%s",
+                    ",".join(missing),
+                )
+                return BrainResult(
+                    handled=CONTROLLED_UNAVAILABLE_RESULT.handled,
+                    reply_text=CONTROLLED_UNAVAILABLE_RESULT.reply_text,
+                    tool=CONTROLLED_UNAVAILABLE_RESULT.tool,
+                    fallthrough_reason=(
+                        CONTROLLED_UNAVAILABLE_RESULT.fallthrough_reason
+                    ),
+                )
             v2_result = await run_v2_authoritative(
                 vault_id=vault_id, session_id=session_id,
                 turn_id=turn_id, user_message=user_message,
                 key=key, memory=memory,
-                executor_registry=_default_v2_executor_registry(),
+                executor_registry=registry,
                 assistant_turn_id=turn_id,
             )
         except Exception:
+            # Any exception escaping run_v2_authoritative is a bug
+            # (that function catches everything internally). Treat
+            # like a READ_ONLY-phase failure so V1_FALLBACK env
+            # (if set) still applies -- the ambiguity resolves in
+            # favor of "state may already have mutated". Since
+            # run_v2_authoritative's own catch has phase context
+            # and this branch does not, we conservatively refuse
+            # fallback here regardless of env.
             logger.exception("[BRAIN] on_v2_top_level_crashed")
-            from vault_chat_brain_v2 import (
-                CONTROLLED_ERROR_RESULT, v1_fallback_enabled,
-            )
-            if v1_fallback_enabled():
-                return BrainResult(
-                    handled=False,
-                    fallthrough_reason=(
-                        "v2_error_v1_fallback:top_level_exception"
-                    ),
-                )
             v2_result = CONTROLLED_ERROR_RESULT
         return BrainResult(
             handled=v2_result.handled,

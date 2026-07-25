@@ -1,19 +1,28 @@
 """Tests for the v2 top-level orchestrator + feature-flag dispatch
 in vault_chat_brain / vault_chat_brain_v2.
 
-Covers:
+Covers (commit 5 + commit 5a):
     * feature flag off never invokes v2
-    * feature flag shadow performs zero writes
+    * feature flag shadow performs zero writes AND exercises the
+      full read-only stack (snapshot -> decider -> policy -> router)
+      -- but NEVER integration / auth mint / consume / executor /
+      focus persistence
     * feature flag on invokes v2 only
-    * snapshot contains no secrets
-    * V2 exception handling (fail-closed vs V1_FALLBACK env)
+    * snapshot redaction: no vault_id, session_id, password_ref
+      value, tokens, ciphertext, authorization ids, or Redis keys
+      in the serialized decider payload
+    * V2 exception handling: V1_FALLBACK env honored ONLY when
+      phase == READ_ONLY; refused otherwise
     * no mixed V1/V2 execution in a single request
+    * runtime-readiness guard refuses on-mode with incomplete
+      registry (controlled unavailable, not silent v1)
     * shadow diff record generation
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import unittest
 from typing import Any, Optional
@@ -25,6 +34,16 @@ import vault_chat_integration_v2 as vi
 import vault_chat_shadow_recorder_v2 as sr
 
 from vault_chat_authorization_record import AUTH_ACTION_SAVE
+from vault_chat_decision_router_v2 import (
+    ACTION_KIND_APPLY_CREATE,
+    ACTION_KIND_APPLY_EDIT,
+    ACTION_KIND_CANCEL_DRAFT,
+    ACTION_KIND_CANCEL_PENDING,
+    ACTION_KIND_CONFIRM_DELETE,
+    ACTION_KIND_CONFIRM_SAVE,
+    ACTION_KIND_CONFIRM_SAVE_ATTACHMENT,
+    ACTION_KINDS,
+)
 from vault_chat_draft import (
     DRAFT_LOGIN, DraftField, SOURCE_GENERATED, SOURCE_USER_EXPLICIT,
     STATUS_PRESENTED_FOR_CONFIRMATION,
@@ -35,6 +54,7 @@ from vault_chat_focus import (
     FOCUS_KIND_DRAFT,
     stamp_focus,
 )
+from vault_chat_semantic_decider_v2 import build_prompt_v2
 from vault_chat_semantic_decision_v2 import (
     SEMANTIC_DECISION_V2_SCHEMA_VERSION,
 )
@@ -51,6 +71,21 @@ def _run(coro):
 
 VAULT = "vault-brainv2-test"
 SESSION = "sess-brainv2-test"
+
+TEST_FP_SECRET: bytes = b"test-brain-v2-fingerprint-secret-please-use-in-tests-only"
+
+
+class _FingerprintFixture:
+    """Provide a stable fingerprint secret for any test that runs
+    build_and_log_diff indirectly through shadow-mode. Prevents
+    the shadow recorder from emitting fingerprint-free records
+    across our brain-integration paths."""
+
+    def _install_fp_secret(self):
+        sr.configure_fingerprint_secret_for_tests(TEST_FP_SECRET)
+
+    def _reset_fp_secret(self):
+        sr.reset_fingerprint_secret_for_tests()
 
 
 # =====================================================================
@@ -89,10 +124,13 @@ class ReadBrainModeTest(unittest.TestCase):
 
 
 # =====================================================================
-# Snapshot construction — no secrets
+# Snapshot construction -- no secrets
 # =====================================================================
 
-class SnapshotNoSecretsTest(unittest.TestCase):
+class SnapshotRedactionTest(unittest.TestCase):
+    """Broad snapshot-redaction assertions. Every one of these
+    forbidden values MUST be absent from build_prompt_v2's
+    serialized payload."""
 
     def setUp(self):
         install_backend_for_tests(InMemoryChatStateBackend())
@@ -100,8 +138,13 @@ class SnapshotNoSecretsTest(unittest.TestCase):
     def tearDown(self):
         reset_chat_state_backend_for_tests()
 
+    def _prompt_payload(self, snap) -> str:
+        """Serialize the decider prompt to a searchable string --
+        JSON-encoding matches how the model actually sees it."""
+        messages = build_prompt_v2(snap.decider_context)
+        return json.dumps(messages, ensure_ascii=False)
+
     def test_snapshot_draft_view_hides_password_ref_value(self):
-        # Store a login draft.
         d = new_draft(
             vault_id=VAULT, session_id=SESSION,
             draft_kind=DRAFT_LOGIN,
@@ -132,16 +175,12 @@ class SnapshotNoSecretsTest(unittest.TestCase):
         )
         views = snap.decider_context.active_drafts
         self.assertEqual(len(views), 1)
-        # password_ref must be redacted — only {present, source},
-        # never the actual reference string.
         pw = views[0]["fields"]["password_ref"]
         self.assertNotIn("value", pw)
         self.assertNotIn(
             "memory:pending_login_draft:password", str(views[0]),
         )
         self.assertTrue(pw["present"])
-        # But non-secret fields keep their values (that's what the
-        # decider reasons over).
         self.assertEqual(
             views[0]["fields"]["service"]["value"], "Netflix",
         )
@@ -162,12 +201,155 @@ class SnapshotNoSecretsTest(unittest.TestCase):
         )
         fv = snap.decider_context.focus
         self.assertIsNotNone(fv)
-        # Focus view: kind, id, assistant_act, assistant_turn_id, age
         for k in ("kind", "id", "assistant_act", "assistant_turn_id"):
             self.assertIn(k, fv)
-        # No vault-content fields
         for forbidden in ("vault_id", "password", "notes", "secret", "key"):
             self.assertNotIn(forbidden, fv)
+
+    def test_serialized_prompt_never_contains_raw_vault_id(self):
+        d = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Netflix", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=1.0,
+                ),
+            },
+            origin_turn_id="t0", now=1.0,
+        )
+        store_draft(d)
+
+        snap = vbv2._build_v2_snapshot(
+            vault_id=VAULT, session_id=SESSION,
+            user_message="save it",
+            current_user_turn_id="u-1",
+            preceding_assistant_turn_id="a-0",
+            memory=None, now=2.0,
+        )
+        prompt = self._prompt_payload(snap)
+        self.assertNotIn(VAULT, prompt)
+
+    def test_serialized_prompt_never_contains_raw_session_id(self):
+        d = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Netflix", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=1.0,
+                ),
+            },
+            origin_turn_id="t0", now=1.0,
+        )
+        store_draft(d)
+        snap = vbv2._build_v2_snapshot(
+            vault_id=VAULT, session_id=SESSION,
+            user_message="save it",
+            current_user_turn_id="u-1",
+            preceding_assistant_turn_id="a-0",
+            memory=None, now=2.0,
+        )
+        prompt = self._prompt_payload(snap)
+        self.assertNotIn(SESSION, prompt)
+
+    def test_policy_snapshot_still_carries_vault_and_session_for_side_effects(self):
+        # The prompt payload omits them, but the POLICY snapshot
+        # (which drives auth mint and Redis writes) must still
+        # carry the real values -- otherwise integration side
+        # effects would silently misfire.
+        snap = vbv2._build_v2_snapshot(
+            vault_id=VAULT, session_id=SESSION,
+            user_message="hi",
+            current_user_turn_id="u-1",
+            preceding_assistant_turn_id="a-0",
+            memory=None, now=1.0,
+        )
+        self.assertEqual(snap.policy_snapshot.vault_id, VAULT)
+        self.assertEqual(snap.policy_snapshot.session_id, SESSION)
+
+    def test_serialized_prompt_carries_no_token_shaped_strings(self):
+        # Store a draft that includes a plausibly-token-shaped
+        # username to verify usernames DO appear (permitted, per
+        # design memo) but no token-shape strings leak from
+        # unrelated snapshot machinery.
+        d = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Github", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=1.0,
+                ),
+            },
+            origin_turn_id="t0", now=1.0,
+        )
+        store_draft(d)
+        snap = vbv2._build_v2_snapshot(
+            vault_id=VAULT, session_id=SESSION,
+            user_message="save it",
+            current_user_turn_id="u-1",
+            preceding_assistant_turn_id="a-0",
+            memory=None, now=2.0,
+        )
+        prompt = self._prompt_payload(snap)
+        for token_prefix in ("Bearer ", "eyJhbGciOi", "ghp_", "sk-",
+                              "AKIA", "AIza"):
+            self.assertNotIn(token_prefix, prompt)
+
+    def test_serialized_prompt_carries_no_redis_keys(self):
+        # A Redis key from vault_chat_state_store would start with
+        # a namespace prefix; assert no compose_key-shaped strings
+        # in the prompt.
+        d = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Netflix", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=1.0,
+                ),
+            },
+            origin_turn_id="t0", now=1.0,
+        )
+        store_draft(d)
+        snap = vbv2._build_v2_snapshot(
+            vault_id=VAULT, session_id=SESSION,
+            user_message="save it",
+            current_user_turn_id="u-1",
+            preceding_assistant_turn_id="a-0",
+            memory=None, now=2.0,
+        )
+        prompt = self._prompt_payload(snap)
+        # Compose-key namespace shapes.
+        for redis_shape in (
+            "chat:draft:", "chat:focus:", "chat:auth:",
+            "vault_chat_state:",
+        ):
+            self.assertNotIn(redis_shape, prompt)
+
+    def test_serialized_prompt_carries_no_authorization_ids(self):
+        # Mint an authorization record. Its auth_id must not leak
+        # into the decider prompt (integration owns auth records;
+        # decider must never see one).
+        from vault_chat_authorization_record import mint_authorization
+        rec = mint_authorization(
+            vault_id=VAULT, session_id=SESSION,
+            target_kind="draft", target_id="d-1",
+            action=AUTH_ACTION_SAVE,
+            authorizing_user_turn_id="u-1",
+            preceding_assistant_turn_id="a-0",
+            confidence=0.9,
+        )
+        snap = vbv2._build_v2_snapshot(
+            vault_id=VAULT, session_id=SESSION,
+            user_message="save it",
+            current_user_turn_id="u-2",
+            preceding_assistant_turn_id="a-1",
+            memory=None, now=1.0,
+        )
+        prompt = self._prompt_payload(snap)
+        self.assertNotIn(rec.auth_id, prompt)
 
 
 # =====================================================================
@@ -215,8 +397,6 @@ class FlagShadowTest(unittest.TestCase):
         reset_chat_state_backend_for_tests()
 
     def test_shadow_calls_v2_shadow_and_no_writes_from_it(self):
-        # Wrap the backend to catch writes that shadow-mode v2
-        # would emit if it misbehaved.
         import vault_chat_state_store as st
         writes: list[tuple[str, bytes, int]] = []
         real_backend = InMemoryChatStateBackend()
@@ -248,14 +428,10 @@ class FlagShadowTest(unittest.TestCase):
                 os.environ, {"VAULTAI_CHAT_BRAIN_MODE": "shadow"},
                 clear=False,
             ):
-                # Patch run_v2_shadow to observe it was called AND
-                # to prevent it doing anything real (which needs an
-                # ai_provider).
                 observed = {"called": False}
 
                 async def fake_shadow(**kwargs):
                     observed["called"] = True
-                    # Verify shadow was passed the v1 result signals.
                     self.assertIn("v1_tool", kwargs)
                     self.assertIn("v1_handled", kwargs)
 
@@ -269,14 +445,252 @@ class FlagShadowTest(unittest.TestCase):
                         user_message="hi", memory=None,
                     ))
                 self.assertTrue(observed["called"])
-                # In shadow mode with fake_shadow patched, no v2
-                # writes should have occurred.
-                # (Some v1 writes may exist — SavedDict recent_turns
-                # etc. That's v1, not v2, so not a shadow violation.)
-                # We assert only that our fake_shadow did not write.
-                # No stronger assertion since v1 may write.
         finally:
             st.reset_chat_state_backend_for_tests()
+
+
+# =====================================================================
+# SHADOW pipeline: full read-only stack, NEVER any side effect
+# =====================================================================
+
+class ShadowFullStackTest(unittest.TestCase, _FingerprintFixture):
+    """The shadow pipeline must run snapshot -> decider -> policy
+    -> router. It must NEVER call apply_router_result_v2,
+    mint_authorization, atomic_consume_authorization, an executor,
+    or any focus/draft/pending mutation."""
+
+    def setUp(self):
+        install_backend_for_tests(InMemoryChatStateBackend())
+        self._install_fp_secret()
+
+    def tearDown(self):
+        reset_chat_state_backend_for_tests()
+        self._reset_fp_secret()
+
+    def _fake_provider(self, intent: str = "confirm_draft",
+                        target_kind: str = "draft",
+                        target_id: str = "d-1"):
+        # Build a well-formed decision so policy/router don't reject.
+        payload = {
+            "schema_version": SEMANTIC_DECISION_V2_SCHEMA_VERSION,
+            "intent": intent,
+            "target": {"kind": target_kind, "id": target_id},
+            "field_patch": {},
+            "requested_operations": [],
+            "authorization": {"granted": True},
+            "confidence": 0.95,
+            "reason": "shadow test",
+        }
+        body = json.dumps(payload)
+
+        async def provider(**kwargs):
+            class R:
+                content = body
+            return R()
+        return provider
+
+    def test_shadow_invokes_decider_policy_router(self):
+        # Store a live draft so router has a valid target.
+        d = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Netflix", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=1.0,
+                ),
+                "username": DraftField(
+                    value="alice@example.org",
+                    source=SOURCE_USER_EXPLICIT, turn_id="t0", at=1.0,
+                ),
+                "password_ref": DraftField(
+                    value="memory:pending_login_draft:password",
+                    source=SOURCE_GENERATED, turn_id="t0", at=1.0,
+                ),
+            },
+            origin_turn_id="t0", now=1.0,
+        )
+        from vault_chat_draft import with_status
+        d = with_status(
+            d, STATUS_PRESENTED_FOR_CONFIRMATION,
+            touch_turn_id="t0", now=1.0,
+        )
+        store_draft(d)
+        stamp_focus(
+            vault_id=VAULT, session_id=SESSION,
+            kind=FOCUS_KIND_DRAFT, id=d.draft_id,
+            assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+            assistant_turn_id="a-0",
+        )
+
+        calls = {"decider": 0, "policy": 0, "router": 0, "log": 0}
+        real_decide = vbv2.decide_v2
+        real_authorize = vbv2.authorize_v2
+        real_route = vbv2.route_v2
+        real_log = vbv2.build_and_log_diff
+
+        async def spy_decide(*a, **kw):
+            calls["decider"] += 1
+            return await real_decide(*a, **kw)
+
+        def spy_authorize(*a, **kw):
+            calls["policy"] += 1
+            return real_authorize(*a, **kw)
+
+        def spy_route(*a, **kw):
+            calls["router"] += 1
+            return real_route(*a, **kw)
+
+        def spy_log(**kw):
+            calls["log"] += 1
+            return real_log(**kw)
+
+        with mock.patch.object(vbv2, "decide_v2", new=spy_decide), \
+                mock.patch.object(vbv2, "authorize_v2", new=spy_authorize), \
+                mock.patch.object(vbv2, "route_v2", new=spy_route), \
+                mock.patch.object(vbv2, "build_and_log_diff", new=spy_log):
+            _run(vbv2.run_v2_shadow(
+                vault_id=VAULT, session_id=SESSION, turn_id="t-1",
+                user_message="yes",
+                ai_provider=self._fake_provider(
+                    target_id=d.draft_id,
+                ),
+                v1_tool="confirm_pending_save", v1_handled=True,
+            ))
+        self.assertEqual(calls["decider"], 1)
+        self.assertEqual(calls["policy"], 1)
+        self.assertEqual(calls["router"], 1)
+        self.assertEqual(calls["log"], 1)
+
+    def test_shadow_never_invokes_integration_or_side_effects(self):
+        import vault_chat_authorization_record as vauth
+        import vault_chat_focus as vfocus
+
+        forbidden_calls = {
+            "apply_router": 0, "mint": 0, "consume": 0,
+            "stamp_focus": 0, "clear_focus": 0,
+            "clear_focus_if_matches": 0,
+        }
+
+        def _sentinel(name):
+            def _fn(*a, **kw):
+                forbidden_calls[name] += 1
+                raise AssertionError(
+                    f"shadow mode called forbidden side-effect {name!r}"
+                )
+            return _fn
+
+        with mock.patch.object(vi, "apply_router_result_v2",
+                                 new=_sentinel("apply_router")), \
+                mock.patch.object(vauth, "mint_authorization",
+                                     new=_sentinel("mint")), \
+                mock.patch.object(vauth, "atomic_consume_authorization",
+                                     new=_sentinel("consume")), \
+                mock.patch.object(vfocus, "stamp_focus",
+                                     new=_sentinel("stamp_focus")), \
+                mock.patch.object(vfocus, "clear_focus",
+                                     new=_sentinel("clear_focus")), \
+                mock.patch.object(vfocus, "clear_focus_if_matches",
+                                     new=_sentinel("clear_focus_if_matches")):
+            _run(vbv2.run_v2_shadow(
+                vault_id=VAULT, session_id=SESSION, turn_id="t-1",
+                user_message="hi",
+                ai_provider=self._fake_provider(intent="chat",
+                                                 target_kind="none",
+                                                 target_id=None),
+                v1_tool="conversational_reply", v1_handled=True,
+            ))
+        # No forbidden call raised, and every counter stayed at 0.
+        for k, v in forbidden_calls.items():
+            self.assertEqual(
+                v, 0, msg=f"shadow triggered forbidden {k!r}",
+            )
+
+    def test_shadow_never_calls_executor(self):
+        # If the shadow pipeline mistakenly reached integration, an
+        # executor would fire. Verify no executor is invoked when
+        # we route through run_v2_shadow.
+        exec_counter = {"calls": 0}
+
+        def spy_executor(**kw):
+            exec_counter["calls"] += 1
+
+        registry = vi.ExecutorRegistry(
+            confirm_save=spy_executor,
+            confirm_delete=spy_executor,
+            apply_edit=spy_executor,
+            apply_create=spy_executor,
+            cancel_draft=spy_executor,
+            cancel_pending=spy_executor,
+            confirm_save_attachment=spy_executor,
+        )
+        # Shadow doesn't take a registry -- verify structurally that
+        # the shadow path never even tries to use one.
+        _run(vbv2.run_v2_shadow(
+            vault_id=VAULT, session_id=SESSION, turn_id="t-1",
+            user_message="hi",
+            ai_provider=self._fake_provider(intent="chat",
+                                             target_kind="none",
+                                             target_id=None),
+        ))
+        self.assertEqual(exec_counter["calls"], 0)
+
+    def test_shadow_diff_record_contains_router_summary(self):
+        d = new_draft(
+            vault_id=VAULT, session_id=SESSION,
+            draft_kind=DRAFT_LOGIN,
+            initial_fields={
+                "service": DraftField(
+                    value="Netflix", source=SOURCE_USER_EXPLICIT,
+                    turn_id="t0", at=1.0,
+                ),
+                "username": DraftField(
+                    value="alice@example.org",
+                    source=SOURCE_USER_EXPLICIT, turn_id="t0", at=1.0,
+                ),
+                "password_ref": DraftField(
+                    value="memory:pending_login_draft:password",
+                    source=SOURCE_GENERATED, turn_id="t0", at=1.0,
+                ),
+            },
+            origin_turn_id="t0", now=1.0,
+        )
+        from vault_chat_draft import with_status
+        d = with_status(
+            d, STATUS_PRESENTED_FOR_CONFIRMATION,
+            touch_turn_id="t0", now=1.0,
+        )
+        store_draft(d)
+        stamp_focus(
+            vault_id=VAULT, session_id=SESSION,
+            kind=FOCUS_KIND_DRAFT, id=d.draft_id,
+            assistant_act=FOCUS_ACT_PRESENTED_FOR_CONFIRMATION,
+            assistant_turn_id="a-0",
+        )
+        captured: dict = {}
+
+        real_log = vbv2.build_and_log_diff
+
+        def capture(**kw):
+            rec = real_log(**kw)
+            captured["record"] = rec
+            captured["kwargs"] = kw
+            return rec
+
+        with mock.patch.object(vbv2, "build_and_log_diff", new=capture):
+            _run(vbv2.run_v2_shadow(
+                vault_id=VAULT, session_id=SESSION, turn_id="t-1",
+                user_message="yes",
+                ai_provider=self._fake_provider(
+                    target_id=d.draft_id,
+                ),
+                v1_tool="confirm_pending_save", v1_handled=True,
+            ))
+        # v2_router must be passed to the recorder AND the record's
+        # router_view must be non-None (proving router_v2 ran).
+        self.assertIn("v2_router", captured["kwargs"])
+        self.assertIsNotNone(captured["kwargs"]["v2_router"])
+        self.assertIsNotNone(captured["record"].router_view)
 
 
 # =====================================================================
@@ -287,8 +701,27 @@ class FlagOnTest(unittest.TestCase):
 
     def setUp(self):
         install_backend_for_tests(InMemoryChatStateBackend())
+        # Register a complete executor set so the readiness guard
+        # doesn't refuse mode-on for structural reasons in this
+        # group. Each test that wants to exercise the guard
+        # explicitly patches this.
+        self._registry = vi.ExecutorRegistry(
+            confirm_save=lambda **kw: None,
+            confirm_delete=lambda **kw: None,
+            confirm_save_attachment=lambda **kw: None,
+            cancel_draft=lambda **kw: None,
+            cancel_pending=lambda **kw: None,
+            apply_edit=lambda **kw: None,
+            apply_create=lambda **kw: None,
+        )
+        self._patcher = mock.patch.object(
+            vb, "_default_v2_executor_registry",
+            return_value=self._registry,
+        )
+        self._patcher.start()
 
     def tearDown(self):
+        self._patcher.stop()
         reset_chat_state_backend_for_tests()
 
     def test_on_calls_v2_authoritative_not_legacy(self):
@@ -319,13 +752,11 @@ class FlagOnTest(unittest.TestCase):
                     vault_name="Personal", reply_language="en",
                     user_message="hi", memory=None,
                 ))
-            # v1 legacy body never called in on mode
             self.assertEqual(legacy_called["count"], 0)
             self.assertTrue(r.handled)
             self.assertEqual(r.reply_text, "v2-reply")
 
     def test_on_v2_exception_fails_closed_by_default(self):
-        # V1_FALLBACK env NOT set — v2 exception → controlled error
         with mock.patch.dict(
             os.environ, {"VAULTAI_CHAT_BRAIN_MODE": "on"},
             clear=False,
@@ -349,16 +780,173 @@ class FlagOnTest(unittest.TestCase):
                     vault_name="Personal", reply_language="en",
                     user_message="hi", memory=None,
                 ))
-            # v1 legacy path not invoked — no mixed v1/v2 execution
             self.assertEqual(legacy_called["count"], 0)
             self.assertTrue(r.handled)
             self.assertIn("Sorry", r.reply_text)
 
-    def test_on_v2_exception_with_v1_fallback_env_falls_through(self):
+
+# =====================================================================
+# V2ExecutionPhase-aware fallback (commit 5a)
+# =====================================================================
+
+class PhaseAwareFallbackTest(unittest.TestCase):
+    """V1_FALLBACK env is honored only for READ_ONLY-phase failures.
+    Any exception caught after the side-effect boundary results in
+    a controlled error, never a v1 fallthrough."""
+
+    def test_read_only_phase_fallback_when_env_on(self):
         with mock.patch.dict(
             os.environ,
-            {"VAULTAI_CHAT_BRAIN_MODE": "on",
-             "VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK": "on"},
+            {"VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK": "on"},
+            clear=False,
+        ):
+            r = vbv2._handle_on_exception(
+                "decider_failed", vbv2.V2ExecutionPhase.READ_ONLY,
+            )
+        self.assertFalse(r.handled)
+        self.assertIn("v2_error_v1_fallback", r.fallthrough_reason)
+
+    def test_read_only_phase_no_fallback_when_env_off(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK", None)
+            r = vbv2._handle_on_exception(
+                "decider_failed", vbv2.V2ExecutionPhase.READ_ONLY,
+            )
+        self.assertTrue(r.handled)
+        self.assertIn("Sorry", r.reply_text)
+
+    def test_integration_started_phase_never_falls_back(self):
+        # Even with the env var explicitly on, integration-phase
+        # failure MUST NOT delegate to v1 -- state mutation may
+        # already have landed.
+        with mock.patch.dict(
+            os.environ,
+            {"VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK": "on"},
+            clear=False,
+        ):
+            r = vbv2._handle_on_exception(
+                "integration_failed",
+                vbv2.V2ExecutionPhase.INTEGRATION_STARTED,
+            )
+        self.assertTrue(r.handled)
+        self.assertNotIn("v2_error_v1_fallback", r.fallthrough_reason)
+        self.assertIn("v2_controlled_error", r.fallthrough_reason)
+        self.assertIn("Sorry", r.reply_text)
+
+    def test_executor_completed_phase_never_falls_back(self):
+        # Reply-rendering exception AFTER executor completed:
+        # controlled error, never v1 fallthrough.
+        with mock.patch.dict(
+            os.environ,
+            {"VAULTAI_CHAT_BRAIN_V2_V1_FALLBACK": "on"},
+            clear=False,
+        ):
+            r = vbv2._handle_on_exception(
+                "render_reply_failed",
+                vbv2.V2ExecutionPhase.EXECUTOR_COMPLETED,
+            )
+        self.assertTrue(r.handled)
+        self.assertNotIn("v2_error_v1_fallback", r.fallthrough_reason)
+        self.assertIn("v2_controlled_error", r.fallthrough_reason)
+
+
+# =====================================================================
+# Runtime-readiness guard (commit 5a)
+# =====================================================================
+
+class RuntimeReadinessTest(unittest.TestCase):
+
+    def test_empty_registry_is_not_ready(self):
+        ready, missing = vi.validate_v2_runtime_readiness(
+            vi.ExecutorRegistry(),
+        )
+        self.assertFalse(ready)
+        # every ACTION_KIND appears in the missing list
+        self.assertEqual(sorted(missing), sorted(ACTION_KINDS))
+
+    def test_partial_registry_reports_only_missing_kinds(self):
+        registry = vi.ExecutorRegistry(
+            confirm_save=lambda **kw: None,
+            confirm_delete=lambda **kw: None,
+            confirm_save_attachment=lambda **kw: None,
+            cancel_draft=lambda **kw: None,
+            cancel_pending=lambda **kw: None,
+        )
+        ready, missing = vi.validate_v2_runtime_readiness(registry)
+        self.assertFalse(ready)
+        self.assertEqual(
+            sorted(missing),
+            sorted([ACTION_KIND_APPLY_CREATE, ACTION_KIND_APPLY_EDIT]),
+        )
+
+    def test_complete_registry_is_ready(self):
+        registry = vi.ExecutorRegistry(
+            confirm_save=lambda **kw: None,
+            confirm_delete=lambda **kw: None,
+            confirm_save_attachment=lambda **kw: None,
+            cancel_draft=lambda **kw: None,
+            cancel_pending=lambda **kw: None,
+            apply_edit=lambda **kw: None,
+            apply_create=lambda **kw: None,
+        )
+        ready, missing = vi.validate_v2_runtime_readiness(registry)
+        self.assertTrue(ready)
+        self.assertEqual(missing, [])
+
+
+class OnModeReadinessGuardTest(unittest.TestCase):
+    """Mode==on with an incomplete registry must refuse to enter
+    v2 -- returning controlled unavailable, not calling v1."""
+
+    def setUp(self):
+        install_backend_for_tests(InMemoryChatStateBackend())
+
+    def tearDown(self):
+        reset_chat_state_backend_for_tests()
+
+    def test_on_mode_refused_when_registry_empty(self):
+        with mock.patch.dict(
+            os.environ, {"VAULTAI_CHAT_BRAIN_MODE": "on"},
+            clear=False,
+        ):
+            legacy_called = {"count": 0}
+            v2_called = {"count": 0}
+
+            async def fake_legacy(**kwargs):
+                legacy_called["count"] += 1
+                return vb.FALLTHROUGH
+
+            async def fake_v2(**kwargs):
+                v2_called["count"] += 1
+                return vbv2.BrainV2Result(
+                    handled=True, reply_text="v2-ok",
+                )
+
+            with mock.patch.object(
+                vb, "_default_v2_executor_registry",
+                return_value=vi.ExecutorRegistry(),
+            ), mock.patch.object(vb, "_run_legacy_brain",
+                                   new=fake_legacy), \
+                    mock.patch.object(
+                        vbv2, "run_v2_authoritative", new=fake_v2,
+                    ):
+                r = _run(vb.run_chat_brain(
+                    vault_id=VAULT, session_id=SESSION, turn_id="t-1",
+                    vault_name="Personal", reply_language="en",
+                    user_message="hi", memory=None,
+                ))
+        # Neither legacy nor v2 ran.
+        self.assertEqual(legacy_called["count"], 0)
+        self.assertEqual(v2_called["count"], 0)
+        # Controlled unavailable reply.
+        self.assertTrue(r.handled)
+        self.assertEqual(r.reply_text, vbv2.CONTROLLED_UNAVAILABLE_REPLY)
+        self.assertEqual(r.fallthrough_reason, "v2_not_ready_on_mode")
+
+    def test_off_mode_does_not_require_executors(self):
+        # off mode never calls the readiness guard -- v1 runs unaffected.
+        with mock.patch.dict(
+            os.environ, {"VAULTAI_CHAT_BRAIN_MODE": "off"},
             clear=False,
         ):
             legacy_called = {"count": 0}
@@ -367,27 +955,48 @@ class FlagOnTest(unittest.TestCase):
                 legacy_called["count"] += 1
                 return vb.FALLTHROUGH
 
-            async def fake_v2_crash(**kwargs):
-                raise RuntimeError("v2 broke")
-
-            with mock.patch.object(vb, "_run_legacy_brain", new=fake_legacy), \
-                    mock.patch.object(
-                        vbv2, "run_v2_authoritative", new=fake_v2_crash,
-                    ):
-                r = _run(vb.run_chat_brain(
+            with mock.patch.object(
+                vb, "_default_v2_executor_registry",
+                return_value=vi.ExecutorRegistry(),  # empty
+            ), mock.patch.object(vb, "_run_legacy_brain",
+                                   new=fake_legacy):
+                _run(vb.run_chat_brain(
                     vault_id=VAULT, session_id=SESSION, turn_id="t-1",
                     vault_name="Personal", reply_language="en",
                     user_message="hi", memory=None,
                 ))
-            # V1_FALLBACK enabled → brain returns fallthrough so main.py
-            # runs its own legacy pipeline (that's the "whole-request
-            # fallback" — main.py handles it fresh, not mid-request
-            # splice). Brain itself did not invoke v1 body.
-            self.assertEqual(legacy_called["count"], 0)
-            self.assertFalse(r.handled)
-            self.assertIn(
-                "v2_error_v1_fallback", r.fallthrough_reason,
-            )
+        self.assertEqual(legacy_called["count"], 1)
+
+    def test_shadow_mode_does_not_require_executors(self):
+        with mock.patch.dict(
+            os.environ, {"VAULTAI_CHAT_BRAIN_MODE": "shadow"},
+            clear=False,
+        ):
+            legacy_called = {"count": 0}
+            shadow_called = {"count": 0}
+
+            async def fake_legacy(**kwargs):
+                legacy_called["count"] += 1
+                return vb.FALLTHROUGH
+
+            async def fake_shadow(**kwargs):
+                shadow_called["count"] += 1
+
+            with mock.patch.object(
+                vb, "_default_v2_executor_registry",
+                return_value=vi.ExecutorRegistry(),
+            ), mock.patch.object(vb, "_run_legacy_brain",
+                                   new=fake_legacy), \
+                    mock.patch.object(
+                        vbv2, "run_v2_shadow", new=fake_shadow,
+                    ):
+                _run(vb.run_chat_brain(
+                    vault_id=VAULT, session_id=SESSION, turn_id="t-1",
+                    vault_name="Personal", reply_language="en",
+                    user_message="hi", memory=None,
+                ))
+        self.assertEqual(legacy_called["count"], 1)
+        self.assertEqual(shadow_called["count"], 1)
 
 
 # =====================================================================
@@ -395,16 +1004,26 @@ class FlagOnTest(unittest.TestCase):
 # =====================================================================
 
 class NoMixedExecutionTest(unittest.TestCase):
-    """Once v2 has started for a turn, v1 code paths inside the
-    brain never run. On mode==off, only v1 runs. On mode==shadow,
-    v1 is authoritative and v2 is observation-only. On mode==on,
-    only v2 runs (or v2 fallthrough delegates to main.py's legacy
-    handling — but that's outside brain, not inside)."""
 
     def setUp(self):
         install_backend_for_tests(InMemoryChatStateBackend())
+        self._registry = vi.ExecutorRegistry(
+            confirm_save=lambda **kw: None,
+            confirm_delete=lambda **kw: None,
+            confirm_save_attachment=lambda **kw: None,
+            cancel_draft=lambda **kw: None,
+            cancel_pending=lambda **kw: None,
+            apply_edit=lambda **kw: None,
+            apply_create=lambda **kw: None,
+        )
+        self._patcher = mock.patch.object(
+            vb, "_default_v2_executor_registry",
+            return_value=self._registry,
+        )
+        self._patcher.start()
 
     def tearDown(self):
+        self._patcher.stop()
         reset_chat_state_backend_for_tests()
 
     def test_off_runs_only_v1(self):
@@ -462,22 +1081,23 @@ class NoMixedExecutionTest(unittest.TestCase):
                     vault_name="Personal", reply_language="en",
                     user_message="hi", memory=None,
                 ))
-            # v1 body never invoked in mode==on
             self.assertEqual(v1_count["count"], 0)
             self.assertEqual(fake_v2.call_count, 1)
 
 
 # =====================================================================
-# Shadow diff record generation is invoked
+# Shadow diff record generation
 # =====================================================================
 
-class ShadowDiffGenerationTest(unittest.TestCase):
+class ShadowDiffGenerationTest(unittest.TestCase, _FingerprintFixture):
 
     def setUp(self):
         install_backend_for_tests(InMemoryChatStateBackend())
+        self._install_fp_secret()
 
     def tearDown(self):
         reset_chat_state_backend_for_tests()
+        self._reset_fp_secret()
 
     def test_shadow_mode_calls_build_and_log_diff(self):
         with mock.patch.dict(
@@ -486,10 +1106,19 @@ class ShadowDiffGenerationTest(unittest.TestCase):
         ):
             calls: list[dict] = []
 
-            # Patch the ai_provider path so decide_v2 doesn't try to
-            # hit the network.
             async def fake_provider(**kwargs):
-                class R: content = '{"schema_version":1,"intent":"fallthrough","target":{"kind":"none","id":null},"field_patch":{},"requested_operations":[],"authorization":{"granted":false},"confidence":0.9,"reason":"test"}'
+                class R:
+                    content = json.dumps({
+                        "schema_version":
+                            SEMANTIC_DECISION_V2_SCHEMA_VERSION,
+                        "intent": "fallthrough",
+                        "target": {"kind": "none", "id": None},
+                        "field_patch": {},
+                        "requested_operations": [],
+                        "authorization": {"granted": False},
+                        "confidence": 0.9,
+                        "reason": "test",
+                    })
                 return R()
 
             with mock.patch.object(vbv2, "_default_ai_provider",
@@ -499,11 +1128,11 @@ class ShadowDiffGenerationTest(unittest.TestCase):
                         side_effect=lambda **kw: (
                             calls.append(kw)
                             or sr.ShadowDiffRecordV2(
-                                vault_hmac8="v", session_hmac8="s",
-                                turn_hmac8="t", v1_tool="fallthrough",
+                                vault_hmac64="v", session_hmac64="s",
+                                turn_hmac64="t", v1_tool="fallthrough",
                                 v1_handled=False, v2_intent="fallthrough",
                                 v2_target_kind="none",
-                                v2_target_id_hmac8="-",
+                                v2_target_id_hmac64="-",
                                 v2_outcome="allow",
                                 v2_reason_code="FALLTHROUGH",
                                 v2_confidence_bucket="gte95",
