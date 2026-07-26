@@ -430,7 +430,9 @@ class BuildVaultFileEnvelopeTest(unittest.TestCase):
 
 class BuildDisambiguationEnvelopeTest(unittest.TestCase):
 
-    def test_shape(self):
+    def test_shape_matches_frontend_files_contract(self):
+        # 2026-07-31 blocker #1 fix: the Flutter parser reads
+        # `decoded['files']` (main.dart:11204), not `options`.
         env = json.loads(
             det._build_disambiguation_envelope(
                 "passport",
@@ -440,12 +442,33 @@ class BuildDisambiguationEnvelopeTest(unittest.TestCase):
         )
         self.assertEqual(env["type"], RESPONSE_TYPE_FILE_DISAMBIGUATION)
         self.assertEqual(env["candidate_name"], "passport")
-        self.assertEqual(len(env["options"]), 2)
+        # Canonical field: files. Fail loudly if someone reverts to
+        # `options`.
+        self.assertIn("files", env)
+        self.assertNotIn("options", env)
+        self.assertEqual(len(env["files"]), 2)
+        # Each row must carry the fields the Flutter row renderer
+        # keys on: file_id, file_name, saved_name, mime_type,
+        # confidence, reasons, best_match.
+        for row in env["files"]:
+            self.assertIn("file_id", row)
+            self.assertIn("saved_name", row)
+            self.assertIn("mime_type", row)
+            self.assertIn("confidence", row)
+            self.assertIn("reasons", row)
+            self.assertIn("best_match", row)
 
 
 class BuildCredentialDraftEnvelopeTest(unittest.TestCase):
 
-    def test_shape(self):
+    def test_shape_matches_frontend_router_v1_wrapper(self):
+        # 2026-07-31 blocker #2 fix: the Flutter parser at
+        # vault_chat_stream_parser.dart:88-168 requires
+        #   type == "vault_chat_card" (or "vault_chat_response_v1")
+        #   card.cardType == "vault_generated_login_card"
+        #   card.view     == "create_draft"
+        # A bare top-level type="vault_generated_login_card"
+        # silently degrades to plain assistant text.
         payload = {
             "draft_id":        "draft-yt-1",
             "username":        "beraves@gmail.com",
@@ -455,12 +478,24 @@ class BuildCredentialDraftEnvelopeTest(unittest.TestCase):
         env = json.loads(
             det._build_credential_draft_envelope(payload, "YouTube"),
         )
-        self.assertEqual(env["type"], RESPONSE_TYPE_CREDENTIAL_DRAFT)
-        self.assertEqual(env["service"], "YouTube")
-        self.assertEqual(env["username"], "beraves@gmail.com")
-        self.assertEqual(env["draft_id"], "draft-yt-1")
-        self.assertEqual(env["explicit_fields"], ["username"])
+        self.assertEqual(env["type"], "vault_chat_card")
+        self.assertEqual(env["schema"], "vault_chat_response_v1")
+        self.assertEqual(
+            env["intent"], "vault_generated_login_create_draft",
+        )
+        card = env["card"]
+        self.assertEqual(card["cardType"], "vault_generated_login_card")
+        self.assertEqual(card["view"], "create_draft")
+        self.assertEqual(card["service"], "YouTube")
+        self.assertEqual(card["draft_id"], "draft-yt-1")
+        self.assertEqual(card["explicit_fields"], ["username"])
         self.assertEqual(env["resolved_by"], "deterministic_router")
+        # The envelope MUST NOT surface the generated password /
+        # username at the top level — the frontend renderer is a
+        # security-hardened placeholder and the state machine holds
+        # the real values for the save turn.
+        self.assertNotIn("password", env)
+        self.assertNotIn("username", env)
 
 
 class ExtractServiceFromMessageTest(unittest.TestCase):
@@ -743,11 +778,17 @@ class TryRouteBug4CredentialCreationTest(unittest.TestCase):
                          "youtube")
         # Password was NOT explicitly supplied.
         self.assertIsNone(call.get("password"))
-        # The envelope also carries the explicit username.
+        # Envelope is the router-V1 wrapper Flutter parses.
         env = json.loads(outcome.envelope_json)
-        self.assertEqual(env["type"], RESPONSE_TYPE_CREDENTIAL_DRAFT)
-        self.assertEqual(env["username"], "beraves@gmail.com")
-        self.assertIn("username", env["explicit_fields"])
+        self.assertEqual(env["type"], "vault_chat_card")
+        self.assertEqual(
+            env["intent"], "vault_generated_login_create_draft",
+        )
+        card = env["card"]
+        self.assertEqual(
+            card["cardType"], "vault_generated_login_card",
+        )
+        self.assertIn("username", card["explicit_fields"])
 
     def test_prime_login_email_username(self):
         drafter_calls: list = []
@@ -850,7 +891,9 @@ class TryRouteAmbiguityAndMissTest(unittest.TestCase):
         )
         env = json.loads(outcome.envelope_json)
         self.assertEqual(env["type"], RESPONSE_TYPE_FILE_DISAMBIGUATION)
-        self.assertEqual(len(env["options"]), 2)
+        # Post-blocker-1: canonical field is `files`, matching the
+        # Flutter parser at main.dart:11204.
+        self.assertEqual(len(env["files"]), 2)
         # Ambiguity envelope must NOT pin an active entity — the user
         # hasn't chosen yet.
         self.assertIsNone(outcome.pin_active_entity)

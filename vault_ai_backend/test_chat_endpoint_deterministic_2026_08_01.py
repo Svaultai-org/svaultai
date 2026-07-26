@@ -76,13 +76,20 @@ from typing import Any, Callable, Optional
 from unittest import mock
 
 # Set production env vars BEFORE importing main so any module-level
-# reads of these variables see the production configuration.
+# reads of these variables see the production configuration. This
+# matches the user's stated production configuration in the 2026-07-31
+# review brief.
 os.environ.setdefault("VAULTAI_ENV", "production")
 os.environ.setdefault("VAULTAI_DIRECT_AI_TOOLS_ENABLED", "true")
 os.environ.setdefault("VAULTAI_DETERMINISTIC_ROUTER_ENABLED", "true")
 os.environ.setdefault(
     "VAULTAI_EXPERIMENTAL_VAULT_BRAIN_CHAT_ENABLED", "false",
 )
+# The shadow-mode brain (semantic decider v1 + v2 shadow) is the AI
+# entry point Codex flagged in blocker #4. Setting it here forces the
+# sentinel harness below to prove NO AI runs when the router resolves
+# under the exact configuration production uses.
+os.environ.setdefault("VAULTAI_CHAT_BRAIN_MODE", "shadow")
 # Chat rate-limit env cranked open so the 5/minute limit does not
 # reject the repeated-request tests. The rate-limit call is also
 # patched at the test level; this env override is a belt-and-braces
@@ -106,6 +113,11 @@ from vault_core import (  # noqa: E402
 
 _TEST_VAULT_ID = "vault-endpoint-test-0001"
 _TEST_TOKEN_ID = "sess-endpoint-test-1234"
+# The token id doubles as the session id in vault_chat_active_entity
+# (main.py passes `principal["token_id"]` as `session_id` when talking
+# to the active-entity store). Alias for tests that assert on session
+# scoping directly.
+_TEST_SESSION_ID = _TEST_TOKEN_ID
 _TEST_PIN = "1234"
 _TEST_PIN_SALT_BYTES = b"vaultai-endpoint-test-salt-16b"[:16]
 _TEST_PIN_SALT_B64 = base64.b64encode(_TEST_PIN_SALT_BYTES).decode()
@@ -252,22 +264,83 @@ class ChatTurnEvidence:
 # ---------------------------------------------------------------------------
 
 class _PlannerSentinel:
-    def __init__(self):
-        self.armed:   bool = False
-        self.invoked: bool = False
+    """Multi-target AI sentinel — the 2026-07-31 answer to Codex's
+    4th blocker. Under production config
+    (VAULTAI_CHAT_BRAIN_MODE=shadow, VAULTAI_DIRECT_AI_TOOLS_ENABLED=
+    true), five different code paths can invoke OpenAI:
 
-    async def stream(self, *args, **kwargs):
-        # Match the async-generator signature ai_stream has.
-        self.invoked = True
+      1. `ai_stream`                        (main.py:8116)
+      2. `chat_complete_with_fallback`      (vault_ai_provider)
+      3. `plan_user_message`                (vault_planner)
+      4. `client.chat.completions.create`   (direct SDK)
+      5. `client.embeddings.create`         (semantic embedder path)
+
+    The old harness only sentineled #1, so a test could pass while
+    the shadow-mode semantic decider (#2 via `run_chat_brain`) had
+    already hit OpenAI — no runtime proof that "no AI runs when the
+    router terminates" held.
+
+    This class arms ALL five. Any invocation while armed raises
+    with the offending entry-point name in the assertion message,
+    so a failing test names the exact leaked call.
+    """
+
+    def __init__(self):
+        self.armed:                 bool = False
+        # Named entry-point invocation counters so a test can prove
+        # which of the five actually fired for a given turn.
+        self.invocations: dict[str, int] = {
+            "ai_stream":                    0,
+            "chat_complete_with_fallback":  0,
+            "plan_user_message":            0,
+            "openai_chat_completions":      0,
+            "openai_embeddings":            0,
+        }
+
+    @property
+    def invoked(self) -> bool:
+        return sum(self.invocations.values()) > 0
+
+    def _guard(self, name: str):
+        self.invocations[name] = self.invocations.get(name, 0) + 1
         if self.armed:
             raise AssertionError(
-                "PLANNER SENTINEL: ai_stream was invoked but the "
+                f"AI-ENTRY SENTINEL: {name!r} was invoked but the "
                 "deterministic router was expected to have "
-                "terminated the request."
+                "terminated the request BEFORE any AI call fired. "
+                f"invocations={dict(self.invocations)}"
             )
-        # Not armed — yield one plaintext byte so pipeline that
-        # deliberately falls through still emits something.
+
+    # ---- individual entry-point handlers ----
+
+    async def ai_stream_shim(self, *args, **kwargs):
+        self._guard("ai_stream")
+        # If not armed, yield one empty chunk so a fallthrough test
+        # does not hang.
         yield b""
+
+    async def chat_complete_shim(self, *args, **kwargs):
+        self._guard("chat_complete_with_fallback")
+        # Return the shape callers expect: an object with `.content`
+        # string. Callers guard against None.
+        class _StubMsg:
+            content = ""
+            role    = "assistant"
+        return _StubMsg()
+
+    async def plan_user_message_shim(self, *args, **kwargs):
+        self._guard("plan_user_message")
+        # Return the empty-plan shape planner callers tolerate.
+        return None
+
+    def openai_chat_completions_shim(self, *args, **kwargs):
+        self._guard("openai_chat_completions")
+        # Direct SDK — nothing expects this in test mode.
+        return None
+
+    def openai_embeddings_shim(self, *args, **kwargs):
+        self._guard("openai_embeddings")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -281,10 +354,18 @@ class _FakeCursor:
     modelled, we WANT to see it fail loudly so the test author
     updates the stub coverage rather than silently returning zeros."""
 
-    def __init__(self, vault_id: str, pin_salt: str, iterations: int):
+    def __init__(self, vault_id: str, pin_salt: str, iterations: int,
+                 file_ids_present: Optional[set[str]] = None):
         self._vault_id = vault_id
         self._pin_salt = pin_salt
         self._iterations = iterations
+        # Set of file ids the current fixture contains. Used by the
+        # `uploaded_files` existence probe (called from
+        # revalidate_active_entity inside main.py). When None, treat
+        # every SELECT-from-uploaded_files as "row present" so tests
+        # that don't care about revalidation don't need to configure
+        # this. When set, treat any id NOT in the set as "gone".
+        self._file_ids_present = file_ids_present
         self._last_result: Any = None
         self.executed: list[tuple[str, tuple]] = []
         # psycopg2 exposes rowcount; some helpers read it after an
@@ -300,8 +381,34 @@ class _FakeCursor:
             self._last_result = (self._pin_salt, self._iterations)
             return
         # `check_kdf_generation_fresh` looks up the same row.
-        if "select" in sql_lower and "vaults" in sql_lower:
+        if "select" in sql_lower and "vaults" in sql_lower \
+                and "uploaded_files" not in sql_lower:
             self._last_result = (self._pin_salt, self._iterations)
+            return
+        # uploaded_files existence probe from revalidate_active_entity.
+        # Signature: "SELECT 1 FROM uploaded_files WHERE id = %s AND
+        # vault_id = %s LIMIT 1". Answer against the current fixture
+        # so tests can simulate deletion by removing the row.
+        if "uploaded_files" in sql_lower and "select" in sql_lower:
+            if not params:
+                self._last_result = None
+                return
+            probed_file_id = str(params[0]) if params else ""
+            if self._file_ids_present is None:
+                # No fixture wired: treat every id as present so
+                # tests that never touch delete-flow are unaffected.
+                self._last_result = (1,)
+                return
+            if probed_file_id in self._file_ids_present:
+                self._last_result = (1,)
+            else:
+                self._last_result = None
+            return
+        # vault_items existence probe (login revalidation).
+        if "vault_items" in sql_lower and "select" in sql_lower:
+            # We don't currently fixture logins; treat as present so
+            # login-revalidation is a no-op in these tests.
+            self._last_result = (1,)
             return
         # Anything else: return no rows. If some downstream helper
         # depends on a specific column, the test will surface it as
@@ -319,15 +426,18 @@ class _FakeCursor:
 
 
 class _FakeConn:
-    def __init__(self, vault_id: str, pin_salt: str, iterations: int):
+    def __init__(self, vault_id: str, pin_salt: str, iterations: int,
+                 file_ids_present: Optional[set[str]] = None):
         self._vault_id = vault_id
         self._pin_salt = pin_salt
         self._iterations = iterations
+        self._file_ids_present = file_ids_present
         self.cursors: list[_FakeCursor] = []
 
     def cursor(self, cursor_factory=None):
         cur = _FakeCursor(
             self._vault_id, self._pin_salt, self._iterations,
+            file_ids_present=self._file_ids_present,
         )
         self.cursors.append(cur)
         return cur
@@ -374,6 +484,19 @@ class _ChatEndpointHarness:
     # ---- setup / teardown ------------------------------------------------
 
     def setUp(self):
+        # 2026-07-31: actively set the production env vars per-test
+        # so no earlier test can pollute them (setdefault at module
+        # scope is not enough — another test may have already set a
+        # different value in the same process).
+        os.environ["VAULTAI_ENV"] = "production"
+        os.environ["VAULTAI_DIRECT_AI_TOOLS_ENABLED"] = "true"
+        os.environ["VAULTAI_DETERMINISTIC_ROUTER_ENABLED"] = "true"
+        os.environ[
+            "VAULTAI_EXPERIMENTAL_VAULT_BRAIN_CHAT_ENABLED"
+        ] = "false"
+        os.environ["VAULTAI_CHAT_BRAIN_MODE"] = "shadow"
+        os.environ["VAULTAI_CHAT_TURN_MAX_PER_MINUTE"] = "10000"
+
         # Import inside setUp so env vars are already set.
         import main
         self._main = main
@@ -429,10 +552,22 @@ class _ChatEndpointHarness:
         # so this returns True as production would.
 
         # ----- Patch #4: `get_db`. Return a fake conn that satisfies
-        # the pre-router SELECTs.
+        # the pre-router SELECTs AND the uploaded_files existence
+        # probe called by revalidate_active_entity. The probe's answer
+        # is derived from the CURRENT fixture, so mutating
+        # self._files_fixture between turns (e.g. simulating a delete)
+        # correctly propagates to the revalidator's next check.
+        harness_self = self
+
         def _fake_get_db():
+            file_ids = {
+                str(r.get("id"))
+                for r in harness_self._files_fixture
+                if r.get("id")
+            }
             return _FakeConn(
                 _TEST_VAULT_ID, _TEST_PIN_SALT_B64, _TEST_KDF_ITERATIONS,
+                file_ids_present=file_ids,
             )
         self._patch("main.get_db", side_effect=_fake_get_db)
         # Some modules import get_db from vault_core — patch there too.
@@ -486,17 +621,54 @@ class _ChatEndpointHarness:
             side_effect=_fake_store_draft,
         )
 
-        # ----- Patch #8: PLANNER SENTINEL. Replace `ai_stream` with
-        # our sentinel. When a test arms the sentinel, invocation
-        # raises → test fails loudly with a message that names the
-        # router as the expected handler.
-        # Wrap so the signature matches `ai_stream(*args, **kwargs)`.
-        async def _sentinel_stream(*args, **kwargs):
-            async for chunk in self._planner_sentinel.stream(
-                *args, **kwargs,
+        # ----- Patch #8: MULTI-TARGET AI SENTINEL.
+        # 2026-07-31 (blocker #4). Replace EVERY AI entry point Codex
+        # enumerated. When armed, any of them raises with the
+        # offending entry-point name in the assertion message.
+
+        async def _stream_shim(*args, **kwargs):
+            async for chunk in (
+                self._planner_sentinel.ai_stream_shim(*args, **kwargs)
             ):
                 yield chunk
-        self._patch("main.ai_stream", side_effect=_sentinel_stream)
+        self._patch("main.ai_stream", side_effect=_stream_shim)
+
+        async def _chat_complete_shim(*args, **kwargs):
+            return await self._planner_sentinel.chat_complete_shim(
+                *args, **kwargs,
+            )
+        self._patch(
+            "vault_ai_provider.chat_complete_with_fallback",
+            side_effect=_chat_complete_shim,
+        )
+
+        async def _plan_shim(*args, **kwargs):
+            return await self._planner_sentinel.plan_user_message_shim(
+                *args, **kwargs,
+            )
+        self._patch(
+            "vault_planner.plan_user_message",
+            side_effect=_plan_shim,
+        )
+
+        # Direct SDK — belt-and-braces for any bypass of the provider
+        # abstraction. If a future SDK version renames the internal
+        # path we still hold the provider-layer patches above.
+        try:
+            self._patch(
+                "openai.resources.chat.completions.AsyncCompletions.create",
+                side_effect=(
+                    self._planner_sentinel.openai_chat_completions_shim
+                ),
+            )
+            self._patch(
+                "openai.resources.embeddings.AsyncEmbeddings.create",
+                side_effect=(
+                    self._planner_sentinel.openai_embeddings_shim
+                ),
+            )
+        except Exception:
+            pass
 
         # ---- Build the client
         self._client = TestClient(main.app)
@@ -527,14 +699,19 @@ class _ChatEndpointHarness:
     # ---- posting a turn --------------------------------------------------
 
     def arm_planner_sentinel(self):
-        """Arm the sentinel so any call to ai_stream RAISES. Use
-        for tests where the router MUST handle the request."""
+        """Arm the sentinel so ANY AI entry point (ai_stream,
+        chat_complete_with_fallback, plan_user_message, direct SDK
+        chat.completions.create, direct SDK embeddings.create)
+        RAISES if invoked. Use for tests where the router MUST
+        handle the request without any AI call firing."""
         self._planner_sentinel.armed = True
-        self._planner_sentinel.invoked = False
+        for k in self._planner_sentinel.invocations:
+            self._planner_sentinel.invocations[k] = 0
 
     def disarm_planner_sentinel(self):
         self._planner_sentinel.armed = False
-        self._planner_sentinel.invoked = False
+        for k in self._planner_sentinel.invocations:
+            self._planner_sentinel.invocations[k] = 0
 
     def post_message(
         self,
@@ -800,20 +977,45 @@ class Bug3EndpointTest(_EndpointTestBase):
 # ---------------------------------------------------------------------------
 
 class Bug4EndpointTest(_EndpointTestBase):
+    """2026-07-31 blocker #2 fix: the credential envelope must be a
+    router-V1 wrapper (type=vault_chat_card, card.cardType=
+    vault_generated_login_card) so the Flutter parser routes it to
+    the structured GeneratedLoginCard renderer rather than falling
+    back to plain assistant text.
+
+    Value preservation (Bug 4 substance) is verified by inspecting
+    the recorded drafter call, since the frontend renderer
+    intentionally does not expose the plaintext username in the
+    chat card (security posture). The state machine holds the
+    correct username; the user's next `save it` persists it
+    verbatim via save_secret_tool."""
 
     def test_youtube_login_with_email_username_preserved(self):
-        # Sentinel armed: the router's Pattern C must handle this
-        # without touching the planner.
         self.h.arm_planner_sentinel()
         ev = self.h.post_message(
             "create me a youtube login with my email address "
             "beraves@gmail.com as my username"
         )
         self.assertHTTP200(ev)
-        self.assertResponseType(ev, "vault_generated_login_card")
+        # Envelope shape MUST match the router-V1 contract Flutter
+        # parses (vault_chat_stream_parser.dart:88-168).
+        self.assertResponseType(ev, "vault_chat_card")
+        env = ev.envelope or {}
+        self.assertEqual(
+            env.get("schema"), "vault_chat_response_v1", ev.summary(),
+        )
+        self.assertEqual(
+            env.get("intent"),
+            "vault_generated_login_create_draft", ev.summary(),
+        )
+        card = env.get("card") or {}
+        self.assertEqual(
+            card.get("cardType"), "vault_generated_login_card",
+            ev.summary(),
+        )
+        self.assertEqual(card.get("view"), "create_draft", ev.summary())
         self.assertPlannerNotInvoked(ev)
-        # The evidence check: the recorded drafter call carries the
-        # explicit username VERBATIM.
+        # Value preservation — verified at the drafter call boundary.
         self.assertEqual(
             len(self.h.credential_draft_calls), 1,
             "expected exactly ONE credential-draft store call, got "
@@ -822,13 +1024,8 @@ class Bug4EndpointTest(_EndpointTestBase):
         call = self.h.credential_draft_calls[0]
         self.assertEqual(
             call["username"], "beraves@gmail.com",
-            "USERNAME OVERWRITTEN by the router. Received: "
+            "USERNAME OVERWRITTEN. Received: "
             f"{call['username']!r}\n{ev.summary()}",
-        )
-        # The rendered envelope also carries the correct username.
-        self.assertEqual(
-            (ev.envelope or {}).get("username"), "beraves@gmail.com",
-            ev.summary(),
         )
 
     def test_prime_login_email_username(self):
@@ -836,7 +1033,10 @@ class Bug4EndpointTest(_EndpointTestBase):
         ev = self.h.post_message(
             "create a prime login with user@example.com as username"
         )
-        self.assertResponseType(ev, "vault_generated_login_card")
+        self.assertResponseType(ev, "vault_chat_card")
+        card = (ev.envelope or {}).get("card") or {}
+        self.assertEqual(card.get("cardType"),
+                         "vault_generated_login_card")
         self.assertPlannerNotInvoked(ev)
         self.assertEqual(
             self.h.credential_draft_calls[-1]["username"],
@@ -848,7 +1048,10 @@ class Bug4EndpointTest(_EndpointTestBase):
         ev = self.h.post_message(
             "create a disney login, username is chosen123"
         )
-        self.assertResponseType(ev, "vault_generated_login_card")
+        self.assertResponseType(ev, "vault_chat_card")
+        card = (ev.envelope or {}).get("card") or {}
+        self.assertEqual(card.get("cardType"),
+                         "vault_generated_login_card")
         self.assertEqual(
             self.h.credential_draft_calls[-1]["username"], "chosen123",
         )
@@ -1013,16 +1216,18 @@ class RouterTerminatesRequestTest(_EndpointTestBase):
         ev = self.h.post_message(
             "create a github login using user@example.com as username",
         )
-        self.assertResponseType(ev, "vault_generated_login_card")
+        # After blocker #2 the wrapper is vault_chat_card with
+        # card.cardType=vault_generated_login_card.
+        self.assertResponseType(ev, "vault_chat_card")
+        card = (ev.envelope or {}).get("card") or {}
+        self.assertEqual(card.get("cardType"),
+                         "vault_generated_login_card")
         self.assertPlannerNotInvoked(ev)
 
     def test_ambiguity_never_touches_planner(self):
         # Two files that both begin with "passport" would substring-
         # match "show me passport". The router emits a disambiguation
-        # envelope; planner still must not run.
-        self.h.arm_planner_sentinel()
-        # This fixture has exactly one "passport" saved_name row —
-        # to force ambiguity we add a second identical-prefix row.
+        # envelope; NO AI entry point may fire.
         h = _ChatEndpointHarness(files_fixture=[
             _file_row(id="p-1", saved_name="passport 2024",
                       asset_type="pdf", content_type="application/pdf"),
@@ -1035,7 +1240,20 @@ class RouterTerminatesRequestTest(_EndpointTestBase):
             ev = h.post_message("show me passport")
             self.assertResponseType(ev, "file_disambiguation")
             self.assertChatPath(ev, "deterministic_named_ambiguous")
-            self.assertPlannerNotInvoked(ev)
+            self.assertFalse(
+                ev.planner_invoked,
+                "ANY AI entry point fired on the ambiguity path — "
+                "sentinel invocations should all be 0. "
+                f"invocations={h._planner_sentinel.invocations}\n"
+                + ev.summary(),
+            )
+            # Frontend contract check — Flutter reads `files`, not
+            # `options`.
+            self.assertIn("files", (ev.envelope or {}), ev.summary())
+            files = (ev.envelope or {}).get("files") or []
+            self.assertEqual(len(files), 2, ev.summary())
+            ids = {f.get("file_id") for f in files}
+            self.assertEqual(ids, {"p-1", "p-2"}, ev.summary())
         finally:
             h.tearDown()
 
@@ -1064,6 +1282,320 @@ class DiagnosticHeadersTest(_EndpointTestBase):
             ev.x_chat_path, "deterministic_credential_create", ev.summary(),
         )
         self.assertIsNotNone(ev.x_release, ev.summary())
+        # Post-blocker-2: envelope must be the wrapper Flutter parses.
+        self.assertEqual(
+            (ev.envelope or {}).get("type"), "vault_chat_card",
+            ev.summary(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-31 blocker #3 — active-object lifecycle
+# ---------------------------------------------------------------------------
+
+class ActiveObjectLifecycleTest(_EndpointTestBase):
+    """Every active-entity path MUST revalidate before use and MUST
+    be cleared when the referenced object is deleted / moved to a
+    different vault / becomes inaccessible."""
+
+    def _get_pinned(self):
+        from vault_chat_active_entity import get_active_entity
+        return get_active_entity(_TEST_VAULT_ID, session_id=_TEST_SESSION_ID)
+
+    def test_router_pins_the_file_on_named_lookup(self):
+        # Baseline — before revalidation logic can even fire, we need
+        # a pinned entity to test against.
+        self.h.arm_planner_sentinel()
+        ev = self.h.post_message("show me testing video")
+        self.assertFileId(ev, "row-video-testing")
+        rec = self._get_pinned()
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["entity_type"], "file")
+        self.assertEqual(rec["entity_ref"]["file_id"], "row-video-testing")
+
+    def test_revalidate_clears_when_probe_returns_false(self):
+        # Simulate: user pins a file, then it is deleted from the DB.
+        # revalidate_active_entity MUST drop the record and return None.
+        from vault_chat_active_entity import (
+            revalidate_active_entity,
+            get_active_entity,
+        )
+        # Pin via a real turn.
+        self.h.arm_planner_sentinel()
+        ev = self.h.post_message("show me testing video")
+        self.assertFileId(ev, "row-video-testing")
+        self.assertIsNotNone(self._get_pinned())
+
+        # Now revalidate with a probe that says "gone".
+        result = revalidate_active_entity(
+            _TEST_VAULT_ID,
+            session_id=_TEST_SESSION_ID,
+            file_exists_probe=lambda vid, fid: False,
+        )
+        self.assertIsNone(
+            result,
+            "revalidator returned a stale entity even though the "
+            "file-exists probe reported False",
+        )
+        # And the store must be empty afterward.
+        self.assertIsNone(
+            get_active_entity(
+                _TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+            ),
+            "revalidator did not clear the store on probe=False",
+        )
+
+    def test_revalidate_keeps_entity_when_probe_returns_true(self):
+        from vault_chat_active_entity import revalidate_active_entity
+        self.h.arm_planner_sentinel()
+        self.h.post_message("show me testing video")
+        result = revalidate_active_entity(
+            _TEST_VAULT_ID,
+            session_id=_TEST_SESSION_ID,
+            file_exists_probe=lambda vid, fid: True,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result["entity_ref"]["file_id"],
+                         "row-video-testing")
+
+    def test_revalidate_keeps_entity_when_probe_raises(self):
+        # A transient DB blip must NOT drop context. We deliberately
+        # keep the entity so a network hiccup does not silently lose
+        # the user's active object.
+        from vault_chat_active_entity import revalidate_active_entity
+        self.h.arm_planner_sentinel()
+        self.h.post_message("show me testing video")
+
+        def _boom(*a, **k):
+            raise RuntimeError("db down")
+        result = revalidate_active_entity(
+            _TEST_VAULT_ID,
+            session_id=_TEST_SESSION_ID,
+            file_exists_probe=_boom,
+        )
+        self.assertIsNotNone(result)
+
+    def test_revalidate_drops_on_cross_vault(self):
+        from vault_chat_active_entity import (
+            revalidate_active_entity,
+            set_active_entity,
+        )
+        # Manually pin an entity whose vault_id is DIFFERENT from the
+        # requester's — an impossible-in-prod state that the
+        # revalidator must still refuse to hand back.
+        set_active_entity(
+            _TEST_VAULT_ID,
+            entity_type="file",
+            entity_ref={"file_id": "row-video-testing"},
+            display_label="testing video",
+            allowed_actions=("show",),
+            session_id=_TEST_SESSION_ID,
+        )
+        # get_active_entity returns the record with vault_id set to
+        # _TEST_VAULT_ID. Simulate a corrupted record by tampering
+        # in-memory via the store shim. The safer test: request from
+        # a DIFFERENT vault_id — session scoping should drop it.
+        from vault_chat_active_entity import get_active_entity
+        other_vault_result = get_active_entity(
+            "vault-someone-else", session_id=_TEST_SESSION_ID,
+        )
+        self.assertIsNone(
+            other_vault_result,
+            "session-scope did not isolate active entity across vaults",
+        )
+
+    def test_clear_on_delete_matches_file_id(self):
+        from vault_chat_active_entity import (
+            clear_active_entity_if_matches_file,
+            set_active_entity,
+            get_active_entity,
+        )
+        set_active_entity(
+            _TEST_VAULT_ID,
+            entity_type="file",
+            entity_ref={"file_id": "row-video-testing"},
+            display_label="testing video",
+            allowed_actions=("show",),
+            session_id=_TEST_SESSION_ID,
+        )
+        cleared = clear_active_entity_if_matches_file(
+            _TEST_VAULT_ID, "row-video-testing",
+        )
+        self.assertTrue(cleared)
+        self.assertIsNone(
+            get_active_entity(
+                _TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+            ),
+        )
+
+    def test_clear_on_delete_leaves_other_file_alone(self):
+        from vault_chat_active_entity import (
+            clear_active_entity_if_matches_file,
+            set_active_entity,
+            get_active_entity,
+        )
+        set_active_entity(
+            _TEST_VAULT_ID,
+            entity_type="file",
+            entity_ref={"file_id": "row-video-testing"},
+            display_label="testing video",
+            allowed_actions=("show",),
+            session_id=_TEST_SESSION_ID,
+        )
+        # Deleting some OTHER file must not touch this pin.
+        cleared = clear_active_entity_if_matches_file(
+            _TEST_VAULT_ID, "row-pdf-passport",
+        )
+        self.assertFalse(cleared)
+        self.assertIsNotNone(
+            get_active_entity(
+                _TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+            ),
+        )
+
+    def test_endpoint_bare_show_me_after_file_removed_from_fixture(self):
+        """End-to-end lifecycle: pin a file, remove it from the
+        fixture (simulating a delete), then send bare "show me" —
+        the revalidator embedded in main.py MUST refuse to hand
+        back the stale entity, and the follow-up MUST NOT resolve
+        to the deleted file."""
+        # Turn 1 — pin the video via the real endpoint path.
+        self.h.arm_planner_sentinel()
+        ev1 = self.h.post_message("show me testing video")
+        self.assertFileId(ev1, "row-video-testing")
+
+        # Simulate deletion: remove the row from the fixture the
+        # files_lister returns. The next probe against
+        # uploaded_files will find nothing.
+        self.h._files_fixture = [
+            r for r in self.h._files_fixture
+            if r.get("id") != "row-video-testing"
+        ]
+
+        # Turn 2 — bare "show me". The revalidator inside main.py
+        # runs `_active_file_still_exists` which queries the fake DB.
+        # Our fake cursor returns None for arbitrary SELECTs (nothing
+        # models uploaded_files here) — treated as "file gone" and
+        # the entity is cleared. The follow-up dispatcher then finds
+        # no active entity and falls through.
+        self.h.disarm_planner_sentinel()
+        ev2 = self.h.post_message("show me")
+        # The response MUST NOT reference the deleted file.
+        self.assertNotIn(
+            "row-video-testing",
+            (ev2.envelope_json or ""),
+            "bare 'show me' after delete surfaced the stale file\n"
+            + ev2.summary(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-31 blocker #4 — shadow-mode AI proof
+# ---------------------------------------------------------------------------
+
+class ShadowModeAIProofTest(_EndpointTestBase):
+    """Under VAULTAI_CHAT_BRAIN_MODE=shadow, five AI entry points can
+    fire before the deterministic router used to run. Codex flagged
+    this: sentinel on `ai_stream` alone is not proof.
+
+    Our multi-target sentinel arms all five: ai_stream,
+    chat_complete_with_fallback, plan_user_message, direct SDK
+    chat.completions.create, direct SDK embeddings.create.
+
+    Every test in this class arms the sentinel and asserts each
+    counter is 0 after a router-handled turn. If ANY counter is
+    non-zero, the assertion prints the entry-point name that
+    leaked."""
+
+    def _assert_all_ai_counters_zero(self, label: str):
+        counters = self.h._planner_sentinel.invocations
+        non_zero = {k: v for k, v in counters.items() if v > 0}
+        self.assertEqual(
+            non_zero, {},
+            f"[SHADOW-MODE AI LEAK] scenario={label!r}\n"
+            f"  AI entry points invoked: {non_zero}\n"
+            f"  full counter dump:       {counters}\n"
+            f"  This means at least one AI call fired for a turn the "
+            f"deterministic router was supposed to terminate BEFORE "
+            f"any AI entry point could run.",
+        )
+
+    def test_named_object_zero_ai_calls(self):
+        self.h.arm_planner_sentinel()
+        ev = self.h.post_message("show me testing video")
+        self.assertFileId(ev, "row-video-testing")
+        self._assert_all_ai_counters_zero("show me testing video")
+
+    def test_credential_create_zero_ai_calls(self):
+        self.h.arm_planner_sentinel()
+        ev = self.h.post_message(
+            "create me a github login with user@example.com as username",
+        )
+        self.assertResponseType(ev, "vault_chat_card")
+        self._assert_all_ai_counters_zero("credential create")
+
+    def test_multiple_named_lookups_zero_ai_calls(self):
+        # Ten consecutive named-object turns; sentinel counts must
+        # stay at 0 across the entire batch. Any leak in any turn
+        # produces a non-zero counter and fails the assertion.
+        self.h.arm_planner_sentinel()
+        for prompt, expect in [
+            ("show me naim id",          "row-image-naim-id"),
+            ("show me testing video",    "row-video-testing"),
+            ("show me passport",         "row-pdf-passport"),
+            ("show me tax return 2024",  "row-pdf-tax-return"),
+            ("show me voice memo",       "row-audio-voice-memo"),
+            ("show me meeting notes",    "row-note-meeting"),
+            ("show me family photo",     "row-image-family"),
+            ("show me family archive",   "row-folder-family"),
+            ("open tax return 2024",     "row-pdf-tax-return"),
+            ("download testing video",   "row-video-testing"),
+        ]:
+            ev = self.h.post_message(prompt)
+            self.assertFileId(ev, expect)
+        self._assert_all_ai_counters_zero(
+            "10x named-object batch under VAULTAI_CHAT_BRAIN_MODE=shadow",
+        )
+
+    def test_ambiguity_zero_ai_calls(self):
+        h = _ChatEndpointHarness(files_fixture=[
+            _file_row(id="p-1", saved_name="passport 2024",
+                      asset_type="pdf", content_type="application/pdf"),
+            _file_row(id="p-2", saved_name="passport 2025",
+                      asset_type="pdf", content_type="application/pdf"),
+        ])
+        h.setUp()
+        try:
+            h.arm_planner_sentinel()
+            ev = h.post_message("show me passport")
+            self.assertResponseType(ev, "file_disambiguation")
+            counters = h._planner_sentinel.invocations
+            non_zero = {k: v for k, v in counters.items() if v > 0}
+            self.assertEqual(
+                non_zero, {},
+                f"[SHADOW-MODE AI LEAK] ambiguity path fired AI: "
+                f"{non_zero}. Full: {counters}",
+            )
+        finally:
+            h.tearDown()
+
+    def test_env_vars_reflect_production(self):
+        # Regression trap: if a future change silently changes the
+        # test-time env config away from production settings, catch it.
+        self.assertEqual(os.environ.get("VAULTAI_CHAT_BRAIN_MODE"),
+                         "shadow")
+        self.assertEqual(os.environ.get("VAULTAI_DIRECT_AI_TOOLS_ENABLED"),
+                         "true")
+        self.assertEqual(
+            os.environ.get("VAULTAI_DETERMINISTIC_ROUTER_ENABLED"),
+            "true",
+        )
+        self.assertEqual(
+            os.environ.get(
+                "VAULTAI_EXPERIMENTAL_VAULT_BRAIN_CHAT_ENABLED",
+            ),
+            "false",
+        )
 
 
 if __name__ == "__main__":

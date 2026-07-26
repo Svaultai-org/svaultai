@@ -485,6 +485,182 @@ def entity_matches_action(record: dict[str, Any], action: str) -> bool:
     return action.strip().lower() in (record.get("allowed_actions") or ())
 
 
+# ---------------------------------------------------------------------------
+# 2026-07-31 revalidation — the third of Codex's four production
+# blockers. Prior to this fix, a pinned active entity survived until
+# its TTL (default 900 s) even after the referenced file was deleted,
+# the vault was locked, or permissions changed. A subsequent bare
+# "show me" would then resolve to a stale file_id, and the pronoun-
+# followup dispatcher would render a card pointing at a row that no
+# longer existed.
+#
+# The revalidator below runs BEFORE the dispatcher acts on the
+# entity. On failure it clears the entity and returns None; the
+# caller then falls through to normal resolution as if nothing had
+# been pinned.
+# ---------------------------------------------------------------------------
+
+
+def revalidate_active_entity(
+    vault_id: str,
+    *,
+    session_id: Optional[str] = None,
+    file_exists_probe: Optional[Any] = None,
+    login_exists_probe: Optional[Any] = None,
+) -> Optional[dict[str, Any]]:
+    """Return the active entity IFF it is still valid; else clear and
+    return None.
+
+    Validity checks, in order:
+      1. TTL / session-scope guarantees (existing `get_active_entity`).
+      2. Entity's `vault_id` matches the requested `vault_id`.
+      3. For FILE entities: `file_exists_probe(vault_id, file_id)`
+         must return True. If the probe returns False, the file has
+         been deleted, moved to a different vault, or become
+         inaccessible — clear the entity and return None.
+      4. For LOGIN entities: same check via `login_exists_probe`.
+      5. Multi-entity records (candidate lists) are always considered
+         valid — the user will pick one, and the picker path
+         re-fetches the underlying rows anyway.
+
+    Probe signature:
+      probe(vault_id: str, entity_id: str) -> bool
+    Any exception in a probe is treated as "unknown, keep the
+    entity" so a transient DB blip does not silently drop context.
+    Only an explicit False return clears the entity.
+
+    Never raises. Always safe to call from a hot path.
+    """
+    record = get_active_entity(vault_id, session_id=session_id)
+    if record is None:
+        return None
+
+    # Cross-vault guard — should be impossible given session scoping
+    # but the extra check is cheap and defends against a future bug
+    # where session_id is elided.
+    if str(record.get("vault_id") or "") != str(vault_id or ""):
+        logger.info(
+            "[ACTIVE-ENTITY] revalidate_dropped reason=cross_vault "
+            "vault=%s stored_vault=%s",
+            (vault_id or "")[:8] + "…",
+            str(record.get("vault_id") or "")[:8] + "…",
+        )
+        try:
+            clear_active_entity(vault_id)
+        except Exception:
+            pass
+        return None
+
+    if record.get("is_multi"):
+        return record
+
+    etype = str(record.get("entity_type") or "")
+    ref   = record.get("entity_ref") or {}
+
+    if etype == ENTITY_FILE and file_exists_probe is not None:
+        file_id = str(ref.get("file_id") or "")
+        if not file_id:
+            logger.info(
+                "[ACTIVE-ENTITY] revalidate_dropped reason=missing_file_id",
+            )
+            try:
+                clear_active_entity(vault_id)
+            except Exception:
+                pass
+            return None
+        try:
+            still_exists = bool(file_exists_probe(vault_id, file_id))
+        except Exception:
+            # Probe failed loudly — refuse to guess. Keep the entity
+            # so a transient DB blip does not drop context.
+            logger.exception(
+                "[ACTIVE-ENTITY] revalidate_probe_raised vault=%s",
+                (vault_id or "")[:8] + "…",
+            )
+            return record
+        if not still_exists:
+            logger.info(
+                "[ACTIVE-ENTITY] revalidate_dropped reason=file_gone "
+                "vault=%s file_id_prefix=%s",
+                (vault_id or "")[:8] + "…", file_id[:8] + "…",
+            )
+            try:
+                clear_active_entity(vault_id)
+            except Exception:
+                pass
+            return None
+
+    if etype == ENTITY_LOGIN and login_exists_probe is not None:
+        login_id = str(ref.get("id") or "")
+        if not login_id:
+            return record
+        try:
+            still_exists = bool(login_exists_probe(vault_id, login_id))
+        except Exception:
+            logger.exception(
+                "[ACTIVE-ENTITY] revalidate_login_probe_raised",
+            )
+            return record
+        if not still_exists:
+            logger.info(
+                "[ACTIVE-ENTITY] revalidate_dropped reason=login_gone "
+                "vault=%s", (vault_id or "")[:8] + "…",
+            )
+            try:
+                clear_active_entity(vault_id)
+            except Exception:
+                pass
+            return None
+
+    return record
+
+
+def clear_active_entity_if_matches_file(
+    vault_id: str, file_id: str,
+) -> bool:
+    """Called from the file-delete endpoint. If the pinned active
+    entity is the file the user just deleted, drop it so subsequent
+    bare follow-ups do not resolve to a nonexistent row.
+
+    Bypasses session scoping deliberately: a deleted file is gone
+    for EVERY session in the vault, not just the one that deleted
+    it. Reads the raw record directly from the state backend to
+    make that comparison possible.
+
+    Returns True if the entity was cleared. Never raises.
+    """
+    if not vault_id or not file_id:
+        return False
+    try:
+        backend = get_chat_state_backend()
+        raw = backend.get(_redis_key(vault_id))
+    except Exception:
+        logger.exception(
+            "[ACTIVE-ENTITY] clear_on_delete_read_failed vault=%s",
+            (vault_id or "")[:8] + "…",
+        )
+        return False
+    record = _deserialize(raw)
+    if record is None:
+        return False
+    ref = record.get("entity_ref") or {}
+    if str(ref.get("file_id") or "") == str(file_id or ""):
+        logger.info(
+            "[ACTIVE-ENTITY] cleared_on_delete vault=%s "
+            "file_id_prefix=%s",
+            (vault_id or "")[:8] + "…", str(file_id)[:8] + "…",
+        )
+        try:
+            backend.delete(_redis_key(vault_id))
+            return True
+        except Exception:
+            logger.exception(
+                "[ACTIVE-ENTITY] clear_on_delete_delete_failed",
+            )
+            return False
+    return False
+
+
 
 
 def _reset_store_for_test() -> None:

@@ -10818,7 +10818,7 @@ async def delete_file_endpoint(
 
         bump_vault_total_bytes(vault_id, -int(deleted["file_size"] or 0))
 
-                                                      
+
         try:
             from vault_relationship_graph import (
                 cleanup_relationships_for_file,
@@ -10827,6 +10827,23 @@ async def delete_file_endpoint(
         except Exception:
             logger.exception(
                 "[delete-file] relationship cleanup failed "
+                "vault=%s file=%s", vault_id, payload.file_id,
+            )
+
+        # 2026-07-31 active-entity lifecycle. If the file the user
+        # just deleted was pinned as the chat's active entity, drop
+        # the pin so a subsequent bare "show me" cannot resolve to
+        # this nonexistent row via the pronoun-followup dispatcher.
+        try:
+            from vault_chat_active_entity import (
+                clear_active_entity_if_matches_file,
+            )
+            clear_active_entity_if_matches_file(
+                vault_id, payload.file_id,
+            )
+        except Exception:
+            logger.exception(
+                "[delete-file] active-entity cleanup failed "
                 "vault=%s file=%s", vault_id, payload.file_id,
             )
 
@@ -12900,6 +12917,7 @@ async def chat_endpoint(
             from vault_chat_pronoun_followup import detect_pronoun_followup
             from vault_chat_active_entity import (
                 get_active_entity,
+                revalidate_active_entity,
                 entity_matches_action,
                 ENTITY_LOGIN,
                 ENTITY_FILE,
@@ -12913,9 +12931,49 @@ async def chat_endpoint(
                 _session_id_for_ctx = str(
                     (principal or {}).get("token_id") or "",
                 ) or None
-                _active = get_active_entity(
+                # 2026-07-31 revalidation. Before dispatching on the
+                # active entity, prove it still exists in the vault.
+                # A pinned entity that was deleted / moved / lost
+                # permissions is cleared here rather than surfacing
+                # a broken card via the pronoun-followup dispatcher.
+                # Probe uses the same authoritative table the file
+                # lister uses (uploaded_files, gated by vault_id).
+                def _active_file_still_exists(vid: str, fid: str) -> bool:
+                    if not vid or not fid:
+                        return False
+                    _probe_conn = get_db()
+                    try:
+                        _pc = _probe_conn.cursor()
+                        _pc.execute(
+                            "SELECT 1 FROM uploaded_files "
+                            "WHERE id = %s AND vault_id = %s LIMIT 1",
+                            (fid, vid),
+                        )
+                        return _pc.fetchone() is not None
+                    finally:
+                        _probe_conn.close()
+
+                def _active_login_still_exists(vid: str, lid: str) -> bool:
+                    if not vid or not lid:
+                        return False
+                    _probe_conn = get_db()
+                    try:
+                        _pc = _probe_conn.cursor()
+                        _pc.execute(
+                            "SELECT 1 FROM vault_items "
+                            "WHERE id = %s AND vault_id = %s "
+                            "AND item_type = 'login' LIMIT 1",
+                            (lid, vid),
+                        )
+                        return _pc.fetchone() is not None
+                    finally:
+                        _probe_conn.close()
+
+                _active = revalidate_active_entity(
                     vault_id,
                     session_id=_session_id_for_ctx,
+                    file_exists_probe=_active_file_still_exists,
+                    login_exists_probe=_active_login_still_exists,
                 )
                 print(
                     "[CHAT-DEBUG] pronoun_followup_check "
@@ -13778,6 +13836,121 @@ async def chat_endpoint(
             )
             raise
         print("[CHAT-DEBUG] memory_ok", flush=True)
+
+        # ------------------------------------------------------------------
+        # [DETERMINISTIC-ROUTER] — 2026-07-31 relocation.
+        #
+        # The deterministic pre-router runs HERE, BEFORE any AI entry
+        # point in chat_endpoint: BEFORE run_chat_brain (semantic
+        # decider), BEFORE route_crypto_question, BEFORE the state-
+        # machine pre-cascade, BEFORE the direct-tools short-circuit,
+        # BEFORE all Phase 2 pipelines.
+        #
+        # Original placement (between the state-machine and the direct
+        # -tools branch) meant `run_chat_brain` still ran on every
+        # turn under VAULTAI_CHAT_BRAIN_MODE=shadow — the "shadow"
+        # decider hits OpenAI to log a comparison decision, even for
+        # requests my router would then handle. Codex's 4th blocker
+        # made this explicit: shadow-mode invokes AI on every turn,
+        # so the sentinel-based termination proof does not hold with
+        # the router downstream of the brain.
+        #
+        # Moving the router HERE fixes that: when it resolves, we
+        # return before any AI-invoking function is called.
+        #
+        # Guards:
+        #   - VAULTAI_DETERMINISTIC_ROUTER_ENABLED (default "true")
+        #     lets ops disable without a redeploy.
+        #   - Skip when a pending draft is live so the state machine
+        #     downstream still owns "save it" / "cancel" turns.
+        # ------------------------------------------------------------------
+        try:
+            _det_pending_draft = memory.get("pending_login_draft")
+        except Exception:
+            _det_pending_draft = None
+        _det_has_pending_draft = (
+            isinstance(_det_pending_draft, dict)
+            and bool(_det_pending_draft.get("service"))
+        )
+
+        _det_router_enabled = os.getenv(
+            "VAULTAI_DETERMINISTIC_ROUTER_ENABLED", "true",
+        ).strip().lower() in ("1", "true", "yes", "on")
+
+        if _det_router_enabled and not _det_has_pending_draft:
+            try:
+                from vault_chat_deterministic_router import (
+                    try_route_deterministically as _det_route,
+                )
+                from vault_inspection_tools import (
+                    generate_credential_draft as _det_drafter,
+                )
+                from vault_chat_active_entity import (
+                    set_active_entity as _det_set_active,
+                    get_active_entity as _det_get_active,
+                )
+
+                def _det_files_lister():
+                    try:
+                        return _list_uploaded_files_for_credential_search(
+                            vault_id, key,
+                        ) or []
+                    except Exception:
+                        logger.exception(
+                            "[DETERMINISTIC-ROUTER] files_lister raised",
+                        )
+                        return []
+
+                _det_outcome = _det_route(
+                    vault_id=vault_id,
+                    session_id=_chat_session_id,
+                    key=key,
+                    decrypted_message=decrypted_message or "",
+                    files_lister=_det_files_lister,
+                    credential_drafter=_det_drafter,
+                    active_entity_getter=_det_get_active,
+                    active_entity_setter=_det_set_active,
+                    chat_request_id=_chat_request_id or "",
+                )
+            except Exception:
+                logger.exception(
+                    "[DETERMINISTIC-ROUTER] wiring raised — falling "
+                    "through vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
+                _det_outcome = None
+
+            if _det_outcome is not None:
+                if _det_outcome.pin_active_entity is not None:
+                    try:
+                        _pin_type, _pin_ref, _pin_label, _pin_actions = (
+                            _det_outcome.pin_active_entity
+                        )
+                        _det_set_active(
+                            vault_id,
+                            entity_type=_pin_type,
+                            entity_ref=_pin_ref,
+                            display_label=_pin_label,
+                            allowed_actions=_pin_actions,
+                            session_id=_chat_session_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[DETERMINISTIC-ROUTER] pin_active_entity "
+                            "failed (non-fatal)",
+                        )
+                try:
+                    request.state.chat_path = _det_outcome.chat_path_tag
+                except Exception:
+                    pass
+                logger.info(
+                    "[CHAT-TRACE] deterministic_router_handled "
+                    "vault=%s kind=%s path=%s",
+                    (vault_id or "")[:8] + "...",
+                    _det_outcome.kind,
+                    _det_outcome.chat_path_tag,
+                )
+                return encrypted_reply(_det_outcome.envelope_json)
 
         # -----------------------------------------------------------
         # 2026-07-24 chat-brain rebuild — semantic decider band.
@@ -14968,107 +15141,13 @@ async def chat_endpoint(
                 )
                 return encrypted_reply("\n".join(_save_lines))
 
-        # ------------------------------------------------------------------
-        # 2026-07-27 deterministic pre-router. Runs BEFORE the OpenAI
-        # planner short-circuit so identical requests always produce
-        # identical structured responses. Handles three patterns:
-        #   A. Explicit named-object lookup ("show me naim id",
-        #      "download testing video") — resolves against saved_name
-        #      / file_name; returns a `type=vault_file` envelope.
-        #   B. Ambiguity clarification when two files match the same
-        #      candidate name — returns a `type=file_disambiguation`.
-        #   C. Explicit credential creation with value preservation —
-        #      "create me a youtube login with beraves@gmail.com" runs
-        #      generate_credential_draft directly with the user's
-        #      username so the LLM cannot overwrite it.
-        #
-        # When resolved, the router also pins the active entity via
-        # vault_chat_active_entity.set_active_entity so subsequent bare
-        # "show me" / "open it" follow-ups resolve to the same object.
-        #
-        # Env-gated for safe rollback: VAULTAI_DETERMINISTIC_ROUTER_ENABLED
-        # defaults to "true"; set to "false" to disable and fall through
-        # to the previous behavior.
-        _det_router_enabled = os.getenv(
-            "VAULTAI_DETERMINISTIC_ROUTER_ENABLED", "true",
-        ).strip().lower() in ("1", "true", "yes", "on")
-        if _det_router_enabled and not _has_pending_draft:
-            try:
-                from vault_chat_deterministic_router import (
-                    try_route_deterministically as _det_route,
-                )
-                from vault_inspection_tools import (
-                    generate_credential_draft as _det_drafter,
-                )
-                from vault_chat_active_entity import (
-                    set_active_entity as _det_set_active,
-                    get_active_entity as _det_get_active,
-                )
-
-                def _det_files_lister():
-                    try:
-                        return _list_uploaded_files_for_credential_search(
-                            vault_id, key,
-                        ) or []
-                    except Exception:
-                        logger.exception(
-                            "[DETERMINISTIC-ROUTER] files_lister raised",
-                        )
-                        return []
-
-                _det_outcome = _det_route(
-                    vault_id=vault_id,
-                    session_id=_chat_session_id,
-                    key=key,
-                    decrypted_message=decrypted_message or "",
-                    files_lister=_det_files_lister,
-                    credential_drafter=_det_drafter,
-                    active_entity_getter=_det_get_active,
-                    active_entity_setter=_det_set_active,
-                    chat_request_id=_chat_request_id or "",
-                )
-            except Exception:
-                logger.exception(
-                    "[DETERMINISTIC-ROUTER] wiring raised — falling "
-                    "through vault=%s",
-                    (vault_id or "")[:8] + "...",
-                )
-                _det_outcome = None
-
-            if _det_outcome is not None:
-                # Pin the active entity BEFORE returning so a subsequent
-                # bare "show me" / "open it" resolves to this object via
-                # the existing pronoun-followup handler at ~line 12899.
-                if _det_outcome.pin_active_entity is not None:
-                    try:
-                        _pin_type, _pin_ref, _pin_label, _pin_actions = (
-                            _det_outcome.pin_active_entity
-                        )
-                        _det_set_active(
-                            vault_id,
-                            entity_type=_pin_type,
-                            entity_ref=_pin_ref,
-                            display_label=_pin_label,
-                            allowed_actions=_pin_actions,
-                            session_id=_chat_session_id,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "[DETERMINISTIC-ROUTER] pin_active_entity "
-                            "failed (non-fatal)",
-                        )
-                try:
-                    request.state.chat_path = _det_outcome.chat_path_tag
-                except Exception:
-                    pass
-                logger.info(
-                    "[CHAT-TRACE] deterministic_router_handled "
-                    "vault=%s kind=%s path=%s",
-                    (vault_id or "")[:8] + "...",
-                    _det_outcome.kind,
-                    _det_outcome.chat_path_tag,
-                )
-                return encrypted_reply(_det_outcome.envelope_json)
+        # 2026-07-31 note: the deterministic pre-router previously
+        # lived here. It has been RELOCATED to run BEFORE run_chat_brain
+        # (line ~13840) so no AI entry point — the semantic decider,
+        # brain pipelines, planner — fires when the router resolves.
+        # Codex's 4th blocker: "Move deterministic routing ahead of
+        # every AI entry point." Done. See the router wiring block
+        # tagged `[DETERMINISTIC-ROUTER]` earlier in this function.
 
         if _direct_ai_tools_enabled:
             logger.info(

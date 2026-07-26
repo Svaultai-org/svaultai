@@ -770,9 +770,20 @@ class ChatHandlerWiringSourceGuards(unittest.TestCase):
             "detect_pronoun_followup(decrypted_message)",
         )
         self.assertGreater(idx, -1)
-        window = self.main_src[idx:idx + 4500]
+        window = self.main_src[idx:idx + 6500]
 
-        self.assertIn("get_active_entity(", window)
+        # After 2026-07-31 blocker-3 fix (active-object revalidation),
+        # the active-entity read is wrapped in `revalidate_active_entity`
+        # which itself calls `get_active_entity` internally. Either
+        # symbol appearing in the window keeps the semantic invariant
+        # ("after pronoun detection, the code looks up the active
+        # entity before dispatching").
+        self.assertTrue(
+            "get_active_entity(" in window
+            or "revalidate_active_entity(" in window,
+            "pronoun-followup dispatcher no longer reads the active "
+            "entity — regression on the entity-lookup invariant",
+        )
 
         self.assertIn("entity_matches_action(", window)
 

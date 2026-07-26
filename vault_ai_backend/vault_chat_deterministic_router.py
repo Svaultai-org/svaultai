@@ -483,25 +483,55 @@ def _build_vault_file_envelope(row: dict, action: str) -> str:
 def _build_disambiguation_envelope(
     candidate_name: str, candidates: list[dict],
 ) -> str:
-    """Ambiguity clarification. The frontend maps
-    ``file_disambiguation`` to a picker card."""
+    """Ambiguity clarification. Matches the frontend
+    file_disambiguation contract exactly (main.dart:11203-11223 +
+    chat_cards.dart:3520-3533):
+
+      { "type":  "file_disambiguation",
+        "files": [ { file_id, file_name, saved_name,
+                     relative_path, mime_type, confidence,
+                     reasons, best_match, mostly_credentials,
+                     purpose_label }, ... ],
+        "title": "<header text>",
+        "count": <int>,
+        "context_kind": "named_object",
+        "message": "<body headline>" }
+
+    The Flutter parser reads `files` (not `options`), so this
+    envelope MUST use `files`. The 2026-07-31 Codex review caught
+    a mismatch where the router emitted `options` and the frontend
+    rendered an empty candidate list. That is fixed here.
+    """
     entries: list[dict] = []
     for row in candidates[:8]:
+        # Confidence is a proxy for "best match strength" — every
+        # candidate matches at the same length so we return equal
+        # confidence and let the user pick.
         entries.append({
             "file_id":       str(row.get("id") or row.get("file_id") or ""),
             "file_name":     str(row.get("file_name") or ""),
             "saved_name":    row.get("saved_name") or None,
             "relative_path": row.get("relative_path") or None,
+            # Frontend row reader keys on `mime_type`, not `content_type`.
+            "mime_type":     row.get("content_type") or None,
             "asset_type":    row.get("asset_type") or None,
-            "content_type":  row.get("content_type") or None,
+            "confidence":    0.5,
+            "reasons":       ["saved-name substring match"],
+            "best_match":    False,
+            "mostly_credentials": False,
+            "purpose_label": None,
         })
     envelope = {
         "type":            RESPONSE_TYPE_FILE_DISAMBIGUATION,
+        # Canonical field the Flutter parser reads.
+        "files":           entries,
+        "title":           f'Which file do you mean by "{candidate_name}"?',
+        "count":           len(entries),
+        "context_kind":    "named_object",
         "candidate_name":  candidate_name,
-        "options":         entries,
         "message":         (
-            f"I found {len(entries)} items with a similar name. "
-            "Which one do you mean?"
+            f"I found {len(entries)} items whose saved name matches "
+            f"\"{candidate_name}\". Tap the one you meant."
         ),
         "resolved_by":     "deterministic_router",
     }
@@ -509,33 +539,63 @@ def _build_disambiguation_envelope(
 
 
 def _build_credential_draft_envelope(draft_payload: dict, service: str) -> str:
-    """Wrap the draft payload from ``generate_credential_draft`` in an
-    envelope the frontend can render as a generated-login card.
+    """Wrap the draft payload in the vault_chat_card envelope the
+    Flutter frontend recognizes.
 
-    Fields:
-      type=vault_generated_login_card, service, username (masked-fine
-      because this is the DRAFT), draft_id, explicit_fields.
+    2026-07-31 Codex review found that the frontend does NOT parse a
+    bare top-level ``type == "vault_generated_login_card"`` — that
+    string is a CARD TYPE nested inside a router-V1 envelope. Emitting
+    it at the top level silently degraded to plain assistant text.
+
+    Correct shape per vault_chat_stream_parser.dart:88-168 +
+    vault_chat_cards.dart:184-185 + vault_chat_router.dart:22-25:
+
+      { "type":   "vault_chat_card",
+        "schema": "vault_chat_response_v1",
+        "intent": "vault_generated_login_create_draft",
+        "message": "<user-visible headline>",
+        "card": {
+            "cardType": "vault_generated_login_card",
+            "view":     "create_draft"
+        } }
+
+    ``_GeneratedLoginCard`` (vault_chat_cards.dart:1415) reads only
+    ``card.view`` and renders a security-hardened placeholder — it
+    deliberately does NOT display the generated username/password
+    in the chat card. The state machine already holds the real
+    values (explicit username preserved verbatim); saving happens
+    on the user's next "save it" turn via the existing confirmation
+    flow. That is the intentional product surface: chat card ->
+    prompt to confirm -> vault UI shows values on save.
     """
     envelope = {
-        "type":            RESPONSE_TYPE_CREDENTIAL_DRAFT,
-        "service":         service,
-        "username":        draft_payload.get("username", ""),
-        "password":        draft_payload.get("password", ""),
-        "draft_id":        draft_payload.get("draft_id", ""),
-        "explicit_fields": list(draft_payload.get("explicit_fields") or []),
-        "message":         (
-            f"Draft {service} login ready. "
+        "type":       "vault_chat_card",
+        "schema":     "vault_chat_response_v1",
+        "intent":     "vault_generated_login_create_draft",
+        # Body headline: what the user sees under the card. Never
+        # includes the generated password / username plaintext.
+        "message":    (
+            f"I prepared a {service} login draft. "
             "Say 'save it' to store it in your vault, or "
             "'change the username to <new value>' to edit."
         ),
-        "resolved_by":     "deterministic_router",
+        "card": {
+            "cardType": "vault_generated_login_card",
+            "view":     "create_draft",
+            # Non-rendered fields the frontend ignores today but that
+            # a future iteration of the card renderer may surface.
+            # Kept here so the envelope carries a complete audit
+            # picture without altering current rendering.
+            "service":            service,
+            "draft_id":           draft_payload.get("draft_id", ""),
+            "explicit_fields":    list(
+                draft_payload.get("explicit_fields") or []
+            ),
+        },
+        # Diagnostic marker so operators can trace which pipeline
+        # produced this envelope. Never displayed to the user.
+        "resolved_by": "deterministic_router",
     }
-    if draft_payload.get("email"):
-        envelope["email"] = draft_payload["email"]
-    if draft_payload.get("url"):
-        envelope["url"] = draft_payload["url"]
-    if draft_payload.get("title"):
-        envelope["title"] = draft_payload["title"]
     return json.dumps(envelope, ensure_ascii=False)
 
 
