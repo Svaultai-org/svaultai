@@ -1015,6 +1015,37 @@ class Bug4EndpointTest(_EndpointTestBase):
         )
         self.assertEqual(card.get("view"), "create_draft", ev.summary())
         self.assertPlannerNotInvoked(ev)
+        # 2026-08-01 values live inside card.data (matches
+        # VaultChatCard.fromJson at vault_chat_router.dart:251 which
+        # reads structured content from raw['data']).
+        data = card.get("data") or {}
+        self.assertEqual(
+            data.get("username"), "beraves@gmail.com",
+            "endpoint payload dropped the explicit username\n"
+            + ev.summary(),
+        )
+        # Password is generated but must be present + non-empty.
+        self.assertIsInstance(data.get("password"), str, ev.summary())
+        self.assertGreater(len(data.get("password") or ""), 0,
+                           ev.summary())
+        # Service surfaces as both `service` and `service_name`.
+        self.assertEqual(data.get("service"),      "youtube",
+                         ev.summary())
+        self.assertEqual(data.get("service_name"), "youtube",
+                         ev.summary())
+        # Action button set for the frontend.
+        self.assertEqual(data.get("actions"), ["save", "cancel"],
+                         ev.summary())
+        # Draft id present so Cancel can address it.
+        self.assertTrue(len(data.get("draft_id") or "") > 0,
+                        ev.summary())
+        # Security posture: TOP-LEVEL envelope AND outer `card` MUST
+        # NOT surface credentials — only the nested `card.data`
+        # sub-dict may.
+        self.assertNotIn("password", env)
+        self.assertNotIn("username", env)
+        self.assertNotIn("password", card)
+        self.assertNotIn("username", card)
         # Value preservation — verified at the drafter call boundary.
         self.assertEqual(
             len(self.h.credential_draft_calls), 1,

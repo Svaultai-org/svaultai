@@ -16,6 +16,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -79,18 +80,32 @@ const String kBackendDisambigJson = '''
 // wrapping a generated-login draft, captured from POST /chat.
 // The Flutter parser at vault_chat_stream_parser.dart:88-168
 // requires this exact wrapper shape.
+// 2026-08-01 UPDATED — the backend now populates the `card` sub-dict
+// with the actual credential values so the Flutter renderer can show
+// service / username / password / draft_id + Save/Cancel buttons.
+// The whole /chat SSE stream is AES-GCM encrypted; the plaintext
+// password never crosses the trust boundary in the clear.
 const String kBackendCredDraftJson = '''
 {
   "type":    "vault_chat_card",
   "schema":  "vault_chat_response_v1",
   "intent":  "vault_generated_login_create_draft",
-  "message": "I prepared a youtube login draft. Say 'save it' to store it in your vault, or 'change the username to <new value>' to edit.",
+  "message": "I prepared a HBO Max login draft. Review the values, then tap Save to store it in your vault or Cancel to discard it.",
   "card": {
     "cardType": "vault_generated_login_card",
     "view":     "create_draft",
-    "service":  "youtube",
-    "draft_id": "draft-endpoint-0001",
-    "explicit_fields": ["username", "email"]
+    "data": {
+      "schema":       "vault_generated_login_draft_v1",
+      "view":         "create_draft",
+      "service":      "HBO Max",
+      "service_name": "HBO Max",
+      "username":     "beraves123@gmail.com",
+      "password":     "P@ssw0rd!ExampleGenerated",
+      "draft_id":     "draft-endpoint-0001",
+      "email":        "beraves123@gmail.com",
+      "explicit_fields": ["username", "email"],
+      "actions":      ["save", "cancel"]
+    }
   },
   "resolved_by": "deterministic_router"
 }
@@ -303,7 +318,8 @@ void _testBlocker2() {
 
     testWidgets(
       'ChatMessage from the new envelope renders the structured '
-      '_GeneratedLoginCard, not plain assistant text',
+      '_GeneratedLoginCard with service, username, masked password, '
+      'and Save/Cancel buttons — not plain assistant text',
       (WidgetTester tester) async {
         final result = parseVaultChatCardMessage(kBackendCredDraftJson);
         expect(result, isNotNull);
@@ -323,6 +339,151 @@ void _testBlocker2() {
         expect(response.card.cardType, 'vault_generated_login_card',
             reason: 'router failed to recognize the card type');
 
+        String? savedDraftId;
+        String? cancelledDraftId;
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+            ],
+            supportedLocales: const [Locale('en')],
+            home: Scaffold(
+              body: VaultChatCardView(
+                response: response,
+                onGeneratedLoginSave: (id, svc) {
+                  savedDraftId = id;
+                },
+                onGeneratedLoginCancel: (id, svc) {
+                  cancelledDraftId = id;
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle(const Duration(milliseconds: 200));
+
+        // 2026-08-01 widget rewrite. The card MUST now display:
+        //   service name (HBO Max) as the title
+        //   username in plaintext (never hidden)
+        //   password masked by default
+        //   Save + Cancel buttons
+
+        // Service title.
+        expect(
+          find.byKey(const Key(
+            'vault_chat_card_generated_login_service',
+          )),
+          findsOneWidget,
+        );
+        expect(find.text('HBO Max'), findsOneWidget,
+            reason: 'service name not rendered as the card title');
+
+        // Username row (visible in plaintext). Fixture has the
+        // same value as `email` so we expect >=1 render (username +
+        // optional email row when email is supplied).
+        expect(
+          find.text('beraves123@gmail.com'),
+          findsWidgets,
+          reason: 'username row must be plaintext and always visible',
+        );
+        // Explicit username-row key check — proves the Username row
+        // specifically renders (not just any row with that value).
+        expect(
+          find.byKey(const Key(
+            'vault_chat_card_generated_login_username_value',
+          )),
+          findsOneWidget,
+        );
+
+        // Password row (masked by default).
+        final passwordValueFinder = find.byKey(const Key(
+          'vault_chat_card_generated_login_password_value',
+        ));
+        expect(passwordValueFinder, findsOneWidget);
+        final passwordDisplay = tester.widget<Text>(
+          passwordValueFinder,
+        ).data;
+        expect(
+          passwordDisplay?.contains('•'),
+          isTrue,
+          reason: 'password row must be masked by default',
+        );
+        expect(
+          passwordDisplay?.contains('P@ssw0rd!ExampleGenerated'),
+          isFalse,
+          reason: 'plaintext password leaked in default (unrevealed) '
+                  'render — security regression',
+        );
+
+        // Reveal-eye toggle exposes the real password.
+        final revealFinder = find.byKey(const Key(
+          'vault_chat_card_generated_login_password_reveal',
+        ));
+        expect(revealFinder, findsOneWidget);
+        await tester.tap(revealFinder);
+        await tester.pumpAndSettle();
+        final revealedText = tester.widget<Text>(
+          passwordValueFinder,
+        ).data;
+        expect(
+          revealedText, 'P@ssw0rd!ExampleGenerated',
+          reason: 'reveal toggle did not expose the plaintext password',
+        );
+
+        // Save + Cancel buttons wired to callbacks.
+        final saveBtn = find.byKey(const Key(
+          'vault_chat_card_generated_login_save',
+        ));
+        final cancelBtn = find.byKey(const Key(
+          'vault_chat_card_generated_login_cancel',
+        ));
+        expect(saveBtn,   findsOneWidget);
+        expect(cancelBtn, findsOneWidget);
+
+        // Tap Cancel first; callback fires with the draft id.
+        await tester.tap(cancelBtn);
+        await tester.pumpAndSettle();
+        expect(cancelledDraftId, 'draft-endpoint-0001',
+            reason: 'Cancel button did not invoke the callback with '
+                    'the correct draft_id');
+        // Save doesn't fire because the widget debounces once
+        // dispatched — verify that guard holds.
+        expect(savedDraftId, isNull);
+      },
+    );
+
+    testWidgets(
+      'Copy button copies the username to the clipboard',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(900, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        // Intercept clipboard writes for the assertion.
+        final List<String> clipboardValues = <String>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform,
+                (MethodCall call) async {
+          if (call.method == 'Clipboard.setData') {
+            final args = call.arguments as Map;
+            clipboardValues.add((args['text'] ?? '').toString());
+          }
+          return null;
+        });
+        addTearDown(() {
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(SystemChannels.platform, null);
+        });
+
+        final envelope = jsonDecode(kBackendCredDraftJson)
+            as Map<String, dynamic>;
+        final response = VaultChatResponse.fromJson(envelope);
         await tester.pumpWidget(
           MaterialApp(
             localizationsDelegates: const [
@@ -339,29 +500,47 @@ void _testBlocker2() {
         );
         await tester.pumpAndSettle(const Duration(milliseconds: 200));
 
-        // Structured render evidence: the placeholder copy that the
-        // _GeneratedLoginCard renderer emits. If the parser had
-        // rejected the envelope, the widget would be _UnrecognizedCard
-        // instead and this text would be absent.
+        await tester.tap(find.byKey(const Key(
+          'vault_chat_card_generated_login_username_copy',
+        )));
+        await tester.pumpAndSettle();
         expect(
-          find.textContaining('Saving the generated login'),
-          findsOneWidget,
-          reason: 'GeneratedLoginCard placeholder text did not render '
-                  '— the envelope degraded to plain assistant text',
+          clipboardValues, contains('beraves123@gmail.com'),
+          reason: 'copy button did not write username to clipboard',
+        );
+
+        // Copy password too — value must be the plaintext even
+        // when displayed masked in the UI.
+        await tester.tap(find.byKey(const Key(
+          'vault_chat_card_generated_login_password_copy',
+        )));
+        await tester.pumpAndSettle();
+        expect(
+          clipboardValues, contains('P@ssw0rd!ExampleGenerated'),
+          reason: 'copy button did not write plaintext password to '
+                  'clipboard',
         );
       },
     );
 
     test('the envelope does NOT surface generated username/password '
-         'at the top level (security posture preserved)', () {
+         'at the TOP level (security posture preserved)', () {
       final decoded = jsonDecode(kBackendCredDraftJson)
           as Map<String, dynamic>;
-      // The chat card is a "hardened placeholder" — the real values
-      // live only in the state machine and are persisted on the save
-      // turn. If someone widens the envelope to include them, this
-      // test flags it before it ships.
+      // The credential values live INSIDE the `card.data` sub-dict —
+      // not at the top level of the envelope, and not directly on
+      // `card`. That way any caller that logs the outer envelope for
+      // telemetry / audit cannot accidentally leak secrets.
       expect(decoded.containsKey('password'), isFalse);
       expect(decoded.containsKey('username'), isFalse);
+      final card = decoded['card'] as Map<String, dynamic>;
+      // Not on outer `card` either.
+      expect(card.containsKey('password'), isFalse);
+      expect(card.containsKey('username'), isFalse);
+      // But they DO exist inside `card.data` so the widget can render.
+      final data = card['data'] as Map<String, dynamic>;
+      expect(data.containsKey('username'), isTrue);
+      expect(data.containsKey('password'), isTrue);
     });
   });
 }

@@ -126,6 +126,15 @@ ACTION_MORE:     str = "more"
 ACTION_RELATED:  str = "related"
 ACTION_DESCRIBE: str = "describe"
 ACTION_MOVE:     str = "move"
+# 2026-08-01 generated-login-draft card action. Closes the warning
+# `[ACTIVE-ENTITY] rejected_unknown_action cancel` that fired when
+# the deterministic router pinned a `generated_login_draft` entity
+# with allowed_actions including "cancel" — the enum did not
+# recognise it, so it was silently dropped from the pin. The
+# credential-draft Save/Cancel button row on the Flutter card
+# needs "cancel" to survive the gate so a subsequent user click
+# resolves against the pinned draft.
+ACTION_CANCEL:   str = "cancel"
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset({
     ACTION_SHOW,
@@ -142,6 +151,7 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset({
     ACTION_RELATED,
     ACTION_DESCRIBE,
     ACTION_MOVE,
+    ACTION_CANCEL,
 })
 
 

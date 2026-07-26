@@ -12654,6 +12654,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _sendQuickPrompt(prompt);
       return;
     }
+    // 2026-08-01 generated-login draft Save / Cancel from the card
+    // button row. Both re-enter the /chat endpoint as a natural-
+    // language message the backend state machine already knows how
+    // to consume:
+    //   "save it"  -> state machine calls consume_draft(...) +
+    //                  save_secret_tool(...) — persists the draft.
+    //   "cancel"   -> state machine ACTION_CANCEL branch — clears
+    //                  the pending draft + the active entity pin.
+    if (action == 'generated_login_save') {
+      _sendQuickPrompt('save it');
+      return;
+    }
+    if (action == 'generated_login_cancel') {
+      _sendQuickPrompt('cancel');
+      return;
+    }
   }
 
   /// One-shot selection hint attached to the NEXT chat POST. Cleared

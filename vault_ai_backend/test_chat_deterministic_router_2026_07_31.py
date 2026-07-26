@@ -152,6 +152,11 @@ def _stub_drafter_ok(*, vault_id, key, service_name, username=None,
 
     payload = {
         "draft_id":        f"draft-{service_name}-01",
+        # Real generate_credential_draft returns `service_name` (via
+        # store_draft's to_public_dict). Keep the stub aligned so the
+        # router's downstream reader gets the same key production
+        # sees.
+        "service_name":    service_name,
         "service":         service_name,
         "username":        username or "generated-user",
         "password":        password or "GeneratedPassword12345!",
@@ -462,15 +467,25 @@ class BuildDisambiguationEnvelopeTest(unittest.TestCase):
 class BuildCredentialDraftEnvelopeTest(unittest.TestCase):
 
     def test_shape_matches_frontend_router_v1_wrapper(self):
-        # 2026-07-31 blocker #2 fix: the Flutter parser at
-        # vault_chat_stream_parser.dart:88-168 requires
-        #   type == "vault_chat_card" (or "vault_chat_response_v1")
-        #   card.cardType == "vault_generated_login_card"
-        #   card.view     == "create_draft"
-        # A bare top-level type="vault_generated_login_card"
-        # silently degrades to plain assistant text.
+        # 2026-08-01 UPDATED for the values-in-payload rewrite (see
+        # `_build_credential_draft_envelope`). The wrapper still uses
+        # `type=vault_chat_card`, but the credential values now live
+        # inside `card.data` (matching the Flutter router's
+        # VaultChatCard.fromJson at services/vault_chat_router.dart:251
+        # which reads structured content from `raw['data']`).
+        #
+        # Rationale for including the plaintext password in
+        # `card.data`: the whole /chat SSE stream is AES-GCM encrypted
+        # with the caller's derived vault key, and the user must be
+        # able to review the credential values before Save. This
+        # matches the pre-router state-machine behavior at
+        # vault_pending_draft_state._format_draft_reply which also
+        # serialized the plaintext password into the chat reply.
+        # The frontend's positive-allowlist `_sanitizeGeneratedLoginDraft`
+        # is the corresponding trust-boundary check.
         payload = {
             "draft_id":        "draft-yt-1",
+            "service_name":    "YouTube",
             "username":        "beraves@gmail.com",
             "password":        "P@ssw0rd!ExampleValue",
             "explicit_fields": ["username"],
@@ -478,24 +493,92 @@ class BuildCredentialDraftEnvelopeTest(unittest.TestCase):
         env = json.loads(
             det._build_credential_draft_envelope(payload, "YouTube"),
         )
+        # Outer envelope shape (Flutter parser gate).
         self.assertEqual(env["type"], "vault_chat_card")
         self.assertEqual(env["schema"], "vault_chat_response_v1")
         self.assertEqual(
             env["intent"], "vault_generated_login_create_draft",
         )
+        self.assertEqual(env["resolved_by"], "deterministic_router")
+
+        # `card` outer object carries type + view (the discriminators
+        # the router keys on) but NOT the credential values themselves.
         card = env["card"]
         self.assertEqual(card["cardType"], "vault_generated_login_card")
         self.assertEqual(card["view"], "create_draft")
-        self.assertEqual(card["service"], "YouTube")
-        self.assertEqual(card["draft_id"], "draft-yt-1")
-        self.assertEqual(card["explicit_fields"], ["username"])
-        self.assertEqual(env["resolved_by"], "deterministic_router")
-        # The envelope MUST NOT surface the generated password /
-        # username at the top level — the frontend renderer is a
-        # security-hardened placeholder and the state machine holds
-        # the real values for the save turn.
+        # Security posture: outer `card` MUST NOT surface secrets.
+        self.assertNotIn("password", card)
+        self.assertNotIn("username", card)
+
+        # Nested `card.data`: what the widget renderer reads.
+        data = card["data"]
+        self.assertEqual(data["view"], "create_draft")
+        self.assertEqual(data["schema"],
+                         "vault_generated_login_draft_v1")
+        # Service: emit BOTH `service` and `service_name` so a rename
+        # regression on either reader is a hard fail.
+        self.assertEqual(data["service"], "YouTube")
+        self.assertEqual(data["service_name"], "YouTube")
+        # Credentials.
+        self.assertEqual(data["username"], "beraves@gmail.com")
+        self.assertEqual(data["password"], "P@ssw0rd!ExampleValue")
+        self.assertEqual(data["draft_id"], "draft-yt-1")
+        self.assertEqual(data["explicit_fields"], ["username"])
+        # Action row for the frontend button pair.
+        self.assertEqual(data["actions"], ["save", "cancel"])
+        # Top-level envelope also MUST NOT surface secrets.
         self.assertNotIn("password", env)
         self.assertNotIn("username", env)
+
+    def test_falls_back_to_caller_service_when_payload_lacks_it(self):
+        # Defensive: if store_draft ever returns a draft without a
+        # service_name, the router should still use the caller's
+        # `service` argument as the display name.
+        payload = {
+            "draft_id": "draft-fallback-1",
+            "username": "u@example.com",
+            "password": "GeneratedStrong!",
+            "explicit_fields": ["username"],
+        }
+        env = json.loads(
+            det._build_credential_draft_envelope(
+                payload, "Fallback Service",
+            ),
+        )
+        data = env["card"]["data"]
+        self.assertEqual(data["service"], "Fallback Service")
+        self.assertEqual(data["service_name"], "Fallback Service")
+
+    def test_optional_fields_only_surface_when_supplied(self):
+        # email / url / title should NOT be in card.data unless the
+        # user supplied them — otherwise the frontend renders empty
+        # rows for every draft.
+        payload_bare = {
+            "draft_id": "d-1",
+            "service_name": "Bare",
+            "username": "u",
+            "password": "p",
+            "explicit_fields": [],
+        }
+        data = json.loads(
+            det._build_credential_draft_envelope(payload_bare, "Bare"),
+        )["card"]["data"]
+        self.assertNotIn("email", data)
+        self.assertNotIn("url",   data)
+        self.assertNotIn("title", data)
+
+        payload_full = dict(payload_bare)
+        payload_full.update({
+            "email": "someone@example.com",
+            "url":   "https://example.com",
+            "title": "Personal",
+        })
+        data_full = json.loads(
+            det._build_credential_draft_envelope(payload_full, "Bare"),
+        )["card"]["data"]
+        self.assertEqual(data_full["email"], "someone@example.com")
+        self.assertEqual(data_full["url"],   "https://example.com")
+        self.assertEqual(data_full["title"], "Personal")
 
 
 class ExtractServiceFromMessageTest(unittest.TestCase):
@@ -788,7 +871,19 @@ class TryRouteBug4CredentialCreationTest(unittest.TestCase):
         self.assertEqual(
             card["cardType"], "vault_generated_login_card",
         )
-        self.assertIn("username", card["explicit_fields"])
+        # 2026-08-01 values live inside card.data (matches Flutter
+        # VaultChatCard.fromJson reading raw['data']).
+        data = card["data"]
+        self.assertIn("username", data["explicit_fields"])
+        # values-in-payload: the card now carries the actual values
+        # the frontend renders.
+        self.assertEqual(data["username"], "beraves@gmail.com")
+        # Password is generated (drafter stub returned
+        # "GeneratedPassword12345!" — real production value differs
+        # every run; just prove it's non-empty).
+        self.assertTrue(len(data["password"]) > 0)
+        self.assertEqual(data["actions"], ["save", "cancel"])
+        self.assertTrue(len(data["draft_id"]) > 0)
 
     def test_prime_login_email_username(self):
         drafter_calls: list = []

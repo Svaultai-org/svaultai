@@ -265,10 +265,21 @@ class VaultChatCard {
       // path via _sanitize_login_detail_payload; the frontend mirrors
       // it here by routing detail payloads through the same positive
       // allowlist instead of the blacklist strip.
+      //
+      // 2026-08-01: same treatment for the GENERATED-LOGIN card in
+      // create_draft view — the user needs to review the values the
+      // draft holds before deciding Save/Cancel. Backend-side the
+      // whole /chat SSE stream is AES-GCM encrypted with the vault-
+      // derived key; the plaintext password never crosses the trust
+      // boundary in the clear.
       final isLoginDetail = safeType == kVcrCardLogin &&
           (rawData['view'] == 'detail');
+      final isGeneratedLoginDraft = safeType == kVcrCardGeneratedLogin &&
+          (rawData['view'] == 'create_draft');
       if (isLoginDetail) {
         safeData = _sanitizeLoginDetail(rawData);
+      } else if (isGeneratedLoginDraft) {
+        safeData = _sanitizeGeneratedLoginDraft(rawData);
       } else {
         safeData = _stripForbiddenKeys(rawData);
       }
@@ -389,6 +400,39 @@ Map<String, dynamic> _sanitizeLoginDetail(Map<String, dynamic> raw) {
     } else {
       out[entry.key] = v;
     }
+  }
+  return out;
+}
+
+
+// 2026-08-01 positive allowlist for the generated-login draft card
+// in `create_draft` view. Same pattern as `_sanitizeLoginDetail`.
+// Any key not in this set is stripped — including anything on the
+// forbidden-keys blacklist that isn't explicitly allowed here.
+const Set<String> _kGeneratedLoginDraftKeys = <String>{
+  'schema',
+  'view',
+  'service',
+  'service_name',
+  'username',
+  'password',
+  'draft_id',
+  'explicit_fields',
+  'actions',
+  'email',
+  'url',
+  'title',
+};
+
+
+Map<String, dynamic> _sanitizeGeneratedLoginDraft(
+    Map<String, dynamic> raw,) {
+  final out = <String, dynamic>{};
+  for (final entry in raw.entries) {
+    if (!_kGeneratedLoginDraftKeys.contains(entry.key)) continue;
+    // Values in this allowlist are all leaf types (String, List<String>)
+    // — no nested maps to recurse into.
+    out[entry.key] = entry.value;
   }
   return out;
 }

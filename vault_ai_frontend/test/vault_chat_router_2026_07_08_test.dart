@@ -325,8 +325,16 @@ void main() {
           findsOneWidget);
     });
 
-    testWidgets('generated login card shows the save-requires-'
-        'confirmation pill', (tester) async {
+    testWidgets('generated login card renders Save + Cancel action row '
+        '(2026-08-01 rewrite — replaces the old placeholder pill)',
+        (tester) async {
+      // 2026-08-01: the "Save requires confirmation" pill was a
+      // placeholder from an unfinished stub. The rewritten
+      // _GeneratedLoginCard renders real Save/Cancel buttons that
+      // fire onGeneratedLoginSave / onGeneratedLoginCancel
+      // callbacks. Backend now nests the credential values inside
+      // `card.data` (matching VaultChatCard.fromJson at
+      // services/vault_chat_router.dart:251).
       await tester.pumpWidget(_wrap(
         VaultChatCardView(
           response: _parse(
@@ -334,14 +342,41 @@ void main() {
             card: {
               'cardType': 'vault_generated_login_card',
               'view':     'create_draft',
+              'data': {
+                'view':         'create_draft',
+                'service':      'HBO Max',
+                'service_name': 'HBO Max',
+                'username':     'beraves123@example.com',
+                'password':     'SamplePassword1!',
+                'draft_id':     'draft-router-test-1',
+                'explicit_fields': ['username'],
+                'actions':      ['save', 'cancel'],
+              },
             },
           ),
         ),
       ));
       await tester.pumpAndSettle();
+      // Card mount marker.
       expect(find.byKey(const Key(kVcrCardKeyGeneratedLogin)),
           findsOneWidget);
-      expect(find.text('Save requires confirmation'), findsOneWidget);
+      // The old placeholder text MUST NOT render.
+      expect(find.text('Save requires confirmation'), findsNothing);
+      // The real action buttons render.
+      expect(
+        find.byKey(const Key(
+          'vault_chat_card_generated_login_save',
+        )),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key(
+          'vault_chat_card_generated_login_cancel',
+        )),
+        findsOneWidget,
+      );
+      // Service name is the title.
+      expect(find.text('HBO Max'), findsOneWidget);
     });
 
     testWidgets('billing card renders with route-to-checkout wording',

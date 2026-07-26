@@ -543,60 +543,135 @@ def _build_disambiguation_envelope(
 
 def _build_credential_draft_envelope(draft_payload: dict, service: str) -> str:
     """Wrap the draft payload in the vault_chat_card envelope the
-    Flutter frontend recognizes.
+    Flutter frontend recognizes AND fully populates so the
+    ``_GeneratedLoginCard`` widget can render the service name, the
+    username, the generated password (masked by default, revealable
+    on tap), and Save/Cancel action buttons.
 
-    2026-07-31 Codex review found that the frontend does NOT parse a
-    bare top-level ``type == "vault_generated_login_card"`` — that
-    string is a CARD TYPE nested inside a router-V1 envelope. Emitting
-    it at the top level silently degraded to plain assistant text.
+    2026-08-01: the prior envelope carried only the wrapper shape but
+    NO field values, because the frontend renderer at that time was
+    a hardcoded "Save requires confirmation" placeholder. That
+    placeholder was an unfinished stub — production feedback made
+    that clear: users had no way to see what would be saved. Both
+    the envelope AND the widget renderer are updated in this pass;
+    the envelope is populated here, and the widget rewrite lives at
+    ``vault_ai_frontend/lib/ui/vault_chat_cards.dart::_GeneratedLoginCard``.
 
-    Correct shape per vault_chat_stream_parser.dart:88-168 +
-    vault_chat_cards.dart:184-185 + vault_chat_router.dart:22-25:
+    Envelope shape (matches vault_chat_stream_parser.dart:88-168):
 
       { "type":   "vault_chat_card",
         "schema": "vault_chat_response_v1",
         "intent": "vault_generated_login_create_draft",
         "message": "<user-visible headline>",
         "card": {
-            "cardType": "vault_generated_login_card",
-            "view":     "create_draft"
-        } }
+            "cardType":     "vault_generated_login_card",
+            "view":         "create_draft",
+            "service":      "<service display name>",
+            "service_name": "<service display name>",  # alias
+            "username":     "<explicit or generated>",
+            "password":     "<generated>",              # masked in UI
+            "draft_id":     "<draft-id>",
+            "email":        "<if user supplied one>",   # optional
+            "url":          "<if user supplied one>",   # optional
+            "title":        "<if user supplied one>",   # optional
+            "explicit_fields": [ ... ],                 # provenance
+            "actions":      ["save", "cancel"]
+        }
+      }
 
-    ``_GeneratedLoginCard`` (vault_chat_cards.dart:1415) reads only
-    ``card.view`` and renders a security-hardened placeholder — it
-    deliberately does NOT display the generated username/password
-    in the chat card. The state machine already holds the real
-    values (explicit username preserved verbatim); saving happens
-    on the user's next "save it" turn via the existing confirmation
-    flow. That is the intentional product surface: chat card ->
-    prompt to confirm -> vault UI shows values on save.
+    Security note: the raw password IS included in this envelope.
+    That is intentional and matches the pre-router state-machine
+    behavior at vault_pending_draft_state._format_draft_reply which
+    also serialized the plaintext password into the chat reply.
+    The whole /chat SSE stream is AES-GCM encrypted with the
+    caller's derived vault key, so the payload never crosses the
+    trust boundary in plaintext. The frontend then masks the
+    password by default; the user reveals it explicitly. On "save"
+    the state machine persists the values via
+    save_secret_tool — the same code path the OLD state machine
+    used, unchanged.
     """
+    # Prefer the persisted draft's authoritative values — that is
+    # what will actually land in the vault when the user says "save
+    # it". Fall back to the caller-supplied service only when the
+    # draft payload does not carry it (should never happen for a
+    # successful store_draft, but defensive).
+    display_service = str(
+        draft_payload.get("service_name")
+        or draft_payload.get("service")
+        or service
+        or ""
+    )
+    username = str(draft_payload.get("username") or "")
+    password = str(draft_payload.get("password") or "")
+    draft_id = str(draft_payload.get("draft_id") or "")
+    explicit_fields = list(draft_payload.get("explicit_fields") or [])
+
+    # The Flutter parser (services/vault_chat_router.dart:VaultChatCard.
+    # fromJson at line 251) reads structured content from the NESTED
+    # `card.data` sub-dict, not from `card` itself. Only cardType and
+    # view live at the outer `card` level; every field the widget
+    # renders (service, username, password, draft_id, actions, ...)
+    # goes inside `data`.
+    #
+    # Also: the parser strips a blacklist of forbidden keys from
+    # `data` unless the card type has a positive allowlist. The
+    # frontend router at vault_chat_router.dart adds a positive
+    # allowlist for our card type (_sanitizeGeneratedLoginCard),
+    # mirroring the existing login-detail allowlist pattern.
+    card_data: dict = {
+        # View discriminator the widget switches on. Same value the
+        # renderer reads to distinguish create_draft from any future
+        # view (e.g. list, edit).
+        "view":            "create_draft",
+        # Both keys carry the same value — some downstream consumers
+        # read `service`, others `service_name`. Emit both to avoid
+        # a rename regression on a future frontend change.
+        "service":         display_service,
+        "service_name":    display_service,
+        "username":        username,
+        "password":        password,
+        "draft_id":        draft_id,
+        "explicit_fields": explicit_fields,
+        # Closed-set enum the frontend switches on to render the
+        # button row. Order matters: Save first, Cancel second.
+        "actions":         ["save", "cancel"],
+        # Marker the sanitizer keys on. Kept intentionally verbose so
+        # a code reviewer can grep it and understand why plaintext
+        # values survive the strip.
+        "schema":          "vault_generated_login_draft_v1",
+    }
+
+    # Optional user-supplied fields — surface only when present so
+    # they render as extra rows rather than empty pills.
+    if draft_payload.get("email"):
+        card_data["email"] = str(draft_payload["email"])
+    if draft_payload.get("url"):
+        card_data["url"] = str(draft_payload["url"])
+    if draft_payload.get("title"):
+        card_data["title"] = str(draft_payload["title"])
+
+    card: dict = {
+        "cardType": "vault_generated_login_card",
+        # The `view` at the outer `card` level is what the existing
+        # `_GeneratedLoginCard` widget currently reads via
+        # `widget.card.view`. Keep it here too so any consumer that
+        # inspects the outer card object (not just `data`) still sees
+        # the right view.
+        "view":     "create_draft",
+        "data":     card_data,
+    }
+
     envelope = {
-        "type":       "vault_chat_card",
-        "schema":     "vault_chat_response_v1",
-        "intent":     "vault_generated_login_create_draft",
-        # Body headline: what the user sees under the card. Never
-        # includes the generated password / username plaintext.
-        "message":    (
-            f"I prepared a {service} login draft. "
-            "Say 'save it' to store it in your vault, or "
-            "'change the username to <new value>' to edit."
+        "type":        "vault_chat_card",
+        "schema":      "vault_chat_response_v1",
+        "intent":      "vault_generated_login_create_draft",
+        "message":     (
+            f"I prepared a {display_service} login draft. "
+            "Review the values, then tap Save to store it in your "
+            "vault or Cancel to discard it."
         ),
-        "card": {
-            "cardType": "vault_generated_login_card",
-            "view":     "create_draft",
-            # Non-rendered fields the frontend ignores today but that
-            # a future iteration of the card renderer may surface.
-            # Kept here so the envelope carries a complete audit
-            # picture without altering current rendering.
-            "service":            service,
-            "draft_id":           draft_payload.get("draft_id", ""),
-            "explicit_fields":    list(
-                draft_payload.get("explicit_fields") or []
-            ),
-        },
-        # Diagnostic marker so operators can trace which pipeline
-        # produced this envelope. Never displayed to the user.
+        "card":        card,
         "resolved_by": "deterministic_router",
     }
     return json.dumps(envelope, ensure_ascii=False)

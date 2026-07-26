@@ -665,6 +665,28 @@ class _CardBubble extends StatelessWidget {
           });
         }
       },
+      // 2026-08-01 generated-login draft Save / Cancel wiring. The
+      // card owns the visual button row; this file translates the
+      // button tap into an `onCardAction` call the main.dart chat
+      // controller turns into a "save it" / "cancel" chat message,
+      // which the backend state machine consumes to persist or
+      // discard the draft.
+      onGeneratedLoginSave: (draftId, service) {
+        if (onCardAction != null) {
+          onCardAction!(msg, 'generated_login_save', {
+            'draft_id': draftId,
+            'service':  service,
+          });
+        }
+      },
+      onGeneratedLoginCancel: (draftId, service) {
+        if (onCardAction != null) {
+          onCardAction!(msg, 'generated_login_cancel', {
+            'draft_id': draftId,
+            'service':  service,
+          });
+        }
+      },
     );
   }
 
