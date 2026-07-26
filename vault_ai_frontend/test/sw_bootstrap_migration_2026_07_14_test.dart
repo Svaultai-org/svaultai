@@ -63,6 +63,29 @@ void main() {
               'is attached before Flutter runs.');
       expect(tagText.contains(' defer'), isFalse);
     });
+
+    test('source fallback exists so the referenced bootstrap URL is '
+         'a 200 even after an accidental plain Flutter build', () {
+      final fallback = File(
+        '${Directory.current.path}/web/vaultai-sw-bootstrap.js',
+      );
+      expect(fallback.existsSync(), isTrue,
+          reason:
+              'index.html references /vaultai-sw-bootstrap.js; the '
+              'source web/ asset must exist so plain build/web output '
+              'does not deploy a 404 for that URL.');
+      final js = fallback.readAsStringSync().replaceAll('\r\n', '\n');
+      expect(js.contains('__VAULTAI_APP_RELEASE__'), isTrue);
+      expect(
+        js.contains(
+          "if (RELEASE.charAt(0) === '_' && RELEASE.charAt(1) === '_')",
+        ),
+        isTrue,
+        reason:
+            'The source fallback must no-op until the release build '
+            'substitutes a concrete SHA.',
+      );
+    });
   });
 
   group('Round 12 — bootstrap template contract', () {

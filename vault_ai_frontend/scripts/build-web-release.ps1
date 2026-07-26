@@ -118,6 +118,12 @@ This guard prevents shipping a production release with APP_RELEASE=dev
     }
     Write-Host "[vault-release] wrote SW-registration bootstrap to $tplDest" -ForegroundColor Green
 
+    $tplLeftover = Join-Path $flutterProjectRoot 'build/web/vaultai-sw-bootstrap.template.js'
+    if (Test-Path $tplLeftover) {
+        Remove-Item -Force -Path $tplLeftover
+        Write-Host "[vault-release] removed template leftover $tplLeftover" -ForegroundColor Green
+    }
+
     # ---- release.json ----
     $releaseJson = @{
         commit      = $shaFull

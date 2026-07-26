@@ -1059,6 +1059,52 @@ class Bug4EndpointTest(_EndpointTestBase):
             f"{call['username']!r}\n{ev.summary()}",
         )
 
+    def test_hbo_max_create_draft_has_full_card_data(self):
+        self.h.arm_planner_sentinel()
+        ev = self.h.post_message(
+            "create me an HBO Max login with test@gmail.com as my username"
+        )
+        self.assertHTTP200(ev)
+        self.assertResponseType(ev, "vault_chat_card")
+        self.assertChatPath(ev, "deterministic_credential_create")
+        self.assertPlannerNotInvoked(ev)
+
+        env = ev.envelope or {}
+        self.assertEqual(
+            env.get("intent"),
+            "vault_generated_login_create_draft",
+            ev.summary(),
+        )
+        card = env.get("card") or {}
+        self.assertEqual(
+            card.get("cardType"), "vault_generated_login_card",
+            ev.summary(),
+        )
+        self.assertEqual(card.get("view"), "create_draft", ev.summary())
+
+        data = card.get("data")
+        self.assertIsInstance(
+            data, dict,
+            "generated-login create-draft returned a shell card "
+            "without card.data\n" + ev.summary(),
+        )
+        self.assertEqual(data.get("service_name"), "HBO Max", ev.summary())
+        self.assertEqual(data.get("service"), "HBO Max", ev.summary())
+        self.assertEqual(data.get("username"), "test@gmail.com",
+                         ev.summary())
+        self.assertIsInstance(data.get("password"), str, ev.summary())
+        self.assertGreater(len(data.get("password") or ""), 0,
+                           ev.summary())
+        self.assertTrue(len(data.get("draft_id") or "") > 0,
+                        ev.summary())
+        self.assertEqual(data.get("actions"), ["save", "cancel"],
+                         ev.summary())
+
+        self.assertNotIn("password", env)
+        self.assertNotIn("username", env)
+        self.assertNotIn("password", card)
+        self.assertNotIn("username", card)
+
     def test_prime_login_email_username(self):
         self.h.arm_planner_sentinel()
         ev = self.h.post_message(

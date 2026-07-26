@@ -162,17 +162,24 @@ class IntentClassificationTests(unittest.TestCase):
             self._f("Find generated login for example.com")["intent"],
             "vault_generated_login_list",
         )
+
+    def test_generated_login_create_declines_to_deterministic_router(self):
+        r = self._f("Create a generated login draft")
         self.assertEqual(
-            self._f("Create a generated login draft")["intent"],
-            "vault_generated_login_create_draft",
+            r["intent"],
+            "vault_unrecognized",
         )
+        self.assertEqual(r["card"]["cardType"], "vault_unrecognized_card")
 
 
-    def test_generated_login_draft_never_saves_without_confirmation(
+    def test_generated_login_create_envelope_is_not_built_by_legacy_router(
         self,
     ):
-        r = self._f("Create a generated login draft")
-        self.assertFalse(r["card"]["canSaveWithoutConfirmation"])
+        from vault_chat_router import build_vault_chat_envelope
+
+        self.assertIsNone(
+            build_vault_chat_envelope("create me a new login for hbo"),
+        )
 
 
     def test_id_document_intents(self):

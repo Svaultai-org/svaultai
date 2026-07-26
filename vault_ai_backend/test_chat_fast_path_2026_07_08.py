@@ -64,6 +64,12 @@ class TestSafeIntentSet(unittest.TestCase):
             with self.subTest(intent=i):
                 self.assertIn(i, cfp.INTENTS_SAFE_WITHOUT_DRAINS)
 
+    def test_generated_login_create_draft_never_fast_paths(self):
+        self.assertNotIn(
+            cfp.INTENT_GENERATED_LOGIN_CREATE_DRAFT,
+            cfp.INTENTS_SAFE_WITHOUT_DRAINS,
+        )
+
     def test_file_search_and_llm_still_need_drains(self):
         for i in (
             "vault_file_search",
@@ -145,6 +151,20 @@ class TestCanSkipDrainsDecision(unittest.TestCase):
 
     def test_file_search_intent_does_not_skip(self):
         env = {"intent": "vault_file_search", "card": {}}
+        self.assertFalse(cfp.can_skip_drains(
+            env,
+            is_pending_confirm=False,
+            has_active_context=False,
+        ))
+
+    def test_generated_login_create_draft_does_not_skip(self):
+        env = {
+            "intent": cfp.INTENT_GENERATED_LOGIN_CREATE_DRAFT,
+            "card": {
+                "cardType": "vault_generated_login_card",
+                "view": "create_draft",
+            },
+        }
         self.assertFalse(cfp.can_skip_drains(
             env,
             is_pending_confirm=False,

@@ -914,15 +914,14 @@ def classify_and_build_vault_intent(
 
 
     if _matches_any(text, _GENERATED_LOGIN_CREATE_PATTERNS):
+        # Generated-login CREATE-DRAFT needs side effects: preserve
+        # explicit fields, generate only missing values, persist a
+        # pending draft, and return card.data for the renderer. This
+        # legacy side-effect-free router can only emit a shell card, so
+        # decline and let vault_chat_deterministic_router own the path.
         return _wrap_intent(
-            INTENT_GENERATED_LOGIN_CREATE_DRAFT,
-            _build_card(
-                CARD_GENERATED_LOGIN,
-                liveFetchRequired=False,
-                maskedByDefault=True,
-                view="create_draft",
-                canSaveWithoutConfirmation=False,
-            ),
+            INTENT_UNRECOGNIZED,
+            _build_card(CARD_UNRECOGNIZED),
         )
     if _matches_any(text, _GENERATED_LOGIN_LIST_PATTERNS):
         return _wrap_intent(

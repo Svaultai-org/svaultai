@@ -133,6 +133,12 @@ if ! grep -q "$sha_full" "$tpl_dest"; then
 fi
 echo "[vault-release] wrote SW-registration bootstrap to $tpl_dest"
 
+tpl_leftover="$project_root/build/web/vaultai-sw-bootstrap.template.js"
+if [ -f "$tpl_leftover" ]; then
+    rm -f "$tpl_leftover"
+    echo "[vault-release] removed template leftover $tpl_leftover"
+fi
+
 # 5. release.json.
 release_path="$project_root/build/web/release.json"
 printf '{"commit":"%s","commitShort":"%s","builtAt":"%s"}\n' \

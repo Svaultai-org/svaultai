@@ -15,6 +15,10 @@ skip those drains. The rules:
     card data comes from DB rows or static content — FAQ,
     refusals, vault overview counts, logins/secure items/IDs
     lists, billing, storage, activity, crypto Vault cards.
+    Generated-login CREATE-DRAFT is intentionally excluded: the
+    side-effect-free router can only produce a shell card, while the
+    deterministic credential-create router is the authoritative path
+    that stores the draft and attaches card.data.
   * File-search, document-summary, cross-vault search, and
     unrecognized (LLM fallback) DO need the drains — those paths
     can genuinely benefit from freshly-extracted file text or
@@ -115,7 +119,6 @@ INTENTS_SAFE_WITHOUT_DRAINS: frozenset[str] = frozenset({
     INTENT_LOGIN_REVEAL,
     INTENT_LOGIN_COPY,
     INTENT_GENERATED_LOGIN_LIST,
-    INTENT_GENERATED_LOGIN_CREATE_DRAFT,
     INTENT_ID_DOCUMENT_LIST,
     INTENT_ID_DOCUMENT_SEARCH,
     INTENT_ID_DOCUMENT_EXPIRY,
