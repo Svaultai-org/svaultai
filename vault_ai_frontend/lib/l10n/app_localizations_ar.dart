@@ -150,9 +150,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sidebarMemory => 'الذاكرة';
 
   @override
-  String get sidebarRelationships => 'العلاقات';
-
-  @override
   String get sidebarInheritance => 'الميراث';
 
   @override
@@ -225,9 +222,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get unlockToSeeMemory => 'افتح خزينة لعرض الجدول الزمني للذاكرة.';
-
-  @override
-  String get unlockToSeeRelationships => 'افتح خزينة لعرض شبكة العلاقات.';
 
   @override
   String get conciergeTitle => 'المساعد الذكي';
@@ -529,77 +523,6 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String memoryAskAbout(String key) {
     return 'ماذا تتذكر عن $key؟';
-  }
-
-  @override
-  String get relationshipsTitle => 'العلاقات';
-
-  @override
-  String get relationshipsSubtitle =>
-      'المستندات والحسابات والذكريات التي تنتمي معًا';
-
-  @override
-  String get relationshipsLoading => 'جارٍ رسم خريطة خزينتك...';
-
-  @override
-  String get relationshipsErrorPrefix => 'تعذّر تحميل العلاقات.';
-
-  @override
-  String get relationshipsEmptyTitle => 'لا توجد مجموعات بعد.';
-
-  @override
-  String get relationshipsEmptySub =>
-      'ارفع جواز سفر، تأشيرة، فاتورة، أو عقدًا وسيبدأ VaultAI بتجميع المستندات التي تنتمي معًا حسب السفر والهوية والضرائب والعائلة وغيرها.';
-
-  @override
-  String get relationshipsNoMatchTitle => 'لا توجد نتائج.';
-
-  @override
-  String get relationshipsNoMatchSub => 'جرّب مسح الفلتر أو البحث.';
-
-  @override
-  String get relationshipsSearchHint =>
-      'ابحث في المستندات أو العناصر أو العلاقات...';
-
-  @override
-  String get relationshipsTypeTravel => 'مجموعة السفر';
-
-  @override
-  String get relationshipsTypeIdentity => 'مجموعة الهوية';
-
-  @override
-  String get relationshipsTypeBusiness => 'مجموعة الأعمال';
-
-  @override
-  String get relationshipsTypeFinance => 'مجموعة المالية';
-
-  @override
-  String get relationshipsTypeTax => 'مجموعة الضرائب';
-
-  @override
-  String get relationshipsTypeMedical => 'مجموعة طبية';
-
-  @override
-  String get relationshipsTypeFamily => 'مجموعة العائلة';
-
-  @override
-  String get relationshipsTypeSecurity => 'مجموعة الأمان';
-
-  @override
-  String get relationshipsTypeMedia => 'مجموعة الوسائط';
-
-  @override
-  String get relationshipsTypeInheritance => 'مجموعة الميراث';
-
-  @override
-  String get relationshipsEndpointFile => 'ملف';
-
-  @override
-  String get relationshipsEndpointItem => 'عنصر';
-
-  @override
-  String relationshipsAskRelated(String label) {
-    return 'ما المرتبط بـ \"$label\"؟';
   }
 
   @override

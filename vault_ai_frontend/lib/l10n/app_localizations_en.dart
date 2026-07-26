@@ -150,9 +150,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarMemory => 'Memory';
 
   @override
-  String get sidebarRelationships => 'Relationships';
-
-  @override
   String get sidebarInheritance => 'Inheritance';
 
   @override
@@ -226,10 +223,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get unlockToSeeMemory => 'Unlock a vault to see your memory timeline.';
-
-  @override
-  String get unlockToSeeRelationships =>
-      'Unlock a vault to see your relationship graph.';
 
   @override
   String get conciergeTitle => 'Concierge';
@@ -534,77 +527,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get relationshipsTitle => 'Relationships';
-
-  @override
-  String get relationshipsSubtitle =>
-      'Documents, accounts, and memories that belong together';
-
-  @override
-  String get relationshipsLoading => 'Mapping your vault...';
-
-  @override
-  String get relationshipsErrorPrefix => 'Could not load relationships.';
-
-  @override
-  String get relationshipsEmptyTitle => 'No clusters yet.';
-
-  @override
-  String get relationshipsEmptySub =>
-      'Upload a passport, visa, invoice, or contract and VaultAI will start grouping documents that belong together by travel, identity, tax, family, and more.';
-
-  @override
-  String get relationshipsNoMatchTitle => 'Nothing matches.';
-
-  @override
-  String get relationshipsNoMatchSub => 'Try clearing the filter or search.';
-
-  @override
-  String get relationshipsSearchHint =>
-      'Search documents, items, or relations...';
-
-  @override
-  String get relationshipsTypeTravel => 'Travel cluster';
-
-  @override
-  String get relationshipsTypeIdentity => 'Identity cluster';
-
-  @override
-  String get relationshipsTypeBusiness => 'Business cluster';
-
-  @override
-  String get relationshipsTypeFinance => 'Finance cluster';
-
-  @override
-  String get relationshipsTypeTax => 'Tax cluster';
-
-  @override
-  String get relationshipsTypeMedical => 'Medical cluster';
-
-  @override
-  String get relationshipsTypeFamily => 'Family cluster';
-
-  @override
-  String get relationshipsTypeSecurity => 'Security cluster';
-
-  @override
-  String get relationshipsTypeMedia => 'Media cluster';
-
-  @override
-  String get relationshipsTypeInheritance => 'Inheritance cluster';
-
-  @override
-  String get relationshipsEndpointFile => 'File';
-
-  @override
-  String get relationshipsEndpointItem => 'Item';
-
-  @override
-  String relationshipsAskRelated(String label) {
-    return 'What is related to \"$label\"?';
-  }
-
-  @override
   String get settingsTitle => 'Settings';
 
   @override
@@ -756,7 +678,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String helpContactSupportEmailOpenFailed(String email) {
-    return "Couldn't open your email app. Copy this address instead: $email";
+    return 'Couldn\'t open your email app. Copy this address instead: $email';
   }
 
   @override

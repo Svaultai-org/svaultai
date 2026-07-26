@@ -179,12 +179,31 @@ class _FakeCursor:
                      if f["vault_id"] == vault_id]
             self._pending = [dict(f) for f in files]
             return
+        if norm.startswith("select id, payload_ciphertext from vault_ai_memory"):
+            (vault_id,) = params
+            memories = [
+                m for m in self.db.memories.values()
+                if m["vault_id"] == vault_id
+                and m.get("payload_ciphertext") is not None
+                and m.get("memory_key") is None
+                and m.get("memory_value") is None
+            ]
+            self._pending = [dict(m) for m in memories]
+            return
         if norm.startswith("update vault_items set encrypted_data"):
             new_data, item_id = params
             self.db.items[item_id]["encrypted_data"] = new_data
             self._pending = []
             return
         if norm.startswith("update uploaded_files"):
+            self._pending = []
+            return
+        if norm.startswith("update vault_ai_memory set payload_ciphertext"):
+            payload_ct, lookup_hash, memory_id, vault_id = params
+            row = self.db.memories.get(memory_id)
+            if row is not None and row["vault_id"] == vault_id:
+                row["payload_ciphertext"] = payload_ct
+                row["memory_lookup_hash"] = lookup_hash
             self._pending = []
             return
 
@@ -239,6 +258,7 @@ class InMemoryVaultDb:
         self.vaults: dict[str, dict[str, Any]] = {}
         self.items:  dict[int, dict[str, Any]] = {}
         self.files:  dict[int, dict[str, Any]] = {}
+        self.memories: dict[int, dict[str, Any]] = {}
 
 
 def _add_vault(db: InMemoryVaultDb, *, pin: str,

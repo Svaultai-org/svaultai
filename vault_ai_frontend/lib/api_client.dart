@@ -1205,43 +1205,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  Future<Map<String, dynamic>> getRelationshipList({
-    required String authToken,
-    required String vaultName,
-    String? relationType,
-    int limit = 500,
-  }) async {
-    final uri = Uri.parse('$baseUrl/relationships/list');
-    final body = <String, dynamic>{
-      'vault_name': vaultName,
-      'limit': limit,
-    };
-    if (relationType != null && relationType.isNotEmpty) {
-      body['relation_type'] = relationType;
-    }
-    final headers = _defaultHeaders(authToken: authToken, json: true);
-    _vlogRequest('relationships.list', uri, headers);
-    final response = await _runWithNetLog(
-      'relationships.list',
-      uri,
-      () => http.post(uri, headers: headers, body: jsonEncode(body)),
-    );
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Relationships failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid relationships response format');
-    }
-    return decoded;
-  }
-
   Future<Map<String, dynamic>> analyzePasswords({
     required String authToken,
     required String vaultName,

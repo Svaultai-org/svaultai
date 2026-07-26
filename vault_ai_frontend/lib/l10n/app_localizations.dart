@@ -390,12 +390,6 @@ abstract class AppLocalizations {
   /// **'Memory'**
   String get sidebarMemory;
 
-  /// No description provided for @sidebarRelationships.
-  ///
-  /// In en, this message translates to:
-  /// **'Relationships'**
-  String get sidebarRelationships;
-
   /// No description provided for @sidebarInheritance.
   ///
   /// In en, this message translates to:
@@ -533,12 +527,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unlock a vault to see your memory timeline.'**
   String get unlockToSeeMemory;
-
-  /// No description provided for @unlockToSeeRelationships.
-  ///
-  /// In en, this message translates to:
-  /// **'Unlock a vault to see your relationship graph.'**
-  String get unlockToSeeRelationships;
 
   /// No description provided for @conciergeTitle.
   ///
@@ -1067,138 +1055,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'What do you remember about {key}?'**
   String memoryAskAbout(String key);
-
-  /// No description provided for @relationshipsTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Relationships'**
-  String get relationshipsTitle;
-
-  /// No description provided for @relationshipsSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Documents, accounts, and memories that belong together'**
-  String get relationshipsSubtitle;
-
-  /// No description provided for @relationshipsLoading.
-  ///
-  /// In en, this message translates to:
-  /// **'Mapping your vault...'**
-  String get relationshipsLoading;
-
-  /// No description provided for @relationshipsErrorPrefix.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not load relationships.'**
-  String get relationshipsErrorPrefix;
-
-  /// No description provided for @relationshipsEmptyTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'No clusters yet.'**
-  String get relationshipsEmptyTitle;
-
-  /// No description provided for @relationshipsEmptySub.
-  ///
-  /// In en, this message translates to:
-  /// **'Upload a passport, visa, invoice, or contract and VaultAI will start grouping documents that belong together by travel, identity, tax, family, and more.'**
-  String get relationshipsEmptySub;
-
-  /// No description provided for @relationshipsNoMatchTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Nothing matches.'**
-  String get relationshipsNoMatchTitle;
-
-  /// No description provided for @relationshipsNoMatchSub.
-  ///
-  /// In en, this message translates to:
-  /// **'Try clearing the filter or search.'**
-  String get relationshipsNoMatchSub;
-
-  /// No description provided for @relationshipsSearchHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Search documents, items, or relations...'**
-  String get relationshipsSearchHint;
-
-  /// No description provided for @relationshipsTypeTravel.
-  ///
-  /// In en, this message translates to:
-  /// **'Travel cluster'**
-  String get relationshipsTypeTravel;
-
-  /// No description provided for @relationshipsTypeIdentity.
-  ///
-  /// In en, this message translates to:
-  /// **'Identity cluster'**
-  String get relationshipsTypeIdentity;
-
-  /// No description provided for @relationshipsTypeBusiness.
-  ///
-  /// In en, this message translates to:
-  /// **'Business cluster'**
-  String get relationshipsTypeBusiness;
-
-  /// No description provided for @relationshipsTypeFinance.
-  ///
-  /// In en, this message translates to:
-  /// **'Finance cluster'**
-  String get relationshipsTypeFinance;
-
-  /// No description provided for @relationshipsTypeTax.
-  ///
-  /// In en, this message translates to:
-  /// **'Tax cluster'**
-  String get relationshipsTypeTax;
-
-  /// No description provided for @relationshipsTypeMedical.
-  ///
-  /// In en, this message translates to:
-  /// **'Medical cluster'**
-  String get relationshipsTypeMedical;
-
-  /// No description provided for @relationshipsTypeFamily.
-  ///
-  /// In en, this message translates to:
-  /// **'Family cluster'**
-  String get relationshipsTypeFamily;
-
-  /// No description provided for @relationshipsTypeSecurity.
-  ///
-  /// In en, this message translates to:
-  /// **'Security cluster'**
-  String get relationshipsTypeSecurity;
-
-  /// No description provided for @relationshipsTypeMedia.
-  ///
-  /// In en, this message translates to:
-  /// **'Media cluster'**
-  String get relationshipsTypeMedia;
-
-  /// No description provided for @relationshipsTypeInheritance.
-  ///
-  /// In en, this message translates to:
-  /// **'Inheritance cluster'**
-  String get relationshipsTypeInheritance;
-
-  /// No description provided for @relationshipsEndpointFile.
-  ///
-  /// In en, this message translates to:
-  /// **'File'**
-  String get relationshipsEndpointFile;
-
-  /// No description provided for @relationshipsEndpointItem.
-  ///
-  /// In en, this message translates to:
-  /// **'Item'**
-  String get relationshipsEndpointItem;
-
-  /// No description provided for @relationshipsAskRelated.
-  ///
-  /// In en, this message translates to:
-  /// **'What is related to \"{label}\"?'**
-  String relationshipsAskRelated(String label);
 
   /// No description provided for @settingsTitle.
   ///

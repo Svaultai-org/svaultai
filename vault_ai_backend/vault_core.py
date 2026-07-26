@@ -1,6 +1,8 @@
 import os
 import re
 import base64
+import hmac
+import json
 import logging
 import hashlib
 import secrets
@@ -505,6 +507,54 @@ def rotate_vault_kdf_if_needed(
 
         cursor.execute(
             """
+            SELECT id, payload_ciphertext
+            FROM vault_ai_memory
+            WHERE vault_id = %s
+              AND payload_ciphertext IS NOT NULL
+              AND memory_key IS NULL
+              AND memory_value IS NULL
+            """,
+            (vault_id,),
+        )
+        memory_rows = cursor.fetchall() or []
+        for memory_row in memory_rows:
+            raw_blob = memory_row.get("payload_ciphertext")
+            if isinstance(raw_blob, memoryview):
+                raw_bytes = raw_blob.tobytes()
+            elif isinstance(raw_blob, bytes):
+                raw_bytes = raw_blob
+            else:
+                raw_bytes = str(raw_blob).encode("utf-8")
+
+            plaintext = decrypt_message(raw_bytes.decode("utf-8"), old_key)
+            payload = json.loads(plaintext)
+            canonical_key = (
+                payload.get("canonical_key") if isinstance(payload, dict) else None
+            )
+            if not canonical_key:
+                raise ValueError("ciphertext memory payload missing canonical_key")
+            new_lookup_hash = hmac.new(
+                new_key,
+                f"vaultai-personal-memory/v1:{canonical_key}".encode("utf-8"),
+                hashlib.sha256,
+            ).digest()
+            cursor.execute(
+                """
+                UPDATE vault_ai_memory
+                SET payload_ciphertext = %s,
+                    memory_lookup_hash = %s
+                WHERE id = %s AND vault_id = %s
+                """,
+                (
+                    encrypt_message(plaintext, new_key).encode("utf-8"),
+                    new_lookup_hash,
+                    memory_row["id"],
+                    vault_id,
+                ),
+            )
+
+        cursor.execute(
+            """
             UPDATE vaults
             SET pin_salt = %s,
                 pin_verifier = %s,
@@ -516,9 +566,10 @@ def rotate_vault_kdf_if_needed(
         conn.commit()
 
         logger.warning(
-            "Rotated KDF for vault_id=%s: %d → %d iters, %d items + %d files re-encrypted",
+            "Rotated KDF for vault_id=%s: %d -> %d iters, "
+            "%d items + %d files + %d memories re-encrypted",
             vault_id, current_iter, new_iterations,
-            len(item_rows), len(file_rows),
+            len(item_rows), len(file_rows), len(memory_rows),
         )
 
         return {

@@ -150,9 +150,6 @@ class AppLocalizationsKo extends AppLocalizations {
   String get sidebarMemory => '메모리';
 
   @override
-  String get sidebarRelationships => '관계';
-
-  @override
   String get sidebarInheritance => '상속';
 
   @override
@@ -224,9 +221,6 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get unlockToSeeMemory => '메모리 타임라인을 보려면 보관소를 잠금 해제하세요.';
-
-  @override
-  String get unlockToSeeRelationships => '관계 그래프를 보려면 보관소를 잠금 해제하세요.';
 
   @override
   String get conciergeTitle => '컨시어지';
@@ -523,75 +517,6 @@ class AppLocalizationsKo extends AppLocalizations {
   }
 
   @override
-  String get relationshipsTitle => '관계';
-
-  @override
-  String get relationshipsSubtitle => '함께 속하는 문서·계정·기억';
-
-  @override
-  String get relationshipsLoading => '보관소를 매핑하는 중...';
-
-  @override
-  String get relationshipsErrorPrefix => '관계를 불러올 수 없습니다.';
-
-  @override
-  String get relationshipsEmptyTitle => '아직 클러스터가 없습니다.';
-
-  @override
-  String get relationshipsEmptySub =>
-      '여권, 비자, 청구서, 계약서를 업로드하면 VaultAI 가 여행·신원·세금·가족 등으로 문서를 그룹화합니다.';
-
-  @override
-  String get relationshipsNoMatchTitle => '일치하는 항목이 없습니다.';
-
-  @override
-  String get relationshipsNoMatchSub => '필터나 검색을 지워 보세요.';
-
-  @override
-  String get relationshipsSearchHint => '문서·항목·관계 검색...';
-
-  @override
-  String get relationshipsTypeTravel => '여행 클러스터';
-
-  @override
-  String get relationshipsTypeIdentity => '신원 클러스터';
-
-  @override
-  String get relationshipsTypeBusiness => '비즈니스 클러스터';
-
-  @override
-  String get relationshipsTypeFinance => '금융 클러스터';
-
-  @override
-  String get relationshipsTypeTax => '세금 클러스터';
-
-  @override
-  String get relationshipsTypeMedical => '의료 클러스터';
-
-  @override
-  String get relationshipsTypeFamily => '가족 클러스터';
-
-  @override
-  String get relationshipsTypeSecurity => '보안 클러스터';
-
-  @override
-  String get relationshipsTypeMedia => '미디어 클러스터';
-
-  @override
-  String get relationshipsTypeInheritance => '상속 클러스터';
-
-  @override
-  String get relationshipsEndpointFile => '파일';
-
-  @override
-  String get relationshipsEndpointItem => '항목';
-
-  @override
-  String relationshipsAskRelated(String label) {
-    return '\"$label\" 와 관련된 것은?';
-  }
-
-  @override
   String get settingsTitle => '설정';
 
   @override
@@ -731,8 +656,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get helpContactSupportTitle => '지원팀에 문의';
 
   @override
-  String get helpContactSupportBody =>
-      'VaultAI 에 도움이 필요하신가요? 지원팀에 문의하세요.';
+  String get helpContactSupportBody => 'VaultAI 에 도움이 필요하신가요? 지원팀에 문의하세요.';
 
   @override
   String helpContactSupportEmailA11yLabel(String email) {

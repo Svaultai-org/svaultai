@@ -12792,6 +12792,29 @@ async def chat_endpoint(
             print("[CHAT-DEBUG] encrypted_reply_ok", flush=True)
             return resp
 
+        try:
+            from durable_personal_memory import (
+                handle_personal_memory_turn as _handle_personal_memory_turn,
+            )
+            _personal_memory_reply = _handle_personal_memory_turn(
+                vault_id=vault_id,
+                key=key,
+                message=decrypted_message or "",
+                source_message_id=str(_chat_request_id or ""),
+            )
+        except Exception:
+            logger.exception(
+                "[CHAT-DEBUG] personal_memory_router_failed vault=%s",
+                (vault_id or "")[:8] + "...",
+            )
+            _personal_memory_reply = None
+        if _personal_memory_reply is not None:
+            try:
+                request.state.chat_path = "personal_memory"
+            except Exception:
+                pass
+            return encrypted_reply(_personal_memory_reply)
+
                                                                
         _direct_ai_tools_enabled = os.getenv(
             "VAULTAI_DIRECT_AI_TOOLS_ENABLED", "true",

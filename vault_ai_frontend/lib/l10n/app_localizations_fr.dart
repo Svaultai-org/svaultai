@@ -150,9 +150,6 @@ class AppLocalizationsFr extends AppLocalizations {
   String get sidebarMemory => 'Mémoire';
 
   @override
-  String get sidebarRelationships => 'Relations';
-
-  @override
   String get sidebarInheritance => 'Héritage';
 
   @override
@@ -229,10 +226,6 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get unlockToSeeMemory =>
       'Déverrouille un coffre pour voir la timeline mémoire.';
-
-  @override
-  String get unlockToSeeRelationships =>
-      'Déverrouille un coffre pour voir le graphe des relations.';
 
   @override
   String get conciergeTitle => 'Concierge';
@@ -540,77 +533,6 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String memoryAskAbout(String key) {
     return 'Que sais-tu de $key ?';
-  }
-
-  @override
-  String get relationshipsTitle => 'Relations';
-
-  @override
-  String get relationshipsSubtitle =>
-      'Documents, comptes et souvenirs qui vont ensemble';
-
-  @override
-  String get relationshipsLoading => 'Cartographie de votre coffre...';
-
-  @override
-  String get relationshipsErrorPrefix => 'Impossible de charger les relations.';
-
-  @override
-  String get relationshipsEmptyTitle => 'Aucun groupe pour l\'instant.';
-
-  @override
-  String get relationshipsEmptySub =>
-      'Téléversez un passeport, visa, facture ou contrat et VaultAI commencera à grouper les documents par voyage, identité, fiscalité, famille, etc.';
-
-  @override
-  String get relationshipsNoMatchTitle => 'Aucun résultat.';
-
-  @override
-  String get relationshipsNoMatchSub => 'Effacez le filtre ou la recherche.';
-
-  @override
-  String get relationshipsSearchHint =>
-      'Rechercher documents, éléments ou relations...';
-
-  @override
-  String get relationshipsTypeTravel => 'Groupe Voyage';
-
-  @override
-  String get relationshipsTypeIdentity => 'Groupe Identité';
-
-  @override
-  String get relationshipsTypeBusiness => 'Groupe Affaires';
-
-  @override
-  String get relationshipsTypeFinance => 'Groupe Finance';
-
-  @override
-  String get relationshipsTypeTax => 'Groupe Fiscalité';
-
-  @override
-  String get relationshipsTypeMedical => 'Groupe Médical';
-
-  @override
-  String get relationshipsTypeFamily => 'Groupe Famille';
-
-  @override
-  String get relationshipsTypeSecurity => 'Groupe Sécurité';
-
-  @override
-  String get relationshipsTypeMedia => 'Groupe Médias';
-
-  @override
-  String get relationshipsTypeInheritance => 'Groupe Héritage';
-
-  @override
-  String get relationshipsEndpointFile => 'Fichier';
-
-  @override
-  String get relationshipsEndpointItem => 'Élément';
-
-  @override
-  String relationshipsAskRelated(String label) {
-    return 'Qu\'est-ce qui est lié à « $label » ?';
   }
 
   @override

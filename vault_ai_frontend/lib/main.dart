@@ -71,7 +71,6 @@ import 'ui/dashboards/concierge_page.dart';
 import 'ui/dashboards/expiry_page.dart';
 
 import 'ui/dashboards/memory_page.dart';
-import 'ui/dashboards/relationships_page.dart';
 
 import 'services/crypto_chat_live_cache.dart';
 import 'services/app_release_controller_scope.dart';
@@ -369,7 +368,6 @@ enum _DashboardSection {
   concierge,
   expiry,
   memory,
-  relationships,
   inheritance,
   settings,
 }
@@ -14381,10 +14379,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         AppLocalizations.of(context).sidebarMemory,
                         compact: _vr.isMobile,
                         verticalPadding: _drawerTileVpad),
-                    tile(_DashboardSection.relationships, Icons.hub_outlined,
-                        AppLocalizations.of(context).sidebarRelationships,
-                        compact: _vr.isMobile,
-                        verticalPadding: _drawerTileVpad),
                     tile(_DashboardSection.inheritance, Icons.diversity_3,
                         AppLocalizations.of(context).sidebarInheritance,
                         compact: _vr.isMobile,
@@ -14465,9 +14459,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       case _DashboardSection.memory:
         return _buildMemorySection(isMobile);
-
-      case _DashboardSection.relationships:
-        return _buildRelationshipsSection(isMobile);
 
       case _DashboardSection.inheritance:
         return _buildInheritanceSection(isMobile);
@@ -14744,34 +14735,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
     return MemoryPage(
-      client: VaultAIClient(baseUrl: backendBaseUrl),
-      authToken: token,
-      vaultName: vaultName,
-      isMobile: isMobile,
-      onAskVaultAI: (prompt) async {
-        setState(() => selectedSection = _DashboardSection.chat);
-        await _sendQuickPrompt(prompt);
-      },
-    );
-  }
-
-  Widget _buildRelationshipsSection(bool isMobile) {
-    final app = context.watch<AppState>();
-    final token = app.sessionToken;
-    final vaultName = app.vaultName;
-    if (token == null || vaultName == null || vaultName.isEmpty) {
-      return Center(
-        child: Padding(
-          padding:
-              EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
-          child: Text(
-            AppLocalizations.of(context).unlockToSeeRelationships,
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
-    }
-    return RelationshipsPage(
       client: VaultAIClient(baseUrl: backendBaseUrl),
       authToken: token,
       vaultName: vaultName,

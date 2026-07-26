@@ -18,7 +18,6 @@ import 'package:vault_ai_frontend/ui/crypto_receive_panel.dart';
 import 'package:vault_ai_frontend/ui/dashboards/concierge_page.dart';
 import 'package:vault_ai_frontend/ui/dashboards/expiry_page.dart';
 import 'package:vault_ai_frontend/ui/dashboards/memory_page.dart';
-import 'package:vault_ai_frontend/ui/dashboards/relationships_page.dart';
 import 'package:vault_ai_frontend/ui/responsive.dart';
 
 import '_helpers/responsive_harness.dart';
@@ -459,12 +458,6 @@ void main() {
   group('Dashboard pages (loading state) — full viewport matrix', () {
     for (final page in [
       ('MemoryPage', (bool isMobile) => MemoryPage(
-            client: _fakeClient,
-            authToken: 'tok',
-            vaultName: 'V',
-            isMobile: isMobile,
-          )),
-      ('RelationshipsPage', (bool isMobile) => RelationshipsPage(
             client: _fakeClient,
             authToken: 'tok',
             vaultName: 'V',

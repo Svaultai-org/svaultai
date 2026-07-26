@@ -11,7 +11,6 @@ import 'package:vault_ai_frontend/main.dart' show AppState;
 import 'package:vault_ai_frontend/ui/dashboards/concierge_page.dart';
 import 'package:vault_ai_frontend/ui/dashboards/expiry_page.dart';
 import 'package:vault_ai_frontend/ui/dashboards/memory_page.dart';
-import 'package:vault_ai_frontend/ui/dashboards/relationships_page.dart';
 
 import '_helpers/responsive_harness.dart';
 
@@ -144,24 +143,6 @@ void main() {
       await _pumpWithState(
         tester,
         MemoryPage(
-          client: _fakeClient,
-          authToken: 'test-token',
-          vaultName: 'MyVault',
-          isMobile: device.width < 600,
-        ),
-        app,
-        device,
-      );
-    });
-  });
-
-
-  group('RelationshipsPage (loading state)', () {
-    _forEachPhone('renders without overflow', (tester, device) async {
-      final app = await _hydratedAppState();
-      await _pumpWithState(
-        tester,
-        RelationshipsPage(
           client: _fakeClient,
           authToken: 'test-token',
           vaultName: 'MyVault',

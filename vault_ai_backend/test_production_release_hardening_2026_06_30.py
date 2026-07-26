@@ -139,6 +139,7 @@ APPROVED_CRYPTO_MODULES = frozenset({
     "vault_secure_item_save.py",
     "vault_secure_item_draft.py",
     "vault_core.py",
+    "durable_personal_memory.py",
     "main.py",
     "chunked_aead.py",
                                                             

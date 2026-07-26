@@ -150,9 +150,6 @@ class AppLocalizationsJa extends AppLocalizations {
   String get sidebarMemory => 'メモリ';
 
   @override
-  String get sidebarRelationships => '関連';
-
-  @override
   String get sidebarInheritance => '継承';
 
   @override
@@ -224,9 +221,6 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get unlockToSeeMemory => 'メモリタイムラインを表示するには保管庫を解除してください。';
-
-  @override
-  String get unlockToSeeRelationships => '関連グラフを表示するには保管庫を解除してください。';
 
   @override
   String get conciergeTitle => 'コンシェルジュ';
@@ -523,75 +517,6 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
-  String get relationshipsTitle => '関連';
-
-  @override
-  String get relationshipsSubtitle => '一緒に属する書類・アカウント・記憶';
-
-  @override
-  String get relationshipsLoading => '保管庫をマッピング中...';
-
-  @override
-  String get relationshipsErrorPrefix => '関連を読み込めませんでした。';
-
-  @override
-  String get relationshipsEmptyTitle => 'まだクラスタはありません。';
-
-  @override
-  String get relationshipsEmptySub =>
-      'パスポート、ビザ、請求書、契約書をアップロードすると、VaultAI が旅行・アイデンティティ・税金・家族などで書類をグループ化します。';
-
-  @override
-  String get relationshipsNoMatchTitle => '一致するものがありません。';
-
-  @override
-  String get relationshipsNoMatchSub => 'フィルターや検索をクリアしてください。';
-
-  @override
-  String get relationshipsSearchHint => '書類、項目、関連を検索...';
-
-  @override
-  String get relationshipsTypeTravel => '旅行クラスタ';
-
-  @override
-  String get relationshipsTypeIdentity => 'アイデンティティクラスタ';
-
-  @override
-  String get relationshipsTypeBusiness => 'ビジネスクラスタ';
-
-  @override
-  String get relationshipsTypeFinance => 'ファイナンスクラスタ';
-
-  @override
-  String get relationshipsTypeTax => '税金クラスタ';
-
-  @override
-  String get relationshipsTypeMedical => '医療クラスタ';
-
-  @override
-  String get relationshipsTypeFamily => '家族クラスタ';
-
-  @override
-  String get relationshipsTypeSecurity => 'セキュリティクラスタ';
-
-  @override
-  String get relationshipsTypeMedia => 'メディアクラスタ';
-
-  @override
-  String get relationshipsTypeInheritance => '継承クラスタ';
-
-  @override
-  String get relationshipsEndpointFile => 'ファイル';
-
-  @override
-  String get relationshipsEndpointItem => 'アイテム';
-
-  @override
-  String relationshipsAskRelated(String label) {
-    return '「$label」に関連するものは?';
-  }
-
-  @override
   String get settingsTitle => '設定';
 
   @override
@@ -751,8 +676,7 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
-  String get helpContactSupportEmailCopied =>
-      'メールアドレスをクリップボードにコピーしました';
+  String get helpContactSupportEmailCopied => 'メールアドレスをクリップボードにコピーしました';
 
   @override
   String get helpCenterPublicHint =>

@@ -42,6 +42,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import unittest
 import uuid
@@ -57,9 +58,11 @@ os.environ.setdefault("VAULTAI_DEVICE_GATE_DEV_DISABLE", "true")
 os.environ["KDF_TARGET_ITERATIONS"] = "1000"
 
 import vault_core
+import durable_personal_memory as dpm
 from vault_core import (
     KDF_TARGET_ITERATIONS,
     PIN_VERIFIER_PLAINTEXT,
+    decrypt_message,
     derive_key,
     encrypt_message,
     generate_pin_salt,
@@ -155,6 +158,18 @@ class _FakeCursor:
             self._pending = [dict(f) for f in files]
             return
 
+        if norm.startswith("select id, payload_ciphertext from vault_ai_memory"):
+            (vault_id,) = params
+            memories = [
+                m for m in self.db.memories.values()
+                if m["vault_id"] == vault_id
+                and m.get("payload_ciphertext") is not None
+                and m.get("memory_key") is None
+                and m.get("memory_value") is None
+            ]
+            self._pending = [dict(m) for m in memories]
+            return
+
         # UPDATE vault_items
         if norm.startswith("update vault_items set encrypted_data"):
             new_data, item_id = params
@@ -164,6 +179,15 @@ class _FakeCursor:
 
         # UPDATE uploaded_files
         if norm.startswith("update uploaded_files"):
+            self._pending = []
+            return
+
+        if norm.startswith("update vault_ai_memory set payload_ciphertext"):
+            payload_ct, lookup_hash, memory_id, vault_id = params
+            row = self.db.memories.get(memory_id)
+            if row is not None and row["vault_id"] == vault_id:
+                row["payload_ciphertext"] = payload_ct
+                row["memory_lookup_hash"] = lookup_hash
             self._pending = []
             return
 
@@ -218,6 +242,7 @@ class InMemoryVaultDb:
         self.vaults: dict[str, dict[str, Any]] = {}
         self.items:  dict[int, dict[str, Any]] = {}
         self.files:  dict[int, dict[str, Any]] = {}
+        self.memories: dict[int, dict[str, Any]] = {}
 
 
 def _add_vault(db: InMemoryVaultDb, *, pin: str,
@@ -305,6 +330,47 @@ class RotateResponseAuthoritativeTests(unittest.TestCase):
         self.assertEqual(
             result["kdf_iterations"], KDF_TARGET_ITERATIONS,
         )
+
+    def test_rotation_reencrypts_ciphertext_personal_memories(self) -> None:
+        vault_id = _add_vault(
+            self.db, pin="123456", iterations=100,
+        )
+        old_key = verify_vault_pin(vault_id, "123456")
+        payload = {
+            "record_type": "personal_memory",
+            "canonical_key": "mother:birthday",
+            "display_value": "January 30, 1965",
+            "normalized_value": "1965-01-30",
+            "status": "active",
+        }
+        old_ciphertext = dpm._encrypted_payload(payload, old_key)
+        old_lookup_hash = dpm._lookup_hash(old_key, "mother:birthday")
+        self.db.memories[1] = {
+            "id": 1,
+            "vault_id": vault_id,
+            "payload_ciphertext": old_ciphertext,
+            "memory_lookup_hash": old_lookup_hash,
+            "memory_key": None,
+            "memory_value": None,
+        }
+
+        result = rotate_vault_kdf_if_needed(vault_id, "123456", old_key)
+        self.assertTrue(result["rotated"])
+
+        row = self.db.memories[1]
+        self.assertNotEqual(row["payload_ciphertext"], old_ciphertext)
+        self.assertNotEqual(row["memory_lookup_hash"], old_lookup_hash)
+        self.assertEqual(
+            row["memory_lookup_hash"],
+            dpm._lookup_hash(result["new_key"], "mother:birthday"),
+        )
+        ciphertext = row["payload_ciphertext"].decode("utf-8")
+        decoded = json.loads(
+            decrypt_message(ciphertext, result["new_key"])
+        )
+        self.assertEqual(decoded["display_value"], "January 30, 1965")
+        with self.assertRaises(Exception):
+            decrypt_message(ciphertext, old_key)
 
     def test_key_from_rotate_response_fields_decrypts_new_verifier(
         self,

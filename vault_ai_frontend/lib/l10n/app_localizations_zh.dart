@@ -150,9 +150,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarMemory => '记忆';
 
   @override
-  String get sidebarRelationships => '关系';
-
-  @override
   String get sidebarInheritance => '继承';
 
   @override
@@ -224,9 +221,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get unlockToSeeMemory => '解锁保险库以查看记忆时间线。';
-
-  @override
-  String get unlockToSeeRelationships => '解锁保险库以查看关系图。';
 
   @override
   String get conciergeTitle => '智能助理';
@@ -518,75 +512,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String memoryAskAbout(String key) {
     return '你记得关于$key的什么?';
-  }
-
-  @override
-  String get relationshipsTitle => '关系';
-
-  @override
-  String get relationshipsSubtitle => '彼此相关的文件、账户和记忆';
-
-  @override
-  String get relationshipsLoading => '正在绘制你的保险库...';
-
-  @override
-  String get relationshipsErrorPrefix => '无法加载关系。';
-
-  @override
-  String get relationshipsEmptyTitle => '尚无聚类。';
-
-  @override
-  String get relationshipsEmptySub =>
-      '上传护照、签证、发票或合同,VaultAI 会按旅行、身份、税务、家庭等方式将相关文件分组。';
-
-  @override
-  String get relationshipsNoMatchTitle => '没有匹配。';
-
-  @override
-  String get relationshipsNoMatchSub => '清除筛选或搜索。';
-
-  @override
-  String get relationshipsSearchHint => '搜索文件、条目或关系...';
-
-  @override
-  String get relationshipsTypeTravel => '旅行聚类';
-
-  @override
-  String get relationshipsTypeIdentity => '身份聚类';
-
-  @override
-  String get relationshipsTypeBusiness => '业务聚类';
-
-  @override
-  String get relationshipsTypeFinance => '金融聚类';
-
-  @override
-  String get relationshipsTypeTax => '税务聚类';
-
-  @override
-  String get relationshipsTypeMedical => '医疗聚类';
-
-  @override
-  String get relationshipsTypeFamily => '家庭聚类';
-
-  @override
-  String get relationshipsTypeSecurity => '安全聚类';
-
-  @override
-  String get relationshipsTypeMedia => '媒体聚类';
-
-  @override
-  String get relationshipsTypeInheritance => '继承聚类';
-
-  @override
-  String get relationshipsEndpointFile => '文件';
-
-  @override
-  String get relationshipsEndpointItem => '条目';
-
-  @override
-  String relationshipsAskRelated(String label) {
-    return '什么与\"$label\"相关?';
   }
 
   @override
