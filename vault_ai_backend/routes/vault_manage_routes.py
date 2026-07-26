@@ -1,9 +1,13 @@
 import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
+
+
+logger = logging.getLogger(__name__)
 
 from auth_local import verify_session_token
 from device_gate import verify_trusted_device
@@ -460,7 +464,7 @@ def _delete_file_impl(payload: FileDeleteRequest, vault_id: str):
 
         conn.commit()
 
-                                                                
+
         try:
             from vault_tool_result_cache import invalidate_for_event
             invalidate_for_event(
@@ -468,6 +472,27 @@ def _delete_file_impl(payload: FileDeleteRequest, vault_id: str):
             )
         except Exception:
             pass
+
+        # 2026-07-31 active-entity lifecycle (blocker 3, second delete
+        # path). The primary /delete-file endpoint clears the pin on
+        # delete; this vault-manage route is the OTHER authoritative
+        # deletion path. Without this hook, deleting a pinned file
+        # via /vault-manage/file (or POST /file/delete) leaves the
+        # active-entity pin stale for the full 900 s TTL. Independent
+        # review of d184d22 flagged this as the one remaining gap in
+        # blocker 3's coverage.
+        try:
+            from vault_chat_active_entity import (
+                clear_active_entity_if_matches_file,
+            )
+            clear_active_entity_if_matches_file(
+                vault_id, payload.file_id,
+            )
+        except Exception:
+            logger.exception(
+                "[vault-manage/file] active-entity cleanup failed "
+                "vault=%s file=%s", vault_id, payload.file_id,
+            )
 
         return {"status": "deleted", "file": row}
     finally:

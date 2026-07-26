@@ -81,17 +81,34 @@ class TestMainPyWiringCredentialStore(unittest.TestCase):
         )
 
     def test_main_calls_consume_credential_draft_before_legacy_memory(self):
+        # 2026-07-31 refinement: the invariant this test protects is
+        # "the persistent credential-draft consume runs BEFORE the
+        # LEGACY state-machine pick-up." After the deterministic
+        # pre-router relocation (d184d22), a router-side pending-draft
+        # PEEK (not consume) now legitimately runs earlier — it only
+        # decides whether the router should skip so the state machine
+        # downstream keeps ownership of pending-draft turns. That peek
+        # is not the legacy consume path; matching the first
+        # `memory.get("pending_login_draft")` byte-offset in the file
+        # was too coarse. Anchor the search to the state-machine
+        # block (identified by its `_sm_draft` local, which is the
+        # variable the state machine reads) instead.
         src = _read_main()
         idx_consume = src.find("_consume_credential_draft(")
-        idx_legacy  = src.find('memory.get("pending_login_draft")')
-        self.assertGreater(idx_consume, 0)
-        self.assertGreater(idx_legacy, 0)
-                                                             
-                                                             
+        idx_legacy  = src.find('_sm_draft = memory.get("pending_login_draft")')
+        self.assertGreater(idx_consume, 0,
+            "_consume_credential_draft(...) call missing from main.py",
+        )
+        self.assertGreater(idx_legacy, 0,
+            "legacy state-machine `_sm_draft` read from memory "
+            "missing — the state-machine cascade may have been "
+            "deleted",
+        )
         self.assertLess(
             idx_consume, idx_legacy,
             "Persistent credential-draft consume must run BEFORE "
-            "the legacy memory[\"pending_login_draft\"] check.",
+            "the legacy state-machine memory[\"pending_login_draft\"] "
+            "pick-up.",
         )
 
     def test_main_credential_trace_marks_persistent_store(self):

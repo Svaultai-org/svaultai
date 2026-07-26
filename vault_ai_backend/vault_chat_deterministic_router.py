@@ -504,9 +504,12 @@ def _build_disambiguation_envelope(
     """
     entries: list[dict] = []
     for row in candidates[:8]:
-        # Confidence is a proxy for "best match strength" — every
-        # candidate matches at the same length so we return equal
-        # confidence and let the user pick.
+        # Confidence is a THREE-VALUE STRING ENUM the Flutter
+        # _ConfidenceBadge (chat_cards.dart:3345) switches on:
+        # "strong" | "medium" | "weak". Emitting a numeric would
+        # trigger a _TypeError in the row renderer at
+        # chat_cards.dart:3524. Every candidate here matches on the
+        # same substring length, so "medium" is the correct label.
         entries.append({
             "file_id":       str(row.get("id") or row.get("file_id") or ""),
             "file_name":     str(row.get("file_name") or ""),
@@ -515,7 +518,7 @@ def _build_disambiguation_envelope(
             # Frontend row reader keys on `mime_type`, not `content_type`.
             "mime_type":     row.get("content_type") or None,
             "asset_type":    row.get("asset_type") or None,
-            "confidence":    0.5,
+            "confidence":    "medium",
             "reasons":       ["saved-name substring match"],
             "best_match":    False,
             "mostly_credentials": False,
