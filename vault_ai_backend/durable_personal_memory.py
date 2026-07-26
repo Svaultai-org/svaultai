@@ -257,7 +257,7 @@ def _encrypted_payload(payload: dict, key: bytes) -> bytes:
 
 def _fetch_active(cur, vault_id: str, digest: bytes) -> Optional[dict]:
     cur.execute(
-        """SELECT id, payload_ciphertext, event_date, created_at, updated_at
+        """SELECT id, payload_ciphertext, created_at, updated_at
            FROM vault_ai_memory
            WHERE vault_id=%s
              AND memory_lookup_hash=%s
@@ -274,9 +274,8 @@ def _fetch_active(cur, vault_id: str, digest: bytes) -> Optional[dict]:
     return {
         "id": row[0],
         "payload_ciphertext": row[1],
-        "event_date": row[2] if len(row) > 2 else None,
-        "created_at": row[3] if len(row) > 3 else None,
-        "updated_at": row[4] if len(row) > 4 else None,
+        "created_at": row[2] if len(row) > 2 else None,
+        "updated_at": row[3] if len(row) > 3 else None,
     }
 
 
@@ -290,13 +289,12 @@ def _insert_payload(cur, vault_id: str, intent: PersonalMemoryIntent, key: bytes
                memory_language, memory_script, memory_normalized_key,
                payload_ciphertext, memory_lookup_hash
            )
-           VALUES (%s, %s, NULL, NULL, %s, 1.0, 'chat',
+           VALUES (%s, %s, NULL, NULL, NULL, 1.0, 'chat',
                    NULL, NULL, NULL, %s, %s)
            RETURNING id""",
         (
             vault_id,
             _MEMORY_TYPE,
-            intent.normalized_value,
             _encrypted_payload(payload, key),
             _lookup_hash(key, intent.canonical_key),
         ),

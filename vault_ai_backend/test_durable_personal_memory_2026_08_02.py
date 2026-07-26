@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, Optional
 
 import pytest
 
 import durable_personal_memory as dpm
-from vault_core import derive_key, KDF_TARGET_ITERATIONS
+from vault_core import derive_key, decrypt_message, KDF_TARGET_ITERATIONS
 
 
 _KEY = derive_key(
@@ -31,11 +32,11 @@ class _MemoryCursor:
             self.last = self.store.find_active(vault_id, digest)
             return
         if low.startswith("insert into vault_ai_memory"):
-            vault_id, memory_type, event_date, payload_ct, lookup_hash = params
+            vault_id, memory_type, payload_ct, lookup_hash = params
             row = self.store.insert(
                 vault_id=vault_id,
                 memory_type=memory_type,
-                event_date=event_date,
+                event_date=None,
                 payload_ciphertext=payload_ct,
                 memory_lookup_hash=lookup_hash,
             )
@@ -93,7 +94,6 @@ class _MemoryStore:
         return (
             row["id"],
             row["payload_ciphertext"],
-            row["event_date"],
             None,
             None,
         )
@@ -156,6 +156,35 @@ def _handle(store: _MemoryStore, message: str, *, vault_id: str = "vault-a") -> 
     return reply
 
 
+def _payload(row: dict) -> dict:
+    blob = row["payload_ciphertext"]
+    text = (blob.tobytes() if isinstance(blob, memoryview) else blob).decode("utf-8")
+    decoded = dpm.json.loads(decrypt_message(text, _KEY))
+    assert isinstance(decoded, dict)
+    return decoded
+
+
+def _assert_no_plaintext_birthday_storage(store: _MemoryStore) -> None:
+    forbidden_text = (
+        "January 30, 1965",
+        "January 31, 1965",
+        "1965-01-30",
+        "1965-01-31",
+    )
+    forbidden_bytes = tuple(v.encode("utf-8") for v in forbidden_text)
+    for row in store.rows:
+        assert row["memory_key"] is None
+        assert row["memory_value"] is None
+        assert row["event_date"] is None
+        assert row.get("memory_normalized_key") is None
+        for value in forbidden_text:
+            assert value not in str(row.get("memory_key"))
+            assert value not in str(row.get("memory_value"))
+            assert value not in str(row.get("event_date"))
+        for value in forbidden_bytes:
+            assert value not in row["payload_ciphertext"]
+
+
 def test_save_and_immediate_recall_exact_reproduction(memory_store):
     reply = _handle(
         memory_store,
@@ -169,8 +198,10 @@ def test_save_and_immediate_recall_exact_reproduction(memory_store):
     row = active[0]
     assert row["memory_key"] is None
     assert row["memory_value"] is None
+    assert row["event_date"] is None
     assert b"January" not in row["payload_ciphertext"]
     assert b"mom" not in row["payload_ciphertext"].lower()
+    _assert_no_plaintext_birthday_storage(memory_store)
 
     recall = _handle(memory_store, "when is my mom's birthday")
     assert "January 30, 1965" in recall
@@ -206,12 +237,15 @@ def test_duplicate_save_does_not_create_duplicate_active_records(memory_store):
 
 def test_clear_correction_replaces_the_canonical_fact(memory_store):
     _handle(memory_store, "remember my mom birthday is January 30, 1965")
-    reply = _handle(memory_store, "my mom's birthday is actually January 31, 1965")
+    reply = _handle(memory_store, "my mom's birthday is actually January 31 1965")
     assert "Updated" in reply
     assert len(memory_store.active_rows("vault-a")) == 1
+    assert all(row["event_date"] is None for row in memory_store.rows)
+    _assert_no_plaintext_birthday_storage(memory_store)
     recall = _handle(memory_store, "when is my mom's birthday")
     assert "January 31, 1965" in recall
     assert "January 30, 1965" not in recall
+    assert _payload(memory_store.active_rows("vault-a")[0])["normalized_value"] == "1965-01-31"
 
 
 def test_conflicting_non_correction_does_not_overwrite(memory_store):
@@ -229,6 +263,7 @@ def test_forget_tombstones_fact(memory_store):
     assert "Forgot" in reply
     recall = _handle(memory_store, "when is my mom's birthday")
     assert "don't have" in recall
+    _assert_no_plaintext_birthday_storage(memory_store)
 
 
 def test_vault_isolation(memory_store):
@@ -239,6 +274,24 @@ def test_vault_isolation(memory_store):
     )
     recall = _handle(memory_store, "when is my mom's birthday", vault_id="vault-b")
     assert "don't have" in recall
+
+
+def test_recall_survives_backend_restart_without_event_date_or_index(memory_store):
+    _handle(memory_store, "remember my mom birthday is January 30, 1965")
+    memory_store.commits = 0
+    memory_store.rollbacks = 0
+
+    recall = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="when is my mom's birthday",
+        source_message_id="after-restart",
+    )
+
+    assert recall == "Your mom's birthday is January 30, 1965."
+    assert memory_store.commits == 0
+    assert memory_store.rollbacks == 0
+    _assert_no_plaintext_birthday_storage(memory_store)
 
 
 def test_failed_write_does_not_claim_saved_or_log_plaintext(memory_store, caplog):
@@ -270,8 +323,35 @@ def test_db_connection_failure_returns_memory_error(monkeypatch, caplog):
     assert "mom" not in caplog.text.lower()
 
 
+def test_forward_migration_clears_only_plaintext_event_date(monkeypatch):
+    migration = importlib.import_module(
+        "migrations.versions.0032_clear_durable_personal_memory_event_date"
+    )
+    executed: list[str] = []
+    monkeypatch.setattr(migration.op, "execute", executed.append)
+
+    migration.upgrade()
+    migration.downgrade()
+
+    assert len(executed) == 1
+    sql = " ".join(executed[0].lower().split())
+    assert sql.startswith("update vault_ai_memory set event_date = null")
+    assert "memory_type = 'date'" in sql
+    assert "memory_key is null" in sql
+    assert "memory_value is null" in sql
+    assert "payload_ciphertext is not null" in sql
+    assert "memory_lookup_hash is not null" in sql
+    assert "event_date is not null" in sql
+    assert "payload_ciphertext =" not in sql
+    assert "memory_lookup_hash =" not in sql
+    assert "vault_id =" not in sql
+
+
 def test_exact_memory_route_handles_chat_endpoint_before_ai_planner(monkeypatch):
-    from test_chat_endpoint_deterministic_2026_08_01 import _ChatEndpointHarness
+    from test_chat_endpoint_deterministic_2026_08_01 import (
+        _ChatEndpointHarness,
+        _TEST_VAULT_ID,
+    )
 
     store = _MemoryStore()
     harness = _ChatEndpointHarness()
@@ -287,11 +367,51 @@ def test_exact_memory_route_handles_chat_endpoint_before_ai_planner(monkeypatch)
         assert save.x_chat_path == "personal_memory", save.summary()
         assert not save.planner_invoked, save.summary()
         assert "January 30, 1965" in (save.envelope_json or "")
+        assert len(store.active_rows(_TEST_VAULT_ID)) == 1
+        assert store.active_rows(_TEST_VAULT_ID)[0]["event_date"] is None
 
         recall = harness.post_message("when is my mom's birthday")
         assert recall.http_status == 200, recall.summary()
         assert recall.x_chat_path == "personal_memory", recall.summary()
         assert not recall.planner_invoked, recall.summary()
         assert "January 30, 1965" in (recall.envelope_json or "")
+
+        corrected = harness.post_message(
+            "my mom's birthday is actually January 31 1965"
+        )
+        assert corrected.http_status == 200, corrected.summary()
+        assert corrected.x_chat_path == "personal_memory", corrected.summary()
+        assert not corrected.planner_invoked, corrected.summary()
+        assert "January 31, 1965" in (corrected.envelope_json or "")
+        assert len(store.active_rows(_TEST_VAULT_ID)) == 1
+        assert all(row["event_date"] is None for row in store.rows)
+
+        recall_after_restart = harness.post_message(
+            "when is my mother's date of birth"
+        )
+        assert recall_after_restart.http_status == 200, recall_after_restart.summary()
+        assert recall_after_restart.x_chat_path == "personal_memory"
+        assert "January 31, 1965" in (recall_after_restart.envelope_json or "")
+
+        isolated = dpm.handle_personal_memory_turn(
+            vault_id="vault-b",
+            key=_KEY,
+            message="when is my mom's birthday",
+            source_message_id="vault-b",
+        )
+        assert isolated is not None
+        assert "don't have" in isolated
+
+        forgot = harness.post_message("forget my mom's birthday")
+        assert forgot.http_status == 200, forgot.summary()
+        assert forgot.x_chat_path == "personal_memory", forgot.summary()
+        assert not forgot.planner_invoked, forgot.summary()
+        assert "Forgot" in (forgot.envelope_json or "")
+
+        after_forget = harness.post_message("when is my mom's birthday")
+        assert after_forget.http_status == 200, after_forget.summary()
+        assert after_forget.x_chat_path == "personal_memory"
+        assert "don't have" in (after_forget.envelope_json or "")
+        _assert_no_plaintext_birthday_storage(store)
     finally:
         harness.tearDown()
