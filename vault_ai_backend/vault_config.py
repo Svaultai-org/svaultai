@@ -79,6 +79,13 @@ def _env_bool(name: str, *, default: bool) -> bool:
     return str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
+def _env_bool_if_set(name: str) -> Optional[bool]:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return None
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
 @dataclass(frozen=True)
 class AIConfig:
 
@@ -719,7 +726,8 @@ def ethereum_mainnet_send_paused() -> bool:
 
 
 
-    if _env_bool("VAULTAI_CRYPTO_MAINNET_SEND_PAUSED", default=False):
+    env_pause = _env_bool_if_set("VAULTAI_CRYPTO_MAINNET_SEND_PAUSED")
+    if env_pause is True:
         return True
     flag_path = _mainnet_send_pause_flag_path()
     if flag_path:
@@ -731,6 +739,8 @@ def ethereum_mainnet_send_paused() -> bool:
 
 
             return True
+    if env_pause is False:
+        return False
     override = globals().get("_db_pause_override")
     if callable(override):
         try:

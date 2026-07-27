@@ -171,6 +171,37 @@ class MainnetSendPauseFileFlag(unittest.TestCase):
         )
         self.assertTrue(ethereum_mainnet_send_paused())
 
+    def test_explicit_env_false_overrides_stale_db_pause(self) -> None:
+        from vault_config import ethereum_mainnet_send_paused
+        _set_env(
+            VAULTAI_CRYPTO_MAINNET_SEND_PAUSED="false",
+            VAULTAI_CRYPTO_MAINNET_SEND_PAUSED_FILE=os.path.join(
+                self._tmp, "no-such-file.flag",
+            ),
+        )
+        sentinel = object()
+        original = getattr(vault_config, "_db_pause_override", sentinel)
+        vault_config._db_pause_override = lambda: True
+        try:
+            self.assertFalse(ethereum_mainnet_send_paused())
+        finally:
+            if original is sentinel:
+                if hasattr(vault_config, "_db_pause_override"):
+                    delattr(vault_config, "_db_pause_override")
+            else:
+                vault_config._db_pause_override = original
+
+    def test_file_pause_still_blocks_when_env_false(self) -> None:
+        from vault_config import ethereum_mainnet_send_paused
+        flag_path = os.path.join(self._tmp, "runtime-pause.flag")
+        _set_env(
+            VAULTAI_CRYPTO_MAINNET_SEND_PAUSED="false",
+            VAULTAI_CRYPTO_MAINNET_SEND_PAUSED_FILE=flag_path,
+        )
+        with open(flag_path, "w", encoding="utf-8") as f:
+            f.write("paused-by-operator")
+        self.assertTrue(ethereum_mainnet_send_paused())
+
     def test_paused_when_flag_file_appears_at_runtime(self) -> None:
         from vault_config import ethereum_mainnet_send_paused
         flag_path = os.path.join(self._tmp, "runtime-pause.flag")

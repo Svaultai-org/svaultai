@@ -138,6 +138,28 @@ class FeaturesRouteTests(unittest.TestCase):
         self.assertTrue(body["mainnetSendEnabled"])
         self.assertTrue(body["mainnetSendPaused"])
 
+    def test_features_explicit_env_unpause_overrides_stale_db_pause(self) -> None:
+        _set_env(
+            VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
+            VAULTAI_CRYPTO_ETH_MAINNET_RECEIVE_ENABLED="true",
+            VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED="true",
+            VAULTAI_CRYPTO_MAINNET_SEND_PAUSED="false",
+            VAULTAI_CRYPTO_MAINNET_SEND_PAUSED_FILE="/dev/null/no-such-flag",
+        )
+        sentinel = object()
+        original = getattr(vault_config, "_db_pause_override", sentinel)
+        vault_config._db_pause_override = lambda: True
+        try:
+            body = self._client.get("/crypto/wallet/features").json()
+        finally:
+            if original is sentinel:
+                if hasattr(vault_config, "_db_pause_override"):
+                    delattr(vault_config, "_db_pause_override")
+            else:
+                vault_config._db_pause_override = original
+        self.assertTrue(body["mainnetSendEnabled"])
+        self.assertFalse(body["mainnetSendPaused"])
+
     def test_features_assets_per_network(self) -> None:
         body = self._client.get("/crypto/wallet/features").json()
         self.assertEqual(
