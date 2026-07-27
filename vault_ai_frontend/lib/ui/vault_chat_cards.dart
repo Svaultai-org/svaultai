@@ -836,6 +836,38 @@ class _LoginDetailCard extends StatefulWidget {
   State<_LoginDetailCard> createState() => _LoginDetailCardState();
 }
 
+class _LoginDetailFieldValue {
+  final String label;
+  final String value;
+
+  const _LoginDetailFieldValue({
+    required this.label,
+    required this.value,
+  });
+}
+
+List<_LoginDetailFieldValue> _loginDetailFields(Map<String, dynamic> login) {
+  final raw = login['fields'];
+  final out = <_LoginDetailFieldValue>[];
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final label = (item['label'] ?? '').toString().trim();
+      final value = (item['value'] ?? '').toString();
+      if (label.isEmpty) continue;
+      out.add(_LoginDetailFieldValue(label: label, value: value));
+    }
+  } else if (raw is Map) {
+    for (final entry in raw.entries) {
+      final label = entry.key.toString().trim();
+      final value = (entry.value ?? '').toString();
+      if (label.isEmpty) continue;
+      out.add(_LoginDetailFieldValue(label: label, value: value));
+    }
+  }
+  return out;
+}
+
 class _LoginDetailCardState extends State<_LoginDetailCard> {
   bool _pendingDispatched = false;
 
@@ -914,6 +946,13 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
     _snack(context, 'Password copied');
   }
 
+  Future<void> _copyField(String label, String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    final name = label.trim().isEmpty ? 'Field' : label.trim();
+    _snack(context, '$name copied');
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = (widget.login['title'] ?? '').toString();
@@ -923,6 +962,8 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
     final domain = (widget.login['domain'] ?? '').toString();
     final website = (widget.login['website'] ?? '').toString();
     final notes = (widget.login['notes'] ?? '').toString();
+    final detailFields = _loginDetailFields(widget.login);
+    final hasOrderedFields = detailFields.isNotEmpty;
 
     final vr = VaultResponsive.of(context);
     final narrow = vr.width < 380;
@@ -978,44 +1019,61 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
             ),
           ],
           const SizedBox(height: 12),
-          if (username.isNotEmpty)
-            _LoginDetailFieldRow(
-              label: 'Username',
-              valueKey: 'vault_chat_card_login_detail_username_value',
-              copyKey: 'vault_chat_card_login_detail_username_copy',
-              value: username,
-              onCopy: _copyUsername,
-              narrow: narrow,
-            ),
-          if (password.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _LoginDetailFieldRow(
-              label: 'Password',
-              valueKey: 'vault_chat_card_login_detail_password_value',
-              copyKey: 'vault_chat_card_login_detail_password_copy',
-              value: password,
-              monospace: true,
-              onCopy: _copyPassword,
-              narrow: narrow,
-            ),
+          if (hasOrderedFields)
+            for (var i = 0; i < detailFields.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              _LoginDetailFieldRow(
+                label: detailFields[i].label,
+                valueKey: 'vault_chat_card_login_detail_field_${i}_value',
+                copyKey: 'vault_chat_card_login_detail_field_${i}_copy',
+                value: detailFields[i].value,
+                onCopy: () => _copyField(
+                  detailFields[i].label,
+                  detailFields[i].value,
+                ),
+                narrow: narrow,
+              ),
+            ]
+          else ...[
+            if (username.isNotEmpty)
+              _LoginDetailFieldRow(
+                label: 'Username',
+                valueKey: 'vault_chat_card_login_detail_username_value',
+                copyKey: 'vault_chat_card_login_detail_username_copy',
+                value: username,
+                onCopy: _copyUsername,
+                narrow: narrow,
+              ),
+            if (password.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _LoginDetailFieldRow(
+                label: 'Password',
+                valueKey: 'vault_chat_card_login_detail_password_value',
+                copyKey: 'vault_chat_card_login_detail_password_copy',
+                value: password,
+                monospace: true,
+                onCopy: _copyPassword,
+                narrow: narrow,
+              ),
+            ],
+            if (website.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _LoginDetailFieldRow(
+                label: 'Website',
+                valueKey: 'vault_chat_card_login_detail_website_value',
+                copyKey: 'vault_chat_card_login_detail_website_open',
+                value: website,
+                copyIcon: Icons.open_in_new,
+                onCopy: () {
+                  if (widget.onOpenWebsite != null && service.isNotEmpty) {
+                    widget.onOpenWebsite!(service, website);
+                  }
+                },
+                narrow: narrow,
+              ),
+            ],
           ],
-          if (website.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _LoginDetailFieldRow(
-              label: 'Website',
-              valueKey: 'vault_chat_card_login_detail_website_value',
-              copyKey: 'vault_chat_card_login_detail_website_open',
-              value: website,
-              copyIcon: Icons.open_in_new,
-              onCopy: () {
-                if (widget.onOpenWebsite != null && service.isNotEmpty) {
-                  widget.onOpenWebsite!(service, website);
-                }
-              },
-              narrow: narrow,
-            ),
-          ],
-          if (notes.isNotEmpty) ...[
+          if (!hasOrderedFields && notes.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
               'Notes',
@@ -1119,7 +1177,7 @@ class _LoginDetailFieldRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label.toUpperCase(), style: labelStyle),
+        Text(label, style: labelStyle),
         const SizedBox(height: 4),
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,

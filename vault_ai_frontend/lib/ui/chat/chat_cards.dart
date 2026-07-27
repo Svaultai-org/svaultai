@@ -6636,6 +6636,13 @@ class _SecureItemRow extends StatelessWidget {
     final nonLoginValue = !isLogin && reveal
         ? (_pullRevealedValue(itemType, preview) ?? '')
         : '';
+    final detailFields = isLogin && reveal
+        ? _secureItemDetailFields(
+            preview,
+            username: username,
+            password: password,
+          )
+        : const <_SecureItemDetailField>[];
 
     return Container(
       key: Key('secure_item_chat_card_$itemType-$title-$itemId'),
@@ -6708,6 +6715,7 @@ class _SecureItemRow extends StatelessWidget {
               password: password,
               nonLoginValue: nonLoginValue,
               fallbackLine: previewLine,
+              fields: detailFields,
             )
           else
             Text(
@@ -6801,12 +6809,67 @@ class _SecureItemRow extends StatelessWidget {
 }
 
 
+class _SecureItemDetailField {
+  final String label;
+  final String value;
+  final Key? valueKey;
+
+  const _SecureItemDetailField({
+    required this.label,
+    required this.value,
+    this.valueKey,
+  });
+}
+
+List<_SecureItemDetailField> _secureItemDetailFields(
+  Map<String, dynamic> preview, {
+  required String username,
+  required String password,
+}) {
+  final out = <_SecureItemDetailField>[];
+  final raw = preview['fields'];
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final label = (item['label'] ?? '').toString().trim();
+      final value = (item['value'] ?? '').toString();
+      if (label.isEmpty) continue;
+      out.add(_SecureItemDetailField(label: label, value: value));
+    }
+  } else if (raw is Map) {
+    for (final entry in raw.entries) {
+      final label = entry.key.toString().trim();
+      final value = (entry.value ?? '').toString();
+      if (label.isEmpty) continue;
+      out.add(_SecureItemDetailField(label: label, value: value));
+    }
+  }
+  if (out.isNotEmpty) return out;
+  if (username.isNotEmpty) {
+    out.add(_SecureItemDetailField(
+      label: 'Username',
+      value: username,
+      valueKey: const Key('secure_item_chat_card_detail_username'),
+    ));
+  }
+  if (password.isNotEmpty) {
+    out.add(_SecureItemDetailField(
+      label: 'Password',
+      value: password,
+      valueKey: const Key('secure_item_chat_card_detail_password'),
+    ));
+  }
+  return out;
+}
+
+
 class _DetailBody extends StatelessWidget {
   final bool   isLogin;
   final String username;
   final String password;
   final String nonLoginValue;
   final String fallbackLine;
+  final List<_SecureItemDetailField> fields;
 
   const _DetailBody({
     required this.isLogin,
@@ -6814,6 +6877,7 @@ class _DetailBody extends StatelessWidget {
     required this.password,
     required this.nonLoginValue,
     required this.fallbackLine,
+    this.fields = const <_SecureItemDetailField>[],
   });
 
   @override
@@ -6824,7 +6888,7 @@ class _DetailBody extends StatelessWidget {
         "No saved value attached. Ask your vault to look it up "
         "again.";
     if (isLogin) {
-      if (username.isEmpty && password.isEmpty) {
+      if (fields.isEmpty) {
         return const _DetailFallback(text: _kMissingValueCopy);
       }
       return Container(
@@ -6838,20 +6902,15 @@ class _DetailBody extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (username.isNotEmpty)
+            for (var i = 0; i < fields.length; i++) ...[
+              if (i > 0) const SizedBox(height: 6),
               _DetailRow(
-                label: 'Username',
-                value: username,
-                valueKey: const Key('secure_item_chat_card_detail_username'),
+                label: fields[i].label,
+                value: fields[i].value,
+                valueKey: fields[i].valueKey
+                    ?? Key('secure_item_chat_card_detail_field_$i'),
               ),
-            if (username.isNotEmpty && password.isNotEmpty)
-              const SizedBox(height: 6),
-            if (password.isNotEmpty)
-              _DetailRow(
-                label: 'Password',
-                value: password,
-                valueKey: const Key('secure_item_chat_card_detail_password'),
-              ),
+            ],
           ],
         ),
       );

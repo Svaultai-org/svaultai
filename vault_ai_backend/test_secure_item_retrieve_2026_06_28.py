@@ -365,14 +365,17 @@ class TestLoginCardPreservation(unittest.TestCase):
             except Exception:
                 pass
 
-    def _login_row(self) -> dict:
+    def _login_row(self, extra_fields: dict | None = None) -> dict:
+        fields = {
+            "username": "user_chosen",
+            "password": _PASSWORD,
+        }
+        if extra_fields:
+            fields.update(extra_fields)
         record = {
             "category": t.CATEGORY_LOGIN,
             "title":    "Union Bank",
-            "fields":   {
-                "username": "user_chosen",
-                "password": _PASSWORD,
-            },
+            "fields":   fields,
         }
         plain = json.dumps(record)
         encrypted = _fake_encrypt(plain, self.key)
@@ -410,6 +413,37 @@ class TestLoginCardPreservation(unittest.TestCase):
         self.assertNotIn(_PASSWORD, result["envelope"])
                                                          
         self.assertIn("copy_username", card["available_actions"])
+
+    def test_exact_login_recall_returns_custom_fields_in_order(self):
+        def reader(vault_id, category):
+            if category == "login":
+                return [self._login_row({
+                    "pin": "748291",
+                    "Recovery Code": "blue-hill-42",
+                })]
+            return []
+
+        result = vsi.route_secure_item_message(
+            vault_id="v1", key=self.key,
+            user_message="show my Union Bank login",
+            db_reader=reader,
+        )
+        self.assertEqual(result["band"], vsi.BAND_RETRIEVED)
+        envelope = json.loads(result["envelope"])
+        self.assertTrue(envelope["reveal"])
+        card = envelope["items"][0]
+        preview = card["preview"]
+        self.assertEqual(preview["username"], "user_chosen")
+        self.assertEqual(preview["password"], _PASSWORD)
+        self.assertEqual(
+            preview["fields"],
+            [
+                {"label": "Username", "value": "user_chosen"},
+                {"label": "Password", "value": _PASSWORD},
+                {"label": "pin", "value": "748291"},
+                {"label": "Recovery Code", "value": "blue-hill-42"},
+            ],
+        )
 
 
 class TestEnvelopeShape(unittest.TestCase):

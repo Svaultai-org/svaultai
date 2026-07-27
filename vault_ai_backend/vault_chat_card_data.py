@@ -520,6 +520,34 @@ def _derive_website(fields: dict[str, Any], service: str) -> str:
     return ""
 
 
+_LOGIN_DETAIL_FIELD_LABELS: dict[str, str] = {
+    "username": "Username",
+    "password": "Password",
+    "website": "Website",
+    "url": "Website or URL",
+    "notes": "Note",
+    "note": "Note",
+}
+
+
+def _login_detail_field_entries(
+    fields: dict[str, Any],
+) -> list[dict[str, str]]:
+    if not isinstance(fields, dict):
+        return []
+    out: list[dict[str, str]] = []
+    for raw_label, raw_value in fields.items():
+        label = str(raw_label or "").strip()
+        if not label or raw_value is None:
+            continue
+        value = str(raw_value)
+        out.append({
+            "label": _LOGIN_DETAIL_FIELD_LABELS.get(label, label),
+            "value": value,
+        })
+    return out
+
+
 def _project_login_row_detail(
     row: dict[str, Any], key: bytes,
 ) -> dict[str, Any]:
@@ -569,6 +597,7 @@ def _project_login_row_detail(
         "domain":     domain,
         "website":    website,
         "notes":      notes,
+        "fields":     _login_detail_field_entries(fields),
         "updated_at": _row_updated_at_iso(row),
         "generated":  bool(plain.get("generated")),
     }
@@ -576,7 +605,7 @@ def _project_login_row_detail(
 
 _ALLOWED_DETAIL_LOGIN_KEYS: frozenset[str] = frozenset({
     "id", "title", "service", "username", "password",
-    "domain", "website", "notes", "updated_at", "generated",
+    "domain", "website", "notes", "fields", "updated_at", "generated",
 })
 
 _ALLOWED_DETAIL_PAYLOAD_KEYS: frozenset[str] = frozenset({

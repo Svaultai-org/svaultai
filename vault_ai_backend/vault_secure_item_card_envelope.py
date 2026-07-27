@@ -93,6 +93,7 @@ _ALLOWED_MASKED_KEYS: frozenset[str] = frozenset({
 
 _ALLOWED_REVEALED_KEYS: frozenset[str] = frozenset({
     "category", "noun", "title", "revealed",
+    "fields",
     "username", "password", "has_password",
     "has_notes", "notes",
     "imei_1", "imei_2",

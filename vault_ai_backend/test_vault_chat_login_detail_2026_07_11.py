@@ -16,7 +16,7 @@ The plaintext exception is enforced by:
   - vault_chat_card_data._sanitize_login_detail_payload — a positive
     allowlist that admits only ``schema, available, view, query,
     login, count, pending_action`` at the payload level and only
-    ``id, title, service, username, password, domain, website, notes,
+    ``id, title, service, username, password, domain, website, notes, fields,
     updated_at, generated`` at the login level. Any other key is
     silently dropped.
   - populate_vault_chat_card_data — the ONLY code path that runs the
@@ -65,7 +65,8 @@ def _encrypt(fields: dict) -> str:
 
 
 def _row(id_: str, service: str, username: str, password: str,
-         notes: str = "", title: str = "") -> dict:
+         notes: str = "", title: str = "",
+         extra_fields: dict | None = None) -> dict:
     body = {
         "title": title or service,
         "service": service,
@@ -73,6 +74,8 @@ def _row(id_: str, service: str, username: str, password: str,
     }
     if notes:
         body["fields"]["notes"] = notes
+    if extra_fields:
+        body["fields"].update(extra_fields)
     return {
         "id": id_,
         "service": service,
@@ -158,6 +161,32 @@ class SanitizerAllowsOnlyKnownKeys(unittest.TestCase):
         self.assertNotIn("encrypted_data", login)
         self.assertNotIn("raw_username", login)
 
+    def test_sanitizer_preserves_ordered_login_fields(self):
+        raw = {
+            "schema": "x", "available": True, "view": "detail",
+            "query": "q", "count": 1,
+            "login": {
+                "id": "1", "title": "T", "service": "S",
+                "username": "u", "password": "p",
+                "fields": [
+                    {"label": "Username", "value": "u"},
+                    {"label": "Password", "value": "p"},
+                    {"label": "pin", "value": "111222"},
+                    {"label": "Recovery Code", "value": "rc-xyz"},
+                ],
+            },
+        }
+        out = _sanitize_login_detail_payload(raw)
+        self.assertEqual(
+            out["login"]["fields"],
+            [
+                {"label": "Username", "value": "u"},
+                {"label": "Password", "value": "p"},
+                {"label": "pin", "value": "111222"},
+                {"label": "Recovery Code", "value": "rc-xyz"},
+            ],
+        )
+
     def test_sanitizer_on_none_returns_empty(self):
         self.assertEqual(_sanitize_login_detail_payload({}), {})
 
@@ -178,6 +207,27 @@ class DetailProjectorReturnsPlaintext(unittest.TestCase):
         self.assertEqual(proj["username"], "ada@example.com")
         self.assertEqual(proj["password"], "hunter2!")
         self.assertTrue(proj["website"])
+
+    def test_project_login_row_detail_emits_custom_fields_in_order(self):
+        row = _row(
+            "l-1", "Tinder", "beraves", "bunty1234567",
+            extra_fields={
+                "pin": "748291",
+                "Recovery Code": "blue-hill-42",
+            },
+        )
+        proj = _project_login_row_detail(row, _KEY)
+        self.assertEqual(proj["username"], "beraves")
+        self.assertEqual(proj["password"], "bunty1234567")
+        self.assertEqual(
+            proj["fields"],
+            [
+                {"label": "Username", "value": "beraves"},
+                {"label": "Password", "value": "bunty1234567"},
+                {"label": "pin", "value": "748291"},
+                {"label": "Recovery Code", "value": "blue-hill-42"},
+            ],
+        )
 
     def test_project_login_row_list_still_masks(self):
         row = _row("l-1", "AFCU", "ada@example.com", "hunter2!")
@@ -227,6 +277,35 @@ class BuilderRoutesByMatchCount(unittest.TestCase):
         self.assertEqual(out["count"], 1)
         self.assertEqual(out["login"]["username"], "ada@example.com")
         self.assertEqual(out["login"]["password"], "hunter2!")
+
+    def test_single_match_returns_all_custom_fields(self):
+        import pytest
+        rows = {
+            "tinder": [
+                _row(
+                    "l-9", "Tinder", "beraves", "bunty1234567",
+                    extra_fields={
+                        "pin": "748291",
+                        "Recovery Code": "blue-hill-42",
+                    },
+                ),
+            ],
+        }
+        with pytest.MonkeyPatch.context() as m:
+            _patch_fetch(m, rows)
+            out = build_login_detail_data(
+                "v", _KEY, query="tinder", limit=20,
+            )
+        self.assertEqual(out["view"], LOGIN_VIEW_DETAIL)
+        self.assertEqual(
+            out["login"]["fields"],
+            [
+                {"label": "Username", "value": "beraves"},
+                {"label": "Password", "value": "bunty1234567"},
+                {"label": "pin", "value": "748291"},
+                {"label": "Recovery Code", "value": "blue-hill-42"},
+            ],
+        )
 
     def test_multi_match_returns_chooser_without_plaintext(self):
         import pytest

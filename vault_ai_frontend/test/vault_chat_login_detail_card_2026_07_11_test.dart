@@ -21,6 +21,7 @@ Map<String, dynamic> _detailEnv({
   String domain = 'americanfirst.com',
   String website = 'https://americanfirst.com',
   String notes = '',
+  List<Map<String, String>>? fields,
   String? pendingAction,
 }) {
   return <String, dynamic>{
@@ -44,6 +45,7 @@ Map<String, dynamic> _detailEnv({
           'domain':   domain,
           'website':  website,
           'notes':    notes,
+          if (fields != null) 'fields': fields,
         },
         if (pendingAction != null) 'pending_action': pendingAction,
       },
@@ -208,6 +210,37 @@ void main() {
       expect(find.text('•••••••••'), findsNothing);
       expect(find.textContaining('Reveal requires'), findsNothing);
       expect(find.textContaining('Password hidden'), findsNothing);
+    });
+
+    testWidgets('renders arbitrary custom fields from ordered login.fields',
+        (t) async {
+      final env = _detailEnv(
+        service: 'Tinder',
+        title: 'Tinder',
+        username: 'beraves',
+        password: 'bunty1234567',
+        domain: '',
+        website: '',
+        fields: const [
+          {'label': 'Username', 'value': 'beraves'},
+          {'label': 'Password', 'value': 'bunty1234567'},
+          {'label': 'pin', 'value': '748291'},
+          {'label': 'Recovery Code', 'value': 'blue-hill-42'},
+        ],
+      );
+      await t.pumpWidget(_wrap(VaultChatCardView(
+        response: vcr.VaultChatResponse.fromJson(env),
+      )));
+      await t.pumpAndSettle();
+
+      expect(_findVisibleText('Username'), findsOneWidget);
+      expect(_findVisibleText('Password'), findsOneWidget);
+      expect(_findVisibleText('pin'), findsOneWidget);
+      expect(_findVisibleText('Recovery Code'), findsOneWidget);
+      expect(_findVisibleText('beraves'), findsOneWidget);
+      expect(_findVisibleText('bunty1234567'), findsOneWidget);
+      expect(_findVisibleText('748291'), findsOneWidget);
+      expect(_findVisibleText('blue-hill-42'), findsOneWidget);
     });
 
     testWidgets('(3) generic list view does NOT expose every '

@@ -113,6 +113,40 @@ void main() {
       expect(find.textContaining('Password saved'), findsOneWidget);
     });
 
+    testWidgets('revealed login detail renders custom fields in order',
+        (tester) async {
+      final msg = _envelope(
+        reveal: true,
+        items: [
+          _row(
+            itemId: 'a',
+            type: 'login',
+            title: 'Tinder',
+            categoryLabel: 'Login',
+            preview: const {
+              'username': 'beraves',
+              'password': 'bunty1234567',
+              'fields': [
+                {'label': 'Username', 'value': 'beraves'},
+                {'label': 'Password', 'value': 'bunty1234567'},
+                {'label': 'pin', 'value': '748291'},
+                {'label': 'Recovery Code', 'value': 'blue-hill-42'},
+              ],
+            },
+          ),
+        ],
+      );
+      await _pump(tester, SecureItemResultsCard(msg: msg));
+      expect(find.text('Username'), findsOneWidget);
+      expect(find.text('Password'), findsOneWidget);
+      expect(find.text('pin'), findsOneWidget);
+      expect(find.text('Recovery Code'), findsOneWidget);
+      expect(find.text('beraves'), findsOneWidget);
+      expect(find.text('bunty1234567'), findsOneWidget);
+      expect(find.text('748291'), findsOneWidget);
+      expect(find.text('blue-hill-42'), findsOneWidget);
+    });
+
     testWidgets('Private note card shows hidden preview', (tester) async {
       final msg = _envelope(items: [
         _row(

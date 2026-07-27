@@ -452,6 +452,32 @@ def mask_wallet_address(value: Any) -> str:
     return f"{head}…{tail}"
 
 
+_DISPLAY_LABELS: dict[str, str] = {
+    "username": "Username",
+    "password": "Password",
+    "website": "Website",
+    "url": "Website or URL",
+    "notes": "Note",
+    "note": "Note",
+}
+
+
+def _ordered_field_entries(fields: Optional[dict]) -> list[dict[str, str]]:
+    if not isinstance(fields, dict):
+        return []
+    out: list[dict[str, str]] = []
+    for raw_label, raw_value in fields.items():
+        label = str(raw_label or "").strip()
+        if not label or raw_value is None:
+            continue
+        value = str(raw_value)
+        out.append({
+            "label": _DISPLAY_LABELS.get(label, label),
+            "value": value,
+        })
+    return out
+
+
 def masked_preview(
     *, category: Optional[str],
     title: str,
@@ -572,6 +598,9 @@ def revealed_preview(
     if notes:
         out["notes"] = str(notes)
         out["has_notes"] = True
+    ordered_fields = _ordered_field_entries(fields)
+    if ordered_fields:
+        out["fields"] = ordered_fields
     return out
 
 

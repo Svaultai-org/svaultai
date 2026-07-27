@@ -383,9 +383,35 @@ const Set<String> _kLoginDetailLoginKeys = <String>{
   'domain',
   'website',
   'notes',
+  'fields',
   'updated_at',
   'generated',
 };
+
+List<Map<String, String>> _sanitizeLoginDetailFields(dynamic raw) {
+  final out = <Map<String, String>>[];
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final label = (item['label'] ?? '').toString().trim();
+      if (label.isEmpty) continue;
+      out.add({
+        'label': label,
+        'value': (item['value'] ?? '').toString(),
+      });
+    }
+  } else if (raw is Map) {
+    for (final entry in raw.entries) {
+      final label = entry.key.toString().trim();
+      if (label.isEmpty) continue;
+      out.add({
+        'label': label,
+        'value': (entry.value ?? '').toString(),
+      });
+    }
+  }
+  return out;
+}
 
 Map<String, dynamic> _sanitizeLoginDetail(Map<String, dynamic> raw) {
   final out = <String, dynamic>{};
@@ -396,7 +422,9 @@ Map<String, dynamic> _sanitizeLoginDetail(Map<String, dynamic> raw) {
       final loginMap = v.cast<String, dynamic>();
       final safeLogin = <String, dynamic>{};
       for (final le in loginMap.entries) {
-        if (_kLoginDetailLoginKeys.contains(le.key)) {
+        if (le.key == 'fields') {
+          safeLogin[le.key] = _sanitizeLoginDetailFields(le.value);
+        } else if (_kLoginDetailLoginKeys.contains(le.key)) {
           safeLogin[le.key] = le.value;
         }
       }
