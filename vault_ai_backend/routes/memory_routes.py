@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from collections import OrderedDict
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -77,6 +77,7 @@ class MemoryCreateRequest(BaseModel):
     display_value: Optional[str] = Field(None, max_length=500)
     place: Optional[str] = Field(None, max_length=120)
     tags: list[str] = Field(default_factory=list, max_length=20)
+    custom_fields: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
     canonical_key: Optional[str] = Field(None, max_length=180)
     proposal_id: Optional[str] = Field(None, max_length=80)
 

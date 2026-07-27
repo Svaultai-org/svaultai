@@ -1,48 +1,42 @@
-
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
 
-
-const Map<String, String> kSecureItemTypeLabelsForDetail =
-    <String, String>{
-  'login':                       'Login',
-  'credential':                  'Credential',
-  'device':                      'Device',
-  'device_info':                 'Device',
-  'imei':                        'Phone IMEI',
-  'serial_number':               'Serial number',
-  'document_note':               'Note',
-  'recovery_code':               'Recovery code',
-  'recovery_phrase':             'Recovery phrase',
-  'backup_code':                 'Backup code',
-  'private_note':                'Private note',
-  'account_note':                'Account note',
-  'license_key':                 'License key',
-  'product_key':                 'Product key',
-  'activation_key':              'Activation key',
-  'private_key':                 'Private key',
-  'bank':                        'Bank record',
-  'card':                        'Card record',
-  'other':                       'Saved item',
-  'other_secret':                'Saved secret',
-  'crypto_wallet_address':       'Crypto wallet',
-  'crypto_seed_phrase':          'Seed phrase',
-  'crypto_private_key':          'Private key',
-  'crypto_recovery_phrase':      'Recovery phrase',
-  'crypto_note':                 'Crypto note',
-  'crypto_transaction_note':     'Transaction note',
-  'crypto_exchange_note':        'Exchange note',
+const Map<String, String> kSecureItemTypeLabelsForDetail = <String, String>{
+  'login': 'Login',
+  'credential': 'Credential',
+  'device': 'Device',
+  'device_info': 'Device',
+  'imei': 'Phone IMEI',
+  'serial_number': 'Serial number',
+  'document_note': 'Note',
+  'recovery_code': 'Recovery code',
+  'recovery_phrase': 'Recovery phrase',
+  'backup_code': 'Backup code',
+  'private_note': 'Private note',
+  'account_note': 'Account note',
+  'license_key': 'License key',
+  'product_key': 'Product key',
+  'activation_key': 'Activation key',
+  'private_key': 'Private key',
+  'bank': 'Bank record',
+  'card': 'Card record',
+  'other': 'Saved item',
+  'other_secret': 'Saved secret',
+  'crypto_wallet_address': 'Crypto wallet',
+  'crypto_seed_phrase': 'Seed phrase',
+  'crypto_private_key': 'Private key',
+  'crypto_recovery_phrase': 'Recovery phrase',
+  'crypto_note': 'Crypto note',
+  'crypto_transaction_note': 'Transaction note',
+  'crypto_exchange_note': 'Exchange note',
   'crypto_hardware_wallet_note': 'Hardware wallet note',
 };
-
 
 bool isSecureItemLoginLike(String itemType) {
   return itemType == 'login' || itemType == 'credential';
 }
-
 
 String secureItemMaskedHintFor(String itemType) {
   if (isSecureItemLoginLike(itemType)) {
@@ -55,19 +49,19 @@ String secureItemMaskedHintFor(String itemType) {
   if (itemType == 'crypto_wallet_address') {
     return 'Ask your vault to show this wallet to see the full address.';
   }
-  if (itemType == 'crypto_seed_phrase'
-      || itemType == 'crypto_private_key'
-      || itemType == 'crypto_recovery_phrase') {
+  if (itemType == 'crypto_seed_phrase' ||
+      itemType == 'crypto_private_key' ||
+      itemType == 'crypto_recovery_phrase') {
     return 'Anyone with this value controls the wallet — only ask '
         'your vault to show it when you mean to read it.';
   }
   if (itemType == 'private_note' || itemType == 'account_note') {
     return 'Ask your vault to show this note to read its full text.';
   }
-  if (itemType == 'license_key'
-      || itemType == 'product_key'
-      || itemType == 'activation_key'
-      || itemType == 'private_key') {
+  if (itemType == 'license_key' ||
+      itemType == 'product_key' ||
+      itemType == 'activation_key' ||
+      itemType == 'private_key') {
     return 'Ask your vault to show this key to see the full value.';
   }
   if (itemType == 'backup_code' || itemType == 'recovery_code') {
@@ -75,7 +69,6 @@ String secureItemMaskedHintFor(String itemType) {
   }
   return 'Ask your vault to show this item to see the saved value.';
 }
-
 
 class SecureItemEditField {
   final String key;
@@ -91,17 +84,19 @@ class SecureItemEditField {
   });
 }
 
-
 List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
   if (isSecureItemLoginLike(itemType)) {
     return const [
       SecureItemEditField(key: 'username', label: 'Username'),
       SecureItemEditField(
-        key: 'password', label: 'Password',
+        key: 'password',
+        label: 'Password',
         obscureText: true,
       ),
+      SecureItemEditField(key: 'url', label: 'Website or URL'),
       SecureItemEditField(
-        key: 'note',     label: 'Note',
+        key: 'note',
+        label: 'Note',
         maxLines: 3,
       ),
     ];
@@ -110,7 +105,9 @@ List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
     return const [
       SecureItemEditField(key: 'imei_1', label: 'IMEI'),
       SecureItemEditField(
-        key: 'notes', label: 'Notes', maxLines: 3,
+        key: 'notes',
+        label: 'Notes',
+        maxLines: 3,
       ),
     ];
   }
@@ -118,14 +115,17 @@ List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
     return const [
       SecureItemEditField(key: 'serial_number', label: 'Serial number'),
       SecureItemEditField(
-        key: 'notes', label: 'Notes', maxLines: 3,
+        key: 'notes',
+        label: 'Notes',
+        maxLines: 3,
       ),
     ];
   }
   if (itemType == 'private_note') {
     return const [
       SecureItemEditField(
-        key: 'private_value', label: 'Private note',
+        key: 'private_value',
+        label: 'Private note',
         maxLines: 6,
       ),
     ];
@@ -133,7 +133,8 @@ List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
   if (itemType == 'account_note') {
     return const [
       SecureItemEditField(
-        key: 'account_notes', label: 'Account note',
+        key: 'account_notes',
+        label: 'Account note',
         maxLines: 6,
       ),
     ];
@@ -141,86 +142,92 @@ List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
   if (itemType == 'backup_code' || itemType == 'recovery_code') {
     return const [
       SecureItemEditField(
-        key: 'backup_codes', label: 'Codes',
+        key: 'backup_codes',
+        label: 'Codes',
         maxLines: 4,
       ),
       SecureItemEditField(
-        key: 'notes', label: 'Notes', maxLines: 3,
+        key: 'notes',
+        label: 'Notes',
+        maxLines: 3,
       ),
     ];
   }
-  if (itemType == 'license_key'
-      || itemType == 'product_key'
-      || itemType == 'activation_key') {
+  if (itemType == 'license_key' ||
+      itemType == 'product_key' ||
+      itemType == 'activation_key') {
     return [
       SecureItemEditField(
-        key: itemType, label: kSecureItemTypeLabelsForDetail[itemType] ?? 'Key',
+        key: itemType,
+        label: kSecureItemTypeLabelsForDetail[itemType] ?? 'Key',
       ),
       const SecureItemEditField(
-        key: 'notes', label: 'Notes', maxLines: 3,
+        key: 'notes',
+        label: 'Notes',
+        maxLines: 3,
       ),
     ];
   }
   if (itemType == 'private_key') {
     return const [
       SecureItemEditField(
-        key: 'private_key', label: 'Private key',
+        key: 'private_key',
+        label: 'Private key',
         maxLines: 4,
       ),
       SecureItemEditField(
-        key: 'notes', label: 'Notes', maxLines: 3,
+        key: 'notes',
+        label: 'Notes',
+        maxLines: 3,
       ),
     ];
   }
   if (itemType == 'recovery_phrase') {
     return const [
       SecureItemEditField(
-        key: 'recovery_phrase', label: 'Recovery phrase',
+        key: 'recovery_phrase',
+        label: 'Recovery phrase',
         maxLines: 4,
       ),
       SecureItemEditField(
-        key: 'notes', label: 'Notes', maxLines: 3,
+        key: 'notes',
+        label: 'Notes',
+        maxLines: 3,
       ),
     ];
   }
-  
-  
+
   return const [
     SecureItemEditField(
-      key: 'secret_value', label: 'Value',
+      key: 'secret_value',
+      label: 'Value',
       maxLines: 4,
     ),
     SecureItemEditField(
-      key: 'notes', label: 'Notes', maxLines: 3,
+      key: 'notes',
+      label: 'Notes',
+      maxLines: 3,
     ),
   ];
 }
 
-
-typedef SecureItemRevealHandler   = void Function(
-    String title, String itemType);
-typedef SecureItemEditHandler     = void Function(
-    String title, String itemType);
-typedef SecureItemDeleteHandler   = void Function(
-    String title, String itemType);
-typedef SecureItemCopyHandler     = void Function(String value);
-
+typedef SecureItemRevealHandler = void Function(String title, String itemType);
+typedef SecureItemEditHandler = void Function(String title, String itemType);
+typedef SecureItemDeleteHandler = void Function(String title, String itemType);
+typedef SecureItemCopyHandler = void Function(String value);
 
 class SecureItemDetailSheet extends StatelessWidget {
   final String title;
   final String itemType;
-  
-  
+
   final String? username;
 
-  
   final SecureItemRevealHandler? onReveal;
-  final SecureItemEditHandler?   onEdit;
+  final SecureItemEditHandler? onEdit;
   final SecureItemDeleteHandler? onDelete;
-  final SecureItemCopyHandler?   onCopyUsername;
-  final SecureItemCopyHandler?   onCopyValue;
+  final SecureItemCopyHandler? onCopyUsername;
+  final SecureItemCopyHandler? onCopyValue;
 
-  
   final String? revealedValue;
 
   const SecureItemDetailSheet({
@@ -239,8 +246,8 @@ class SecureItemDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isLogin = isSecureItemLoginLike(itemType);
-    final chip    = kSecureItemTypeLabelsForDetail[itemType] ?? 'Saved item';
-    final hint    = secureItemMaskedHintFor(itemType);
+    final chip = kSecureItemTypeLabelsForDetail[itemType] ?? 'Saved item';
+    final hint = secureItemMaskedHintFor(itemType);
 
     return SafeArea(
       child: Container(
@@ -248,7 +255,7 @@ class SecureItemDetailSheet extends StatelessWidget {
         decoration: const BoxDecoration(
           color: Color(0xFF2A2A2A),
           borderRadius: BorderRadius.only(
-            topLeft:  Radius.circular(20),
+            topLeft: Radius.circular(20),
             topRight: Radius.circular(20),
           ),
         ),
@@ -261,140 +268,140 @@ class SecureItemDetailSheet extends StatelessWidget {
             maxHeight: MediaQuery.of(context).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            
-            Center(
-              child: Container(
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              title.trim().isEmpty ? 'Saved item' : title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 8, vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: const Color(0xFF10A37F).withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                chip,
-                style: const TextStyle(
-                  color: Color(0xFF10A37F),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            
-            if (revealedValue == null)
-              Text(
-                hint,
-                style: const TextStyle(
-                  color: Color(0xFFD0D0D0),
-                  fontSize: 13, height: 1.4,
-                ),
-              )
-            else
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F1F1F),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white12),
-                ),
-                child: SelectableText(
-                  revealedValue!,
+                const SizedBox(height: 12),
+                Text(
+                  title.trim().isEmpty ? 'Saved item' : title,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 14,
-                    fontFamily: 'monospace',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-            const SizedBox(height: 16),
-            
-            
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (isLogin
-                    && username != null
-                    && (username?.isNotEmpty ?? false))
-                  OutlinedButton.icon(
-                    key: const Key('secure_item_detail_copy_username'),
-                    onPressed: onCopyUsername == null
-                        ? () {
-                            Clipboard.setData(
-                              ClipboardData(text: username!),
-                            );
-                          }
-                        : () => onCopyUsername!(username!),
-                    icon: const Icon(Icons.copy_outlined, size: 18),
-                    label: Text(
-                      AppLocalizations.of(context).secureItemCopyUsername,
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10A37F).withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    chip,
+                    style: const TextStyle(
+                      color: Color(0xFF10A37F),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                if (!isLogin
-                    && revealedValue != null
-                    && revealedValue!.isNotEmpty)
-                  OutlinedButton.icon(
-                    key: const Key('secure_item_detail_copy_value'),
-                    onPressed: onCopyValue == null
-                        ? () {
-                            Clipboard.setData(
-                              ClipboardData(text: revealedValue!),
-                            );
-                          }
-                        : () => onCopyValue!(revealedValue!),
-                    icon: const Icon(Icons.copy_outlined, size: 18),
-                    label: Text(
-                      AppLocalizations.of(context).secureItemCopyValue,
-                    ),
-                  ),
-                OutlinedButton.icon(
-                  key: const Key('secure_item_detail_edit'),
-                  onPressed: onEdit == null
-                      ? null : () => onEdit!(title, itemType),
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  label: const Text('Edit'),
                 ),
-                OutlinedButton.icon(
-                  key: const Key('secure_item_detail_delete'),
-                  onPressed: onDelete == null
-                      ? null : () => onDelete!(title, itemType),
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: Text(AppLocalizations.of(context).commonDelete),
+                const SizedBox(height: 14),
+                if (revealedValue == null)
+                  Text(
+                    hint,
+                    style: const TextStyle(
+                      color: Color(0xFFD0D0D0),
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1F1F1F),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: SelectableText(
+                      revealedValue!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (isLogin &&
+                        username != null &&
+                        (username?.isNotEmpty ?? false))
+                      OutlinedButton.icon(
+                        key: const Key('secure_item_detail_copy_username'),
+                        onPressed: onCopyUsername == null
+                            ? () {
+                                Clipboard.setData(
+                                  ClipboardData(text: username!),
+                                );
+                              }
+                            : () => onCopyUsername!(username!),
+                        icon: const Icon(Icons.copy_outlined, size: 18),
+                        label: Text(
+                          AppLocalizations.of(context).secureItemCopyUsername,
+                        ),
+                      ),
+                    if (!isLogin &&
+                        revealedValue != null &&
+                        revealedValue!.isNotEmpty)
+                      OutlinedButton.icon(
+                        key: const Key('secure_item_detail_copy_value'),
+                        onPressed: onCopyValue == null
+                            ? () {
+                                Clipboard.setData(
+                                  ClipboardData(text: revealedValue!),
+                                );
+                              }
+                            : () => onCopyValue!(revealedValue!),
+                        icon: const Icon(Icons.copy_outlined, size: 18),
+                        label: Text(
+                          AppLocalizations.of(context).secureItemCopyValue,
+                        ),
+                      ),
+                    OutlinedButton.icon(
+                      key: const Key('secure_item_detail_edit'),
+                      onPressed: onEdit == null
+                          ? null
+                          : () => onEdit!(title, itemType),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Edit'),
+                    ),
+                    OutlinedButton.icon(
+                      key: const Key('secure_item_detail_delete'),
+                      onPressed: onDelete == null
+                          ? null
+                          : () => onDelete!(title, itemType),
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: Text(AppLocalizations.of(context).commonDelete),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
-        ),
           ),
         ),
       ),
     );
   }
 }
-
 
 typedef SecureItemEditSaveHandler = Future<bool> Function({
   required String oldTitle,
@@ -403,15 +410,13 @@ typedef SecureItemEditSaveHandler = Future<bool> Function({
   required Map<String, String> fields,
 });
 
-
 class SecureItemEditDialog extends StatefulWidget {
   final String title;
   final String itemType;
+  final String? dialogTitle;
 
-  
   final Map<String, String>? initialFields;
 
-  
   final SecureItemEditSaveHandler onSave;
 
   const SecureItemEditDialog({
@@ -420,29 +425,53 @@ class SecureItemEditDialog extends StatefulWidget {
     required this.itemType,
     required this.onSave,
     this.initialFields,
+    this.dialogTitle,
   });
 
   @override
   State<SecureItemEditDialog> createState() => _SecureItemEditDialogState();
 }
 
-
 class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
   late final TextEditingController _titleCtrl;
   late final Map<String, TextEditingController> _fieldCtrls;
+  late final List<SecureItemEditField> _baseFields;
+  final List<_SecureItemCustomFieldCtrls> _customFields = [];
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     _titleCtrl = TextEditingController(text: widget.title);
-    
-    
+
     final init = widget.initialFields ?? const <String, String>{};
+    _baseFields = secureItemEditFieldsFor(widget.itemType);
     _fieldCtrls = {
-      for (final f in secureItemEditFieldsFor(widget.itemType))
+      for (final f in _baseFields)
         f.key: TextEditingController(text: init[f.key] ?? ''),
     };
+    if (isSecureItemLoginLike(widget.itemType)) {
+      final baseKeys = _baseFields.map((f) => f.key).toSet();
+      const reserved = {
+        'category',
+        'title',
+        'item_id',
+        'schema',
+        'warningConfirmed',
+      };
+      for (final entry in init.entries) {
+        if (baseKeys.contains(entry.key) || reserved.contains(entry.key)) {
+          continue;
+        }
+        if (entry.key.trim().isEmpty && entry.value.trim().isEmpty) {
+          continue;
+        }
+        _customFields.add(_SecureItemCustomFieldCtrls(
+          label: TextEditingController(text: entry.key),
+          value: TextEditingController(text: entry.value),
+        ));
+      }
+    }
   }
 
   @override
@@ -451,52 +480,75 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
     for (final c in _fieldCtrls.values) {
       c.dispose();
     }
+    for (final row in _customFields) {
+      row.dispose();
+    }
     super.dispose();
   }
 
+  void _addCustomField() {
+    setState(() {
+      _customFields.add(_SecureItemCustomFieldCtrls(
+        label: TextEditingController(),
+        value: TextEditingController(),
+      ));
+    });
+  }
+
+  void _removeCustomField(int index) {
+    final removed = _customFields.removeAt(index);
+    removed.dispose();
+    setState(() {});
+  }
+
   Future<void> _handleSave() async {
-    
-    
     if (_saving) return;
     setState(() => _saving = true);
     final newTitle = _titleCtrl.text.trim();
+    final effectiveTitle = newTitle.isEmpty ? widget.title.trim() : newTitle;
+    if (effectiveTitle.isEmpty) {
+      setState(() => _saving = false);
+      return;
+    }
     final fields = <String, String>{
       for (final entry in _fieldCtrls.entries)
-        if (entry.value.text.trim().isNotEmpty)
-          entry.key: entry.value.text,
+        if (entry.value.text.trim().isNotEmpty) entry.key: entry.value.text,
     };
+    for (final row in _customFields) {
+      final label = row.label.text.trim();
+      final value = row.value.text.trim();
+      if (label.isEmpty || value.isEmpty) continue;
+      fields[label] = value;
+    }
     bool ok = false;
     try {
       ok = await widget.onSave(
         oldTitle: widget.title,
         itemType: widget.itemType,
-        newTitle: newTitle.isEmpty ? widget.title : newTitle,
-        fields:   fields,
+        newTitle: effectiveTitle,
+        fields: fields,
       );
     } catch (_) {
       ok = false;
     }
     if (!mounted) return;
     if (ok) {
-      
-      
       Navigator.of(context).pop(true);
       return;
     }
-    
-    
+
     setState(() => _saving = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    final fields = secureItemEditFieldsFor(widget.itemType);
-    final chip = kSecureItemTypeLabelsForDetail[widget.itemType]
-        ?? 'Saved item';
+    final fields = _baseFields;
+    final chip =
+        kSecureItemTypeLabelsForDetail[widget.itemType] ?? 'Saved item';
     return AlertDialog(
       backgroundColor: const Color(0xFF2A2A2A),
       title: Text(
-        'Edit $chip',
+        widget.dialogTitle ?? 'Edit $chip',
         style: const TextStyle(color: Colors.white, fontSize: 18),
       ),
       content: SingleChildScrollView(
@@ -524,11 +576,67 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       labelText: f.label,
-                      labelStyle:
-                          const TextStyle(color: Color(0xFFB4B4B4)),
+                      labelStyle: const TextStyle(color: Color(0xFFB4B4B4)),
                     ),
                   ),
                 )),
+            if (isSecureItemLoginLike(widget.itemType)) ...[
+              const SizedBox(height: 14),
+              Text(
+                'Custom fields',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.82),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              for (var i = 0; i < _customFields.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: Key('secure_item_custom_label_$i'),
+                          controller: _customFields[i].label,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'Field label',
+                            labelStyle: TextStyle(color: Color(0xFFB4B4B4)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          key: Key('secure_item_custom_value_$i'),
+                          controller: _customFields[i].value,
+                          obscureText: true,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            labelText: 'Value',
+                            labelStyle: TextStyle(color: Color(0xFFB4B4B4)),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: Key('secure_item_custom_remove_$i'),
+                        tooltip: 'Remove field',
+                        onPressed: _saving ? null : () => _removeCustomField(i),
+                        icon: const Icon(Icons.close, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const Key('secure_item_edit_add_field'),
+                onPressed: _saving ? null : _addCustomField,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add field'),
+              ),
+            ],
           ],
         ),
       ),
@@ -547,6 +655,20 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
   }
 }
 
+class _SecureItemCustomFieldCtrls {
+  final TextEditingController label;
+  final TextEditingController value;
+
+  _SecureItemCustomFieldCtrls({
+    required this.label,
+    required this.value,
+  });
+
+  void dispose() {
+    label.dispose();
+    value.dispose();
+  }
+}
 
 Future<void> showSecureItemDetailSheet(
   BuildContext context, {
@@ -555,29 +677,28 @@ Future<void> showSecureItemDetailSheet(
   String? username,
   String? revealedValue,
   SecureItemRevealHandler? onReveal,
-  SecureItemEditHandler?   onEdit,
+  SecureItemEditHandler? onEdit,
   SecureItemDeleteHandler? onDelete,
-  SecureItemCopyHandler?   onCopyUsername,
-  SecureItemCopyHandler?   onCopyValue,
+  SecureItemCopyHandler? onCopyUsername,
+  SecureItemCopyHandler? onCopyValue,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) => SecureItemDetailSheet(
-      title:         title,
-      itemType:      itemType,
-      username:      username,
+      title: title,
+      itemType: itemType,
+      username: username,
       revealedValue: revealedValue,
-      onReveal:      onReveal,
-      onEdit:        onEdit,
-      onDelete:      onDelete,
+      onReveal: onReveal,
+      onEdit: onEdit,
+      onDelete: onDelete,
       onCopyUsername: onCopyUsername,
-      onCopyValue:   onCopyValue,
+      onCopyValue: onCopyValue,
     ),
   );
 }
-
 
 Future<bool?> showSecureItemEditDialog(
   BuildContext context, {
@@ -585,14 +706,16 @@ Future<bool?> showSecureItemEditDialog(
   required String itemType,
   required SecureItemEditSaveHandler onSave,
   Map<String, String>? initialFields,
+  String? dialogTitle,
 }) {
   return showDialog<bool>(
     context: context,
     builder: (ctx) => SecureItemEditDialog(
-      title:    title,
+      title: title,
       itemType: itemType,
+      dialogTitle: dialogTitle,
       initialFields: initialFields,
-      onSave:   onSave,
+      onSave: onSave,
     ),
   );
 }

@@ -1,5 +1,3 @@
-
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -11,12 +9,11 @@ import 'package:vault_ai_frontend/ui/secure_item_detail.dart';
 Future<void> _pump(WidgetTester tester, Widget body) async {
   await tester.binding.setSurfaceSize(const Size(900, 800));
   await tester.pumpWidget(MaterialApp(
-        localizationsDelegates: _testL10nDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,home: Scaffold(body: body)));
+      localizationsDelegates: _testL10nDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: body)));
   await tester.pumpAndSettle();
 }
-
-
 
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   AppLocalizations.delegate,
@@ -24,7 +21,6 @@ const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   GlobalWidgetsLocalizations.delegate,
   GlobalCupertinoLocalizations.delegate,
 ];
-
 
 void main() {
   group('SecureItemDetailSheet — Reveal removed (2026-06-29)', () {
@@ -37,8 +33,7 @@ void main() {
           itemType: 'imei',
         ),
       );
-      
-      
+
       expect(find.text('Reveal'), findsNothing);
       expect(
         find.byKey(const Key('secure_item_detail_reveal')),
@@ -46,8 +41,7 @@ void main() {
       );
     });
 
-    testWidgets('revealedValue still renders when attached',
-        (tester) async {
+    testWidgets('revealedValue still renders when attached', (tester) async {
       await _pump(
         tester,
         const SecureItemDetailSheet(
@@ -57,12 +51,11 @@ void main() {
         ),
       );
       expect(find.text('123456789012345'), findsOneWidget);
-      
+
       expect(find.text('Reveal'), findsNothing);
     });
 
-    testWidgets('masked-hint copy no longer says "Tap Reveal"',
-        (tester) async {
+    testWidgets('masked-hint copy no longer says "Tap Reveal"', (tester) async {
       await _pump(
         tester,
         const SecureItemDetailSheet(
@@ -70,16 +63,14 @@ void main() {
           itemType: 'license_key',
         ),
       );
-      
-      
+
       expect(find.textContaining('Tap Reveal'), findsNothing);
       expect(find.textContaining('Ask your vault'), findsOneWidget);
     });
   });
 
   group('SecureItemDetailSheet — Copy username (login-only)', () {
-    testWidgets('login card shows Copy username when present',
-        (tester) async {
+    testWidgets('login card shows Copy username when present', (tester) async {
       await _pump(
         tester,
         const SecureItemDetailSheet(
@@ -97,7 +88,7 @@ void main() {
         const SecureItemDetailSheet(
           title: 'iPhone 15 IMEI',
           itemType: 'imei',
-          username: 'alice',  
+          username: 'alice',
         ),
       );
       expect(find.text('Copy username'), findsNothing);
@@ -146,9 +137,7 @@ void main() {
       expect(find.text('Copy value'), findsNothing);
     });
 
-    testWidgets('revealed LOGIN does not show Copy value',
-        (tester) async {
-      
+    testWidgets('revealed LOGIN does not show Copy value', (tester) async {
       await _pump(
         tester,
         const SecureItemDetailSheet(
@@ -164,19 +153,23 @@ void main() {
   group('SecureItemDetailSheet — Edit / Delete always present', () {
     testWidgets('Edit + Delete render for every item type', (tester) async {
       for (final type in const [
-        'login', 'imei', 'private_note', 'license_key',
-        'crypto_wallet_address', 'backup_code',
+        'login',
+        'imei',
+        'private_note',
+        'license_key',
+        'crypto_wallet_address',
+        'backup_code',
       ]) {
         await _pump(
           tester,
           SecureItemDetailSheet(
             title: 'Sample',
             itemType: type,
-            onEdit:   (_, __) {},
+            onEdit: (_, __) {},
             onDelete: (_, __) {},
           ),
         );
-        expect(find.text('Edit'),   findsOneWidget,
+        expect(find.text('Edit'), findsOneWidget,
             reason: 'Edit missing for $type');
         expect(find.text('Delete'), findsOneWidget,
             reason: 'Delete missing for $type');
@@ -185,11 +178,11 @@ void main() {
   });
 
   group('Per-type edit field map', () {
-    test('login uses username + password + note', () {
+    test('login uses username + password + URL + note', () {
       final fields = secureItemEditFieldsFor('login');
       expect(
         fields.map((f) => f.key).toList(),
-        ['username', 'password', 'note'],
+        ['username', 'password', 'url', 'note'],
       );
       expect(
         fields.firstWhere((f) => f.key == 'password').obscureText,
@@ -223,12 +216,18 @@ void main() {
       expect(codes.maxLines, greaterThan(1));
     });
 
-    test('non-login categories NEVER include username/password',
-        () {
+    test('non-login categories NEVER include username/password', () {
       for (final type in const [
-        'imei', 'serial_number', 'private_note', 'account_note',
-        'license_key', 'product_key', 'activation_key',
-        'private_key', 'recovery_phrase', 'backup_code',
+        'imei',
+        'serial_number',
+        'private_note',
+        'account_note',
+        'license_key',
+        'product_key',
+        'activation_key',
+        'private_key',
+        'recovery_phrase',
+        'backup_code',
       ]) {
         final fields = secureItemEditFieldsFor(type);
         final keys = fields.map((f) => f.key).toList();
@@ -263,12 +262,12 @@ void main() {
           },
         ),
       );
-      
+
       await tester.enterText(
         find.byKey(const Key('secure_item_edit_title')),
         'iPhone 15 IMEI',
       );
-      
+
       await tester.enterText(
         find.byKey(const Key('secure_item_edit_imei_1')),
         '987654321098765',
@@ -335,31 +334,92 @@ void main() {
         find.byKey(const Key('secure_item_edit_password')),
         'fishfish',
       );
+      await tester.enterText(
+        find.byKey(const Key('secure_item_edit_url')),
+        'https://netflix.example',
+      );
       await tester.tap(find.byKey(const Key('secure_item_edit_save')));
       await tester.pumpAndSettle();
-      expect(savedFields, {'username': 'alice', 'password': 'fishfish'});
+      expect(savedFields, {
+        'username': 'alice',
+        'password': 'fishfish',
+        'url': 'https://netflix.example',
+      });
+    });
+
+    testWidgets('Login custom fields round-trip with base fields',
+        (tester) async {
+      Map<String, String>? savedFields;
+      await _pump(
+        tester,
+        SecureItemEditDialog(
+          title: 'Server login',
+          itemType: 'login',
+          onSave: ({
+            required String oldTitle,
+            required String itemType,
+            required String newTitle,
+            required Map<String, String> fields,
+          }) async {
+            savedFields = fields;
+            return true;
+          },
+        ),
+      );
+      await tester.enterText(
+        find.byKey(const Key('secure_item_edit_username')),
+        'deploy',
+      );
+      await tester.enterText(
+        find.byKey(const Key('secure_item_edit_password')),
+        'server-secret',
+      );
+      await tester.tap(find.byKey(const Key('secure_item_edit_add_field')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('secure_item_custom_label_0')),
+        'Recovery Code',
+      );
+      await tester.enterText(
+        find.byKey(const Key('secure_item_custom_value_0')),
+        'RC-123-456',
+      );
+      final customValue = tester.widget<TextField>(
+        find.byKey(const Key('secure_item_custom_value_0')),
+      );
+      expect(customValue.obscureText, isTrue);
+      await tester.tap(find.byKey(const Key('secure_item_edit_save')));
+      await tester.pumpAndSettle();
+      expect(savedFields, {
+        'username': 'deploy',
+        'password': 'server-secret',
+        'Recovery Code': 'RC-123-456',
+      });
     });
   });
 
   group('Source-level guards', () {
     test('isSecureItemLoginLike is closed-set', () {
-      expect(isSecureItemLoginLike('login'),       isTrue);
-      expect(isSecureItemLoginLike('credential'),  isTrue);
-      expect(isSecureItemLoginLike('imei'),        isFalse);
+      expect(isSecureItemLoginLike('login'), isTrue);
+      expect(isSecureItemLoginLike('credential'), isTrue);
+      expect(isSecureItemLoginLike('imei'), isFalse);
       expect(isSecureItemLoginLike('private_note'), isFalse);
-      expect(isSecureItemLoginLike('license_key'),  isFalse);
+      expect(isSecureItemLoginLike('license_key'), isFalse);
       expect(isSecureItemLoginLike('crypto_seed_phrase'), isFalse);
     });
 
     test('per-type label is closed-set', () {
       expect(
-        kSecureItemTypeLabelsForDetail['imei'], 'Phone IMEI',
+        kSecureItemTypeLabelsForDetail['imei'],
+        'Phone IMEI',
       );
       expect(
-        kSecureItemTypeLabelsForDetail['license_key'], 'License key',
+        kSecureItemTypeLabelsForDetail['license_key'],
+        'License key',
       );
       expect(
-        kSecureItemTypeLabelsForDetail['private_note'], 'Private note',
+        kSecureItemTypeLabelsForDetail['private_note'],
+        'Private note',
       );
     });
   });

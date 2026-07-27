@@ -12092,6 +12092,28 @@ def _handle_remember_fact(
     if not is_enabled():
         return None
     if vault_key is None:
+        try:
+            from vault_core import is_vault_zk_adopted
+            if is_vault_zk_adopted(vault_id):
+                proposal = {
+                    "memory_type": (memory_type or "note").strip().lower(),
+                    "memory_key": (memory_key or "memory").strip(),
+                    "memory_value": val if "val" in locals() else (memory_value or "").strip(),
+                }
+                if memory_event_date:
+                    proposal["memory_event_date"] = memory_event_date
+                return (
+                    "<<VAULTAI_MEMORY_PROPOSAL>>"
+                    + json.dumps(
+                        proposal,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    + "<<END>>\n\n"
+                    + "I prepared a memory proposal. Unlock your vault and tap Save to store it securely."
+                )
+        except Exception:
+            pass
         return "I couldn't save that memory. Please unlock your vault and try again."
     mt = (memory_type or "").strip().lower()
     if mt not in ALLOWED_MEMORY_TYPES:

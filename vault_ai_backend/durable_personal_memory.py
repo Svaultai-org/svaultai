@@ -31,6 +31,14 @@ _LOOKUP_CONTEXT = "vaultai-personal-memory/v1"
 _CARD_SCHEMA = "vault_chat_response_v1"
 _PROPOSAL_SCHEMA = "vault_memory_proposal_v1"
 _PAYLOAD_SCHEMA = "vault_personal_memory_v1"
+_END_PUNCT_RE = r"(?:[.!?]+)?\s*$"
+_SOFT_STOPWORDS = {
+    "a", "an", "and", "about", "called", "containing", "did", "do", "for",
+    "have", "i", "is", "it", "me", "memories", "memory", "my", "note",
+    "of", "personal", "please", "save", "saved", "show", "that", "the",
+    "this", "to", "was", "what", "when", "where", "which", "with", "you",
+    "your",
+}
 
 _MONTHS = {
     "jan": 1,
@@ -82,15 +90,21 @@ _SAVE_TRIGGER_RE = re.compile(
 )
 _SAVE_PENDING_RE = re.compile(
     r"^\s*(?:save\s+it|save\s+this\s+memory|save\s+that\s+memory|"
-    r"save\s+memory|yes\s+save\s+it|yes\s+save\s+this)\.?\s*$",
+    r"save\s+this|save\s+that|save\s+the\s+memory|remember\s+it|"
+    r"save\s+memory|yes\s+save\s+it|yes\s+save\s+this)"
+    + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _MEMORY_SAVE_PENDING_RE = re.compile(
-    r"^\s*(?:save\s+(?:this|that)?\s*memory|save\s+it\s+as\s+a\s+memory)\.?\s*$",
+    r"^\s*(?:save\s+it|save\s+this|save\s+that|save\s+the\s+memory|"
+    r"save\s+(?:this|that)?\s*memory|remember\s+it|"
+    r"save\s+it\s+as\s+a\s+memory)"
+    + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _CANCEL_PENDING_RE = re.compile(
-    r"^\s*(?:cancel|cancel\s+it|don't\s+save\s+it|dont\s+save\s+it)\.?\s*$",
+    r"^\s*(?:cancel|cancel\s+it|don't\s+save\s+it|dont\s+save\s+it)"
+    + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _FACT_RE = re.compile(
@@ -107,13 +121,15 @@ _CORRECTION_RE = re.compile(
 _RECALL_RE = re.compile(
     rf"^\s*(?:when|what(?:'s|\s+is))\s+(?:is\s+)?(?:my\s+)?"
     rf"(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
-    rf"(?P<attribute>{_ATTR_RE})\??\s*$",
+    rf"(?P<attribute>{_ATTR_RE}){_END_PUNCT_RE}",
     re.IGNORECASE,
 )
 _FORGET_RE = re.compile(
-    rf"^\s*(?:forget|delete|remove)\s+(?:my\s+)?"
+    rf"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
+    rf"(?:(?:the\s+)?memory\s+about\s+|what\s+i\s+saved\s+about\s+)?"
+    rf"(?:my\s+)?"
     rf"(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
-    rf"(?P<attribute>{_ATTR_RE})\??\s*$",
+    rf"(?P<attribute>{_ATTR_RE}){_END_PUNCT_RE}",
     re.IGNORECASE,
 )
 _MAIDEN_FACT_RE = re.compile(
@@ -124,13 +140,15 @@ _MAIDEN_FACT_RE = re.compile(
 _MAIDEN_RECALL_RE = re.compile(
     rf"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?"
     rf"(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
-    r"maiden\s+name\??\s*$",
+    r"maiden\s+name" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _MAIDEN_FORGET_RE = re.compile(
-    rf"^\s*(?:forget|delete|remove)\s+(?:my\s+)?"
+    rf"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
+    rf"(?:(?:the\s+)?memory\s+about\s+|what\s+i\s+saved\s+about\s+)?"
+    rf"(?:my\s+)?"
     rf"(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
-    r"maiden\s+name\??\s*$",
+    r"maiden\s+name" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _ANNIVERSARY_FACT_RE = re.compile(
@@ -140,12 +158,13 @@ _ANNIVERSARY_FACT_RE = re.compile(
 )
 _ANNIVERSARY_RECALL_RE = re.compile(
     r"^\s*(?:when|what(?:'s|\s+is))\s+(?:is\s+)?(?:my\s+)?"
-    r"(?P<subject>wedding|marriage)\s+anniversary\??\s*$",
+    r"(?P<subject>wedding|marriage)\s+anniversary" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _ANNIVERSARY_FORGET_RE = re.compile(
-    r"^\s*(?:forget|delete|remove)\s+(?:my\s+)?"
-    r"(?P<subject>wedding|marriage)\s+anniversary\??\s*$",
+    r"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
+    r"(?:(?:the\s+)?memory\s+about\s+|what\s+i\s+saved\s+about\s+)?"
+    r"(?:my\s+)?(?P<subject>wedding|marriage)\s+anniversary" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _TRAVEL_FACT_RE = re.compile(
@@ -155,12 +174,13 @@ _TRAVEL_FACT_RE = re.compile(
 )
 _TRAVEL_RECALL_RE = re.compile(
     r"^\s*(?:when|what\s+date)\s+did\s+i\s+"
-    r"(?:travel|travell|go|fly)\s+to\s+(?P<place>.+?)\??\s*$",
+    r"(?:travel|travell|go|fly)\s+to\s+(?P<place>.+?)" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _TRAVEL_FORGET_RE = re.compile(
-    r"^\s*(?:forget|delete|remove)\s+(?:my\s+)?"
-    r"(?:trip|travel)\s+to\s+(?P<place>.+?)\??\s*$",
+    r"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
+    r"(?:(?:the\s+)?memory\s+about\s+|what\s+i\s+saved\s+about\s+)?"
+    r"(?:my\s+)?(?:trip|travel)\s+to\s+(?P<place>.+?)" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _FAVORITE_PLACE_FACT_RE = re.compile(
@@ -168,7 +188,7 @@ _FAVORITE_PLACE_FACT_RE = re.compile(
     re.IGNORECASE,
 )
 _FAVORITE_PLACE_RECALL_RE = re.compile(
-    r"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?favorite\s+place\??\s*$",
+    r"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?favorite\s+place" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _BLOOD_TYPE_FACT_RE = re.compile(
@@ -176,7 +196,64 @@ _BLOOD_TYPE_FACT_RE = re.compile(
     re.IGNORECASE,
 )
 _BLOOD_TYPE_RECALL_RE = re.compile(
-    r"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?blood\s+type\??\s*$",
+    r"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?blood\s+type" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_TITLE_RECALL_RE = re.compile(
+    r"^\s*(?:show\s+me\s+)?(?:the\s+)?memory\s+called\s+"
+    r"(?P<title>.+?)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_CONTAINING_RECALL_RE = re.compile(
+    r"^\s*find\s+(?:the\s+)?(?:memory|note)\s+containing\s+"
+    r"(?P<query>.+?)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_ABOUT_RECALL_RE = re.compile(
+    r"^\s*(?:what\s+(?:do\s+you\s+remember|did\s+i\s+save)|"
+    r"show\s+me\s+(?:what\s+i\s+saved|memories?)|"
+    r"find\s+(?:my\s+)?memories?)\s+about\s+"
+    r"(?P<query>.+?)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_SAVED_RECALL_RE = re.compile(
+    r"^\s*what\s+(?P<query>.+?)\s+did\s+i\s+save"
+    + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_NOTE_ABOUT_RECALL_RE = re.compile(
+    r"^\s*what\s+(?:note|memory)\s+did\s+i\s+save\s+about\s+"
+    r"(?P<query>.+?)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_HAVE_ABOUT_RECALL_RE = re.compile(
+    r"^\s*what\s+memories\s+do\s+you\s+have\s+about\s+"
+    r"(?P<query>.+?)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_WHAT_RECALL_RE = re.compile(
+    r"^\s*(?:what\s+(?:is|was|are|were|did)\s+|show\s+me\s+)"
+    r"(?P<query>.+?)\s+(?:did\s+i\s+save|i\s+saved|"
+    r"do\s+you\s+have|in\s+memory)"
+    + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_DIRECT_RECALL_RE = re.compile(
+    r"^\s*(?:what\s+(?:is|was|are|were)\s+)?(?:the\s+)?(?:my\s+)?"
+    r"(?P<query>(?:openai\s+)?api\s+key|wi-?fi\s+password(?:\s+for\s+.+?)?|"
+    r"server\s+ip|recovery\s+code|personal\s+preference)"
+    + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_FORGET_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
+    r"(?:(?:the\s+)?memory\s+about\s+|what\s+i\s+saved\s+about\s+)?"
+    r"(?P<query>.+?)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_GENERIC_UPDATE_RE = re.compile(
+    r"^\s*(?:update|change|correct)\s+(?P<query>.+?)\s+"
+    r"(?:to|as)\s+(?P<value>.+?)" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _LIKE_FACT_RE = re.compile(
@@ -216,6 +293,7 @@ class PersonalMemoryIntent:
     event_date: Optional[str] = None
     place: Optional[str] = None
     tags: tuple[str, ...] = ()
+    custom_fields: tuple[dict[str, str], ...] = ()
     is_correction: bool = False
     needs_clarification: bool = False
     canonical_key_override: Optional[str] = None
@@ -549,6 +627,9 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             category="travel",
             place=place,
         )
+    generic_forget = _generic_forget_intent(text)
+    if generic_forget is not None:
+        return generic_forget
 
     m = _RECALL_RE.match(text)
     if m:
@@ -623,6 +704,13 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             memory_type="identity",
             category="medical",
         )
+    generic_recall = _generic_query_from_text(text)
+    if generic_recall is not None:
+        return generic_recall
+
+    generic_update = _generic_update_intent(text)
+    if generic_update is not None:
+        return generic_update
 
     is_correction = bool(
         re.search(r"\b(?:actually|correction|correct|update|change)\b", text, re.I)
@@ -675,6 +763,7 @@ def _payload_for_intent(
         "display_value": _clip(value),
         "place": intent.place,
         "tags": [t for t in intent.tags if t],
+        "custom_fields": [dict(field) for field in intent.custom_fields],
         "source": "explicit_user_memory",
         "status": "active",
         "canonical_key": intent.canonical_key,
@@ -718,6 +807,7 @@ def _intent_from_payload(payload: dict[str, Any], *, action: str = "save",
             str(t) for t in (payload.get("tags") or [])
             if isinstance(t, str) and t
         ),
+        custom_fields=tuple(_custom_fields_from_payload(payload)),
         is_correction=is_correction,
         needs_clarification=False,
         canonical_key_override=canonical or f"{subject}:{attribute}",
@@ -758,6 +848,261 @@ def _safe_memory_type(memory_type: Any) -> str:
     }
     raw = aliases.get(raw, raw)
     return raw if raw in ALLOWED_MEMORY_TYPES else "note"
+
+
+def _strip_terminal_punct(text: str) -> str:
+    return re.sub(r"[.!?]+$", "", (text or "").strip()).strip()
+
+
+def _normalize_query_text(text: str) -> str:
+    value = (text or "").lower()
+    value = value.replace("\u201c", " ").replace("\u201d", " ")
+    value = value.replace('"', " ").replace("'", " ")
+    value = re.sub(r"\bwi[\s-]?fi\b", "wifi", value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _query_terms(query: str) -> list[str]:
+    normalized = _normalize_query_text(query)
+    return [
+        term for term in normalized.split()
+        if len(term) > 1 and term not in _SOFT_STOPWORDS
+    ]
+
+
+def _custom_fields_from_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw = payload.get("custom_fields")
+    fields: list[dict[str, str]] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            label = _clip(item.get("label"), 80)
+            value = _clip(item.get("value"), _MAX_FIELD_LEN)
+            if label or value:
+                fields.append({"label": label, "value": value})
+    elif isinstance(raw, dict):
+        for label, value in raw.items():
+            label_s = _clip(label, 80)
+            value_s = _clip(value, _MAX_FIELD_LEN)
+            if label_s or value_s:
+                fields.append({"label": label_s, "value": value_s})
+    return fields
+
+
+def _payload_search_text(payload: dict[str, Any], item: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key_name in (
+        "title", "value", "body", "category", "memory_type", "subject",
+        "subject_display", "relationship", "attribute", "place",
+    ):
+        parts.append(str(payload.get(key_name) or item.get(key_name) or ""))
+    tags = payload.get("tags") or item.get("tags") or []
+    if isinstance(tags, list):
+        parts.extend(str(t) for t in tags)
+    for field in _custom_fields_from_payload(payload):
+        parts.append(field.get("label") or "")
+        parts.append(field.get("value") or "")
+    return _normalize_query_text(" ".join(parts))
+
+
+def _score_payload_match(
+    payload: dict[str, Any],
+    item: dict[str, Any],
+    query: str,
+    *,
+    exact_title: bool = False,
+    memory_type: Optional[str] = None,
+) -> int:
+    if memory_type and item.get("memory_type") != _safe_memory_type(memory_type):
+        return 0
+    q = _normalize_query_text(query)
+    terms = _query_terms(query)
+    if not q and not terms:
+        return 0
+
+    title_norm = _normalize_query_text(str(item.get("title") or ""))
+    haystack = _payload_search_text(payload, item)
+
+    score = 0
+    if exact_title:
+        if title_norm == q:
+            score += 120
+        elif q and q in title_norm:
+            score += 70
+        else:
+            return 0
+    elif q and q in haystack:
+        score += 40
+
+    def _term_matches(term: str) -> bool:
+        if term in haystack:
+            return True
+        synonyms = {
+            "childhood": ("child", "childhood"),
+            "wifi": ("wifi", "wi fi", "wi-fi"),
+            "mother": ("mother", "mom", "mum", "mama"),
+            "mom": ("mother", "mom", "mum", "mama"),
+        }
+        return any(s in haystack for s in synonyms.get(term, ()))
+
+    matched_terms = sum(1 for t in terms if _term_matches(t))
+    if terms:
+        if matched_terms == 0:
+            return 0
+        score += matched_terms * 12
+        if matched_terms == len(terms):
+            score += 25
+    if title_norm and q and q in title_norm:
+        score += 20
+    if memory_type:
+        score += 10
+    return score
+
+
+def _search_memory_payloads(
+    *,
+    vault_id: str,
+    key: bytes,
+    query: str,
+    exact_title: bool = False,
+    memory_type: Optional[str] = None,
+    limit: int = 10,
+) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
+    conn = None
+    matches: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=RealDictCursor) if RealDictCursor else conn.cursor()
+        rows = _fetch_active_rows(cur, vault_id, limit=1000)
+        for row in rows:
+            payload = _decode_payload(row.get("payload_ciphertext"), key)
+            if not payload or payload.get("status") != "active":
+                continue
+            item = _safe_item_from_payload(row, payload)
+            score = _score_payload_match(
+                payload,
+                item,
+                query,
+                exact_title=exact_title,
+                memory_type=memory_type,
+            )
+            if score > 0:
+                matches.append((score, item, payload))
+    finally:
+        if conn is not None:
+            conn.close()
+    matches.sort(
+        key=lambda triplet: (
+            -triplet[0],
+            str(triplet[1].get("title") or "").lower(),
+        )
+    )
+    return matches[: max(1, min(int(limit or 10), 25))]
+
+
+def _generic_query_from_text(text: str) -> Optional[PersonalMemoryIntent]:
+    m = _GENERIC_TITLE_RECALL_RE.match(text)
+    if m:
+        title = _strip_terminal_punct(m.group("title"))
+        return PersonalMemoryIntent(
+            action="generic_recall",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="generic",
+            title=title,
+            value=title,
+            canonical_key_override=f"query:title:{_slug(title)}",
+        )
+
+    m = _GENERIC_CONTAINING_RECALL_RE.match(text)
+    if m:
+        query = _strip_terminal_punct(m.group("query"))
+        return PersonalMemoryIntent(
+            action="generic_recall",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="generic",
+            title=query,
+            value=query,
+            memory_type="note",
+            canonical_key_override=f"query:note:{_slug(query)}",
+        )
+
+    for regex in (
+        _GENERIC_NOTE_ABOUT_RECALL_RE,
+        _GENERIC_HAVE_ABOUT_RECALL_RE,
+        _GENERIC_ABOUT_RECALL_RE,
+        _GENERIC_SAVED_RECALL_RE,
+        _GENERIC_WHAT_RECALL_RE,
+        _GENERIC_DIRECT_RECALL_RE,
+    ):
+        m = regex.match(text)
+        if not m:
+            continue
+        query = _strip_terminal_punct(m.group("query"))
+        memory_type = "preference" if "preference" in query.lower() else "note"
+        if "travel" in query.lower():
+            memory_type = "travel"
+        return PersonalMemoryIntent(
+            action="generic_recall",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="generic",
+            title=query,
+            value=query,
+            memory_type=memory_type if memory_type != "note" else "note",
+            canonical_key_override=f"query:generic:{_slug(query)}",
+        )
+
+    return None
+
+
+def _generic_forget_intent(text: str) -> Optional[PersonalMemoryIntent]:
+    m = _GENERIC_FORGET_RE.match(text)
+    if not m:
+        return None
+    query = _strip_terminal_punct(m.group("query"))
+    if not query:
+        return None
+    if _normalize_query_text(query) in {"it", "this", "that"}:
+        return None
+    return PersonalMemoryIntent(
+        action="generic_forget",
+        subject="self",
+        subject_display="your",
+        relationship="self",
+        attribute="generic",
+        title=query,
+        value=query,
+        canonical_key_override=f"query:forget:{_slug(query)}",
+    )
+
+
+def _generic_update_intent(text: str) -> Optional[PersonalMemoryIntent]:
+    m = _GENERIC_UPDATE_RE.match(text)
+    if not m:
+        return None
+    query = _strip_terminal_punct(m.group("query"))
+    value = _clip(_strip_terminal_punct(m.group("value")))
+    if not query or not value:
+        return None
+    return PersonalMemoryIntent(
+        action="generic_update",
+        subject="self",
+        subject_display="your",
+        relationship="self",
+        attribute="generic",
+        title=query,
+        value=query,
+        display_value=value,
+        body=value,
+        canonical_key_override=f"query:update:{_slug(query)}",
+    )
 
 
 def _row_to_dict(row: Any, columns: tuple[str, ...]) -> Optional[dict[str, Any]]:
@@ -948,6 +1293,7 @@ def _safe_item_from_payload(row: dict[str, Any], payload: dict[str, Any]) -> dic
             str(t) for t in (payload.get("tags") or [])
             if isinstance(t, str) and t
         ],
+        "custom_fields": _custom_fields_from_payload(payload),
         "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else None,
         "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else None,
     }
@@ -1061,6 +1407,166 @@ def _recall_memory(vault_id: str, key: bytes, intent: PersonalMemoryIntent) -> s
     if not payload or payload.get("status") != "active":
         return _missing_text(intent)
     return _recall_text(intent, payload)
+
+
+def _generic_no_match_text(query: str) -> str:
+    label = _clip(query, 120)
+    if not label:
+        return "I don't have a matching memory saved yet."
+    return f"I don't have a matching memory for {label!r} saved yet."
+
+
+def _format_memory_match(item: dict[str, Any], payload: dict[str, Any]) -> str:
+    title = str(item.get("title") or "Memory").strip() or "Memory"
+    value = str(
+        item.get("value") or item.get("body") or payload.get("display_value") or ""
+    ).strip()
+    fields = _custom_fields_from_payload(payload)
+    if fields:
+        field_text = "; ".join(
+            f"{f.get('label')}: {f.get('value')}"
+            for f in fields[:6]
+            if f.get("label") or f.get("value")
+        )
+        if field_text:
+            value = f"{value}\n{field_text}" if value else field_text
+    return f"{title}: {value}" if value else title
+
+
+def _generic_recall_memory(vault_id: str, key: bytes, intent: PersonalMemoryIntent) -> str:
+    query = intent.value or intent.title
+    exact_title = str(intent.canonical_key_override or "").startswith("query:title:")
+    memory_type = None
+    if "preference" in (query or "").lower():
+        memory_type = "preference"
+    elif "travel" in (query or "").lower():
+        memory_type = "travel"
+    elif str(intent.canonical_key_override or "").startswith("query:note:"):
+        memory_type = "note"
+    try:
+        matches = _search_memory_payloads(
+            vault_id=vault_id,
+            key=key,
+            query=query or "",
+            exact_title=exact_title,
+            memory_type=memory_type,
+            limit=8,
+        )
+    except Exception as exc:
+        logger.warning(
+            "personal memory generic recall failed vault=%s error_type=%s",
+            (vault_id or "")[:8],
+            type(exc).__name__,
+        )
+        return "I couldn't check your memories right now. Please try again."
+    if not matches:
+        return _generic_no_match_text(query or "")
+    if len(matches) == 1:
+        _, item, payload = matches[0]
+        return _format_memory_match(item, payload)
+
+    lines = [
+        f"I found {len(matches)} matching memories for {query!r}:",
+    ]
+    for _, item, payload in matches[:6]:
+        title = str(item.get("title") or "Memory").strip() or "Memory"
+        type_label = str(item.get("memory_type") or "note")
+        summary = str(item.get("body") or item.get("value") or "").strip()
+        if len(summary) > 90:
+            summary = summary[:87].rstrip() + "..."
+        lines.append(f"- {title} ({type_label})" + (f": {summary}" if summary else ""))
+    lines.append("Ask for one by title if you want the exact value.")
+    return "\n".join(lines)
+
+
+def _generic_forget_memory(vault_id: str, key: bytes, intent: PersonalMemoryIntent) -> str:
+    query = intent.value or intent.title
+    try:
+        matches = _search_memory_payloads(
+            vault_id=vault_id,
+            key=key,
+            query=query or "",
+            exact_title=False,
+            limit=5,
+        )
+    except Exception as exc:
+        logger.warning(
+            "personal memory generic forget search failed vault=%s error_type=%s",
+            (vault_id or "")[:8],
+            type(exc).__name__,
+        )
+        return "I couldn't check that memory right now. Please try again."
+    if not matches:
+        return _generic_no_match_text(query or "")
+    if len(matches) > 1:
+        titles = [
+            str(item.get("title") or "Memory").strip() or "Memory"
+            for _, item, _ in matches[:5]
+        ]
+        return (
+            "I found multiple matching memories. Please tell me which one to "
+            f"forget: {', '.join(titles)}."
+        )
+    _, item, _payload = matches[0]
+    memory_id = int(item.get("id") or 0)
+    if memory_id <= 0:
+        return "I couldn't forget that memory right now. Please try again."
+    deleted = delete_memory_item(vault_id=vault_id, key=key, memory_id=memory_id)
+    if not deleted.get("ok"):
+        return str(deleted.get("message") or "I couldn't forget that memory.")
+    title = str(item.get("title") or "Memory").strip() or "Memory"
+    return f"Forgot {title}."
+
+
+def _generic_update_memory(vault_id: str, key: bytes, intent: PersonalMemoryIntent,
+                           *, source_message_id: Optional[str]) -> str:
+    query = intent.value or intent.title
+    new_value = intent.display_value or intent.body
+    if not new_value:
+        return "I can update that memory, but I need the new value first."
+    try:
+        matches = _search_memory_payloads(
+            vault_id=vault_id,
+            key=key,
+            query=query or "",
+            exact_title=False,
+            limit=5,
+        )
+    except Exception as exc:
+        logger.warning(
+            "personal memory generic update search failed vault=%s error_type=%s",
+            (vault_id or "")[:8],
+            type(exc).__name__,
+        )
+        return "I couldn't check that memory right now. Please try again."
+    if not matches:
+        return _generic_no_match_text(query or "")
+    if len(matches) > 1:
+        titles = [
+            str(item.get("title") or "Memory").strip() or "Memory"
+            for _, item, _ in matches[:5]
+        ]
+        return (
+            "I found multiple matching memories. Please tell me which one to "
+            f"update: {', '.join(titles)}."
+        )
+
+    _, item, payload = matches[0]
+    merged = {**payload}
+    merged["value"] = _clip(new_value)
+    merged["body"] = _clip(new_value, 1000)
+    merged["display_value"] = _clip(new_value)
+    merged["source_message_id"] = source_message_id
+    result = update_memory_item(
+        vault_id=vault_id,
+        key=key,
+        memory_id=int(item.get("id") or 0),
+        payload=merged,
+    )
+    if not result.get("ok"):
+        return str(result.get("message") or "I couldn't update that memory.")
+    title = str(item.get("title") or "Memory").strip() or "Memory"
+    return f"Updated: {title}."
 
 
 def _forget_memory(vault_id: str, key: bytes, intent: PersonalMemoryIntent) -> str:
@@ -1257,11 +1763,7 @@ def list_memory_items(
             if filt and item.get("memory_type") != filt:
                 continue
             if q:
-                haystack = " ".join(
-                    str(item.get(k) or "")
-                    for k in ("title", "value", "body", "category", "memory_type")
-                ).lower()
-                if q not in haystack:
+                if _score_payload_match(payload, item, q, memory_type=filt) <= 0:
                     continue
             items.append(item)
         counts: dict[str, int] = {}
@@ -1381,14 +1883,24 @@ def build_payload_from_request(data: dict[str, Any]) -> dict[str, Any]:
     if event_date is not None:
         event_date = _clip(event_date, 40)
     tags_raw = data.get("tags")
+    if isinstance(tags_raw, str):
+        tag_values = re.split(r"[,#]", tags_raw)
+    elif isinstance(tags_raw, list):
+        tag_values = tags_raw
+    else:
+        tag_values = []
     tags = [
         _clip(t, 40)
-        for t in tags_raw
+        for t in tag_values
         if isinstance(t, str) and t.strip()
-    ] if isinstance(tags_raw, list) else []
+    ]
+    custom_fields = _custom_fields_from_payload(data)
     canonical = data.get("canonical_key")
     if not canonical:
-        if attribute == "note" and subject == "self":
+        title_slug = _slug(title)
+        if attribute == "note" and subject == "self" and title_slug != "memory":
+            canonical = f"memory:{title_slug}"
+        elif attribute == "note" and subject == "self":
             canonical = f"note:{uuid.uuid4().hex}"
         else:
             canonical = f"{subject}:{attribute}"
@@ -1409,6 +1921,7 @@ def build_payload_from_request(data: dict[str, Any]) -> dict[str, Any]:
         "display_value": _clip(data.get("display_value") or value),
         "place": data.get("place"),
         "tags": tags,
+        "custom_fields": custom_fields,
         "source": "explicit_user_memory",
         "status": "active",
         "canonical_key": _clip(canonical, 180),
@@ -1430,11 +1943,7 @@ def handle_personal_memory_turn(
     if intent.action == "save_pending":
         pending = _peek_pending_proposal(vault_id, session_id)
         if pending is None:
-            # Bare "save it" is also used by generated-login drafts. Do not
-            # steal that flow unless this is explicitly a memory save command.
-            if _MEMORY_SAVE_PENDING_RE.match(_clean_message(message)):
-                return "I don't have a pending memory proposal to save."
-            return None
+            return "There isn't a memory waiting to be saved."
         _pop_pending_proposal(vault_id, session_id)
         saved = save_memory_payload(
             vault_id=vault_id,
@@ -1466,4 +1975,15 @@ def handle_personal_memory_turn(
         return _recall_memory(vault_id, key, intent)
     if intent.action == "forget":
         return _forget_memory(vault_id, key, intent)
+    if intent.action == "generic_recall":
+        return _generic_recall_memory(vault_id, key, intent)
+    if intent.action == "generic_forget":
+        return _generic_forget_memory(vault_id, key, intent)
+    if intent.action == "generic_update":
+        return _generic_update_memory(
+            vault_id,
+            key,
+            intent,
+            source_message_id=source_message_id,
+        )
     return None

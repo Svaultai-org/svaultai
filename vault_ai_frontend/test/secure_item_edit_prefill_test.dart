@@ -1,5 +1,3 @@
-
-
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -9,18 +7,14 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/ui/secure_item_detail.dart';
 
-
 Future<void> _pump(WidgetTester tester, Widget body) async {
   await tester.binding.setSurfaceSize(const Size(900, 800));
   await tester.pumpWidget(MaterialApp(
       localizationsDelegates: _testL10nDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,home: Scaffold(body: body)));
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: body)));
   await tester.pumpAndSettle();
 }
-
-
-
-
 
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   AppLocalizations.delegate,
@@ -28,7 +22,6 @@ const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   GlobalWidgetsLocalizations.delegate,
   GlobalCupertinoLocalizations.delegate,
 ];
-
 
 void main() {
   group('SecureItemEditDialog — initialFields prefill', () {
@@ -41,26 +34,33 @@ void main() {
           initialFields: const {
             'username': 'snoworchard686',
             'password': 'YOWlu)c*XlqDjw6z%w6V',
+            'url': 'https://instagram.example',
           },
           onSave: ({
             required String oldTitle,
             required String itemType,
             required String newTitle,
             required Map<String, String> fields,
-          }) async => true,
+          }) async =>
+              true,
         ),
       );
-      
+
       final username = tester.widget<TextField>(
         find.byKey(const Key('secure_item_edit_username')),
       );
       expect(username.controller?.text, 'snoworchard686');
-      
+
       final pw = tester.widget<TextField>(
         find.byKey(const Key('secure_item_edit_password')),
       );
       expect(pw.controller?.text, 'YOWlu)c*XlqDjw6z%w6V');
       expect(pw.obscureText, isTrue);
+
+      final url = tester.widget<TextField>(
+        find.byKey(const Key('secure_item_edit_url')),
+      );
+      expect(url.controller?.text, 'https://instagram.example');
     });
 
     testWidgets('IMEI dialog prefills imei_1', (tester) async {
@@ -75,7 +75,8 @@ void main() {
             required String itemType,
             required String newTitle,
             required Map<String, String> fields,
-          }) async => true,
+          }) async =>
+              true,
         ),
       );
       final imei = tester.widget<TextField>(
@@ -84,8 +85,7 @@ void main() {
       expect(imei.controller?.text, '352099001761481');
     });
 
-    testWidgets('private note dialog prefills private_value',
-        (tester) async {
+    testWidgets('private note dialog prefills private_value', (tester) async {
       await _pump(
         tester,
         SecureItemEditDialog(
@@ -99,18 +99,17 @@ void main() {
             required String itemType,
             required String newTitle,
             required Map<String, String> fields,
-          }) async => true,
+          }) async =>
+              true,
         ),
       );
       final note = tester.widget<TextField>(
         find.byKey(const Key('secure_item_edit_private_value')),
       );
-      expect(note.controller?.text,
-          'blue tiger sleeps under the willow');
+      expect(note.controller?.text, 'blue tiger sleeps under the willow');
     });
 
-    testWidgets('license_key dialog prefills license_key',
-        (tester) async {
+    testWidgets('license_key dialog prefills license_key', (tester) async {
       await _pump(
         tester,
         SecureItemEditDialog(
@@ -122,7 +121,8 @@ void main() {
             required String itemType,
             required String newTitle,
             required Map<String, String> fields,
-          }) async => true,
+          }) async =>
+              true,
         ),
       );
       final key = tester.widget<TextField>(
@@ -133,34 +133,32 @@ void main() {
 
     testWidgets('extra initialFields keys are silently ignored',
         (tester) async {
-      
-      
       await _pump(
         tester,
         SecureItemEditDialog(
           title: 'iPhone 15 IMEI',
           itemType: 'imei',
           initialFields: const {
-            'imei_1':   '352099001761481',
+            'imei_1': '352099001761481',
             'username': 'should-be-ignored',
             'password': 'should-be-ignored',
             'category': 'imei',
-            'title':    'iPhone 15 IMEI',
+            'title': 'iPhone 15 IMEI',
           },
           onSave: ({
             required String oldTitle,
             required String itemType,
             required String newTitle,
             required Map<String, String> fields,
-          }) async => true,
+          }) async =>
+              true,
         ),
       );
       final imei = tester.widget<TextField>(
         find.byKey(const Key('secure_item_edit_imei_1')),
       );
       expect(imei.controller?.text, '352099001761481');
-      
-      
+
       expect(
         find.byKey(const Key('secure_item_edit_username')),
         findsNothing,
@@ -181,7 +179,8 @@ void main() {
               required String itemType,
               required String newTitle,
               required Map<String, String> fields,
-            }) async => true,
+            }) async =>
+                true,
           ),
         );
         final username = tester.widget<TextField>(
@@ -190,11 +189,41 @@ void main() {
         expect(username.controller?.text, '');
       },
     );
+
+    testWidgets('login dialog prefills extra fields as custom fields',
+        (tester) async {
+      await _pump(
+        tester,
+        SecureItemEditDialog(
+          title: 'Bank',
+          itemType: 'login',
+          initialFields: const {
+            'username': 'account-user',
+            'password': 'bank-secret',
+            'Customer ID': 'CUST-42',
+          },
+          onSave: ({
+            required String oldTitle,
+            required String itemType,
+            required String newTitle,
+            required Map<String, String> fields,
+          }) async =>
+              true,
+        ),
+      );
+      final label = tester.widget<TextField>(
+        find.byKey(const Key('secure_item_custom_label_0')),
+      );
+      final value = tester.widget<TextField>(
+        find.byKey(const Key('secure_item_custom_value_0')),
+      );
+      expect(label.controller?.text, 'Customer ID');
+      expect(value.controller?.text, 'CUST-42');
+      expect(value.obscureText, isTrue);
+    });
   });
 
-
-  group('SecureItemEditDialog — save round-trips prefilled values',
-      () {
+  group('SecureItemEditDialog — save round-trips prefilled values', () {
     testWidgets(
       'unchanged prefilled login Save sends the original values',
       (tester) async {
@@ -219,11 +248,10 @@ void main() {
             },
           ),
         );
-        
+
         await tester.tap(find.byKey(const Key('secure_item_edit_save')));
         await tester.pumpAndSettle();
-        
-        
+
         expect(saved, isNotNull);
         expect(saved!['username'], 'snoworchard686');
         expect(saved!['password'], 'YOWlu)c*XlqDjw6z%w6V');
@@ -231,9 +259,7 @@ void main() {
     );
   });
 
-
-  group('Source-level guards — main.dart fetches before opening',
-      () {
+  group('Source-level guards — main.dart fetches before opening', () {
     String _read(String relativePath) {
       return File(
         Directory.current.path + '/' + relativePath,
@@ -252,32 +278,27 @@ void main() {
       expect(
         exec,
         contains('Future<Map<String, dynamic>> getVaultSecureItem('),
-        reason:
-            'api_client.dart must declare the fetch helper so '
+        reason: 'api_client.dart must declare the fetch helper so '
             'the Edit dialog can pre-fill from the backend.',
       );
-      
+
       expect(exec, contains('/get-secure-item'));
     });
 
-    test('main.dart calls getVaultSecureItem before showing dialog',
-        () {
+    test('main.dart calls getVaultSecureItem before showing dialog', () {
       final src = _read('lib/main.dart');
       final exec = _stripDartComments(src);
-      
-      
+
       expect(exec, contains('client.getVaultSecureItem('));
-      
+
       expect(exec, contains('initialFields:'));
     });
 
-    test('secure_item_detail.dart wires initialFields into controllers',
-        () {
+    test('secure_item_detail.dart wires initialFields into controllers', () {
       final src = _read('lib/ui/secure_item_detail.dart');
       final exec = _stripDartComments(src);
       expect(exec, contains('initialFields'));
-      
-      
+
       expect(
         exec,
         contains("TextEditingController(text: init[f.key] ?? '')"),

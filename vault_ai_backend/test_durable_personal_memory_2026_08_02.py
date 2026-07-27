@@ -385,21 +385,36 @@ def test_save_it_persists_current_memory_proposal(memory_store):
 
 
 def test_bare_save_it_without_memory_proposal_does_not_steal_other_flows(memory_store):
-    assert dpm.handle_personal_memory_turn(
-        vault_id="vault-a",
-        key=_KEY,
-        message="save it",
-        source_message_id="no-proposal",
-        session_id="session-a",
-    ) is None
-    explicit = dpm.handle_personal_memory_turn(
-        vault_id="vault-a",
-        key=_KEY,
-        message="save memory",
-        source_message_id="no-proposal",
-        session_id="session-a",
-    )
-    assert explicit == "I don't have a pending memory proposal to save."
+    for text in (
+        "save it",
+        "Save it.",
+        "SAVE IT!",
+        "save that?",
+        "save this",
+        "save the memory",
+        "remember it.",
+        "save memory",
+    ):
+        reply = dpm.handle_personal_memory_turn(
+            vault_id="vault-a",
+            key=_KEY,
+            message=text,
+            source_message_id="no-proposal",
+            session_id="session-a",
+        )
+        assert reply == "There isn't a memory waiting to be saved."
+    assert memory_store.active_rows("vault-a") == []
+
+
+def test_generic_forget_does_not_steal_active_object_pronouns(memory_store):
+    for text in ("delete it", "remove this", "forget that"):
+        assert dpm.handle_personal_memory_turn(
+            vault_id="vault-a",
+            key=_KEY,
+            message=text,
+            source_message_id="active-object",
+            session_id="session-a",
+        ) is None
 
 
 def test_maiden_name_proposal_save_recall_update_and_forget(memory_store):
@@ -460,6 +475,88 @@ def test_travel_memory_immediate_after_save_and_encrypted_list(memory_store):
     _assert_plaintext_absent_from_persistent_columns(
         memory_store,
         ["Italy", "January 3, 2020", "2020-01-03"],
+    )
+
+
+def test_forget_birthday_accepts_normal_punctuation(memory_store):
+    _handle(memory_store, "remember my mom birthday is January 30, 1965")
+    for suffix in ("", ".", "!", "?"):
+        _handle(memory_store, "remember my mom birthday is January 30, 1965")
+        reply = _handle(memory_store, f"Please forget my mom's birthday{suffix}")
+        assert "Forgot" in reply
+        assert "don't have" in _handle(memory_store, "when is my mom's birthday")
+    _assert_no_plaintext_birthday_storage(memory_store)
+
+
+def test_generic_encrypted_memory_recall_and_custom_fields(memory_store):
+    saved = dpm.save_memory_payload(
+        vault_id="vault-a",
+        key=_KEY,
+        payload=dpm.build_payload_from_request({
+            "title": "OpenAI API key",
+            "value": "Structured memory",
+            "body": "OpenAI project access",
+            "memory_type": "note",
+            "category": "project",
+            "tags": ["api", "openai"],
+            "custom_fields": [
+                {"label": "API key", "value": "sk-memory-marker-123"},
+                {"label": "Server IP", "value": "10.50.60.70"},
+            ],
+        }),
+        source_message_id="manual-memory",
+        is_correction=True,
+    )
+    assert saved["ok"] is True
+
+    assert "sk-memory-marker-123" in _handle(
+        memory_store,
+        "What API key did I save?",
+    )
+    assert "10.50.60.70" in _handle(
+        memory_store,
+        "What was the server IP I saved?",
+    )
+    listed = dpm.list_memory_items(
+        vault_id="vault-a",
+        key=_KEY,
+        query="server ip",
+    )
+    assert listed["items"][0]["title"] == "OpenAI API key"
+    assert listed["items"][0]["custom_fields"][1] == {
+        "label": "Server IP",
+        "value": "10.50.60.70",
+    }
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["sk-memory-marker-123", "10.50.60.70"],
+    )
+
+
+def test_generic_memory_update_uses_existing_row(memory_store):
+    dpm.save_memory_payload(
+        vault_id="vault-a",
+        key=_KEY,
+        payload=dpm.build_payload_from_request({
+            "title": "Home Wi-Fi",
+            "value": "old-wifi-secret",
+            "body": "Home Wi-Fi password",
+            "memory_type": "note",
+            "tags": ["wifi"],
+        }),
+        source_message_id="manual-memory",
+        is_correction=True,
+    )
+    reply = _handle(memory_store, "update home Wi-Fi to new-wifi-secret")
+    assert "Updated" in reply
+    assert len(memory_store.active_rows("vault-a")) == 1
+    assert "new-wifi-secret" in _handle(
+        memory_store,
+        "What is the Wi-Fi password for my home network?",
+    )
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["old-wifi-secret", "new-wifi-secret"],
     )
 
 

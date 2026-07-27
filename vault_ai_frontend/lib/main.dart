@@ -2465,6 +2465,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
   final bool showActions;
   final bool isMobile;
   final VoidCallback? onMenuTap;
+  final VoidCallback? onCreateTap;
   final bool showMenuButton;
 
   const TopNavBar({
@@ -2472,6 +2473,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
     this.showActions = true,
     this.isMobile = false,
     this.onMenuTap,
+    this.onCreateTap,
     this.showMenuButton = false,
   });
 
@@ -2576,6 +2578,23 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                   ),
                 ),
               ] else ...[
+                if (app.unlocked && onCreateTap != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: isMobile
+                        ? IconButton(
+                            key: const Key('top_nav_create_button'),
+                            tooltip: 'Create',
+                            onPressed: onCreateTap,
+                            icon: const Icon(Icons.add_circle_outline),
+                          )
+                        : FilledButton.icon(
+                            key: const Key('top_nav_create_button'),
+                            onPressed: onCreateTap,
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('Create'),
+                          ),
+                  ),
                 if (app.unlocked) const _NotificationBell(),
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
@@ -5839,6 +5858,32 @@ class ChatDashboardPage extends StatefulWidget {
   State<ChatDashboardPage> createState() => _ChatDashboardPageState();
 }
 
+class _CreateChoiceTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _CreateChoiceTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.chevron_right),
+    );
+  }
+}
+
 class MemoryProposalStripResult {
   final String strippedBuffer;
   final String? jsonPayload;
@@ -5913,8 +5958,106 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _showCreateMenu() async {
+    final app = context.read<AppState>();
+    if (!app.authed || !app.unlocked) {
+      _showSnack('Unlock your vault first.');
+      return;
+    }
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+          child: Column(
+            key: const Key('vault_create_menu'),
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Create',
+                style: Theme.of(ctx).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              _CreateChoiceTile(
+                key: const Key('create_choice_login'),
+                icon: Icons.key_outlined,
+                title: 'Login',
+                subtitle: 'Credentials and access details',
+                onTap: () => Navigator.pop(ctx, 'login'),
+              ),
+              _CreateChoiceTile(
+                key: const Key('create_choice_file'),
+                icon: Icons.upload_file_outlined,
+                title: 'File',
+                subtitle: 'Documents, images, videos, and uploads',
+                onTap: () => Navigator.pop(ctx, 'file'),
+              ),
+              _CreateChoiceTile(
+                key: const Key('create_choice_memory'),
+                icon: Icons.auto_stories_outlined,
+                title: 'Memory',
+                subtitle: 'Notes, facts, keys, Wi-Fi details, and more',
+                onTap: () => Navigator.pop(ctx, 'memory'),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                key: const Key('create_menu_cancel'),
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(AppLocalizations.of(ctx).commonCancel),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    switch (choice) {
+      case 'login':
+        await _openSecureItemEditDialog('', 'login', createMode: true);
+        break;
+      case 'file':
+        await _pickFile();
+        break;
+      case 'memory':
+        await _openCreateMemoryDialog();
+        break;
+    }
+  }
+
+  Future<void> _openCreateMemoryDialog() async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) {
+      _showSnack('Session expired.');
+      return;
+    }
+    final data = await showMemoryEditorDialog(context);
+    if (data == null) return;
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.createMemory(
+        authToken: token,
+        vaultName: vaultName,
+        pin: pin,
+        data: data,
+      );
+      if (!mounted) return;
+      _showSnack('Memory saved');
+      setState(() => selectedSection = _DashboardSection.memory);
+      unawaited(app.refreshVaultStats());
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not save memory: $e');
+    }
+  }
+
   Future<void> _openSecureItemEditDialog(String service, String itemType,
-      {Map<String, String>? initialFields}) async {
+      {Map<String, String>? initialFields, bool createMode = false}) async {
     final app = context.read<AppState>();
 
     Map<String, String> resolved = initialFields ?? const {};
@@ -5950,6 +6093,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       context,
       title: service,
       itemType: itemType,
+      dialogTitle: createMode
+          ? 'New ${kSecureItemTypeLabelsForDetail[itemType] ?? 'saved item'}'
+          : null,
       initialFields: resolved,
       onSave: ({
         required String oldTitle,
@@ -5965,20 +6111,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         try {
           final pin = await _VaultCrypto.currentPinOrThrow();
           final client = VaultAIClient(baseUrl: backendBaseUrl);
+          final oldServiceForRequest =
+              oldTitle.trim().isEmpty ? newTitle : oldTitle;
           await client.updateVaultSecureItem(
             vaultName: app.vaultName!,
-            oldService: oldTitle,
+            oldService: oldServiceForRequest,
             itemType: itemType,
-            newService: newTitle == oldTitle ? null : newTitle,
+            newService: newTitle == oldServiceForRequest ? null : newTitle,
             fields: fields.isEmpty ? null : fields,
             pin: pin,
             authToken: token,
           );
 
           final isLogin = itemType == 'login' || itemType == 'credential';
-          _showSnack(isLogin ? 'Updated login' : 'Updated saved item');
+          _showSnack(createMode
+              ? (isLogin ? 'Login saved' : 'Saved item')
+              : (isLogin ? 'Updated login' : 'Updated saved item'));
           unawaited(_loadVaultLogins());
           unawaited(app.refreshVaultStats());
+          if (createMode && isLogin) {
+            setState(() => selectedSection = _DashboardSection.logins);
+          }
           return true;
         } catch (e) {
           if (app.handleApiException(e)) return false;
@@ -6234,10 +6387,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ));
             }
 
+            // dart format off
             final structuredNow =
                 _tryParseAssistantStructuredMessage(buffer);
             final _Msg replacement = structuredNow ??
                 _Msg('assistant', buffer);
+            // dart format on
             setState(() {
               if (assistantIndex == null) {
                 msgs.add(replacement);
@@ -6781,10 +6936,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       return;
                                     }
                                   }
+                                  // dart format off
                                   setLocal(() {
                                     pairingCode = result['pairing_code']?.toString();
                                     creating = false;
                                   });
+                                  // dart format on
                                   await _loadBeneficiaries();
                                 } catch (e) {
                                   if (app.handleApiException(e)) return;
@@ -13242,10 +13399,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ));
             }
 
+            // dart format off
             final structuredNow =
                 _tryParseAssistantStructuredMessage(buffer);
             final _Msg replacement = structuredNow ??
                 _Msg('assistant', buffer);
+            // dart format on
             setState(() {
               if (assistantIndex == null) {
                 msgs.add(replacement);
@@ -14801,6 +14960,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             isMobile: isMobile,
             showMenuButton: true,
             onMenuTap: () => _scaffoldKey.currentState?.openDrawer(),
+            onCreateTap: _showCreateMenu,
           ),
           body: _buildBody(isMobile),
         );

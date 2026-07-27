@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../api_client.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
@@ -131,6 +132,324 @@ const Map<String, Color> _memoryTypeAccents = {
   'note': VaultColors.textSecondary,
 };
 
+String _memoryRowRevealId(Map<String, dynamic> row) {
+  final id = '${row['id'] ?? ''}'.trim();
+  if (id.isNotEmpty) return id;
+  return '${row['title'] ?? row['memory_key'] ?? row.hashCode}';
+}
+
+List<Map<String, String>> _memoryCustomFields(Map<String, dynamic>? row) {
+  final raw = row?['custom_fields'];
+  final fields = <Map<String, String>>[];
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final label = '${item['label'] ?? ''}'.trim();
+      final value = '${item['value'] ?? ''}'.trim();
+      if (label.isNotEmpty || value.isNotEmpty) {
+        fields.add({'label': label, 'value': value});
+      }
+    }
+  } else if (raw is Map) {
+    for (final entry in raw.entries) {
+      final label = '${entry.key}'.trim();
+      final value = '${entry.value}'.trim();
+      if (label.isNotEmpty || value.isNotEmpty) {
+        fields.add({'label': label, 'value': value});
+      }
+    }
+  }
+  return fields;
+}
+
+String _memoryVisibleValue(Map<String, dynamic> row) {
+  final value = ((row['value'] ?? row['memory_value']) as String?) ?? '';
+  final body = (row['body'] as String?) ?? '';
+  final lines = <String>[];
+  if (value.trim().isNotEmpty) lines.add(value.trim());
+  if (body.trim().isNotEmpty && body.trim() != value.trim()) {
+    lines.add(body.trim());
+  }
+  for (final field in _memoryCustomFields(row)) {
+    final label = field['label'] ?? '';
+    final fieldValue = field['value'] ?? '';
+    if (label.isEmpty && fieldValue.isEmpty) continue;
+    if (label.isEmpty) {
+      lines.add(fieldValue);
+    } else if (fieldValue.isEmpty) {
+      lines.add(label);
+    } else {
+      lines.add('$label: $fieldValue');
+    }
+  }
+  return lines.join('\n');
+}
+
+class _MemoryCustomFieldCtrls {
+  final TextEditingController label;
+  final TextEditingController value;
+
+  _MemoryCustomFieldCtrls({
+    required this.label,
+    required this.value,
+  });
+
+  void dispose() {
+    label.dispose();
+    value.dispose();
+  }
+}
+
+Future<Map<String, dynamic>?> showMemoryEditorDialog(
+  BuildContext context, {
+  Map<String, dynamic>? row,
+}) async {
+  final titleCtrl = TextEditingController(
+    text: ((row?['title'] ?? row?['memory_key']) as String?) ?? '',
+  );
+  final valueCtrl = TextEditingController(
+    text: ((row?['value'] ?? row?['memory_value']) as String?) ?? '',
+  );
+  final dateCtrl = TextEditingController(
+    text: (row?['event_date'] as String?) ?? '',
+  );
+  final tagsRaw = row?['tags'];
+  final tagsCtrl = TextEditingController(
+    text: tagsRaw is List
+        ? tagsRaw.whereType<String>().join(', ')
+        : '${tagsRaw ?? ''}'.trim(),
+  );
+  final customCtrls = [
+    for (final field in _memoryCustomFields(row))
+      _MemoryCustomFieldCtrls(
+        label: TextEditingController(text: field['label'] ?? ''),
+        value: TextEditingController(text: field['value'] ?? ''),
+      ),
+  ];
+  var selectedType = (row?['memory_type'] as String?) ?? 'note';
+  selectedType = _normalizeMemoryType(selectedType);
+  String? localError;
+
+  Map<String, dynamic>? result;
+  try {
+    result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          void addField() {
+            setLocal(() {
+              customCtrls.add(_MemoryCustomFieldCtrls(
+                label: TextEditingController(),
+                value: TextEditingController(),
+              ));
+            });
+          }
+
+          void removeField(int index) {
+            final removed = customCtrls.removeAt(index);
+            removed.dispose();
+            setLocal(() {});
+          }
+
+          return AlertDialog(
+            title: Text(row == null ? 'New memory' : 'Edit memory'),
+            content: SizedBox(
+              width: 460,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      key: const Key('memory_dialog_title'),
+                      controller: titleCtrl,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    const SizedBox(height: VaultSpacing.md),
+                    TextField(
+                      key: const Key('memory_dialog_value'),
+                      controller: valueCtrl,
+                      minLines: 2,
+                      maxLines: 5,
+                      decoration: const InputDecoration(labelText: 'Memory'),
+                    ),
+                    const SizedBox(height: VaultSpacing.md),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedType,
+                      decoration:
+                          const InputDecoration(labelText: 'Type or category'),
+                      items: _memoryTypeOrder
+                          .map((type) => DropdownMenuItem(
+                                value: _normalizeMemoryType(type),
+                                child: Text(
+                                  _memoryTypeLabel(
+                                    AppLocalizations.of(context),
+                                    _normalizeMemoryType(type),
+                                  ),
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) setLocal(() => selectedType = v);
+                      },
+                    ),
+                    const SizedBox(height: VaultSpacing.md),
+                    TextField(
+                      key: const Key('memory_dialog_tags'),
+                      controller: tagsCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Tags',
+                        hintText: 'travel, family, project',
+                      ),
+                    ),
+                    const SizedBox(height: VaultSpacing.md),
+                    TextField(
+                      key: const Key('memory_dialog_event_date'),
+                      controller: dateCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Date',
+                        hintText: 'YYYY-MM-DD',
+                      ),
+                    ),
+                    const SizedBox(height: VaultSpacing.md),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Custom fields',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ),
+                    for (var i = 0; i < customCtrls.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(top: VaultSpacing.sm),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                key: Key('memory_dialog_custom_label_$i'),
+                                controller: customCtrls[i].label,
+                                decoration: const InputDecoration(
+                                  labelText: 'Field label',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: VaultSpacing.sm),
+                            Expanded(
+                              child: TextField(
+                                key: Key('memory_dialog_custom_value_$i'),
+                                controller: customCtrls[i].value,
+                                obscureText: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Value',
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              key: Key('memory_dialog_custom_remove_$i'),
+                              tooltip: 'Remove field',
+                              onPressed: () => removeField(i),
+                              icon: const Icon(Icons.close, size: 18),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: VaultSpacing.sm),
+                    OutlinedButton.icon(
+                      key: const Key('memory_dialog_add_field'),
+                      onPressed: addField,
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Add field'),
+                    ),
+                    if (localError != null) ...[
+                      const SizedBox(height: VaultSpacing.md),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          localError!,
+                          style:
+                              const TextStyle(color: VaultColors.severityCrit),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                key: const Key('memory_dialog_save'),
+                onPressed: () {
+                  final customFields = <Map<String, String>>[];
+                  for (final field in customCtrls) {
+                    final label = field.label.text.trim();
+                    final value = field.value.text.trim();
+                    if (label.isEmpty && value.isEmpty) continue;
+                    customFields.add({'label': label, 'value': value});
+                  }
+                  final valueText = valueCtrl.text.trim();
+                  if (valueText.isEmpty && customFields.isEmpty) {
+                    setLocal(() {
+                      localError = 'Add memory text or a custom field first';
+                    });
+                    return;
+                  }
+                  final title = titleCtrl.text.trim().isEmpty
+                      ? 'Memory'
+                      : titleCtrl.text.trim();
+                  final eventDate = dateCtrl.text.trim();
+                  final tags = tagsCtrl.text
+                      .split(RegExp(r'[,#]'))
+                      .map((t) => t.trim())
+                      .where((t) => t.isNotEmpty)
+                      .toList();
+                  final effectiveValue =
+                      valueText.isEmpty ? 'Structured memory' : valueText;
+                  Navigator.pop(ctx, <String, dynamic>{
+                    'title': title,
+                    'value': effectiveValue,
+                    'body': valueText,
+                    'memory_type': selectedType,
+                    'category': row?['category'] ?? selectedType,
+                    'subject': row?['subject'] ?? 'self',
+                    'subject_display': row?['subject_display'] ?? 'your',
+                    'relationship': row?['relationship'] ?? 'self',
+                    'attribute': row?['attribute'] ?? 'note',
+                    if (eventDate.isNotEmpty) 'event_date': eventDate,
+                    if (row?['place'] != null) 'place': row?['place'],
+                    if (tags.isNotEmpty) 'tags': tags,
+                    if (customFields.isNotEmpty) 'custom_fields': customFields,
+                  });
+                },
+                icon: const Icon(Icons.check_rounded, size: 18),
+                label: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  } finally {
+    // showDialog completes as the route begins closing; defer disposal so
+    // TextField animations do not read controllers during the final frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        titleCtrl.dispose();
+        valueCtrl.dispose();
+        dateCtrl.dispose();
+        tagsCtrl.dispose();
+        for (final row in customCtrls) {
+          row.dispose();
+        }
+      });
+    });
+  }
+  return result;
+}
+
 class MemoryPage extends StatefulWidget {
   final VaultAIClient client;
   final String authToken;
@@ -161,6 +480,7 @@ class _MemoryPageState extends State<MemoryPage> {
   String? _typeFilter;
   final TextEditingController _searchCtrl = TextEditingController();
   String _searchQuery = '';
+  final Set<String> _revealedMemoryIds = <String>{};
 
   @override
   void initState() {
@@ -170,6 +490,7 @@ class _MemoryPageState extends State<MemoryPage> {
 
   @override
   void dispose() {
+    _revealedMemoryIds.clear();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -179,6 +500,7 @@ class _MemoryPageState extends State<MemoryPage> {
     super.didUpdateWidget(old);
     if (old.vaultName != widget.vaultName ||
         old.authToken != widget.authToken) {
+      _revealedMemoryIds.clear();
       _load();
     }
   }
@@ -188,6 +510,7 @@ class _MemoryPageState extends State<MemoryPage> {
     setState(() {
       _loading = true;
       _error = null;
+      _revealedMemoryIds.clear();
     });
     try {
       final pinProvider = widget.pinProvider;
@@ -236,11 +559,20 @@ class _MemoryPageState extends State<MemoryPage> {
       final body = (m['body'] as String? ?? '').toLowerCase();
       final category = (m['category'] as String? ?? '').toLowerCase();
       final type = (m['memory_type'] as String? ?? '').toLowerCase();
+      final tags = (m['tags'] is List)
+          ? (m['tags'] as List).whereType<String>().join(' ').toLowerCase()
+          : '';
+      final custom = _memoryCustomFields(m)
+          .map((f) => '${f['label'] ?? ''} ${f['value'] ?? ''}')
+          .join(' ')
+          .toLowerCase();
       return key.contains(query) ||
           val.contains(query) ||
           body.contains(query) ||
           category.contains(query) ||
-          type.contains(query);
+          type.contains(query) ||
+          tags.contains(query) ||
+          custom.contains(query);
     }).toList();
   }
 
@@ -321,124 +653,24 @@ class _MemoryPageState extends State<MemoryPage> {
               onAskVaultAI: widget.onAskVaultAI,
               onEdit: (row) => _showMemoryDialog(row: row),
               onDelete: _deleteMemory,
+              isRevealed: (row) =>
+                  _revealedMemoryIds.contains(_memoryRowRevealId(row)),
+              onReveal: (row) => setState(() {
+                _revealedMemoryIds.add(_memoryRowRevealId(row));
+              }),
+              onHide: (row) => setState(() {
+                _revealedMemoryIds.remove(_memoryRowRevealId(row));
+              }),
+              onCopy: _copyMemoryValue,
             ),
       ],
     );
   }
 
   Future<void> _showMemoryDialog({Map<String, dynamic>? row}) async {
-    final titleCtrl = TextEditingController(
-      text: ((row?['title'] ?? row?['memory_key']) as String?) ?? '',
-    );
-    final valueCtrl = TextEditingController(
-      text: ((row?['value'] ?? row?['memory_value']) as String?) ?? '',
-    );
-    final dateCtrl = TextEditingController(
-      text: (row?['event_date'] as String?) ?? '',
-    );
-    var selectedType = (row?['memory_type'] as String?) ?? 'note';
-    selectedType = _normalizeMemoryType(selectedType);
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(row == null ? 'New memory' : 'Edit memory'),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  key: const Key('memory_dialog_title'),
-                  controller: titleCtrl,
-                  decoration: const InputDecoration(labelText: 'Title'),
-                ),
-                const SizedBox(height: VaultSpacing.md),
-                TextField(
-                  key: const Key('memory_dialog_value'),
-                  controller: valueCtrl,
-                  minLines: 2,
-                  maxLines: 5,
-                  decoration: const InputDecoration(labelText: 'Memory'),
-                ),
-                const SizedBox(height: VaultSpacing.md),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedType,
-                  decoration: const InputDecoration(labelText: 'Type'),
-                  items: _memoryTypeOrder
-                      .map((type) => DropdownMenuItem(
-                            value: _normalizeMemoryType(type),
-                            child: Text(
-                              _memoryTypeLabel(
-                                AppLocalizations.of(context),
-                                _normalizeMemoryType(type),
-                              ),
-                            ),
-                          ))
-                      .toList(),
-                  onChanged: (v) {
-                    if (v != null) setLocal(() => selectedType = v);
-                  },
-                ),
-                const SizedBox(height: VaultSpacing.md),
-                TextField(
-                  key: const Key('memory_dialog_event_date'),
-                  controller: dateCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Date',
-                    hintText: 'YYYY-MM-DD',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(ctx, true),
-              icon: const Icon(Icons.check_rounded, size: 18),
-              label: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (saved != true) {
-      titleCtrl.dispose();
-      valueCtrl.dispose();
-      dateCtrl.dispose();
-      return;
-    }
-    final title = titleCtrl.text.trim();
-    final value = valueCtrl.text.trim();
-    final eventDate = dateCtrl.text.trim();
-    titleCtrl.dispose();
-    valueCtrl.dispose();
-    dateCtrl.dispose();
-    if (title.isEmpty || value.isEmpty) {
-      _showSnack('Add a title and memory first');
-      return;
-    }
-    await _persistMemoryDialog(
-      row: row,
-      data: <String, dynamic>{
-        'title': title,
-        'value': value,
-        'body': value,
-        'memory_type': selectedType,
-        'category': row?['category'] ?? selectedType,
-        'subject': row?['subject'] ?? 'self',
-        'subject_display': row?['subject_display'] ?? 'your',
-        'relationship': row?['relationship'] ?? 'self',
-        'attribute': row?['attribute'] ?? 'note',
-        if (eventDate.isNotEmpty) 'event_date': eventDate,
-        if (row?['place'] != null) 'place': row?['place'],
-        if (row?['tags'] is List) 'tags': row?['tags'],
-      },
-    );
+    final data = await showMemoryEditorDialog(context, row: row);
+    if (data == null) return;
+    await _persistMemoryDialog(row: row, data: data);
   }
 
   Future<void> _persistMemoryDialog({
@@ -522,6 +754,22 @@ class _MemoryPageState extends State<MemoryPage> {
       if (!mounted) return;
       _showSnack('Could not delete memory');
     }
+  }
+
+  Future<void> _copyMemoryValue(Map<String, dynamic> row) async {
+    final id = _memoryRowRevealId(row);
+    if (!_revealedMemoryIds.contains(id)) {
+      _showSnack('Reveal this memory before copying it.');
+      return;
+    }
+    final value = _memoryVisibleValue(row);
+    if (value.trim().isEmpty) {
+      _showSnack('Nothing to copy.');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    _showSnack('Copied memory');
   }
 
   void _showSnack(String text) {
@@ -741,11 +989,19 @@ class _YearGroup extends StatelessWidget {
   final void Function(String prompt)? onAskVaultAI;
   final void Function(Map<String, dynamic> row)? onEdit;
   final void Function(Map<String, dynamic> row)? onDelete;
+  final bool Function(Map<String, dynamic> row) isRevealed;
+  final void Function(Map<String, dynamic> row) onReveal;
+  final void Function(Map<String, dynamic> row) onHide;
+  final void Function(Map<String, dynamic> row) onCopy;
 
   const _YearGroup({
     required this.year,
     required this.items,
     required this.isMobile,
+    required this.isRevealed,
+    required this.onReveal,
+    required this.onHide,
+    required this.onCopy,
     this.onAskVaultAI,
     this.onEdit,
     this.onDelete,
@@ -769,9 +1025,13 @@ class _YearGroup extends StatelessWidget {
                 delay: Duration(milliseconds: 25 * i),
                 child: _MemoryRowCard(
                   row: items[i],
+                  revealed: isRevealed(items[i]),
                   onAskVaultAI: onAskVaultAI,
                   onEdit: onEdit == null ? null : () => onEdit!(items[i]),
                   onDelete: onDelete == null ? null : () => onDelete!(items[i]),
+                  onReveal: () => onReveal(items[i]),
+                  onHide: () => onHide(items[i]),
+                  onCopy: () => onCopy(items[i]),
                 ),
               ),
             ),
@@ -783,12 +1043,20 @@ class _YearGroup extends StatelessWidget {
 
 class _MemoryRowCard extends StatelessWidget {
   final Map<String, dynamic> row;
+  final bool revealed;
   final void Function(String prompt)? onAskVaultAI;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final VoidCallback onReveal;
+  final VoidCallback onHide;
+  final VoidCallback onCopy;
 
   const _MemoryRowCard({
     required this.row,
+    required this.revealed,
+    required this.onReveal,
+    required this.onHide,
+    required this.onCopy,
     this.onAskVaultAI,
     this.onEdit,
     this.onDelete,
@@ -800,10 +1068,12 @@ class _MemoryRowCard extends StatelessWidget {
     final type =
         _normalizeMemoryType((row['memory_type'] as String?) ?? 'note');
     final key = ((row['title'] ?? row['memory_key']) as String?) ?? '';
-    final value = ((row['value'] ?? row['memory_value']) as String?) ?? '';
-    final body = (row['body'] as String?) ?? '';
+    final visibleValue = _memoryVisibleValue(row);
     final eventDate = (row['event_date'] as String?) ?? '';
     final updatedAt = (row['updated_at'] as String?) ?? '';
+    final tags = (row['tags'] is List)
+        ? (row['tags'] as List).whereType<String>().toList()
+        : const <String>[];
     final confidence = (row['confidence'] is num)
         ? (row['confidence'] as num).toDouble()
         : 1.0;
@@ -837,17 +1107,19 @@ class _MemoryRowCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (value.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        value,
-                        style: VaultText.bodySm.copyWith(
-                          color: VaultColors.textSecondary,
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 2),
+                    Text(
+                      revealed
+                          ? (visibleValue.isEmpty
+                              ? 'No saved value'
+                              : 'Memory value revealed below')
+                          : 'Memory value hidden',
+                      style: VaultText.bodySm.copyWith(
+                        color: VaultColors.textSecondary,
                       ),
-                    ],
+                      maxLines: revealed ? 6 : 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
@@ -856,6 +1128,31 @@ class _MemoryRowCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   MetaPill(label: typeLabel, icon: icon, tint: accent),
+                  const SizedBox(width: VaultSpacing.xs),
+                  OutlinedButton.icon(
+                    key: Key(
+                      revealed
+                          ? 'memory_row_hide_${_memoryRowRevealId(row)}'
+                          : 'memory_row_reveal_${_memoryRowRevealId(row)}',
+                    ),
+                    onPressed: revealed ? onHide : onReveal,
+                    icon: Icon(
+                      revealed
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                      size: 16,
+                    ),
+                    label: Text(revealed ? 'Hide' : 'Reveal'),
+                  ),
+                  if (revealed) ...[
+                    const SizedBox(width: VaultSpacing.xs),
+                    IconButton(
+                      key: Key('memory_row_copy_${_memoryRowRevealId(row)}'),
+                      tooltip: 'Copy',
+                      onPressed: onCopy,
+                      icon: const Icon(Icons.copy_outlined, size: 18),
+                    ),
+                  ],
                   if (onEdit != null) ...[
                     const SizedBox(width: VaultSpacing.xs),
                     IconButton(
@@ -874,15 +1171,13 @@ class _MemoryRowCard extends StatelessWidget {
               ),
             ],
           ),
-          if (value.isEmpty && body.isNotEmpty) ...[
+          if (revealed && visibleValue.isNotEmpty) ...[
             const SizedBox(height: VaultSpacing.sm),
-            Text(
-              body,
+            SelectableText(
+              visibleValue,
               style: VaultText.bodySm.copyWith(
                 color: VaultColors.textSecondary,
               ),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
           const SizedBox(height: VaultSpacing.md),
@@ -903,6 +1198,8 @@ class _MemoryRowCard extends StatelessWidget {
                   icon: Icons.percent,
                   dim: true,
                 ),
+              for (final tag in tags.take(4))
+                MetaPill(label: tag, icon: Icons.sell_outlined, dim: true),
             ],
           ),
         ],

@@ -19,6 +19,11 @@ def _normalize_service_name(service: Optional[str]) -> str:
     return normalize_service(service)
 
 
+def _display_service_name(service: Optional[str]) -> str:
+    value = " ".join(str(service or "").strip().split())
+    return value
+
+
 class ListLoginNamesRequest(BaseModel):
     pin: str
 
@@ -216,9 +221,10 @@ def update_secure_item(
     principal=Depends(verify_trusted_device),
 ):
     vault_id        = principal["vault_id"]
+    old_service_raw = _display_service_name(payload.old_service)
     old_service     = _normalize_service_name(payload.old_service)
     item_type       = (payload.item_type or "").strip()
-    new_service_in  = (payload.new_service or "").strip()
+    new_service_in  = _display_service_name(payload.new_service)
 
     if not item_type:
         raise HTTPException(
@@ -247,13 +253,9 @@ def update_secure_item(
             (vault_id, item_type, old_service),
         )
         row = cur.fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=404, detail="Saved item not found",
-            )
 
                                                               
-        existing_blob = row["encrypted_data"]
+        existing_blob = row["encrypted_data"] if row else None
         if isinstance(existing_blob, (bytes, bytearray, memoryview)):
             existing_blob_size = len(bytes(existing_blob))
         elif isinstance(existing_blob, str):
@@ -262,8 +264,9 @@ def update_secure_item(
             existing_blob_size = 0
 
         try:
-            existing = json.loads(
-                decrypt_message(row["encrypted_data"], key)
+            existing = (
+                json.loads(decrypt_message(row["encrypted_data"], key))
+                if row else {}
             )
         except Exception:
             existing = {}
@@ -285,11 +288,16 @@ def update_secure_item(
         merged_fields = {**existing_fields, **incoming_fields}
 
         new_service = (
-            _normalize_service_name(new_service_in)
-            if new_service_in else (row["service"] or old_service)
+            new_service_in
+            if new_service_in
+            else ((row["service"] if row else None) or old_service_raw or old_service)
         )
-        if new_service == "general":
-            new_service = row["service"] or old_service
+        if _normalize_service_name(new_service) == "general":
+            new_service = (
+                (row["service"] if row else None)
+                or old_service_raw
+                or old_service
+            )
 
                                                                 
         merged_record = {
@@ -300,7 +308,7 @@ def update_secure_item(
             "title":    new_service,
             "fields":   merged_fields,
             "notes":    existing_notes,
-            "item_id":  existing.get("item_id") or row["id"],
+            "item_id":  existing.get("item_id") or (row["id"] if row else None),
         }
                                                                    
          
@@ -330,41 +338,65 @@ def update_secure_item(
                                                       
             pass
 
-        encrypted = encrypt_message(json.dumps(merged_record), key)
+        created = row is None
+        if row:
+            encrypted = encrypt_message(json.dumps(merged_record), key)
+            cur.execute(
+                """
+                UPDATE vault_items
+                SET service        = %s,
+                    encrypted_data = %s,
+                    created_at     = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (new_service, encrypted, row["id"]),
+            )
+            item_id = row["id"]
 
-        cur.execute(
-            """
-            UPDATE vault_items
-            SET service        = %s,
-                encrypted_data = %s,
-                created_at     = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
-            (new_service, encrypted, row["id"]),
-        )
-        conn.commit()
+            conn.commit()
 
-                                                               
-        new_blob_size = (
-            len(bytes(encrypted))
-            if isinstance(encrypted, (bytes, bytearray, memoryview))
-            else (len(encrypted.encode("utf-8"))
-                  if isinstance(encrypted, str) else 0)
-        )
-        delta = int(new_blob_size) - int(existing_blob_size)
-        if delta != 0:
-            try:
-                from main import bump_vault_total_bytes
-                bump_vault_total_bytes(vault_id, delta)
-            except Exception:
-                pass
+
+            new_blob_size = (
+                len(bytes(encrypted))
+                if isinstance(encrypted, (bytes, bytearray, memoryview))
+                else (len(encrypted.encode("utf-8"))
+                      if isinstance(encrypted, str) else 0)
+            )
+            delta = int(new_blob_size) - int(existing_blob_size)
+            if delta != 0:
+                try:
+                    from main import bump_vault_total_bytes
+                    bump_vault_total_bytes(vault_id, delta)
+                except Exception:
+                    pass
+        else:
+            from vault_secure_item_save import _encrypt_and_write
+            write_result = _encrypt_and_write(
+                vault_id=vault_id,
+                key=key,
+                args={
+                    "secret_type": item_type,
+                    "service":     new_service,
+                    "fields":      merged_fields,
+                    "notes":       existing_notes,
+                },
+                field=None,
+                value=None,
+                notes=existing_notes,
+                db_executor=None,
+            )
+            if write_result.get("band") != "saved":
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not create saved item",
+                )
+            item_id = write_result.get("item_id")
 
                                                             
         try:
             from vault_tool_result_cache import invalidate_for_event
             event = (
-                "credential_edited"
-                if item_type in ("login", "credential")
+                "credential_edited" if item_type in ("login", "credential")
                 else "secure_item_edited"
             )
             invalidate_for_event(vault_id=vault_id, event=event)
@@ -373,6 +405,8 @@ def update_secure_item(
 
         return {
             "updated":   True,
+            "created":   created,
+            "id":        item_id,
             "service":   new_service,
             "item_type": item_type,
         }
