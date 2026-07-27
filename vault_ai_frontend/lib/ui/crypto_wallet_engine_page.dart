@@ -530,6 +530,13 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
     return false;
   }
 
+  bool get _sendEnabledForActive {
+    final f = _features;
+    if (f == null) return false;
+    if (_isMainnetActive) return f.mainnetSendEnabled;
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     return _CryptoWalletEnginePageBody(
@@ -544,6 +551,7 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       effectiveNetwork: _effectiveNetwork,
       isMainnetActive: _isMainnetActive,
       mainnetNotReady: _mainnetNotReady,
+      sendEnabled: _sendEnabledForActive,
       sendPaused: _sendPausedForActive,
       features: _features,
       onFeatureRefreshRequested: _loadFeatures,
@@ -576,6 +584,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final String effectiveNetwork;
   final bool isMainnetActive;
   final bool mainnetNotReady;
+  final bool sendEnabled;
   final bool sendPaused;
   final CryptoWalletFeatures? features;
   final Future<void> Function()? onFeatureRefreshRequested;
@@ -601,6 +610,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     required this.effectiveNetwork,
     required this.isMainnetActive,
     required this.mainnetNotReady,
+    required this.sendEnabled,
     required this.sendPaused,
     required this.features,
     this.onFeatureRefreshRequested,
@@ -767,6 +777,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         verifyPin: verifyPin,
         asset: assetForPanel,
         network: effectiveNetwork,
+        mainnetSendEnabled: sendEnabled,
         mainnetSendPaused: sendPaused,
       ),
     );

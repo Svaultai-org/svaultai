@@ -161,6 +161,7 @@ Future<void> _pumpMainnetSafetyPanel(
         isVaultKeyAvailable: () => true,
         asset: asset,
         network: kEvmNetworkEthereumMainnet,
+        mainnetSendEnabled: true,
         mainnetSendPaused: mainnetSendPaused,
         isKnownDestination: isKnownDestination,
         fetchAvailableBalance: fetchAvailableBalance,

@@ -1053,6 +1053,8 @@ class _CryptoWalletEngineAssetDetailPageState
         verifyPin: widget.verifyPin,
         asset: widget.asset,
         network: widget.effectiveNetwork,
+        mainnetSendEnabled: widget.features?.mainnetSendEnabled ?? false,
+        mainnetSendPaused: widget.features?.mainnetSendPaused ?? false,
         fetchAvailableBalance: () async {
           final s = _balance;
           if (s == null || s.isEmpty) return null;

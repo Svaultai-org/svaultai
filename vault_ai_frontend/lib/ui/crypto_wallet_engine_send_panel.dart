@@ -344,7 +344,10 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   
   final String network;
 
-  
+
+  final bool mainnetSendEnabled;
+
+
   final bool mainnetSendPaused;
 
   
@@ -438,6 +441,7 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     this.prefilledDestination,
     this.prefilledAmount,
     this.network = kCompileTimeDefaultNetworkResolved,
+    this.mainnetSendEnabled = false,
     this.mainnetSendPaused = false,
     this.isKnownDestination,
     this.fetchAvailableBalance,
@@ -760,14 +764,12 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Future<void> _onReviewInner() async {
-    if (widget.isMainnet && !kCryptoWalletEngineMainnetSendEnabled) {
-      setState(() => _error = kEthSendMainnetSendDisabledBanner);
-      return;
-    }
-    
-    
     if (widget.isMainnet && widget.mainnetSendPaused) {
       setState(() => _error = kMainnetSendPausedBanner);
+      return;
+    }
+    if (widget.isMainnet && !widget.mainnetSendEnabled) {
+      setState(() => _error = kEthSendMainnetSendDisabledBanner);
       return;
     }
     final destination = _destCtrl.text.trim();
@@ -1615,7 +1617,7 @@ class _CryptoWalletEngineSendPanelState
           text: kMainnetSendPausedBanner,
           tone: WalletSendWarningTone.critical,
         );
-      } else if (!kCryptoWalletEngineMainnetSendEnabled) {
+      } else if (!widget.mainnetSendEnabled) {
         topWarning = const WalletSendWarning(
           key: Key('eth_send_panel_mainnet_send_disabled'),
           text: kEthSendMainnetSendDisabledBanner,

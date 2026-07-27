@@ -158,15 +158,16 @@ void main() {
       expect(feats.mainnetSendEnabled, isFalse);
     });
 
-    test('PF2: effectiveMainnetSendEnabled requires backend AND build flag',
+    test('PF2: effectiveMainnetSendEnabled follows backend enabled + pause',
         () {
       
       final feats = CryptoWalletFeatures.fromBackend(const {
         'mainnetSendEnabled': true,
+        'mainnetSendPaused': false,
       });
       expect(feats.mainnetSendEnabled, isTrue);
-      
-      expect(feats.effectiveMainnetSendEnabled, isFalse);
+      expect(feats.mainnetSendPaused, isFalse);
+      expect(feats.effectiveMainnetSendEnabled, isTrue);
     });
 
     test('PF3: paused → effective send disabled', () {

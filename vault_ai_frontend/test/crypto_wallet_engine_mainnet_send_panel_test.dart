@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/services/evm_networks.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_send_panel.dart';
 
@@ -198,10 +199,14 @@ Future<void> _pumpMainnetPanel(
   WidgetTester tester, {
   required _FakeMainnetClient client,
   String asset = 'ETH',
+  bool mainnetSendEnabled = true,
+  bool mainnetSendPaused = false,
   Future<bool> Function(String)? verifyPin,
   Future<String> Function(String)? decryptForVault,
 }) async {
   await tester.pumpWidget(MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
       body: CryptoWalletEngineSendPanel(
         authToken: 'tok',
@@ -213,6 +218,8 @@ Future<void> _pumpMainnetPanel(
         verifyPin: verifyPin,
         asset: asset,
         network: kEvmNetworkEthereumMainnet,
+        mainnetSendEnabled: mainnetSendEnabled,
+        mainnetSendPaused: mainnetSendPaused,
       ),
     ),
   ));
@@ -281,13 +288,10 @@ void main() {
         },
       );
       await _pumpMainnetPanel(tester, client: client);
-      // 2026-07-13: the mobile Send layout now shows AT MOST ONE
-      // prominent top-of-panel warning. Priority order: disabled >
-      // paused > real-funds. In test env
-      // `kCryptoWalletEngineMainnetSendEnabled` defaults to false, so
-      // we expect the disabled banner and NOT the real-funds banner.
-      // If a future test env sets the flag to true, the real-funds
-      // banner would be present instead.
+      // Backend capability is the UI source of truth. Even though the
+      // legacy compile-time flag defaults false in tests,
+      // backend-enabled + not-paused must show the real-funds warning,
+      // not the disabled/paused banners.
       final realFundsFinder = find.byKey(
         const Key('eth_send_panel_mainnet_real_funds'),
       );
@@ -296,15 +300,42 @@ void main() {
       );
       final hasReal = realFundsFinder.evaluate().isNotEmpty;
       final hasDisabled = disabledFinder.evaluate().isNotEmpty;
-      expect(hasReal || hasDisabled, isTrue,
-          reason: 'expected at least one mainnet warning row');
+      expect(hasReal, isTrue);
+      expect(hasDisabled, isFalse);
+      expect(find.byKey(const Key(kMainnetSendPausedBannerKey)),
+          findsNothing);
       // The two banners must never appear simultaneously.
       expect(hasReal && hasDisabled, isFalse,
           reason: 'mobile UX must not stack overlapping mainnet '
               'warnings — disabled should subsume real-funds');
     });
 
-    testWidgets('SS5: send-disabled banner + refuses draft when flag off',
+    testWidgets('SS4b: backend enabled + paused shows paused banner',
+        (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        encryptedSecretResponse: const {
+          'status':                'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted', 'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester, client: client,
+        mainnetSendEnabled: true,
+        mainnetSendPaused: true,
+      );
+      expect(find.byKey(const Key(kMainnetSendPausedBannerKey)),
+          findsOneWidget);
+      expect(find.byKey(const Key('eth_send_panel_mainnet_send_disabled')),
+          findsNothing);
+      expect(find.byKey(const Key('eth_send_panel_mainnet_real_funds')),
+          findsNothing);
+    });
+
+    testWidgets('SS5: send-disabled banner + refuses draft when backend off',
         (tester) async {
       
       
@@ -318,7 +349,9 @@ void main() {
           'status': 'submitted', 'txHash': _kTxHash,
         },
       );
-      await _pumpMainnetPanel(tester, client: client);
+      await _pumpMainnetPanel(
+        tester, client: client, mainnetSendEnabled: false,
+      );
       expect(
         find.byKey(const Key('eth_send_panel_mainnet_send_disabled')),
         findsOneWidget,

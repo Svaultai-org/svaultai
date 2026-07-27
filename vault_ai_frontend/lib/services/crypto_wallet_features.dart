@@ -197,7 +197,6 @@ class CryptoWalletFeatures {
 
   bool get effectiveMainnetSendEnabled =>
       mainnetSendEnabled
-      && kCryptoWalletEngineMainnetSendEnabled
       && !mainnetSendPaused;
 
 
