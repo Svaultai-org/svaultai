@@ -553,6 +553,7 @@ class ZkLoginFinalizeBehavioralTests(_ZkRouteHarness):
                 {
                     "vault_id":                self._VAULT_ID,
                     "vault_name":              self._VAULT_NAME,
+                    "vault_handle":            self._VALID_HANDLE_BYTES,
                     "wrapped_mvk":             b"fake-wrapped-mvk",
                     "wrapped_sk_vault":        b"fake-wrapped-sk-vault",
                     "display_name_ciphertext": b"fake-display-name",
@@ -592,6 +593,13 @@ class ZkLoginFinalizeBehavioralTests(_ZkRouteHarness):
         self.assertNotIn("token_id", body)
         self.assertNotIn("expires_at", body)
         self.assertNotIn("client_label", body)
+
+    def test_response_returns_stored_vault_handle(self) -> None:
+        from vault_handle import to_display
+
+        resp, _ = self._run_route(self._mock_issued_session())
+        body = resp.json()
+        self.assertEqual(body["vault_handle"], to_display(self._VALID_HANDLE_BYTES))
 
     def test_issue_session_token_receives_vault_name_device_and_client_label(self) -> None:
         _, m_issue = self._run_route(self._mock_issued_session())

@@ -149,7 +149,7 @@ void main() {
     // this test flags it so the fix boundary stays visible.
     test('AppState.verifyPin calls client.authLogin', () {
       final src = _lib('main.dart');
-      final verifyIdx = src.indexOf('Future<bool> verifyPin(String pin)');
+      final verifyIdx = src.indexOf('Future<bool> verifyPin');
       expect(verifyIdx, greaterThan(-1),
           reason: 'AppState.verifyPin must exist');
       final window =

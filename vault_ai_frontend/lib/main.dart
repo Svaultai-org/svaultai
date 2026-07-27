@@ -1587,6 +1587,107 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<LoginResult?> _restoreZkSessionKeysAfterPin({
+    required String pin,
+    required String expectedVaultId,
+    required String vaultNameHint,
+    String? vaultHandleHint,
+    required String reason,
+  }) async {
+    final loginId = selectInheritanceRevealLoginIdentifier(
+      vaultName: vaultNameHint,
+      lastVaultName: lastVaultName,
+      vaultHandle: vaultHandleHint ?? vaultHandle,
+    );
+    if (!loginId.hasIdentifier) {
+      inheritanceRevealDiag('${reason}_zk_restore_no_identifier', {
+        'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+        'expected_role': 'beneficiary',
+      });
+      return null;
+    }
+    inheritanceRevealDiag('${reason}_zk_restore_attempt', {
+      'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+      'expected_role': 'beneficiary',
+      'id_source': loginId.source,
+      'has_vault_handle': loginId.vaultHandle != null,
+      'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+      'active_sk_vault_match':
+          zk_sk_store.ZkActiveSkVault.currentVaultId() == expectedVaultId,
+    });
+
+    String lastStep = 'begin';
+    try {
+      final zk = ZkAuthService(_zkHttpPost);
+      final result = await zk.loginVault(
+        vaultName: loginId.vaultName,
+        vaultHandle: loginId.vaultHandle,
+        pin: pin,
+        onStep: (step) => lastStep = step,
+      );
+      if (result.vaultId != expectedVaultId) {
+        inheritanceRevealDiag('${reason}_zk_restore_vault_mismatch', {
+          'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+          'actual_vault_fpr': inheritanceRevealIdFingerprint(result.vaultId),
+          'expected_role': 'beneficiary',
+          'id_source': loginId.source,
+        });
+        return null;
+      }
+
+      final resolvedVaultName = _nonEmptyTrimmed(result.vaultName) ??
+          loginId.vaultName ??
+          _nonEmptyTrimmed(vaultNameHint) ??
+          _nonEmptyTrimmed(vaultName) ??
+          _nonEmptyTrimmed(lastVaultName) ??
+          _nonEmptyTrimmed(result.displayName) ??
+          result.vaultHandle;
+
+      _VaultCrypto._keyCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
+          result.mvk;
+      _VaultCrypto._pinCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
+          pin;
+      _VaultCrypto.setActiveVault(
+        vaultId: result.vaultId,
+        vaultName: resolvedVaultName,
+      );
+      zk_mvk_store.ZkActiveMvk.set(
+        mvk: result.mvk,
+        vaultId: result.vaultId,
+        vaultHandle: result.vaultHandle,
+      );
+      zk_sk_store.ZkActiveSkVault.set(
+        skVault: result.skVaultPrivate,
+        vaultId: result.vaultId,
+      );
+      inheritanceRevealDiag('${reason}_zk_restore_success', {
+        'vault_fpr': inheritanceRevealIdFingerprint(result.vaultId),
+        'expected_role': 'beneficiary',
+        'id_source': loginId.source,
+        'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+        'active_sk_vault_match':
+            zk_sk_store.ZkActiveSkVault.currentVaultId() == expectedVaultId,
+      });
+      return result;
+    } on OpaqueAuthenticationFailed catch (e) {
+      inheritanceRevealDiag('${reason}_zk_restore_opaque_failed', {
+        'stage': e.stage,
+        'last_step': lastStep,
+        'expected_role': 'beneficiary',
+        'id_source': loginId.source,
+      });
+      return null;
+    } catch (e) {
+      inheritanceRevealDiag('${reason}_zk_restore_failed', {
+        'exception_type': e.runtimeType.toString(),
+        'last_step': lastStep,
+        'expected_role': 'beneficiary',
+        'id_source': loginId.source,
+      });
+      return null;
+    }
+  }
+
   Future<void> wipeOrphanDataAndClear() async {
     final token = sessionToken;
     if (token == null) {
@@ -1613,7 +1714,10 @@ class AppState extends ChangeNotifier {
     await clearSession(keepLastVaultName: true);
   }
 
-  Future<bool> verifyPin(String pin) async {
+  Future<bool> verifyPin(
+    String pin, {
+    bool restoreZkSessionKeys = false,
+  }) async {
     final knownVaultName = vaultName ?? lastVaultName;
     if (knownVaultName == null) return false;
 
@@ -1667,12 +1771,44 @@ class AppState extends ChangeNotifier {
         throw Exception('Login response missing session_token or vault_id');
       }
 
+      var activeToken = newToken;
+      var activeVaultId = newVaultId;
+      var activeVaultName = newVaultName;
+      var activeDisplay = newDisplay;
+      var activeVaultHandle = newVaultHandle;
+      LoginResult? zkRestore;
+      if (restoreZkSessionKeys &&
+          newVaultHandle != null &&
+          newVaultHandle.isNotEmpty) {
+        zkRestore = await _restoreZkSessionKeysAfterPin(
+          pin: pin,
+          expectedVaultId: newVaultId,
+          vaultNameHint: newVaultName,
+          vaultHandleHint: newVaultHandle,
+          reason: 'verify_pin',
+        );
+        if (zkRestore != null) {
+          activeToken = zkRestore.sessionToken;
+          activeVaultId = zkRestore.vaultId;
+          activeVaultName =
+              _nonEmptyTrimmed(zkRestore.vaultName) ?? newVaultName;
+          activeDisplay = zkRestore.displayName;
+          activeVaultHandle = zkRestore.vaultHandle;
+        }
+      } else if (restoreZkSessionKeys) {
+        inheritanceRevealDiag('verify_pin_zk_restore_skipped', {
+          'expected_vault_fpr': inheritanceRevealIdFingerprint(newVaultId),
+          'expected_role': 'beneficiary',
+          'has_vault_handle': false,
+        });
+      }
+
       await setSession(
-        token: newToken,
-        vaultIdValue: newVaultId,
-        vaultNameValue: newVaultName,
-        displayNameValue: newDisplay,
-        vaultHandleValue: newVaultHandle,
+        token: activeToken,
+        vaultIdValue: activeVaultId,
+        vaultNameValue: activeVaultName,
+        displayNameValue: activeDisplay,
+        vaultHandleValue: activeVaultHandle,
       );
 
       lockMessage = null;
@@ -1683,19 +1819,20 @@ class AppState extends ChangeNotifier {
           : activeDeviceId;
       vlog('pin.verify.result', {
         'result': 'success',
-        'vaultName': newVaultName,
+        'vaultName': activeVaultName,
         'next_call': '/vault-meta',
         'device_id_prefix': activeDeviceIdPrefix,
         'device_id_present': activeDeviceId.isNotEmpty,
+        'zk_restore': zkRestore != null,
       });
 
       final vaultMeta = await _API.getVaultMeta(
-        vaultName: newVaultName,
-        authToken: newToken,
+        vaultName: activeVaultName,
+        authToken: activeToken,
       );
       vlog('pin.timing.vault_meta', {'elapsed_ms': tick()});
       vlog('pin.post_verify.vault_meta_ok', {
-        'vaultName': newVaultName,
+        'vaultName': activeVaultName,
         'device_id_prefix': activeDeviceIdPrefix,
       });
 
@@ -1714,8 +1851,8 @@ class AppState extends ChangeNotifier {
       // updated atomically so no read path sees a half-updated
       // state.
       final _preRotateCtx = await deriveAndInstallCryptoContext(
-        vaultId: newVaultId,
-        vaultName: newVaultName,
+        vaultId: activeVaultId,
+        vaultName: activeVaultName,
         pin: pin,
         pinSaltBase64: pinSalt,
         iterations: iterations,
@@ -1724,7 +1861,7 @@ class AppState extends ChangeNotifier {
       if (_preRotateCtx == null) {
         vlog('pin.verify.derive.superseded', {
           'phase': 'initial',
-          'vaultName': newVaultName,
+          'vaultName': activeVaultName,
         });
         return false;
       }
@@ -1761,9 +1898,9 @@ class AppState extends ChangeNotifier {
       Object? _rotateError;
       try {
         await client.rotateVaultKdf(
-          vaultName: newVaultName,
+          vaultName: activeVaultName,
           pin: pin,
-          authToken: newToken,
+          authToken: activeToken,
         );
       } catch (e) {
         _rotateError = e;
@@ -1776,8 +1913,8 @@ class AppState extends ChangeNotifier {
       });
 
       final freshMeta = await _API.getVaultMeta(
-        vaultName: newVaultName,
-        authToken: newToken,
+        vaultName: activeVaultName,
+        authToken: activeToken,
       );
       final freshSalt = freshMeta['pin_salt']?.toString();
       final freshIter =
@@ -1798,8 +1935,8 @@ class AppState extends ChangeNotifier {
         // new context (bumping the generation). Legacy _VaultCrypto
         // caches are mirrored inside deriveAndInstallCryptoContext.
         final _postRotateCtx = await deriveAndInstallCryptoContext(
-          vaultId: newVaultId,
-          vaultName: newVaultName,
+          vaultId: activeVaultId,
+          vaultName: activeVaultName,
           pin: pin,
           pinSaltBase64: freshSalt,
           iterations: freshIter,
@@ -1808,7 +1945,7 @@ class AppState extends ChangeNotifier {
         if (_postRotateCtx == null) {
           vlog('pin.verify.derive.superseded', {
             'phase': 'post_rotate',
-            'vaultName': newVaultName,
+            'vaultName': activeVaultName,
           });
           return false;
         }
@@ -1820,7 +1957,7 @@ class AppState extends ChangeNotifier {
       unlocked = true;
       notifyListeners();
       vlog('pin.post_verify.unlocked', {
-        'vaultName': newVaultName,
+        'vaultName': activeVaultName,
         'device_id_prefix': activeDeviceIdPrefix,
         'route_target': '/chat',
       });
@@ -3731,13 +3868,23 @@ Future<Map<String, dynamic>> _zkHttpPost(
 }) async {
   final uri = Uri.parse('$backendBaseUrl$path');
   final headers = <String, String>{'Content-Type': 'application/json'};
+  final deviceId = apiClientDeviceId();
+  if (deviceId != null && deviceId.isNotEmpty) {
+    headers['X-Device-Id'] = deviceId;
+  }
   if (bearerToken != null && bearerToken.isNotEmpty) {
     headers['Authorization'] = 'Bearer $bearerToken';
+  }
+  final requestBody = Map<String, dynamic>.from(body);
+  if (path == '/auth/zk-login-finalize' &&
+      deviceId != null &&
+      deviceId.isNotEmpty) {
+    requestBody.putIfAbsent('device_id', () => deviceId);
   }
   final response = await http.post(
     uri,
     headers: headers,
-    body: jsonEncode(body),
+    body: jsonEncode(requestBody),
   );
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
@@ -4191,7 +4338,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         zk_mvk_store.ZkActiveMvk.set(
           mvk: loginResult.mvk,
           vaultId: loginResult.vaultId,
-          vaultHandle: resolvedVaultName,
+          vaultHandle: loginResult.vaultHandle,
         );
         try {
           final _zkLoginMeta = await _API.getVaultMeta(
@@ -4236,6 +4383,14 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           skVault: loginResult.skVaultPrivate,
           vaultId: loginResult.vaultId,
         );
+        inheritanceRevealDiag('normal_login_zk_success', {
+          'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
+          'has_vault_handle': loginResult.vaultHandle.isNotEmpty,
+          'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+          'active_sk_vault_match':
+              zk_sk_store.ZkActiveSkVault.currentVaultId() ==
+                  loginResult.vaultId,
+        });
         app.markUnlocked();
         try {
           await app.refreshAvailableVaults();
@@ -4390,6 +4545,14 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         displayNameValue: display,
         vaultHandleValue: vaultHandle,
       );
+      inheritanceRevealDiag('normal_login_legacy_success', {
+        'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+        'has_vault_handle':
+            vaultHandle != null && vaultHandle.trim().isNotEmpty,
+        'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+        'active_sk_vault_match':
+            zk_sk_store.ZkActiveSkVault.currentVaultId() == vaultId,
+      });
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
       await _deriveKeyAndUnlock(app: app, pin: pin);
@@ -4671,7 +4834,7 @@ class _SignupPageState extends State<SignupPage> {
       zk_mvk_store.ZkActiveMvk.set(
         mvk: result.mvk,
         vaultId: result.vaultId,
-        vaultHandle: vaultName,
+        vaultHandle: result.vaultHandle,
       );
       // 2026-07-22 crypto-context refactor. Fresh ZK signup writes
       // a random MVK; the server's /chat handler derives PBKDF2 from
@@ -5067,7 +5230,7 @@ class _UnlockPageState extends State<UnlockPage> {
         zk_mvk_store.ZkActiveMvk.set(
           mvk: loginResult.mvk,
           vaultId: loginResult.vaultId,
-          vaultHandle: resolvedVaultName,
+          vaultHandle: loginResult.vaultHandle,
         );
         try {
           final _zkUnlockMeta = await _API.getVaultMeta(
@@ -5112,6 +5275,14 @@ class _UnlockPageState extends State<UnlockPage> {
           skVault: loginResult.skVaultPrivate,
           vaultId: loginResult.vaultId,
         );
+        inheritanceRevealDiag('normal_unlock_zk_success', {
+          'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
+          'has_vault_handle': loginResult.vaultHandle.isNotEmpty,
+          'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+          'active_sk_vault_match':
+              zk_sk_store.ZkActiveSkVault.currentVaultId() ==
+                  loginResult.vaultId,
+        });
         app.markUnlocked();
         try {
           await app.refreshAvailableVaults();
@@ -5225,6 +5396,14 @@ class _UnlockPageState extends State<UnlockPage> {
         displayNameValue: display,
         vaultHandleValue: vaultHandle,
       );
+      inheritanceRevealDiag('normal_unlock_legacy_success', {
+        'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+        'has_vault_handle':
+            vaultHandle != null && vaultHandle.trim().isNotEmpty,
+        'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+        'active_sk_vault_match':
+            zk_sk_store.ZkActiveSkVault.currentVaultId() == vaultId,
+      });
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
       await _deriveKeyAndUnlock(app: app, pin: pin);
@@ -8288,7 +8467,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultId: vaultId,
         pin: pin,
         cachedPinMatches: _inheritanceCachedPinMatches,
-        unlockWithPin: app.verifyPin,
+        unlockWithPin: (candidatePin) => app.verifyPin(
+          candidatePin,
+          restoreZkSessionKeys: true,
+        ),
         currentSk: () => _activeInheritanceSkForVault(vaultId),
         currentSkVaultId: zk_sk_store.ZkActiveSkVault.currentVaultId,
         rehydrateSkWithPin: (candidatePin) => _rehydrateInheritanceSkVault(
@@ -8485,11 +8667,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!loginId.hasIdentifier) {
       inheritanceRevealDiag('rehydrate_no_identifier', {
         'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+        'expected_role': 'beneficiary',
       });
       return null;
     }
     inheritanceRevealDiag('rehydrate_attempt', {
       'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+      'expected_role': 'beneficiary',
       'id_source': loginId.source,
       'uses_handle': loginId.vaultHandle != null,
       'uses_name': loginId.vaultName != null,
@@ -8509,6 +8693,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
           'actual_vault_fpr':
               inheritanceRevealIdFingerprint(loginResult.vaultId),
+          'expected_role': 'beneficiary',
           'id_source': loginId.source,
         });
         vlog('inheritance.reveal.rehydrate_vault_mismatch', {
@@ -8551,7 +8736,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       zk_mvk_store.ZkActiveMvk.set(
         mvk: loginResult.mvk,
         vaultId: loginResult.vaultId,
-        vaultHandle: resolvedVaultName,
+        vaultHandle: loginResult.vaultHandle,
       );
       zk_sk_store.ZkActiveSkVault.set(
         skVault: loginResult.skVaultPrivate,
@@ -8584,13 +8769,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       app.markUnlocked();
       inheritanceRevealDiag('rehydrate_success', {
         'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
+        'expected_role': 'beneficiary',
         'id_source': loginId.source,
+        'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+        'active_sk_vault_match':
+            zk_sk_store.ZkActiveSkVault.currentVaultId() == expectedVaultId,
       });
       return loginResult.skVaultPrivate;
     } on OpaqueAuthenticationFailed catch (e) {
       inheritanceRevealDiag('rehydrate_opaque_failed', {
         'stage': e.stage,
         'last_step': lastStep,
+        'expected_role': 'beneficiary',
         'id_source': loginId.source,
       });
       vlog('inheritance.reveal.rehydrate_opaque_failed', {
@@ -8602,6 +8792,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       inheritanceRevealDiag('rehydrate_failed', {
         'exception_type': e.runtimeType.toString(),
         'last_step': lastStep,
+        'expected_role': 'beneficiary',
         'id_source': loginId.source,
       });
       vlog('inheritance.reveal.rehydrate_failed', {

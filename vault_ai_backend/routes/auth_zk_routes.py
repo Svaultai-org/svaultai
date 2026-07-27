@@ -789,6 +789,7 @@ class ZkLoginFinalizeRequest(BaseModel):
 
 class ZkLoginFinalizeResponse(BaseModel):
     vault_id: str
+    vault_handle: str
     session_token: str
     wrapped_mvk: str
     wrapped_sk_vault: str
@@ -859,7 +860,7 @@ async def zk_login_finalize(
                   failed_pin_attempts  = 0
               WHERE vault_id = %s
               RETURNING vault_id, vault_name, wrapped_mvk, wrapped_sk_vault,
-                        display_name_ciphertext
+                        display_name_ciphertext, vault_handle
             """,
             (row["vault_id"],),
         )
@@ -970,6 +971,7 @@ async def zk_login_finalize(
 
     return ZkLoginFinalizeResponse(
         vault_id=str(vault_row["vault_id"]),
+        vault_handle=to_display(bytes(vault_row["vault_handle"])),
         session_token=token["token"],
         wrapped_mvk=_b64url_encode(bytes(vault_row["wrapped_mvk"])),
         wrapped_sk_vault=_b64url_encode(bytes(vault_row["wrapped_sk_vault"])),

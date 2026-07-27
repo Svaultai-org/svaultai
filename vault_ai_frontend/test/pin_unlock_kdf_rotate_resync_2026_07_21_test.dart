@@ -54,7 +54,7 @@ String _mainDart() => File('lib/main.dart').readAsStringSync();
 String _verifyPinRotateWindow() {
   final src = _mainDart();
   final verifyIdx =
-      src.indexOf('Future<bool> verifyPin(String pin)');
+      src.indexOf('Future<bool> verifyPin');
   expect(verifyIdx, greaterThan(-1),
       reason: 'AppState.verifyPin must exist');
   final rotateIdx = src.indexOf('rotateVaultKdf(', verifyIdx);

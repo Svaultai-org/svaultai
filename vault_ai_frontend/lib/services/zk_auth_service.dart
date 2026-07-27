@@ -485,9 +485,12 @@ class ZkAuthService {
         utf8.decode(await _unwrap(displayNameKey, displayNameCt));
     step('unwrap_display_name');
 
+    final authenticatedHandle =
+        finalizeResponse['vault_handle'] as String? ?? handleDisplay;
+
     return LoginResult(
       vaultId: finalizeResponse['vault_id'] as String,
-      vaultHandle: handleDisplay,
+      vaultHandle: authenticatedHandle,
       sessionToken: finalizeResponse['session_token'] as String,
       mvk: mvk,
       skVaultPrivate: skVault,

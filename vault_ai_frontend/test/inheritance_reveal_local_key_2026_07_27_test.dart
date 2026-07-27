@@ -306,9 +306,82 @@ void main() {
         isTrue,
       );
       expect(
-        mainSource.contains('vaultHandleValue: newVaultHandle'),
+        mainSource.contains('var activeVaultHandle = newVaultHandle'),
         isTrue,
       );
+      expect(
+        mainSource.contains('vaultHandleValue: activeVaultHandle'),
+        isTrue,
+      );
+    });
+
+    test('PIN reauth restores and publishes ZK sk_vault when handle exists',
+        () {
+      final idx = mainSource.indexOf(
+        'Future<LoginResult?> _restoreZkSessionKeysAfterPin',
+      );
+      expect(idx, greaterThan(-1));
+      final window =
+          mainSource.substring(idx, (idx + 4200).clamp(0, mainSource.length));
+      expect(window.contains('ZkAuthService(_zkHttpPost)'), isTrue);
+      expect(window.contains('vaultHandle: loginId.vaultHandle'), isTrue);
+      expect(window.contains('zk_sk_store.ZkActiveSkVault.set('), isTrue);
+      expect(window.contains('expected_role'), isTrue);
+
+      final verifyIdx = mainSource.indexOf('Future<bool> verifyPin');
+      final verifyWindow = mainSource.substring(
+        verifyIdx,
+        (verifyIdx + 5200).clamp(0, mainSource.length),
+      );
+      expect(
+        verifyWindow.contains('_restoreZkSessionKeysAfterPin('),
+        isTrue,
+      );
+      expect(
+        verifyWindow.contains('restoreZkSessionKeys &&'),
+        isTrue,
+      );
+      expect(
+        verifyWindow.contains("reason: 'verify_pin'"),
+        isTrue,
+      );
+    });
+
+    test('reveal path explicitly asks verifyPin to restore sk_vault', () {
+      final idx = mainSource.indexOf(
+        'Future<void> _beneficiaryRevealCredentials',
+      );
+      expect(idx, greaterThan(-1));
+      final window =
+          mainSource.substring(idx, (idx + 2300).clamp(0, mainSource.length));
+      expect(
+        window.contains('restoreZkSessionKeys: true'),
+        isTrue,
+      );
+    });
+
+    test('ZK login stores backend-authenticated handle, not guessed handle',
+        () {
+      final src = File('lib/services/zk_auth_service.dart').readAsStringSync();
+      final idx = src.indexOf('Future<LoginResult> loginVault');
+      expect(idx, greaterThan(-1));
+      final window = src.substring(idx, (idx + 5200).clamp(0, src.length));
+      expect(
+        window.contains("finalizeResponse['vault_handle'] as String?"),
+        isTrue,
+      );
+      expect(window.contains('vaultHandle: authenticatedHandle'), isTrue);
+    });
+
+    test('ZK auth POSTs include current device id for finalize', () {
+      final idx = mainSource.indexOf('Future<Map<String, dynamic>> _zkHttpPost');
+      expect(idx, greaterThan(-1));
+      final window =
+          mainSource.substring(idx, (idx + 1100).clamp(0, mainSource.length));
+      expect(window.contains('apiClientDeviceId()'), isTrue);
+      expect(window.contains("headers['X-Device-Id']"), isTrue);
+      expect(window.contains("path == '/auth/zk-login-finalize'"), isTrue);
+      expect(window.contains("'device_id'"), isTrue);
     });
 
     test('successful ZK login and unlock store the result vaultHandle', () {
