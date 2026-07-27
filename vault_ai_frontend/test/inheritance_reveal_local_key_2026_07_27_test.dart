@@ -140,6 +140,56 @@ void main() {
       expect(rehydrateCalled, isTrue);
     });
 
+    test(
+        'production legacy-login then handle rehydrate sequence gates '
+        'ciphertext retrieval until sk_vault is restored', () async {
+      final events = <String>[];
+      SecretKey? activeSk;
+      String? activeSkVaultId;
+
+      final result = await resolveInheritanceRevealLocalKey(
+        vaultId: 'beneficiary-vault',
+        pin: '123456',
+        cachedPinMatches: (_) async {
+          events.add('pin_cache_missing');
+          return null;
+        },
+        unlockWithPin: (candidatePin) async {
+          expect(candidatePin, '123456');
+          events.add('legacy_auth_login_succeeded');
+          return true;
+        },
+        currentSk: () => activeSk,
+        currentSkVaultId: () => activeSkVaultId,
+        rehydrateSkWithPin: (candidatePin) async {
+          expect(candidatePin, '123456');
+          events
+            ..add('zk_username_init_401')
+            ..add('stored_vlt_handle_login_init_succeeded')
+            ..add('opaque_finish_login_succeeded')
+            ..add('zk_login_finalize_called');
+          activeSk = _key(21);
+          activeSkVaultId = 'beneficiary-vault';
+          return activeSk;
+        },
+      );
+
+      expect(result.status, InheritanceRevealLocalKeyStatus.ready);
+      expect(result.reason, 'rehydrated_sk_ready');
+      expect(await _marker(result.skVault!), 21);
+      events.add('ciphertext_retrieval_allowed');
+
+      expect(events, [
+        'pin_cache_missing',
+        'legacy_auth_login_succeeded',
+        'zk_username_init_401',
+        'stored_vlt_handle_login_init_succeeded',
+        'opaque_finish_login_succeeded',
+        'zk_login_finalize_called',
+        'ciphertext_retrieval_allowed',
+      ]);
+    });
+
     test('session without an unlockable local key is blocked safely', () async {
       var rehydrateCalled = false;
 
@@ -365,7 +415,7 @@ void main() {
       final src = File('lib/services/zk_auth_service.dart').readAsStringSync();
       final idx = src.indexOf('Future<LoginResult> loginVault');
       expect(idx, greaterThan(-1));
-      final window = src.substring(idx, (idx + 5200).clamp(0, src.length));
+      final window = src.substring(idx, (idx + 7000).clamp(0, src.length));
       expect(
         window.contains("finalizeResponse['vault_handle'] as String?"),
         isTrue,
@@ -374,7 +424,8 @@ void main() {
     });
 
     test('ZK auth POSTs include current device id for finalize', () {
-      final idx = mainSource.indexOf('Future<Map<String, dynamic>> _zkHttpPost');
+      final idx =
+          mainSource.indexOf('Future<Map<String, dynamic>> _zkHttpPost');
       expect(idx, greaterThan(-1));
       final window =
           mainSource.substring(idx, (idx + 1100).clamp(0, mainSource.length));

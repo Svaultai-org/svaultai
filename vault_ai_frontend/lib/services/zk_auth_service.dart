@@ -436,17 +436,34 @@ class ZkAuthService {
     final ke2 = initResponse['ke2'] as String;
     final slotId = initResponse['slot_id'] as String;
 
-    final finish = OpaqueClient.finishLogin(
-      clientLoginState: start.clientLoginState,
-      loginResponse: ke2,
-      password: pin,
-      // See the matching comment in registerVault: identifiers.client
-      // is NOT passed here because the backend Rust uses
-      // ServerLoginParameters::default() and would otherwise mismatch
-      // the AKE transcript, making every login fail with
-      // OpaqueAuthenticationFailed regardless of PIN correctness.
-    );
-    step('opaque_finish_login');
+    ClientLoginFinish finish;
+    try {
+      finish = OpaqueClient.finishLogin(
+        clientLoginState: start.clientLoginState,
+        loginResponse: ke2,
+        password: pin,
+        // See the matching comment in registerVault: identifiers.client
+        // is NOT passed here because the backend Rust uses
+        // ServerLoginParameters::default() and would otherwise mismatch
+        // the AKE transcript for correctly-created records.
+      );
+      step('opaque_finish_login');
+    } on OpaqueAuthenticationFailed {
+      // Compatibility for accounts adopted/registered by the short-lived
+      // pre-f4d47a1 frontend: those records were created with
+      // identifiers.client = vaultHandleCredentialId(handleBytes). The
+      // server login-init has already selected the stored vault row, so
+      // this retry still cannot reveal ciphertext or finalize a session
+      // unless the same user-entered PIN completes OPAQUE successfully.
+      step('opaque_finish_login_default_rejected');
+      finish = OpaqueClient.finishLogin(
+        clientLoginState: start.clientLoginState,
+        loginResponse: ke2,
+        password: pin,
+        clientIdentifier: vaultHandleCredentialId(handleBytes),
+      );
+      step('opaque_finish_login_legacy_identifier');
+    }
 
     // Opportunistic backfill: for accounts registered before
     // migration 0031 whose vaults.vault_name was NULLed by the

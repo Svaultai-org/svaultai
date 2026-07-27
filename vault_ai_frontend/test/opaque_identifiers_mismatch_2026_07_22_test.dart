@@ -9,26 +9,29 @@
 // attempt, which surfaced as ``OpaqueAuthenticationFailed`` =>
 // "Wrong username or PIN." regardless of PIN correctness.
 //
-// The fix: strip ``clientIdentifier`` from both frontend OPAQUE
-// finish calls to match the interop test that provably works. This
-// suite locks the invariant.
+// The fix: strip ``clientIdentifier`` from frontend OPAQUE
+// registration finish calls and from the primary login finish call
+// to match the interop test that provably works. A later production
+// compatibility patch permits loginVault to retry finishLogin with
+// the historical identifier only after the default finish rejects,
+// so records created by the short-lived bad build can still unlock.
+// This suite locks both invariants.
 
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-String _readSvc(String path) =>
-    File('lib/services/$path').readAsStringSync();
+String _readSvc(String path) => File('lib/services/$path').readAsStringSync();
 
 String _readLib(String path) => File('lib/$path').readAsStringSync();
 
 void main() {
   group('OPAQUE finish calls must NOT set identifiers.client', () {
-    test('zk_auth_service.registerVault.finishRegistration does not pass '
+    test(
+        'zk_auth_service.registerVault.finishRegistration does not pass '
         'clientIdentifier', () {
       final src = _readSvc('zk_auth_service.dart');
-      final idx =
-          src.indexOf('Future<RegisterResult> registerVault(');
+      final idx = src.indexOf('Future<RegisterResult> registerVault(');
       expect(idx, greaterThan(-1));
       // Everything up to the next public method (loginVault).
       final endIdx = src.indexOf('Future<LoginResult> loginVault(', idx);
@@ -44,16 +47,17 @@ void main() {
         window.contains('clientIdentifier:'),
         isFalse,
         reason: 'registerVault must not pass clientIdentifier — RFC '
-                '9807 requires the server to use the matching '
-                'ServerLoginParameters, and our Rust backend calls '
-                '::default(). Passing an identifier here baked a '
-                'mismatch into the OPAQUE envelope and made every '
-                'subsequent login return undefined.',
+            '9807 requires the server to use the matching '
+            'ServerLoginParameters, and our Rust backend calls '
+            '::default(). Passing an identifier here baked a '
+            'mismatch into the OPAQUE envelope and made every '
+            'subsequent login return undefined.',
       );
     });
 
-    test('zk_auth_service.loginVault.finishLogin does not pass '
-        'clientIdentifier', () {
+    test(
+        'zk_auth_service.loginVault tries default finish first, then '
+        'legacy clientIdentifier compatibility only after rejection', () {
       final src = _readSvc('zk_auth_service.dart');
       final idx = src.indexOf('Future<LoginResult> loginVault(');
       expect(idx, greaterThan(-1));
@@ -63,22 +67,49 @@ void main() {
         window.contains('OpaqueClient.finishLogin('),
         isTrue,
       );
+      final defaultFinishIdx =
+          window.indexOf('finish = OpaqueClient.finishLogin(');
+      final rejectedStepIdx =
+          window.indexOf("step('opaque_finish_login_default_rejected')");
+      final legacyIdentifierIdx = window
+          .indexOf('clientIdentifier: vaultHandleCredentialId(handleBytes)');
+      final finalizeIdx = window.indexOf("'/auth/zk-login-finalize'");
       expect(
-        window.contains('clientIdentifier:'),
+        defaultFinishIdx,
+        greaterThan(-1),
+        reason: 'loginVault must attempt the corrected no-identifier '
+            'finish first',
+      );
+      expect(rejectedStepIdx, greaterThan(defaultFinishIdx));
+      expect(legacyIdentifierIdx, greaterThan(rejectedStepIdx));
+      expect(finalizeIdx, greaterThan(legacyIdentifierIdx));
+      final defaultFinishWindow = window.substring(
+        defaultFinishIdx,
+        rejectedStepIdx,
+      );
+      expect(
+        defaultFinishWindow.contains('clientIdentifier:'),
         isFalse,
-        reason: 'loginVault must not pass clientIdentifier for the '
-                'reasons documented in the matching guard on '
-                'registerVault',
+        reason: 'the primary login finish path must remain compatible '
+            'with correctly-created OPAQUE records',
+      );
+      expect(
+        window.substring(rejectedStepIdx, finalizeIdx).contains(
+              'clientIdentifier: vaultHandleCredentialId(handleBytes)',
+            ),
+        isTrue,
+        reason: 'only the post-rejection compatibility retry may use '
+            'the historical client identifier',
       );
     });
 
-    test('adoptLegacyVault.finishRegistration also omits '
+    test(
+        'adoptLegacyVault.finishRegistration also omits '
         'clientIdentifier', () {
       final src = _readSvc('zk_auth_service.dart');
       final idx = src.indexOf('Future<AdoptResult> adoptLegacyVault(');
       expect(idx, greaterThan(-1));
-      final window =
-          src.substring(idx, (idx + 4000).clamp(0, src.length));
+      final window = src.substring(idx, (idx + 4000).clamp(0, src.length));
       expect(
         window.contains('OpaqueClient.finishRegistration('),
         isTrue,
@@ -87,15 +118,14 @@ void main() {
         window.contains('clientIdentifier:'),
         isFalse,
         reason: 'the legacy-adopt registration flow must also match '
-                'the server-side ServerLoginParameters::default() — '
-                'otherwise adopted accounts would be stranded the '
-                'same way fresh ZK ones were before the fix',
+            'the server-side ServerLoginParameters::default() — '
+            'otherwise adopted accounts would be stranded the '
+            'same way fresh ZK ones were before the fix',
       );
     });
   });
 
-  group('the SERVER-side credential_id is still the deterministic handle',
-      () {
+  group('the SERVER-side credential_id is still the deterministic handle', () {
     // Removing identifiers.client MUST NOT be conflated with
     // dropping the OPAQUE OPRF credential_identifier. The latter
     // is what binds the account to the vault_handle bytes on the
@@ -143,8 +173,9 @@ void main() {
   });
 
   group('SignupPage duplicate-username 409 shows a clean copy', () {
-    test('the SignupPage catch converts a 409 error string to the '
-         'friendly copy', () {
+    test(
+        'the SignupPage catch converts a 409 error string to the '
+        'friendly copy', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _SignupPageState');
       final endIdx = src.indexOf('Widget build(BuildContext context)', idx);
@@ -154,8 +185,8 @@ void main() {
         window.contains(r"err = e.toString().replaceFirst('Exception: ', '')"),
         isFalse,
         reason: 'SignupPage must not surface the raw '
-                '_zkHttpPost exception message — that leaks the '
-                'endpoint URL and response body',
+            '_zkHttpPost exception message — that leaks the '
+            'endpoint URL and response body',
       );
       // Positive check: the friendly duplicate-username copy is
       // present and matches the spec verbatim.
@@ -165,7 +196,7 @@ void main() {
         ),
         isTrue,
         reason: 'SignupPage must classify 409 responses and show '
-                'the friendly "already taken" message',
+            'the friendly "already taken" message',
       );
       // The classification must match on both the ``failed 409``
       // shape (from _zkHttpPost) AND the generic ``HTTP 409`` shape
@@ -176,8 +207,9 @@ void main() {
   });
 
   group('UnlockPage cache invariants', () {
-    test('UnlockPage._submit routes to /login when lastVaultName is '
-         'null/empty', () {
+    test(
+        'UnlockPage._submit routes to /login when lastVaultName is '
+        'null/empty', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _UnlockPageState');
       final endIdx = src.indexOf('_useAnotherVault', idx);
@@ -189,8 +221,8 @@ void main() {
         window.contains('name == null || name.isEmpty'),
         isTrue,
         reason: 'UnlockPage must route to /login when the cached '
-                'identity is incomplete — attempting unlock without '
-                'a cached name has no possible success path',
+            'identity is incomplete — attempting unlock without '
+            'a cached name has no possible success path',
       );
     });
   });
