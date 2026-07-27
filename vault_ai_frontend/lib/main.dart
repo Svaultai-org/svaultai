@@ -2996,6 +2996,46 @@ Future<bool> tryZkFinalizeBeneficiaryLabelCiphertext({
   }
 }
 
+String? _displayLabelString(Object? value) {
+  if (value is! String) return null;
+  return value.trim().isEmpty ? null : value;
+}
+
+@visibleForTesting
+Future<Map<String, dynamic>> resolveOwnerBeneficiaryLabelForDisplay(
+  Map<String, dynamic> row, {
+  SecretKey? mvk,
+}) async {
+  final out = Map<String, dynamic>.from(row);
+  final plaintext = _displayLabelString(out['label']);
+  if (plaintext != null) {
+    out['label'] = plaintext;
+    return out;
+  }
+
+  final encrypted = _displayLabelString(out['passer_label_ciphertext']);
+  final activeMvk = mvk ?? zk_mvk_store.ZkActiveMvk.current();
+  if (encrypted == null) return out;
+  out['has_stored_label'] = true;
+  if (activeMvk == null) return out;
+
+  try {
+    final hierarchy = vk_hier.VaultKeyHierarchy(activeMvk);
+    final metaKey = await hierarchy.metadataKey();
+    final labelBytes = await vk_hier.aesGcmUnwrap(
+      metaKey,
+      vk_hier.b64urlDecode(encrypted),
+    );
+    final label = utf8.decode(labelBytes);
+    if (label.trim().isNotEmpty) {
+      out['label'] = label;
+    }
+  } catch (_) {
+    // Corrupt or unavailable owner-only metadata should not break the list.
+  }
+  return out;
+}
+
 /// Best-effort ZK finalize of the inferred metadata for a
 /// just-uploaded file. Silent no-op when the vault is not
 /// ZK-adopted (legacy vaults get the backend heuristic path). For
@@ -7017,13 +7057,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // what should populate the panel.
       if (!mounted || myGen != _loadBeneficiariesGen) return;
       final raw = result['beneficiaries'];
+      final resolved = raw is List
+          ? await Future.wait(raw
+              .whereType<Map>()
+              .map((m) => resolveOwnerBeneficiaryLabelForDisplay(
+                    Map<String, dynamic>.from(m),
+                  )))
+          : <Map<String, dynamic>>[];
+      if (!mounted || myGen != _loadBeneficiariesGen) return;
       setState(() {
-        beneficiaries = raw is List
-            ? raw
-                .whereType<Map>()
-                .map((m) => Map<String, dynamic>.from(m))
-                .toList()
-            : <Map<String, dynamic>>[];
+        beneficiaries = resolved;
       });
     } catch (e) {
       // Skip stale errors — a newer invocation is in flight or
@@ -9262,7 +9305,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       )
                     else
                       ...beneficiaries.map((b) {
-                        final label = (b['label'] ?? 'Unnamed').toString();
+                        final hasStoredLabel = b['has_stored_label'] == true;
+                        final label =
+                            (b['label'] ??
+                                    (hasStoredLabel
+                                        ? 'Encrypted label unavailable'
+                                        : 'Unnamed'))
+                                .toString();
                         final status = (b['status'] ?? '').toString();
                         final id = (b['id'] as num?)?.toInt() ?? 0;
                         final executesAt =

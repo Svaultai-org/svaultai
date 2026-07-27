@@ -9495,6 +9495,7 @@ async def beneficiary_list_mine_endpoint(
             """
             SELECT bl.id,
                    bl.passer_label,
+                   bl.passer_label_ciphertext,
                    bl.status,
                    bl.beneficiary_vault_id IS NOT NULL AS is_linked,
                    bl.pairing_expires_at,
@@ -9530,6 +9531,13 @@ async def beneficiary_list_mine_endpoint(
             {
                 "id": r["id"],
                 "label": r["passer_label"],
+                "passer_label_ciphertext": (
+                    base64.urlsafe_b64encode(
+                        bytes(r["passer_label_ciphertext"]),
+                    ).rstrip(b"=").decode("ascii")
+                    if r.get("passer_label_ciphertext") is not None
+                    else None
+                ),
                 "status": r["status"],
                 "pairing_state": r.get("pairing_state") or "paired_no_credentials",
                 "is_linked": bool(r["is_linked"]),
