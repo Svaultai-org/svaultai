@@ -287,6 +287,60 @@ void main() {
       );
     });
 
+    test('auth hydration preserves server and legacy-adopted vault handles',
+        () {
+      expect(mainSource.contains("me['vault_handle']"), isTrue);
+      expect(
+        mainSource.contains("sp.setString('last_vault_handle', handle)"),
+        isTrue,
+      );
+      expect(
+        mainSource.contains('legacy_adopt.readCachedVaultHandle()'),
+        isTrue,
+      );
+    });
+
+    test('PIN reauth forwards auth/login vault_handle into session state', () {
+      expect(
+        mainSource.contains("loginResult['vault_handle']?.toString()"),
+        isTrue,
+      );
+      expect(
+        mainSource.contains('vaultHandleValue: newVaultHandle'),
+        isTrue,
+      );
+    });
+
+    test('successful ZK login and unlock store the result vaultHandle', () {
+      final occurrences =
+          'vaultHandleValue: loginResult.vaultHandle'.allMatches(mainSource);
+      expect(occurrences.length, greaterThanOrEqualTo(2));
+      expect(mainSource.contains('vaultHandleValue: loginResult.displayName'),
+          isFalse);
+    });
+
+    test('logout clears vaultHandle memory and persisted storage', () {
+      final idx = mainSource.indexOf('Future<void> clearSession');
+      expect(idx, greaterThan(-1));
+      final window =
+          mainSource.substring(idx, (idx + 2800).clamp(0, mainSource.length));
+      expect(window.contains('vaultHandle = null'), isTrue);
+      expect(window.contains("sp.remove('last_vault_handle')"), isTrue);
+      expect(mainSource.contains('clearSession(keepLastVaultName: false)'),
+          isTrue);
+    });
+
+    test('reveal rehydrate falls back to legacy adoption handle cache', () {
+      final idx = mainSource.indexOf(
+        'Future<SecretKey?> _rehydrateInheritanceSkVault',
+      );
+      expect(idx, greaterThan(-1));
+      final window =
+          mainSource.substring(idx, (idx + 2200).clamp(0, mainSource.length));
+      expect(window.contains('cachedAdoptedHandle'), isTrue);
+      expect(window.contains('_nonEmptyTrimmed(app.vaultHandle)'), isTrue);
+    });
+
     test('safe reveal diagnostics never log PINs, keys, ciphertext, or tokens',
         () {
       final lines = mainSource

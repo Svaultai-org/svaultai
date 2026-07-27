@@ -64,7 +64,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import auth_local
-from routes.auth_routes import router as auth_router
+from routes.auth_routes import router as auth_router, verify_session_token
+from vault_handle import to_display as vault_handle_to_display
 from vault_core import (
     KDF_LEGACY_ITERATIONS,
     PIN_VERIFIER_PLAINTEXT,
@@ -134,6 +135,20 @@ class _FakeCursor:
             self._pending = hits
             return
 
+        if (
+            norm.startswith("select vault_id, vault_name, display_username, vault_handle")
+            and "where vault_id = %s" in norm
+        ):
+            (vault_id,) = params
+            row = self.db.rows.get(str(vault_id))
+            if row:
+                projected = self._project(row)
+                projected["created_at"] = row["created_at"]
+                self._pending = [projected]
+            else:
+                self._pending = []
+            return
+
         # ---- SELECT NOW() --------------------------------------------
         if norm.startswith("select now()"):
             self._pending = [{"now": datetime.now(timezone.utc)}]
@@ -190,6 +205,7 @@ class _FakeCursor:
             "locked_until":        r.get("locked_until"),
             "must_reset":          r.get("must_reset", False),
             "display_username":    r.get("display_username"),
+            "vault_handle":        r.get("vault_handle"),
         }
 
     def fetchone(self) -> Optional[dict]:
@@ -223,6 +239,7 @@ class _InMemoryVaults:
         iterations: int = KDF_LEGACY_ITERATIONS,
         display_username: Optional[str] = None,
         must_reset: bool = False,
+        vault_handle: Optional[bytes] = None,
     ) -> str:
         pin_salt = generate_pin_salt()
         key = derive_key(pin, pin_salt, iterations=iterations)
@@ -238,6 +255,8 @@ class _InMemoryVaults:
             "locked_until":        None,
             "must_reset":          must_reset,
             "display_username":    display_username,
+            "vault_handle":        vault_handle,
+            "created_at":          datetime.now(timezone.utc),
         }
         return vault_id
 
@@ -316,6 +335,53 @@ class MixedCaseVaultNameLoginReproTests(_AuthLoginTestBase):
         self.assertTrue(body["session_token"])
         # The response echoes the row's stored value (case-preserved).
         self.assertEqual(body["vault_name"], "Alexa")
+
+
+class ZkHandleAuthResponseTests(_AuthLoginTestBase):
+    def test_auth_login_returns_vault_handle_for_zk_adopted_row(self) -> None:
+        handle = bytes(range(15))
+        expected = vault_handle_to_display(handle)
+        self.db.add_vault(
+            vault_name="Chosen",
+            pin="123456",
+            vault_handle=handle,
+        )
+
+        resp = self.client.post(
+            "/auth/login",
+            json={"vault_name": "Chosen", "pin": "123456"},
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["vault_handle"], expected)
+        self.assertTrue(body["zk"])
+
+    def test_auth_me_returns_vault_handle_for_authenticated_zk_row(self) -> None:
+        handle = bytes(range(15))
+        expected = vault_handle_to_display(handle)
+        vault_id = self.db.add_vault(
+            vault_name="Chosen",
+            pin="123456",
+            vault_handle=handle,
+        )
+        self.client.app.dependency_overrides[verify_session_token] = lambda: {
+            "vault_id": vault_id,
+            "vault_name": "Chosen",
+        }
+
+        try:
+            resp = self.client.get(
+                "/auth/me",
+                headers={"Authorization": "Bearer test-token"},
+            )
+        finally:
+            self.client.app.dependency_overrides.clear()
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["vault_handle"], expected)
+        self.assertTrue(body["zk"])
 
 
 # ---------------------------------------------------------------------------

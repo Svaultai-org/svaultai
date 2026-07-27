@@ -37,6 +37,7 @@ from vault_core import (
     generate_pin_salt,
     get_db,
 )
+from vault_handle import to_display as vault_handle_to_display
 
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,8 @@ class AuthResponse(BaseModel):
     vault_id:           str
     vault_name:         str
     display_username:   Optional[str] = None
+    vault_handle:       Optional[str] = None
+    zk:                 bool = False
                                                                      
                                                                     
     new_device_trusted: bool = False
@@ -151,7 +154,19 @@ class MeResponse(BaseModel):
     # login-finalize (backfill) or PATCH /vault/name.
     vault_name:       Optional[str] = None
     display_username: Optional[str]
+    vault_handle:     Optional[str] = None
+    zk:               bool = False
     created_at:       datetime
+
+
+def _display_vault_handle(raw: object) -> Optional[str]:
+    if raw is None:
+        return None
+    try:
+        return vault_handle_to_display(bytes(raw))
+    except Exception:
+        logger.warning("[AUTH] invalid vault_handle bytes on auth response")
+        return None
 
 
 _DUMMY_PIN_SALT = "AAAAAAAAAAAAAAAAAAAAAAAA"                           
@@ -219,13 +234,17 @@ def _build_response(
     token_bundle: dict,
     *,
     display_username: Optional[str] = None,
+    vault_handle: object = None,
     new_device_trusted: bool = False,
 ) -> AuthResponse:
+    handle_display = _display_vault_handle(vault_handle)
     return AuthResponse(
         session_token=token_bundle["token"],
         vault_id=str(token_bundle["vault_id"]),
         vault_name=token_bundle["vault_name"],
         display_username=display_username,
+        vault_handle=handle_display,
+        zk=handle_display is not None,
         new_device_trusted=new_device_trusted,
         expires_at=token_bundle["expires_at"],
     )
@@ -441,6 +460,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
             """
             SELECT vault_id, vault_name, pin_salt, pin_verifier, kdf_iterations,
                    failed_pin_attempts, locked_until, must_reset, display_username,
+                   vault_handle,
                    (vault_name = %(raw)s) AS is_exact_match
             FROM vaults
             WHERE LOWER(vault_name) = LOWER(%(raw)s)
@@ -575,6 +595,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
     return _build_response(
         issued,
         display_username=row.get("display_username"),
+        vault_handle=row.get("vault_handle"),
         new_device_trusted=newly_trusted,
     )
 
@@ -586,7 +607,8 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT vault_id, vault_name, display_username, created_at
+            SELECT vault_id, vault_name, display_username, vault_handle,
+                   created_at
             FROM vaults
             WHERE vault_id = %s
             """,
@@ -600,6 +622,8 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
             vault_id=str(row["vault_id"]),
             vault_name=row.get("vault_name"),
             display_username=row.get("display_username"),
+            vault_handle=_display_vault_handle(row.get("vault_handle")),
+            zk=row.get("vault_handle") is not None,
             created_at=row["created_at"],
         )
     finally:

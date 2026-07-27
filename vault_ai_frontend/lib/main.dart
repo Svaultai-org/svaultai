@@ -1421,6 +1421,12 @@ class AppState extends ChangeNotifier {
     final persistedHandle = sp.getString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
+    } else {
+      final adoptedHandle = await legacy_adopt.readCachedVaultHandle();
+      if (adoptedHandle != null && adoptedHandle.isNotEmpty) {
+        vaultHandle = adoptedHandle;
+        await sp.setString('last_vault_handle', adoptedHandle);
+      }
     }
     await _loadAppLocale();
 
@@ -1454,6 +1460,11 @@ class AppState extends ChangeNotifier {
         if (display != null && display.isNotEmpty) {
           displayName = display;
           await sp.setString('last_display_name', display);
+        }
+        final handle = me['vault_handle']?.toString().trim();
+        if (handle != null && handle.isNotEmpty) {
+          vaultHandle = handle;
+          await sp.setString('last_vault_handle', handle);
         }
       } catch (_) {
         sessionToken = null;
@@ -1651,6 +1662,7 @@ class AppState extends ChangeNotifier {
       final newVaultName =
           loginResult['vault_name']?.toString() ?? knownVaultName;
       final newDisplay = loginResult['display_username']?.toString();
+      final newVaultHandle = loginResult['vault_handle']?.toString();
       if (newToken == null || newToken.isEmpty || newVaultId == null) {
         throw Exception('Login response missing session_token or vault_id');
       }
@@ -1660,6 +1672,7 @@ class AppState extends ChangeNotifier {
         vaultIdValue: newVaultId,
         vaultNameValue: newVaultName,
         displayNameValue: newDisplay,
+        vaultHandleValue: newVaultHandle,
       );
 
       lockMessage = null;
@@ -3825,7 +3838,13 @@ Future<bool> _tryLegacyAdoptionBestEffort({
       get: _zkHttpGet,
     );
 
-    if (result.adopted && result.newVaultHandle != null && context.mounted) {
+    if (result.adopted && result.newVaultHandle != null) {
+      app.vaultHandle = result.newVaultHandle;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('last_vault_handle', result.newVaultHandle!);
+      } catch (_) {}
+      if (!context.mounted) return true;
       // Adoption completes silently and the user lands in /chat. The
       // internal vault handle is stored via legacy_adoption for
       // subsequent ZK login, but the user never sees it — VaultAI's
@@ -4359,6 +4378,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final vaultId = result['vault_id']?.toString() ?? '';
       final outName = result['vault_name']?.toString() ?? vaultName;
       final display = result['display_username']?.toString();
+      final vaultHandle = result['vault_handle']?.toString();
       final newDeviceTrusted = result['new_device_trusted'] == true;
       if (token.isEmpty || vaultId.isEmpty) {
         throw Exception('Login response missing session_token / vault_id');
@@ -4368,6 +4388,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         vaultIdValue: vaultId,
         vaultNameValue: outName,
         displayNameValue: display,
+        vaultHandleValue: vaultHandle,
       );
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
@@ -5192,6 +5213,7 @@ class _UnlockPageState extends State<UnlockPage> {
       final vaultId = result['vault_id']?.toString() ?? '';
       final outName = result['vault_name']?.toString() ?? name;
       final display = result['display_username']?.toString();
+      final vaultHandle = result['vault_handle']?.toString();
       final newDeviceTrusted = result['new_device_trusted'] == true;
       if (token.isEmpty || vaultId.isEmpty) {
         throw Exception('Login response missing session_token / vault_id');
@@ -5201,6 +5223,7 @@ class _UnlockPageState extends State<UnlockPage> {
         vaultIdValue: vaultId,
         vaultNameValue: outName,
         displayNameValue: display,
+        vaultHandleValue: vaultHandle,
       );
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
@@ -8453,10 +8476,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String expectedVaultId,
     required String pin,
   }) async {
+    final cachedAdoptedHandle = await legacy_adopt.readCachedVaultHandle();
     final loginId = selectInheritanceRevealLoginIdentifier(
       vaultName: app.vaultName,
       lastVaultName: app.lastVaultName,
-      vaultHandle: app.vaultHandle,
+      vaultHandle: _nonEmptyTrimmed(app.vaultHandle) ?? cachedAdoptedHandle,
     );
     if (!loginId.hasIdentifier) {
       inheritanceRevealDiag('rehydrate_no_identifier', {
