@@ -311,6 +311,25 @@ void main() {
       );
     });
 
+    test('repair rotation exits before backend ciphertext retrieval', () {
+      final idx = mainSource.indexOf(
+        'Future<void> _beneficiaryRevealCredentials',
+      );
+      expect(idx, greaterThan(-1));
+      final window =
+          mainSource.substring(idx, (idx + 8500).clamp(0, mainSource.length));
+
+      final repairIdx = window.indexOf('_repairInheritanceZkAfterPin');
+      final needsOwnerIdx = window.indexOf('requiresOwnerReencryption');
+      final returnAfterNeedsOwnerIdx = window.indexOf('return;', needsOwnerIdx);
+      final retrieveIdx = window.indexOf('retrieveInheritanceCredentials');
+
+      expect(repairIdx, greaterThan(-1));
+      expect(needsOwnerIdx, greaterThan(repairIdx));
+      expect(returnAfterNeedsOwnerIdx, greaterThan(needsOwnerIdx));
+      expect(retrieveIdx, greaterThan(returnAfterNeedsOwnerIdx));
+    });
+
     test('uses a vault-scoped active sk_vault, not any process key', () {
       final idx = mainSource.indexOf(
         'Future<void> _beneficiaryRevealCredentials',

@@ -112,6 +112,7 @@ class TestRefuseIfAccessInFlight:
         "approved",
         "claimable",
         "released",
+        "needs_reencryption",
         "revoked",
         "rejected",
     ])
@@ -196,7 +197,7 @@ class TestClearReleaseTimestampsIfStale:
             self.calls.append((" ".join(sql.split()), params))
 
     @pytest.mark.parametrize("prior_state", [
-        "approved", "claimable", "released",
+        "approved", "claimable", "released", "needs_reencryption",
     ])
     def test_clears_when_prior_state_had_stale_timestamps(
         self, prior_state: str,

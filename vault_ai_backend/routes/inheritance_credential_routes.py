@@ -337,7 +337,7 @@ def _refuse_if_not_initial_save_state(link_row: dict) -> None:
 # pairing_state transition. Mirrors what /access/cancel and
 # /access/reject already do (see inheritance_release_routes.py).
 _STATES_WITH_STALE_RELEASE_TIMESTAMPS = frozenset({
-    "approved", "claimable", "released",
+    "approved", "claimable", "released", "needs_reencryption",
 })
 
 

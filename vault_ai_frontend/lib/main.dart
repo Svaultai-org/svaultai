@@ -1643,10 +1643,11 @@ class AppState extends ChangeNotifier {
           _nonEmptyTrimmed(result.displayName) ??
           result.vaultHandle;
 
-      _VaultCrypto._keyCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
+      _VaultCrypto
+              ._keyCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
           result.mvk;
-      _VaultCrypto._pinCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
-          pin;
+      _VaultCrypto
+          ._pinCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] = pin;
       _VaultCrypto.setActiveVault(
         vaultId: result.vaultId,
         vaultName: resolvedVaultName,
@@ -8209,6 +8210,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return 'Access approved';
       case 'released':
         return 'Access granted';
+      case 'needs_reencryption':
+        return 'Owner update required';
       case 'revoked':
         return 'Revoked';
       case 'rejected':
@@ -8228,6 +8231,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       case 'claimable':
         return const Color(0xFF10A37F);
       case 'cooldown_active':
+      case 'needs_reencryption':
         return Colors.orange;
       case 'revoked':
       case 'rejected':
@@ -8504,13 +8508,68 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         _showSnack('PIN did not match. Try again.');
         return;
       case InheritanceRevealLocalKeyStatus.missingLocalKey:
-        _showSnack(
-          'Could not restore this device\'s inheritance key. '
-          'Unlock this beneficiary vault with your PIN, then try Reveal again.',
+        ZkRepairResult? repair;
+        try {
+          repair = await _repairInheritanceZkAfterPin(
+            app: app,
+            vaultId: vaultId,
+            pin: pin,
+          );
+        } catch (e) {
+          if (app.handleApiException(e)) return;
+          inheritanceRevealDiag('repair_exception', {
+            'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+            'exception_type': e.runtimeType.toString(),
+          });
+        }
+        if (repair == null) {
+          _showSnack(
+            'Could not restore this device\'s inheritance key. '
+            'Unlock this beneficiary vault with your PIN, then try Reveal again.',
+          );
+          return;
+        }
+        if (repair.requiresOwnerReencryption) {
+          _showSnack(
+            'This device could not recover the old inheritance key. '
+            'I repaired this beneficiary vault with a new key, but the owner '
+            'must update the saved credentials before you can reveal them.',
+          );
+          await _loadInheritances();
+          await _loadBeneficiaries();
+          return;
+        }
+        localKey = InheritanceRevealLocalKeyResult.ready(
+          repair.skVaultPrivate,
+          reason: 'repair_preserved_sk_ready',
         );
-        return;
+        break;
       case InheritanceRevealLocalKeyStatus.ready:
         break;
+    }
+
+    if (localKey.skVault != null &&
+        (localKey.reason == 'active_sk_ready' ||
+            localKey.reason == 'active_sk_ready_after_rehydrate')) {
+      try {
+        final repair = await _repairInheritanceZkAfterPin(
+          app: app,
+          vaultId: vaultId,
+          pin: pin,
+          existingSkVault: localKey.skVault,
+        );
+        if (repair != null && repair.preservedExistingKey) {
+          localKey = InheritanceRevealLocalKeyResult.ready(
+            repair.skVaultPrivate,
+            reason: 'repair_preserved_existing_sk',
+          );
+        }
+      } catch (e) {
+        inheritanceRevealDiag('repair_preserve_failed_non_blocking', {
+          'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+          'exception_type': e.runtimeType.toString(),
+        });
+      }
     }
 
     // 2. Load the wrapped package.
@@ -8651,6 +8710,88 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return null;
     }
     return zk_sk_store.ZkActiveSkVault.current();
+  }
+
+  Future<SecretKey> _inheritanceRepairMvkFor({
+    required String vaultId,
+  }) async {
+    final activeMvk = zk_mvk_store.ZkActiveMvk.current();
+    if (activeMvk != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId) {
+      return activeMvk;
+    }
+    final activeContext = VaultCryptoRegistry.current;
+    if (activeContext != null && activeContext.vaultId == vaultId) {
+      return activeContext.key;
+    }
+    if (_VaultCrypto._activeVaultId == vaultId) {
+      return _VaultCrypto._requireActiveKey();
+    }
+    throw const InvalidVaultUnlockException();
+  }
+
+  Future<ZkRepairResult?> _repairInheritanceZkAfterPin({
+    required AppState app,
+    required String vaultId,
+    required String pin,
+    SecretKey? existingSkVault,
+  }) async {
+    final pinVerified = await app.verifyPin(
+      pin,
+      restoreZkSessionKeys: false,
+    );
+    if (!pinVerified) {
+      inheritanceRevealDiag('repair_pin_rejected', {
+        'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+      });
+      return null;
+    }
+    final token = app.sessionToken;
+    final handle = _nonEmptyTrimmed(app.vaultHandle);
+    if (token == null || token.isEmpty || handle == null) {
+      inheritanceRevealDiag('repair_missing_session_or_handle', {
+        'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+        'has_token': token != null && token.isNotEmpty,
+        'has_vault_handle': handle != null,
+      });
+      return null;
+    }
+    final mvk = await _inheritanceRepairMvkFor(vaultId: vaultId);
+    final display = _nonEmptyTrimmed(app.displayName) ??
+        _nonEmptyTrimmed(app.vaultName) ??
+        _nonEmptyTrimmed(app.lastVaultName) ??
+        'VaultAI';
+    final repair = await ZkAuthService(_zkHttpPost).repairVaultOpaqueRecord(
+      vaultHandle: handle,
+      pin: pin,
+      mvk: mvk,
+      displayName: display,
+      currentSessionToken: token,
+      existingSkVaultPrivate: existingSkVault,
+    );
+    if (repair.vaultId != vaultId) {
+      inheritanceRevealDiag('repair_vault_mismatch', {
+        'expected_vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+        'actual_vault_fpr': inheritanceRevealIdFingerprint(repair.vaultId),
+      });
+      return null;
+    }
+    zk_mvk_store.ZkActiveMvk.set(
+      mvk: repair.mvk,
+      vaultId: repair.vaultId,
+      vaultHandle: repair.vaultHandle,
+    );
+    zk_sk_store.ZkActiveSkVault.set(
+      skVault: repair.skVaultPrivate,
+      vaultId: repair.vaultId,
+    );
+    inheritanceRevealDiag('repair_success', {
+      'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+      'branch': repair.branch,
+      'requires_owner_reencryption': repair.requiresOwnerReencryption,
+      'reencryption_required_count': repair.reencryptionRequiredCount,
+    });
+    return repair;
   }
 
   Future<SecretKey?> _rehydrateInheritanceSkVault({
@@ -9139,6 +9280,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         final pairingState =
                             (b['pairing_state'] ?? 'paired_no_credentials')
                                 .toString();
+                        final needsReencryption =
+                            pairingState == 'needs_reencryption';
                         final cooldownEndsAt =
                             b['cooldown_ends_at']?.toString();
                         final accessRequested =
@@ -9239,23 +9382,31 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Icon(
-                                            credentialsSaved
-                                                ? Icons.lock_outline
-                                                : Icons.lock_open_outlined,
+                                            needsReencryption
+                                                ? Icons.warning_amber_outlined
+                                                : credentialsSaved
+                                                    ? Icons.lock_outline
+                                                    : Icons.lock_open_outlined,
                                             size: 16,
-                                            color: credentialsSaved
-                                                ? const Color(0xFF66BB6A)
-                                                : const Color(0xFFB4B4B4),
+                                            color: needsReencryption
+                                                ? Colors.orange
+                                                : credentialsSaved
+                                                    ? const Color(0xFF66BB6A)
+                                                    : const Color(0xFFB4B4B4),
                                           ),
                                           const SizedBox(width: 6),
                                           Text(
-                                            credentialsSaved
-                                                ? 'Inheritance credentials: Saved'
-                                                : 'Inheritance credentials: Not saved',
+                                            needsReencryption
+                                                ? 'Inheritance credentials: Needs update'
+                                                : credentialsSaved
+                                                    ? 'Inheritance credentials: Saved'
+                                                    : 'Inheritance credentials: Not saved',
                                             style: TextStyle(
-                                              color: credentialsSaved
-                                                  ? const Color(0xFF66BB6A)
-                                                  : const Color(0xFFB4B4B4),
+                                              color: needsReencryption
+                                                  ? Colors.orange
+                                                  : credentialsSaved
+                                                      ? const Color(0xFF66BB6A)
+                                                      : const Color(0xFFB4B4B4),
                                               fontSize: 12,
                                             ),
                                           ),
@@ -9301,8 +9452,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           ),
                                           icon: const Icon(Icons.edit_outlined,
                                               size: 18),
-                                          label:
-                                              const Text('Update credentials'),
+                                          label: Text(needsReencryption
+                                              ? 'Re-save credentials'
+                                              : 'Update credentials'),
                                         ),
                                         OutlinedButton.icon(
                                           key: Key(
@@ -9515,6 +9667,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         final pairingState =
                             (i['pairing_state'] ?? 'paired_no_credentials')
                                 .toString();
+                        final needsReencryption =
+                            pairingState == 'needs_reencryption';
                         final credentialsSaved = i['credentials_saved'] == true;
                         final cooldownEndsAt =
                             i['cooldown_ends_at']?.toString();
@@ -9588,6 +9742,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           Text(
                                             'Available in ${_formatCountdown(cooldownEndsAt)}',
                                             style: const TextStyle(
+                                                color: Color(0xFFB4B4B4),
+                                                fontSize: 11),
+                                          ),
+                                        ] else if (needsReencryption) ...[
+                                          const SizedBox(height: 2),
+                                          const Text(
+                                            'The owner needs to update these credentials for your repaired vault key.',
+                                            style: TextStyle(
                                                 color: Color(0xFFB4B4B4),
                                                 fontSize: 11),
                                           ),

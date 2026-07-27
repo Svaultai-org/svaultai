@@ -74,6 +74,12 @@ def _record_fingerprint(record_bytes: bytes) -> str:
     return hashlib.sha256(record_bytes).hexdigest()[:8]
 
 
+def _bytes_or_none(value: object) -> Optional[bytes]:
+    if value is None:
+        return None
+    return bytes(value)
+
+
 # Length of the client-derived username lookup identifier
 # (SHA-256 output). See vault_handle.dart::deriveUsernameLookupV1
 # and migration 0030_username_blind_index.
@@ -117,6 +123,7 @@ from auth_local import (
     normalize_client_label,
     verify_session_token,
 )
+from device_gate import verify_trusted_device
 from opaque_server_module import (
     OpaqueError,
     OpaqueProtocolError,
@@ -148,12 +155,16 @@ LOGIN_SLOT_TTL_SECONDS = 90
 
 MAX_OPAQUE_MESSAGE_BYTES = 8 * 1024
 MAX_WRAPPED_BLOB_BYTES = 64 * 1024
+ZK_REPAIR_PIN_SESSION_FRESH_SECONDS = 5 * 60
 
 
 GENERIC_ZK_AUTH_ERROR = "Wrong username or PIN."
 DUPLICATE_USERNAME_ERROR = (
     "That username is already taken. Please choose another."
 )
+
+ZK_REPAIR_BRANCH_PRESERVE = "preserve_existing_key"
+ZK_REPAIR_BRANCH_ROTATE = "rotate_new_key"
 
 
 def _b64url_decode(value: str, *, name: str, max_bytes: int) -> bytes:
@@ -979,6 +990,335 @@ async def zk_login_finalize(
             bytes(vault_row["display_name_ciphertext"]),
         ),
         vault_name=vault_row.get("vault_name"),
+    )
+
+
+class ZkRepairInitRequest(BaseModel):
+    vault_handle: str = Field(..., min_length=1, max_length=200)
+    ke1: str = Field(..., min_length=1)
+
+
+class ZkRepairInitResponse(BaseModel):
+    ke2: str
+
+
+class ZkRepairFinalizeRequest(BaseModel):
+    vault_handle: str = Field(..., min_length=1, max_length=200)
+    ke3: str = Field(..., min_length=1)
+    wrapped_mvk: str = Field(..., min_length=1)
+    wrapped_sk_vault: str = Field(..., min_length=1)
+    pk_vault_public: str = Field(..., min_length=1)
+    display_name_ciphertext: str = Field(..., min_length=1)
+    repair_branch: str = Field(..., min_length=1, max_length=64)
+
+    @field_validator("repair_branch")
+    @classmethod
+    def _valid_branch(cls, value: str) -> str:
+        if value not in {ZK_REPAIR_BRANCH_PRESERVE, ZK_REPAIR_BRANCH_ROTATE}:
+            raise ValueError("unknown repair branch")
+        return value
+
+
+class ZkRepairFinalizeResponse(BaseModel):
+    repaired: bool
+    vault_id: str
+    vault_handle: str
+    branch: str
+    pk_rotated: bool
+    requires_owner_reencryption: bool
+    reencryption_required_count: int
+
+
+def _decode_zk_repair_payload(payload: ZkRepairFinalizeRequest) -> dict:
+    record_upload = _b64url_decode(
+        payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
+    )
+    wrapped_mvk = _b64url_decode(
+        payload.wrapped_mvk, name="wrapped_mvk",
+        max_bytes=MAX_WRAPPED_BLOB_BYTES,
+    )
+    wrapped_sk_vault = _b64url_decode(
+        payload.wrapped_sk_vault, name="wrapped_sk_vault",
+        max_bytes=MAX_WRAPPED_BLOB_BYTES,
+    )
+    pk_vault_public = _b64url_decode(
+        payload.pk_vault_public, name="pk_vault_public", max_bytes=64,
+    )
+    if len(pk_vault_public) != 32:
+        raise HTTPException(
+            status_code=400, detail="pk_vault_public must be 32 bytes",
+        )
+    display_name_ciphertext = _b64url_decode(
+        payload.display_name_ciphertext,
+        name="display_name_ciphertext",
+        max_bytes=MAX_WRAPPED_BLOB_BYTES,
+    )
+    return {
+        "record_upload": record_upload,
+        "wrapped_mvk": wrapped_mvk,
+        "wrapped_sk_vault": wrapped_sk_vault,
+        "pk_vault_public": pk_vault_public,
+        "display_name_ciphertext": display_name_ciphertext,
+    }
+
+
+def _require_recent_repair_session(
+    *,
+    principal: SessionPrincipal,
+    request: Request,
+) -> None:
+    """Require a fresh legacy-PIN session on the current trusted device."""
+    device_id = (request.headers.get("x-device-id") or "").strip()
+    if not device_id or principal.get("device_id") != device_id:
+        raise HTTPException(
+            status_code=403,
+            detail="fresh device-bound PIN verification required",
+        )
+
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=ZK_REPAIR_PIN_SESSION_FRESH_SECONDS,
+    )
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT 1
+              FROM auth_sessions
+             WHERE token_id = %s
+               AND vault_id = %s
+               AND device_id = %s
+               AND revoked_at IS NULL
+               AND expires_at > NOW()
+               AND issued_at >= %s
+             LIMIT 1
+            """,
+            (
+                principal["token_id"],
+                principal["vault_id"],
+                device_id,
+                cutoff,
+            ),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(
+                status_code=401,
+                detail="fresh PIN verification required for repair",
+            )
+    finally:
+        conn.close()
+
+
+def _mark_inherited_packages_need_reencryption(
+    cur, *, beneficiary_vault_id: str,
+) -> int:
+    """Preserve active packages but mark them stale after key rotation."""
+    cur.execute(
+        """
+        WITH affected AS (
+            SELECT bl.id
+              FROM beneficiary_links bl
+              JOIN inheritance_credentials ic
+                ON ic.beneficiary_link_id = bl.id
+               AND ic.deleted_at IS NULL
+             WHERE bl.beneficiary_vault_id = %s
+               AND COALESCE(bl.pairing_state, 'paired_no_credentials')
+                   <> 'revoked'
+        ),
+        updated_links AS (
+            UPDATE beneficiary_links bl
+               SET pairing_state = 'needs_reencryption',
+                   access_requested_at = NULL,
+                   cooldown_ends_at = NULL,
+                   decision_at = NULL
+              FROM affected a
+             WHERE bl.id = a.id
+            RETURNING bl.id
+        ),
+        updated_credentials AS (
+            UPDATE inheritance_credentials ic
+               SET state = 'needs_reencryption',
+                   updated_at = NOW(),
+                   released_at = NULL,
+                   revoked_at = NULL
+              FROM updated_links ul
+             WHERE ic.beneficiary_link_id = ul.id
+               AND ic.deleted_at IS NULL
+            RETURNING ic.beneficiary_link_id
+        )
+        UPDATE inheritance_device_authorizations ida
+           SET revoked_at = NOW()
+         WHERE ida.beneficiary_link_id IN (
+               SELECT beneficiary_link_id FROM updated_credentials
+         )
+           AND ida.consumed_at IS NULL
+           AND ida.revoked_at IS NULL
+        """,
+        (beneficiary_vault_id,),
+    )
+    cur.execute(
+        """
+        SELECT COUNT(*) AS c
+          FROM inheritance_credentials ic
+          JOIN beneficiary_links bl ON bl.id = ic.beneficiary_link_id
+         WHERE bl.beneficiary_vault_id = %s
+           AND ic.deleted_at IS NULL
+           AND ic.state = 'needs_reencryption'
+        """,
+        (beneficiary_vault_id,),
+    )
+    row = cur.fetchone() or {}
+    return int(row.get("c") or 0)
+
+
+@router.post(
+    "/auth/zk-repair-init",
+    response_model=ZkRepairInitResponse,
+)
+async def zk_repair_init(
+    payload: ZkRepairInitRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> ZkRepairInitResponse:
+    _require_recent_repair_session(principal=principal, request=request)
+    handle_bytes = _decode_handle_or_400(payload.vault_handle)
+    ke1 = _b64url_decode(
+        payload.ke1, name="ke1", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
+    )
+
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT vault_handle FROM vaults WHERE vault_id = %s",
+            (principal["vault_id"],),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    stored_handle = _bytes_or_none(row.get("vault_handle") if row else None)
+    if stored_handle is None or stored_handle != handle_bytes:
+        raise HTTPException(status_code=403, detail="vault handle mismatch")
+
+    try:
+        ke2 = opaque_registration_start(
+            ke1, _opaque_credential_id(stored_handle),
+        )
+    except OpaqueWheelMissing:
+        raise HTTPException(
+            status_code=503, detail="zk auth not available",
+        )
+    except OpaqueError:
+        raise HTTPException(
+            status_code=400, detail="invalid repair registration request",
+        )
+    return ZkRepairInitResponse(ke2=_b64url_encode(ke2))
+
+
+@router.post(
+    "/auth/zk-repair-finalize",
+    response_model=ZkRepairFinalizeResponse,
+)
+async def zk_repair_finalize(
+    payload: ZkRepairFinalizeRequest,
+    request: Request,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> ZkRepairFinalizeResponse:
+    _require_recent_repair_session(principal=principal, request=request)
+    handle_bytes = _decode_handle_or_400(payload.vault_handle)
+    decoded = _decode_zk_repair_payload(payload)
+    try:
+        record = opaque_registration_finish(decoded["record_upload"])
+    except OpaqueWheelMissing:
+        raise HTTPException(
+            status_code=503, detail="zk auth not available",
+        )
+    except OpaqueError:
+        raise HTTPException(
+            status_code=400, detail="invalid repair registration upload",
+        )
+
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT vault_id, vault_handle, pk_vault_public
+              FROM vaults
+             WHERE vault_id = %s
+            FOR UPDATE
+            """,
+            (principal["vault_id"],),
+        )
+        row = cur.fetchone()
+        if row is None:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="vault not found")
+
+        stored_handle = _bytes_or_none(row.get("vault_handle"))
+        if stored_handle is None or stored_handle != handle_bytes:
+            conn.rollback()
+            raise HTTPException(status_code=403, detail="vault handle mismatch")
+
+        existing_pk = _bytes_or_none(row.get("pk_vault_public"))
+        new_pk = decoded["pk_vault_public"]
+        if payload.repair_branch == ZK_REPAIR_BRANCH_PRESERVE:
+            if existing_pk is not None and existing_pk != new_pk:
+                conn.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail="preserve repair public key mismatch",
+                )
+            pk_rotated = False
+        else:
+            pk_rotated = existing_pk != new_pk
+
+        cur.execute(
+            """
+            UPDATE vaults
+               SET opaque_registration_record = %s,
+                   wrapped_mvk = %s,
+                   wrapped_sk_vault = %s,
+                   pk_vault_public = %s,
+                   display_name_ciphertext = %s,
+                   last_vault_unlock_at = NOW(),
+                   last_any_activity_at = NOW()
+             WHERE vault_id = %s
+            """,
+            (
+                record,
+                decoded["wrapped_mvk"],
+                decoded["wrapped_sk_vault"],
+                new_pk,
+                decoded["display_name_ciphertext"],
+                principal["vault_id"],
+            ),
+        )
+        reencryption_count = 0
+        if payload.repair_branch == ZK_REPAIR_BRANCH_ROTATE:
+            reencryption_count = _mark_inherited_packages_need_reencryption(
+                cur, beneficiary_vault_id=principal["vault_id"],
+            )
+        conn.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return ZkRepairFinalizeResponse(
+        repaired=True,
+        vault_id=principal["vault_id"],
+        vault_handle=to_display(handle_bytes),
+        branch=payload.repair_branch,
+        pk_rotated=pk_rotated,
+        requires_owner_reencryption=(
+            payload.repair_branch == ZK_REPAIR_BRANCH_ROTATE
+        ),
+        reencryption_required_count=reencryption_count,
     )
 
 

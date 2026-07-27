@@ -36,6 +36,8 @@ void main() {
           return 'Access approved';
         case 'released':
           return 'Access granted';
+        case 'needs_reencryption':
+          return 'Owner update required';
         case 'revoked':
           return 'Revoked';
         case 'rejected':
@@ -50,58 +52,80 @@ void main() {
 
     test('credentials_saved renders "Credentials secured"', () {
       expect(
-        _label(pairingState: 'credentials_saved',
-               credentialsSaved: true, legacyStatus: 'linked'),
+        _label(
+            pairingState: 'credentials_saved',
+            credentialsSaved: true,
+            legacyStatus: 'linked'),
         'Credentials secured',
       );
     });
 
     test('cooldown_active renders "Access requested"', () {
       expect(
-        _label(pairingState: 'cooldown_active',
-               credentialsSaved: true, legacyStatus: 'linked'),
+        _label(
+            pairingState: 'cooldown_active',
+            credentialsSaved: true,
+            legacyStatus: 'linked'),
         'Access requested',
       );
     });
 
     test('claimable renders "Access available"', () {
       expect(
-        _label(pairingState: 'claimable',
-               credentialsSaved: true, legacyStatus: 'linked'),
+        _label(
+            pairingState: 'claimable',
+            credentialsSaved: true,
+            legacyStatus: 'linked'),
         'Access available',
       );
     });
 
     test('approved / released render access states', () {
       expect(
-        _label(pairingState: 'approved',
-               credentialsSaved: true, legacyStatus: 'linked'),
+        _label(
+            pairingState: 'approved',
+            credentialsSaved: true,
+            legacyStatus: 'linked'),
         'Access approved',
       );
       expect(
-        _label(pairingState: 'released',
-               credentialsSaved: true, legacyStatus: 'linked'),
+        _label(
+            pairingState: 'released',
+            credentialsSaved: true,
+            legacyStatus: 'linked'),
         'Access granted',
       );
     });
 
     test('paired_no_credentials falls back to legacy status', () {
       expect(
-        _label(pairingState: 'paired_no_credentials',
-               credentialsSaved: false, legacyStatus: 'transfer_pending'),
+        _label(
+            pairingState: 'paired_no_credentials',
+            credentialsSaved: false,
+            legacyStatus: 'transfer_pending'),
         'Transfer pending',
+      );
+    });
+
+    test('needs_reencryption tells beneficiary owner action is required', () {
+      expect(
+        _label(
+            pairingState: 'needs_reencryption',
+            credentialsSaved: true,
+            legacyStatus: 'linked'),
+        'Owner update required',
       );
     });
   });
 
-  group('source guards — nothing Recovery-Kit / Settings-pairing '
-        'ever comes back', () {
+  group(
+      'source guards — nothing Recovery-Kit / Settings-pairing '
+      'ever comes back', () {
     File _main() => File('lib/main.dart');
     File _api() => File('lib/api_client.dart');
     Directory _services() => Directory('lib/services');
 
-    test('main.dart contains none of the removed feature identifiers',
-        () {
+    test('main.dart contains none of the removed feature identifiers', () {
       final src = _main().readAsStringSync();
       const forbidden = <String>[
         'recovery_kit_settings_page',
@@ -166,7 +190,7 @@ void main() {
       expect(idx, greaterThan(-1));
       // Within a ~200 line window after the helper, the PIN prompt
       // must be called BEFORE the /retrieve fetch.
-      final window = src.substring(idx, idx + 4000);
+      final window = src.substring(idx, idx + 7000);
       final promptIdx = window.indexOf('_promptForReauthPin');
       final retrieveIdx = window.indexOf('retrieveInheritanceCredentials');
       expect(promptIdx, greaterThan(-1));

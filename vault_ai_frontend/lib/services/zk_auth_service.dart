@@ -122,6 +122,33 @@ class AdoptResult {
   AdoptResult(this.newVaultHandle);
 }
 
+const String zkRepairBranchPreserveExistingKey = 'preserve_existing_key';
+const String zkRepairBranchRotateNewKey = 'rotate_new_key';
+
+class ZkRepairResult {
+  final String vaultId;
+  final String vaultHandle;
+  final SecretKey mvk;
+  final SecretKey skVaultPrivate;
+  final Uint8List pkVaultPublic;
+  final String branch;
+  final bool requiresOwnerReencryption;
+  final int reencryptionRequiredCount;
+
+  ZkRepairResult({
+    required this.vaultId,
+    required this.vaultHandle,
+    required this.mvk,
+    required this.skVaultPrivate,
+    required this.pkVaultPublic,
+    required this.branch,
+    required this.requiresOwnerReencryption,
+    required this.reencryptionRequiredCount,
+  });
+
+  bool get preservedExistingKey => branch == zkRepairBranchPreserveExistingKey;
+}
+
 /// Callback that POSTs the given ZK auth-endpoint JSON body and
 /// returns the parsed JSON. Extracted so widget tests can inject a
 /// fake without touching the network.
@@ -661,6 +688,95 @@ class ZkAuthService {
       skVaultPrivate: skVault,
       displayName: displayName,
       vaultName: finalizeResponse['vault_name'] as String?,
+    );
+  }
+
+  Future<ZkRepairResult> repairVaultOpaqueRecord({
+    required String vaultHandle,
+    required String pin,
+    required SecretKey mvk,
+    required String displayName,
+    required String currentSessionToken,
+    SecretKey? existingSkVaultPrivate,
+  }) async {
+    await _opaque.ready();
+
+    final handleBytes = vaultHandleFromDisplay(vaultHandle);
+    final handleDisplay = vaultHandleToDisplay(handleBytes);
+
+    final regStart = _opaque.startRegistration(password: pin);
+    final initResponse = await _post(
+      '/auth/zk-repair-init',
+      {
+        'vault_handle': handleDisplay,
+        'ke1': regStart.registrationRequest,
+      },
+      bearerToken: currentSessionToken,
+    );
+
+    final regFinish = _opaque.finishRegistration(
+      password: pin,
+      registrationResponse: initResponse['ke2'] as String,
+      clientRegistrationState: regStart.clientRegistrationState,
+      // No clientIdentifier: repair writes the modern production format.
+    );
+
+    final kek = await _deriveKek(regFinish.exportKey);
+    final mvkBytes = Uint8List.fromList(await mvk.extractBytes());
+    if (mvkBytes.length != _mvkBytes) {
+      throw StateError('repair MVK has invalid length');
+    }
+
+    late final Uint8List skVaultBytes;
+    late final String branch;
+    if (existingSkVaultPrivate != null) {
+      skVaultBytes =
+          Uint8List.fromList(await existingSkVaultPrivate.extractBytes());
+      if (skVaultBytes.length != _skVaultBytes) {
+        throw StateError('repair sk_vault has invalid length');
+      }
+      branch = zkRepairBranchPreserveExistingKey;
+    } else {
+      skVaultBytes = _randomBytes(_skVaultBytes);
+      branch = zkRepairBranchRotateNewKey;
+    }
+    final skVault = SecretKey(skVaultBytes);
+    final pkVaultPublic = await _x25519PublicFromSecret(skVaultBytes);
+
+    final wrappedMvk = await _wrap(kek, mvkBytes);
+    final wrappedSkVault = await _wrap(kek, skVaultBytes);
+    final displayNameKey = await _deriveDisplayNameKey(mvk);
+    final displayNameCiphertext = await _wrap(
+      displayNameKey,
+      Uint8List.fromList(utf8.encode(displayName)),
+    );
+
+    final finalizeResponse = await _post(
+      '/auth/zk-repair-finalize',
+      {
+        'vault_handle': handleDisplay,
+        'ke3': regFinish.registrationRecord,
+        'wrapped_mvk': _b64urlEncode(wrappedMvk),
+        'wrapped_sk_vault': _b64urlEncode(wrappedSkVault),
+        'pk_vault_public': _b64urlEncode(pkVaultPublic),
+        'display_name_ciphertext': _b64urlEncode(displayNameCiphertext),
+        'repair_branch': branch,
+      },
+      bearerToken: currentSessionToken,
+    );
+
+    return ZkRepairResult(
+      vaultId: finalizeResponse['vault_id'] as String,
+      vaultHandle: finalizeResponse['vault_handle'] as String? ?? handleDisplay,
+      mvk: mvk,
+      skVaultPrivate: skVault,
+      pkVaultPublic: pkVaultPublic,
+      branch: finalizeResponse['branch'] as String? ?? branch,
+      requiresOwnerReencryption:
+          finalizeResponse['requires_owner_reencryption'] == true,
+      reencryptionRequiredCount:
+          (finalizeResponse['reencryption_required_count'] as num?)?.toInt() ??
+              0,
     );
   }
 
