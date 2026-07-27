@@ -268,11 +268,58 @@ def _refuse_if_access_in_flight(link_row: dict) -> None:
                 "pairing_state": pairing_state,
             },
         )
+    if pairing_state:
+        return
     # Legacy transfer path signals via ``status``: refuse if the
     # link is anywhere past ``linked``. Kept for pre-Phase-2 rows
     # that never adopted a ``pairing_state`` value.
     legacy_status = (link_row.get("status") or "").strip()
     if legacy_status not in ("pairing_pending", "linked", ""):
+        raise inheritance_http_error(
+            INHERR.CRED_ACCESS_IN_FLIGHT,
+            log_details={
+                "link_id": link_row["id"],
+                "pairing_state": pairing_state,
+                "legacy_status": legacy_status,
+            },
+        )
+
+
+_SAVE_ALLOWED_PAIRING_STATES = frozenset({"paired_no_credentials"})
+_SAVE_ALLOWED_LEGACY_STATUSES = frozenset({"linked"})
+_SAVE_TERMINAL_LEGACY_STATUSES = frozenset({
+    "cancelled", "canceled", "transferred", "deleted", "revoked",
+})
+
+
+def _refuse_if_not_initial_save_state(link_row: dict) -> None:
+    """Credential creation is only valid for a paired link that has
+    not saved credentials yet. ``pairing_state`` is authoritative when
+    present; legacy ``status`` is only used to block terminal legacy
+    rows such as cancelled/deleted/transferred links."""
+    pairing_state = (link_row.get("pairing_state") or "").strip()
+    legacy_status = (link_row.get("status") or "").strip()
+    if pairing_state:
+        if pairing_state not in _SAVE_ALLOWED_PAIRING_STATES:
+            raise inheritance_http_error(
+                INHERR.CRED_ACCESS_IN_FLIGHT,
+                log_details={
+                    "link_id": link_row["id"],
+                    "pairing_state": pairing_state,
+                    "legacy_status": legacy_status,
+                },
+            )
+        if legacy_status in _SAVE_TERMINAL_LEGACY_STATUSES:
+            raise inheritance_http_error(
+                INHERR.CRED_ACCESS_IN_FLIGHT,
+                log_details={
+                    "link_id": link_row["id"],
+                    "pairing_state": pairing_state,
+                    "legacy_status": legacy_status,
+                },
+            )
+        return
+    if legacy_status not in _SAVE_ALLOWED_LEGACY_STATUSES:
         raise inheritance_http_error(
             INHERR.CRED_ACCESS_IN_FLIGHT,
             log_details={
@@ -459,6 +506,7 @@ def save_credentials(
                 INHERR.CRED_ALREADY_SAVED,
                 log_details={"link_id": payload.beneficiary_link_id},
             )
+        _refuse_if_not_initial_save_state(link)
 
         _insert_credential_row(
             cur, link_id=payload.beneficiary_link_id,

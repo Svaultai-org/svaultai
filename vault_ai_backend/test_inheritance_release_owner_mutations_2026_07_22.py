@@ -153,13 +153,23 @@ class TestRefuseIfAccessInFlight:
         )
         icr._refuse_if_access_in_flight(link)  # must not raise
 
-    def test_legacy_transfer_status_still_refuses(self) -> None:
-        # Pre-Phase-2 rows whose ``status`` moved to transfer_pending
-        # via the legacy /beneficiary/request-transfer flow must still
-        # be blocked — the release-flow pairing_state is not
-        # authoritative for those rows.
+    def test_pairing_state_overrides_legacy_transfer_status(self) -> None:
+        # Once pairing_state is populated, it is authoritative. A
+        # stale legacy transfer_pending status must not block owner
+        # credential mutations.
         link = self._link(
             pairing_state="credentials_saved",
+            legacy_status="transfer_pending",
+        )
+        icr._refuse_if_access_in_flight(link)
+
+    def test_blank_pairing_state_still_uses_legacy_transfer_status(
+        self,
+    ) -> None:
+        # Rows that truly predate pairing_state still fall back to the
+        # legacy status field.
+        link = self._link(
+            pairing_state="",
             legacy_status="transfer_pending",
         )
         with pytest.raises(HTTPException) as ei:
@@ -371,28 +381,32 @@ def store_at_state():
 
     def _build(*, pairing_state: str,
                with_escrow: bool = True,
-               with_stale_timestamps: bool = False) -> dict:
+               with_stale_timestamps: bool = False,
+               legacy_status: str = "linked",
+               owner_vault_id: str = _OWNER_VAULT_ID,
+               beneficiary_vault_id: Optional[str] = _BENEFICIARY_VAULT_ID,
+               link_id: int = 42) -> dict:
         now = _now()
         link = {
-            "id": 42,
-            "passer_vault_id": _OWNER_VAULT_ID,
-            "beneficiary_vault_id": _BENEFICIARY_VAULT_ID,
-            "status": "linked",
+            "id": link_id,
+            "passer_vault_id": owner_vault_id,
+            "beneficiary_vault_id": beneficiary_vault_id,
+            "status": legacy_status,
             "pairing_state": pairing_state,
             "access_requested_at": now if with_stale_timestamps else None,
             "cooldown_ends_at": now if with_stale_timestamps else None,
             "decision_at": now if with_stale_timestamps else None,
         }
         store: dict = {
-            "links": {42: link},
+            "links": {link_id: link},
             "escrow": {},
             "next_escrow_id": 100,
         }
         if with_escrow:
             store["escrow"][77] = {
                 "id": 77,
-                "beneficiary_link_id": 42,
-                "owner_vault_id": _OWNER_VAULT_ID,
+                "beneficiary_link_id": link_id,
+                "owner_vault_id": owner_vault_id,
                 "crypto_version": 1,
                 "encrypted_payload": b"\x01" * 48,
                 "payload_nonce": b"\x02" * 12,
@@ -433,6 +447,134 @@ def _build_client(store: dict):
         icr.get_db = original_get_db
 
     return client, _restore
+
+
+# ---- SAVE first credential package ---------------------------------
+
+
+class TestSaveCredentials:
+
+    def test_save_paired_no_credentials_with_legacy_transfer_pending_succeeds(
+        self, store_at_state,
+    ) -> None:
+        store = store_at_state(
+            pairing_state="paired_no_credentials",
+            legacy_status="transfer_pending",
+            with_escrow=False,
+        )
+        client, restore = _build_client(store)
+        try:
+            r = client.post(
+                "/inheritance/credentials/save",
+                json=_valid_package_body(),
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["pairing_state"] == "credentials_saved"
+            assert r.json()["credentials_saved"] is True
+            assert 100 in store["escrow"]
+            assert store["links"][42]["pairing_state"] == "credentials_saved"
+        finally:
+            restore()
+
+    def test_save_when_credentials_saved_still_requires_replace(
+        self, store_at_state,
+    ) -> None:
+        store = store_at_state(pairing_state="credentials_saved")
+        client, restore = _build_client(store)
+        try:
+            r = client.post(
+                "/inheritance/credentials/save",
+                json=_valid_package_body(),
+            )
+            assert r.status_code == 409, r.text
+            assert r.json()["detail"]["code"] == "INH-CRED-005"
+            assert 100 not in store["escrow"]
+        finally:
+            restore()
+
+    @pytest.mark.parametrize("pairing_state, legacy_status", [
+        ("unknown_state", "linked"),
+        ("released", "linked"),
+        ("paired_no_credentials", "cancelled"),
+        ("paired_no_credentials", "deleted"),
+    ])
+    def test_save_rejects_invalid_cancelled_deleted_or_released_links(
+        self, store_at_state, pairing_state: str, legacy_status: str,
+    ) -> None:
+        store = store_at_state(
+            pairing_state=pairing_state,
+            legacy_status=legacy_status,
+            with_escrow=False,
+        )
+        client, restore = _build_client(store)
+        try:
+            r = client.post(
+                "/inheritance/credentials/save",
+                json=_valid_package_body(),
+            )
+            assert r.status_code == 409, r.text
+            assert r.json()["detail"]["code"] == "INH-CRED-007"
+            assert 100 not in store["escrow"]
+        finally:
+            restore()
+
+    def test_save_rejects_unpaired_link(
+        self, store_at_state,
+    ) -> None:
+        store = store_at_state(
+            pairing_state="paired_no_credentials",
+            beneficiary_vault_id=None,
+            with_escrow=False,
+        )
+        client, restore = _build_client(store)
+        try:
+            r = client.post(
+                "/inheritance/credentials/save",
+                json=_valid_package_body(),
+            )
+            assert r.status_code == 409, r.text
+            assert r.json()["detail"]["code"] == "INH-CRED-002"
+            assert 100 not in store["escrow"]
+        finally:
+            restore()
+
+    def test_save_rejects_wrong_owner(
+        self, store_at_state,
+    ) -> None:
+        store = store_at_state(
+            pairing_state="paired_no_credentials",
+            owner_vault_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+            with_escrow=False,
+        )
+        client, restore = _build_client(store)
+        try:
+            r = client.post(
+                "/inheritance/credentials/save",
+                json=_valid_package_body(),
+            )
+            assert r.status_code == 404, r.text
+            assert r.json()["detail"]["code"] == "INH-CRED-001"
+            assert 100 not in store["escrow"]
+        finally:
+            restore()
+
+    def test_save_rejects_malformed_encrypted_payload(
+        self, store_at_state,
+    ) -> None:
+        store = store_at_state(
+            pairing_state="paired_no_credentials",
+            with_escrow=False,
+        )
+        client, restore = _build_client(store)
+        try:
+            body = _valid_package_body()
+            body["encrypted_payload"] = _b64u(b"\x11" * 8)
+            r = client.post("/inheritance/credentials/save", json=body)
+            assert r.status_code == 400, r.text
+            assert r.json()["detail"]["code"] == "INH-CRED-004"
+            assert 100 not in store["escrow"]
+        finally:
+            restore()
 
 
 # ---- REPLACE across every reachable state -------------------------
