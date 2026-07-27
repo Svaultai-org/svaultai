@@ -3463,6 +3463,80 @@ bool shouldPreservePendingInheritanceToken(String errorText) {
   return errorText.contains('INH-DEV-004');
 }
 
+@visibleForTesting
+enum InheritanceRevealLocalKeyStatus {
+  ready,
+  invalidPin,
+  missingLocalKey,
+}
+
+@visibleForTesting
+class InheritanceRevealLocalKeyResult {
+  final InheritanceRevealLocalKeyStatus status;
+  final SecretKey? skVault;
+
+  const InheritanceRevealLocalKeyResult._(this.status, this.skVault);
+
+  const InheritanceRevealLocalKeyResult.ready(SecretKey skVault)
+      : this._(InheritanceRevealLocalKeyStatus.ready, skVault);
+
+  const InheritanceRevealLocalKeyResult.invalidPin()
+      : this._(InheritanceRevealLocalKeyStatus.invalidPin, null);
+
+  const InheritanceRevealLocalKeyResult.missingLocalKey()
+      : this._(InheritanceRevealLocalKeyStatus.missingLocalKey, null);
+}
+
+typedef InheritanceCachedPinCheck = Future<bool?> Function(String pin);
+typedef InheritanceUnlockWithPin = Future<bool> Function(String pin);
+typedef InheritanceSkReader = SecretKey? Function();
+typedef InheritanceSkVaultIdReader = String? Function();
+typedef InheritanceSkRehydrate = Future<SecretKey?> Function(String pin);
+
+@visibleForTesting
+Future<InheritanceRevealLocalKeyResult> resolveInheritanceRevealLocalKey({
+  required String vaultId,
+  required String pin,
+  required InheritanceCachedPinCheck cachedPinMatches,
+  required InheritanceUnlockWithPin unlockWithPin,
+  required InheritanceSkReader currentSk,
+  required InheritanceSkVaultIdReader currentSkVaultId,
+  required InheritanceSkRehydrate rehydrateSkWithPin,
+}) async {
+  SecretKey? usableCurrentSk() {
+    final sk = currentSk();
+    if (sk == null) return null;
+    if (currentSkVaultId() != vaultId) return null;
+    return sk;
+  }
+
+  final cachedMatch = await cachedPinMatches(pin);
+  if (cachedMatch == false) {
+    return const InheritanceRevealLocalKeyResult.invalidPin();
+  }
+  if (cachedMatch == null) {
+    final unlocked = await unlockWithPin(pin);
+    if (!unlocked) {
+      return const InheritanceRevealLocalKeyResult.invalidPin();
+    }
+  }
+
+  final active = usableCurrentSk();
+  if (active != null) {
+    return InheritanceRevealLocalKeyResult.ready(active);
+  }
+
+  final rehydrated = await rehydrateSkWithPin(pin);
+  if (rehydrated != null) {
+    return InheritanceRevealLocalKeyResult.ready(rehydrated);
+  }
+  final afterRehydrate = usableCurrentSk();
+  if (afterRehydrate != null) {
+    return InheritanceRevealLocalKeyResult.ready(afterRehydrate);
+  }
+  return const InheritanceRevealLocalKeyResult.missingLocalKey();
+}
+
 /// Best-effort consume of any pending inheritance device-enrollment
 /// token immediately after a successful login. If the token matches
 /// the account the caller just logged in to (and the current device),
@@ -8065,26 +8139,59 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final pin = await _promptForReauthPin(title: 'Reveal $passerLabel');
     if (pin == null) return;
     final app = context.read<AppState>();
-    final token = app.sessionToken;
-    if (token == null) return;
-
-    // Verify PIN against the beneficiary's active vault so an
-    // over-the-shoulder attacker cannot bypass the reveal wall.
-    // ``_VaultCrypto.currentPinOrThrow`` returns the PIN cached at
-    // login/unlock time; we compare constant-time-ish.
-    try {
-      final cached = await _VaultCrypto.currentPinOrThrow();
-      if (cached.length != pin.length ||
-          !_constantTimeStringEquals(cached, pin)) {
-        _showSnack('PIN did not match. Try again.');
-        return;
-      }
-    } catch (_) {
-      _showSnack('PIN did not match. Try again.');
+    if (app.sessionToken == null) return;
+    final vaultId = app.vaultId;
+    if (vaultId == null || vaultId.isEmpty) {
+      _showSnack('Session expired. Please sign in again.');
       return;
     }
 
+    // Resolve the beneficiary's local X25519 key before fetching the
+    // encrypted package. Wrong PINs and missing/corrupt local keys
+    // fail closed without asking the backend for ciphertext.
+    InheritanceRevealLocalKeyResult localKey;
+    try {
+      localKey = await resolveInheritanceRevealLocalKey(
+        vaultId: vaultId,
+        pin: pin,
+        cachedPinMatches: _inheritanceCachedPinMatches,
+        unlockWithPin: app.verifyPin,
+        currentSk: () => _activeInheritanceSkForVault(vaultId),
+        currentSkVaultId: zk_sk_store.ZkActiveSkVault.currentVaultId,
+        rehydrateSkWithPin: (candidatePin) => _rehydrateInheritanceSkVault(
+          app: app,
+          expectedVaultId: vaultId,
+          pin: candidatePin,
+        ),
+      );
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      vlog('inheritance.reveal.local_key_failed', {
+        'exception_type': e.runtimeType.toString(),
+      });
+      _showSnack(
+        'Could not unlock inherited credentials on this device. '
+        'Enter your PIN again to continue.',
+      );
+      return;
+    }
+    switch (localKey.status) {
+      case InheritanceRevealLocalKeyStatus.invalidPin:
+        _showSnack('PIN did not match. Try again.');
+        return;
+      case InheritanceRevealLocalKeyStatus.missingLocalKey:
+        _showSnack(
+          'Could not unlock inherited credentials on this device. '
+          'Enter your PIN again to continue.',
+        );
+        return;
+      case InheritanceRevealLocalKeyStatus.ready:
+        break;
+    }
+
     // 2. Load the wrapped package.
+    final token = app.sessionToken;
+    if (token == null) return;
     Map<String, dynamic> pkg;
     try {
       pkg = await VaultAIClient(baseUrl: backendBaseUrl)
@@ -8101,20 +8208,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
 
-    // 3. Beneficiary's X25519 private key must be present in the
-    //    in-memory ZK store. If not (e.g. session restored from
-    //    disk without a fresh login), tell the user to log in
-    //    again — never surface the raw error.
-    final sk = zk_sk_store.ZkActiveSkVault.current();
-    if (sk == null) {
-      _showSnack(
-        'Please log out and log back in with your PIN to reveal '
-        'inherited credentials on this device.',
-      );
-      return;
-    }
-
-    // 4. Stage-complete decrypt.
+    // 3. Stage-complete decrypt.
     //
     // 2026-07-23: reveal now runs entirely inside
     // ``revealInheritanceCredentialsStaged``. Every one of the nine
@@ -8128,7 +8222,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     StackTrace? stagedStack;
     try {
       decrypted = await inh_cred.revealInheritanceCredentialsStaged(
-        beneficiarySkVault: sk,
+        beneficiarySkVault: localKey.skVault!,
         rawPackage: pkg,
       );
     } catch (e, st) {
@@ -8213,6 +8307,138 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       token: token,
     );
     await _loadInheritances();
+  }
+
+  Future<bool?> _inheritanceCachedPinMatches(String pin) async {
+    try {
+      final cached = await _VaultCrypto.currentPinOrThrow();
+      return cached.length == pin.length &&
+          _constantTimeStringEquals(cached, pin);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  SecretKey? _activeInheritanceSkForVault(String vaultId) {
+    if (zk_sk_store.ZkActiveSkVault.currentVaultId() != vaultId) {
+      return null;
+    }
+    return zk_sk_store.ZkActiveSkVault.current();
+  }
+
+  Future<SecretKey?> _rehydrateInheritanceSkVault({
+    required AppState app,
+    required String expectedVaultId,
+    required String pin,
+  }) async {
+    String? nonEmpty(String? value) {
+      final trimmed = value?.trim();
+      return trimmed == null || trimmed.isEmpty ? null : trimmed;
+    }
+
+    final rememberedName =
+        nonEmpty(app.vaultName) ?? nonEmpty(app.lastVaultName);
+    final rememberedHandle = nonEmpty(app.vaultHandle);
+    final nameIsHandle =
+        rememberedName != null && vh.isValidVaultHandleDisplay(rememberedName);
+    if (rememberedName == null && rememberedHandle == null) {
+      return null;
+    }
+
+    String lastStep = 'begin';
+    try {
+      final zk = ZkAuthService(_zkHttpPost);
+      final loginResult = await zk.loginVault(
+        vaultName: nameIsHandle ? null : rememberedName,
+        vaultHandle: nameIsHandle ? rememberedName : rememberedHandle,
+        pin: pin,
+        onStep: (step) => lastStep = step,
+      );
+      if (loginResult.vaultId != expectedVaultId) {
+        vlog('inheritance.reveal.rehydrate_vault_mismatch', {
+          'expected_vault_id': expectedVaultId,
+          'actual_vault_id': loginResult.vaultId,
+        });
+        return null;
+      }
+
+      final resolvedVaultName = nonEmpty(loginResult.vaultName) ??
+          (nameIsHandle ? null : rememberedName) ??
+          nonEmpty(app.vaultName) ??
+          nonEmpty(app.lastVaultName) ??
+          nonEmpty(loginResult.displayName) ??
+          loginResult.vaultHandle;
+
+      await app.setSession(
+        token: loginResult.sessionToken,
+        vaultIdValue: loginResult.vaultId,
+        vaultNameValue: resolvedVaultName,
+        vaultHandleValue: loginResult.vaultHandle,
+        displayNameValue: loginResult.displayName,
+      );
+      await _registerDeviceBestEffort(loginResult.sessionToken);
+      await _autoConsumeInheritanceTokenIfPresent(
+        loginResult.sessionToken,
+        app,
+      );
+
+      _VaultCrypto._keyCache[
+              _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
+          loginResult.mvk;
+      _VaultCrypto._pinCache[
+          _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] = pin;
+      _VaultCrypto.setActiveVault(
+        vaultId: loginResult.vaultId,
+        vaultName: resolvedVaultName,
+      );
+      zk_mvk_store.ZkActiveMvk.set(
+        mvk: loginResult.mvk,
+        vaultId: loginResult.vaultId,
+        vaultHandle: resolvedVaultName,
+      );
+      zk_sk_store.ZkActiveSkVault.set(
+        skVault: loginResult.skVaultPrivate,
+        vaultId: loginResult.vaultId,
+      );
+
+      try {
+        final vaultMeta = await _API.getVaultMeta(
+          vaultName: resolvedVaultName,
+          authToken: loginResult.sessionToken,
+        );
+        final pinSalt = vaultMeta['pin_salt']?.toString();
+        final iterations = (vaultMeta['kdf_iterations'] as num?)?.toInt();
+        if (pinSalt != null && pinSalt.isNotEmpty && iterations != null) {
+          await deriveAndInstallCryptoContext(
+            vaultId: loginResult.vaultId,
+            vaultName: resolvedVaultName,
+            pin: pin,
+            pinSaltBase64: pinSalt,
+            iterations: iterations,
+            source: 'inheritance_reveal_reauth',
+          );
+        }
+      } catch (e) {
+        vlog('inheritance.reveal.rehydrate_pbkdf2_failed', {
+          'exception_type': e.runtimeType.toString(),
+        });
+      }
+
+      app.markUnlocked();
+      return loginResult.skVaultPrivate;
+    } on OpaqueAuthenticationFailed catch (e) {
+      vlog('inheritance.reveal.rehydrate_opaque_failed', {
+        'stage': e.stage,
+        'last_step': lastStep,
+      });
+      return null;
+    } catch (e) {
+      vlog('inheritance.reveal.rehydrate_failed', {
+        'exception_type': e.runtimeType.toString(),
+        'last_step': lastStep,
+      });
+      return null;
+    }
   }
 
   Future<String?> _promptForReauthPin({required String title}) async {
