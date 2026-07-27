@@ -35,6 +35,17 @@ const String kCryptoWalletEngineSendPausedKey =
 const String kCryptoWalletEngineSendPausedMessage =
     'Mainnet sending is temporarily paused.';
 
+void _cryptoWalletCapabilityDiag(
+  String branch,
+  Map<String, Object?> data,
+) {
+  final payload = data.entries
+      .map((entry) => '${entry.key}=${entry.value}')
+      .join(' ');
+  // ignore: avoid_print
+  print('[crypto-wallet-capability-diag] branch=$branch $payload');
+}
+
 
 const List<String> kCryptoWalletEngineAssets = [
   'ETH',
@@ -398,6 +409,11 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
         _features = CryptoWalletFeatures.fromBackend(body);
       });
       final f = _features!;
+      _cryptoWalletCapabilityDiag('features_loaded', {
+        'mainnetSendEnabled': f.mainnetSendEnabled,
+        'mainnetSendPaused': f.mainnetSendPaused,
+        'effectiveMainnetSendEnabled': f.effectiveMainnetSendEnabled,
+      });
       _cvLog(
         'features_loaded '
         'default_network=${f.effectiveDefaultNetwork} '
@@ -533,7 +549,7 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   bool get _sendEnabledForActive {
     final f = _features;
     if (f == null) return false;
-    if (_isMainnetActive) return f.mainnetSendEnabled;
+    if (_isMainnetActive) return f.effectiveMainnetSendEnabled;
     return false;
   }
 
@@ -996,6 +1012,13 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   }
 
   Widget _buildSendPausedBanner() {
+    _cryptoWalletCapabilityDiag('top_banner', {
+      'mainnetSendEnabled': features?.mainnetSendEnabled ?? false,
+      'mainnetSendPaused': features?.mainnetSendPaused ?? false,
+      'effectiveMainnetSendEnabled':
+          features?.effectiveMainnetSendEnabled ?? false,
+      'reason': sendPaused ? 'mainnet_send_paused' : 'none',
+    });
     if (!sendPaused) return const SizedBox.shrink();
     return Container(
       key: const Key(kCryptoWalletEngineSendPausedKey),

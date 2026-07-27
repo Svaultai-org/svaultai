@@ -5012,11 +5012,24 @@ class VaultAIClient {
   Future<Map<String, dynamic>> getCryptoWalletFeatures({
     required String authToken,
   }) async {
-    final uri = Uri.parse('$baseUrl/crypto/wallet/features');
+    final uri = Uri.parse('$baseUrl/crypto/wallet/features').replace(
+      queryParameters: <String, String>{
+        '_': DateTime.now().millisecondsSinceEpoch.toString(),
+      },
+    );
+    final headers = _defaultHeaders(authToken: authToken, json: false);
+    headers['Cache-Control'] = 'no-cache, no-store';
+    headers['Pragma'] = 'no-cache';
     final response = await http.get(
       uri,
-      headers: _defaultHeaders(authToken: authToken, json: false),
+      headers: headers,
     );
+    // ignore: avoid_print
+    print('[crypto-wallet-capability-diag] '
+        'branch=features_request status=${response.statusCode}');
+    _vlog('crypto_wallet.features.response', {
+      'status': response.statusCode,
+    });
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);

@@ -465,7 +465,7 @@ DashboardAssetActionCapability dashboardAssetActionCapability({
           && (asset == 'ETH'
               ? f.mainnetReceiveEnabled
               : f.mainnetErc20ReceiveEnabled);
-      final sendOn = f.mainnetSendEnabled && !f.mainnetSendPaused;
+      final sendOn = f.effectiveMainnetSendEnabled;
       final send = receive && hasSendWiring && sendOn;
       return DashboardAssetActionCapability(
         receive: receive,
