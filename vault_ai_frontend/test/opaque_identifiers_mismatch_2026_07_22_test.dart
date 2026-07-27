@@ -37,7 +37,7 @@ void main() {
       final endIdx = src.indexOf('Future<LoginResult> loginVault(', idx);
       final window = src.substring(idx, endIdx);
       expect(
-        window.contains('OpaqueClient.finishRegistration('),
+        window.contains('finishRegistration('),
         isTrue,
       );
       // The exact argument that broke production:
@@ -64,35 +64,36 @@ void main() {
       final endIdx = src.indexOf('/// Transparent legacy adoption', idx);
       final window = src.substring(idx, endIdx);
       expect(
-        window.contains('OpaqueClient.finishLogin('),
+        window.contains('finishLogin('),
         isTrue,
       );
-      final defaultFinishIdx =
-          window.indexOf('finish = OpaqueClient.finishLogin(');
+      final modernAttemptIdx =
+          window.indexOf('final modern = await finishLoginAttempt(');
       final rejectedStepIdx =
           window.indexOf("step('opaque_finish_login_default_rejected')");
+      final retryBeginIdx = window.indexOf("step('opaque_legacy_retry_begin')");
+      final legacyAttemptIdx =
+          window.indexOf('final legacy = await finishLoginAttempt(');
       final legacyIdentifierIdx = window
           .indexOf('clientIdentifier: vaultHandleCredentialId(handleBytes)');
       final finalizeIdx = window.indexOf("'/auth/zk-login-finalize'");
       expect(
-        defaultFinishIdx,
+        modernAttemptIdx,
         greaterThan(-1),
         reason: 'loginVault must attempt the corrected no-identifier '
             'finish first',
       );
-      expect(rejectedStepIdx, greaterThan(defaultFinishIdx));
-      expect(legacyIdentifierIdx, greaterThan(rejectedStepIdx));
-      expect(finalizeIdx, greaterThan(legacyIdentifierIdx));
-      final defaultFinishWindow = window.substring(
-        defaultFinishIdx,
-        rejectedStepIdx,
-      );
       expect(
-        defaultFinishWindow.contains('clientIdentifier:'),
-        isFalse,
-        reason: 'the primary login finish path must remain compatible '
-            'with correctly-created OPAQUE records',
+        window.substring(modernAttemptIdx, rejectedStepIdx).contains(
+              'clientIdentifier: null',
+            ),
+        isTrue,
       );
+      expect(rejectedStepIdx, greaterThan(modernAttemptIdx));
+      expect(retryBeginIdx, greaterThan(rejectedStepIdx));
+      expect(legacyAttemptIdx, greaterThan(retryBeginIdx));
+      expect(legacyIdentifierIdx, greaterThan(legacyAttemptIdx));
+      expect(finalizeIdx, greaterThan(legacyIdentifierIdx));
       expect(
         window.substring(rejectedStepIdx, finalizeIdx).contains(
               'clientIdentifier: vaultHandleCredentialId(handleBytes)',
@@ -111,7 +112,7 @@ void main() {
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 4000).clamp(0, src.length));
       expect(
-        window.contains('OpaqueClient.finishRegistration('),
+        window.contains('finishRegistration('),
         isTrue,
       );
       expect(
