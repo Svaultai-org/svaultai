@@ -139,9 +139,11 @@ class VaultNameTakenException implements Exception {
 /// ``INH-CRED-004`` fallback that hid every non-shape failure.
 class InheritanceCredSaveException implements Exception {
   final int statusCode;
+
   /// The backend's stable ``detail.code`` string, or null when the
   /// response body could not be parsed as the expected shape.
   final String? backendCode;
+
   /// The backend's user-safe ``detail.message`` (already scrubbed
   /// of internals by ``inheritance_http_error``).
   final String? backendMessage;
@@ -153,8 +155,7 @@ class InheritanceCredSaveException implements Exception {
   });
 
   @override
-  String toString() =>
-      'InheritanceCredSaveException(statusCode: $statusCode, '
+  String toString() => 'InheritanceCredSaveException(statusCode: $statusCode, '
       'backendCode: $backendCode, backendMessage: $backendMessage)';
 }
 
@@ -333,8 +334,7 @@ Map<String, dynamic> buildChatRequestBody({
 class CryptoContextMismatchException implements Exception {
   final String message;
   const CryptoContextMismatchException({
-    this.message =
-        'Vault crypto state is out of sync. Please tap send again.',
+    this.message = 'Vault crypto state is out of sync. Please tap send again.',
   });
   @override
   String toString() => 'CryptoContextMismatchException(message: $message)';
@@ -427,7 +427,7 @@ class KdfGenerationStaleException implements Exception {
       currentKdfIterations: iter,
       message: msg ??
           'The vault was updated in another tab or window. '
-          'Please tap send again.',
+              'Please tap send again.',
     );
   }
 
@@ -1205,6 +1205,136 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> listMemories({
+    required String authToken,
+    required String vaultName,
+    required String pin,
+    String? query,
+    String? memoryType,
+    int limit = 200,
+  }) async {
+    final uri = Uri.parse('$baseUrl/memory/list');
+    final body = <String, dynamic>{
+      'vault_name': vaultName,
+      'pin': pin,
+      'limit': limit,
+      if (query != null && query.isNotEmpty) 'query': query,
+      if (memoryType != null && memoryType.isNotEmpty)
+        'memory_type': memoryType,
+    };
+    final headers = _defaultHeaders(authToken: authToken, json: true);
+    _vlogRequest('memory.list', uri, headers);
+    final response = await _runWithNetLog(
+      'memory.list',
+      uri,
+      () => http.post(uri, headers: headers, body: jsonEncode(body)),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory list failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid memory list response format');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> createMemory({
+    required String authToken,
+    required String vaultName,
+    required String pin,
+    required Map<String, dynamic> data,
+  }) async {
+    return _postMemoryMutation(
+      label: 'memory.create',
+      path: '/memory/create',
+      authToken: authToken,
+      body: <String, dynamic>{
+        ...data,
+        'vault_name': vaultName,
+        'pin': pin,
+      },
+      prefix: 'Memory save failed',
+    );
+  }
+
+  Future<Map<String, dynamic>> updateMemory({
+    required String authToken,
+    required String vaultName,
+    required String pin,
+    required int id,
+    required Map<String, dynamic> data,
+  }) async {
+    return _postMemoryMutation(
+      label: 'memory.update',
+      path: '/memory/update',
+      authToken: authToken,
+      body: <String, dynamic>{
+        ...data,
+        'id': id,
+        'vault_name': vaultName,
+        'pin': pin,
+      },
+      prefix: 'Memory update failed',
+    );
+  }
+
+  Future<Map<String, dynamic>> deleteMemory({
+    required String authToken,
+    required String vaultName,
+    required String pin,
+    required int id,
+  }) async {
+    return _postMemoryMutation(
+      label: 'memory.delete',
+      path: '/memory/delete',
+      authToken: authToken,
+      body: <String, dynamic>{
+        'id': id,
+        'vault_name': vaultName,
+        'pin': pin,
+      },
+      prefix: 'Memory delete failed',
+    );
+  }
+
+  Future<Map<String, dynamic>> _postMemoryMutation({
+    required String label,
+    required String path,
+    required String authToken,
+    required Map<String, dynamic> body,
+    required String prefix,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final headers = _defaultHeaders(authToken: authToken, json: true);
+    _vlogRequest(label, uri, headers);
+    final response = await _runWithNetLog(
+      label,
+      uri,
+      () => http.post(uri, headers: headers, body: jsonEncode(body)),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: prefix,
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid memory response format');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> analyzePasswords({
     required String authToken,
     required String vaultName,
@@ -1840,7 +1970,8 @@ class VaultAIClient {
     final headers = _defaultHeaders(authToken: authToken, json: true);
     if (clientRequestId != null && clientRequestId.isNotEmpty) {
       final cri = clientRequestId.length > 64
-          ? clientRequestId.substring(0, 64) : clientRequestId;
+          ? clientRequestId.substring(0, 64)
+          : clientRequestId;
       headers['X-Client-Request-Id'] = cri;
     }
     final response = await http.post(

@@ -1,5 +1,3 @@
-
-
 import 'package:flutter/material.dart';
 import '../tokens.dart';
 import '../../services/vault_chat_router.dart' as vcr;
@@ -34,36 +32,26 @@ class ChatBubble extends StatelessWidget {
   /// True while the "show more" request is in flight.
   final bool isShowMoreFilesInFlight;
 
-
   final void Function(String fileId)? onShowRelated;
-  
-  
-  final Future<Map<String, dynamic>?> Function(String jobId)?
-      onDeepAnswerPoll;
-  
-  
+
+  final Future<Map<String, dynamic>?> Function(String jobId)? onDeepAnswerPoll;
+
   final void Function(Map<String, dynamic> snapshot)? onDeepAnswerReady;
-  
-  
+
   final void Function(ChatMessage credentialMsg)? onScanRemaining;
-  
-  
+
   final bool Function({
     required String intent,
     required String normalizedQuery,
   })? isDeepScanActive;
-  
 
   final CryptoWalletActionCallback? onCryptoWalletAction;
 
-
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
-  final void Function(ChatMessage msg, String action, Map<String, dynamic>? data)?
-      onCardAction;
-
+  final void Function(
+      ChatMessage msg, String action, Map<String, dynamic>? data)? onCardAction;
 
   final VoidCallback? onBrainSearchDeeper;
-
 
   final void Function(String itemId, String title, String itemType)?
       onSecureItemView;
@@ -75,8 +63,6 @@ class ChatBubble extends StatelessWidget {
   final void Function(String title, String itemType)? onSecureItemEdit;
   final void Function(String title, String itemType)? onSecureItemDelete;
 
-
-
   final VoidCallback? onOpenVault;
   final void Function(String asset)? onOpenAssetDetail;
   final VoidCallback? onOpenSendFlow;
@@ -86,11 +72,9 @@ class ChatBubble extends StatelessWidget {
   final void Function(String category, String? id)? onOpenVaultItem;
   final void Function(String query)? onSearchVault;
 
-
   final vcr_ui.CryptoBalanceFetcher? onFetchCryptoBalance;
   final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
   final vcr_ui.CryptoChatLiveCache? cryptoCache;
-
 
   final bool cryptoEntitled;
 
@@ -169,11 +153,11 @@ class ChatBubble extends StatelessWidget {
         onOpenStoragePage: onOpenStoragePage,
         onOpenVaultItem: onOpenVaultItem,
         onSearchVault: onSearchVault,
-        onFetchCryptoBalance:  onFetchCryptoBalance,
+        onFetchCryptoBalance: onFetchCryptoBalance,
         onFetchCryptoActivity: onFetchCryptoActivity,
-        cryptoCache:           cryptoCache,
-        cryptoEntitled:        cryptoEntitled,
-        onOpenCryptoUpgrade:   onOpenCryptoUpgrade,
+        cryptoCache: cryptoCache,
+        cryptoEntitled: cryptoEntitled,
+        onOpenCryptoUpgrade: onOpenCryptoUpgrade,
         onSecureItemView: onSecureItemView,
         onSecureItemReveal: onSecureItemReveal,
         onSecureItemCopyUsername: onSecureItemCopyUsername,
@@ -191,7 +175,6 @@ class ChatBubble extends StatelessWidget {
     );
   }
 }
-
 
 class _TextBubble extends StatelessWidget {
   final ChatMessage msg;
@@ -239,11 +222,9 @@ class _TextBubble extends StatelessWidget {
             boxShadow: VaultShadows.e1,
           );
 
-    final textColor = isUser
-        ? VaultColors.textOnAccent
-        : VaultColors.textPrimary;
+    final textColor =
+        isUser ? VaultColors.textOnAccent : VaultColors.textPrimary;
 
-    
     final renderAttachments = isUser && msg.hasAttachments;
     final textIsBlank = msg.text.isEmpty;
     final content = ConstrainedBox(
@@ -257,9 +238,8 @@ class _TextBubble extends StatelessWidget {
         ),
         decoration: decoration,
         child: Column(
-          crossAxisAlignment: isUser
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
+          crossAxisAlignment:
+              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             if (renderAttachments)
@@ -316,8 +296,7 @@ class _TextBubble extends StatelessWidget {
   }) {
     const r = Radius.circular(VaultRadius.xl);
     const tight = Radius.circular(VaultRadius.sm);
-    
-    
+
     if (isUser) {
       return BorderRadius.only(
         topLeft: r,
@@ -335,7 +314,6 @@ class _TextBubble extends StatelessWidget {
   }
 }
 
-
 class _CardBubble extends StatelessWidget {
   final ChatMessage msg;
   final bool isMobile;
@@ -348,10 +326,9 @@ class _CardBubble extends StatelessWidget {
   final bool isShowMoreFilesInFlight;
   final void Function(String fileId)? onShowRelated;
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
-  final void Function(ChatMessage msg, String action, Map<String, dynamic>? data)?
-      onCardAction;
-  final Future<Map<String, dynamic>?> Function(String jobId)?
-      onDeepAnswerPoll;
+  final void Function(
+      ChatMessage msg, String action, Map<String, dynamic>? data)? onCardAction;
+  final Future<Map<String, dynamic>?> Function(String jobId)? onDeepAnswerPoll;
   final void Function(Map<String, dynamic> snapshot)? onDeepAnswerReady;
   final void Function(ChatMessage credentialMsg)? onScanRemaining;
   final bool Function({
@@ -359,7 +336,7 @@ class _CardBubble extends StatelessWidget {
     required String normalizedQuery,
   })? isDeepScanActive;
   final VoidCallback? onBrainSearchDeeper;
-  
+
   final void Function(String itemId, String title, String itemType)?
       onSecureItemView;
   final void Function(String itemId, String title, String itemType)?
@@ -368,9 +345,8 @@ class _CardBubble extends StatelessWidget {
   final void Function(String value)? onSecureItemCopyValue;
   final void Function(String title, String itemType)? onSecureItemEdit;
   final void Function(String title, String itemType)? onSecureItemDelete;
-  
-  final CryptoWalletActionCallback? onCryptoWalletAction;
 
+  final CryptoWalletActionCallback? onCryptoWalletAction;
 
   final VoidCallback? onOpenVault;
   final void Function(String asset)? onOpenAssetDetail;
@@ -381,11 +357,9 @@ class _CardBubble extends StatelessWidget {
   final void Function(String category, String? id)? onOpenVaultItem;
   final void Function(String query)? onSearchVault;
 
-
   final vcr_ui.CryptoBalanceFetcher? onFetchCryptoBalance;
   final vcr_ui.CryptoActivityFetcher? onFetchCryptoActivity;
   final vcr_ui.CryptoChatLiveCache? cryptoCache;
-
 
   final bool cryptoEntitled;
   final VoidCallback? onOpenCryptoUpgrade;
@@ -441,8 +415,7 @@ class _CardBubble extends StatelessWidget {
           onDownload: onDownloadVaultFile == null
               ? null
               : () => onDownloadVaultFile!(msg),
-          isViewInFlight:
-              viewInFlightFileIds.contains(msg.fileId ?? ''),
+          isViewInFlight: viewInFlightFileIds.contains(msg.fileId ?? ''),
           isDownloadInFlight:
               downloadInFlightFileIds.contains(msg.fileId ?? ''),
           onShowRelated: onShowRelated,
@@ -472,15 +445,13 @@ class _CardBubble extends StatelessWidget {
       case ChatMessage.kConcierge:
         body = ConciergeCard(
           msg: msg,
-          onAction: (action, data) =>
-              onCardAction?.call(msg, action, data),
+          onAction: (action, data) => onCardAction?.call(msg, action, data),
         );
         break;
       case ChatMessage.kExpiry:
         body = ExpiryCard(
           msg: msg,
-          onAction: (action, data) =>
-              onCardAction?.call(msg, action, data),
+          onAction: (action, data) => onCardAction?.call(msg, action, data),
         );
         break;
       case ChatMessage.kVaultInventory:
@@ -505,9 +476,8 @@ class _CardBubble extends StatelessWidget {
           onOpen: (fileMsg) => onOpenVaultFile?.call(fileMsg),
           onLoadRelated: onLoadRelated,
           onShowRelated: onShowRelated,
-          onScanRemaining: onScanRemaining == null
-              ? null
-              : () => onScanRemaining!(msg),
+          onScanRemaining:
+              onScanRemaining == null ? null : () => onScanRemaining!(msg),
           isDeepScanActive: isDeepScanActive,
         );
         break;
@@ -560,36 +530,28 @@ class _CardBubble extends StatelessWidget {
         );
         break;
       case ChatMessage.kSecureItemResults:
-        
-        
         body = SecureItemResultsCard(
           msg: msg,
           actions: SecureItemCardActions(
-            onView:         onSecureItemView,
-            onReveal:       onSecureItemReveal,
+            onView: onSecureItemView,
+            onReveal: onSecureItemReveal,
             onCopyUsername: onSecureItemCopyUsername,
-            onCopyValue:    onSecureItemCopyValue,
-            onEdit:         onSecureItemEdit,
-            onDelete:       onSecureItemDelete,
+            onCopyValue: onSecureItemCopyValue,
+            onEdit: onSecureItemEdit,
+            onDelete: onSecureItemDelete,
           ),
         );
         break;
       case ChatMessage.kCryptoWalletAction:
-
-
         body = CryptoWalletActionCard(
           msg: msg,
           onAction: onCryptoWalletAction,
         );
         break;
       case ChatMessage.kVaultChatCard:
-
-
         body = _buildVaultChatCardView();
         break;
       case ChatMessage.kVaultBrainAnswer:
-        
-        
         body = VaultBrainAnswerCard(
           msg: msg,
           onOpen: (fileMsg) => onOpenVaultFile?.call(fileMsg),
@@ -604,11 +566,9 @@ class _CardBubble extends StatelessWidget {
     return _wrapCardBody(context, body, maxFraction);
   }
 
-
   Widget _buildVaultChatCardView() {
     final payload = msg.payload;
     if (payload == null) {
-
       return const SizedBox.shrink();
     }
     final intent = payload['intent']?.toString() ?? '';
@@ -619,30 +579,28 @@ class _CardBubble extends StatelessWidget {
 
     final response = vcr.VaultChatResponse.fromJson(<String, dynamic>{
       'intent': intent,
-      'card':   cardMap,
+      'card': cardMap,
     });
     return vcr_ui.VaultChatCardView(
       response: response,
-      onOpenVault:        onOpenVault,
-      onOpenAssetDetail:  onOpenAssetDetail,
-      onOpenSendFlow:     onOpenSendFlow,
+      onOpenVault: onOpenVault,
+      onOpenAssetDetail: onOpenAssetDetail,
+      onOpenSendFlow: onOpenSendFlow,
       onOpenSecurityPage: onOpenSecurityPage,
-      onOpenBillingPage:  onOpenBillingPage,
-      onFetchCryptoBalance:  onFetchCryptoBalance,
+      onOpenBillingPage: onOpenBillingPage,
+      onFetchCryptoBalance: onFetchCryptoBalance,
       onFetchCryptoActivity: onFetchCryptoActivity,
-      cryptoCache:           cryptoCache,
-      cryptoEntitled:        cryptoEntitled,
-      onOpenCryptoUpgrade:   onOpenCryptoUpgrade,
+      cryptoCache: cryptoCache,
+      cryptoEntitled: cryptoEntitled,
+      onOpenCryptoUpgrade: onOpenCryptoUpgrade,
 
-      onLoginEdit: (service) =>
-          onSecureItemEdit?.call(service, 'login'),
-      onLoginDelete: (service) =>
-          onSecureItemDelete?.call(service, 'login'),
+      onLoginEdit: (service) => onSecureItemEdit?.call(service, 'login'),
+      onLoginDelete: (service) => onSecureItemDelete?.call(service, 'login'),
       onLoginOpenWebsite: (service, url) {
         if (onCardAction != null) {
           onCardAction!(msg, 'open_login_website', {
             'service': service,
-            'url':     url,
+            'url': url,
           });
         }
       },
@@ -660,7 +618,7 @@ class _CardBubble extends StatelessWidget {
         // prompt.
         if (onCardAction != null) {
           onCardAction!(msg, 'select_login_by_id', {
-            'id':    id,
+            'id': id,
             'title': title,
           });
         }
@@ -675,7 +633,7 @@ class _CardBubble extends StatelessWidget {
         if (onCardAction != null) {
           onCardAction!(msg, 'generated_login_save', {
             'draft_id': draftId,
-            'service':  service,
+            'service': service,
           });
         }
       },
@@ -683,18 +641,28 @@ class _CardBubble extends StatelessWidget {
         if (onCardAction != null) {
           onCardAction!(msg, 'generated_login_cancel', {
             'draft_id': draftId,
-            'service':  service,
+            'service': service,
           });
+        }
+      },
+      onMemoryProposalSave: (data) {
+        if (onCardAction != null) {
+          onCardAction!(msg, 'memory_proposal_save', data);
+        }
+      },
+      onMemoryProposalCancel: () {
+        if (onCardAction != null) {
+          onCardAction!(msg, 'memory_proposal_cancel', null);
         }
       },
     );
   }
 
-
   Widget _wrapCardBody(
-    BuildContext context, Widget body, double maxFraction,
+    BuildContext context,
+    Widget body,
+    double maxFraction,
   ) {
-
     return Padding(
       padding: EdgeInsets.only(
         top: isFirstInGroup ? VaultSpacing.md : VaultSpacing.xs,
@@ -724,7 +692,6 @@ class _CardBubble extends StatelessWidget {
     );
   }
 }
-
 
 class _AssistantAvatar extends StatelessWidget {
   final bool visible;
@@ -759,15 +726,12 @@ class _AssistantAvatar extends StatelessWidget {
   }
 }
 
-
 class MessageAttachmentList extends StatelessWidget {
   final List<ChatAttachmentSummary> attachments;
   final bool isMobile;
 
-  
   final bool onAccent;
 
-  
   static const double maxHeightDesktop = 220;
   static const double maxHeightMobile = 180;
 
@@ -786,7 +750,7 @@ class MessageAttachmentList extends StatelessWidget {
     if (mt == 'application/pdf' || a.name.toLowerCase().endsWith('.pdf')) {
       return Icons.picture_as_pdf;
     }
-    
+
     switch (a.kind) {
       case 'image':
         return Icons.image;
@@ -811,10 +775,8 @@ class MessageAttachmentList extends StatelessWidget {
     return '${size.toStringAsFixed(size >= 10 || i == 0 ? 0 : 1)} ${units[i]}';
   }
 
-  
   static const int folderSummaryThreshold = 6;
 
-  
   static const int folderSummaryPreviewLimit = 3;
 
   @override
@@ -833,7 +795,6 @@ class MessageAttachmentList extends StatelessWidget {
 
     final maxHeight = isMobile ? maxHeightMobile : maxHeightDesktop;
 
-    
     if (count >= folderSummaryThreshold) {
       return _FolderSummaryCard(
         attachments: attachments,
@@ -856,7 +817,8 @@ class MessageAttachmentList extends StatelessWidget {
         return _AttachmentRow(
           icon: _iconFor(a),
           name: a.name,
-          subtitle: a.size != null && a.size! > 0 ? _formatBytes(a.size!) : null,
+          subtitle:
+              a.size != null && a.size! > 0 ? _formatBytes(a.size!) : null,
           fg: fg,
           subtleFg: subtleFg,
           chipBg: chipBg,
@@ -889,7 +851,6 @@ class MessageAttachmentList extends StatelessWidget {
   }
 }
 
-
 class _FolderSummaryCard extends StatelessWidget {
   final List<ChatAttachmentSummary> attachments;
   final int previewLimit;
@@ -911,7 +872,6 @@ class _FolderSummaryCard extends StatelessWidget {
     required this.formatBytes,
   });
 
-  
   String _deriveFolderName() {
     for (final a in attachments) {
       final n = a.name;
@@ -1009,7 +969,6 @@ class _FolderSummaryCard extends StatelessWidget {
   }
 }
 
-
 class _AttachmentRow extends StatelessWidget {
   final IconData icon;
   final String name;
@@ -1077,7 +1036,6 @@ class _AttachmentRow extends StatelessWidget {
   }
 }
 
-
 class _StreamingCaret extends StatefulWidget {
   const _StreamingCaret();
 
@@ -1106,7 +1064,6 @@ class _StreamingCaretState extends State<_StreamingCaret>
 
   @override
   Widget build(BuildContext context) {
-    
     if (MediaQuery.of(context).disableAnimations) {
       return Container(
         width: 7,

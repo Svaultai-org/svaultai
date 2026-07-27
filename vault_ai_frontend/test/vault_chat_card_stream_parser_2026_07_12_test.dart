@@ -1,6 +1,3 @@
-
-
-
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,7 +12,6 @@ import 'package:vault_ai_frontend/ui/chat/chat_message_list.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
 import 'package:vault_ai_frontend/ui/vault_chat_cards.dart';
 
-
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   AppLocalizations.delegate,
   GlobalMaterialLocalizations.delegate,
@@ -23,39 +19,36 @@ const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   GlobalCupertinoLocalizations.delegate,
 ];
 
-
-
-
 const Map<String, dynamic> _PROD_ENVELOPE_LOGIN_SEARCH = {
-  'type':    'vault_chat_card',
-  'schema':  'vault_chat_response_v1',
-  'intent':  'vault_login_search',
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_login_search',
   'message': '',
   'card': {
-    'schema':          'vault_chat_router_v1',
-    'cardType':        'vault_login_card',
+    'schema': 'vault_chat_router_v1',
+    'cardType': 'vault_login_card',
     'maskedByDefault': true,
     'liveFetchRequired': true,
-    'view':            'search',
-    'query':           'American First Credit Union',
+    'view': 'search',
+    'query': 'American First Credit Union',
     'data': {
-      'schema':    'vault_login_data_v1',
+      'schema': 'vault_login_data_v1',
       'available': true,
-      'view':      'search',
-      'query':     'American First Credit Union',
+      'view': 'search',
+      'query': 'American First Credit Union',
       'logins': [
         {
-          'id':              'l-1',
-          'title':           'American First Credit Union',
-          'service':         'American First Credit Union',
+          'id': 'l-1',
+          'title': 'American First Credit Union',
+          'service': 'American First Credit Union',
           'username_masked': 'a•••@example.com',
-          'has_username':    true,
-          'domain':          'americanfirst.com',
-          'updated_at':      '2026-07-11T09:00:00Z',
-          'generated':       false,
+          'has_username': true,
+          'domain': 'americanfirst.com',
+          'updated_at': '2026-07-11T09:00:00Z',
+          'generated': false,
         }
       ],
-      'count':         1,
+      'count': 1,
       'limit_applied': 50,
     },
   },
@@ -63,45 +56,45 @@ const Map<String, dynamic> _PROD_ENVELOPE_LOGIN_SEARCH = {
 };
 
 const Map<String, dynamic> _PROD_ENVELOPE_LOGIN_MULTI = {
-  'type':    'vault_chat_card',
-  'schema':  'vault_chat_response_v1',
-  'intent':  'vault_login_search',
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_login_search',
   'message': '',
   'card': {
-    'schema':          'vault_chat_router_v1',
-    'cardType':        'vault_login_card',
+    'schema': 'vault_chat_router_v1',
+    'cardType': 'vault_login_card',
     'maskedByDefault': true,
     'liveFetchRequired': true,
-    'view':            'search',
-    'query':           'Chase',
+    'view': 'search',
+    'query': 'Chase',
     'data': {
-      'schema':    'vault_login_data_v1',
+      'schema': 'vault_login_data_v1',
       'available': true,
-      'view':      'search',
-      'query':     'Chase',
+      'view': 'search',
+      'query': 'Chase',
       'logins': [
         {
-          'id':              'l-1',
-          'title':           'Chase',
-          'service':         'Chase',
+          'id': 'l-1',
+          'title': 'Chase',
+          'service': 'Chase',
           'username_masked': 'a•••@example.com',
-          'has_username':    true,
-          'domain':          'chase.com',
-          'updated_at':      '2026-07-11T09:00:00Z',
-          'generated':       false,
+          'has_username': true,
+          'domain': 'chase.com',
+          'updated_at': '2026-07-11T09:00:00Z',
+          'generated': false,
         },
         {
-          'id':              'l-2',
-          'title':           'Chase Business',
-          'service':         'Chase Business',
+          'id': 'l-2',
+          'title': 'Chase Business',
+          'service': 'Chase Business',
           'username_masked': 'b•••@example.com',
-          'has_username':    true,
-          'domain':          'chase.com',
-          'updated_at':      '2026-07-11T09:00:00Z',
-          'generated':       false,
+          'has_username': true,
+          'domain': 'chase.com',
+          'updated_at': '2026-07-11T09:00:00Z',
+          'generated': false,
         }
       ],
-      'count':         2,
+      'count': 2,
       'limit_applied': 50,
     },
   },
@@ -109,29 +102,54 @@ const Map<String, dynamic> _PROD_ENVELOPE_LOGIN_MULTI = {
 };
 
 const Map<String, dynamic> _PROD_ENVELOPE_GENERATED_LOGIN = {
-  'type':    'vault_chat_card',
-  'schema':  'vault_chat_response_v1',
-  'intent':  'vault_generated_login_create_draft',
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_generated_login_create_draft',
   'message': '',
   'card': {
-    'schema':                       'vault_chat_router_v1',
-    'cardType':                     'vault_generated_login_card',
-    'maskedByDefault':              true,
-    'liveFetchRequired':            false,
-    'view':                         'create_draft',
-    'canSaveWithoutConfirmation':   false,
+    'schema': 'vault_chat_router_v1',
+    'cardType': 'vault_generated_login_card',
+    'maskedByDefault': true,
+    'liveFetchRequired': false,
+    'view': 'create_draft',
+    'canSaveWithoutConfirmation': false,
+  },
+  'locale': 'en',
+};
+
+const Map<String, dynamic> _PROD_ENVELOPE_MEMORY_PROPOSAL = {
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_memory_save_proposal',
+  'message': 'I can save this memory to your vault.',
+  'card': {
+    'schema': 'vault_chat_router_v1',
+    'cardType': 'vault_memory_proposal_card',
+    'view': 'save_proposal',
+    'data': {
+      'schema': 'vault_memory_proposal_v1',
+      'proposal_id': 'mem-1',
+      'title': "Dad's birthday",
+      'value': 'December 12, 1975',
+      'memory_type': 'date',
+      'category': 'family',
+      'subject': 'father',
+      'attribute': 'birthday',
+      'event_date': '1975-12-12',
+      'actions': ['save', 'edit', 'cancel'],
+    },
   },
   'locale': 'en',
 };
 
 const Map<String, dynamic> _PROD_ENVELOPE_STORAGE = {
-  'type':    'vault_chat_card',
-  'schema':  'vault_chat_response_v1',
-  'intent':  'vault_storage_usage',
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_storage_usage',
   'message': '',
   'card': {
-    'schema':          'vault_chat_router_v1',
-    'cardType':        'vault_storage_usage_card',
+    'schema': 'vault_chat_router_v1',
+    'cardType': 'vault_storage_usage_card',
     'maskedByDefault': false,
     'liveFetchRequired': true,
   },
@@ -139,44 +157,42 @@ const Map<String, dynamic> _PROD_ENVELOPE_STORAGE = {
 };
 
 const Map<String, dynamic> _PROD_ENVELOPE_FILE_RESULT = {
-  'type':    'vault_chat_card',
-  'schema':  'vault_chat_response_v1',
-  'intent':  'vault_file_search',
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_file_search',
   'message': '',
   'card': {
-    'schema':          'vault_chat_router_v1',
-    'cardType':        'vault_file_result_card',
+    'schema': 'vault_chat_router_v1',
+    'cardType': 'vault_file_result_card',
     'liveFetchRequired': true,
-    'view':            'search',
-    'query':           'passport',
+    'view': 'search',
+    'query': 'passport',
   },
   'locale': 'en',
 };
 
 const Map<String, dynamic> _UNKNOWN_CARD = {
-  'type':    'vault_chat_card',
-  'schema':  'vault_chat_response_v1',
-  'intent':  'vault_unrecognized',
+  'type': 'vault_chat_card',
+  'schema': 'vault_chat_response_v1',
+  'intent': 'vault_unrecognized',
   'message': '',
   'card': {
-    'schema':   'vault_chat_router_v1',
+    'schema': 'vault_chat_router_v1',
     'cardType': 'vault_something_the_frontend_has_never_heard_of',
   },
   'locale': 'en',
 };
 
-
-
-
 void main() {
   group('parseVaultChatCardMessage — exact production envelope', () {
-    test('production login-search envelope becomes a vault_chat_card '
+    test(
+        'production login-search envelope becomes a vault_chat_card '
         'ChatMessage (this is the failing case from prod)', () {
       final buffer = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final msg = parseVaultChatCardMessage(buffer);
-      expect(msg, isNotNull, reason:
-          'The exact production envelope MUST parse. If this fails, '
-          'the raw JSON is what the user is seeing in the bubble.');
+      expect(msg, isNotNull,
+          reason: 'The exact production envelope MUST parse. If this fails, '
+              'the raw JSON is what the user is seeing in the bubble.');
       expect(msg!.kind, ChatMessage.kVaultChatCard);
       expect(msg.isCard, isTrue);
       expect(msg.role, 'assistant');
@@ -193,7 +209,6 @@ void main() {
     });
 
     test('empty message field does NOT discard the card', () {
-
       final buffer = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final msg = parseVaultChatCardMessage(buffer);
       expect(msg, isNotNull);
@@ -229,6 +244,17 @@ void main() {
       expect(card['cardType'], 'vault_generated_login_card');
     });
 
+    test('memory proposal envelope parses to a vault_chat_card too', () {
+      final buffer = jsonEncode(_PROD_ENVELOPE_MEMORY_PROPOSAL);
+      final msg = parseVaultChatCardMessage(buffer);
+      expect(msg, isNotNull);
+      expect(msg!.kind, ChatMessage.kVaultChatCard);
+      expect(msg.text, 'I can save this memory to your vault.');
+      final card = msg.payload!['card'] as Map<String, dynamic>;
+      expect(card['cardType'], 'vault_memory_proposal_card');
+      expect(card['view'], 'save_proposal');
+    });
+
     test('storage envelope parses to a vault_chat_card', () {
       final buffer = jsonEncode(_PROD_ENVELOPE_STORAGE);
       final msg = parseVaultChatCardMessage(buffer);
@@ -245,15 +271,15 @@ void main() {
       expect(card['cardType'], 'vault_file_result_card');
     });
 
-    test('unknown cardType still parses so the router-level fallback '
+    test(
+        'unknown cardType still parses so the router-level fallback '
         'renders — never leaks raw JSON', () {
-
       final buffer = jsonEncode(_UNKNOWN_CARD);
       final msg = parseVaultChatCardMessage(buffer);
-      expect(msg, isNotNull, reason:
-          'unknown cardType must NOT return null — that would leak '
-          'raw JSON in the bubble. The parser succeeds and the card '
-          'renderer falls back to the unrecognized-card widget.');
+      expect(msg, isNotNull,
+          reason: 'unknown cardType must NOT return null — that would leak '
+              'raw JSON in the bubble. The parser succeeds and the card '
+              'renderer falls back to the unrecognized-card widget.');
     });
   });
 
@@ -278,23 +304,24 @@ void main() {
       expect(parseVaultChatCardMessage(buffer), isNull);
     });
 
-    test('envelope without cardType -> null (renderer would render '
+    test(
+        'envelope without cardType -> null (renderer would render '
         'nothing anyway)', () {
       final buffer = jsonEncode({
-        'type':   'vault_chat_card',
+        'type': 'vault_chat_card',
         'schema': 'vault_chat_response_v1',
         'intent': 'vault_login_search',
-        'card':   {
+        'card': {
           'schema': 'vault_chat_router_v1',
         },
       });
       expect(parseVaultChatCardMessage(buffer), isNull);
     });
 
-    test('trailing NUL byte after the JSON does not break parsing '
+    test(
+        'trailing NUL byte after the JSON does not break parsing '
         '(defensive against buggy transports)', () {
-      final buffer =
-          '${jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH)}\x00';
+      final buffer = '${jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH)}\x00';
       final msg = parseVaultChatCardMessage(buffer);
       expect(msg, isNotNull);
     });
@@ -316,19 +343,16 @@ void main() {
   });
 
   group('parseVaultChatCardMessage — streaming split', () {
-
-
-    test('two-chunk arrival: first chunk half + second chunk half '
+    test(
+        'two-chunk arrival: first chunk half + second chunk half '
         '(concatenated buffer)', () {
       final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final half = full.length ~/ 2;
       final chunk1 = full.substring(0, half);
       final chunk2 = full.substring(half);
 
-
       final buffer1 = chunk1;
       expect(parseVaultChatCardMessage(buffer1), isNull);
-
 
       final buffer2 = chunk1 + chunk2;
       final msg = parseVaultChatCardMessage(buffer2);
@@ -347,7 +371,6 @@ void main() {
     });
 
     test('non-streaming (single-chunk) case', () {
-
       final buffer = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final msg = parseVaultChatCardMessage(buffer);
       expect(msg, isNotNull);
@@ -378,25 +401,26 @@ void main() {
     ) async {
       final buffer = jsonEncode(envelope);
       final msg = parseVaultChatCardMessage(buffer);
-      expect(msg, isNotNull, reason:
-          'parser must return a card message for known envelopes');
+      expect(msg, isNotNull,
+          reason: 'parser must return a card message for known envelopes');
       final card = msg!.payload!['card'] as Map<String, dynamic>;
       final response = vcr.VaultChatResponse.fromJson({
         'intent': msg.payload!['intent'] ?? '',
-        'card':   card,
+        'card': card,
       });
       await tester.pumpWidget(wrap(VaultChatCardView(response: response)));
       await tester.pump();
     }
 
-    testWidgets('single login match renders as a login card '
+    testWidgets(
+        'single login match renders as a login card '
         '(not raw JSON)', (tester) async {
       await _pumpVaultChatCardEnvelope(
-        tester, _PROD_ENVELOPE_LOGIN_SEARCH,
+        tester,
+        _PROD_ENVELOPE_LOGIN_SEARCH,
       );
 
       expect(find.byKey(const Key(kVcrCardKeyLogin)), findsOneWidget);
-
 
       final rawJsonFragment = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       expect(find.text(rawJsonFragment), findsNothing);
@@ -404,12 +428,13 @@ void main() {
       expect(find.textContaining('"schema"'), findsNothing);
     });
 
-    testWidgets('multi-match login list renders as a tappable '
+    testWidgets(
+        'multi-match login list renders as a tappable '
         'selector — rows carry a chevron affordance, not a password '
-        'dot cluster (2026-07-12 product decision)',
-        (tester) async {
+        'dot cluster (2026-07-12 product decision)', (tester) async {
       await _pumpVaultChatCardEnvelope(
-        tester, _PROD_ENVELOPE_LOGIN_MULTI,
+        tester,
+        _PROD_ENVELOPE_LOGIN_MULTI,
       );
       expect(find.byKey(const Key(kVcrCardKeyLogin)), findsOneWidget);
       // Each row is a real selector (has chevron_right), NOT a static
@@ -421,7 +446,8 @@ void main() {
 
     testWidgets('generated-login card renders', (tester) async {
       await _pumpVaultChatCardEnvelope(
-        tester, _PROD_ENVELOPE_GENERATED_LOGIN,
+        tester,
+        _PROD_ENVELOPE_GENERATED_LOGIN,
       );
       expect(
         find.byKey(const Key(kVcrCardKeyGeneratedLogin)),
@@ -431,7 +457,8 @@ void main() {
 
     testWidgets('storage card renders', (tester) async {
       await _pumpVaultChatCardEnvelope(
-        tester, _PROD_ENVELOPE_STORAGE,
+        tester,
+        _PROD_ENVELOPE_STORAGE,
       );
       expect(
         find.byKey(const Key(kVcrCardKeyStorageUsage)),
@@ -441,7 +468,8 @@ void main() {
 
     testWidgets('file result card renders', (tester) async {
       await _pumpVaultChatCardEnvelope(
-        tester, _PROD_ENVELOPE_FILE_RESULT,
+        tester,
+        _PROD_ENVELOPE_FILE_RESULT,
       );
       expect(
         find.byKey(const Key(kVcrCardKeyFileResult)),
@@ -449,10 +477,12 @@ void main() {
       );
     });
 
-    testWidgets('unknown card renders the unrecognized-card widget '
+    testWidgets(
+        'unknown card renders the unrecognized-card widget '
         '(NEVER raw JSON)', (tester) async {
       await _pumpVaultChatCardEnvelope(
-        tester, _UNKNOWN_CARD,
+        tester,
+        _UNKNOWN_CARD,
       );
       expect(
         find.byKey(const Key(kVcrCardKeyUnrecognized)),
@@ -471,7 +501,8 @@ void main() {
           home: Scaffold(body: SingleChildScrollView(child: child)),
         );
 
-    testWidgets('login card never renders a plaintext password '
+    testWidgets(
+        'login card never renders a plaintext password '
         'string (backend does not send one; widget must not '
         'synthesise one either)', (tester) async {
       final buffer = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
@@ -479,7 +510,7 @@ void main() {
       final card = msg.payload!['card'] as Map<String, dynamic>;
       final response = vcr.VaultChatResponse.fromJson({
         'intent': msg.payload!['intent'] ?? '',
-        'card':   card,
+        'card': card,
       });
       await tester.pumpWidget(wrap(VaultChatCardView(response: response)));
       await tester.pump();
@@ -492,7 +523,6 @@ void main() {
         'private key',
         'api key',
       ]) {
-
         expect(
           find.textContaining(RegExp(banned, caseSensitive: false)),
           findsNothing,
@@ -503,11 +533,8 @@ void main() {
   });
 
   group('Source-guard: main.dart uses the extracted parser', () {
-
-
     test('lib/main.dart imports vault_chat_stream_parser', () {
-      final src =
-          _readMainDart();
+      final src = _readMainDart();
       expect(
         src,
         contains(
@@ -517,20 +544,21 @@ void main() {
       );
     });
 
-    test('_tryParseAssistantStructuredMessage calls '
+    test(
+        '_tryParseAssistantStructuredMessage calls '
         'parseVaultChatCardMessage first', () {
       final src = _readMainDart();
       expect(
         src,
         contains('vcs_parser.parseVaultChatCardMessage(text)'),
-        reason:
-            'main.dart must delegate to the tested parser BEFORE the '
+        reason: 'main.dart must delegate to the tested parser BEFORE the '
             'existing type dispatch — the parser is the source of '
             'truth for vault_chat_card',
       );
     });
 
-    test('the fallback Map<dynamic,dynamic> cast keeps parsing '
+    test(
+        'the fallback Map<dynamic,dynamic> cast keeps parsing '
         'alive on Dart web edge cases', () {
       final src = _readMainDart();
       expect(
@@ -543,114 +571,99 @@ void main() {
     });
   });
 
-
-
-
-
-
-
-
-
-  group('Race guard: chunk callback must parse before finalizing the '
-        'assistant message', () {
+  group(
+      'Race guard: chunk callback must parse before finalizing the '
+      'assistant message', () {
     String _mainSrc() => _readMainDart();
 
-    test('main.dart uses await for over the chat stream (no .listen '
+    test(
+        'main.dart uses await for over the chat stream (no .listen '
         'race between async decrypt and stream done)', () {
       final src = _mainSrc();
-
 
       expect(
         src.contains('await for (final encryptedChunk in stream)'),
         isTrue,
         reason: 'production chat handler must consume the chat '
-                'stream with `await for`, not `.listen((chunk) async '
-                '{...})`. The .listen form races: the callback\'s '
-                'decrypt Future runs concurrently with the stream\'s '
-                'done event, so buffer updates from the last chunk '
-                'can arrive AFTER _tryParseAssistantStructuredMessage '
-                'has already run against an empty buffer.',
+            'stream with `await for`, not `.listen((chunk) async '
+            '{...})`. The .listen form races: the callback\'s '
+            'decrypt Future runs concurrently with the stream\'s '
+            'done event, so buffer updates from the last chunk '
+            'can arrive AFTER _tryParseAssistantStructuredMessage '
+            'has already run against an empty buffer.',
       );
-
 
       expect(
         src.contains('await sub.asFuture<void>()'),
         isFalse,
         reason: 'the racy asFuture pattern must be removed from every '
-                'chat handler that expects a structured card',
+            'chat handler that expects a structured card',
       );
     });
 
-    test('main.dart parses+replaces INSIDE the chunk loop (belt), '
+    test(
+        'main.dart parses+replaces INSIDE the chunk loop (belt), '
         'and again after the loop (suspenders)', () {
       final src = _mainSrc();
-
-
-
 
       expect(
         RegExp(r'final\s+structuredNow\s*=\s*\n\s*_tryParseAssistantStructuredMessage\(buffer\);')
             .hasMatch(src),
         isTrue,
         reason: 'the chunk-level parse must run so a completed JSON '
-                'envelope becomes a card in the SAME setState that '
-                'wrote the buffer — never leaving a raw-JSON text '
-                'message visible to the user',
+            'envelope becomes a card in the SAME setState that '
+            'wrote the buffer — never leaving a raw-JSON text '
+            'message visible to the user',
       );
       expect(
         RegExp(r"final\s+_Msg\s+replacement\s*=\s*structuredNow\s*\?\?\s*\n\s*_Msg\('assistant',\s*buffer\);")
             .hasMatch(src),
         isTrue,
         reason: 'the placeholder committed to msgs[i] must ALREADY '
-                'be the structured card when the JSON is complete',
+            'be the structured card when the JSON is complete',
       );
 
       expect(
         src.contains('if (assistantIndex != null && buffer.isNotEmpty) {'),
         isTrue,
         reason: 'the post-loop parse must ALSO run, so any '
-                'edge-case chunking that missed the intra-chunk '
-                'parse is caught before returning',
+            'edge-case chunking that missed the intra-chunk '
+            'parse is caught before returning',
       );
-
 
       final structuredNowMatches =
           RegExp(r'\bstructuredNow\b').allMatches(src).length;
       expect(
-        structuredNowMatches, greaterThanOrEqualTo(4),
-        reason:
-            'both chatStream callsites (delete-confirm + main _send) '
+        structuredNowMatches,
+        greaterThanOrEqualTo(4),
+        reason: 'both chatStream callsites (delete-confirm + main _send) '
             'must contain the belt: define structuredNow and use it '
             'in the replacement (≥ 2 * 2 = 4 references)',
       );
     });
 
-    test('both chatStream callsites in main.dart are await-for '
+    test(
+        'both chatStream callsites in main.dart are await-for '
         '(delete-confirm flow + main _send flow)', () {
       final src = _mainSrc();
-      final awaitForCount = 'await for (final encryptedChunk in stream)'
-          .allMatches(src)
-          .length;
+      final awaitForCount =
+          'await for (final encryptedChunk in stream)'.allMatches(src).length;
       expect(
-        awaitForCount, greaterThanOrEqualTo(2),
+        awaitForCount,
+        greaterThanOrEqualTo(2),
         reason: 'BOTH chatStream flows (delete-confirm + _send) must '
-                'use await for; otherwise one of them keeps the race',
+            'use await for; otherwise one of them keeps the race',
       );
 
       expect(src.contains('.listen(\n      (encryptedChunk) async {'), isFalse);
-      expect(src.contains('.listen(\n        (encryptedChunk) async {'), isFalse);
+      expect(
+          src.contains('.listen(\n        (encryptedChunk) async {'), isFalse);
     });
   });
 
-
-
-
-  group('Streamed vault_login_card assembles into a card BEFORE '
-        'the widget builds — the exact production replay', () {
-
-
-
-
+  group(
+      'Streamed vault_login_card assembles into a card BEFORE '
+      'the widget builds — the exact production replay', () {
     Future<List<ChatMessage>> _simulateSendReceive({
       required List<String> chunks,
     }) async {
@@ -659,14 +672,12 @@ void main() {
       var buffer = '';
 
       for (final chunk in chunks) {
-
         await Future<void>.delayed(Duration.zero);
         buffer += chunk;
 
-
         final structuredNow = parseVaultChatCardMessage(buffer);
-        final ChatMessage replacement = structuredNow ??
-            ChatMessage('assistant', buffer);
+        final ChatMessage replacement =
+            structuredNow ?? ChatMessage('assistant', buffer);
 
         if (assistantIndex == null) {
           msgs.add(replacement);
@@ -675,7 +686,6 @@ void main() {
           msgs[assistantIndex] = replacement;
         }
       }
-
 
       if (assistantIndex != null && buffer.isNotEmpty) {
         final structured = parseVaultChatCardMessage(buffer);
@@ -686,7 +696,8 @@ void main() {
       return msgs;
     }
 
-    test('single-chunk arrival: state committed for the widget is '
+    test(
+        'single-chunk arrival: state committed for the widget is '
         'a vault_chat_card, NEVER a text ChatMessage', () async {
       final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final msgs = await _simulateSendReceive(chunks: [full]);
@@ -696,13 +707,12 @@ void main() {
       expect(msgs.first.isCard, isTrue);
       expect(msgs.first.payload, isNotNull);
 
-
       expect(msgs.first.text, '');
     });
 
-    test('two-chunk arrival: FINAL state is a card (fix eliminates '
-        'the raw-text bubble the user was seeing in production)',
-        () async {
+    test(
+        'two-chunk arrival: FINAL state is a card (fix eliminates '
+        'the raw-text bubble the user was seeing in production)', () async {
       final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final half = full.length ~/ 2;
       final msgs = await _simulateSendReceive(chunks: [
@@ -711,10 +721,12 @@ void main() {
       ]);
 
       expect(msgs, hasLength(1));
-      expect(msgs.first.kind, ChatMessage.kVaultChatCard,
+      expect(
+        msgs.first.kind,
+        ChatMessage.kVaultChatCard,
         reason: 'FINAL msg (after all chunks) must be a card — this '
-                'is exactly the invariant that was broken by the '
-                'race in the old .listen((chunk) async {...}) flow.',
+            'is exactly the invariant that was broken by the '
+            'race in the old .listen((chunk) async {...}) flow.',
       );
       expect(msgs.first.isCard, isTrue);
     });
@@ -730,7 +742,8 @@ void main() {
       expect(msgs.first.kind, ChatMessage.kVaultChatCard);
     });
 
-    test('empty message field on the envelope does NOT downgrade '
+    test(
+        'empty message field on the envelope does NOT downgrade '
         'the card back to text', () async {
       expect(_PROD_ENVELOPE_LOGIN_SEARCH['message'], '');
       final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
@@ -746,16 +759,13 @@ void main() {
       expect(msgs.first.kind, ChatMessage.kVaultChatCard);
     });
 
-
-
-
-    test('adversarial race: if _tryParseAssistant were called BEFORE '
+    test(
+        'adversarial race: if _tryParseAssistant were called BEFORE '
         'the chunk callback fired, we would leave a raw-text bubble. '
         'The intra-chunk parse guarantees the assistantIndex slot is '
         'ALREADY a card when the widget builds.', () async {
       final full = jsonEncode(_PROD_ENVELOPE_LOGIN_SEARCH);
       final msgs = await _simulateSendReceive(chunks: [full]);
-
 
       expect(msgs.first.kind, isNot('text'));
 
@@ -764,9 +774,7 @@ void main() {
   });
 }
 
-
 String _readMainDart() {
-
   try {
     final f = File('lib/main.dart');
     return f.readAsStringSync();
@@ -774,5 +782,3 @@ String _readMainDart() {
     return '';
   }
 }
-
-

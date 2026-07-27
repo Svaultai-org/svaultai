@@ -12081,17 +12081,18 @@ def _handle_remember_fact(
     memory_key: Optional[str],
     memory_value: Optional[str],
     memory_event_date: Optional[str] = None,
+    vault_key: Optional[bytes] = None,
 ) -> Optional[str]:
 
 
     from ai_memory import (
         is_enabled, ALLOWED_MEMORY_TYPES, is_forbidden_memory_value,
-        slugify_memory_key, update_memory_safe,
+        slugify_memory_key,
     )
-    from memory_recall import label_for_type
-    from vault_core import is_vault_zk_adopted
     if not is_enabled():
         return None
+    if vault_key is None:
+        return "I couldn't save that memory. Please unlock your vault and try again."
     mt = (memory_type or "").strip().lower()
     if mt not in ALLOWED_MEMORY_TYPES:
         return None
@@ -12106,71 +12107,43 @@ def _handle_remember_fact(
     if not key:
         return None
 
-    # ZK/adopted-vault boundary: the backend MUST NOT persist
-    # readable memory_key / memory_value for a ZK vault. Emit a
-    # ``memory_proposal`` sentinel prefix that the Flutter chat
-    # SSE handler recognizes, encrypts client-side under memoryKey,
-    # computes memory_lookup_hash locally, and POSTs to
-    # /vault/ciphertext/vault-ai-memory. If the client fails to
-    # finalize (network drop, tab close), the memory is not saved
-    # — the correct privacy tradeoff. No server-side plaintext
-    # persistence fallback.
-    if is_vault_zk_adopted(vault_id):
-        _proposal_json = json.dumps(
-            {
+    try:
+        from durable_personal_memory import (
+            build_payload_from_request,
+            save_memory_payload,
+        )
+        title = (memory_key or key).strip() or "Memory"
+        result = save_memory_payload(
+            vault_id=vault_id,
+            key=vault_key,
+            payload=build_payload_from_request({
                 "memory_type": mt,
-                "memory_key": key,
-                "memory_value": val,
-                "memory_event_date": memory_event_date,
-            },
-            separators=(",", ":"),
+                "category": mt,
+                "title": title,
+                "value": val,
+                "body": val,
+                "event_date": memory_event_date,
+                "subject": "self",
+                "subject_display": "your",
+                "relationship": "self",
+                "attribute": key,
+                "canonical_key": f"{mt}:{key}",
+            }),
+            is_correction=True,
         )
-        label = label_for_type(mt)
-        return (
-            f"<<VAULTAI_MEMORY_PROPOSAL>>{_proposal_json}<<END>>\n\n"
-            f"Got it.\n\n{label}: {val}\n\n"
-            "I'll remember that for this vault (encrypted locally)."
+    except Exception as exc:
+        logger.warning(
+            "encrypted remember_fact failed vault=%s error_type=%s",
+            (vault_id or "")[:8],
+            type(exc).__name__,
         )
-
-    result = update_memory_safe(
-        vault_id, mt, key, val,
-        event_date=memory_event_date,
-    )
+        return "I couldn't save that memory. Please try again."
     if not result or not result.get("ok"):
         return None
-                                                             
-    try:
-        from relationship_builder import build_relationships_for_memory_safe
-        build_relationships_for_memory_safe(vault_id, mt, key)
-    except Exception:
-        pass
-
-                                                                   
-    try:
-        from expiry_engine import build_expiry_alerts_for_memory_safe
-        build_expiry_alerts_for_memory_safe(vault_id, mt, key)
-    except Exception:
-        pass
-
-    label = label_for_type(mt)
-    status = result.get("status")
-    if status == "updated":
-        prior = result.get("prior_value") or "(previous value)"
-        return (
-            f"Updated.\n\n{label}: {val}\n\n"
-            f"I had \"{prior}\" before; updated to \"{val}\". "
-            f"The previous value is kept in history."
-        )
-    if status == "unchanged":
-        return (
-            f"Already remembered.\n\n{label}: {val}"
-        )
-              
-    return (
-        f"Got it.\n\n{label}: {val}\n\n"
-        "I'll remember that for this vault."
-    )
-
+    # build_relationships_for_memory_safe remains part of the legacy
+    # relationship graph surface, but encrypted durable personal memories
+    # must not pass plaintext memory keys or values into that builder.
+    return str(result.get("message") or "Saved.")
 
 def _handle_recall_memory(
     vault_id: str,
@@ -12178,6 +12151,7 @@ def _handle_recall_memory(
     memory_query: Optional[str] = None,
     memory_anchor: Optional[str] = None,
     memory_direction: Optional[str] = None,
+    vault_key: Optional[bytes] = None,
 ) -> Optional[str]:
 
 
@@ -12197,6 +12171,49 @@ def _handle_recall_memory(
     direction = (memory_direction or "").strip().lower() or None
     if direction and direction not in ("before", "after", "around"):
         direction = None
+
+    if vault_key is not None:
+        try:
+            from durable_personal_memory import list_memory_items
+            encrypted = list_memory_items(
+                vault_id=vault_id,
+                key=vault_key,
+                query=query or anchor,
+                memory_type=mt,
+                limit=15 if (query or anchor) else 200,
+            )
+            encrypted_items = encrypted.get("items") or []
+        except Exception as exc:
+            logger.warning(
+                "encrypted recall_memory failed vault=%s error_type=%s",
+                (vault_id or "")[:8],
+                type(exc).__name__,
+            )
+            encrypted_items = []
+        if encrypted_items:
+            lines = [_fmt.remember_header()]
+            grouped: dict[str, list[dict]] = {}
+            for item in encrypted_items:
+                grouped.setdefault(item.get("memory_type") or "note", []).append(item)
+            for t in _MEMORY_RENDER_ORDER:
+                items = grouped.get(t)
+                if not items:
+                    continue
+                lines.append("")
+                lines.append(label_for_type(t))
+                for item in items:
+                    title = str(item.get("title") or "Memory").strip()
+                    value = str(
+                        item.get("value")
+                        or item.get("body")
+                        or item.get("event_date")
+                        or ""
+                    ).strip()
+                    if value:
+                        lines.append(f"- {title}: {value}")
+                    else:
+                        lines.append(f"- {title}")
+            return "\n".join(lines).rstrip()
 
                                                                     
     if query or anchor or direction:
@@ -12801,6 +12818,7 @@ async def chat_endpoint(
                 key=key,
                 message=decrypted_message or "",
                 source_message_id=str(_chat_request_id or ""),
+                session_id=str((principal or {}).get("token_id") or ""),
             )
         except Exception:
             logger.exception(
@@ -17216,6 +17234,7 @@ async def chat_endpoint(
                 intent_data.get("memory_key"),
                 intent_data.get("memory_value"),
                 intent_data.get("memory_event_date"),
+                vault_key=key,
             )
             if rem_reply:
                 return encrypted_reply(rem_reply)
@@ -17227,6 +17246,7 @@ async def chat_endpoint(
                 intent_data.get("memory_query"),
                 intent_data.get("memory_anchor"),
                 intent_data.get("memory_direction"),
+                vault_key=key,
             )
             if rec_reply:
                 return encrypted_reply(rec_reply)

@@ -9,8 +9,13 @@ import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
-    show kIsWeb, kReleaseMode, kDebugMode, visibleForTesting, debugPrint,
-         immutable;
+    show
+        kIsWeb,
+        kReleaseMode,
+        kDebugMode,
+        visibleForTesting,
+        debugPrint,
+        immutable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart' as web_plugins;
@@ -1772,8 +1777,9 @@ class AppState extends ChangeNotifier {
         'iter_changed': iterChanged,
         'new_iterations': freshIter,
       });
-      if (freshSalt != null && freshSalt.isNotEmpty
-          && (saltChanged || iterChanged)) {
+      if (freshSalt != null &&
+          freshSalt.isNotEmpty &&
+          (saltChanged || iterChanged)) {
         // Authoritative salt/iter differ from what K1 was derived
         // from. Re-derive K2 with the fresh values and install as a
         // new context (bumping the generation). Legacy _VaultCrypto
@@ -1864,9 +1870,9 @@ class AppState extends ChangeNotifier {
     // one — falls back to the legacy _pinCache for pre-refactor
     // ZK-login state where the context was not yet installed.
     final currentCtx = VaultCryptoRegistry.current;
-    final String? pin = (currentCtx != null
-            && currentCtx.vaultId == vId
-            && currentCtx.vaultName == vName)
+    final String? pin = (currentCtx != null &&
+            currentCtx.vaultId == vId &&
+            currentCtx.vaultName == vName)
         ? currentCtx.pin
         : _VaultCrypto.cachedPinFor(vaultId: vId, vaultName: vName);
     if (pin == null) {
@@ -2483,9 +2489,8 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
     // the chip cap on the narrowest phones so the wordmark keeps
     // some space to render.
     final screenWidth = MediaQuery.of(context).size.width;
-    final double accountChipMaxWidth = !isMobile
-        ? 260.0
-        : (screenWidth < 380 ? 120.0 : 180.0);
+    final double accountChipMaxWidth =
+        !isMobile ? 260.0 : (screenWidth < 380 ? 120.0 : 180.0);
 
     return AppBar(
       toolbarHeight: 72,
@@ -3982,8 +3987,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           final _zkLoginSalt = _zkLoginMeta['pin_salt']?.toString();
           final _zkLoginIter =
               (_zkLoginMeta['kdf_iterations'] as num?)?.toInt();
-          if (_zkLoginSalt != null && _zkLoginSalt.isNotEmpty
-              && _zkLoginIter != null) {
+          if (_zkLoginSalt != null &&
+              _zkLoginSalt.isNotEmpty &&
+              _zkLoginIter != null) {
             final _zkLoginCtx = await deriveAndInstallCryptoContext(
               vaultId: loginResult.vaultId,
               vaultName: resolvedVaultName,
@@ -4465,8 +4471,9 @@ class _SignupPageState extends State<SignupPage> {
         final _zkSignupSalt = _zkSignupMeta['pin_salt']?.toString();
         final _zkSignupIter =
             (_zkSignupMeta['kdf_iterations'] as num?)?.toInt();
-        if (_zkSignupSalt != null && _zkSignupSalt.isNotEmpty
-            && _zkSignupIter != null) {
+        if (_zkSignupSalt != null &&
+            _zkSignupSalt.isNotEmpty &&
+            _zkSignupIter != null) {
           final _zkSignupCtx = await deriveAndInstallCryptoContext(
             vaultId: result.vaultId,
             vaultName: vaultName,
@@ -4854,8 +4861,9 @@ class _UnlockPageState extends State<UnlockPage> {
           final _zkUnlockSalt = _zkUnlockMeta['pin_salt']?.toString();
           final _zkUnlockIter =
               (_zkUnlockMeta['kdf_iterations'] as num?)?.toInt();
-          if (_zkUnlockSalt != null && _zkUnlockSalt.isNotEmpty
-              && _zkUnlockIter != null) {
+          if (_zkUnlockSalt != null &&
+              _zkUnlockSalt.isNotEmpty &&
+              _zkUnlockIter != null) {
             final _zkUnlockCtx = await deriveAndInstallCryptoContext(
               vaultId: loginResult.vaultId,
               vaultName: resolvedVaultName,
@@ -6160,9 +6168,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // rationale — the delete-sentinel path was subject to the
       // exact same race.
       final ctxSnapshot = VaultCryptoRegistry.current;
-      if (ctxSnapshot == null
-          || ctxSnapshot.vaultId != activeVaultId
-          || ctxSnapshot.vaultName != vaultName) {
+      if (ctxSnapshot == null ||
+          ctxSnapshot.vaultId != activeVaultId ||
+          ctxSnapshot.vaultName != vaultName) {
         vlog('delete_sentinel.no_context', {
           'has_ctx': ctxSnapshot != null,
         });
@@ -6226,8 +6234,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ));
             }
 
-            final structuredNow = _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
+            final structuredNow =
+                _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ??
+                _Msg('assistant', buffer);
             setState(() {
               if (assistantIndex == null) {
                 msgs.add(replacement);
@@ -6554,14 +6564,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   // endpoint and let the next refresh populate the panel.
   bool _looksLikeNetworkAbort(Object e) {
     final s = e.toString().toLowerCase();
-    return s.contains('clientexception')
-        || s.contains('load failed')
-        || s.contains('failed to fetch')
-        || s.contains('aborted')
-        || s.contains('cancelled')
-        || s.contains('canceled')
-        || s.contains('network is offline')
-        || s.contains('network request failed');
+    return s.contains('clientexception') ||
+        s.contains('load failed') ||
+        s.contains('failed to fetch') ||
+        s.contains('aborted') ||
+        s.contains('cancelled') ||
+        s.contains('canceled') ||
+        s.contains('network is offline') ||
+        s.contains('network request failed');
   }
 
   Future<void> _loadInheritances() async {
@@ -6772,8 +6782,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                     }
                                   }
                                   setLocal(() {
-                                    pairingCode =
-                                        result['pairing_code']?.toString();
+                                    pairingCode = result['pairing_code']?.toString();
                                     creating = false;
                                   });
                                   await _loadBeneficiaries();
@@ -7560,15 +7569,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // travel as ClientException / SocketException from
       // package:http and never carry a backend code.
       final s = e.toString().toLowerCase();
-      final isNetwork = s.contains('clientexception')
-          || s.contains('socketexception')
-          || s.contains('load failed')
-          || s.contains('failed to fetch')
-          || s.contains('aborted')
-          || s.contains('cancelled')
-          || s.contains('canceled')
-          || s.contains('network is offline')
-          || s.contains('network request failed');
+      final isNetwork = s.contains('clientexception') ||
+          s.contains('socketexception') ||
+          s.contains('load failed') ||
+          s.contains('failed to fetch') ||
+          s.contains('aborted') ||
+          s.contains('cancelled') ||
+          s.contains('canceled') ||
+          s.contains('network is offline') ||
+          s.contains('network request failed');
       vlog('inheritance.cred.save.failed', {
         'link_id': linkId,
         'error': e.toString(),
@@ -7579,9 +7588,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       return (
         ok: false,
-        code: isNetwork
-            ? 'INH-CRED-CLIENT-NETWORK'
-            : 'INH-CRED-CLIENT-UNKNOWN',
+        code: isNetwork ? 'INH-CRED-CLIENT-NETWORK' : 'INH-CRED-CLIENT-UNKNOWN',
       );
     }
   }
@@ -7993,8 +8000,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         // wrapper somehow missed a code path, we surface the
         // ``kRevealStageUnstagedUnknown`` sentinel — never
         // ``stage=None``.
-        'stage': inh_classify.revealStageOf(stagedError)
-            ?? inh_cred.kRevealStageUnstagedUnknown,
+        'stage': inh_classify.revealStageOf(stagedError) ??
+            inh_cred.kRevealStageUnstagedUnknown,
         'link_id': linkId,
         'exception_type': stagedError.runtimeType.toString(),
       });
@@ -8004,23 +8011,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         body: {
           'area': 'reveal',
           'reference_code': ref,
-          'stage': inh_classify.revealStageOf(stagedError)
-              ?? inh_cred.kRevealStageUnstagedUnknown,
+          'stage': inh_classify.revealStageOf(stagedError) ??
+              inh_cred.kRevealStageUnstagedUnknown,
           'link_id': linkId,
           'exception_type': stagedError.runtimeType.toString(),
           'category': category,
-          'crypto_version':
-              safeLens['crypto_version'],
-          'encrypted_payload_len':
-              safeLens['encrypted_payload_len'],
-          'payload_nonce_len':
-              safeLens['payload_nonce_len'],
-          'wrapped_key_len':
-              safeLens['wrapped_key_len'],
-          'wrapping_ephemeral_pk_len':
-              safeLens['wrapping_ephemeral_pk_len'],
-          'wrapping_nonce_len':
-              safeLens['wrapping_nonce_len'],
+          'crypto_version': safeLens['crypto_version'],
+          'encrypted_payload_len': safeLens['encrypted_payload_len'],
+          'payload_nonce_len': safeLens['payload_nonce_len'],
+          'wrapped_key_len': safeLens['wrapped_key_len'],
+          'wrapping_ephemeral_pk_len': safeLens['wrapping_ephemeral_pk_len'],
+          'wrapping_nonce_len': safeLens['wrapping_nonce_len'],
           'active_sk_present': true,
           // sk_len is 32 for every ZK-adopted account (X25519 seed).
           // We report the SPEC value here rather than re-extracting
@@ -8748,9 +8749,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         // chosen vault_name. Only render 'Unknown'
                         // when the backend genuinely has no usable
                         // identity for either field.
-                        final label = (i['passer_label']
-                                ?? i['owner_vault_name']
-                                ?? 'Unknown')
+                        final label = (i['passer_label'] ??
+                                i['owner_vault_name'] ??
+                                'Unknown')
                             .toString();
                         final status = (i['status'] ?? '').toString();
                         final id = (i['id'] as num?)?.toInt() ?? 0;
@@ -12668,6 +12669,46 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _sendQuickPrompt('cancel');
       return;
     }
+    if (action == 'memory_proposal_save') {
+      final payload =
+          data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
+      unawaited(_saveMemoryProposalFromCard(payload));
+      return;
+    }
+    if (action == 'memory_proposal_cancel') {
+      _appendAssistantMessage('Memory proposal cancelled.');
+      return;
+    }
+  }
+
+  Future<void> _saveMemoryProposalFromCard(
+    Map<String, dynamic> payload,
+  ) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) {
+      _showSnack('Session expired. Please sign in again.');
+      return;
+    }
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final result = await VaultAIClient(baseUrl: backendBaseUrl).createMemory(
+        authToken: token,
+        vaultName: vaultName,
+        pin: pin,
+        data: payload,
+      );
+      final message = (result['message'] as String?)?.trim();
+      _appendAssistantMessage(
+        message == null || message.isEmpty ? 'Memory saved.' : message,
+      );
+      _showSnack('Memory saved');
+    } on InvalidVaultUnlockException {
+      _showSnack('Your vault is locked. Please enter your PIN again.');
+    } catch (e) {
+      _showSnack('Could not save memory.');
+    }
   }
 
   /// One-shot selection hint attached to the NEXT chat POST. Cleared
@@ -13099,9 +13140,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // finishing the encrypt+request-build unless the SAME
       // snapshot object is retained.
       final ctxSnapshot = VaultCryptoRegistry.current;
-      if (ctxSnapshot == null
-          || ctxSnapshot.vaultId != activeVaultId
-          || ctxSnapshot.vaultName != vaultName) {
+      if (ctxSnapshot == null ||
+          ctxSnapshot.vaultId != activeVaultId ||
+          ctxSnapshot.vaultName != vaultName) {
         // No live context for the caller's vault. Do NOT force PIN
         // (that would be the pre-2026-07-22 silent-sign-out bug).
         // Surface a clear typed error and preserve the input; the
@@ -13201,8 +13242,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ));
             }
 
-            final structuredNow = _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
+            final structuredNow =
+                _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ??
+                _Msg('assistant', buffer);
             setState(() {
               if (assistantIndex == null) {
                 msgs.add(replacement);
@@ -13246,8 +13289,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               msgs.removeLast();
             }
             input.text = text;
-            input.selection =
-                TextSelection.collapsed(offset: text.length);
+            input.selection = TextSelection.collapsed(offset: text.length);
           });
           rootScaffoldMessengerKey.currentState?.clearSnackBars();
           rootScaffoldMessengerKey.currentState?.showSnackBar(
@@ -13289,8 +13331,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             // Put the text back in the input so the user can just
             // tap send again — no retyping.
             input.text = text;
-            input.selection =
-                TextSelection.collapsed(offset: text.length);
+            input.selection = TextSelection.collapsed(offset: text.length);
           });
           rootScaffoldMessengerKey.currentState?.clearSnackBars();
           if (rederived) {
@@ -14739,6 +14780,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       authToken: token,
       vaultName: vaultName,
       isMobile: isMobile,
+      pinProvider: _VaultCrypto.currentPinOrThrow,
       onAskVaultAI: (prompt) async {
         setState(() => selectedSection = _DashboardSection.chat);
         await _sendQuickPrompt(prompt);

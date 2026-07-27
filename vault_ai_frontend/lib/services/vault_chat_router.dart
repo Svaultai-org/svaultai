@@ -1,74 +1,66 @@
-
-
-
 import 'crypto_vault_chat_control.dart';
-
 
 const String kVaultChatRouterSchemaV1 = 'vault_chat_router_v1';
 
-
-
-const String kVcrIntentVaultOverview          = 'vault_overview';
-const String kVcrIntentFileSearch             = 'vault_file_search';
-const String kVcrIntentDocumentSummary        = 'vault_document_summary';
-const String kVcrIntentSecureItemList         = 'vault_secure_item_list';
-const String kVcrIntentSecureItemSearch       =
-    'vault_secure_item_search';
-const String kVcrIntentLoginList              = 'vault_login_list';
-const String kVcrIntentLoginSearch            = 'vault_login_search';
-const String kVcrIntentLoginDuplicates        = 'vault_login_duplicates';
-const String kVcrIntentLoginReveal            = 'vault_login_reveal';
-const String kVcrIntentLoginCopy              = 'vault_login_copy';
-const String kVcrIntentGeneratedLoginList     =
-    'vault_generated_login_list';
+const String kVcrIntentVaultOverview = 'vault_overview';
+const String kVcrIntentFileSearch = 'vault_file_search';
+const String kVcrIntentDocumentSummary = 'vault_document_summary';
+const String kVcrIntentSecureItemList = 'vault_secure_item_list';
+const String kVcrIntentSecureItemSearch = 'vault_secure_item_search';
+const String kVcrIntentLoginList = 'vault_login_list';
+const String kVcrIntentLoginSearch = 'vault_login_search';
+const String kVcrIntentLoginDuplicates = 'vault_login_duplicates';
+const String kVcrIntentLoginReveal = 'vault_login_reveal';
+const String kVcrIntentLoginCopy = 'vault_login_copy';
+const String kVcrIntentGeneratedLoginList = 'vault_generated_login_list';
 const String kVcrIntentGeneratedLoginCreateDraft =
     'vault_generated_login_create_draft';
-const String kVcrIntentIdDocumentList         = 'vault_id_document_list';
-const String kVcrIntentIdDocumentSearch       =
-    'vault_id_document_search';
-const String kVcrIntentIdDocumentExpiry       =
-    'vault_id_document_expiry';
-const String kVcrIntentIdDocumentReveal       =
-    'vault_id_document_reveal';
-const String kVcrIntentBillingStatus          = 'vault_billing_status';
-const String kVcrIntentBillingUpgrade         = 'vault_billing_upgrade';
-const String kVcrIntentStorageUsage           = 'vault_storage_usage';
-const String kVcrIntentStorageLargest         =
-    'vault_storage_largest_files';
-const String kVcrIntentActivityRecent         = 'vault_activity_recent';
-const String kVcrIntentActivityItemHistory    =
-    'vault_activity_item_history';
-const String kVcrIntentCrossVaultSearch       = 'vault_cross_vault_search';
-const String kVcrIntentCryptoDelegated        = 'vault_crypto_delegated';
-const String kVcrIntentFaq                    = 'vault_faq';
-const String kVcrIntentRefusalSecretMaterial  =
-    'vault_refusal_secret_material';
-const String kVcrIntentRefusalExchangeAction  =
-    'vault_refusal_exchange_action';
-const String kVcrIntentRefusalBypassPin       =
-    'vault_refusal_bypass_pin';
-const String kVcrIntentRefusalExportAll       =
-    'vault_refusal_export_all';
-const String kVcrIntentRefusalMassReveal      =
-    'vault_refusal_mass_reveal';
-const String kVcrIntentRefusalAutoSend        =
-    'vault_refusal_auto_send';
-const String kVcrIntentUnrecognized           = 'vault_unrecognized';
+const String kVcrIntentMemorySaveProposal = 'vault_memory_save_proposal';
+const String kVcrIntentIdDocumentList = 'vault_id_document_list';
+const String kVcrIntentIdDocumentSearch = 'vault_id_document_search';
+const String kVcrIntentIdDocumentExpiry = 'vault_id_document_expiry';
+const String kVcrIntentIdDocumentReveal = 'vault_id_document_reveal';
+const String kVcrIntentBillingStatus = 'vault_billing_status';
+const String kVcrIntentBillingUpgrade = 'vault_billing_upgrade';
+const String kVcrIntentStorageUsage = 'vault_storage_usage';
+const String kVcrIntentStorageLargest = 'vault_storage_largest_files';
+const String kVcrIntentActivityRecent = 'vault_activity_recent';
+const String kVcrIntentActivityItemHistory = 'vault_activity_item_history';
+const String kVcrIntentCrossVaultSearch = 'vault_cross_vault_search';
+const String kVcrIntentCryptoDelegated = 'vault_crypto_delegated';
+const String kVcrIntentFaq = 'vault_faq';
+const String kVcrIntentRefusalSecretMaterial = 'vault_refusal_secret_material';
+const String kVcrIntentRefusalExchangeAction = 'vault_refusal_exchange_action';
+const String kVcrIntentRefusalBypassPin = 'vault_refusal_bypass_pin';
+const String kVcrIntentRefusalExportAll = 'vault_refusal_export_all';
+const String kVcrIntentRefusalMassReveal = 'vault_refusal_mass_reveal';
+const String kVcrIntentRefusalAutoSend = 'vault_refusal_auto_send';
+const String kVcrIntentUnrecognized = 'vault_unrecognized';
 
 const Set<String> kAllowedVcrIntents = {
   kVcrIntentVaultOverview,
-  kVcrIntentFileSearch, kVcrIntentDocumentSummary,
-  kVcrIntentSecureItemList, kVcrIntentSecureItemSearch,
-  kVcrIntentLoginList, kVcrIntentLoginSearch,
-  kVcrIntentLoginDuplicates, kVcrIntentLoginReveal,
+  kVcrIntentFileSearch,
+  kVcrIntentDocumentSummary,
+  kVcrIntentSecureItemList,
+  kVcrIntentSecureItemSearch,
+  kVcrIntentLoginList,
+  kVcrIntentLoginSearch,
+  kVcrIntentLoginDuplicates,
+  kVcrIntentLoginReveal,
   kVcrIntentLoginCopy,
   kVcrIntentGeneratedLoginList,
   kVcrIntentGeneratedLoginCreateDraft,
-  kVcrIntentIdDocumentList, kVcrIntentIdDocumentSearch,
-  kVcrIntentIdDocumentExpiry, kVcrIntentIdDocumentReveal,
-  kVcrIntentBillingStatus, kVcrIntentBillingUpgrade,
-  kVcrIntentStorageUsage, kVcrIntentStorageLargest,
-  kVcrIntentActivityRecent, kVcrIntentActivityItemHistory,
+  kVcrIntentMemorySaveProposal,
+  kVcrIntentIdDocumentList,
+  kVcrIntentIdDocumentSearch,
+  kVcrIntentIdDocumentExpiry,
+  kVcrIntentIdDocumentReveal,
+  kVcrIntentBillingStatus,
+  kVcrIntentBillingUpgrade,
+  kVcrIntentStorageUsage,
+  kVcrIntentStorageLargest,
+  kVcrIntentActivityRecent,
+  kVcrIntentActivityItemHistory,
   kVcrIntentCrossVaultSearch,
   kVcrIntentCryptoDelegated,
   kVcrIntentFaq,
@@ -81,42 +73,43 @@ const Set<String> kAllowedVcrIntents = {
   kVcrIntentUnrecognized,
 };
 
-
-
-const String kVcrCardVaultOverview        = 'vault_overview_card';
-const String kVcrCardFileResult           = 'vault_file_result_card';
-const String kVcrCardDocumentResult       = 'vault_document_result_card';
-const String kVcrCardSecureItem           = 'vault_secure_item_card';
-const String kVcrCardLogin                = 'vault_login_card';
-const String kVcrCardGeneratedLogin       = 'vault_generated_login_card';
-const String kVcrCardIdDocument           = 'vault_id_document_card';
-const String kVcrCardBillingStatus        = 'vault_billing_status_card';
-const String kVcrCardStorageUsage         = 'vault_storage_usage_card';
-const String kVcrCardVaultActivity        = 'vault_activity_card';
-const String kVcrCardCrossVaultSearch     =
-    'vault_cross_vault_search_card';
-const String kVcrCardConfirmationRequired =
-    'vault_confirmation_required_card';
-const String kVcrCardRefusal              = 'vault_refusal_card';
-const String kVcrCardUnrecognized         = 'vault_unrecognized_card';
-const String kVcrCardCryptoDelegated      =
-    'vault_crypto_delegated_card';
-const String kVcrCardFaq                  = 'vault_faq_card';
+const String kVcrCardVaultOverview = 'vault_overview_card';
+const String kVcrCardFileResult = 'vault_file_result_card';
+const String kVcrCardDocumentResult = 'vault_document_result_card';
+const String kVcrCardSecureItem = 'vault_secure_item_card';
+const String kVcrCardLogin = 'vault_login_card';
+const String kVcrCardGeneratedLogin = 'vault_generated_login_card';
+const String kVcrCardMemoryProposal = 'vault_memory_proposal_card';
+const String kVcrCardIdDocument = 'vault_id_document_card';
+const String kVcrCardBillingStatus = 'vault_billing_status_card';
+const String kVcrCardStorageUsage = 'vault_storage_usage_card';
+const String kVcrCardVaultActivity = 'vault_activity_card';
+const String kVcrCardCrossVaultSearch = 'vault_cross_vault_search_card';
+const String kVcrCardConfirmationRequired = 'vault_confirmation_required_card';
+const String kVcrCardRefusal = 'vault_refusal_card';
+const String kVcrCardUnrecognized = 'vault_unrecognized_card';
+const String kVcrCardCryptoDelegated = 'vault_crypto_delegated_card';
+const String kVcrCardFaq = 'vault_faq_card';
 
 const Set<String> kAllowedVcrCards = {
   kVcrCardVaultOverview,
-  kVcrCardFileResult, kVcrCardDocumentResult,
-  kVcrCardSecureItem, kVcrCardLogin,
-  kVcrCardGeneratedLogin, kVcrCardIdDocument,
-  kVcrCardBillingStatus, kVcrCardStorageUsage,
-  kVcrCardVaultActivity, kVcrCardCrossVaultSearch,
+  kVcrCardFileResult,
+  kVcrCardDocumentResult,
+  kVcrCardSecureItem,
+  kVcrCardLogin,
+  kVcrCardGeneratedLogin,
+  kVcrCardMemoryProposal,
+  kVcrCardIdDocument,
+  kVcrCardBillingStatus,
+  kVcrCardStorageUsage,
+  kVcrCardVaultActivity,
+  kVcrCardCrossVaultSearch,
   kVcrCardConfirmationRequired,
-  kVcrCardRefusal, kVcrCardUnrecognized,
+  kVcrCardRefusal,
+  kVcrCardUnrecognized,
   kVcrCardCryptoDelegated,
   kVcrCardFaq,
 };
-
-
 
 class VaultChatResponse {
   final String intent;
@@ -136,7 +129,6 @@ class VaultChatResponse {
     return VaultChatResponse(intent: safeIntent, card: card);
   }
 
-
   bool get isRefusal =>
       intent == kVcrIntentRefusalSecretMaterial ||
       intent == kVcrIntentRefusalExchangeAction ||
@@ -148,9 +140,7 @@ class VaultChatResponse {
   bool get requiresConfirmation =>
       card.cardType == kVcrCardConfirmationRequired;
 
-  bool get isCryptoDelegated =>
-      intent == kVcrIntentCryptoDelegated;
-
+  bool get isCryptoDelegated => intent == kVcrIntentCryptoDelegated;
 
   CryptoVaultChatCard? get delegatedCryptoCard {
     if (!isCryptoDelegated) return null;
@@ -159,8 +149,6 @@ class VaultChatResponse {
     return CryptoVaultChatCard.fromJson(inner);
   }
 }
-
-
 
 class VaultChatCard {
   final String cardType;
@@ -173,22 +161,16 @@ class VaultChatCard {
   final bool maskedByDefault;
   final bool liveFetchRequired;
 
-
   final bool requiresPinUnlock;
   final bool requiresTrustedDevice;
   final bool requiresLocalSigning;
   final bool requiresExplicitConfirmation;
   final bool canSaveWithoutConfirmation;
 
-
   final String? innerIntent;
   final Map<String, dynamic>? _innerCardRaw;
 
-
-
-
   final Map<String, dynamic>? data;
-
 
   final String? faqId;
   final String? faqCategory;
@@ -209,7 +191,6 @@ class VaultChatCard {
     this.query,
     this.maskedByDefault = true,
     this.liveFetchRequired = false,
-
     this.requiresPinUnlock = true,
     this.requiresTrustedDevice = true,
     this.requiresLocalSigning = false,
@@ -232,7 +213,6 @@ class VaultChatCard {
     return const VaultChatCard(cardType: kVcrCardUnrecognized);
   }
 
-
   bool get isAvailable {
     final d = data;
     if (d == null) return false;
@@ -250,12 +230,10 @@ class VaultChatCard {
 
   factory VaultChatCard.fromJson(Map<String, dynamic> raw) {
     final rawType = (raw['cardType'] ?? '').toString();
-    final safeType = kAllowedVcrCards.contains(rawType)
-        ? rawType
-        : kVcrCardUnrecognized;
+    final safeType =
+        kAllowedVcrCards.contains(rawType) ? rawType : kVcrCardUnrecognized;
     final innerCard = raw['innerCard'];
     final rawData = raw['data'];
-
 
     Map<String, dynamic>? safeData;
     if (rawData is Map<String, dynamic>) {
@@ -272,14 +250,18 @@ class VaultChatCard {
       // whole /chat SSE stream is AES-GCM encrypted with the vault-
       // derived key; the plaintext password never crosses the trust
       // boundary in the clear.
-      final isLoginDetail = safeType == kVcrCardLogin &&
-          (rawData['view'] == 'detail');
+      final isLoginDetail =
+          safeType == kVcrCardLogin && (rawData['view'] == 'detail');
       final isGeneratedLoginDraft = safeType == kVcrCardGeneratedLogin &&
           (rawData['view'] == 'create_draft');
+      final isMemoryProposal = safeType == kVcrCardMemoryProposal &&
+          (rawData['view'] == 'save_proposal');
       if (isLoginDetail) {
         safeData = _sanitizeLoginDetail(rawData);
       } else if (isGeneratedLoginDraft) {
         safeData = _sanitizeGeneratedLoginDraft(rawData);
+      } else if (isMemoryProposal) {
+        safeData = _sanitizeMemoryProposal(rawData);
       } else {
         safeData = _stripForbiddenKeys(rawData);
       }
@@ -298,7 +280,7 @@ class VaultChatCard {
       for (final e in rawRelQs) {
         if (e is Map) {
           final id = (e['id'] ?? '').toString();
-          final q  = (e['question'] ?? '').toString();
+          final q = (e['question'] ?? '').toString();
           if (id.isNotEmpty && q.isNotEmpty) {
             relQs.add({'id': id, 'question': q});
           }
@@ -314,74 +296,96 @@ class VaultChatCard {
     }
 
     return VaultChatCard(
-      cardType:            safeType,
-      refusalReason:       raw['refusalReason']?.toString(),
-      message:             raw['message']?.toString(),
-      action:              raw['action']?.toString(),
-      subject:             raw['subject']?.toString(),
-      view:                raw['view']?.toString(),
-      query:               raw['query']?.toString(),
-      maskedByDefault:     raw['maskedByDefault'] != false,
-      liveFetchRequired:   raw['liveFetchRequired'] == true,
-
-      requiresPinUnlock:            true,
-      requiresTrustedDevice:        true,
+      cardType: safeType,
+      refusalReason: raw['refusalReason']?.toString(),
+      message: raw['message']?.toString(),
+      action: raw['action']?.toString(),
+      subject: raw['subject']?.toString(),
+      view: raw['view']?.toString(),
+      query: raw['query']?.toString(),
+      maskedByDefault: raw['maskedByDefault'] != false,
+      liveFetchRequired: raw['liveFetchRequired'] == true,
+      requiresPinUnlock: true,
+      requiresTrustedDevice: true,
       requiresLocalSigning: raw['requiresLocalSigning'] == true,
       requiresExplicitConfirmation: true,
-
       canSaveWithoutConfirmation: false,
-      innerIntent:  raw['innerIntent']?.toString(),
-      innerCardRaw: innerCard is Map<String, dynamic>
-          ? innerCard
-          : null,
+      innerIntent: raw['innerIntent']?.toString(),
+      innerCardRaw: innerCard is Map<String, dynamic> ? innerCard : null,
       data: safeData,
-      faqId:            raw['faqId']?.toString(),
-      faqCategory:      raw['category']?.toString(),
+      faqId: raw['faqId']?.toString(),
+      faqCategory: raw['category']?.toString(),
       faqCategoryLabel: raw['categoryLabel']?.toString(),
-      faqQuestion:      raw['question']?.toString(),
-      faqAnswer:        raw['answer']?.toString(),
-      faqRelatedIds:        relIds,
-      faqRelatedQuestions:  relQs,
-      faqRelatedActions:    relActs,
+      faqQuestion: raw['question']?.toString(),
+      faqAnswer: raw['answer']?.toString(),
+      faqRelatedIds: relIds,
+      faqRelatedQuestions: relQs,
+      faqRelatedActions: relActs,
     );
   }
 }
 
-
-
 const Set<String> kVcrForbiddenDataKeys = <String>{
-  'password', 'password_value', 'raw_password', 'plaintext_password',
-  'pin', 'pin_hash', 'pinHash',
-  'seed', 'seed_phrase', 'seedPhrase', 'seed_hex',
-  'mnemonic', 'mnemonic_words',
-  'private_key', 'privateKey',
-  'view_key', 'private_view_key',
-  'spend_key', 'private_spend_key',
+  'password',
+  'password_value',
+  'raw_password',
+  'plaintext_password',
+  'pin',
+  'pin_hash',
+  'pinHash',
+  'seed',
+  'seed_phrase',
+  'seedPhrase',
+  'seed_hex',
+  'mnemonic',
+  'mnemonic_words',
+  'private_key',
+  'privateKey',
+  'view_key',
+  'private_view_key',
+  'spend_key',
+  'private_spend_key',
   'polyseed',
-  'api_key', 'apiKey',
-  'auth_token', 'authToken',
-  'encrypted_wallet_secret', 'encrypted_secret',
-  'stripe_secret_key', 'stripe_secret',
-
-  'id_number', 'idNumber', 'raw_id_number',
-  'ssn', 'social_security_number',
-
-
-  'password_field', 'notes_full', 'card_number_raw',
+  'api_key',
+  'apiKey',
+  'auth_token',
+  'authToken',
+  'encrypted_wallet_secret',
+  'encrypted_secret',
+  'stripe_secret_key',
+  'stripe_secret',
+  'id_number',
+  'idNumber',
+  'raw_id_number',
+  'ssn',
+  'social_security_number',
+  'password_field',
+  'notes_full',
+  'card_number_raw',
 };
 
-
-
 const Set<String> _kLoginDetailPayloadKeys = <String>{
-  'schema', 'available', 'view', 'query', 'login', 'count',
+  'schema',
+  'available',
+  'view',
+  'query',
+  'login',
+  'count',
   'pending_action',
 };
 
 const Set<String> _kLoginDetailLoginKeys = <String>{
-  'id', 'title', 'service', 'username', 'password',
-  'domain', 'website', 'notes', 'updated_at', 'generated',
+  'id',
+  'title',
+  'service',
+  'username',
+  'password',
+  'domain',
+  'website',
+  'notes',
+  'updated_at',
+  'generated',
 };
-
 
 Map<String, dynamic> _sanitizeLoginDetail(Map<String, dynamic> raw) {
   final out = <String, dynamic>{};
@@ -404,7 +408,6 @@ Map<String, dynamic> _sanitizeLoginDetail(Map<String, dynamic> raw) {
   return out;
 }
 
-
 // 2026-08-01 positive allowlist for the generated-login draft card
 // in `create_draft` view. Same pattern as `_sanitizeLoginDetail`.
 // Any key not in this set is stripped — including anything on the
@@ -424,9 +427,9 @@ const Set<String> _kGeneratedLoginDraftKeys = <String>{
   'title',
 };
 
-
 Map<String, dynamic> _sanitizeGeneratedLoginDraft(
-    Map<String, dynamic> raw,) {
+  Map<String, dynamic> raw,
+) {
   final out = <String, dynamic>{};
   for (final entry in raw.entries) {
     if (!_kGeneratedLoginDraftKeys.contains(entry.key)) continue;
@@ -437,6 +440,34 @@ Map<String, dynamic> _sanitizeGeneratedLoginDraft(
   return out;
 }
 
+const Set<String> _kMemoryProposalKeys = <String>{
+  'schema',
+  'proposal_id',
+  'title',
+  'value',
+  'body',
+  'memory_type',
+  'category',
+  'subject',
+  'subject_display',
+  'relationship',
+  'attribute',
+  'event_date',
+  'place',
+  'tags',
+  'actions',
+};
+
+Map<String, dynamic> _sanitizeMemoryProposal(
+  Map<String, dynamic> raw,
+) {
+  final out = <String, dynamic>{};
+  for (final entry in raw.entries) {
+    if (!_kMemoryProposalKeys.contains(entry.key)) continue;
+    out[entry.key] = entry.value;
+  }
+  return out;
+}
 
 Map<String, dynamic> _stripForbiddenKeys(Map<String, dynamic> raw) {
   final out = <String, dynamic>{};
@@ -469,8 +500,6 @@ List<dynamic> _stripForbiddenKeysList(List<dynamic> raw) {
     return e;
   }).toList();
 }
-
-
 
 const String kVcrRefusalCopySecretMaterial =
     'VaultAI never surfaces your seed, mnemonic, private keys, '

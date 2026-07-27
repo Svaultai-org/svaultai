@@ -495,14 +495,16 @@ void main() {
 
 
 
-  group('Regression: kAllowedVcrIntents/cards untouched', () {
+  group('Regression: kAllowedVcrIntents/cards closed set', () {
 
 
-    test('intents still 32, cards still 16', () {
+    test('intents still 33, cards still 17', () {
 
 
-      expect(kAllowedVcrIntents, hasLength(32));
-      expect(kAllowedVcrCards,   hasLength(16));
+      expect(kAllowedVcrIntents, hasLength(33));
+      expect(kAllowedVcrCards,   hasLength(17));
+      expect(kAllowedVcrIntents, contains('vault_memory_save_proposal'));
+      expect(kAllowedVcrCards, contains('vault_memory_proposal_card'));
     });
   });
 }

@@ -21,6 +21,7 @@ class _MemoryCursor:
     def __init__(self, store: "_MemoryStore"):
         self.store = store
         self.last: Any = None
+        self.rows: list[Any] = []
         self.rowcount = 0
 
     def execute(self, sql: str, params: tuple = ()):
@@ -30,6 +31,16 @@ class _MemoryCursor:
         if low.startswith("select id, payload_ciphertext"):
             vault_id, digest = params
             self.last = self.store.find_active(vault_id, digest)
+            return
+        if low.startswith("select id, memory_type, payload_ciphertext"):
+            if "where id=%s" in low:
+                row_id, vault_id = params
+                self.last = self.store.find_active_by_id(vault_id, row_id)
+            else:
+                vault_id = params[0]
+                limit = params[1] if len(params) > 1 else 500
+                self.rows = self.store.fetch_active_rows(vault_id, limit=limit)
+                self.last = None
             return
         if low.startswith("insert into vault_ai_memory"):
             vault_id, memory_type, payload_ct, lookup_hash = params
@@ -51,6 +62,9 @@ class _MemoryCursor:
 
     def fetchone(self):
         return self.last
+
+    def fetchall(self):
+        return self.rows
 
 
 class _MemoryConn:
@@ -137,6 +151,34 @@ class _MemoryStore:
             if row["vault_id"] == vault_id and row.get("superseded_at") is None
         ]
 
+    def find_active_by_id(self, vault_id: str, row_id: int) -> Optional[tuple]:
+        for row in self.rows:
+            if (
+                row["vault_id"] == vault_id
+                and row["id"] == row_id
+                and row.get("superseded_at") is None
+            ):
+                return (
+                    row["id"],
+                    row["memory_type"],
+                    row["payload_ciphertext"],
+                    None,
+                    None,
+                )
+        return None
+
+    def fetch_active_rows(self, vault_id: str, *, limit: int = 500) -> list[tuple]:
+        out = []
+        for row in self.active_rows(vault_id)[: int(limit)]:
+            out.append((
+                row["id"],
+                row["memory_type"],
+                row["payload_ciphertext"],
+                None,
+                None,
+            ))
+        return out
+
 
 @pytest.fixture()
 def memory_store(monkeypatch):
@@ -178,6 +220,24 @@ def _assert_no_plaintext_birthday_storage(store: _MemoryStore) -> None:
         assert row["event_date"] is None
         assert row.get("memory_normalized_key") is None
         for value in forbidden_text:
+            assert value not in str(row.get("memory_key"))
+            assert value not in str(row.get("memory_value"))
+            assert value not in str(row.get("event_date"))
+        for value in forbidden_bytes:
+            assert value not in row["payload_ciphertext"]
+
+
+def _assert_plaintext_absent_from_persistent_columns(
+    store: _MemoryStore,
+    forbidden: list[str],
+) -> None:
+    forbidden_bytes = [v.encode("utf-8") for v in forbidden]
+    for row in store.rows:
+        assert row["memory_key"] is None
+        assert row["memory_value"] is None
+        assert row["event_date"] is None
+        assert row.get("memory_normalized_key") is None
+        for value in forbidden:
             assert value not in str(row.get("memory_key"))
             assert value not in str(row.get("memory_value"))
             assert value not in str(row.get("event_date"))
@@ -276,6 +336,133 @@ def test_vault_isolation(memory_store):
     assert "don't have" in recall
 
 
+def test_bare_memory_statement_returns_structured_proposal_not_plain_save(memory_store):
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my dad birthday is 12/12/1975",
+        source_message_id="proposal-msg",
+        session_id="session-a",
+    )
+    assert proposal is not None
+    decoded = dpm.json.loads(proposal)
+    assert decoded["type"] == "vault_chat_card"
+    assert decoded["intent"] == "vault_memory_save_proposal"
+    assert decoded["card"]["cardType"] == "vault_memory_proposal_card"
+    data = decoded["card"]["data"]
+    assert data["title"] == "Dad's birthday"
+    assert data["value"] == "December 12, 1975"
+    assert data["event_date"] == "1975-12-12"
+    assert data["actions"] == ["save", "edit", "cancel"]
+    assert memory_store.active_rows("vault-a") == []
+
+
+def test_save_it_persists_current_memory_proposal(memory_store):
+    dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my dad birthday is 12/12/1975",
+        source_message_id="proposal-msg",
+        session_id="session-a",
+    )
+    saved = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="save-msg",
+        session_id="session-a",
+    )
+    assert saved is not None
+    assert "Saved" in saved
+    assert "December 12, 1975" in saved
+    assert len(memory_store.active_rows("vault-a")) == 1
+    recall = _handle(memory_store, "when is my dad's birthday")
+    assert "December 12, 1975" in recall
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["December 12, 1975", "1975-12-12"],
+    )
+
+
+def test_bare_save_it_without_memory_proposal_does_not_steal_other_flows(memory_store):
+    assert dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="no-proposal",
+        session_id="session-a",
+    ) is None
+    explicit = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save memory",
+        source_message_id="no-proposal",
+        session_id="session-a",
+    )
+    assert explicit == "I don't have a pending memory proposal to save."
+
+
+def test_maiden_name_proposal_save_recall_update_and_forget(memory_store):
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my mother maiden name is Lodato",
+        source_message_id="maiden-proposal",
+        session_id="session-a",
+    )
+    assert proposal is not None
+    assert "vault_memory_proposal_card" in proposal
+    saved = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="maiden-save",
+        session_id="session-a",
+    )
+    assert "Saved" in (saved or "")
+    assert "Lodato" in _handle(memory_store, "what is my mother's maiden name")
+    updated = _handle(memory_store, "my mother's maiden name is actually Rossi")
+    assert "Updated" in updated
+    assert "Rossi" in _handle(memory_store, "what is my mother maiden name")
+    forgot = _handle(memory_store, "forget my mother's maiden name")
+    assert "Forgot" in forgot
+    assert "don't have" in _handle(memory_store, "what is my mother maiden name")
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["Lodato", "Rossi"],
+    )
+
+
+def test_travel_memory_immediate_after_save_and_encrypted_list(memory_store):
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="I traveled to Italy on January 3, 2020",
+        source_message_id="travel-proposal",
+        session_id="session-a",
+    )
+    assert proposal is not None
+    decoded = dpm.json.loads(proposal)
+    assert decoded["card"]["data"]["title"] == "Trip to Italy"
+    assert decoded["card"]["data"]["memory_type"] == "travel"
+    dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="travel-save",
+        session_id="session-a",
+    )
+    recall = _handle(memory_store, "when did I travel to Italy")
+    assert recall == "You traveled to Italy on January 3, 2020."
+    listed = dpm.list_memory_items(vault_id="vault-a", key=_KEY, query="Italy")
+    assert listed["items"][0]["title"] == "Trip to Italy"
+    assert listed["items"][0]["value"] == "January 3, 2020"
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["Italy", "January 3, 2020", "2020-01-03"],
+    )
+
+
 def test_recall_survives_backend_restart_without_event_date_or_index(memory_store):
     _handle(memory_store, "remember my mom birthday is January 30, 1965")
     memory_store.commits = 0
@@ -323,6 +510,54 @@ def test_db_connection_failure_returns_memory_error(monkeypatch, caplog):
     assert "mom" not in caplog.text.lower()
 
 
+def test_legacy_remember_fact_branch_uses_encrypted_durable_store(
+    memory_store,
+    monkeypatch,
+):
+    import ai_memory
+    import main
+
+    plaintext_writer_called = False
+
+    def fail_plaintext_writer(*args, **kwargs):
+        nonlocal plaintext_writer_called
+        plaintext_writer_called = True
+        raise AssertionError("plaintext ai_memory writer must not be used")
+
+    monkeypatch.setattr(dpm, "get_db", memory_store.get_db)
+    monkeypatch.setattr(ai_memory, "update_memory_safe", fail_plaintext_writer)
+
+    reply = main._handle_remember_fact(
+        "vault-a",
+        "date",
+        "mom birthday",
+        "January 30, 1965",
+        "1965-01-30",
+        vault_key=_KEY,
+    )
+
+    assert plaintext_writer_called is False
+    assert reply == "Saved: mom birthday."
+    rows = memory_store.active_rows("vault-a")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["memory_key"] is None
+    assert row["memory_value"] is None
+    assert row["event_date"] is None
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["mom birthday", "January 30, 1965", "1965-01-30"],
+    )
+    recalled = main._handle_recall_memory(
+        "vault-a",
+        "date",
+        memory_query="mom birthday",
+        vault_key=_KEY,
+    )
+    assert recalled is not None
+    assert "mom birthday: January 30, 1965" in recalled
+
+
 def test_forward_migration_clears_only_plaintext_event_date(monkeypatch):
     migration = importlib.import_module(
         "migrations.versions.0032_clear_durable_personal_memory_event_date"
@@ -345,6 +580,32 @@ def test_forward_migration_clears_only_plaintext_event_date(monkeypatch):
     assert "payload_ciphertext =" not in sql
     assert "memory_lookup_hash =" not in sql
     assert "vault_id =" not in sql
+
+
+def test_forward_migration_drops_event_date_index_and_clears_encrypted_columns(
+    monkeypatch,
+):
+    migration = importlib.import_module(
+        "migrations.versions.0033_harden_encrypted_memory_plaintext_columns"
+    )
+    executed: list[str] = []
+
+    monkeypatch.setattr(migration.op, "execute", executed.append)
+
+    migration.upgrade()
+
+    assert len(executed) == 2
+    assert executed[0] == "DROP INDEX IF EXISTS vault_ai_memory_event_date_idx"
+    sql = " ".join(executed[1].lower().split())
+    assert sql.startswith("update vault_ai_memory set memory_key = null")
+    assert "memory_value = null" in sql
+    assert "memory_normalized_key = null" in sql
+    assert "event_date = null" in sql
+    assert "payload_ciphertext is not null" in sql
+    assert "memory_lookup_hash is not null" in sql
+    assert "vault_id =" not in sql
+    assert "payload_ciphertext =" not in sql
+    assert "memory_lookup_hash =" not in sql
 
 
 def test_exact_memory_route_handles_chat_endpoint_before_ai_planner(monkeypatch):
@@ -412,6 +673,123 @@ def test_exact_memory_route_handles_chat_endpoint_before_ai_planner(monkeypatch)
         assert after_forget.http_status == 200, after_forget.summary()
         assert after_forget.x_chat_path == "personal_memory"
         assert "don't have" in (after_forget.envelope_json or "")
+
+        proposal = harness.post_message("my dad birthday is 12/12/1975")
+        assert proposal.http_status == 200, proposal.summary()
+        assert proposal.x_chat_path == "personal_memory", proposal.summary()
+        assert not proposal.planner_invoked, proposal.summary()
+        assert "vault_memory_save_proposal" in (proposal.envelope_json or "")
+        assert "vault_memory_proposal_card" in (proposal.envelope_json or "")
+
+        saved_proposal = harness.post_message("save it")
+        assert saved_proposal.http_status == 200, saved_proposal.summary()
+        assert saved_proposal.x_chat_path == "personal_memory"
+        assert not saved_proposal.planner_invoked, saved_proposal.summary()
+        assert "December 12, 1975" in (saved_proposal.envelope_json or "")
+
         _assert_no_plaintext_birthday_storage(store)
+        _assert_plaintext_absent_from_persistent_columns(
+            store,
+            ["December 12, 1975", "1975-12-12"],
+        )
     finally:
         harness.tearDown()
+
+
+def test_encrypted_memory_crud_routes_create_search_update_delete(monkeypatch):
+    from fastapi.testclient import TestClient
+    import main
+    import routes.memory_routes as memory_routes
+
+    store = _MemoryStore()
+
+    async def fake_verify(request=None):
+        return {"vault_id": "vault-a", "token_id": "memory-route-session"}
+
+    monkeypatch.setattr(dpm, "get_db", store.get_db)
+    monkeypatch.setattr(memory_routes, "verify_vault_pin", lambda vault_id, pin: _KEY)
+    main.app.dependency_overrides[memory_routes.verify_trusted_device] = fake_verify
+    main.app.dependency_overrides[main.verify_trusted_device] = fake_verify
+    client = TestClient(main.app)
+    try:
+        created = client.post("/memory/create", json={
+            "vault_name": "Vault",
+            "pin": "1234",
+            "title": "Mother's maiden name",
+            "value": "Lodato",
+            "memory_type": "identity",
+            "category": "family",
+            "subject": "mother",
+            "subject_display": "mother",
+            "relationship": "mother",
+            "attribute": "maiden_name",
+        })
+        assert created.status_code == 200, created.text
+        item = created.json()["item"]
+        assert item["title"] == "Mother's maiden name"
+        assert item["value"] == "Lodato"
+
+        listed = client.post("/memory/list", json={
+            "vault_name": "Vault",
+            "pin": "1234",
+            "query": "Lodato",
+        })
+        assert listed.status_code == 200, listed.text
+        assert [it["title"] for it in listed.json()["items"]] == [
+            "Mother's maiden name"
+        ]
+
+        updated = client.post("/memory/update", json={
+            "id": int(item["id"]),
+            "vault_name": "Vault",
+            "pin": "1234",
+            "title": "Mother's maiden name",
+            "value": "Rossi",
+            "memory_type": "identity",
+            "category": "family",
+            "subject": "mother",
+            "subject_display": "mother",
+            "relationship": "mother",
+            "attribute": "maiden_name",
+        })
+        assert updated.status_code == 200, updated.text
+        new_item = updated.json()["item"]
+        assert new_item["value"] == "Rossi"
+
+        old_search = client.post("/memory/list", json={
+            "vault_name": "Vault",
+            "pin": "1234",
+            "query": "Lodato",
+        })
+        assert old_search.status_code == 200, old_search.text
+        assert old_search.json()["items"] == []
+
+        new_search = client.post("/memory/list", json={
+            "vault_name": "Vault",
+            "pin": "1234",
+            "query": "Rossi",
+        })
+        assert new_search.status_code == 200, new_search.text
+        assert len(new_search.json()["items"]) == 1
+
+        deleted = client.post("/memory/delete", json={
+            "vault_name": "Vault",
+            "pin": "1234",
+            "id": int(new_item["id"]),
+        })
+        assert deleted.status_code == 200, deleted.text
+
+        empty = client.post("/memory/list", json={
+            "vault_name": "Vault",
+            "pin": "1234",
+            "query": "Rossi",
+        })
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["items"] == []
+        _assert_plaintext_absent_from_persistent_columns(
+            store,
+            ["Lodato", "Rossi"],
+        )
+    finally:
+        main.app.dependency_overrides.pop(memory_routes.verify_trusted_device, None)
+        main.app.dependency_overrides.pop(main.verify_trusted_device, None)

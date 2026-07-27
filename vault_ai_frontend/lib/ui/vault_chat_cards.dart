@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,63 +10,50 @@ import 'responsive.dart';
 
 export 'crypto_vault_chat_cards.dart'
     show CryptoBalanceFetcher, CryptoActivityFetcher;
-export '../services/crypto_chat_live_cache.dart'
-    show CryptoChatLiveCache;
+export '../services/crypto_chat_live_cache.dart' show CryptoChatLiveCache;
 
-
-const String kVcrLoginViewList     = 'list';
-const String kVcrLoginViewSearch   = 'search';
-const String kVcrLoginViewDetail   = 'detail';
-const String kVcrLoginViewChooser  = 'chooser';
+const String kVcrLoginViewList = 'list';
+const String kVcrLoginViewSearch = 'search';
+const String kVcrLoginViewDetail = 'detail';
+const String kVcrLoginViewChooser = 'chooser';
 const String kVcrLoginViewNotFound = 'not_found';
-const String kVcrLoginViewDupes    = 'duplicates';
+const String kVcrLoginViewDupes = 'duplicates';
 
+const String kVcrLoginActionShow = 'show';
+const String kVcrLoginActionOpen = 'open';
+const String kVcrLoginActionView = 'view';
+const String kVcrLoginActionEdit = 'edit';
+const String kVcrLoginActionDelete = 'delete';
+const String kVcrLoginActionCopy = 'copy';
+const String kVcrLoginActionSave = 'save';
 
-const String kVcrLoginActionShow    = 'show';
-const String kVcrLoginActionOpen    = 'open';
-const String kVcrLoginActionView    = 'view';
-const String kVcrLoginActionEdit    = 'edit';
-const String kVcrLoginActionDelete  = 'delete';
-const String kVcrLoginActionCopy    = 'copy';
-const String kVcrLoginActionSave    = 'save';
-
-
-const String kVcrCardKeyOverview          = 'vault_chat_card_overview';
-const String kVcrCardKeyFileResult        = 'vault_chat_card_file_result';
-const String kVcrCardKeyDocumentResult    =
-    'vault_chat_card_document_result';
-const String kVcrCardKeySecureItem        = 'vault_chat_card_secure_item';
-const String kVcrCardKeyLogin             = 'vault_chat_card_login';
-const String kVcrCardKeyGeneratedLogin    =
-    'vault_chat_card_generated_login';
-const String kVcrCardKeyIdDocument        = 'vault_chat_card_id_document';
-const String kVcrCardKeyBillingStatus     =
-    'vault_chat_card_billing_status';
-const String kVcrCardKeyStorageUsage      =
-    'vault_chat_card_storage_usage';
-const String kVcrCardKeyVaultActivity     =
-    'vault_chat_card_vault_activity';
-const String kVcrCardKeyCrossVaultSearch  =
-    'vault_chat_card_cross_vault_search';
-const String kVcrCardKeyConfirmationReq   =
+const String kVcrCardKeyOverview = 'vault_chat_card_overview';
+const String kVcrCardKeyFileResult = 'vault_chat_card_file_result';
+const String kVcrCardKeyDocumentResult = 'vault_chat_card_document_result';
+const String kVcrCardKeySecureItem = 'vault_chat_card_secure_item';
+const String kVcrCardKeyLogin = 'vault_chat_card_login';
+const String kVcrCardKeyGeneratedLogin = 'vault_chat_card_generated_login';
+const String kVcrCardKeyMemoryProposal = 'vault_chat_card_memory_proposal';
+const String kVcrCardKeyIdDocument = 'vault_chat_card_id_document';
+const String kVcrCardKeyBillingStatus = 'vault_chat_card_billing_status';
+const String kVcrCardKeyStorageUsage = 'vault_chat_card_storage_usage';
+const String kVcrCardKeyVaultActivity = 'vault_chat_card_vault_activity';
+const String kVcrCardKeyCrossVaultSearch = 'vault_chat_card_cross_vault_search';
+const String kVcrCardKeyConfirmationReq =
     'vault_chat_card_confirmation_required';
-const String kVcrCardKeyRefusal           = 'vault_chat_card_refusal';
-const String kVcrCardKeyUnrecognized      =
-    'vault_chat_card_unrecognized';
-const String kVcrCardKeyFaq               = 'vault_chat_card_faq';
+const String kVcrCardKeyRefusal = 'vault_chat_card_refusal';
+const String kVcrCardKeyUnrecognized = 'vault_chat_card_unrecognized';
+const String kVcrCardKeyFaq = 'vault_chat_card_faq';
 
-
-const String kVcrFaqActionOpenVault        = 'open_vault';
-const String kVcrFaqActionOpenLogins       = 'open_logins_page';
-const String kVcrFaqActionOpenIdDocs       = 'open_id_documents';
-const String kVcrFaqActionOpenCryptoVault  = 'open_crypto_vault';
-const String kVcrFaqActionOpenBilling      = 'open_billing_page';
-const String kVcrFaqActionOpenStorage      = 'open_storage_page';
-const String kVcrFaqActionOpenSecurity     = 'open_security_center';
-const String kVcrFaqActionOpenHelpCenter   = 'open_help_center';
-const String kVcrFaqActionOpenUpload       = 'open_upload_page';
-
-
+const String kVcrFaqActionOpenVault = 'open_vault';
+const String kVcrFaqActionOpenLogins = 'open_logins_page';
+const String kVcrFaqActionOpenIdDocs = 'open_id_documents';
+const String kVcrFaqActionOpenCryptoVault = 'open_crypto_vault';
+const String kVcrFaqActionOpenBilling = 'open_billing_page';
+const String kVcrFaqActionOpenStorage = 'open_storage_page';
+const String kVcrFaqActionOpenSecurity = 'open_security_center';
+const String kVcrFaqActionOpenHelpCenter = 'open_help_center';
+const String kVcrFaqActionOpenUpload = 'open_upload_page';
 
 class VaultChatCardView extends StatelessWidget {
   final VaultChatResponse response;
@@ -77,7 +63,6 @@ class VaultChatCardView extends StatelessWidget {
   final VoidCallback? onOpenSecurityPage;
   final VoidCallback? onOpenBillingPage;
 
-
   final VoidCallback? onOpenLoginsPage;
   final VoidCallback? onOpenIdDocumentsPage;
   final VoidCallback? onOpenCryptoVaultPage;
@@ -86,16 +71,13 @@ class VaultChatCardView extends StatelessWidget {
   final VoidCallback? onOpenUploadPage;
   final void Function(String faqId)? onAskRelatedFaq;
 
-
   final CryptoBalanceFetcher? onFetchCryptoBalance;
   final CryptoActivityFetcher? onFetchCryptoActivity;
 
-
   final CryptoChatLiveCache? cryptoCache;
 
-
-  final void Function(String service)?             onLoginEdit;
-  final void Function(String service)?             onLoginDelete;
+  final void Function(String service)? onLoginEdit;
+  final void Function(String service)? onLoginDelete;
   final void Function(String service, String url)? onLoginOpenWebsite;
 
   final void Function(String query)? onLoginChooseCandidate;
@@ -110,11 +92,10 @@ class VaultChatCardView extends StatelessWidget {
   /// display name. The handler in `chat_bubble.dart` turns them
   /// into `onCardAction` calls with `generated_login_save` /
   /// `generated_login_cancel` action names.
-  final void Function(String draftId, String service)?
-      onGeneratedLoginSave;
-  final void Function(String draftId, String service)?
-      onGeneratedLoginCancel;
-
+  final void Function(String draftId, String service)? onGeneratedLoginSave;
+  final void Function(String draftId, String service)? onGeneratedLoginCancel;
+  final void Function(Map<String, dynamic> data)? onMemoryProposalSave;
+  final VoidCallback? onMemoryProposalCancel;
 
   final bool cryptoEntitled;
 
@@ -145,6 +126,8 @@ class VaultChatCardView extends StatelessWidget {
     this.onLoginSelectById,
     this.onGeneratedLoginSave,
     this.onGeneratedLoginCancel,
+    this.onMemoryProposalSave,
+    this.onMemoryProposalCancel,
     this.cryptoEntitled = true,
     this.onOpenCryptoUpgrade,
   });
@@ -152,7 +135,6 @@ class VaultChatCardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = response.card;
-
 
     if (response.isCryptoDelegated) {
       final inner = response.delegatedCryptoCard;
@@ -162,11 +144,11 @@ class VaultChatCardView extends StatelessWidget {
           onOpenVault: cryptoEntitled ? onOpenVault : null,
           onOpenAssetDetail: onOpenAssetDetail,
           onOpenSendFlow: onOpenSendFlow,
-          onFetchBalance:  onFetchCryptoBalance,
+          onFetchBalance: onFetchCryptoBalance,
           onFetchActivity: onFetchCryptoActivity,
-          cache:           cryptoCache,
-          cryptoEntitled:  cryptoEntitled,
-          onOpenUpgrade:   onOpenCryptoUpgrade,
+          cache: cryptoCache,
+          cryptoEntitled: cryptoEntitled,
+          onOpenUpgrade: onOpenCryptoUpgrade,
         );
       }
     }
@@ -187,23 +169,29 @@ class VaultChatCardView extends StatelessWidget {
       case kVcrCardLogin:
         return _LoginCard(
           card: c,
-          onLoginEdit:            onLoginEdit,
-          onLoginDelete:          onLoginDelete,
-          onLoginOpenWebsite:     onLoginOpenWebsite,
+          onLoginEdit: onLoginEdit,
+          onLoginDelete: onLoginDelete,
+          onLoginOpenWebsite: onLoginOpenWebsite,
           onLoginChooseCandidate: onLoginChooseCandidate,
           onLoginSelectById: onLoginSelectById,
         );
       case kVcrCardGeneratedLogin:
         return _GeneratedLoginCard(
           card: c,
-          onSave:   onGeneratedLoginSave,
+          onSave: onGeneratedLoginSave,
           onCancel: onGeneratedLoginCancel,
+        );
+      case kVcrCardMemoryProposal:
+        return _MemoryProposalCard(
+          card: c,
+          onSave: onMemoryProposalSave,
+          onCancel: onMemoryProposalCancel,
         );
       case kVcrCardIdDocument:
         return _IdDocumentCard(card: c);
       case kVcrCardBillingStatus:
-        return _BillingStatusCard(card: c,
-            onOpenBillingPage: onOpenBillingPage);
+        return _BillingStatusCard(
+            card: c, onOpenBillingPage: onOpenBillingPage);
       case kVcrCardStorageUsage:
         return _StorageUsageCard(card: c);
       case kVcrCardVaultActivity:
@@ -213,16 +201,16 @@ class VaultChatCardView extends StatelessWidget {
       case kVcrCardFaq:
         return _FaqCard(
           card: c,
-          onOpenVault:           onOpenVault,
-          onOpenLoginsPage:      onOpenLoginsPage,
+          onOpenVault: onOpenVault,
+          onOpenLoginsPage: onOpenLoginsPage,
           onOpenIdDocumentsPage: onOpenIdDocumentsPage,
           onOpenCryptoVaultPage: onOpenCryptoVaultPage,
-          onOpenBillingPage:     onOpenBillingPage,
-          onOpenStoragePage:     onOpenStoragePage,
-          onOpenSecurityPage:    onOpenSecurityPage,
-          onOpenHelpCenter:      onOpenHelpCenter,
-          onOpenUploadPage:      onOpenUploadPage,
-          onAskRelatedFaq:       onAskRelatedFaq,
+          onOpenBillingPage: onOpenBillingPage,
+          onOpenStoragePage: onOpenStoragePage,
+          onOpenSecurityPage: onOpenSecurityPage,
+          onOpenHelpCenter: onOpenHelpCenter,
+          onOpenUploadPage: onOpenUploadPage,
+          onAskRelatedFaq: onAskRelatedFaq,
         );
       case kVcrCardUnrecognized:
       default:
@@ -230,7 +218,6 @@ class VaultChatCardView extends StatelessWidget {
     }
   }
 }
-
 
 Widget _shell({
   required String testKey,
@@ -244,7 +231,6 @@ Widget _shell({
     child: child,
   );
 }
-
 
 Widget _pillMasked(String label) {
   return Container(
@@ -265,7 +251,6 @@ Widget _pillMasked(String label) {
   );
 }
 
-
 class _RefusalCard extends StatelessWidget {
   final VaultChatCard card;
   const _RefusalCard({required this.card});
@@ -279,14 +264,15 @@ class _RefusalCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.block_rounded, size: 18,
-              color: kWalletAccentDanger),
+          const Icon(Icons.block_rounded, size: 18, color: kWalletAccentDanger),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               message,
               style: const TextStyle(
-                color: kWalletTextPrimary, fontSize: 13, height: 1.4,
+                color: kWalletTextPrimary,
+                fontSize: 13,
+                height: 1.4,
               ),
             ),
           ),
@@ -295,7 +281,6 @@ class _RefusalCard extends StatelessWidget {
     );
   }
 }
-
 
 class _ConfirmationRequiredCard extends StatelessWidget {
   final VaultChatCard card;
@@ -315,20 +300,17 @@ class _ConfirmationRequiredCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            card.message ??
-                'This action needs your explicit confirmation.',
+            card.message ?? 'This action needs your explicit confirmation.',
             style: kWalletBodyStyle,
           ),
           const SizedBox(height: 10),
           Wrap(
-            spacing: 6, runSpacing: 6,
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              if (card.requiresTrustedDevice)
-                _pillMasked('Trusted device'),
-              if (card.requiresPinUnlock)
-                _pillMasked('PIN unlock'),
-              if (card.requiresLocalSigning)
-                _pillMasked('Local signing'),
+              if (card.requiresTrustedDevice) _pillMasked('Trusted device'),
+              if (card.requiresPinUnlock) _pillMasked('PIN unlock'),
+              if (card.requiresLocalSigning) _pillMasked('Local signing'),
               if (card.requiresExplicitConfirmation)
                 _pillMasked('Explicit confirmation'),
             ],
@@ -338,7 +320,6 @@ class _ConfirmationRequiredCard extends StatelessWidget {
     );
   }
 }
-
 
 class _VaultOverviewCard extends StatelessWidget {
   final VaultChatCard card;
@@ -371,22 +352,24 @@ class _VaultOverviewCard extends StatelessWidget {
             )
           else if (counts != null) ...[
             Wrap(
-              spacing: 6, runSpacing: 6,
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                _statPill('Files',       _asInt(counts['files'])),
-                _statPill('Documents',   _asInt(counts['documents'])),
-                _statPill('Logins',      _asInt(counts['logins'])),
-                _statPill('Secure',      _asInt(counts['secure_items'])),
-                _statPill('IDs',         _asInt(counts['id_documents'])),
+                _statPill('Files', _asInt(counts['files'])),
+                _statPill('Documents', _asInt(counts['documents'])),
+                _statPill('Logins', _asInt(counts['logins'])),
+                _statPill('Secure', _asInt(counts['secure_items'])),
+                _statPill('IDs', _asInt(counts['id_documents'])),
                 _statPill(
-                  'Generated', _asInt(counts['generated_logins']),
+                  'Generated',
+                  _asInt(counts['generated_logins']),
                 ),
               ],
             ),
             if (storage != null) ...[
               const SizedBox(height: 8),
               _StorageBar(
-                used:  _asInt(storage['used_bytes']),
+                used: _asInt(storage['used_bytes']),
                 quota: _asInt(storage['quota_bytes']),
                 percent: _asDouble(storage['percent_used']),
               ),
@@ -412,7 +395,6 @@ class _VaultOverviewCard extends StatelessWidget {
     );
   }
 }
-
 
 int _asInt(dynamic v) {
   if (v is int) return v;
@@ -440,7 +422,6 @@ String _formatBytes(int bytes) {
   final digits = size >= 10 || i == 0 ? 0 : 1;
   return '${size.toStringAsFixed(digits)} ${units[i]}';
 }
-
 
 Widget _statPill(String label, int count) {
   return Container(
@@ -475,22 +456,21 @@ Widget _statPill(String label, int count) {
   );
 }
 
-
 class _StorageBar extends StatelessWidget {
   final int used;
   final int quota;
   final double percent;
   const _StorageBar({
-    required this.used, required this.quota, required this.percent,
+    required this.used,
+    required this.quota,
+    required this.percent,
   });
 
   @override
   Widget build(BuildContext context) {
     final pct = percent.clamp(0.0, 100.0);
     final usedLabel = _formatBytes(used);
-    final quotaLabel = quota > 0
-        ? _formatBytes(quota)
-        : 'unlimited';
+    final quotaLabel = quota > 0 ? _formatBytes(quota) : 'unlimited';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -518,7 +498,6 @@ class _StorageBar extends StatelessWidget {
   }
 }
 
-
 class _FileResultCard extends StatelessWidget {
   final VaultChatCard card;
   const _FileResultCard({required this.card});
@@ -544,7 +523,6 @@ class _FileResultCard extends StatelessWidget {
     );
   }
 }
-
 
 class _DocumentResultCard extends StatelessWidget {
   final VaultChatCard card;
@@ -573,7 +551,6 @@ class _DocumentResultCard extends StatelessWidget {
   }
 }
 
-
 class _SecureItemCard extends StatelessWidget {
   final VaultChatCard card;
   const _SecureItemCard({required this.card});
@@ -599,9 +576,9 @@ class _SecureItemCard extends StatelessWidget {
             Text(
               q != null
                   ? 'Open the vault to see secure items matching "$q". '
-                    'Values are masked by default.'
+                      'Values are masked by default.'
                   : 'Open the vault to see your secure items. '
-                    'Values are masked by default.',
+                      'Values are masked by default.',
               style: kWalletBodyStyle,
             )
           else if (items.isEmpty)
@@ -612,8 +589,7 @@ class _SecureItemCard extends StatelessWidget {
               style: kWalletBodyStyle,
             )
           else ...[
-            for (final it in items.take(10))
-              _SecureItemRow(row: it),
+            for (final it in items.take(10)) _SecureItemRow(row: it),
             if (items.length > 10) ...[
               const SizedBox(height: 6),
               Text(
@@ -634,7 +610,6 @@ class _SecureItemCard extends StatelessWidget {
   }
 }
 
-
 class _SecureItemRow extends StatelessWidget {
   final Map<String, dynamic> row;
   const _SecureItemRow({required this.row});
@@ -650,7 +625,8 @@ class _SecureItemRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 28, height: 28,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
               color: kWalletBgBase,
               borderRadius: BorderRadius.circular(6),
@@ -694,18 +670,17 @@ class _SecureItemRow extends StatelessWidget {
   }
 }
 
-
 class _LoginCard extends StatelessWidget {
   final VaultChatCard card;
-  final void Function(String service)?             onLoginEdit;
-  final void Function(String service)?             onLoginDelete;
+  final void Function(String service)? onLoginEdit;
+  final void Function(String service)? onLoginDelete;
   final void Function(String service, String url)? onLoginOpenWebsite;
-  final void Function(String query)?               onLoginChooseCandidate;
+  final void Function(String query)? onLoginChooseCandidate;
 
   /// Id-aware selector — preferred over `onLoginChooseCandidate` for
   /// disambiguating rows that share a title. Row taps in the list
   /// view invoke this with the row's stable item id + display title.
-  final void Function(String id, String title)?   onLoginSelectById;
+  final void Function(String id, String title)? onLoginSelectById;
 
   const _LoginCard({
     required this.card,
@@ -732,9 +707,9 @@ class _LoginCard extends StatelessWidget {
           card: card,
           login: loginMap,
           pendingAction: (data['pending_action'] as String?)?.trim(),
-          onEdit:         onLoginEdit,
-          onDelete:       onLoginDelete,
-          onOpenWebsite:  onLoginOpenWebsite,
+          onEdit: onLoginEdit,
+          onDelete: onLoginDelete,
+          onOpenWebsite: onLoginOpenWebsite,
         );
       }
     }
@@ -773,7 +748,6 @@ class _LoginCard extends StatelessWidget {
         ),
       );
     }
-
 
     final logins = _asMapList(data?['logins']);
     return _shell(
@@ -831,7 +805,6 @@ class _LoginCard extends StatelessWidget {
   }
 }
 
-
 /// Full editable saved-login card. Renders when the router LOGIN_SEARCH /
 /// LOGIN_REVEAL / LOGIN_COPY dispatch resolves to a single specific
 /// login and the vault key was verified for the current session.
@@ -846,8 +819,8 @@ class _LoginDetailCard extends StatefulWidget {
   final VaultChatCard card;
   final Map<String, dynamic> login;
   final String? pendingAction;
-  final void Function(String service)?             onEdit;
-  final void Function(String service)?             onDelete;
+  final void Function(String service)? onEdit;
+  final void Function(String service)? onDelete;
   final void Function(String service, String url)? onOpenWebsite;
 
   const _LoginDetailCard({
@@ -862,7 +835,6 @@ class _LoginDetailCard extends StatefulWidget {
   @override
   State<_LoginDetailCard> createState() => _LoginDetailCardState();
 }
-
 
 class _LoginDetailCardState extends State<_LoginDetailCard> {
   bool _pendingDispatched = false;
@@ -912,12 +884,12 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
         _copyPassword();
         break;
       case kVcrLoginActionCopy:
-
         _copyPassword();
         break;
       case kVcrLoginActionOpen:
         if (widget.onOpenWebsite != null &&
-            service.isNotEmpty && website.isNotEmpty) {
+            service.isNotEmpty &&
+            website.isNotEmpty) {
           widget.onOpenWebsite!(service, website);
         }
         break;
@@ -944,13 +916,13 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
 
   @override
   Widget build(BuildContext context) {
-    final title    = (widget.login['title'] ?? '').toString();
-    final service  = (widget.login['service'] ?? '').toString();
+    final title = (widget.login['title'] ?? '').toString();
+    final service = (widget.login['service'] ?? '').toString();
     final username = (widget.login['username'] ?? '').toString();
     final password = (widget.login['password'] ?? '').toString();
-    final domain   = (widget.login['domain'] ?? '').toString();
-    final website  = (widget.login['website'] ?? '').toString();
-    final notes    = (widget.login['notes'] ?? '').toString();
+    final domain = (widget.login['domain'] ?? '').toString();
+    final website = (widget.login['website'] ?? '').toString();
+    final notes = (widget.login['notes'] ?? '').toString();
 
     final vr = VaultResponsive.of(context);
     final narrow = vr.width < 380;
@@ -964,7 +936,8 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
-                width: 30, height: 30,
+                width: 30,
+                height: 30,
                 decoration: BoxDecoration(
                   color: kWalletBgBase,
                   borderRadius: BorderRadius.circular(8),
@@ -977,8 +950,7 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  title.isEmpty ? (service.isEmpty ? 'Login' : service)
-                                : title,
+                  title.isEmpty ? (service.isEmpty ? 'Login' : service) : title,
                   key: const Key(
                     'vault_chat_card_login_detail_title',
                   ),
@@ -1006,36 +978,33 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
             ),
           ],
           const SizedBox(height: 12),
-
           if (username.isNotEmpty)
             _LoginDetailFieldRow(
               label: 'Username',
               valueKey: 'vault_chat_card_login_detail_username_value',
-              copyKey:  'vault_chat_card_login_detail_username_copy',
+              copyKey: 'vault_chat_card_login_detail_username_copy',
               value: username,
               onCopy: _copyUsername,
               narrow: narrow,
             ),
-
           if (password.isNotEmpty) ...[
             const SizedBox(height: 8),
             _LoginDetailFieldRow(
               label: 'Password',
               valueKey: 'vault_chat_card_login_detail_password_value',
-              copyKey:  'vault_chat_card_login_detail_password_copy',
+              copyKey: 'vault_chat_card_login_detail_password_copy',
               value: password,
               monospace: true,
               onCopy: _copyPassword,
               narrow: narrow,
             ),
           ],
-
           if (website.isNotEmpty) ...[
             const SizedBox(height: 8),
             _LoginDetailFieldRow(
               label: 'Website',
               valueKey: 'vault_chat_card_login_detail_website_value',
-              copyKey:  'vault_chat_card_login_detail_website_open',
+              copyKey: 'vault_chat_card_login_detail_website_open',
               value: website,
               copyIcon: Icons.open_in_new,
               onCopy: () {
@@ -1046,7 +1015,6 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
               narrow: narrow,
             ),
           ],
-
           if (notes.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
@@ -1063,15 +1031,15 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
               notes,
               key: const Key('vault_chat_card_login_detail_notes'),
               style: const TextStyle(
-                color: kWalletTextPrimary, fontSize: 12,
+                color: kWalletTextPrimary,
+                fontSize: 12,
               ),
             ),
           ],
-
           const SizedBox(height: 14),
-
           Wrap(
-            spacing: 6, runSpacing: 6,
+            spacing: 6,
+            runSpacing: 6,
             children: [
               OutlinedButton.icon(
                 key: const Key('vault_chat_card_login_detail_edit'),
@@ -1084,8 +1052,8 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
                   style: const TextStyle(fontSize: 12),
                 ),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   minimumSize: const Size(0, 32),
                 ),
               ),
@@ -1100,8 +1068,8 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
                   style: const TextStyle(fontSize: 12),
                 ),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   minimumSize: const Size(0, 32),
                   foregroundColor: const Color(0xFFE0605C),
                 ),
@@ -1113,7 +1081,6 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
     );
   }
 }
-
 
 class _LoginDetailFieldRow extends StatelessWidget {
   final String label;
@@ -1173,7 +1140,7 @@ class _LoginDetailFieldRow extends StatelessWidget {
               iconSize: 16,
               padding: EdgeInsets.zero,
               constraints: BoxConstraints.tightFor(
-                width:  narrow ? 32 : 36,
+                width: narrow ? 32 : 36,
                 height: narrow ? 32 : 36,
               ),
               onPressed: onCopy,
@@ -1185,7 +1152,6 @@ class _LoginDetailFieldRow extends StatelessWidget {
     );
   }
 }
-
 
 class _LoginChooserCard extends StatelessWidget {
   final VaultChatCard card;
@@ -1224,15 +1190,15 @@ class _LoginChooserCard extends StatelessWidget {
                 onPressed: onChooseCandidate == null
                     ? null
                     : () {
-                        final title = (row['title'] ??
-                                       row['service'] ?? '').toString();
+                        final title =
+                            (row['title'] ?? row['service'] ?? '').toString();
                         if (title.isNotEmpty) {
                           onChooseCandidate!(title);
                         }
                       },
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   minimumSize: const Size(double.infinity, 40),
                   alignment: Alignment.centerLeft,
                 ),
@@ -1249,12 +1215,12 @@ class _LoginChooserCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    if ((row['username_masked'] ?? '').toString()
-                        .isNotEmpty ||
+                    if ((row['username_masked'] ?? '').toString().isNotEmpty ||
                         (row['domain'] ?? '').toString().isNotEmpty)
                       Text(
                         [
-                          if ((row['username_masked'] ?? '').toString()
+                          if ((row['username_masked'] ?? '')
+                              .toString()
                               .isNotEmpty)
                             (row['username_masked'] ?? '').toString(),
                           if ((row['domain'] ?? '').toString().isNotEmpty)
@@ -1277,16 +1243,13 @@ class _LoginChooserCard extends StatelessWidget {
   }
 }
 
-
 void _snack(BuildContext context, String message) {
-
   final m = ScaffoldMessenger.maybeOf(context);
   if (m == null) return;
   m.showSnackBar(
     SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
   );
 }
-
 
 String _loginHeader(String view, String? query, int count) {
   if (view == 'duplicates') {
@@ -1297,7 +1260,6 @@ String _loginHeader(String view, String? query, int count) {
   }
   return 'Logins ($count)';
 }
-
 
 List<Map<String, dynamic>> _asMapList(dynamic raw) {
   if (raw is! List) return const <Map<String, dynamic>>[];
@@ -1311,7 +1273,6 @@ List<Map<String, dynamic>> _asMapList(dynamic raw) {
   }
   return out;
 }
-
 
 class _LoginRow extends StatelessWidget {
   final Map<String, dynamic> row;
@@ -1358,13 +1319,13 @@ class _LoginRow extends StatelessWidget {
               : () => onSelect!(rowId, tapTitle),
           borderRadius: BorderRadius.circular(8),
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-                vertical: 8, horizontal: 4),
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
-                  width: 32, height: 32,
+                  width: 32,
+                  height: 32,
                   decoration: BoxDecoration(
                     color: kWalletBgBase,
                     borderRadius: BorderRadius.circular(6),
@@ -1394,8 +1355,7 @@ class _LoginRow extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             [
-                              if (usernameMasked.isNotEmpty)
-                                usernameMasked,
+                              if (usernameMasked.isNotEmpty) usernameMasked,
                               if (domain.isNotEmpty) '· $domain',
                             ].join(' '),
                             maxLines: 1,
@@ -1412,8 +1372,7 @@ class _LoginRow extends StatelessWidget {
                 ),
                 if (generated) ...[
                   const SizedBox(width: 6),
-                  const Icon(Icons.bolt,
-                      size: 14, color: kWalletTextMuted),
+                  const Icon(Icons.bolt, size: 14, color: kWalletTextMuted),
                 ],
                 const SizedBox(width: 6),
                 const Icon(Icons.chevron_right,
@@ -1427,21 +1386,187 @@ class _LoginRow extends StatelessWidget {
   }
 }
 
+/// Structured memory proposal. The editable values are persisted only
+/// through the PIN-gated encrypted memory API.
+class _MemoryProposalCard extends StatefulWidget {
+  final VaultChatCard card;
+  final void Function(Map<String, dynamic> data)? onSave;
+  final VoidCallback? onCancel;
 
-/// 2026-08-01 REWRITE — was a hardcoded placeholder that only
-/// displayed "Save requires confirmation" and ignored every value
-/// the backend supplied. This version reads the real backend
-/// envelope (`card.data['service'|'username'|'password'|'draft_id']`
-/// plus the optional `email` / `url` / `title` rows) and lets the
-/// user review, copy, reveal, save, or cancel the draft directly
-/// from the chat card.
-///
-/// The plaintext generated password IS in the envelope. That is
-/// intentional: the whole /chat SSE stream is AES-GCM encrypted
+  const _MemoryProposalCard({
+    required this.card,
+    this.onSave,
+    this.onCancel,
+  });
+
+  @override
+  State<_MemoryProposalCard> createState() => _MemoryProposalCardState();
+}
+
+class _MemoryProposalCardState extends State<_MemoryProposalCard> {
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _valueCtrl;
+  bool _dispatched = false;
+
+  Map<String, dynamic> get _data =>
+      widget.card.data ?? const <String, dynamic>{};
+
+  String _readString(String key) {
+    final v = _data[key];
+    return v is String ? v : '';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _titleCtrl = TextEditingController(text: _readString('title'));
+    _valueCtrl = TextEditingController(
+      text: _readString('value').isNotEmpty
+          ? _readString('value')
+          : _readString('body'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _valueCtrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (_dispatched) return;
+    final title = _titleCtrl.text.trim();
+    final value = _valueCtrl.text.trim();
+    if (title.isEmpty || value.isEmpty) {
+      _snack(context, 'Add a title and value first');
+      return;
+    }
+    setState(() => _dispatched = true);
+    widget.onSave?.call(<String, dynamic>{
+      ..._data,
+      'title': title,
+      'value': value,
+      'body': value,
+    });
+  }
+
+  void _cancel() {
+    if (_dispatched) return;
+    setState(() => _dispatched = true);
+    widget.onCancel?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.card.view != 'save_proposal') {
+      return _shell(
+        testKey: kVcrCardKeyMemoryProposal,
+        child: const Text('Memory proposal', style: kWalletBodyStyle),
+      );
+    }
+
+    final type = _readString('memory_type');
+    final category = _readString('category');
+    final eventDate = _readString('event_date');
+
+    return _shell(
+      testKey: kVcrCardKeyMemoryProposal,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Save memory',
+            style: kWalletSectionHeadingStyle,
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Review the memory before it is stored in your vault.',
+            style: kWalletBodyStyle,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('vault_chat_card_memory_title_field'),
+            controller: _titleCtrl,
+            enabled: !_dispatched,
+            style: kWalletBodyStyle,
+            decoration: const InputDecoration(
+              labelText: 'Title',
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('vault_chat_card_memory_value_field'),
+            controller: _valueCtrl,
+            enabled: !_dispatched,
+            style: kWalletBodyStyle,
+            minLines: 1,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'Memory',
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (type.isNotEmpty) _pillMasked(type),
+              if (category.isNotEmpty) _pillMasked(category),
+              if (eventDate.isNotEmpty) _pillMasked(eventDate),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  key: const Key('vault_chat_card_memory_save'),
+                  onPressed: _dispatched ? null : _save,
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: const Text('Save memory'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kWalletAccentPrimary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const Key('vault_chat_card_memory_cancel'),
+                  onPressed: _dispatched ? null : _cancel,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('Cancel'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: kWalletTextPrimary,
+                    side: const BorderSide(color: kWalletBorder),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// with the caller's derived vault key, and the password is what
 /// will land in the vault on Save — the user must be able to see
 /// what they're about to persist. Password is masked in the UI by
 /// default; the eye icon toggles a full reveal.
+/// Generated login draft review card.
 class _GeneratedLoginCard extends StatefulWidget {
   final VaultChatCard card;
   final void Function(String draftId, String service)? onSave;
@@ -1459,7 +1584,7 @@ class _GeneratedLoginCard extends StatefulWidget {
 
 class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   bool _passwordRevealed = false;
-  bool _dispatched = false;   // debounce Save/Cancel double-taps
+  bool _dispatched = false; // debounce Save/Cancel double-taps
 
   Map<String, dynamic> get _data =>
       widget.card.data ?? const <String, dynamic>{};
@@ -1512,14 +1637,14 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
       return _legacyPlaceholder(context);
     }
 
-    final service  = _readString('service', 'service_name');
+    final service = _readString('service', 'service_name');
     final username = _readString('username');
     final password = _readString('password');
-    final draftId  = _readString('draft_id');
-    final email    = _readString('email');
-    final url      = _readString('url');
-    final title    = _readString('title');
-    final actions  = _actions;
+    final draftId = _readString('draft_id');
+    final email = _readString('email');
+    final url = _readString('url');
+    final title = _readString('title');
+    final actions = _actions;
 
     return _shell(
       testKey: kVcrCardKeyGeneratedLogin,
@@ -1548,28 +1673,27 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
 
           if (username.isNotEmpty)
             _GenLoginRow(
-              label:    'Username',
-              value:    username,
+              label: 'Username',
+              value: username,
               valueKey: 'vault_chat_card_generated_login_username_value',
-              copyKey:  'vault_chat_card_generated_login_username_copy',
-              obscure:  false,
-              onCopy:   () => _copy('Username', username),
+              copyKey: 'vault_chat_card_generated_login_username_copy',
+              obscure: false,
+              onCopy: () => _copy('Username', username),
             ),
 
           if (password.isNotEmpty) ...[
             const SizedBox(height: 8),
             _GenLoginRow(
-              label:    'Password',
-              value:    password,
+              label: 'Password',
+              value: password,
               valueKey: 'vault_chat_card_generated_login_password_value',
-              copyKey:  'vault_chat_card_generated_login_password_copy',
-              obscure:  !_passwordRevealed,
-              onCopy:   () => _copy('Password', password),
+              copyKey: 'vault_chat_card_generated_login_password_copy',
+              obscure: !_passwordRevealed,
+              onCopy: () => _copy('Password', password),
               onToggleReveal: () => setState(
                 () => _passwordRevealed = !_passwordRevealed,
               ),
-              revealKey:
-                  'vault_chat_card_generated_login_password_reveal',
+              revealKey: 'vault_chat_card_generated_login_password_reveal',
               revealed: _passwordRevealed,
             ),
           ],
@@ -1579,34 +1703,34 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
           if (email.isNotEmpty) ...[
             const SizedBox(height: 8),
             _GenLoginRow(
-              label:    'Email',
-              value:    email,
+              label: 'Email',
+              value: email,
               valueKey: 'vault_chat_card_generated_login_email_value',
-              copyKey:  'vault_chat_card_generated_login_email_copy',
-              obscure:  false,
-              onCopy:   () => _copy('Email', email),
+              copyKey: 'vault_chat_card_generated_login_email_copy',
+              obscure: false,
+              onCopy: () => _copy('Email', email),
             ),
           ],
           if (url.isNotEmpty) ...[
             const SizedBox(height: 8),
             _GenLoginRow(
-              label:    'Website',
-              value:    url,
+              label: 'Website',
+              value: url,
               valueKey: 'vault_chat_card_generated_login_url_value',
-              copyKey:  'vault_chat_card_generated_login_url_copy',
-              obscure:  false,
-              onCopy:   () => _copy('URL', url),
+              copyKey: 'vault_chat_card_generated_login_url_copy',
+              obscure: false,
+              onCopy: () => _copy('URL', url),
             ),
           ],
           if (title.isNotEmpty) ...[
             const SizedBox(height: 8),
             _GenLoginRow(
-              label:    'Title',
-              value:    title,
+              label: 'Title',
+              value: title,
               valueKey: 'vault_chat_card_generated_login_title_value',
-              copyKey:  'vault_chat_card_generated_login_title_copy',
-              obscure:  false,
-              onCopy:   () => _copy('Title', title),
+              copyKey: 'vault_chat_card_generated_login_title_copy',
+              obscure: false,
+              onCopy: () => _copy('Title', title),
             ),
           ],
 
@@ -1701,7 +1825,6 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   }
 }
 
-
 /// Row widget for the generated-login card. Displays a label, a
 /// value (masked or plaintext), an optional reveal-eye toggle for
 /// the password row, and a copy button for the value.
@@ -1733,9 +1856,7 @@ class _GenLoginRow extends StatelessWidget {
     // Password gets a masked display when obscure=true. We render
     // a dot-string with the same character count as the value so
     // the row width doesn't jump when the user toggles reveal.
-    final display = obscure
-        ? ('•' * value.length.clamp(6, 32))
-        : value;
+    final display = obscure ? ('•' * value.length.clamp(6, 32)) : value;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -1782,7 +1903,9 @@ class _GenLoginRow extends StatelessWidget {
           key: Key(copyKey),
           tooltip: 'Copy $label',
           icon: const Icon(
-            Icons.copy_rounded, size: 18, color: kWalletTextMuted,
+            Icons.copy_rounded,
+            size: 18,
+            color: kWalletTextMuted,
           ),
           onPressed: onCopy,
           splashRadius: 18,
@@ -1792,7 +1915,6 @@ class _GenLoginRow extends StatelessWidget {
   }
 }
 // _snack is defined below (used by _LoginCard); we reuse it here.
-
 
 class _IdDocumentCard extends StatelessWidget {
   final VaultChatCard card;
@@ -1841,7 +1963,8 @@ class _IdDocumentCard extends StatelessWidget {
           ],
           const SizedBox(height: 8),
           Wrap(
-            spacing: 6, runSpacing: 6,
+            spacing: 6,
+            runSpacing: 6,
             children: [
               _pillMasked('•••• •••• last-4'),
               _pillMasked('Reveal requires unlock'),
@@ -1853,7 +1976,6 @@ class _IdDocumentCard extends StatelessWidget {
   }
 }
 
-
 class _IdDocumentRow extends StatelessWidget {
   final Map<String, dynamic> row;
   const _IdDocumentRow({required this.row});
@@ -1862,7 +1984,7 @@ class _IdDocumentRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final type = (row['type'] ?? '').toString();
     final country = (row['issuing_country'] ?? '').toString();
-    final state   = (row['issuing_state'] ?? '').toString();
+    final state = (row['issuing_state'] ?? '').toString();
     final expires = (row['expires_at'] ?? '').toString();
     final numberMasked = (row['id_number_masked'] ?? '').toString();
 
@@ -1872,7 +1994,8 @@ class _IdDocumentRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: 28, height: 28,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(
               color: kWalletBgBase,
               borderRadius: BorderRadius.circular(6),
@@ -1931,12 +2054,12 @@ class _IdDocumentRow extends StatelessWidget {
   }
 }
 
-
 class _BillingStatusCard extends StatelessWidget {
   final VaultChatCard card;
   final VoidCallback? onOpenBillingPage;
   const _BillingStatusCard({
-    required this.card, this.onOpenBillingPage,
+    required this.card,
+    this.onOpenBillingPage,
   });
 
   @override
@@ -1964,19 +2087,21 @@ class _BillingStatusCard extends StatelessWidget {
             Text(
               upgrade
                   ? 'To change plan or add storage, VaultAI will open '
-                    'the existing gated checkout flow. Chat cannot '
-                    'directly charge your card.'
+                      'the existing gated checkout flow. Chat cannot '
+                      'directly charge your card.'
                   : 'Open Billing to see your current plan.',
               style: kWalletBodyStyle,
             )
           else ...[
             Wrap(
-              spacing: 6, runSpacing: 6,
+              spacing: 6,
+              runSpacing: 6,
               children: [
                 Container(
                   key: const Key('vault_chat_billing_plan_pill'),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 5,
+                    horizontal: 10,
+                    vertical: 5,
                   ),
                   decoration: BoxDecoration(
                     color: kWalletBgBase,
@@ -1992,8 +2117,7 @@ class _BillingStatusCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (status.isNotEmpty)
-                  _pillMasked('Status: $status'),
+                if (status.isNotEmpty) _pillMasked('Status: $status'),
                 if (hasSub) _pillMasked('Active'),
               ],
             ),
@@ -2001,7 +2125,7 @@ class _BillingStatusCard extends StatelessWidget {
             Text(
               purchased > 0
                   ? 'Included ${_formatBytes(included)} + '
-                    'purchased ${_formatBytes(purchased)}.'
+                      'purchased ${_formatBytes(purchased)}.'
                   : 'Included ${_formatBytes(included)}.',
               style: const TextStyle(
                 color: kWalletTextMuted,
@@ -2024,7 +2148,6 @@ class _BillingStatusCard extends StatelessWidget {
     );
   }
 }
-
 
 class _StorageUsageCard extends StatelessWidget {
   final VaultChatCard card;
@@ -2059,7 +2182,7 @@ class _StorageUsageCard extends StatelessWidget {
             Text(
               quota > 0
                   ? '${_formatBytes(used)} of ${_formatBytes(quota)} '
-                    'used (${pct.toStringAsFixed(0)}%)'
+                      'used (${pct.toStringAsFixed(0)}%)'
                   : '${_formatBytes(used)} used',
               style: const TextStyle(
                 color: kWalletTextPrimary,
@@ -2071,9 +2194,10 @@ class _StorageUsageCard extends StatelessWidget {
             _StorageBar(used: used, quota: quota, percent: pct),
             const SizedBox(height: 10),
             Wrap(
-              spacing: 6, runSpacing: 6,
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                _statPill('Files',     fileCount),
+                _statPill('Files', fileCount),
                 _statPill('Documents', docCount),
               ],
             ),
@@ -2083,7 +2207,6 @@ class _StorageUsageCard extends StatelessWidget {
     );
   }
 }
-
 
 class _VaultActivityCard extends StatelessWidget {
   final VaultChatCard card;
@@ -2136,7 +2259,6 @@ class _VaultActivityCard extends StatelessWidget {
   }
 }
 
-
 class _ActivityRow extends StatelessWidget {
   final Map<String, dynamic> row;
   const _ActivityRow({required this.row});
@@ -2154,7 +2276,8 @@ class _ActivityRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: 8, height: 8,
+            width: 8,
+            height: 8,
             decoration: const BoxDecoration(
               color: kWalletTextMuted,
               shape: BoxShape.circle,
@@ -2191,7 +2314,6 @@ class _ActivityRow extends StatelessWidget {
   }
 }
 
-
 class _CrossVaultSearchCard extends StatelessWidget {
   final VaultChatCard card;
   const _CrossVaultSearchCard({required this.card});
@@ -2209,9 +2331,7 @@ class _CrossVaultSearchCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            q.isNotEmpty
-                ? 'Vault search: "$q"'
-                : 'Vault search',
+            q.isNotEmpty ? 'Vault search: "$q"' : 'Vault search',
             style: kWalletSectionHeadingStyle,
           ),
           const SizedBox(height: 6),
@@ -2219,7 +2339,7 @@ class _CrossVaultSearchCard extends StatelessWidget {
             Text(
               q.isNotEmpty
                   ? 'Open the vault to search across files, secure '
-                    'items, logins, and IDs for "$q".'
+                      'items, logins, and IDs for "$q".'
                   : 'Open the vault to search across categories.',
               style: kWalletBodyStyle,
             )
@@ -2236,7 +2356,6 @@ class _CrossVaultSearchCard extends StatelessWidget {
     );
   }
 }
-
 
 class _SearchGroup extends StatelessWidget {
   final Map<String, dynamic> group;
@@ -2265,7 +2384,6 @@ class _SearchGroup extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 2, left: 6),
               child: Text(
-
                 _safeSearchLabel(category, it),
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -2280,7 +2398,6 @@ class _SearchGroup extends StatelessWidget {
     );
   }
 }
-
 
 String _safeSearchLabel(String category, Map<String, dynamic> row) {
   if (category == 'logins') {
@@ -2302,7 +2419,6 @@ String _safeSearchLabel(String category, Map<String, dynamic> row) {
   return (row['title'] ?? row['name'] ?? '').toString();
 }
 
-
 class _UnrecognizedCard extends StatelessWidget {
   final VaultChatCard card;
   const _UnrecognizedCard({required this.card});
@@ -2312,16 +2428,18 @@ class _UnrecognizedCard extends StatelessWidget {
     return _shell(
       testKey: kVcrCardKeyUnrecognized,
       child: Text(
-        card.message ?? 'That question is not something VaultAI chat '
-            'can answer yet.',
+        card.message ??
+            'That question is not something VaultAI chat '
+                'can answer yet.',
         style: const TextStyle(
-          color: kWalletTextMuted, fontSize: 13, height: 1.4,
+          color: kWalletTextMuted,
+          fontSize: 13,
+          height: 1.4,
         ),
       ),
     );
   }
 }
-
 
 class _FaqCard extends StatelessWidget {
   final VaultChatCard card;
@@ -2352,38 +2470,58 @@ class _FaqCard extends StatelessWidget {
 
   VoidCallback? _handlerFor(String action) {
     switch (action) {
-      case kVcrFaqActionOpenVault:        return onOpenVault;
-      case kVcrFaqActionOpenLogins:       return onOpenLoginsPage;
-      case kVcrFaqActionOpenIdDocs:       return onOpenIdDocumentsPage;
-      case kVcrFaqActionOpenCryptoVault:  return onOpenCryptoVaultPage;
-      case kVcrFaqActionOpenBilling:      return onOpenBillingPage;
-      case kVcrFaqActionOpenStorage:      return onOpenStoragePage;
-      case kVcrFaqActionOpenSecurity:     return onOpenSecurityPage;
-      case kVcrFaqActionOpenHelpCenter:   return onOpenHelpCenter;
-      case kVcrFaqActionOpenUpload:       return onOpenUploadPage;
-      default:                            return null;
+      case kVcrFaqActionOpenVault:
+        return onOpenVault;
+      case kVcrFaqActionOpenLogins:
+        return onOpenLoginsPage;
+      case kVcrFaqActionOpenIdDocs:
+        return onOpenIdDocumentsPage;
+      case kVcrFaqActionOpenCryptoVault:
+        return onOpenCryptoVaultPage;
+      case kVcrFaqActionOpenBilling:
+        return onOpenBillingPage;
+      case kVcrFaqActionOpenStorage:
+        return onOpenStoragePage;
+      case kVcrFaqActionOpenSecurity:
+        return onOpenSecurityPage;
+      case kVcrFaqActionOpenHelpCenter:
+        return onOpenHelpCenter;
+      case kVcrFaqActionOpenUpload:
+        return onOpenUploadPage;
+      default:
+        return null;
     }
   }
 
   String _actionLabel(String action) {
     switch (action) {
-      case kVcrFaqActionOpenVault:        return 'Open vault';
-      case kVcrFaqActionOpenLogins:       return 'Open Logins';
-      case kVcrFaqActionOpenIdDocs:       return 'Open IDs';
-      case kVcrFaqActionOpenCryptoVault:  return 'Open Crypto Vault';
-      case kVcrFaqActionOpenBilling:      return 'Open Billing';
-      case kVcrFaqActionOpenStorage:      return 'Open Storage';
-      case kVcrFaqActionOpenSecurity:     return 'Open Security';
-      case kVcrFaqActionOpenHelpCenter:   return 'Open Help Center';
-      case kVcrFaqActionOpenUpload:       return 'Upload a file';
-      default:                            return action;
+      case kVcrFaqActionOpenVault:
+        return 'Open vault';
+      case kVcrFaqActionOpenLogins:
+        return 'Open Logins';
+      case kVcrFaqActionOpenIdDocs:
+        return 'Open IDs';
+      case kVcrFaqActionOpenCryptoVault:
+        return 'Open Crypto Vault';
+      case kVcrFaqActionOpenBilling:
+        return 'Open Billing';
+      case kVcrFaqActionOpenStorage:
+        return 'Open Storage';
+      case kVcrFaqActionOpenSecurity:
+        return 'Open Security';
+      case kVcrFaqActionOpenHelpCenter:
+        return 'Open Help Center';
+      case kVcrFaqActionOpenUpload:
+        return 'Upload a file';
+      default:
+        return action;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final question = (card.faqQuestion ?? '').trim();
-    final answer   = (card.faqAnswer ?? card.message ?? '').trim();
+    final answer = (card.faqAnswer ?? card.message ?? '').trim();
     final category = (card.faqCategoryLabel ?? '').trim();
     final relatedQuestions = card.faqRelatedQuestions;
     final relatedActions = card.faqRelatedActions
@@ -2433,7 +2571,6 @@ class _FaqCard extends StatelessWidget {
               height: 1.5,
             ),
           ),
-
           if (relatedActions.isNotEmpty) ...[
             const SizedBox(height: 12),
             Wrap(
@@ -2451,7 +2588,6 @@ class _FaqCard extends StatelessWidget {
               ],
             ),
           ],
-
           if (relatedQuestions.isNotEmpty) ...[
             const SizedBox(height: 12),
             const Text(
@@ -2483,7 +2619,6 @@ class _FaqCard extends StatelessWidget {
               ],
             ),
           ],
-
           if (onOpenHelpCenter != null) ...[
             const SizedBox(height: 12),
             TextButton.icon(
