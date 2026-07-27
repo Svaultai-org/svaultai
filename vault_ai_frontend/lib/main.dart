@@ -3474,17 +3474,26 @@ enum InheritanceRevealLocalKeyStatus {
 class InheritanceRevealLocalKeyResult {
   final InheritanceRevealLocalKeyStatus status;
   final SecretKey? skVault;
+  final String reason;
 
-  const InheritanceRevealLocalKeyResult._(this.status, this.skVault);
+  const InheritanceRevealLocalKeyResult._(
+    this.status,
+    this.skVault,
+    this.reason,
+  );
 
-  const InheritanceRevealLocalKeyResult.ready(SecretKey skVault)
-      : this._(InheritanceRevealLocalKeyStatus.ready, skVault);
+  const InheritanceRevealLocalKeyResult.ready(
+    SecretKey skVault, {
+    String reason = 'ready',
+  }) : this._(InheritanceRevealLocalKeyStatus.ready, skVault, reason);
 
-  const InheritanceRevealLocalKeyResult.invalidPin()
-      : this._(InheritanceRevealLocalKeyStatus.invalidPin, null);
+  const InheritanceRevealLocalKeyResult.invalidPin({
+    String reason = 'invalid_pin',
+  }) : this._(InheritanceRevealLocalKeyStatus.invalidPin, null, reason);
 
-  const InheritanceRevealLocalKeyResult.missingLocalKey()
-      : this._(InheritanceRevealLocalKeyStatus.missingLocalKey, null);
+  const InheritanceRevealLocalKeyResult.missingLocalKey({
+    String reason = 'missing_local_key',
+  }) : this._(InheritanceRevealLocalKeyStatus.missingLocalKey, null, reason);
 }
 
 typedef InheritanceCachedPinCheck = Future<bool?> Function(String pin);
@@ -3492,6 +3501,84 @@ typedef InheritanceUnlockWithPin = Future<bool> Function(String pin);
 typedef InheritanceSkReader = SecretKey? Function();
 typedef InheritanceSkVaultIdReader = String? Function();
 typedef InheritanceSkRehydrate = Future<SecretKey?> Function(String pin);
+
+@visibleForTesting
+class InheritanceRevealLoginIdentifier {
+  final String? vaultName;
+  final String? vaultHandle;
+  final String source;
+
+  const InheritanceRevealLoginIdentifier({
+    required this.vaultName,
+    required this.vaultHandle,
+    required this.source,
+  });
+
+  bool get hasIdentifier =>
+      (vaultName != null && vaultName!.isNotEmpty) ||
+      (vaultHandle != null && vaultHandle!.isNotEmpty);
+}
+
+String? _nonEmptyTrimmed(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+String inheritanceRevealIdFingerprint(String? value) {
+  final trimmed = _nonEmptyTrimmed(value);
+  if (trimmed == null) return '-';
+  return _fp12(Uint8List.fromList(utf8.encode(trimmed)));
+}
+
+void inheritanceRevealDiag(String branch, [Map<String, Object?>? data]) {
+  final payload = data == null
+      ? ''
+      : data.entries.map((e) => '${e.key}=${e.value}').join(' ');
+  // Release-safe diagnostic. Values passed here must be closed-set
+  // branch names, booleans, or short one-way fingerprints only.
+  // Never pass PINs, keys, tokens, ciphertext, or decrypted values.
+  // ignore: avoid_print
+  print('[inheritance-reveal-diag] branch=$branch $payload');
+}
+
+@visibleForTesting
+InheritanceRevealLoginIdentifier selectInheritanceRevealLoginIdentifier({
+  required String? vaultName,
+  required String? lastVaultName,
+  required String? vaultHandle,
+}) {
+  final handle = _nonEmptyTrimmed(vaultHandle);
+  if (handle != null) {
+    return InheritanceRevealLoginIdentifier(
+      vaultName: null,
+      vaultHandle: handle,
+      source: 'stored_vault_handle',
+    );
+  }
+
+  final name = _nonEmptyTrimmed(vaultName) ?? _nonEmptyTrimmed(lastVaultName);
+  if (name == null) {
+    return const InheritanceRevealLoginIdentifier(
+      vaultName: null,
+      vaultHandle: null,
+      source: 'none',
+    );
+  }
+  if (vh.isValidVaultHandleDisplay(name)) {
+    return InheritanceRevealLoginIdentifier(
+      vaultName: null,
+      vaultHandle: name,
+      source: 'name_is_vault_handle',
+    );
+  }
+  return InheritanceRevealLoginIdentifier(
+    vaultName: name,
+    vaultHandle: null,
+    source: vaultName != null && vaultName.trim().isNotEmpty
+        ? 'vault_name'
+        : 'last_vault_name',
+  );
+}
 
 @visibleForTesting
 Future<InheritanceRevealLocalKeyResult> resolveInheritanceRevealLocalKey({
@@ -3512,29 +3599,44 @@ Future<InheritanceRevealLocalKeyResult> resolveInheritanceRevealLocalKey({
 
   final cachedMatch = await cachedPinMatches(pin);
   if (cachedMatch == false) {
-    return const InheritanceRevealLocalKeyResult.invalidPin();
+    return const InheritanceRevealLocalKeyResult.invalidPin(
+      reason: 'cached_pin_mismatch',
+    );
   }
   if (cachedMatch == null) {
     final unlocked = await unlockWithPin(pin);
     if (!unlocked) {
-      return const InheritanceRevealLocalKeyResult.invalidPin();
+      return const InheritanceRevealLocalKeyResult.invalidPin(
+        reason: 'pin_unlock_rejected',
+      );
     }
   }
 
   final active = usableCurrentSk();
   if (active != null) {
-    return InheritanceRevealLocalKeyResult.ready(active);
+    return InheritanceRevealLocalKeyResult.ready(
+      active,
+      reason: 'active_sk_ready',
+    );
   }
 
   final rehydrated = await rehydrateSkWithPin(pin);
   if (rehydrated != null) {
-    return InheritanceRevealLocalKeyResult.ready(rehydrated);
+    return InheritanceRevealLocalKeyResult.ready(
+      rehydrated,
+      reason: 'rehydrated_sk_ready',
+    );
   }
   final afterRehydrate = usableCurrentSk();
   if (afterRehydrate != null) {
-    return InheritanceRevealLocalKeyResult.ready(afterRehydrate);
+    return InheritanceRevealLocalKeyResult.ready(
+      afterRehydrate,
+      reason: 'active_sk_ready_after_rehydrate',
+    );
   }
-  return const InheritanceRevealLocalKeyResult.missingLocalKey();
+  return const InheritanceRevealLocalKeyResult.missingLocalKey(
+    reason: 'missing_sk_after_rehydrate',
+  );
 }
 
 /// Best-effort consume of any pending inheritance device-enrollment
@@ -6462,10 +6564,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             }
 
             // dart format off
-            final structuredNow =
-                _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement = structuredNow ??
-                _Msg('assistant', buffer);
+            final structuredNow = _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
             // dart format on
             setState(() {
               if (assistantIndex == null) {
@@ -7012,7 +7112,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   }
                                   // dart format off
                                   setLocal(() {
-                                    pairingCode = result['pairing_code']?.toString();
+                                    pairingCode =
+                                        result['pairing_code']?.toString();
                                     creating = false;
                                   });
                                   // dart format on
@@ -8145,6 +8246,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Session expired. Please sign in again.');
       return;
     }
+    inheritanceRevealDiag('local_key_begin', {
+      'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+      'active_sk_present': zk_sk_store.ZkActiveSkVault.current() != null,
+      'active_sk_vault_match':
+          zk_sk_store.ZkActiveSkVault.currentVaultId() == vaultId,
+      'has_vault_name': _nonEmptyTrimmed(app.vaultName) != null,
+      'has_last_vault_name': _nonEmptyTrimmed(app.lastVaultName) != null,
+      'has_vault_handle': _nonEmptyTrimmed(app.vaultHandle) != null,
+    });
 
     // Resolve the beneficiary's local X25519 key before fetching the
     // encrypted package. Wrong PINs and missing/corrupt local keys
@@ -8166,6 +8276,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     } catch (e) {
       if (app.handleApiException(e)) return;
+      inheritanceRevealDiag('local_key_exception', {
+        'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+        'exception_type': e.runtimeType.toString(),
+      });
       vlog('inheritance.reveal.local_key_failed', {
         'exception_type': e.runtimeType.toString(),
       });
@@ -8175,14 +8289,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       return;
     }
+    inheritanceRevealDiag('local_key_result', {
+      'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
+      'status': localKey.status.name,
+      'reason': localKey.reason,
+    });
     switch (localKey.status) {
       case InheritanceRevealLocalKeyStatus.invalidPin:
         _showSnack('PIN did not match. Try again.');
         return;
       case InheritanceRevealLocalKeyStatus.missingLocalKey:
         _showSnack(
-          'Could not unlock inherited credentials on this device. '
-          'Enter your PIN again to continue.',
+          'Could not restore this device\'s inheritance key. '
+          'Unlock this beneficiary vault with your PIN, then try Reveal again.',
         );
         return;
       case InheritanceRevealLocalKeyStatus.ready:
@@ -8312,9 +8431,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<bool?> _inheritanceCachedPinMatches(String pin) async {
     try {
       final cached = await _VaultCrypto.currentPinOrThrow();
-      return cached.length == pin.length &&
-          _constantTimeStringEquals(cached, pin);
+      final matches =
+          cached.length == pin.length && _constantTimeStringEquals(cached, pin);
+      inheritanceRevealDiag(matches ? 'pin_cache_match' : 'pin_cache_mismatch');
+      return matches;
     } catch (_) {
+      inheritanceRevealDiag('pin_cache_absent');
       return null;
     }
   }
@@ -8331,42 +8453,53 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String expectedVaultId,
     required String pin,
   }) async {
-    String? nonEmpty(String? value) {
-      final trimmed = value?.trim();
-      return trimmed == null || trimmed.isEmpty ? null : trimmed;
-    }
-
-    final rememberedName =
-        nonEmpty(app.vaultName) ?? nonEmpty(app.lastVaultName);
-    final rememberedHandle = nonEmpty(app.vaultHandle);
-    final nameIsHandle =
-        rememberedName != null && vh.isValidVaultHandleDisplay(rememberedName);
-    if (rememberedName == null && rememberedHandle == null) {
+    final loginId = selectInheritanceRevealLoginIdentifier(
+      vaultName: app.vaultName,
+      lastVaultName: app.lastVaultName,
+      vaultHandle: app.vaultHandle,
+    );
+    if (!loginId.hasIdentifier) {
+      inheritanceRevealDiag('rehydrate_no_identifier', {
+        'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+      });
       return null;
     }
+    inheritanceRevealDiag('rehydrate_attempt', {
+      'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+      'id_source': loginId.source,
+      'uses_handle': loginId.vaultHandle != null,
+      'uses_name': loginId.vaultName != null,
+    });
 
     String lastStep = 'begin';
     try {
       final zk = ZkAuthService(_zkHttpPost);
       final loginResult = await zk.loginVault(
-        vaultName: nameIsHandle ? null : rememberedName,
-        vaultHandle: nameIsHandle ? rememberedName : rememberedHandle,
+        vaultName: loginId.vaultName,
+        vaultHandle: loginId.vaultHandle,
         pin: pin,
         onStep: (step) => lastStep = step,
       );
       if (loginResult.vaultId != expectedVaultId) {
+        inheritanceRevealDiag('rehydrate_vault_mismatch', {
+          'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+          'actual_vault_fpr':
+              inheritanceRevealIdFingerprint(loginResult.vaultId),
+          'id_source': loginId.source,
+        });
         vlog('inheritance.reveal.rehydrate_vault_mismatch', {
-          'expected_vault_id': expectedVaultId,
-          'actual_vault_id': loginResult.vaultId,
+          'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+          'actual_vault_fpr':
+              inheritanceRevealIdFingerprint(loginResult.vaultId),
         });
         return null;
       }
 
-      final resolvedVaultName = nonEmpty(loginResult.vaultName) ??
-          (nameIsHandle ? null : rememberedName) ??
-          nonEmpty(app.vaultName) ??
-          nonEmpty(app.lastVaultName) ??
-          nonEmpty(loginResult.displayName) ??
+      final resolvedVaultName = _nonEmptyTrimmed(loginResult.vaultName) ??
+          loginId.vaultName ??
+          _nonEmptyTrimmed(app.vaultName) ??
+          _nonEmptyTrimmed(app.lastVaultName) ??
+          _nonEmptyTrimmed(loginResult.displayName) ??
           loginResult.vaultHandle;
 
       await app.setSession(
@@ -8425,14 +8558,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
 
       app.markUnlocked();
+      inheritanceRevealDiag('rehydrate_success', {
+        'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
+        'id_source': loginId.source,
+      });
       return loginResult.skVaultPrivate;
     } on OpaqueAuthenticationFailed catch (e) {
+      inheritanceRevealDiag('rehydrate_opaque_failed', {
+        'stage': e.stage,
+        'last_step': lastStep,
+        'id_source': loginId.source,
+      });
       vlog('inheritance.reveal.rehydrate_opaque_failed', {
         'stage': e.stage,
         'last_step': lastStep,
       });
       return null;
     } catch (e) {
+      inheritanceRevealDiag('rehydrate_failed', {
+        'exception_type': e.runtimeType.toString(),
+        'last_step': lastStep,
+        'id_source': loginId.source,
+      });
       vlog('inheritance.reveal.rehydrate_failed', {
         'exception_type': e.runtimeType.toString(),
         'last_step': lastStep,
@@ -13626,10 +13773,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             }
 
             // dart format off
-            final structuredNow =
-                _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement = structuredNow ??
-                _Msg('assistant', buffer);
+            final structuredNow = _tryParseAssistantStructuredMessage(buffer);
+            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
             // dart format on
             setState(() {
               if (assistantIndex == null) {
