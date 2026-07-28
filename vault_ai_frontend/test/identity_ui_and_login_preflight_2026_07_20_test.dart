@@ -41,7 +41,7 @@ void main() {
       // just never the visible greeting.
       expect(src.contains('app.vaultName'), isTrue,
           reason: 'vaultName remains referenced elsewhere for '
-                  'login/AI identity — sanity check');
+              'login/AI identity — sanity check');
       // The welcome heading itself no longer reads vault_name.
       expect(
         src.contains(
@@ -49,7 +49,7 @@ void main() {
         ),
         isFalse,
         reason: 'the OLD "Welcome to \${vaultName …}" interpolation '
-                'must be gone — greet by displayName instead',
+            'must be gone — greet by displayName instead',
       );
       // New shape: neutral "Welcome to your vault" fallback string
       // appears in the source AND the greeting reads displayName.
@@ -57,7 +57,7 @@ void main() {
         src.contains("'Welcome to your vault'"),
         isTrue,
         reason: 'neutral fallback string must exist for the null-'
-                'displayName case',
+            'displayName case',
       );
       expect(
         src.contains("'Welcome, \$name'"),
@@ -66,7 +66,8 @@ void main() {
       );
     });
 
-    test('drawer header reads displayName only, never vault_name '
+    test(
+        'drawer header reads displayName only, never vault_name '
         '(updated 2026-07-21 c2f917e follow-up)', () {
       final src = _readLib('main.dart');
       final drawerIdx = src.indexOf("'vault_drawer_menu_list'");
@@ -83,8 +84,8 @@ void main() {
         window.contains('app.vaultName ?? app.displayName ??'),
         isFalse,
         reason: 'the OLD vaultName-first shape must be gone — the '
-                'drawer header must read displayName with a neutral '
-                'fallback, never surface vault_name',
+            'drawer header must read displayName with a neutral '
+            'fallback, never surface vault_name',
       );
       expect(window.contains('app.displayName'), isTrue,
           reason: 'drawer header must interpolate app.displayName');
@@ -107,20 +108,23 @@ void main() {
       expect(window.contains('String? vaultHandleValue'), isTrue);
       expect(window.contains('String? displayNameValue'), isTrue);
       expect(
-        window.contains("sp.setString('last_display_name'"),
+        window.contains("NativeSecureStore.writeString") &&
+            window.contains("'last_display_name'"),
         isTrue,
         reason: 'displayName must persist so hydrate() can paint '
             'the profile menu before /auth/me returns',
       );
     });
 
-    test('hydrate consults the new SharedPreferences keys AND the '
-         'legacy fallbacks so existing users\' names survive', () {
+    test(
+        'hydrate consults the new persisted keys AND the '
+        'legacy fallbacks so existing users\' names survive', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> hydrate(');
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 3500).clamp(0, src.length));
-      final restoreIdx = window.indexOf("sp.getString('last_display_name')");
+      final restoreIdx =
+          window.indexOf("NativeSecureStore.readString('last_display_name')");
       final legacyIdx = window.indexOf("sp.getString('last_display_username')");
       final authMeIdx = window.indexOf('client.authMe(');
       expect(restoreIdx, greaterThan(-1),
@@ -164,7 +168,7 @@ void main() {
             'name — a leftover would prefill the wrong user',
       );
       expect(
-        window.contains("sp.remove('last_vault_handle')"),
+        window.contains("NativeSecureStore.deleteString('last_vault_handle')"),
         isTrue,
       );
       expect(
@@ -350,7 +354,7 @@ void main() {
       );
     });
 
-    test('loginVault prints every step to the console unconditionally', () {
+    test('loginVault emits static step beacons for safe diagnostics', () {
       final src = _svc().readAsStringSync();
       // The [zk-login-step] tag is what an operator greps for in
       // the browser DevTools console when a login fails without
@@ -374,7 +378,7 @@ void main() {
         'post_login_finalize',
       ]) {
         expect(
-          src.contains("step('$s')"),
+          src.contains("'$s'"),
           isTrue,
           reason: 'the pipeline step "$s" is missing from '
               'loginVault — production diagnostics depend on '

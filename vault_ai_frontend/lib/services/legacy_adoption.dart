@@ -25,8 +25,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import 'native_secure_store.dart';
 import 'zk_auth_service.dart';
 
 const String prefsVaultHandleKey = 'vaultai.zk.vault_handle';
@@ -103,11 +103,12 @@ Future<LegacyAdoptionResult> tryAdoptLegacyVault({
     );
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(prefsVaultHandleKey, result.newVaultHandle);
-      await prefs.setBool(prefsAdoptionAttemptedKey, true);
+      await NativeSecureStore.writeString(
+        prefsVaultHandleKey,
+        result.newVaultHandle,
+      );
     } catch (_) {
-      // If shared_preferences is unavailable, we still succeeded
+      // If local secure storage is unavailable, we still succeeded
       // server-side. Next login attempt will need the user to type
       // their handle.
     }
@@ -130,8 +131,7 @@ Future<LegacyAdoptionResult> tryAdoptLegacyVault({
 /// null if none. Used for the trusted-device autofill.
 Future<String?> readCachedVaultHandle() async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(prefsVaultHandleKey);
+    return NativeSecureStore.readString(prefsVaultHandleKey);
   } catch (_) {
     return null;
   }
@@ -141,8 +141,7 @@ Future<String?> readCachedVaultHandle() async {
 /// asks to untrust this device.
 Future<void> clearCachedVaultHandle() async {
   try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(prefsVaultHandleKey);
+    await NativeSecureStore.deleteString(prefsVaultHandleKey);
   } catch (_) {}
 }
 

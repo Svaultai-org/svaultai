@@ -143,9 +143,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      // 20k covers the LoginPage class + full submit body after the
+      // 26k covers the LoginPage class + full submit body after the
       // 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class LoginPage', length: 20000);
+      final window = _windowAfter(src, 'class LoginPage', length: 26000);
       expect(window, contains('authLogin'),
           reason: 'LoginPage must call client.authLogin on submit');
     });
@@ -157,9 +157,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      // 20k covers the LoginPage class + full submit body after the
+      // 26k covers the LoginPage class + full submit body after the
       // 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class LoginPage', length: 20000);
+      final window = _windowAfter(src, 'class LoginPage', length: 26000);
       expect(
         window,
         contains('InvalidCredentialsException'),
@@ -175,9 +175,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      // 20k covers the LoginPage class + full submit body after the
+      // 26k covers the LoginPage class + full submit body after the
       // 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class LoginPage', length: 20000);
+      final window = _windowAfter(src, 'class LoginPage', length: 26000);
       expect(
         window,
         isNot(contains('Vault not found')),
@@ -207,9 +207,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      // 20k covers the LoginPage class + full submit body after the
+      // 26k covers the LoginPage class + full submit body after the
       // 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class LoginPage', length: 20000);
+      final window = _windowAfter(src, 'class LoginPage', length: 26000);
       expect(
         window,
         contains('RateLimitedException'),
@@ -225,9 +225,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      // 20k covers the LoginPage class + full submit body after the
+      // 26k covers the LoginPage class + full submit body after the
       // 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class LoginPage', length: 20000);
+      final window = _windowAfter(src, 'class LoginPage', length: 26000);
       expect(
         window,
         contains('new_device_trusted'),
@@ -594,9 +594,9 @@ void main() {
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
       // preflight + diagnostic vlogs added ~50 lines.
-      // 20k covers the LoginPage class + full submit body after the
+      // 26k covers the LoginPage class + full submit body after the
       // 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class LoginPage', length: 20000);
+      final window = _windowAfter(src, 'class LoginPage', length: 26000);
       expect(
         window,
         contains("result['display_username']"),

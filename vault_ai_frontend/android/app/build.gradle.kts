@@ -10,34 +10,59 @@ plugins {
 
 // ---------------------------------------------------------------
 // Upload-key material. Loaded from android/key.properties which is
-// gitignored — this file is NEVER checked in. See
+// gitignored - this file is NEVER checked in. See
 // android/key.properties.example for the expected schema.
 //
-// If key.properties is missing (developer laptop, CI without signing
-// creds), the release build falls back to the DEBUG keystore so
-// `flutter build appbundle --release` still succeeds locally for
-// validation. That fallback is intentional and loud: Gradle prints
-// a WARN line at configuration time so no one accidentally ships a
-// debug-signed bundle to Play. Production CI must always provide
-// key.properties.
+// If key.properties is missing or incomplete, release builds fail
+// closed. Debug builds still use the normal debug signing config.
 // ---------------------------------------------------------------
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()
-val hasReleaseSigning = keystorePropertiesFile.exists()
-if (hasReleaseSigning) {
+if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-} else {
-    logger.warn(
-        "[vaultai-release] android/key.properties not found — release " +
-        "builds will be DEBUG-SIGNED. This is fine for local " +
-        "validation. Production CI MUST provide key.properties " +
-        "before uploading to Play Console."
-    )
+}
+val releaseSigningProperties = listOf(
+    "storeFile",
+    "storePassword",
+    "keyAlias",
+    "keyPassword",
+)
+val missingReleaseSigningProperties = releaseSigningProperties.filter {
+    keystoreProperties.getProperty(it).isNullOrBlank()
+}
+val hasReleaseSigning = keystorePropertiesFile.exists() &&
+    missingReleaseSigningProperties.isEmpty()
+val releaseSigningFailureMessage =
+    "[vaultai-release] Release signing config is missing or incomplete. " +
+    "Create android/key.properties with storeFile, storePassword, " +
+    "keyAlias, and keyPassword for the Google Play upload key. " +
+    "Release APK/AAB builds must never fall back to debug signing."
+if (!hasReleaseSigning) {
+    val missing = if (!keystorePropertiesFile.exists()) {
+        "key.properties"
+    } else {
+        missingReleaseSigningProperties.joinToString(", ")
+    }
+    logger.warn("$releaseSigningFailureMessage Missing: $missing")
+}
+
+gradle.taskGraph.whenReady {
+    val releaseBuildRequested = allTasks.any { task ->
+        val name = task.name.lowercase()
+        name.contains("release") &&
+            (name.contains("assemble") ||
+                name.contains("bundle") ||
+                name.contains("package") ||
+                name.contains("sign"))
+    }
+    if (releaseBuildRequested && !hasReleaseSigning) {
+        throw GradleException(releaseSigningFailureMessage)
+    }
 }
 
 android {
     namespace = "com.svaultai.app"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -51,8 +76,8 @@ android {
 
     defaultConfig {
         applicationId = "com.svaultai.app"
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 24
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
@@ -82,16 +107,12 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (hasReleaseSigning) {
-                signingConfigs.getByName("release")
-            } else {
-                // Local-dev fallback — see keystoreProperties block
-                // above. Play Console rejects debug-signed bundles.
-                signingConfigs.getByName("debug")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
             }
             // R8 code shrink + resource stripping. Play install size
             // savings ~30-50% vs unminified. Flutter engine keeps its
-            // own -keep rules under $flutter_root/packages/…
+            // own -keep rules under $flutter_root/packages/...
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

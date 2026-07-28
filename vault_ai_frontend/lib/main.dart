@@ -33,6 +33,7 @@ import 'chunked_aead.dart';
 import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
+import 'services/native_secure_store.dart';
 import 'services/session_termination.dart' as st;
 import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_stub.dart';
@@ -119,7 +120,7 @@ const String _kBackendBaseUrlFromEnv = String.fromEnvironment(
 // 'https://'). Web AND mobile release both hit the same FastAPI host
 // today (https://api.svaultai.com); if they ever need to diverge,
 // introduce a separate `_kWebProductionBaseUrl` and re-gate on
-// `kIsWeb` — do NOT reintroduce a `kIsWeb` gate that leaves web
+  // `kIsWeb` - do NOT reintroduce a `kIsWeb` gate that leaves web
 // release resolving to the localhost fallback, which trips the
 // startup HTTPS guard and crashes app.svaultai.com with a black
 // screen.
@@ -128,7 +129,7 @@ const String _kProductionApiBaseUrl = 'https://api.svaultai.com';
 /// Resolves at first access; called from every network path.
 ///
 /// Precedence:
-///   1. If the build passed `--dart-define=BACKEND_BASE_URL=…`, use
+///   1. If the build passed `--dart-define=BACKEND_BASE_URL=...`, use
 ///      it verbatim (staging / preview / CI overrides).
 ///   2. Else, on ANY release build (mobile or web), use the
 ///      production API host `https://api.svaultai.com`. This is the
@@ -618,6 +619,12 @@ void vlog(String tag, [Map<String, Object?>? data]) {
   print('[vault-debug] $tag $payload');
 }
 
+void releaseWebDiagnosticPrint(String message) {
+  if (kReleaseMode && !kIsWeb) return;
+  // ignore: avoid_print
+  print(message);
+}
+
 Future<void> main() async {
   if (kReleaseMode && !backendBaseUrl.startsWith('https://')) {
     throw StateError(
@@ -947,8 +954,9 @@ class AppState extends ChangeNotifier {
 
   /// The human owner's visible name — an optional, human-facing
   /// label for the person who owns this vault (e.g. "Chosen
-  /// Abdullahi"). Persisted as ``last_display_name`` in
-  /// SharedPreferences. Shown in the profile / account menu.
+  /// Abdullahi"). Persisted as ``last_display_name`` through
+  /// NativeSecureStore on native builds. Shown in the profile /
+  /// account menu.
   ///
   /// This is NOT the vault name and NOT the AI's name — those are
   /// carried by [vaultName]. If missing at render time, UI
@@ -1385,8 +1393,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> hydrate() async {
     final sp = await SharedPreferences.getInstance();
-    sessionToken = sp.getString('session_token');
-    lastVaultName = sp.getString('last_vault_name');
+    sessionToken = await NativeSecureStore.readString('session_token');
+    lastVaultName = await NativeSecureStore.readString('last_vault_name');
     // Restore the friendly identity fields FIRST so any UI that
     // paints before /auth/me returns (or if /auth/me never returns)
     // shows the user's chosen name and their display name rather
@@ -1397,35 +1405,45 @@ class AppState extends ChangeNotifier {
     // populated on devices that ran the pre-2026-07-20 build. Read
     // them as a one-time fallback and migrate the values into the
     // new keys.
-    final persistedDisplay = sp.getString('last_display_name') ??
-        sp.getString('last_display_username');
+    final persistedDisplay =
+        await NativeSecureStore.readString('last_display_name') ??
+            sp.getString('last_display_username');
     if (persistedDisplay != null && persistedDisplay.isNotEmpty) {
       displayName = persistedDisplay;
-      await sp.setString('last_display_name', persistedDisplay);
+      await NativeSecureStore.writeString(
+        'last_display_name',
+        persistedDisplay,
+      );
     }
-    final persistedName = sp.getString('last_vault_name') ??
-        sp.getString('last_canonical_username') ??
-        sp.getString('last_vault_ai_name');
+    final persistedName =
+        await NativeSecureStore.readString('last_vault_name') ??
+            sp.getString('last_canonical_username') ??
+            sp.getString('last_vault_ai_name');
     if (persistedName != null && persistedName.isNotEmpty) {
       vaultName = persistedName;
-      await sp.setString('last_vault_name', persistedName);
+      await NativeSecureStore.writeString('last_vault_name', persistedName);
     }
     // Drop the retired keys once we've migrated their values so
     // subsequent hydrates go straight to the new ones. Best-effort;
     // do not fail hydrate on a remove() error.
     try {
+      final sp = await SharedPreferences.getInstance();
       await sp.remove('last_display_username');
       await sp.remove('last_canonical_username');
       await sp.remove('last_vault_ai_name');
     } catch (_) {}
-    final persistedHandle = sp.getString('last_vault_handle');
+    final persistedHandle =
+        await NativeSecureStore.readString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
     } else {
       final adoptedHandle = await legacy_adopt.readCachedVaultHandle();
       if (adoptedHandle != null && adoptedHandle.isNotEmpty) {
         vaultHandle = adoptedHandle;
-        await sp.setString('last_vault_handle', adoptedHandle);
+        await NativeSecureStore.writeString(
+          'last_vault_handle',
+          adoptedHandle,
+        );
       }
     }
     await _loadAppLocale();
@@ -1447,7 +1465,7 @@ class AppState extends ChangeNotifier {
           if (name.isNotEmpty) {
             vaultName = name;
             lastVaultName = name;
-            await sp.setString('last_vault_name', name);
+            await NativeSecureStore.writeString('last_vault_name', name);
           }
         }
         // /auth/me currently returns display_username for legacy
@@ -1459,17 +1477,17 @@ class AppState extends ChangeNotifier {
         final display = me['display_username']?.toString();
         if (display != null && display.isNotEmpty) {
           displayName = display;
-          await sp.setString('last_display_name', display);
+          await NativeSecureStore.writeString('last_display_name', display);
         }
         final handle = me['vault_handle']?.toString().trim();
         if (handle != null && handle.isNotEmpty) {
           vaultHandle = handle;
-          await sp.setString('last_vault_handle', handle);
+          await NativeSecureStore.writeString('last_vault_handle', handle);
         }
       } catch (_) {
         sessionToken = null;
         vaultId = null;
-        await sp.remove('session_token');
+        await NativeSecureStore.deleteString('session_token');
       }
     }
 
@@ -1491,24 +1509,29 @@ class AppState extends ChangeNotifier {
     // the pre-termination session still evaluate as stale to any
     // caller comparing generations.
     st.SessionTermination.instance.reset();
-    final sp = await SharedPreferences.getInstance();
     sessionToken = token;
     vaultId = vaultIdValue;
     vaultName = vaultNameValue;
     lastVaultName = vaultNameValue;
     if (vaultHandleValue != null && vaultHandleValue.isNotEmpty) {
       vaultHandle = vaultHandleValue;
-      await sp.setString('last_vault_handle', vaultHandleValue);
+      await NativeSecureStore.writeString(
+        'last_vault_handle',
+        vaultHandleValue,
+      );
     }
     if (displayNameValue != null && displayNameValue.isNotEmpty) {
       displayName = displayNameValue;
       // Persist the friendly name so the next launch's hydrate() can
       // paint it BEFORE /auth/me returns (or if it fails).
-      await sp.setString('last_display_name', displayNameValue);
+      await NativeSecureStore.writeString(
+        'last_display_name',
+        displayNameValue,
+      );
     }
     authed = true;
-    await sp.setString('session_token', token);
-    await sp.setString('last_vault_name', vaultNameValue);
+    await NativeSecureStore.writeString('session_token', token);
+    await NativeSecureStore.writeString('last_vault_name', vaultNameValue);
     notifyListeners();
   }
 
@@ -1553,7 +1576,6 @@ class AppState extends ChangeNotifier {
       // recipe for the exact TOCTOU class we just eliminated.
       VaultCryptoRegistry.clear(reason: 'clearSession');
     } catch (_) {}
-    final sp = await SharedPreferences.getInstance();
     sessionToken = null;
     vaultId = null;
     vaultName = null;
@@ -1561,16 +1583,17 @@ class AppState extends ChangeNotifier {
     displayName = null;
     authed = false;
     unlocked = false;
-    await sp.remove('session_token');
+    await NativeSecureStore.deleteString('session_token');
     if (!keepLastVaultName) {
       lastVaultName = null;
-      await sp.remove('last_vault_name');
+      await NativeSecureStore.deleteString('last_vault_name');
       // "Use another vault" — drop everything about the previous
       // account so the /login page starts clean. Preserving these
       // would either pre-fill the wrong vault name or paint the
       // wrong display name during the fresh session's hydrate.
-      await sp.remove('last_vault_handle');
-      await sp.remove('last_display_name');
+      await NativeSecureStore.deleteString('last_vault_handle');
+      await NativeSecureStore.deleteString('last_display_name');
+      final sp = await SharedPreferences.getInstance();
       // Legacy keys — retired 2026-07-20 but cleared here too in
       // case a fresh install imported them before hydrate() ran.
       await sp.remove('last_display_username');
@@ -2086,8 +2109,7 @@ class AppState extends ChangeNotifier {
       if (backendVaultName != null && backendVaultName.trim().isNotEmpty) {
         vaultName = backendVaultName.trim();
         lastVaultName = vaultName;
-        final sp = await SharedPreferences.getInstance();
-        await sp.setString('last_vault_name', vaultName!);
+        await NativeSecureStore.writeString('last_vault_name', vaultName!);
       }
 
       notifyListeners();
@@ -2113,7 +2135,6 @@ class AppState extends ChangeNotifier {
       return;
     }
 
-    final sp = await SharedPreferences.getInstance();
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.getMyVault(
@@ -2137,7 +2158,7 @@ class AppState extends ChangeNotifier {
           backendVaultName.trim().isNotEmpty) {
         vaultName = backendVaultName.trim();
         lastVaultName = vaultName;
-        await sp.setString('last_vault_name', vaultName!);
+        await NativeSecureStore.writeString('last_vault_name', vaultName!);
       } else {
         vaultName = null;
       }
@@ -3725,11 +3746,12 @@ void inheritanceRevealDiag(String branch, [Map<String, Object?>? data]) {
   final payload = data == null
       ? ''
       : data.entries.map((e) => '${e.key}=${e.value}').join(' ');
-  // Release-safe diagnostic. Values passed here must be closed-set
-  // branch names, booleans, or short one-way fingerprints only.
-  // Never pass PINs, keys, tokens, ciphertext, or decrypted values.
-  // ignore: avoid_print
-  print('[inheritance-reveal-diag] branch=$branch $payload');
+  // Values passed here must be closed-set branch names, booleans,
+  // or short one-way fingerprints only. Never pass PINs, keys,
+  // tokens, ciphertext, or decrypted values.
+  releaseWebDiagnosticPrint(
+    '[inheritance-reveal-diag] branch=$branch $payload',
+  );
 }
 
 @visibleForTesting
@@ -4029,8 +4051,10 @@ Future<bool> _tryLegacyAdoptionBestEffort({
     if (result.adopted && result.newVaultHandle != null) {
       app.vaultHandle = result.newVaultHandle;
       try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('last_vault_handle', result.newVaultHandle!);
+        await NativeSecureStore.writeString(
+          'last_vault_handle',
+          result.newVaultHandle!,
+        );
       } catch (_) {}
       if (!context.mounted) return true;
       // Adoption completes silently and the user lands in /chat. The
@@ -4132,9 +4156,10 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     // new key on next launch.
     try {
       final sp = await SharedPreferences.getInstance();
-      final persistedName = sp.getString('last_vault_name') ??
-          sp.getString('last_canonical_username') ??
-          sp.getString('last_display_username');
+      final persistedName =
+          await NativeSecureStore.readString('last_vault_name') ??
+              sp.getString('last_canonical_username') ??
+              sp.getString('last_display_username');
       if (!mounted) return;
       if (persistedName != null &&
           persistedName.isNotEmpty &&
@@ -4258,8 +4283,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         'auth_path': 'zk_first_then_legacy_fallback',
       });
     } on vh.InvalidUsername catch (e) {
-      // ignore: avoid_print
-      print('[zk-login-diag] '
+      releaseWebDiagnosticPrint('[zk-login-diag] '
           'last_step=preflight type=InvalidUsername reason=${e.message}');
       vlog('login.preflight.invalid_username', {'reason': e.message});
       setState(() {
@@ -4268,8 +4292,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       });
       return;
     } on vh.InvalidVaultHandle catch (e) {
-      // ignore: avoid_print
-      print('[zk-login-diag] '
+      releaseWebDiagnosticPrint('[zk-login-diag] '
           'last_step=preflight type=InvalidVaultHandle reason=${e.message}');
       vlog('login.preflight.invalid_handle', {'reason': e.message});
       setState(() {
@@ -4281,8 +4304,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final typeName = e.runtimeType.toString();
       final msg = e.toString();
       final head = msg.length > 120 ? msg.substring(0, 120) : msg;
-      // ignore: avoid_print
-      print('[zk-login-diag] '
+      releaseWebDiagnosticPrint('[zk-login-diag] '
           'last_step=preflight type=$typeName head=$head');
       vlog('login.preflight.derivation_failed',
           {'error_type': typeName, 'error': msg});
@@ -4314,8 +4336,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     bool zkLoginNotFound = false;
     {
       try {
-        // ignore: avoid_print
-        print('[zk-login-step] page/submit_entry '
+        releaseWebDiagnosticPrint('[zk-login-step] page/submit_entry '
             'entry_type=${entryIsHandle ? "handle" : "username"} '
             'identifier_len=${vaultName.length} pin_len=${pin.length}');
         vlog('login.zk.attempt', {
@@ -4452,8 +4473,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
         }
         try {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(
+          await NativeSecureStore.writeString(
             legacy_adopt.prefsVaultHandleKey,
             loginResult.vaultHandle,
           );
@@ -4462,8 +4482,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e) {
-        // ignore: avoid_print
-        print('[zk-login-diag] '
+        releaseWebDiagnosticPrint('[zk-login-diag] '
             'last_step=$loginLastStep type=OpaqueUnavailable reason=${e.reason}');
         if (!mounted) return;
         setState(() {
@@ -4479,8 +4498,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // MUST NOT run (an OPAQUE auth failure is a definitive
         // "wrong PIN" — retrying against the plaintext-verifier path
         // would produce the same result and just leak timing info).
-        // ignore: avoid_print
-        print('[zk-login-diag] '
+        releaseWebDiagnosticPrint('[zk-login-diag] '
             'last_step=$loginLastStep type=OpaqueAuthenticationFailed stage=${e.stage}');
         vlog('login.zk.opaque_auth_failed', {'stage': e.stage});
         if (!mounted) return;
@@ -4505,16 +4523,14 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // an operator can grep the browser DevTools console for
         // "[zk-login-diag]" without a debug build. No PIN, token,
         // ciphertext or handle bytes are printed.
-        // ignore: avoid_print
-        print('[zk-login-diag] '
+        releaseWebDiagnosticPrint('[zk-login-diag] '
             'last_step=$loginLastStep type=$typeName head=$head');
         // First line of the stack — the top frame usually names the
         // exact file+line that threw, which is the fastest way to
         // identify a bang null in a minified web build.
         final stackLines = stack.toString().split('\n');
         final topFrame = stackLines.isNotEmpty ? stackLines.first : '';
-        // ignore: avoid_print
-        print('[zk-login-diag] top_frame=$topFrame');
+        releaseWebDiagnosticPrint('[zk-login-diag] top_frame=$topFrame');
 
         vlog('login.zk.failed', {
           'error_type': typeName,
@@ -4635,8 +4651,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final typeName = e.runtimeType.toString();
       final msg = e.toString();
       final head = msg.length > 120 ? msg.substring(0, 120) : msg;
-      // ignore: avoid_print
-      print('[zk-login-diag] '
+      releaseWebDiagnosticPrint('[zk-login-diag] '
           'last_step=legacy_fallback type=$typeName head=$head');
       vlog('login.legacy.failed', {'error_type': typeName});
       setState(() {
@@ -4960,8 +4975,7 @@ class _SignupPageState extends State<SignupPage> {
       // to friendly copy; anything else stays generic.
       if (app.handleApiException(e)) return;
       final msg = e.toString();
-      // ignore: avoid_print
-      print('[zk-signup-diag] error_type=${e.runtimeType} '
+      releaseWebDiagnosticPrint('[zk-signup-diag] error_type=${e.runtimeType} '
           'head=${msg.length > 120 ? msg.substring(0, 120) : msg}');
       String friendly;
       if (msg.contains('failed 409') || msg.contains('HTTP 409')) {
@@ -5178,8 +5192,9 @@ class _UnlockPageState extends State<UnlockPage> {
     // account. Route the user through full /login instead of
     // attempting an unlock that would 100% miss.
     if (name == null || name.isEmpty) {
-      // ignore: avoid_print
-      print('[zk-unlock-diag] cache_incomplete=lastVaultName_missing');
+      releaseWebDiagnosticPrint(
+        '[zk-unlock-diag] cache_incomplete=lastVaultName_missing',
+      );
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
@@ -5217,8 +5232,7 @@ class _UnlockPageState extends State<UnlockPage> {
     bool zkLoginNotFound = false;
     {
       try {
-        // ignore: avoid_print
-        print('[zk-unlock-step] page/submit_entry '
+        releaseWebDiagnosticPrint('[zk-unlock-step] page/submit_entry '
             'entry_type=${entryIsVltHandle ? "handle" : "name"}');
         await OpaqueClient.ready();
         unlockLastStep = 'page_opaque_ready';
@@ -5344,8 +5358,7 @@ class _UnlockPageState extends State<UnlockPage> {
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e) {
-        // ignore: avoid_print
-        print('[zk-unlock-diag] '
+        releaseWebDiagnosticPrint('[zk-unlock-diag] '
             'last_step=$unlockLastStep type=OpaqueUnavailable reason=${e.reason}');
         if (!mounted) return;
         setState(() {
@@ -5356,8 +5369,7 @@ class _UnlockPageState extends State<UnlockPage> {
       } on OpaqueAuthenticationFailed catch (e) {
         // Same wrong-PIN classification as LoginPage — see the
         // matching catch there for the rationale.
-        // ignore: avoid_print
-        print('[zk-unlock-diag] '
+        releaseWebDiagnosticPrint('[zk-unlock-diag] '
             'last_step=$unlockLastStep type=OpaqueAuthenticationFailed stage=${e.stage}');
         vlog('unlock.zk.opaque_auth_failed', {'stage': e.stage});
         if (!mounted) return;
@@ -5371,8 +5383,7 @@ class _UnlockPageState extends State<UnlockPage> {
         final typeName = e.runtimeType.toString();
         final msg = e.toString();
         final head = msg.length > 120 ? msg.substring(0, 120) : msg;
-        // ignore: avoid_print
-        print('[zk-unlock-diag] '
+        releaseWebDiagnosticPrint('[zk-unlock-diag] '
             'last_step=$unlockLastStep type=$typeName head=$head');
         vlog('unlock.zk.failed', {
           'error_type': typeName,
@@ -5485,8 +5496,7 @@ class _UnlockPageState extends State<UnlockPage> {
       final typeName = e.runtimeType.toString();
       final msg = e.toString();
       final head = msg.length > 120 ? msg.substring(0, 120) : msg;
-      // ignore: avoid_print
-      print('[zk-unlock-diag] '
+      releaseWebDiagnosticPrint('[zk-unlock-diag] '
           'last_step=legacy_fallback type=$typeName head=$head');
       vlog('unlock.legacy.failed', {'error_type': typeName});
       if (!mounted) return;
@@ -5669,8 +5679,10 @@ class _PinGatePageState extends State<PinGatePage> {
           backendVaultName.trim().isNotEmpty) {
         app.vaultName = backendVaultName.trim();
         app.lastVaultName = backendVaultName.trim();
-        final sp = await SharedPreferences.getInstance();
-        await sp.setString('last_vault_name', backendVaultName.trim());
+        await NativeSecureStore.writeString(
+          'last_vault_name',
+          backendVaultName.trim(),
+        );
       }
 
       if (mounted) {
@@ -9306,12 +9318,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     else
                       ...beneficiaries.map((b) {
                         final hasStoredLabel = b['has_stored_label'] == true;
-                        final label =
-                            (b['label'] ??
-                                    (hasStoredLabel
-                                        ? 'Encrypted label unavailable'
-                                        : 'Unnamed'))
-                                .toString();
+                        final label = (b['label'] ??
+                                (hasStoredLabel
+                                    ? 'Encrypted label unavailable'
+                                    : 'Unnamed'))
+                            .toString();
                         final status = (b['status'] ?? '').toString();
                         final id = (b['id'] as num?)?.toInt() ?? 0;
                         final executesAt =

@@ -1,8 +1,6 @@
-
-
 import 'dart:developer' as developer;
 
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -25,7 +23,6 @@ import 'crypto_wallet_engine_solana_receive_panel.dart';
 import 'crypto_wallet_engine_tron_receive_panel.dart';
 import 'crypto_wallet_engine_monero_receive_panel.dart';
 
-
 const String kCryptoWalletEngineMainnetNotReadyKey =
     'crypto_wallet_engine_mainnet_not_ready';
 const String kCryptoWalletEngineMainnetNotReadyMessage =
@@ -39,13 +36,12 @@ void _cryptoWalletCapabilityDiag(
   String branch,
   Map<String, Object?> data,
 ) {
-  final payload = data.entries
-      .map((entry) => '${entry.key}=${entry.value}')
-      .join(' ');
+  final payload =
+      data.entries.map((entry) => '${entry.key}=${entry.value}').join(' ');
+  if (kReleaseMode && !kIsWeb) return;
   // ignore: avoid_print
   print('[crypto-wallet-capability-diag] branch=$branch $payload');
 }
-
 
 const List<String> kCryptoWalletEngineAssets = [
   'ETH',
@@ -56,56 +52,55 @@ const List<String> kCryptoWalletEngineAssets = [
   'XMR',
 ];
 
-
 const Map<String, String> kCryptoWalletEngineAssetLabels = {
-  'ETH':         'Ethereum',
-  'USDT_ERC20':  'USDT (ERC20)',
-  'USDC_ERC20':  'USDC (ERC20)',
-  'SOL':         'Solana',
-  'USDT_TRC20':  'USDT (TRC20)',
-  'XMR':         'Monero',
+  'ETH': 'Ethereum',
+  'USDT_ERC20': 'USDT (ERC20)',
+  'USDC_ERC20': 'USDC (ERC20)',
+  'SOL': 'Solana',
+  'USDT_TRC20': 'USDT (TRC20)',
+  'XMR': 'Monero',
 };
-
 
 const Map<String, String> kCryptoWalletEngineNetworkLabels = {
-  'ETH':         'Ethereum',
-  'USDT_ERC20':  'Ethereum ERC20',
-  'USDC_ERC20':  'Ethereum ERC20',
-  'SOL':         'Solana',
-  'USDT_TRC20':  'Tron TRC20',
-  'XMR':         'Monero',
+  'ETH': 'Ethereum',
+  'USDT_ERC20': 'Ethereum ERC20',
+  'USDC_ERC20': 'Ethereum ERC20',
+  'SOL': 'Solana',
+  'USDT_TRC20': 'Tron TRC20',
+  'XMR': 'Monero',
 };
-
-
-
 
 String portfolioRowAssetName(String asset) {
   switch (asset) {
-    case 'ETH':         return 'Ethereum';
-    case 'USDT_ERC20':  return 'USDT';
-    case 'USDC_ERC20':  return 'USDC';
-    case 'SOL':         return 'Solana';
-    case 'USDT_TRC20':  return 'USDT';
-    case 'XMR':         return 'Monero';
+    case 'ETH':
+      return 'Ethereum';
+    case 'USDT_ERC20':
+      return 'USDT';
+    case 'USDC_ERC20':
+      return 'USDC';
+    case 'SOL':
+      return 'Solana';
+    case 'USDT_TRC20':
+      return 'USDT';
+    case 'XMR':
+      return 'Monero';
   }
   return asset;
 }
 
-
-
-
 String? portfolioRowNetworkTag(String asset) {
   switch (asset) {
-    case 'ETH':         return 'Mainnet';
-    case 'USDT_ERC20':  return 'ERC20';
-    case 'USDC_ERC20':  return 'ERC20';
-    case 'USDT_TRC20':  return 'TRC20';
+    case 'ETH':
+      return 'Mainnet';
+    case 'USDT_ERC20':
+      return 'ERC20';
+    case 'USDC_ERC20':
+      return 'ERC20';
+    case 'USDT_TRC20':
+      return 'TRC20';
   }
   return null;
 }
-
-
-
 
 String portfolioUnavailableChipLabel(int count) {
   if (count <= 0) return '';
@@ -113,50 +108,48 @@ String portfolioUnavailableChipLabel(int count) {
   return '$count balances unavailable';
 }
 
-
 const Set<String> kCryptoWalletEngineMainPageLiveAssets = {
-  'ETH', 'USDT_ERC20', 'USDC_ERC20',
+  'ETH',
+  'USDT_ERC20',
+  'USDC_ERC20',
 };
-
-
-
-
-
-
-
 
 const List<String> kVaultBalanceSummaryAssets = [
-  'ETH', 'USDT_ERC20', 'USDC_ERC20', 'SOL', 'USDT_TRC20',
+  'ETH',
+  'USDT_ERC20',
+  'USDC_ERC20',
+  'SOL',
+  'USDT_TRC20',
 ];
 
-
-
 const Set<String> kCryptoWalletEngineLaunchedAssets = {
-  'ETH', 'USDT_ERC20', 'USDC_ERC20',
-  'SOL', 'USDT_TRC20', 'XMR',
+  'ETH',
+  'USDT_ERC20',
+  'USDC_ERC20',
+  'SOL',
+  'USDT_TRC20',
+  'XMR',
 };
-
-
 
 const Map<String, String> kCryptoWalletEngineFutureStateLabel =
     <String, String>{};
 
-
 const Set<String> kAssetsWithLiveReceive = {
-  'ETH', 'USDT_ERC20', 'USDC_ERC20',
+  'ETH',
+  'USDT_ERC20',
+  'USDC_ERC20',
 };
-
 
 const Set<String> kAssetsWithLiveSend = {
-  'ETH', 'USDT_ERC20', 'USDC_ERC20',
+  'ETH',
+  'USDT_ERC20',
+  'USDC_ERC20',
 };
-
 
 const String kCryptoWalletEngineHeading = 'VaultAI Crypto Wallet';
 const String kCryptoWalletEngineSubheading =
     'Your keys. Your crypto. VaultAI cannot move funds without your '
     'approval.';
-
 
 const String kCryptoWalletEnginePortfolioLiveBalancesNoteMainnet =
     'Live balances shown from connected Mainnet networks.';
@@ -173,11 +166,9 @@ const String kCryptoWalletEnginePortfolioActivityNote =
     'Transaction history is real when indexer is connected. VaultAI '
     'never invents activity.';
 
-
 const String kCryptoWalletEngineFutureStateBody =
     'Wallet engine support for this asset is not live yet. No '
     'address, no balance, no transactions are shown.';
-
 
 const Map<String, String> kCryptoWalletEngineFutureStateBodyByAsset =
     <String, String>{};
@@ -206,50 +197,31 @@ const String kCryptoWalletEngineNonCustodialAttestation =
     'Non-custodial: your keys, your coins. VaultAI cannot move your '
     'funds.';
 
-
 const String kCryptoWalletEnginePortfolioHeading = 'Vault balance';
 
 const String kCryptoWalletEngineAssetsHeading = 'Stored assets';
 
 const String kCryptoWalletEngineActivityHeading = 'Vault activity';
 
-
-
-
-const String kCryptoWalletEngineActivityEmptyPrimary =
-    'No activity yet.';
+const String kCryptoWalletEngineActivityEmptyPrimary = 'No activity yet.';
 const String kCryptoWalletEngineActivityEmptySubcopy =
     'Real transactions will appear here when activity history is '
     'connected.';
 const String kCryptoWalletEngineActivityHonestSubcopy =
     'VaultAI never invents transaction history.';
 
-
-
-
 const String kCryptoWalletEngineActivityHonestEmpty =
     kCryptoWalletEngineActivityEmptyPrimary;
-
-
-
 
 const String kCryptoWalletEngineActivityIndexerMixedNote =
     'Activity history is not connected for every network yet.';
 
-
-
-
-const String kCryptoWalletCardActivityEmpty =
-    'No activity yet';
+const String kCryptoWalletCardActivityEmpty = 'No activity yet';
 const String kCryptoWalletCardActivityIndexerMissing =
     'Activity history not connected';
 const String kCryptoWalletCardActivityProviderError =
     'Activity temporarily unavailable';
-const String kCryptoWalletCardActivityXmrScannerMissing =
-    'Scanner not enabled';
-
-
-
+const String kCryptoWalletCardActivityXmrScannerMissing = 'Scanner not enabled';
 
 @Deprecated('use kCryptoWalletCardActivityEmpty / '
     'kCryptoWalletCardActivityIndexerMissing / '
@@ -277,7 +249,6 @@ const String kCryptoWalletEngineAskAiSubheading =
     'Ask VaultAI to drive the wallet for you. Sensitive actions '
     'still require your PIN and your on-screen confirmation.';
 
-
 const List<String> kCryptoWalletEngineAskAiSuggestedPrompts = [
   'Show my ETH balance',
   'Give me my ETH receive QR',
@@ -298,7 +269,6 @@ const String kCryptoWalletEngineSecurityBody =
     'your funds.';
 const String kCryptoWalletEngineSecurityOpenLabel = 'Open security';
 
-
 class CryptoWalletEnginePage extends StatefulWidget {
   // 2026-07-12: onOpenLite parameter removed — CryptoVaultLitePage
   // is retired. The engine page is the sole Crypto Vault surface;
@@ -306,16 +276,13 @@ class CryptoWalletEnginePage extends StatefulWidget {
   // (guarded by test_crypto_wallet_engine_dashboard_cleanup CL13).
   final void Function(String prompt)? onSendChatPrompt;
 
-
   final String? authToken;
   final VaultAIClient? apiClient;
   final Future<String> Function(String plaintext)? encryptForVault;
   final bool Function()? isVaultKeyAvailable;
 
-
   final Future<String> Function(String ciphertext)? decryptForVault;
   final Future<bool> Function(String pin)? verifyPin;
-
 
   // 2026-07-13 network-scoped: production bug was that the ETH Send
   // path called a legacy /crypto/wallet/{asset}/receive endpoint which
@@ -327,7 +294,6 @@ class CryptoWalletEnginePage extends StatefulWidget {
   // loadFromAddress resolves the SAME wallet the balance/receive
   // path resolves.
   final Future<String?> Function(String network)? loadFromAddress;
-
 
   final MoneroWalletAdapter moneroWalletAdapter;
   final MoneroScannerAdapter moneroScannerAdapter;
@@ -347,20 +313,13 @@ class CryptoWalletEnginePage extends StatefulWidget {
   });
 
   @override
-  State<CryptoWalletEnginePage> createState() =>
-      _CryptoWalletEnginePageState();
+  State<CryptoWalletEnginePage> createState() => _CryptoWalletEnginePageState();
 }
 
 class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   CryptoWalletFeatures? _features;
 
-
-
-
   final AssetLiveStore _liveStore = AssetLiveStore.instance;
-
-
-
 
   final GlobalKey _activitySectionKey =
       GlobalKey(debugLabel: 'crypto_wallet_engine_activity_section');
@@ -381,9 +340,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   void _onLiveStoreChanged() {
     if (mounted) setState(() {});
   }
-
-
-
 
   Map<String, DashboardAssetLiveState> get _liveAssetState =>
       _liveStore.statesSnapshot;
@@ -423,9 +379,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
         'tron=${f.tronEnabled} xmr=${f.xmrEnabled}',
       );
 
-
-
-
       _fanOutInitialLiveRefresh();
     } catch (e) {
       _cvLog('features_failed error=${e.runtimeType}');
@@ -435,9 +388,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       });
     }
   }
-
-
-
 
   Future<void> _fanOutInitialLiveRefresh() async {
     final f = _features;
@@ -450,16 +400,12 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
         'effective_network=$_effectiveNetwork '
         'assets=$assets');
 
-
-
-
     for (final asset in assets) {
       if (!mounted) return;
       await _refreshLiveAssetState(asset);
     }
     _cvLog('fanout_done assets=$assets');
   }
-
 
   Future<void> _refreshLiveAssetState(String asset) async {
     if (widget.apiClient == null || widget.authToken == null) {
@@ -470,17 +416,11 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
     }
     if (!mounted) return;
 
-
-
-
     final routeNetwork = networkForAssetRoute(
       asset: asset,
       features: _features,
       effectiveMainnetNetwork: _effectiveNetwork,
     );
-
-
-
 
     final seq = _liveStore.claimSeq(asset);
     _liveStore.applyState(
@@ -493,9 +433,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
     _cvLog('refresh_started asset=$asset network=$routeNetwork '
         'seq=$seq');
 
-
-
-
     final result = await loadAssetWalletState(
       apiClient: widget.apiClient!,
       authToken: widget.authToken!,
@@ -503,10 +440,6 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       asset: asset,
     );
     if (!mounted) return;
-
-
-
-
 
     _liveStore.applyState(
       source: 'dashboard',
@@ -520,15 +453,15 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
 
   String get _effectiveNetwork {
     final f = _features;
-    if (f != null && f.defaultNetwork.isNotEmpty
-        && f.defaultNetworkConfigValid) {
+    if (f != null &&
+        f.defaultNetwork.isNotEmpty &&
+        f.defaultNetworkConfigValid) {
       return f.effectiveDefaultNetwork;
     }
     return kCompileTimeDefaultNetworkResolved;
   }
 
-  bool get _isMainnetActive =>
-      _effectiveNetwork == kEvmNetworkEthereumMainnet;
+  bool get _isMainnetActive => _effectiveNetwork == kEvmNetworkEthereumMainnet;
 
   bool get _mainnetNotReady {
     if (!_isMainnetActive) return false;
@@ -596,7 +529,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   // widget's field of the same name.
   final Future<String?> Function(String network)? loadFromAddress;
 
-
   final String effectiveNetwork;
   final bool isMainnetActive;
   final bool mainnetNotReady;
@@ -608,9 +540,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final Future<void> Function(String asset)? onAssetLiveRefreshRequested;
   final MoneroWalletAdapter moneroWalletAdapter;
   final MoneroScannerAdapter moneroScannerAdapter;
-
-
-
 
   final Key activitySectionKey;
 
@@ -635,8 +564,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     required this.moneroWalletAdapter,
     required this.moneroScannerAdapter,
     Key? activitySectionKey,
-  }) : activitySectionKey = activitySectionKey
-            ?? const Key('crypto_wallet_engine_activity_section');
+  }) : activitySectionKey = activitySectionKey ??
+            const Key('crypto_wallet_engine_activity_section');
 
   bool get _hasReceiveWiring =>
       authToken != null &&
@@ -651,9 +580,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   bool asset_moneroLive() => features?.xmrEnabled ?? false;
 
   bool get _hasSendWiring =>
-      _hasReceiveWiring &&
-      decryptForVault != null &&
-      loadFromAddress != null;
+      _hasReceiveWiring && decryptForVault != null && loadFromAddress != null;
 
   void _openReceivePanel(BuildContext ctx, String assetForPanel) {
     if (!_hasReceiveWiring) {
@@ -666,10 +593,10 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         assetForPanel == 'USDT_TRC20' && (features?.tronEnabled ?? false);
     final isMoneroAsset =
         assetForPanel == 'XMR' && (features?.xmrEnabled ?? false);
-    if (!isSolanaAsset && !isTronAsset && !isMoneroAsset
-        && mainnetNotReady) {
+    if (!isSolanaAsset && !isTronAsset && !isMoneroAsset && mainnetNotReady) {
       _showNotReadyBanner(
-        ctx, kCryptoWalletEngineMainnetNotReadyMessage,
+        ctx,
+        kCryptoWalletEngineMainnetNotReadyMessage,
       );
       return;
     }
@@ -743,7 +670,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   }
 
   Future<void> _openSendPanel(
-    BuildContext ctx, String assetForPanel,
+    BuildContext ctx,
+    String assetForPanel,
   ) async {
     if (!_hasSendWiring) {
       _showNotReadyBanner(ctx, kCryptoWalletEngineSendNotReadyBanner);
@@ -751,13 +679,15 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     }
     if (mainnetNotReady) {
       _showNotReadyBanner(
-        ctx, kCryptoWalletEngineMainnetNotReadyMessage,
+        ctx,
+        kCryptoWalletEngineMainnetNotReadyMessage,
       );
       return;
     }
     if (sendPaused) {
       _showNotReadyBanner(
-        ctx, kCryptoWalletEngineSendPausedMessage,
+        ctx,
+        kCryptoWalletEngineSendPausedMessage,
       );
       return;
     }
@@ -809,9 +739,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     );
   }
 
-
-
-
   void _scrollActivityIntoView() {
     final k = activitySectionKey;
     if (k is! GlobalKey) return;
@@ -826,16 +753,13 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   }
 
   void _openAssetDetail(BuildContext ctx, String asset) {
-
-
-
-
     final networkForDetail = networkForAssetRoute(
       asset: asset,
       features: features,
       effectiveMainnetNetwork: effectiveNetwork,
     );
-    Navigator.of(ctx).push<void>(
+    Navigator.of(ctx)
+        .push<void>(
       MaterialPageRoute(
         builder: (_) => CryptoWalletEngineAssetDetailPage(
           asset: asset,
@@ -852,7 +776,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           moneroScannerAdapter: moneroScannerAdapter,
         ),
       ),
-    ).then((_) {
+    )
+        .then((_) {
       onFeatureRefreshRequested?.call();
 
       onAssetLiveRefreshRequested?.call(asset);
@@ -891,48 +816,36 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               key: const Key('crypto_wallet_engine_page'),
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.all(isMobile ? 14 : 22),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1100),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    
-                    _buildHeader(),
-                    const SizedBox(height: 12),
-
-                    _buildChipRow(),
-                    _buildMainnetNotReadyBanner(),
-                    _buildSendPausedBanner(),
-
-
-
-
-                    const SizedBox(height: 16),
-                    
-                    _buildPortfolioSummary(context),
-                    const SizedBox(height: 14),
-                    
-                    _buildPrimaryActionRow(context),
-                    const SizedBox(height: 22),
-                    
-                    _buildAssetsHeading(),
-                    const SizedBox(height: 10),
-                    _buildAssetGrid(context, isMobile),
-                    const SizedBox(height: 22),
-                    
-                    _buildActivitySection(),
-                    const SizedBox(height: 12),
-                    
-                    _buildSecuritySection(context),
-                    const SizedBox(height: 12),
-                    
-                    _buildAskAiSection(context),
-                    const SizedBox(height: 18),
-                  ],
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1100),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 12),
+                      _buildChipRow(),
+                      _buildMainnetNotReadyBanner(),
+                      _buildSendPausedBanner(),
+                      const SizedBox(height: 16),
+                      _buildPortfolioSummary(context),
+                      const SizedBox(height: 14),
+                      _buildPrimaryActionRow(context),
+                      const SizedBox(height: 22),
+                      _buildAssetsHeading(),
+                      const SizedBox(height: 10),
+                      _buildAssetGrid(context, isMobile),
+                      const SizedBox(height: 22),
+                      _buildActivitySection(),
+                      const SizedBox(height: 12),
+                      _buildSecuritySection(context),
+                      const SizedBox(height: 12),
+                      _buildAskAiSection(context),
+                      const SizedBox(height: 18),
+                    ],
+                  ),
                 ),
               ),
-            ),
             ),
           ),
         ),
@@ -993,8 +906,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       decoration: walletWarningPanel(),
       child: Row(
         children: const [
-          Icon(Icons.warning_amber_rounded, size: 18,
-              color: kWalletAccentWarning),
+          Icon(Icons.warning_amber_rounded,
+              size: 18, color: kWalletAccentWarning),
           SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -1027,8 +940,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       decoration: walletWarningPanel(),
       child: Row(
         children: const [
-          Icon(Icons.pause_circle_outline_rounded, size: 18,
-              color: kWalletAccentWarning),
+          Icon(Icons.pause_circle_outline_rounded,
+              size: 18, color: kWalletAccentWarning),
           SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -1046,10 +959,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   }
 
   Widget _buildPortfolioSummary(BuildContext context) {
-
-
-
-
     final availableRows = <_PortfolioBalanceRow>[];
     bool anyLoading = false;
     int erroredCount = 0;
@@ -1073,9 +982,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           erroredCount++;
           break;
         case DashboardAssetLiveStateKind.noWallet:
-
-
-
           break;
       }
     }
@@ -1093,7 +999,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 32, height: 32,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
@@ -1111,7 +1018,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                 alignment: Alignment.center,
                 child: const Icon(
                   Icons.pie_chart_rounded,
-                  size: 16, color: Colors.white,
+                  size: 16,
+                  color: Colors.white,
                 ),
               ),
               const SizedBox(width: 10),
@@ -1129,8 +1037,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-
-
           if (hasAvailable) ...[
             Column(
               key: const Key(
@@ -1145,17 +1051,14 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               const SizedBox(height: 10),
               _buildPortfolioUnavailableChip(erroredCount),
             ],
-
-
-
-
           ] else if (anyLoading) ...[
             Column(
               key: const Key(
                 'crypto_wallet_engine_portfolio_balance_skeleton',
               ),
               children: List.generate(
-                3, (_) => _buildPortfolioSkeletonRow(),
+                3,
+                (_) => _buildPortfolioSkeletonRow(),
               ),
             ),
           ] else ...[
@@ -1194,14 +1097,11 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               key: Key('crypto_wallet_engine_portfolio_no_wallets_body'),
               style: kWalletBodyStyle,
             ),
-
-
           ],
         ],
       ),
     );
   }
-
 
   Widget _buildPortfolioBalanceRow(_PortfolioBalanceRow row) {
     final assetName = portfolioRowAssetName(row.asset);
@@ -1214,9 +1114,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-
-
-
           Flexible(
             child: RichText(
               overflow: TextOverflow.ellipsis,
@@ -1230,14 +1127,15 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  if (networkTag != null) TextSpan(
-                    text: '  ·  $networkTag',
-                    style: const TextStyle(
-                      color: kWalletTextMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                  if (networkTag != null)
+                    TextSpan(
+                      text: '  ·  $networkTag',
+                      style: const TextStyle(
+                        color: kWalletTextMuted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -1265,9 +1163,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       ),
     );
   }
-
-
-
 
   Widget _buildPortfolioUnavailableChip(int count) {
     return Container(
@@ -1303,14 +1198,14 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     );
   }
 
-
   Widget _buildPortfolioSkeletonRow() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: [
           Container(
-            width: 60, height: 10,
+            width: 60,
+            height: 10,
             decoration: BoxDecoration(
               color: kWalletBorder,
               borderRadius: BorderRadius.circular(4),
@@ -1325,7 +1220,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Container(
-            width: 48, height: 10,
+            width: 48,
+            height: 10,
             decoration: BoxDecoration(
               color: kWalletBorder,
               borderRadius: BorderRadius.circular(4),
@@ -1349,7 +1245,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               _openReceivePanel(ctx, 'ETH');
             } else {
               _showNotReadyBanner(
-                ctx, kCryptoWalletEngineReceiveNotReadyBanner,
+                ctx,
+                kCryptoWalletEngineReceiveNotReadyBanner,
               );
             }
           },
@@ -1364,7 +1261,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               _openSendPanel(ctx, 'ETH');
             } else {
               _showNotReadyBanner(
-                ctx, kCryptoWalletEngineSendNotReadyBanner,
+                ctx,
+                kCryptoWalletEngineSendNotReadyBanner,
               );
             }
           },
@@ -1425,7 +1323,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                     hasSendWiring: _hasSendWiring,
                   );
                   final reason = dashboardAssetBalanceReason(
-                    asset: asset, features: features,
+                    asset: asset,
+                    features: features,
                   );
                   final live = liveAssetState[asset];
                   return _CryptoWalletEngineAssetCard(
@@ -1438,8 +1337,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
                     capability: capability,
                     liveState: live,
                     features: features,
-                    onCardTap:
-                        kCryptoWalletEngineLaunchedAssets.contains(asset)
+                    onCardTap: kCryptoWalletEngineLaunchedAssets.contains(asset)
                         ? () => _openAssetDetail(ctx, asset)
                         : null,
                     onReceive: capability.receive
@@ -1461,7 +1359,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   }
 
   Widget _buildActivitySection() {
-
     return KeyedSubtree(
       key: activitySectionKey,
       child: Container(
@@ -1473,8 +1370,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           children: [
             Row(
               children: const [
-                Icon(Icons.history_rounded, size: 18,
-                    color: kWalletTextSecondary),
+                Icon(Icons.history_rounded,
+                    size: 18, color: kWalletTextSecondary),
                 SizedBox(width: 8),
                 Text(
                   kCryptoWalletEngineActivityHeading,
@@ -1483,21 +1380,18 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-
             const Text(
               kCryptoWalletEngineActivityEmptyPrimary,
               key: Key('crypto_wallet_engine_activity_empty_primary'),
               style: kWalletBodyStyle,
             ),
             const SizedBox(height: 6),
-
             const Text(
               kCryptoWalletEngineActivityEmptySubcopy,
               key: Key('crypto_wallet_engine_activity_empty_subcopy'),
               style: kWalletMutedStyle,
             ),
             const SizedBox(height: 6),
-
             const Text(
               kCryptoWalletEngineActivityHonestSubcopy,
               key: Key('crypto_wallet_engine_activity_honest_subcopy'),
@@ -1509,7 +1403,6 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     );
   }
 
-  
   Widget _buildSecuritySection(BuildContext ctx) {
     return Container(
       key: const Key('crypto_wallet_engine_security_section'),
@@ -1520,8 +1413,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         children: [
           Row(
             children: const [
-              Icon(Icons.shield_outlined, size: 18,
-                  color: kWalletAccentSuccess),
+              Icon(Icons.shield_outlined,
+                  size: 18, color: kWalletAccentSuccess),
               SizedBox(width: 8),
               Text(
                 kCryptoWalletEngineSecurityHeading,
@@ -1568,8 +1461,8 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         children: [
           Row(
             children: const [
-              Icon(Icons.auto_awesome_rounded, size: 18,
-                  color: kWalletAccentPrimarySoft),
+              Icon(Icons.auto_awesome_rounded,
+                  size: 18, color: kWalletAccentPrimarySoft),
               SizedBox(width: 8),
               Text(
                 kCryptoWalletEngineAskAiHeading,
@@ -1640,7 +1533,6 @@ class _PortfolioBalanceRow {
   });
 }
 
-
 class _CryptoWalletEngineAssetCard extends StatelessWidget {
   final String asset;
   final VoidCallback? onCardTap;
@@ -1675,24 +1567,36 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
 
   String _tickerForAsset(String asset) {
     switch (asset) {
-      case 'ETH':         return 'ETH';
-      case 'USDT_ERC20':  return 'USDT';
-      case 'USDC_ERC20':  return 'USDC';
-      case 'SOL':         return 'SOL';
-      case 'USDT_TRC20':  return 'USDT';
-      case 'XMR':         return 'XMR';
+      case 'ETH':
+        return 'ETH';
+      case 'USDT_ERC20':
+        return 'USDT';
+      case 'USDC_ERC20':
+        return 'USDC';
+      case 'SOL':
+        return 'SOL';
+      case 'USDT_TRC20':
+        return 'USDT';
+      case 'XMR':
+        return 'XMR';
     }
     return asset;
   }
 
   String _displayNameForAsset(String asset) {
     switch (asset) {
-      case 'ETH':         return 'Ethereum';
-      case 'USDT_ERC20':  return 'USDT';
-      case 'USDC_ERC20':  return 'USDC';
-      case 'SOL':         return 'Solana';
-      case 'USDT_TRC20':  return 'USDT';
-      case 'XMR':         return 'Monero';
+      case 'ETH':
+        return 'Ethereum';
+      case 'USDT_ERC20':
+        return 'USDT';
+      case 'USDC_ERC20':
+        return 'USDC';
+      case 'SOL':
+        return 'Solana';
+      case 'USDT_TRC20':
+        return 'USDT';
+      case 'XMR':
+        return 'Monero';
     }
     return kCryptoWalletEngineAssetLabels[asset] ?? asset;
   }
@@ -1723,8 +1627,7 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
                 key: Key('crypto_wallet_engine_card_future_state_$asset'),
               )
             : null;
-    
-    
+
     final headerRow = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1769,7 +1672,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   Container(
-                    width: 3, height: 3,
+                    width: 3,
+                    height: 3,
                     decoration: const BoxDecoration(
                       color: kWalletTextMuted,
                       shape: BoxShape.circle,
@@ -1817,8 +1721,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
           ),
         ],
       );
-    } else if (liveState != null
-        && liveState!.kind == DashboardAssetLiveStateKind.loading) {
+    } else if (liveState != null &&
+        liveState!.kind == DashboardAssetLiveStateKind.loading) {
       balanceLine = Row(
         key: Key('crypto_wallet_engine_card_balance_refreshing_$asset'),
         children: const [
@@ -1862,13 +1766,12 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
         ],
       );
     } else {
-
       final String? effectiveReason;
-      if (liveState != null
-          && liveState!.kind == DashboardAssetLiveStateKind.reason) {
+      if (liveState != null &&
+          liveState!.kind == DashboardAssetLiveStateKind.reason) {
         effectiveReason = liveState!.backendReason;
-      } else if (liveState != null
-          && liveState!.kind == DashboardAssetLiveStateKind.noWallet) {
+      } else if (liveState != null &&
+          liveState!.kind == DashboardAssetLiveStateKind.noWallet) {
         effectiveReason = 'no_wallet_yet';
       } else {
         effectiveReason = balanceReason;
@@ -1908,7 +1811,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
         ? Container(
             key: Key('crypto_wallet_engine_card_balance_$asset'),
             padding: const EdgeInsets.symmetric(
-              horizontal: 12, vertical: 10,
+              horizontal: 12,
+              vertical: 10,
             ),
             decoration: BoxDecoration(
               color: kWalletSurfaceElevated,
@@ -1920,7 +1824,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
         : Container(
             key: Key('crypto_wallet_engine_card_future_body_$asset'),
             padding: const EdgeInsets.symmetric(
-              horizontal: 12, vertical: 10,
+              horizontal: 12,
+              vertical: 10,
             ),
             decoration: BoxDecoration(
               color: kWalletSurfaceElevated.withOpacity(0.6),
@@ -1928,8 +1833,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
               border: Border.all(color: kWalletBorder),
             ),
             child: Text(
-              kCryptoWalletEngineFutureStateBodyByAsset[asset]
-                  ?? kCryptoWalletEngineFutureStateBody,
+              kCryptoWalletEngineFutureStateBodyByAsset[asset] ??
+                  kCryptoWalletEngineFutureStateBody,
               style: const TextStyle(
                 color: kWalletTextSecondary,
                 fontSize: 13,
@@ -2008,9 +1913,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
                     ),
                 ],
               ),
-
-              if (!capability.send
-                  && capability.sendUnavailableReason != null) ...[
+              if (!capability.send &&
+                  capability.sendUnavailableReason != null) ...[
                 const SizedBox(height: 10),
                 Row(
                   key: Key(
@@ -2019,29 +1923,29 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
                   children: [
                     const Icon(
                       Icons.info_outline_rounded,
-                      size: 14, color: kWalletTextMuted,
+                      size: 14,
+                      color: kWalletTextMuted,
                     ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         capability.sendUnavailableReason!,
                         style: const TextStyle(
-                          color: kWalletTextMuted, fontSize: 12,
+                          color: kWalletTextMuted,
+                          fontSize: 12,
                         ),
                       ),
                     ),
                   ],
                 ),
               ],
-              if (!capability.transactions
-                  && capability.transactionsUnavailableReason != null) ...[
+              if (!capability.transactions &&
+                  capability.transactionsUnavailableReason != null) ...[
                 const SizedBox(height: 6),
-
-
-
                 Builder(builder: (_) {
                   final kind = dashboardCardActivityKind(
-                    asset: asset, features: features,
+                    asset: asset,
+                    features: features,
                   );
                   final label = dashboardCardActivityChipCopy(kind);
                   return Container(
@@ -2049,7 +1953,8 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
                       'crypto_wallet_engine_card_activity_chip_$asset',
                     ),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3,
+                      horizontal: 8,
+                      vertical: 3,
                     ),
                     decoration: BoxDecoration(
                       color: kWalletBorder.withOpacity(0.35),
@@ -2066,10 +1971,6 @@ class _CryptoWalletEngineAssetCard extends StatelessWidget {
                   );
                 }),
               ],
-
-
-
-
               if (asset == 'XMR') ...[
                 const SizedBox(height: 8),
                 Text(

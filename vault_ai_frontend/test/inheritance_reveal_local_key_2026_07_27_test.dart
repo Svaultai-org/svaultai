@@ -360,7 +360,9 @@ void main() {
         () {
       expect(mainSource.contains("me['vault_handle']"), isTrue);
       expect(
-        mainSource.contains("sp.setString('last_vault_handle', handle)"),
+        mainSource.contains(
+          "NativeSecureStore.writeString('last_vault_handle', handle)",
+        ),
         isTrue,
       );
       expect(
@@ -468,7 +470,10 @@ void main() {
       final window =
           mainSource.substring(idx, (idx + 2800).clamp(0, mainSource.length));
       expect(window.contains('vaultHandle = null'), isTrue);
-      expect(window.contains("sp.remove('last_vault_handle')"), isTrue);
+      expect(
+        window.contains("NativeSecureStore.deleteString('last_vault_handle')"),
+        isTrue,
+      );
       expect(mainSource.contains('clearSession(keepLastVaultName: false)'),
           isTrue);
     });

@@ -5024,9 +5024,6 @@ class VaultAIClient {
       uri,
       headers: headers,
     );
-    // ignore: avoid_print
-    print('[crypto-wallet-capability-diag] '
-        'branch=features_request status=${response.statusCode}');
     _vlog('crypto_wallet.features.response', {
       'status': response.statusCode,
     });

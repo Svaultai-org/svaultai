@@ -2,24 +2,24 @@
 
     <!--
         Runtime permissions VaultAI actually uses. Keep this list
-        MINIMAL — every added permission triggers Google Play policy
+        MINIMAL - every added permission triggers Google Play policy
         questions in the Data Safety form.
 
-        INTERNET     — required, backend session + chat SSE.
-        CAMERA       — used by mobile_scanner (crypto-recipient QR
+        INTERNET     - required, backend session + chat SSE.
+        CAMERA       - used by mobile_scanner (crypto-recipient QR
                        scanning). Runtime-requested by the plugin
                        the first time the user opens the scanner.
-        RECORD_AUDIO — used by record + speech_to_text (voice input
+        RECORD_AUDIO - used by record + speech_to_text (voice input
                        + dictation). Runtime-requested by the plugin.
 
         Optional / considered but NOT declared here:
-          USE_BIOMETRIC          — only needed if flutter_secure_storage
+          USE_BIOMETRIC          - only needed if flutter_secure_storage
                                    is configured with an
                                    authenticationRequired: true slot,
                                    which we don't ship in v1.0.
-          POST_NOTIFICATIONS     — not currently used; add before
+          POST_NOTIFICATIONS     - not currently used; add before
                                    shipping any push feature.
-          READ_MEDIA_IMAGES/etc  — file_picker on Android 13+ uses
+          READ_MEDIA_IMAGES/etc  - file_picker on Android 13+ uses
                                    the system picker via
                                    ACTION_OPEN_DOCUMENT, which does
                                    NOT require this permission.
@@ -43,7 +43,12 @@
     <application
         android:label="VaultAI"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"

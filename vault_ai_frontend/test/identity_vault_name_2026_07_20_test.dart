@@ -44,19 +44,27 @@ void main() {
 
     test(
         'hydrate reads /auth/me\'s vault_name and display_username; '
-        'legacy SharedPreferences keys migrate into the new keys', () {
+        'NativeSecureStore keys migrate from legacy SharedPreferences', () {
       final src = _read('lib/main.dart');
       // /auth/me consumption
       expect(src.contains("me['vault_name']"), isTrue);
       expect(src.contains("me['display_username']"), isTrue,
           reason: 'backend /auth/me still returns display_username '
               'for legacy vaults; frontend field is displayName');
-      // Legacy SharedPreferences fallback migration
-      expect(src.contains("sp.getString('last_vault_name')"), isTrue);
+      // Native secure storage is authoritative on Android; legacy
+      // SharedPreferences keys remain readable as one-time fallbacks
+      // so existing users' typed names are preserved.
+      expect(
+          src.contains(
+              "NativeSecureStore.readString('last_vault_name')"),
+          isTrue);
       expect(src.contains("sp.getString('last_canonical_username')"), isTrue,
           reason: 'legacy key must be readable as a one-time fallback '
               'so existing users\' typed names are preserved');
-      expect(src.contains("sp.getString('last_display_name')"), isTrue);
+      expect(
+          src.contains(
+              "NativeSecureStore.readString('last_display_name')"),
+          isTrue);
       expect(src.contains("sp.getString('last_display_username')"), isTrue,
           reason: 'legacy display key fallback');
     });
@@ -68,9 +76,21 @@ void main() {
       final idx = src.indexOf('Future<void> clearSession(');
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 5000).clamp(0, src.length));
-      expect(window.contains("sp.remove('last_vault_name')"), isTrue);
-      expect(window.contains("sp.remove('last_display_name')"), isTrue);
-      expect(window.contains("sp.remove('last_vault_handle')"), isTrue);
+      expect(
+          window.contains(
+              "NativeSecureStore.deleteString('last_vault_name')"),
+          isTrue);
+      expect(
+          window.contains(
+              "NativeSecureStore.deleteString('last_display_name')"),
+          isTrue);
+      expect(
+          window.contains(
+              "NativeSecureStore.deleteString('last_vault_handle')"),
+          isTrue);
+      expect(window.contains("sp.remove('last_display_username')"), isTrue);
+      expect(window.contains("sp.remove('last_canonical_username')"), isTrue);
+      expect(window.contains("sp.remove('last_vault_ai_name')"), isTrue);
     });
 
     test(

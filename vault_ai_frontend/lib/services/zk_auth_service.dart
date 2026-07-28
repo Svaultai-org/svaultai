@@ -38,6 +38,7 @@ import 'dart:typed_data';
 import 'dart:math' show Random;
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 
 import 'opaque_client.dart' if (dart.library.io) 'opaque_client_stub.dart';
 import 'vault_handle.dart';
@@ -541,8 +542,10 @@ class ZkAuthService {
       // pre-HTTP progress in a production browser console. Release
       // builds silence ``print`` but ``debugPrint`` fires; the tag
       // ``[zk-login-step]`` is greppable in the DevTools console.
-      // ignore: avoid_print
-      print('[zk-login-step] $s');
+      if (!kReleaseMode || kIsWeb) {
+        // ignore: avoid_print
+        print('[zk-login-step] $s');
+      }
       try {
         onStep?.call(s);
       } catch (_) {

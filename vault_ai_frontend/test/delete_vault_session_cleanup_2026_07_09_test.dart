@@ -36,6 +36,7 @@ import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/perf/frontend_cache.dart' as perf_cache;
 import 'package:vault_ai_frontend/services/crypto_chat_live_cache.dart';
+import 'package:vault_ai_frontend/services/native_secure_store.dart';
 
 
 Future<AppState> _hydratedAppState({
@@ -84,7 +85,12 @@ void _primeAuthedVault(AppState app, {
 
 void main() {
   setUp(() {
+    NativeSecureStore.useSharedPreferencesForTesting = true;
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  tearDown(() {
+    NativeSecureStore.useSharedPreferencesForTesting = false;
   });
 
 
@@ -427,7 +433,8 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
       expect(
         tester.widget<Text>(find.byKey(const Key('probe_vault_name')))
@@ -436,7 +443,9 @@ void main() {
       );
 
       await app.handleVaultDeleted();
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
 
 
       expect(find.byKey(const Key('auth_landing')), findsOneWidget,
@@ -498,11 +507,14 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
 
       await app.handleVaultDeleted();
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
 
       expect(find.byKey(const Key('auth_landing_2')), findsOneWidget);
     });

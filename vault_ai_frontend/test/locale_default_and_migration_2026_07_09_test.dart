@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
+import 'package:vault_ai_frontend/services/native_secure_store.dart';
 
 
 AppState _freshAppState({String device = 'en'}) {
@@ -41,10 +42,12 @@ Future<Widget> _buildApp({
 
 void main() {
   setUp(() {
+    NativeSecureStore.useSharedPreferencesForTesting = true;
     AppState.deviceLanguageCodeResolver = () => 'en';
   });
 
   tearDown(() {
+    NativeSecureStore.useSharedPreferencesForTesting = false;
     AppState.deviceLanguageCodeResolver = () => 'en';
   });
 

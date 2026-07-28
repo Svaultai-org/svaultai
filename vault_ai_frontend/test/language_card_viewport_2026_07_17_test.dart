@@ -43,6 +43,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vault_ai_frontend/i18n/language_registry.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
+import 'package:vault_ai_frontend/services/native_secure_store.dart';
 
 
 // --------------------------- harness --------------------------------
@@ -111,6 +112,14 @@ void main() {
   // Suppress the debug prints that main.dart emits during hydrate;
   // they don't affect correctness.
   debugPrint = (_, {wrapWidth}) {};
+
+  setUp(() {
+    NativeSecureStore.useSharedPreferencesForTesting = true;
+  });
+
+  tearDown(() {
+    NativeSecureStore.useSharedPreferencesForTesting = false;
+  });
 
   // ==================================================================
   // 1. Overflow-free layout at 3 viewport sizes × collapsed / expanded
