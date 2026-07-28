@@ -17,7 +17,7 @@ const String kEthReceiveCreateButtonLabel = 'Create my Ethereum wallet';
 const String kEthReceiveCopyButtonLabel = 'Copy address';
 const String kEthReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kEthReceiveNonCustodialAttestation =
-    'Non-custodial: VaultAI never sees your private key. Your wallet is '
+    'Non-custodial: Svaultai never sees your private key. Your wallet is '
     'encrypted with your PIN and stored as ciphertext only.';
 const String kEthReceiveAssetWarning =
     'Only send Ethereum (Sepolia testnet) to this address. Sending the '
@@ -50,7 +50,7 @@ const String kTokenReceiveCreateEthFirstBanner =
 const String _kEthNetworkLabel = 'Ethereum Sepolia';
 const String _kEthNetworkLabelMainnet = 'Ethereum Mainnet';
 const String _kEthAsset = 'ETH';
-const String _kDefaultWalletLabel = 'VaultAI ETH wallet';
+const String _kDefaultWalletLabel = 'Svaultai ETH wallet';
 
 
 String receivePanelNetworkBadgeFor(String network) {

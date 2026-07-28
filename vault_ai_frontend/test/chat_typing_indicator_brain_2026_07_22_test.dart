@@ -145,19 +145,19 @@ void main() {
     }
 
     testWidgets(
-      'falls back to "VaultAI is thinking..." literal when label '
+      'falls back to "Svaultai is thinking..." literal when label '
       'is null (defensive fallback)',
       (WidgetTester tester) async {
         // Preserved historical fallback: if a caller ever passes
         // null (e.g. app.vaultName not yet populated), the widget
-        // renders the neutral "VaultAI is thinking..." literal
+        // renders the neutral "Svaultai is thinking..." literal
         // rather than crashing.
         await tester.pumpWidget(
           const MaterialApp(
             home: Scaffold(body: TypingPulse()),
           ),
         );
-        expect(find.text('VaultAI is thinking...'), findsOneWidget);
+        expect(find.text('Svaultai is thinking...'), findsOneWidget);
       },
     );
   });

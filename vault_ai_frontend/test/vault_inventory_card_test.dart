@@ -231,7 +231,7 @@ void main() {
       expect(
         find.textContaining("can't list"),
         findsNothing,
-        reason: 'spec rule: VaultAI must know what is in the vault',
+        reason: 'spec rule: Svaultai must know what is in the vault',
       );
     });
   });

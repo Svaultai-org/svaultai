@@ -6,7 +6,7 @@
 // keeps the choice of scanner package swappable without ripping
 // through the Send panels.
 //
-// Web behavior (the primary target — VaultAI ships as a Flutter web
+// Web behavior (the primary target — Svaultai ships as a Flutter web
 // app used from iPhone Safari):
 //   * mobile_scanner uses `MediaDevices.getUserMedia({ video })`
 //     on Chromium/WebKit browsers.

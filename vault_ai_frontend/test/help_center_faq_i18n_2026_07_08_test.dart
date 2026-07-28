@@ -242,7 +242,7 @@ void main() {
       'Korean shell renders Korean FAQ questions',
       (tester) async {
         await _pumpHelpCenter(tester, const Locale('ko'));
-        expect(find.text('VaultAI가 뭐야?'), findsOneWidget);
+        expect(find.text('Svaultai가 뭐야?'), findsOneWidget);
 
 
         expect(find.text('보관소를 어떻게 삭제해?'), findsOneWidget);
@@ -261,7 +261,7 @@ void main() {
         );
         expect(direction, TextDirection.rtl);
 
-        expect(find.text('ما هو VaultAI؟'), findsOneWidget);
+        expect(find.text('ما هو Svaultai؟'), findsOneWidget);
         expect(find.text('كيف أحذف خزينتي؟'), findsOneWidget);
       },
     );
@@ -270,7 +270,7 @@ void main() {
       'French shell renders French FAQ questions',
       (tester) async {
         await _pumpHelpCenter(tester, const Locale('fr'));
-        expect(find.text("Qu'est-ce que VaultAI ?"), findsOneWidget);
+        expect(find.text("Qu'est-ce que Svaultai ?"), findsOneWidget);
         expect(
           find.text('Comment supprimer mon coffre ?'), findsOneWidget,
         );
@@ -281,7 +281,7 @@ void main() {
       'Spanish shell renders Spanish FAQ questions',
       (tester) async {
         await _pumpHelpCenter(tester, const Locale('es'));
-        expect(find.text('¿Qué es VaultAI?'), findsOneWidget);
+        expect(find.text('¿Qué es Svaultai?'), findsOneWidget);
         expect(find.text('¿Cómo elimino mi bóveda?'), findsOneWidget);
       },
     );
@@ -290,7 +290,7 @@ void main() {
       'Japanese shell renders Japanese FAQ questions',
       (tester) async {
         await _pumpHelpCenter(tester, const Locale('ja'));
-        expect(find.text('VaultAI とは?'), findsOneWidget);
+        expect(find.text('Svaultai とは?'), findsOneWidget);
         expect(
           find.text('保管庫はどうやって削除しますか?'), findsOneWidget,
         );
@@ -301,7 +301,7 @@ void main() {
       'Chinese shell renders Chinese FAQ questions',
       (tester) async {
         await _pumpHelpCenter(tester, const Locale('zh'));
-        expect(find.text('VaultAI 是什么?'), findsOneWidget);
+        expect(find.text('Svaultai 是什么?'), findsOneWidget);
         expect(find.text('如何删除我的保险库?'), findsOneWidget);
       },
     );
@@ -310,7 +310,7 @@ void main() {
       'English shell keeps English FAQ questions',
       (tester) async {
         await _pumpHelpCenter(tester, const Locale('en'));
-        expect(find.text('What is VaultAI?'), findsOneWidget);
+        expect(find.text('What is Svaultai?'), findsOneWidget);
       },
     );
   });

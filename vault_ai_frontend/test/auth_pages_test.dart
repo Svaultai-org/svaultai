@@ -34,7 +34,7 @@ void main() {
         'acknowledgement flag', () {
       // ZK signup contract: SignupPage must collect vault_name +
       // PIN + confirm PIN and gate submission on an acknowledgement
-      // that VaultAI cannot recover the vault. The variable that
+      // that Svaultai cannot recover the vault. The variable that
       // holds that acknowledgement is a boolean checked before the
       // ZK registration call. We do NOT bind to the specific
       // variable name (that would be a rename-brittleness trap);
@@ -68,7 +68,7 @@ void main() {
         window,
         contains('cannot recover your vault'),
         reason: 'Submitting without acknowledgement must surface the '
-                '"VaultAI cannot recover your vault" enforcement copy.',
+                '"Svaultai cannot recover your vault" enforcement copy.',
       );
     });
 
@@ -400,7 +400,7 @@ void main() {
       );
       expect(
         window,
-        isNot(contains("'VaultAI User'")),
+        isNot(contains("'Svaultai User'")),
       );
       expect(
         window,

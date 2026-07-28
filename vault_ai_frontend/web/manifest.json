@@ -1,7 +1,7 @@
 {
-    "name": "VaultAI",
-    "short_name": "VaultAI",
-    "description": "VaultAI private digital vault",
+    "name": "Svaultai",
+    "short_name": "Svaultai",
+    "description": "Svaultai private digital vault",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0F1115",

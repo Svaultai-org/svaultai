@@ -530,33 +530,33 @@ List<dynamic> _stripForbiddenKeysList(List<dynamic> raw) {
 }
 
 const String kVcrRefusalCopySecretMaterial =
-    'VaultAI never surfaces your seed, mnemonic, private keys, '
+    'Svaultai never surfaces your seed, mnemonic, private keys, '
     'encrypted wallet secret, auth token, or API key through '
     'chat. If you need to back up sensitive material, use the '
     'existing gated flow (Security page, unlock + confirm).';
 
 const String kVcrRefusalCopyExchangeAction =
-    'VaultAI is a non-custodial wallet. It does not buy, sell, '
+    'Svaultai is a non-custodial wallet. It does not buy, sell, '
     'swap, trade, stake, bridge, or exchange assets. You can '
     'receive, hold, and send from your own device.';
 
 const String kVcrRefusalCopyBypassPin =
-    'VaultAI does not bypass PIN unlock, trusted-device checks, '
+    'Svaultai does not bypass PIN unlock, trusted-device checks, '
     'or local signing. These gates exist so nothing moves '
     'without your explicit confirmation on your device.';
 
 const String kVcrRefusalCopyExportAll =
     'Exporting your whole vault requires an explicit '
-    'confirmation step in the Security page. VaultAI will not '
+    'confirmation step in the Security page. Svaultai will not '
     'dump your entire vault from a chat message.';
 
 const String kVcrRefusalCopyMassReveal =
-    'VaultAI will not reveal every password or every secure '
+    'Svaultai will not reveal every password or every secure '
     'item at once. Open a single item and use the reveal-with-'
     'unlock flow to see its value.';
 
 const String kVcrRefusalCopyAutoSend =
-    'VaultAI cannot auto-send crypto. Every send requires a '
+    'Svaultai cannot auto-send crypto. Every send requires a '
     'trusted device, PIN unlock, local signing on your device, '
     'a fee preview where supported, and an explicit '
     'confirmation before broadcast.';

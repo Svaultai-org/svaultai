@@ -149,7 +149,7 @@ void main() {
       expect(
         scope.contains('kCryptoWalletEnginePortfolioHonestSubcopy'),
         isFalse,
-        reason: 'the extra "VaultAI only shows real on-chain balances" '
+        reason: 'the extra "Svaultai only shows real on-chain balances" '
             'line is redundant — per-asset rows already tell the story.',
       );
       expect(
@@ -180,7 +180,7 @@ void main() {
       );
       expect(
         kCryptoWalletEngineActivityHonestSubcopy,
-        'VaultAI never invents transaction history.',
+        'Svaultai never invents transaction history.',
       );
 
 

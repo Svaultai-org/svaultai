@@ -22,8 +22,8 @@ void main() {
       final html = _read('web/privacy/index.html');
 
       for (final required in [
-        'VaultAI',
-        'SVaultAI',
+        'Svaultai',
+        'Svaultai',
         'Effective date: July 28, 2026',
         'vaultai@svaultai.com',
         'Account information',
@@ -63,7 +63,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('VaultAI Privacy Policy'), findsWidgets);
+      expect(find.text('Svaultai Privacy Policy'), findsWidgets);
       expect(find.text('Effective date: July 28, 2026'), findsOneWidget);
       expect(find.textContaining('vaultai@svaultai.com'), findsWidgets);
     });

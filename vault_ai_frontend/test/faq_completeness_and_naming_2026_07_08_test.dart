@@ -154,7 +154,7 @@ void main() {
       expect(offenders, isEmpty,
           reason:
               "Frontend lib copy contains 'Aisha'. Use "
-              "'VaultAI Chat' / 'Ask VaultAI' / 'the assistant' "
+              "'Svaultai Chat' / 'Ask Svaultai' / 'the assistant' "
               "instead. Offenders:\n${offenders.join('\n')}");
     });
 
@@ -170,16 +170,16 @@ void main() {
 
 
   group('Copy naming constants', () {
-    test('support note says "ask VaultAI Chat" not "ask Aisha"',
+    test('support note says "ask Svaultai Chat" not "ask Aisha"',
         () {
       expect(kHelpCenterSupportNote,
-          contains('ask VaultAI Chat for help'));
+          contains('ask Svaultai Chat for help'));
       expect(kHelpCenterSupportNote.contains('Aisha'), isFalse);
     });
 
-    test('public hint says "ask VaultAI" not "ask Aisha"', () {
+    test('public hint says "ask Svaultai" not "ask Aisha"', () {
       expect(kHelpCenterPublicHint, contains('ask'));
-      expect(kHelpCenterPublicHint, contains('VaultAI'));
+      expect(kHelpCenterPublicHint, contains('Svaultai'));
       expect(kHelpCenterPublicHint.contains('Aisha'), isFalse);
     });
 
@@ -191,7 +191,7 @@ void main() {
 
   group('FAQ card ask-button labels', () {
     testWidgets(
-      'signed-in ask button label reads "Ask VaultAI"',
+      'signed-in ask button label reads "Ask Svaultai"',
       (tester) async {
         String? asked;
         await _pumpHelpCenter(
@@ -204,20 +204,20 @@ void main() {
         expect(
           find.descendant(
             of: askButtonFinder,
-            matching: find.text('Ask VaultAI'),
+            matching: find.text('Ask Svaultai'),
           ),
           findsOneWidget,
-          reason: 'signed-in ask button must say "Ask VaultAI"',
+          reason: 'signed-in ask button must say "Ask Svaultai"',
         );
 
         await tester.tap(askButtonFinder);
         await tester.pumpAndSettle();
-        expect(asked, 'What is VaultAI?');
+        expect(asked, 'What is Svaultai?');
       },
     );
 
     testWidgets(
-      'public sign-in button label reads "Sign in to ask VaultAI"',
+      'public sign-in button label reads "Sign in to ask Svaultai"',
       (tester) async {
         await _pumpHelpCenter(
           tester, mode: HelpCenterMode.public,
@@ -229,7 +229,7 @@ void main() {
         expect(
           find.descendant(
             of: signInButtonFinder,
-            matching: find.text('Sign in to ask VaultAI'),
+            matching: find.text('Sign in to ask Svaultai'),
           ),
           findsOneWidget,
         );
@@ -313,8 +313,8 @@ void main() {
     );
 
     testWidgets(
-      'public mode uses the "Sign in to ask VaultAI" label '
-      'consistently, not "Ask VaultAI" directly',
+      'public mode uses the "Sign in to ask Svaultai" label '
+      'consistently, not "Ask Svaultai" directly',
       (tester) async {
         await _pumpHelpCenter(
             tester, mode: HelpCenterMode.public,

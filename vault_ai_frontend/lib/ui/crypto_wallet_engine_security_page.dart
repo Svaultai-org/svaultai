@@ -10,7 +10,7 @@ const String kCryptoWalletSecurityHeading =
     'Your wallet, your keys, your call';
 const String kCryptoWalletSecuritySubheading =
     'Wallet backups are encrypted on this device with your PIN. '
-    'VaultAI cannot decrypt or move your funds. Reveal flows always '
+    'Svaultai cannot decrypt or move your funds. Reveal flows always '
     'require your PIN.';
 
 const String kCryptoWalletSecurityStatusHeading = 'Security status';
@@ -29,7 +29,7 @@ const String kCryptoWalletSecurityBackupBody =
 const String kCryptoWalletSecurityRecoveryHeading = 'Recovery guidance';
 const String kCryptoWalletSecurityRecoveryBody =
     'Write down your PIN somewhere safe and offline. Losing it means '
-    'losing access to the encrypted backups on this device. VaultAI '
+    'losing access to the encrypted backups on this device. Svaultai '
     'cannot reset your PIN — there is no custodial recovery path.';
 
 const String kCryptoWalletSecurityDeviceHeading = 'Device + PIN safety';
@@ -40,7 +40,7 @@ const String kCryptoWalletSecurityDeviceBody =
 
 const String kCryptoWalletSecurityRemindHeading = 'Non-custodial reminder';
 const String kCryptoWalletSecurityRemindBody =
-    'VaultAI cannot move your funds. Every Send action signs locally '
+    'Svaultai cannot move your funds. Every Send action signs locally '
     'after your PIN confirmation; the backend only broadcasts the '
     'signed transaction. No buy, sell, swap, trade, stake, or bridge '
     'surface exists in this product.';

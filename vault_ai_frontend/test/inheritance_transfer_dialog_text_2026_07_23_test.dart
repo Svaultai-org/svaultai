@@ -1,5 +1,5 @@
 // Bug 3 regression — transfer dialog wording must reflect the actual
-// backend behavior. VaultAI does NOT send emails; the inheritance
+// backend behavior. Svaultai does NOT send emails; the inheritance
 // release flow notifies owners in-app via _create_notification, and
 // the post-countdown behavior is NOT automatic release — the
 // beneficiary must call /inheritance/access/claim followed by
@@ -44,7 +44,7 @@ void main() {
         src.contains('The vault owner will be emailed'),
         isFalse,
         reason: 'the request-transfer dialog must not claim email — '
-            'VaultAI only notifies in-app',
+            'Svaultai only notifies in-app',
       );
       expect(
         src.contains('The beneficiary will be emailed'),
@@ -54,13 +54,13 @@ void main() {
     });
 
     test('beneficiary request-transfer dialog says "notified inside '
-        'VaultAI" and describes claiming after the countdown', () {
+        'Svaultai" and describes claiming after the countdown', () {
       final collapsed = _collapsedSourceText(src);
       expect(
         collapsed.contains(
-            'The vault owner will be notified inside VaultAI'),
+            'The vault owner will be notified inside Svaultai'),
         isTrue,
-        reason: 'the request dialog must clearly state VaultAI '
+        reason: 'the request dialog must clearly state Svaultai '
             'notification (not email)',
       );
       expect(
@@ -80,11 +80,11 @@ void main() {
     });
 
     test('owner cancel-transfer dialog says "notified inside '
-        'VaultAI" instead of emailed', () {
+        'Svaultai" instead of emailed', () {
       final collapsed = _collapsedSourceText(src);
       expect(
         collapsed.contains(
-            'The beneficiary will be notified inside VaultAI'),
+            'The beneficiary will be notified inside Svaultai'),
         isTrue,
         reason: 'the cancel dialog must clearly state in-app '
             'notification',

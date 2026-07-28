@@ -15,7 +15,7 @@ const String kMoneroReceiveNetworkBadge = 'Monero';
 const String kMoneroReceiveCopyButtonLabel = 'Copy address';
 const String kMoneroReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kMoneroReceiveNonCustodialAttestation =
-    'Non-custodial: VaultAI never sees your Monero spend or view key. '
+    'Non-custodial: Svaultai never sees your Monero spend or view key. '
     'Your wallet is encrypted with your PIN and stored as ciphertext '
     'only.';
 const String kMoneroReceiveAssetWarning =

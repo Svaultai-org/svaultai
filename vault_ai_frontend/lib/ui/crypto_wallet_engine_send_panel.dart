@@ -69,11 +69,11 @@ const String kMainnetSendNewRecipientWarning =
 // becomes "Retry balance check" until the balance loads.
 const String kMainnetSendBalanceUnverifiedError =
     'Balance could not be verified. Tap Retry balance check to try '
-    'again. VaultAI will not sign or broadcast a transaction while '
+    'again. Svaultai will not sign or broadcast a transaction while '
     'your balance is unknown.';
 const String kMainnetSendEthGasBalanceUnverifiedError =
     'ETH balance for gas could not be verified. Tap Retry balance '
-    'check to try again. VaultAI will not sign or broadcast a token '
+    'check to try again. Svaultai will not sign or broadcast a token '
     'transfer while the parent ETH balance is unknown.';
 const String kMainnetSendRetryBalanceLabel = 'Retry balance check';
 
@@ -126,7 +126,7 @@ const String kEthSendResultBodySubmitted =
     'wallet activity once a node includes it in a block.';
 const String kEthSendResultBodyUncertain =
     "The mainnet RPC accepted the raw transaction but no Ethereum "
-    "node has yet reported seeing it. VaultAI will keep checking. "
+    "node has yet reported seeing it. Svaultai will keep checking. "
     "Do not re-sign with a new nonce until the status is confirmed "
     "as not_found on the network.";
 const String kEthSendResultBodyRejected =
@@ -205,7 +205,7 @@ const String kEthSendMaxActionLabel = 'Max';
 // persisted draft. It calls the dedicated fee-estimate endpoint
 // with the destination address the user has already entered.
 const String kSendUpdatePendingError =
-    'VaultAI was updated. Refresh before starting a new send.';
+    'Svaultai was updated. Refresh before starting a new send.';
 const String kEthSendMaxRequiresDestinationError =
     'Enter a destination address first so we can estimate the '
     'network fee.';
@@ -222,7 +222,7 @@ const String kEthSendReviewWarning =
 const String kEthSendReviewConfirmButtonLabel = 'Confirm and enter PIN';
 const String kEthSendPinDialogTitle = 'Enter your PIN to sign locally';
 const String kEthSendPinDialogBody =
-    'Your private key is decrypted on this device only. VaultAI never '
+    'Your private key is decrypted on this device only. Svaultai never '
     'sees the plaintext key.';
 const String kEthSendPinDialogConfirmLabel = 'Sign + broadcast';
 const String kEthSendBroadcastPendingLabel = 'Signing and broadcasting…';

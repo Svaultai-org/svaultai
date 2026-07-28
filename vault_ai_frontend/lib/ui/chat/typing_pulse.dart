@@ -15,7 +15,7 @@ class TypingPulse extends StatelessWidget {
     
     return Semantics(
       liveRegion: true,
-      label: label ?? 'VaultAI is thinking...',
+      label: label ?? 'Svaultai is thinking...',
       child: Padding(
       padding: const EdgeInsets.only(
         left:  VaultSpacing.xs,
@@ -40,7 +40,7 @@ class TypingPulse extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                label ?? 'VaultAI is thinking...',
+                label ?? 'Svaultai is thinking...',
                 style: VaultText.bodySm.copyWith(
                   color: VaultColors.textSecondary,
                   fontStyle: FontStyle.italic,

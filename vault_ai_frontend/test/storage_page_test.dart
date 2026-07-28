@@ -1272,7 +1272,7 @@ void main() {
       
       expect(
         storageSource,
-        contains("We're updating your VaultAI storage plan."),
+        contains("We're updating your Svaultai storage plan."),
         reason: 'Phase 1: progress dialog body (first sentence)',
       );
       expect(

@@ -777,7 +777,7 @@ Future<void> main() async {
             // against the current window origin; on mobile/desktop
             // Uri.base.origin is undefined so we keep backendBaseUrl.
             baseUrl: kIsWeb ? Uri.base.origin : backendBaseUrl,
-            child: VaultaiApp(),
+            child: SvaultaiApp(),
           ),
         ),
       );
@@ -2615,8 +2615,8 @@ Locale resolveShellLocale(
   return english;
 }
 
-class VaultaiApp extends StatelessWidget {
-  const VaultaiApp({super.key});
+class SvaultaiApp extends StatelessWidget {
+  const SvaultaiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -2630,7 +2630,7 @@ class VaultaiApp extends StatelessWidget {
         return _ActivityWrapper(child: child);
       },
       debugShowCheckedModeBanner: false,
-      title: 'VaultAI',
+      title: 'Svaultai',
       locale: app.shellLocale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -2770,7 +2770,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
             const SizedBox(width: 12),
             const Flexible(
               child: Text(
-                'Vaultai',
+                'Svaultai',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -3199,7 +3199,7 @@ class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
             child: Text(
               'Semantic content search is unavailable for this '
               'private vault. Your files are encrypted end-to-end, '
-              'and VaultAI cannot read their content to build a '
+              'and Svaultai cannot read their content to build a '
               'search index. Filename search still works.',
               style: TextStyle(
                 color: Color(0xFFCFE2FF),
@@ -3665,7 +3665,7 @@ class _HeroText extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         const Text(
-          'Vaultai helps you save logins, IDs, cards, files, photos, and notes, then retrieve them naturally in chat.',
+          'Svaultai helps you save logins, IDs, cards, files, photos, and notes, then retrieve them naturally in chat.',
           style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 16, height: 1.6),
         ),
         const SizedBox(height: 22),
@@ -4131,7 +4131,7 @@ Future<bool> _tryLegacyAdoptionBestEffort({
       if (!context.mounted) return true;
       // Adoption completes silently and the user lands in /chat. The
       // internal vault handle is stored via legacy_adoption for
-      // subsequent ZK login, but the user never sees it — VaultAI's
+      // subsequent ZK login, but the user never sees it — Svaultai's
       // user-facing credentials are username + PIN only.
       Navigator.of(context).pushReplacementNamed('/chat');
       return true;
@@ -4768,7 +4768,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Enter your vault name and PIN. Vault names are unique across VaultAI.',
+                  'Enter your vault name and PIN. Vault names are unique across Svaultai.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFFB4B4B4)),
                 ),
@@ -4886,7 +4886,7 @@ class _SignupPageState extends State<SignupPage> {
     }
     if (!acknowledged) {
       setState(() => err =
-          'Please confirm you understand VaultAI cannot recover your vault.');
+          'Please confirm you understand Svaultai cannot recover your vault.');
       return;
     }
 
@@ -5122,7 +5122,7 @@ class _SignupPageState extends State<SignupPage> {
                         SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'If you forget your vault name or PIN, VaultAI '
+                            'If you forget your vault name or PIN, Svaultai '
                             'cannot recover your vault.',
                             style: TextStyle(
                               color: Color(0xFFFFE0B2),
@@ -5939,7 +5939,7 @@ class _PinGatePageState extends State<PinGatePage> {
                         const SizedBox(width: 10),
                         const Expanded(
                           child: Text(
-                            'VaultAI cannot reset, recover, view, or '
+                            'Svaultai cannot reset, recover, view, or '
                             'bypass your PIN.\n'
                             'If you forget it, your vault may become '
                             'permanently inaccessible.',
@@ -5980,7 +5980,7 @@ class _PinGatePageState extends State<PinGatePage> {
                             child: Padding(
                               padding: EdgeInsets.only(top: 12),
                               child: Text(
-                                'I understand that VaultAI cannot '
+                                'I understand that Svaultai cannot '
                                 'recover my PIN.',
                                 style: TextStyle(
                                   color: Color(0xFFE0E0E0),
@@ -6013,7 +6013,7 @@ class _PinGatePageState extends State<PinGatePage> {
                         SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Remember: VaultAI cannot recover forgotten PINs.',
+                            'Remember: Svaultai cannot recover forgotten PINs.',
                             style: TextStyle(
                               color: Color(0xFFB4B4B4),
                               fontSize: 12,
@@ -6292,7 +6292,7 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
                 const SizedBox(height: 12),
                 const Text(
                   'Without that key, the old data cannot be decrypted by anyone, '
-                  'including you. To protect your account, VaultAI will not let a '
+                  'including you. To protect your account, Svaultai will not let a '
                   'new vault be created on top of it. You must erase the unrecoverable '
                   'data before starting fresh.',
                   style: TextStyle(
@@ -7642,10 +7642,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               .inheritanceCancelPendingTransferTitle(label),
         ),
         content: const Text(
-          // 2026-07-23: VaultAI does not email — the cancel notify
+          // 2026-07-23: Svaultai does not email — the cancel notify
           // fires via _create_notification (in-app only).
           'The 30-day countdown will be cleared. The beneficiary will '
-          'be notified inside VaultAI. They can request again later.',
+          'be notified inside Svaultai. They can request again later.',
         ),
         actions: [
           TextButton(
@@ -7806,14 +7806,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ),
         content: const Text(
           // 2026-07-23: text corrected against the actual backend
-          // state machine. VaultAI does not email — it notifies
+          // state machine. Svaultai does not email — it notifies
           // owners in-app. The post-countdown behavior is NOT
           // automatic release: the beneficiary must call
           // /inheritance/access/claim → /credentials/retrieve to
           // move the escrow to 'released'. See
           // inheritance_release_routes.py::claim_access.
           'A 30-day countdown will start. The vault owner will be '
-          'notified inside VaultAI and can approve or reject the '
+          'notified inside Svaultai and can approve or reject the '
           'request during that period. If the owner does not respond '
           'before the countdown ends, you\'ll be able to claim the '
           'credentials and open the inherited login on your account.',
@@ -8000,8 +8000,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'These are the VaultAI login credentials this '
-                    'beneficiary will inherit. VaultAI can never read '
+                    'These are the Svaultai login credentials this '
+                    'beneficiary will inherit. Svaultai can never read '
                     'them — they are encrypted on this device and '
                     'released only after your approval or the 30-day '
                     'cooldown.',
@@ -8009,7 +8009,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'VaultAI username',
+                    'Svaultai username',
                     style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
                   ),
                   TextFormField(
@@ -8026,7 +8026,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'VaultAI PIN',
+                    'Svaultai PIN',
                     style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
                   ),
                   TextFormField(
@@ -8404,7 +8404,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         backgroundColor: const Color(0xFF2F2F2F),
         title: Text('Approve $beneficiaryLabel?'),
         content: const Text(
-          'Approving will permanently release the saved VaultAI '
+          'Approving will permanently release the saved Svaultai '
           'username and PIN to this beneficiary. This cannot be '
           'undone.',
         ),
@@ -8891,7 +8891,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final display = _nonEmptyTrimmed(app.displayName) ??
         _nonEmptyTrimmed(app.vaultName) ??
         _nonEmptyTrimmed(app.lastVaultName) ??
-        'VaultAI';
+        'Svaultai';
     final repair = await ZkAuthService(_zkHttpPost).repairVaultOpaqueRecord(
       vaultHandle: handle,
       pin: pin,
@@ -9092,7 +9092,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             obscureText: true,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-              hintText: 'Enter your VaultAI PIN',
+              hintText: 'Enter your Svaultai PIN',
               isDense: true,
             ),
             validator: (v) =>
@@ -9131,7 +9131,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       builder: (dCtx) => AlertDialog(
         key: const Key('inheritance_revealed_dialog'),
         backgroundColor: const Color(0xFF2F2F2F),
-        title: Text('Inherited VaultAI login: $passerLabel'),
+        title: Text('Inherited Svaultai login: $passerLabel'),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -9139,7 +9139,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             children: [
               const Text(
                 'These credentials provide access to the owner\'s '
-                'original VaultAI account. Keep them private.',
+                'original Svaultai account. Keep them private.',
                 style: TextStyle(
                   color: Color(0xFFFFA726),
                   fontSize: 13,
@@ -10257,7 +10257,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               ),
                               SizedBox(height: 2),
                               Text(
-                                'Answers about VaultAI, Crypto Vault, '
+                                'Answers about Svaultai, Crypto Vault, '
                                 'Monero, billing, and support.',
                                 style: TextStyle(
                                   color: Color(0xFFB4B4B4),
@@ -10307,7 +10307,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               ),
                               SizedBox(height: 2),
                               Text(
-                                'How VaultAI / SVaultAI handles account, '
+                                'How Svaultai handles account, '
                                 'vault, inheritance, wallet, and device data.',
                                 style: TextStyle(
                                   color: Color(0xFFB4B4B4),
@@ -14679,7 +14679,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       enabled: !sending,
       decoration: InputDecoration(
         hintText: isMobile
-            ? 'Ask VaultAI…'
+            ? 'Ask Svaultai…'
             : AppLocalizations.of(context).chatComposerHint,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
@@ -15768,7 +15768,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'VaultAI Crypto Wallet',
+                'Svaultai Crypto Wallet',
                 key: const Key('crypto_vault_engine_disabled_heading'),
                 style: TextStyle(
                   fontSize: vrHeadline(context),
@@ -15966,7 +15966,7 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'Permanently delete your VaultAI vault. This '
+                    'Permanently delete your Svaultai vault. This '
                     'cannot be undone. Trusted device + PIN + exact '
                     'phrase required.',
                     style: TextStyle(

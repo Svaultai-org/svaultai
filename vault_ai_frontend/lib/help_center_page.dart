@@ -23,7 +23,7 @@ Future<void> _defaultClipboardWrite(String text) =>
 const String kHelpCenterTitle    = 'Help & FAQ';
 const String kHelpCenterHeading  = kHelpCenterTitle;
 const String kHelpCenterSubtitle =
-    'Answers to common questions about VaultAI. Search below or '
+    'Answers to common questions about Svaultai. Search below or '
     'browse by category — the AI assistant answers from the same '
     'set of topics.';
 const String kHelpCenterEmpty     = 'No matching help topics';
@@ -31,15 +31,15 @@ const String kHelpCenterEmptyBody =
     'Try a different search term, or pick a category chip.';
 const String kHelpCenterSupportNote =
     'Live customer support is not available yet. Use this Help '
-    'Center or ask VaultAI Chat for help.';
+    'Center or ask Svaultai Chat for help.';
 const String kHelpCenterPublicHint =
     "You're viewing the public Help Center. Sign in to ask "
-    'VaultAI and see account details.';
+    'Svaultai and see account details.';
 
 const String kHelpContactSupportEmail = 'vaultai@svaultai.com';
 const String kHelpContactSupportMailtoUrl =
     'mailto:vaultai@svaultai.com'
-    '?subject=VaultAI%20Support'
+    '?subject=Svaultai%20Support'
     '&body=Please%20describe%20your%20issue%20below.'
     '%0A%0ADevice:%20'
     '%0APlatform:%20Android/iPhone/Web/Desktop'

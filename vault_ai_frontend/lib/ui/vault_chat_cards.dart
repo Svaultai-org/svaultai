@@ -541,7 +541,7 @@ class _DocumentResultCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Open the document to generate a summary. VaultAI never '
+            'Open the document to generate a summary. Svaultai never '
             'invents document content.',
             style: kWalletBodyStyle,
           ),
@@ -2144,7 +2144,7 @@ class _BillingStatusCard extends StatelessWidget {
           if (!available)
             Text(
               upgrade
-                  ? 'To change plan or add storage, VaultAI will open '
+                  ? 'To change plan or add storage, Svaultai will open '
                       'the existing gated checkout flow. Chat cannot '
                       'directly charge your card.'
                   : 'Open Billing to see your current plan.',
@@ -2288,7 +2288,7 @@ class _VaultActivityCard extends StatelessWidget {
           const SizedBox(height: 6),
           if (!available)
             const Text(
-              'Open the vault to see a masked audit trail. VaultAI '
+              'Open the vault to see a masked audit trail. Svaultai '
               'never leaks raw sensitive values in activity summaries.',
               style: kWalletBodyStyle,
             )
@@ -2487,7 +2487,7 @@ class _UnrecognizedCard extends StatelessWidget {
       testKey: kVcrCardKeyUnrecognized,
       child: Text(
         card.message ??
-            'That question is not something VaultAI chat '
+            'That question is not something Svaultai chat '
                 'can answer yet.',
         style: const TextStyle(
           color: kWalletTextMuted,

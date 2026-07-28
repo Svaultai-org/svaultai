@@ -9,7 +9,7 @@ class AppLocalizationsFr extends AppLocalizations {
   AppLocalizationsFr([String locale = 'fr']) : super(locale);
 
   @override
-  String get appTitle => 'VaultAI';
+  String get appTitle => 'Svaultai';
 
   @override
   String get commonRetry => 'Réessayer';
@@ -42,7 +42,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get commonDownload => 'Télécharger';
 
   @override
-  String get commonAskVaultAI => 'Demander à VaultAI';
+  String get commonAskVaultAI => 'Demander à Svaultai';
 
   @override
   String get commonClose => 'Fermer';
@@ -160,7 +160,7 @@ class AppLocalizationsFr extends AppLocalizations {
       'Posez une question sur votre coffre ou téléversez un fichier...';
 
   @override
-  String get chatThinking => 'VaultAI réfléchit...';
+  String get chatThinking => 'Svaultai réfléchit...';
 
   @override
   String chatThinkingWithName(String name) {
@@ -180,7 +180,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get chatErrorGeneric =>
-      'VaultAI n\'a pas pu répondre à cela. Réessayez.';
+      'Svaultai n\'a pas pu répondre à cela. Réessayez.';
 
   @override
   String get chatRetryButton => 'Réessayer';
@@ -232,7 +232,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get conciergeSubtitle =>
-      'Ce que VaultAI vous suggère de regarder en premier';
+      'Ce que Svaultai vous suggère de regarder en premier';
 
   @override
   String get conciergeLoading => 'Collecte des informations...';
@@ -283,7 +283,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get conciergeAllClearSub =>
-      'Rien d\'urgent aujourd\'hui. VaultAI surveille vos documents et fera remonter toute nouveauté ici.';
+      'Rien d\'urgent aujourd\'hui. Svaultai surveille vos documents et fera remonter toute nouveauté ici.';
 
   @override
   String get conciergePostureSecurity => 'Sécurité';
@@ -377,7 +377,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get expiryEmptySub =>
-      'Téléversez un passeport, visa, police d\'assurance ou contrat et VaultAI suivra son expiration automatiquement.';
+      'Téléversez un passeport, visa, police d\'assurance ou contrat et Svaultai suivra son expiration automatiquement.';
 
   @override
   String get expiryNoneInWindow => 'Rien dans cette période.';
@@ -463,7 +463,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get memorySubtitle =>
-      'Une chronologie de ce que VaultAI retient de votre vie';
+      'Une chronologie de ce que Svaultai retient de votre vie';
 
   @override
   String get memoryLoading => 'Chargement de vos souvenirs...';
@@ -476,7 +476,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get memoryEmptySub =>
-      'Dis à VaultAI quoi retenir : \'retiens que l\'anniversaire de ma mère est le 14 février\'. Tout apparaîtra ici, groupé par type et par date.';
+      'Dis à Svaultai quoi retenir : \'retiens que l\'anniversaire de ma mère est le 14 février\'. Tout apparaîtra ici, groupé par type et par date.';
 
   @override
   String get memoryNoMatchTitle => 'Aucun résultat.';
@@ -547,7 +547,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get settingsLanguageHint =>
-      'Choisissez la langue que VaultAI utilise. Affecte les libellés et les réponses du chat.';
+      'Choisissez la langue que Svaultai utilise. Affecte les libellés et les réponses du chat.';
 
   @override
   String get settingsLanguageAuto => 'Auto (système)';
@@ -587,7 +587,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String settingsLanguagePartialNotice(String name) {
-    return 'VaultAI Chat répondra en $name. L\'interface reste en anglais pendant que la traduction est finalisée.';
+    return 'Svaultai Chat répondra en $name. L\'interface reste en anglais pendant que la traduction est finalisée.';
   }
 
   @override
@@ -660,7 +660,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get helpCenterSubtitle =>
-      'Réponses aux questions courantes sur VaultAI. Cherchez ci-dessous ou parcourez par catégorie — l\'assistant IA répond à partir des mêmes sujets.';
+      'Réponses aux questions courantes sur Svaultai. Cherchez ci-dessous ou parcourez par catégorie — l\'assistant IA répond à partir des mêmes sujets.';
 
   @override
   String get helpCenterEmpty => 'Aucun sujet correspondant';
@@ -671,18 +671,18 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get helpCenterSupportNote =>
-      'Le support client en direct n\'est pas encore disponible. Utilisez le centre d\'aide ou demandez à VaultAI Chat.';
+      'Le support client en direct n\'est pas encore disponible. Utilisez le centre d\'aide ou demandez à Svaultai Chat.';
 
   @override
   String get helpContactSupportTitle => 'Contacter le support';
 
   @override
   String get helpContactSupportBody =>
-      'Besoin d\'aide avec VaultAI ? Contactez notre équipe de support.';
+      'Besoin d\'aide avec Svaultai ? Contactez notre équipe de support.';
 
   @override
   String helpContactSupportEmailA11yLabel(String email) {
-    return 'Envoyer un e-mail au support VaultAI à $email';
+    return 'Envoyer un e-mail au support Svaultai à $email';
   }
 
   @override
@@ -695,7 +695,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String helpContactSupportCopyEmailA11yLabel(String email) {
-    return 'Copier l\'e-mail du support VaultAI $email dans le presse-papiers';
+    return 'Copier l\'e-mail du support Svaultai $email dans le presse-papiers';
   }
 
   @override
@@ -704,7 +704,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get helpCenterPublicHint =>
-      'Vous consultez le centre d\'aide public. Connectez-vous pour interroger VaultAI et voir les détails du compte.';
+      'Vous consultez le centre d\'aide public. Connectez-vous pour interroger Svaultai et voir les détails du compte.';
 
   @override
   String get helpCenterSearchHint =>
@@ -714,7 +714,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get helpCenterClearSearch => 'Effacer la recherche';
 
   @override
-  String get helpCenterSignInToAsk => 'Connectez-vous pour demander à VaultAI';
+  String get helpCenterSignInToAsk => 'Connectez-vous pour demander à Svaultai';
 
   @override
   String get helpCategoryGettingStarted => 'Prise en main';
@@ -745,11 +745,11 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get deleteVaultBody =>
-      'La suppression du coffre supprime définitivement vos données VaultAI, y compris les fichiers, éléments sécurisés, identifiants, pièces d\'identité, enregistrements chiffrés Crypto Vault et métadonnées associées.';
+      'La suppression du coffre supprime définitivement vos données Svaultai, y compris les fichiers, éléments sécurisés, identifiants, pièces d\'identité, enregistrements chiffrés Crypto Vault et métadonnées associées.';
 
   @override
   String get deleteVaultCryptoWarning =>
-      'Supprimer votre coffre ne déplace ni ne supprime les actifs crypto sur la blockchain. Si vous n\'avez pas sauvegardé votre portefeuille hors de VaultAI, la suppression peut entraîner une perte d\'accès à ces fonds.';
+      'Supprimer votre coffre ne déplace ni ne supprime les actifs crypto sur la blockchain. Si vous n\'avez pas sauvegardé votre portefeuille hors de Svaultai, la suppression peut entraîner une perte d\'accès à ces fonds.';
 
   @override
   String get deleteVaultPhraseInstruction =>

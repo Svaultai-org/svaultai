@@ -1,7 +1,7 @@
 /// 2026-07-14 (Round 10 — stale-cache fix): frontend release-update
 /// controller.
 ///
-/// VaultAI is a financial web application. Users must NOT need
+/// Svaultai is a financial web application. Users must NOT need
 /// Incognito, logout, cache clearing, or dev tools to receive a
 /// new deployment.
 ///
@@ -106,7 +106,7 @@ class AppReleaseController {
 
   final _updateNotifier = ValueNotifier<bool>(false);
 
-  /// Consumers listen to this to render "VaultAI was updated.
+  /// Consumers listen to this to render "Svaultai was updated.
   /// Refreshing…" banners and to disable Review/Confirm until the
   /// user chooses to reload.
   ValueListenable<bool> get updateAvailableNotifier =>

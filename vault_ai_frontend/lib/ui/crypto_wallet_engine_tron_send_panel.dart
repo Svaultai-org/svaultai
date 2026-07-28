@@ -23,7 +23,7 @@ import 'scan_recipient_qr_sheet.dart';
 
 
 const String kTronSendUpdatePendingError =
-    'VaultAI was updated. Refresh before starting a new send.';
+    'Svaultai was updated. Refresh before starting a new send.';
 const String kTronSendPanelTitle = 'Send USDT (TRC20)';
 const String kTronSendReviewHeading = 'Review USDT TRC20 send';
 const String kTronSendConfirmationWarning =
@@ -39,7 +39,7 @@ const String kTronSendPausedMessage =
 const String kTronSendPinDialogTitle =
     'Enter your PIN to sign locally';
 const String kTronSendPinDialogBody =
-    'Your TRON secret is decrypted on this device only. VaultAI '
+    'Your TRON secret is decrypted on this device only. Svaultai '
     'never sees the plaintext key.';
 const String kTronSendSubmittedHeading = 'Broadcast submitted';
 const String kTronSendSubmittedBody =
@@ -149,7 +149,7 @@ const String kTronSendResultHeadingExpired =
     'Draft expired before broadcast';
 const String kTronSendResultBodyUncertain =
     'The TRON provider did not confirm inclusion within the '
-    'visibility window. VaultAI will keep checking. Do not re-sign '
+    'visibility window. Svaultai will keep checking. Do not re-sign '
     'until the status resolves.';
 const String kTronSendResultBodyRejected =
     'The TRON provider explicitly rejected this transaction. The '

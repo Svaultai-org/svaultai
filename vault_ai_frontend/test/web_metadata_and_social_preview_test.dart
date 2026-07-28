@@ -24,16 +24,16 @@ void main() {
       html = await f.readAsString();
     });
 
-    test('title is VaultAI', () {
+    test('title is Svaultai', () {
 
-      expect(html, contains('<title>VaultAI</title>'));
+      expect(html, contains('<title>Svaultai</title>'));
     });
 
-    test('meta description is the VaultAI copy', () {
+    test('meta description is the Svaultai copy', () {
       expect(
         html,
         contains(
-          'VaultAI is a private digital vault for securely storing '
+          'Svaultai is a private digital vault for securely storing '
           'and managing passwords, documents, IDs, files, secure '
           'notes, and crypto wallet records.',
         ),
@@ -47,7 +47,7 @@ void main() {
       );
     });
 
-    test('theme-color is the VaultAI brand accent #10A37F', () {
+    test('theme-color is the Svaultai brand accent #10A37F', () {
       expect(
         html,
         contains('<meta name="theme-color" content="#10A37F">'),
@@ -55,8 +55,8 @@ void main() {
     });
 
     group('Open Graph tags', () {
-      test('og:title = VaultAI', () {
-        expect(html, contains('property="og:title" content="VaultAI"'));
+      test('og:title = Svaultai', () {
+        expect(html, contains('property="og:title" content="Svaultai"'));
       });
 
       test('og:description = tagline', () {
@@ -95,8 +95,8 @@ void main() {
         expect(html, contains('property="og:image:height" content="630"'));
       });
 
-      test('og:site_name = VaultAI', () {
-        expect(html, contains('property="og:site_name" content="VaultAI"'));
+      test('og:site_name = Svaultai', () {
+        expect(html, contains('property="og:site_name" content="Svaultai"'));
       });
     });
 
@@ -108,8 +108,8 @@ void main() {
         );
       });
 
-      test('twitter:title = VaultAI', () {
-        expect(html, contains('name="twitter:title" content="VaultAI"'));
+      test('twitter:title = Svaultai', () {
+        expect(html, contains('name="twitter:title" content="Svaultai"'));
       });
 
       test('twitter:description = tagline', () {
@@ -134,19 +134,19 @@ void main() {
     });
 
     group('Apple / PWA tags', () {
-      test('apple-mobile-web-app-title = VaultAI', () {
+      test('apple-mobile-web-app-title = Svaultai', () {
         expect(
           html,
           contains(
-            'name="apple-mobile-web-app-title" content="VaultAI"',
+            'name="apple-mobile-web-app-title" content="Svaultai"',
           ),
         );
       });
 
-      test('application-name = VaultAI', () {
+      test('application-name = Svaultai', () {
         expect(
           html,
-          contains('name="application-name" content="VaultAI"'),
+          contains('name="application-name" content="Svaultai"'),
         );
       });
 
@@ -159,7 +159,7 @@ void main() {
         );
       });
 
-      test('favicon.png is referenced (VaultAI-branded)', () {
+      test('favicon.png is referenced (Svaultai-branded)', () {
         expect(html, contains('rel="icon" type="image/png" href="favicon.png"'));
       });
 
@@ -192,16 +192,16 @@ void main() {
       manifest = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
     });
 
-    test('name = VaultAI', () {
-      expect(manifest['name'], 'VaultAI');
+    test('name = Svaultai', () {
+      expect(manifest['name'], 'Svaultai');
     });
 
-    test('short_name = VaultAI', () {
-      expect(manifest['short_name'], 'VaultAI');
+    test('short_name = Svaultai', () {
+      expect(manifest['short_name'], 'Svaultai');
     });
 
-    test('description is the VaultAI copy', () {
-      expect(manifest['description'], 'VaultAI private digital vault');
+    test('description is the Svaultai copy', () {
+      expect(manifest['description'], 'Svaultai private digital vault');
     });
 
     test('start_url = /', () {
@@ -251,7 +251,7 @@ void main() {
       final f = _webFile('og-image.png');
       expect(await f.exists(), isTrue,
           reason:
-              'og-image.png must exist so link unfurls show the VaultAI card '
+              'og-image.png must exist so link unfurls show the Svaultai card '
               'on iMessage, WhatsApp, Slack, Discord, Facebook, LinkedIn, X.');
       final bytes = await f.readAsBytes();
       expect(bytes.length, greaterThan(2000),
@@ -287,7 +287,7 @@ void main() {
 
       final icon512 = await _webFile('icons/Icon-512.png').readAsBytes();
       expect(icon512.length, greaterThan(2000),
-          reason: 'Icon-512.png should be a proper VaultAI mark, not a stub');
+          reason: 'Icon-512.png should be a proper Svaultai mark, not a stub');
     });
   });
 }

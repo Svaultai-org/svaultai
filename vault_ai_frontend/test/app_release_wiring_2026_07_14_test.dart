@@ -17,7 +17,7 @@
 //     "Update now" calls `applyUpdateAndReload`.
 //   * ETH / SOL / TRON Send panels each block Review when
 //     `sendShouldBeBlocked() == true`, with a panel-specific
-//     "VaultAI was updated" error.
+//     "Svaultai was updated" error.
 //   * `applyUpdateAndReload(reloadAllowed: () => false)` defers
 //     the reload; a later `reloadAllowed: () => true` runs it.
 //   * Source-level proof that the production wiring exists in
@@ -325,7 +325,7 @@ void main() {
       expect(ctl.lastSeenServerRelease, _kFullSha2);
     });
 
-    test('source: main.dart wraps VaultaiApp with '
+    test('source: main.dart wraps SvaultaiApp with '
          'AppReleaseControllerScope(baseUrl: kIsWeb ? Uri.base.origin '
          ': backendBaseUrl, ...)', () {
       final src = _readLib('main.dart');
@@ -345,7 +345,7 @@ void main() {
             'not the raw backendBaseUrl (which would 404 on '
             'https://api.svaultai.com/release.json).',
       );
-      expect(src.contains('child: VaultaiApp()'), true,
+      expect(src.contains('child: SvaultaiApp()'), true,
           reason: 'The scope must wrap the top-level app widget so '
                   'every descendant can see it.');
     });

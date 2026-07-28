@@ -54,14 +54,14 @@ Future<void> _pumpHeader(
 }
 
 
-// Wordmark Text finder — 'Vaultai' (case-preserved wordmark
-// literal). Any variant like 'V...' would not have data=='Vaultai'
+// Wordmark Text finder — 'Svaultai' (case-preserved wordmark
+// literal). Any variant like 'V...' would not have data=='Svaultai'
 // but the ellipsis is rendered by TextPainter, not by mutating
 // the Text.data string. So the correct assertion is: on phone,
-// the Text('Vaultai') widget is NOT in the tree at all.
+// the Text('Svaultai') widget is NOT in the tree at all.
 Finder _wordmarkTextFinder() {
   return find.byWidgetPredicate(
-    (w) => w is Text && w.data == 'Vaultai',
+    (w) => w is Text && w.data == 'Svaultai',
   );
 }
 
@@ -99,7 +99,7 @@ void main() {
           isMobile: false,
         );
         expect(_wordmarkTextFinder(), findsOneWidget,
-            reason: 'tablet must show full Vaultai wordmark');
+            reason: 'tablet must show full Svaultai wordmark');
       },
     );
 

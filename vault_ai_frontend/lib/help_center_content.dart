@@ -55,26 +55,26 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'what-is-vaultai',
     category: 'getting_started',
-    question: 'What is VaultAI?',
+    question: 'What is Svaultai?',
     answer:
-        'VaultAI is your private digital vault. Think of a '
+        'Svaultai is your private digital vault. Think of a '
         'bank vault or a safe at home: people use those to '
         'protect important papers, drives, cash, gold, IDs, '
-        'and private records. VaultAI gives you that idea in '
+        'and private records. Svaultai gives you that idea in '
         'digital form. You can keep files, documents, photos, '
         'videos, audio, passwords, secure notes, ID '
         'documents, and Crypto Vault assets in one protected '
         'place. Instead of saving passwords or private '
         'records in emails, notes, screenshots, or random '
-        'folders, VaultAI helps you keep them organized and '
-        'protected inside your vault. VaultAI Chat helps you '
+        'folders, Svaultai helps you keep them organized and '
+        'protected inside your vault. Svaultai Chat helps you '
         'search, understand, and manage what is inside your '
         'vault without treating everything as just a file.',
   ),
   FaqEntry(
     id: 'what-can-i-save',
     category: 'getting_started',
-    question: 'What can I save in VaultAI?',
+    question: 'What can I save in Svaultai?',
     answer:
         'You can save files, documents, photos, videos, '
         'audio, passwords, generated logins, secure notes, '
@@ -88,7 +88,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'getting_started',
     question: 'How do I create my vault?',
     answer:
-        'Open the VaultAI sign-in flow, pick or confirm your '
+        'Open the Svaultai sign-in flow, pick or confirm your '
         'vault name, and set your PIN when prompted. Your '
         'PIN helps protect your vault unlock process — keep '
         'it safe. If recovery is not available for your '
@@ -100,7 +100,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'getting_started',
     question: 'How do I unlock my vault?',
     answer:
-        'Open VaultAI on a trusted device and enter your '
+        'Open Svaultai on a trusted device and enter your '
         'PIN. Your PIN unlocks the vault locally — the '
         'server never sees your PIN in plaintext. Some '
         'sensitive actions may ask for confirmation again.',
@@ -132,7 +132,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'security',
     question: 'Is my vault encrypted?',
     answer:
-        'Yes. VaultAI stores sensitive vault data encrypted with '
+        'Yes. Svaultai stores sensitive vault data encrypted with '
         'a key derived from your PIN. Sensitive values are '
         'masked by default and protected by trusted-device, '
         'unlock/PIN, and confirmation gates where required.',
@@ -140,9 +140,9 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'can-vaultai-read-secrets',
     category: 'security',
-    question: 'Can VaultAI read my saved secrets?',
+    question: 'Can Svaultai read my saved secrets?',
     answer:
-        'VaultAI does not display or ask for your seed phrase, '
+        'Svaultai does not display or ask for your seed phrase, '
         'private key, mnemonic, spend key, view key, encrypted '
         'wallet secret, auth token, or API key in chat. The AI '
         'only works with masked, safe projections of your vault.',
@@ -194,7 +194,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     answer:
         'Anyone with your seed phrase, private key, mnemonic, '
         'spend key, or view key can access or spend your crypto. '
-        'VaultAI will never ask for these values, and no '
+        'Svaultai will never ask for these values, and no '
         'support person should either.',
   ),
   FaqEntry(
@@ -202,11 +202,11 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'security',
     question: 'How do I delete my vault?',
     answer:
-        'Open Settings and choose Delete vault. VaultAI shows a '
+        'Open Settings and choose Delete vault. Svaultai shows a '
         'warning, then asks you to type the exact phrase '
         'DELETE MY VAULT, enter your PIN, and confirm from a '
         'trusted device. This is intentionally not a one-click '
-        'action. Deletion is permanent. VaultAI cannot delete '
+        'action. Deletion is permanent. Svaultai cannot delete '
         'your vault from chat, and the flow cannot bypass PIN, '
         'trusted-device, or phrase confirmation.',
   ),
@@ -215,14 +215,14 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'security',
     question: 'What happens when I delete my vault?',
     answer:
-        'Deleting your vault permanently deletes your VaultAI '
+        'Deleting your vault permanently deletes your Svaultai '
         'vault data, including files, secure items, logins, ID '
         'documents, Crypto Vault encrypted wallet records, and '
         'related vault metadata. Any active storage '
         'subscription is closed. Deletion does not move or '
         'delete crypto assets on the blockchain — those remain '
         'wherever the corresponding wallets exist. If you have '
-        'not backed up your wallet outside VaultAI, deleting '
+        'not backed up your wallet outside Svaultai, deleting '
         'your encrypted wallet records may cause loss of '
         'access to those funds.',
   ),
@@ -231,10 +231,10 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'security',
     question: 'Can I recover a deleted vault?',
     answer:
-        'No. Once you confirm deletion, VaultAI removes vault '
+        'No. Once you confirm deletion, Svaultai removes vault '
         'data permanently and cannot restore it. There is no '
         'hidden shadow copy and no recovery flow. If you also '
-        'lose the wallet backup you kept outside VaultAI, '
+        'lose the wallet backup you kept outside Svaultai, '
         'on-chain crypto in that wallet may become '
         'unrecoverable too.',
   ),
@@ -253,7 +253,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'files',
     question: 'What file types can I store?',
     answer:
-        'VaultAI accepts common document, image, audio, and '
+        'Svaultai accepts common document, image, audio, and '
         'video file types. Any file that fits within your '
         'storage quota can be uploaded.',
   ),
@@ -262,14 +262,14 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'files',
     question: 'Can I search inside documents?',
     answer:
-        'Yes. VaultAI extracts text from supported documents '
+        'Yes. Svaultai extracts text from supported documents '
         'and lets you search across their contents from chat '
         'or the file list.',
   ),
   FaqEntry(
     id: 'summarize-pdf',
     category: 'files',
-    question: 'Can VaultAI summarize my PDF?',
+    question: 'Can Svaultai summarize my PDF?',
     answer:
         'Yes. Ask the assistant to summarize a specific PDF or '
         'document. The summary uses the extracted text; it '
@@ -278,7 +278,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'why-cant-find-file',
     category: 'files',
-    question: "Why can't VaultAI find my file?",
+    question: "Why can't Svaultai find my file?",
     answer:
         'Check the file name spelling, the vault you are '
         'in, and whether the upload completed. Files that are '
@@ -290,7 +290,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'How do I delete a file?',
     answer:
         "Open the file's row in the Files list and choose "
-        'Delete. Deletion is permanent — VaultAI does not keep '
+        'Delete. Deletion is permanent — Svaultai does not keep '
         'a shadow copy.',
   ),
 
@@ -300,7 +300,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'How do I save a password?',
     answer:
         'Open the Logins & Secure Items page and choose Save, '
-        'or ask the assistant to save a login. VaultAI encrypts '
+        'or ask the assistant to save a login. Svaultai encrypts '
         'the entry before storing it.',
   ),
   FaqEntry(
@@ -342,10 +342,10 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'duplicate-logins',
     category: 'secure_items',
-    question: 'Can VaultAI find duplicate logins?',
+    question: 'Can Svaultai find duplicate logins?',
     answer:
         'Yes. Ask the assistant to show duplicate or reused '
-        'passwords. VaultAI compares saved logins locally after '
+        'passwords. Svaultai compares saved logins locally after '
         'unlock and flags matches.',
   ),
 
@@ -370,10 +370,10 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'id-expiry-reminders',
     category: 'ids',
-    question: 'Can VaultAI remind me about expiration dates?',
+    question: 'Can Svaultai remind me about expiration dates?',
     answer:
         'Ask the assistant when your passport or license '
-        'expires. VaultAI reads the extracted expiry date '
+        'expires. Svaultai reads the extracted expiry date '
         'from your ID documents.',
   ),
   FaqEntry(
@@ -392,7 +392,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'What is Crypto Vault?',
     answer:
         'Crypto Vault is the non-custodial wallet feature of '
-        'VaultAI. It stores your public receive addresses, '
+        'Svaultai. It stores your public receive addresses, '
         'shows live balances from public providers, and lets '
         'you prepare sends that you sign locally.',
   ),
@@ -411,15 +411,15 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Is Crypto Vault custodial?',
     answer:
         'No. Crypto Vault is non-custodial. Your keys are on '
-        'your device; VaultAI cannot move your crypto without '
+        'your device; Svaultai cannot move your crypto without '
         'your local signature.',
   ),
   FaqEntry(
     id: 'can-vaultai-move-crypto',
     category: 'crypto',
-    question: 'Can VaultAI move my crypto?',
+    question: 'Can Svaultai move my crypto?',
     answer:
-        'No. VaultAI cannot broadcast a transaction without '
+        'No. Svaultai cannot broadcast a transaction without '
         'your PIN unlock, trusted device, local signing, and '
         'explicit confirmation. It never auto-sends.',
   ),
@@ -429,7 +429,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why do I need a PIN before sending?',
     answer:
         'The PIN unlocks the local signing key. Without it '
-        'your device cannot sign a transaction, and VaultAI '
+        'your device cannot sign a transaction, and Svaultai '
         'will not accept an unsigned send request.',
   ),
   FaqEntry(
@@ -437,7 +437,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'crypto',
     question: 'Why does USDT have ERC20 and TRC20?',
     answer:
-        'USDT exists on multiple networks. VaultAI supports '
+        'USDT exists on multiple networks. Svaultai supports '
         'USDT ERC20 on Ethereum and USDT TRC20 on TRON. You '
         'must pick the correct network — addresses, fees, and '
         'transfers are network-specific and not interchangeable.',
@@ -477,7 +477,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: "Why can't I see my Monero balance in the browser?",
     answer:
         'Real Monero scanning cannot run safely inside the web '
-        'app. In web, VaultAI can show your Monero receive '
+        'app. In web, Svaultai can show your Monero receive '
         'address, but balance and activity require the desktop '
         'or native local scanner.',
   ),
@@ -493,7 +493,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'buy-sell-swap',
     category: 'crypto',
-    question: 'Can I buy, sell, swap, or trade crypto in VaultAI?',
+    question: 'Can I buy, sell, swap, or trade crypto in Svaultai?',
     answer:
         'No. Crypto Vault is for storing, receiving, and '
         'sending supported assets where enabled. It is not an '
@@ -505,7 +505,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'crypto',
     question: 'What happens if a provider is unavailable?',
     answer:
-        'VaultAI shows a clear unavailable reason instead of '
+        'Svaultai shows a clear unavailable reason instead of '
         'inventing a balance. A 0 balance is shown only when '
         'the provider actually returns zero.',
   ),
@@ -515,7 +515,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why does my balance say 0?',
     answer:
         'A displayed 0 balance means the provider returned a '
-        'real zero. If the provider was unavailable, VaultAI '
+        'real zero. If the provider was unavailable, Svaultai '
         'shows an unavailable reason instead of a fake zero.',
   ),
   FaqEntry(
@@ -533,13 +533,13 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'What happens to my crypto if I delete my vault?',
     answer:
         'Deleting your vault does not move or delete your '
-        'crypto on the blockchain. VaultAI stores encrypted '
+        'crypto on the blockchain. Svaultai stores encrypted '
         'wallet records locally and on the server — but the '
-        'coins themselves live on-chain. Deleting your VaultAI '
+        'coins themselves live on-chain. Deleting your Svaultai '
         'vault removes the encrypted wallet records. If you '
-        'have not backed up your wallet outside VaultAI, '
+        'have not backed up your wallet outside Svaultai, '
         'losing the encrypted wallet records may mean losing '
-        'access to those funds. VaultAI never broadcasts '
+        'access to those funds. Svaultai never broadcasts '
         'crypto transactions during deletion.',
   ),
 
@@ -549,7 +549,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'What plan am I on?',
     answer:
         'Ask the assistant "what plan am I on" or open the '
-        'Billing page. VaultAI shows your active plan and the '
+        'Billing page. Svaultai shows your active plan and the '
         'storage quota it grants.',
   ),
   FaqEntry(
@@ -558,7 +558,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'How much storage do I have?',
     answer:
         'Ask the assistant "how much storage am I using" or '
-        'open the Storage page. VaultAI shows used bytes, '
+        'open the Storage page. Svaultai shows used bytes, '
         'quota bytes, and percent used.',
   ),
   FaqEntry(
@@ -575,7 +575,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'How do I upgrade storage?',
     answer:
         'Open the Billing page and choose an upgrade tier. '
-        'Checkout runs through a payment provider; VaultAI '
+        'Checkout runs through a payment provider; Svaultai '
         'does not store your payment details.',
   ),
   FaqEntry(
@@ -592,7 +592,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'billing',
     question: 'Why does checkout open?',
     answer:
-        'Payments run through a payment provider so VaultAI '
+        'Payments run through a payment provider so Svaultai '
         'does not handle payment details directly. Checkout '
         "opens in the provider's UI.",
   ),
@@ -611,7 +611,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why are unpaid inactive vaults deleted?',
     answer:
         'Unpaid vaults that are not used for at least 6 months '
-        'may be permanently deleted. This keeps VaultAI '
+        'may be permanently deleted. This keeps Svaultai '
         'storage focused on people who are actively using '
         'their vault. To keep your vault active, sign in and '
         'use your vault before the 6-month inactivity cutoff, '
@@ -640,7 +640,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why is my balance unavailable?',
     answer:
         'The provider for that asset did not return a value in '
-        'time. VaultAI shows an honest "unavailable" state '
+        'time. Svaultai shows an honest "unavailable" state '
         'instead of a fake zero. Retry usually recovers it.',
   ),
   FaqEntry(
@@ -680,7 +680,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why does TRON say provider unavailable?',
     answer:
         'The TRON balance provider did not respond in time. '
-        'VaultAI shows unavailable instead of a fake zero. '
+        'Svaultai shows unavailable instead of a fake zero. '
         'Retry usually recovers, and receive addresses remain '
         'valid regardless.',
   ),
@@ -689,7 +689,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     category: 'troubleshooting',
     question: 'Why is subscription status checking?',
     answer:
-        'VaultAI is fetching your latest plan state from the '
+        'Svaultai is fetching your latest plan state from the '
         'billing provider. It usually clears within a few '
         'seconds; if it persists, try Refresh from the Billing '
         'page.',

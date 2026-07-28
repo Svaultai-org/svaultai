@@ -104,7 +104,7 @@ class LoginResult {
   /// identity for both the vault and the AI keeper). Null when
   /// the vaults row is not yet backfilled after migration 0031;
   /// the caller falls back to the user's locally-typed value or,
-  /// failing that, the neutral "VaultAI" fallback rendered by
+  /// failing that, the neutral "Svaultai" fallback rendered by
   /// downstream UI + prompt sites.
   final String? vaultName;
   LoginResult({

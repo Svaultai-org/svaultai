@@ -9,7 +9,7 @@ class AppLocalizationsJa extends AppLocalizations {
   AppLocalizationsJa([String locale = 'ja']) : super(locale);
 
   @override
-  String get appTitle => 'VaultAI';
+  String get appTitle => 'Svaultai';
 
   @override
   String get commonRetry => '再試行';
@@ -42,7 +42,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get commonDownload => 'ダウンロード';
 
   @override
-  String get commonAskVaultAI => 'VaultAI に聞く';
+  String get commonAskVaultAI => 'Svaultai に聞く';
 
   @override
   String get commonClose => '閉じる';
@@ -159,7 +159,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get chatComposerHint => 'あなたの保管庫について質問するか、ファイルをアップロードしてください...';
 
   @override
-  String get chatThinking => 'VaultAI が考えています...';
+  String get chatThinking => 'Svaultai が考えています...';
 
   @override
   String chatThinkingWithName(String name) {
@@ -178,7 +178,7 @@ class AppLocalizationsJa extends AppLocalizations {
   }
 
   @override
-  String get chatErrorGeneric => 'VaultAI は今回答できませんでした。もう一度試してください。';
+  String get chatErrorGeneric => 'Svaultai は今回答できませんでした。もう一度試してください。';
 
   @override
   String get chatRetryButton => '再試行';
@@ -226,7 +226,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get conciergeTitle => 'コンシェルジュ';
 
   @override
-  String get conciergeSubtitle => 'VaultAI が次に確認すべきと考えるもの';
+  String get conciergeSubtitle => 'Svaultai が次に確認すべきと考えるもの';
 
   @override
   String get conciergeLoading => '情報を集めています...';
@@ -272,7 +272,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get conciergeAllClearSub =>
-      '本日急ぎはありません。VaultAI は書類を監視し、新しい事項があればここに表示します。';
+      '本日急ぎはありません。Svaultai は書類を監視し、新しい事項があればここに表示します。';
 
   @override
   String get conciergePostureSecurity => 'セキュリティ';
@@ -363,7 +363,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get expiryEmptySub =>
-      'パスポート、ビザ、保険証券、契約書をアップロードすると VaultAI が自動的に有効期限を追跡します。';
+      'パスポート、ビザ、保険証券、契約書をアップロードすると Svaultai が自動的に有効期限を追跡します。';
 
   @override
   String get expiryNoneInWindow => 'この期間内にはありません。';
@@ -445,7 +445,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get memoryTitle => 'メモリ';
 
   @override
-  String get memorySubtitle => 'VaultAI があなたについて覚えていることのタイムライン';
+  String get memorySubtitle => 'Svaultai があなたについて覚えていることのタイムライン';
 
   @override
   String get memoryLoading => 'あなたの記憶を読み込み中...';
@@ -458,7 +458,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get memoryEmptySub =>
-      'VaultAI に覚えてほしいことを伝えてください:「母の誕生日は 2 月 14 日」など。種類と日付でグループ化されてここに表示されます。';
+      'Svaultai に覚えてほしいことを伝えてください:「母の誕生日は 2 月 14 日」など。種類と日付でグループ化されてここに表示されます。';
 
   @override
   String get memoryNoMatchTitle => '一致するものがありません。';
@@ -527,7 +527,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get settingsLanguageHint =>
-      'VaultAI が使う言語を選択してください。アプリのラベルと AI チャットの返答に影響します。';
+      'Svaultai が使う言語を選択してください。アプリのラベルと AI チャットの返答に影響します。';
 
   @override
   String get settingsLanguageAuto => '自動(システム)';
@@ -566,7 +566,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String settingsLanguagePartialNotice(String name) {
-    return 'VaultAI Chat は $name で応答します。翻訳作業中のため、アプリ画面は英語のまま表示されます。';
+    return 'Svaultai Chat は $name で応答します。翻訳作業中のため、アプリ画面は英語のまま表示されます。';
   }
 
   @override
@@ -638,7 +638,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get helpCenterSubtitle =>
-      'VaultAI に関するよくある質問への回答。下で検索するか、カテゴリで閲覧してください。AI アシスタントは同じ内容から回答します。';
+      'Svaultai に関するよくある質問への回答。下で検索するか、カテゴリで閲覧してください。AI アシスタントは同じ内容から回答します。';
 
   @override
   String get helpCenterEmpty => '該当するヘルプがありません';
@@ -648,18 +648,18 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get helpCenterSupportNote =>
-      'ライブカスタマーサポートはまだ提供されていません。このヘルプセンターまたは VaultAI Chat をご利用ください。';
+      'ライブカスタマーサポートはまだ提供されていません。このヘルプセンターまたは Svaultai Chat をご利用ください。';
 
   @override
   String get helpContactSupportTitle => 'サポートに問い合わせ';
 
   @override
   String get helpContactSupportBody =>
-      'VaultAI についてサポートが必要ですか?サポートチームにお問い合わせください。';
+      'Svaultai についてサポートが必要ですか?サポートチームにお問い合わせください。';
 
   @override
   String helpContactSupportEmailA11yLabel(String email) {
-    return '$email 宛に VaultAI サポートへメール送信';
+    return '$email 宛に Svaultai サポートへメール送信';
   }
 
   @override
@@ -672,7 +672,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String helpContactSupportCopyEmailA11yLabel(String email) {
-    return 'VaultAI サポートのメールアドレス $email をクリップボードにコピー';
+    return 'Svaultai サポートのメールアドレス $email をクリップボードにコピー';
   }
 
   @override
@@ -680,7 +680,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get helpCenterPublicHint =>
-      '公開ヘルプセンターを表示しています。VaultAI に質問しアカウント詳細を見るにはサインインしてください。';
+      '公開ヘルプセンターを表示しています。Svaultai に質問しアカウント詳細を見るにはサインインしてください。';
 
   @override
   String get helpCenterSearchHint => 'ヘルプを検索(例:「monero」「PIN」)';
@@ -689,7 +689,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get helpCenterClearSearch => '検索をクリア';
 
   @override
-  String get helpCenterSignInToAsk => 'サインインして VaultAI に質問';
+  String get helpCenterSignInToAsk => 'サインインして Svaultai に質問';
 
   @override
   String get helpCategoryGettingStarted => 'はじめに';
@@ -720,11 +720,11 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get deleteVaultBody =>
-      '保管庫を削除すると、VaultAI のデータ(ファイル、セキュアアイテム、ログイン、身分証、Crypto Vault の暗号化された記録、関連メタデータ)が完全に削除されます。';
+      '保管庫を削除すると、Svaultai のデータ(ファイル、セキュアアイテム、ログイン、身分証、Crypto Vault の暗号化された記録、関連メタデータ)が完全に削除されます。';
 
   @override
   String get deleteVaultCryptoWarning =>
-      '保管庫の削除はブロックチェーン上の暗号資産を移動・削除しません。VaultAI 外にウォレットのバックアップがない場合、暗号化された記録の削除によりその資金へのアクセスを失う可能性があります。';
+      '保管庫の削除はブロックチェーン上の暗号資産を移動・削除しません。Svaultai 外にウォレットのバックアップがない場合、暗号化された記録の削除によりその資金へのアクセスを失う可能性があります。';
 
   @override
   String get deleteVaultPhraseInstruction =>

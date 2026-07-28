@@ -5,7 +5,7 @@
 //   1. Imports the ESM module.
 //   2. Awaits its `ready` Promise (WASM instantiation).
 //   3. Attaches only the CLIENT half to `globalThis` under the
-//      VaultAI namespace, so Dart's JS interop can call it.
+//      Svaultai namespace, so Dart's JS interop can call it.
 //   4. Sets `globalThis.vaultaiOpaqueReady` to a Promise that
 //      resolves once the WASM is instantiated. Dart awaits this
 //      before making any client.* call.

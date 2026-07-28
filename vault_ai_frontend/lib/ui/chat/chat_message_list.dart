@@ -20,7 +20,7 @@ class ChatMessageList extends StatefulWidget {
   /// both the vault and its AI keeper. Composes the typing
   /// indicator label. Null when no name has been set on this
   /// device — the typing indicator then falls back to the neutral
-  /// "VaultAI is thinking..." literal. MUST NOT be substituted
+  /// "Svaultai is thinking..." literal. MUST NOT be substituted
   /// with the display name, VLT handle, vault_id, random
   /// placeholder, or any hash.
   final String? vaultName;
@@ -200,7 +200,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
           // "b21e31c5b59abdc8067ff6b23643b254 is thinking...".
           // Migration 0031 dropped the placeholder path; this
           // widget now reads the real product name, and falls
-          // back to the neutral "VaultAI is thinking..." literal
+          // back to the neutral "Svaultai is thinking..." literal
           // when the row is unset. Never use vault_id, display
           // name, VLT handle, or any hash here.
           final name = widget.vaultName?.trim();

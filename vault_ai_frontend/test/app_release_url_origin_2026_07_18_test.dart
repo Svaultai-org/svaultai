@@ -1,6 +1,6 @@
 // 2026-07-18 (release-URL fix): the AppReleaseController used to
 // build its `/release.json` URL against `backendBaseUrl`, which on
-// the deployed VaultAI web app resolves to https://api.svaultai.com
+// the deployed Svaultai web app resolves to https://api.svaultai.com
 // — the FastAPI backend host. That host does NOT serve
 // `/release.json`; the manifest is emitted into `build/web/` by the
 // canonical release-build script and served from the frontend origin
@@ -187,11 +187,11 @@ void main() {
 
 
       final startIdx = src.indexOf('AppReleaseControllerScope(');
-      final endIdx = src.indexOf('child: VaultaiApp', startIdx);
+      final endIdx = src.indexOf('child: SvaultaiApp', startIdx);
       expect(startIdx, greaterThan(-1),
           reason: 'expected AppReleaseControllerScope( in main.dart');
       expect(endIdx, greaterThan(startIdx),
-          reason: 'expected child: VaultaiApp AFTER the scope opens');
+          reason: 'expected child: SvaultaiApp AFTER the scope opens');
       final block = src.substring(startIdx, endIdx);
 
 

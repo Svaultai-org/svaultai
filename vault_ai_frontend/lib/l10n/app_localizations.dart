@@ -111,7 +111,7 @@ abstract class AppLocalizations {
   /// App title shown in MaterialApp + dialogs
   ///
   /// In en, this message translates to:
-  /// **'VaultAI'**
+  /// **'Svaultai'**
   String get appTitle;
 
   /// No description provided for @commonRetry.
@@ -177,7 +177,7 @@ abstract class AppLocalizations {
   /// No description provided for @commonAskVaultAI.
   ///
   /// In en, this message translates to:
-  /// **'Ask VaultAI'**
+  /// **'Ask Svaultai'**
   String get commonAskVaultAI;
 
   /// No description provided for @commonClose.
@@ -411,7 +411,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatThinking.
   ///
   /// In en, this message translates to:
-  /// **'VaultAI is thinking...'**
+  /// **'Svaultai is thinking...'**
   String get chatThinking;
 
   /// Typing indicator personalized with the active vault name
@@ -441,7 +441,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatErrorGeneric.
   ///
   /// In en, this message translates to:
-  /// **'VaultAI could not answer that just now. Try again.'**
+  /// **'Svaultai could not answer that just now. Try again.'**
   String get chatErrorGeneric;
 
   /// No description provided for @chatRetryButton.
@@ -537,7 +537,7 @@ abstract class AppLocalizations {
   /// No description provided for @conciergeSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'What VaultAI thinks you should look at next'**
+  /// **'What Svaultai thinks you should look at next'**
   String get conciergeSubtitle;
 
   /// No description provided for @conciergeLoading.
@@ -627,7 +627,7 @@ abstract class AppLocalizations {
   /// No description provided for @conciergeAllClearSub.
   ///
   /// In en, this message translates to:
-  /// **'Nothing urgent today. VaultAI is watching your documents and will surface anything new here.'**
+  /// **'Nothing urgent today. Svaultai is watching your documents and will surface anything new here.'**
   String get conciergeAllClearSub;
 
   /// No description provided for @conciergePostureSecurity.
@@ -807,7 +807,7 @@ abstract class AppLocalizations {
   /// No description provided for @expiryEmptySub.
   ///
   /// In en, this message translates to:
-  /// **'Upload a passport, visa, insurance policy, or contract and VaultAI will track its expiry automatically.'**
+  /// **'Upload a passport, visa, insurance policy, or contract and Svaultai will track its expiry automatically.'**
   String get expiryEmptySub;
 
   /// No description provided for @expiryNoneInWindow.
@@ -921,7 +921,7 @@ abstract class AppLocalizations {
   /// No description provided for @memorySubtitle.
   ///
   /// In en, this message translates to:
-  /// **'A timeline of what VaultAI remembers about your life'**
+  /// **'A timeline of what Svaultai remembers about your life'**
   String get memorySubtitle;
 
   /// No description provided for @memoryLoading.
@@ -945,7 +945,7 @@ abstract class AppLocalizations {
   /// No description provided for @memoryEmptySub.
   ///
   /// In en, this message translates to:
-  /// **'Tell VaultAI things to remember: \'remember my mom\'s birthday is Feb 14\', \'remember I started learning Spanish in 2024\'. They will show up here grouped by type and date.'**
+  /// **'Tell Svaultai things to remember: \'remember my mom\'s birthday is Feb 14\', \'remember I started learning Spanish in 2024\'. They will show up here grouped by type and date.'**
   String get memoryEmptySub;
 
   /// No description provided for @memoryNoMatchTitle.
@@ -1077,7 +1077,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsLanguageHint.
   ///
   /// In en, this message translates to:
-  /// **'Choose how VaultAI talks to you. Affects this app\'s labels and AI chat replies.'**
+  /// **'Choose how Svaultai talks to you. Affects this app\'s labels and AI chat replies.'**
   String get settingsLanguageHint;
 
   /// No description provided for @settingsLanguageAuto.
@@ -1149,7 +1149,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsLanguagePartialNotice.
   ///
   /// In en, this message translates to:
-  /// **'VaultAI Chat will reply in {name}. The app interface is still shown in English while translation is in progress.'**
+  /// **'Svaultai Chat will reply in {name}. The app interface is still shown in English while translation is in progress.'**
   String settingsLanguagePartialNotice(String name);
 
   /// No description provided for @settingsLanguagePopular.
@@ -1281,7 +1281,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpCenterSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Answers to common questions about VaultAI. Search below or browse by category — the AI assistant answers from the same set of topics.'**
+  /// **'Answers to common questions about Svaultai. Search below or browse by category — the AI assistant answers from the same set of topics.'**
   String get helpCenterSubtitle;
 
   /// No description provided for @helpCenterEmpty.
@@ -1299,7 +1299,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpCenterSupportNote.
   ///
   /// In en, this message translates to:
-  /// **'Live customer support is not available yet. Use this Help Center or ask VaultAI Chat for help.'**
+  /// **'Live customer support is not available yet. Use this Help Center or ask Svaultai Chat for help.'**
   String get helpCenterSupportNote;
 
   /// No description provided for @helpContactSupportTitle.
@@ -1311,13 +1311,13 @@ abstract class AppLocalizations {
   /// No description provided for @helpContactSupportBody.
   ///
   /// In en, this message translates to:
-  /// **'Need help with VaultAI? Contact our support team.'**
+  /// **'Need help with Svaultai? Contact our support team.'**
   String get helpContactSupportBody;
 
   /// No description provided for @helpContactSupportEmailA11yLabel.
   ///
   /// In en, this message translates to:
-  /// **'Email VaultAI support at {email}'**
+  /// **'Email Svaultai support at {email}'**
   String helpContactSupportEmailA11yLabel(String email);
 
   /// No description provided for @helpContactSupportEmailOpenFailed.
@@ -1335,7 +1335,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpContactSupportCopyEmailA11yLabel.
   ///
   /// In en, this message translates to:
-  /// **'Copy VaultAI support email {email} to clipboard'**
+  /// **'Copy Svaultai support email {email} to clipboard'**
   String helpContactSupportCopyEmailA11yLabel(String email);
 
   /// No description provided for @helpContactSupportEmailCopied.
@@ -1347,7 +1347,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpCenterPublicHint.
   ///
   /// In en, this message translates to:
-  /// **'You\'re viewing the public Help Center. Sign in to ask VaultAI and see account details.'**
+  /// **'You\'re viewing the public Help Center. Sign in to ask Svaultai and see account details.'**
   String get helpCenterPublicHint;
 
   /// No description provided for @helpCenterSearchHint.
@@ -1365,7 +1365,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpCenterSignInToAsk.
   ///
   /// In en, this message translates to:
-  /// **'Sign in to ask VaultAI'**
+  /// **'Sign in to ask Svaultai'**
   String get helpCenterSignInToAsk;
 
   /// No description provided for @helpCategoryGettingStarted.
@@ -1425,13 +1425,13 @@ abstract class AppLocalizations {
   /// No description provided for @deleteVaultBody.
   ///
   /// In en, this message translates to:
-  /// **'Deleting your vault permanently deletes your VaultAI vault data, including files, secure items, logins, ID documents, Crypto Vault encrypted wallet records, and related vault metadata.'**
+  /// **'Deleting your vault permanently deletes your Svaultai vault data, including files, secure items, logins, ID documents, Crypto Vault encrypted wallet records, and related vault metadata.'**
   String get deleteVaultBody;
 
   /// No description provided for @deleteVaultCryptoWarning.
   ///
   /// In en, this message translates to:
-  /// **'Deleting your vault does not move or delete crypto assets on the blockchain. If you have not backed up your wallet outside VaultAI, deleting your encrypted wallet records may cause loss of access to those funds.'**
+  /// **'Deleting your vault does not move or delete crypto assets on the blockchain. If you have not backed up your wallet outside Svaultai, deleting your encrypted wallet records may cause loss of access to those funds.'**
   String get deleteVaultCryptoWarning;
 
   /// No description provided for @deleteVaultPhraseInstruction.

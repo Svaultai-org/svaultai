@@ -69,7 +69,7 @@ const String kMoneroScannerFailedCopy =
 const String kMoneroScannerStoppedCopy =
     'Scanner not enabled';
 const String kMoneroScannerDaemonPrivacyNote =
-    'VaultAI does not send your seed, spend key, or view key to a '
+    'Svaultai does not send your seed, spend key, or view key to a '
     'scanner.';
 
 
