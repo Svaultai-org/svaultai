@@ -57,6 +57,7 @@ import 'device_pending_page.dart';
 import 'devices_page.dart';
 import 'security_center_page.dart';
 import 'help_center_page.dart' as hc;
+import 'privacy_policy_page.dart';
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
 import 'storage_page.dart';
@@ -2584,6 +2585,7 @@ class VaultaiApp extends StatelessWidget {
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
         '/storage': (_) => const StoragePage(),
+        kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
       },
       initialRoute: '/',
     );
@@ -10183,6 +10185,56 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               Text(
                                 'Answers about VaultAI, Crypto Vault, '
                                 'Monero, billing, and support.',
+                                style: TextStyle(
+                                  color: Color(0xFFB4B4B4),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                InkWell(
+                  key: const Key('settings_privacy_policy_tile'),
+                  onTap: () => Navigator.pushNamed(
+                    context,
+                    kVaultAiPrivacyRoute,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF262626),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Row(
+                      children: const [
+                        Icon(Icons.privacy_tip_outlined,
+                            color: Color(0xFFB4B4B4)),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Privacy Policy',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'How VaultAI / SVaultAI handles account, '
+                                'vault, inheritance, wallet, and device data.',
                                 style: TextStyle(
                                   color: Color(0xFFB4B4B4),
                                   fontSize: 13,
