@@ -40,7 +40,7 @@ import 'dart:math' show Random;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 
-import 'opaque_client.dart' if (dart.library.io) 'opaque_client_stub.dart';
+import 'opaque_client.dart' if (dart.library.io) 'opaque_client_native.dart';
 import 'vault_handle.dart';
 
 const int _mvkBytes = 32;

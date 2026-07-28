@@ -13,6 +13,8 @@ import 'package:flutter/foundation.dart'
         kIsWeb,
         kReleaseMode,
         kDebugMode,
+        defaultTargetPlatform,
+        TargetPlatform,
         visibleForTesting,
         debugPrint,
         immutable;
@@ -36,7 +38,7 @@ import 'services/metadata_migration_client.dart' as mmc;
 import 'services/native_secure_store.dart';
 import 'services/session_termination.dart' as st;
 import 'services/opaque_client.dart'
-    if (dart.library.io) 'services/opaque_client_stub.dart';
+    if (dart.library.io) 'services/opaque_client_native.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
@@ -121,7 +123,7 @@ const String _kBackendBaseUrlFromEnv = String.fromEnvironment(
 // 'https://'). Web AND mobile release both hit the same FastAPI host
 // today (https://api.svaultai.com); if they ever need to diverge,
 // introduce a separate `_kWebProductionBaseUrl` and re-gate on
-  // `kIsWeb` - do NOT reintroduce a `kIsWeb` gate that leaves web
+// `kIsWeb` - do NOT reintroduce a `kIsWeb` gate that leaves web
 // release resolving to the localhost fallback, which trips the
 // startup HTTPS guard and crashes app.svaultai.com with a black
 // screen.
@@ -615,15 +617,78 @@ void vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
       ? ''
-      : data.entries.map((e) => '${e.key}=${e.value}').join(' ');
+      : data.entries
+          .map((e) => '${e.key}=${_safeVlogValue(tag, e.key, e.value)}')
+          .join(' ');
 
   print('[vault-debug] $tag $payload');
+}
+
+String _safeVlogValue(String tag, String key, Object? value) {
+  if (value == null) return 'null';
+  final lowerKey = key.toLowerCase();
+  final lowerTag = tag.toLowerCase();
+  final text = value.toString();
+
+  if (lowerKey.contains('vault_id') ||
+      lowerKey == 'vaultid' ||
+      lowerKey.endsWith('vaultid')) {
+    return inheritanceRevealIdFingerprint(text);
+  }
+  if (lowerKey.contains('vaultname') ||
+      lowerKey.contains('vault_name') ||
+      lowerKey.contains('username') ||
+      lowerKey.contains('display_name') ||
+      lowerKey.contains('token') ||
+      lowerKey.contains('password') ||
+      lowerKey.contains('secret') ||
+      lowerKey.contains('ciphertext') ||
+      lowerKey == 'body' ||
+      lowerKey == 'prompt' ||
+      lowerKey == 'query' ||
+      (lowerTag.contains('vaultname') &&
+          (lowerKey == 'prev' || lowerKey == 'next'))) {
+    return '<redacted>';
+  }
+  if (lowerKey.contains('pin') &&
+      lowerKey != 'pin_len' &&
+      lowerKey != 'pinattempts') {
+    return '<redacted>';
+  }
+  return text;
 }
 
 void releaseWebDiagnosticPrint(String message) {
   if (kReleaseMode && !kIsWeb) return;
   // ignore: avoid_print
   print(message);
+}
+
+const String kAuthDeviceSafeError =
+    'Sign in could not be completed on this device. Please try again.';
+const String kUnlockDeviceSafeError =
+    'Unlock could not be completed on this device. Please try again.';
+
+@visibleForTesting
+bool shouldBypassPublicLandingForAuth({
+  bool? isWeb,
+  TargetPlatform? platform,
+}) {
+  final web = isWeb ?? kIsWeb;
+  final target = platform ?? defaultTargetPlatform;
+  return !web && target == TargetPlatform.android;
+}
+
+void debugAuthFailureTrace(
+  String tag,
+  Object error,
+  StackTrace stack, {
+  String? step,
+}) {
+  if (!kDebugMode) return;
+  final prefix = step == null ? '' : ' step=$step';
+  debugPrint('[$tag]$prefix type=${error.runtimeType}');
+  debugPrintStack(label: '[$tag] stack', stackTrace: stack);
 }
 
 Future<void> main() async {
@@ -3515,6 +3580,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
       final dest = resolveLandingRedirect(
         authed: app.authed,
         unlocked: app.unlocked,
+        lockedRoute: shouldBypassPublicLandingForAuth() ? '/unlock' : '/pin',
       );
       final routeName = ModalRoute.of(context)?.settings.name;
       debugPrint(
@@ -3526,6 +3592,10 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
       );
       if (dest != null) {
         Navigator.of(context).pushReplacementNamed(dest);
+        return;
+      }
+      if (shouldBypassPublicLandingForAuth()) {
+        Navigator.of(context).pushReplacementNamed('/login');
         return;
       }
       if (!_publicVisible) {
@@ -4204,6 +4274,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final dest = resolveLandingRedirect(
         authed: app.authed,
         unlocked: app.unlocked,
+        lockedRoute: shouldBypassPublicLandingForAuth() ? '/unlock' : '/pin',
       );
       debugPrint(
         '[ROUTE-GUARD] login loaded source=$source '
@@ -4302,17 +4373,17 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         loading = false;
       });
       return;
-    } catch (e) {
+    } catch (e, stack) {
       final typeName = e.runtimeType.toString();
       final msg = e.toString();
       final head = msg.length > 120 ? msg.substring(0, 120) : msg;
       releaseWebDiagnosticPrint('[zk-login-diag] '
           'last_step=preflight type=$typeName head=$head');
+      debugAuthFailureTrace('zk-login-diag', e, stack, step: 'preflight');
       vlog('login.preflight.derivation_failed',
           {'error_type': typeName, 'error': msg});
       setState(() {
-        err = 'Login failed. '
-            '[diagnostic: step=preflight, type=$typeName]';
+        err = kAuthDeviceSafeError;
         loading = false;
       });
       return;
@@ -4483,12 +4554,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/chat');
         return;
-      } on OpaqueUnavailable catch (e) {
+      } on OpaqueUnavailable catch (e, stack) {
         releaseWebDiagnosticPrint('[zk-login-diag] '
             'last_step=$loginLastStep type=OpaqueUnavailable reason=${e.reason}');
+        debugAuthFailureTrace('zk-login-diag', e, stack, step: loginLastStep);
         if (!mounted) return;
         setState(() {
-          err = 'Secure login module unavailable: ${e.reason}';
+          err = kAuthDeviceSafeError;
           loading = false;
         });
         return;
@@ -4559,9 +4631,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           zkLoginNotFound = true;
         } else {
           if (!mounted) return;
+          debugAuthFailureTrace('zk-login-diag', e, stack, step: loginLastStep);
           setState(() {
-            err = 'Login failed. '
-                '[diagnostic: step=$loginLastStep, type=$typeName]';
+            err = kAuthDeviceSafeError;
             loading = false;
           });
           return;
@@ -4647,7 +4719,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         err = e.message;
         loading = false;
       });
-    } catch (e) {
+    } catch (e, stack) {
       if (app.handleApiException(e)) return;
       if (!mounted) return;
       final typeName = e.runtimeType.toString();
@@ -4655,14 +4727,14 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final head = msg.length > 120 ? msg.substring(0, 120) : msg;
       releaseWebDiagnosticPrint('[zk-login-diag] '
           'last_step=legacy_fallback type=$typeName head=$head');
+      debugAuthFailureTrace('zk-login-diag', e, stack, step: 'legacy_fallback');
       vlog('login.legacy.failed', {'error_type': typeName});
       setState(() {
         // Controlled copy — never the raw Dart exception. The old
         // "Null check operator used on a null value" from the pre-
         // 2026-07-20 build reached this branch when a bang deeper
         // in the login pipeline blew up.
-        err = 'Login failed. '
-            '[diagnostic: step=legacy_fallback, type=$typeName]';
+        err = kAuthDeviceSafeError;
         loading = false;
       });
     }
@@ -5359,12 +5431,13 @@ class _UnlockPageState extends State<UnlockPage> {
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/chat');
         return;
-      } on OpaqueUnavailable catch (e) {
+      } on OpaqueUnavailable catch (e, stack) {
         releaseWebDiagnosticPrint('[zk-unlock-diag] '
             'last_step=$unlockLastStep type=OpaqueUnavailable reason=${e.reason}');
+        debugAuthFailureTrace('zk-unlock-diag', e, stack, step: unlockLastStep);
         if (!mounted) return;
         setState(() {
-          err = 'Secure unlock module unavailable: ${e.reason}';
+          err = kUnlockDeviceSafeError;
           loading = false;
         });
         return;
@@ -5380,13 +5453,14 @@ class _UnlockPageState extends State<UnlockPage> {
           loading = false;
         });
         return;
-      } catch (e) {
+      } catch (e, stack) {
         if (app.handleApiException(e)) return;
         final typeName = e.runtimeType.toString();
         final msg = e.toString();
         final head = msg.length > 120 ? msg.substring(0, 120) : msg;
         releaseWebDiagnosticPrint('[zk-unlock-diag] '
             'last_step=$unlockLastStep type=$typeName head=$head');
+        debugAuthFailureTrace('zk-unlock-diag', e, stack, step: unlockLastStep);
         vlog('unlock.zk.failed', {
           'error_type': typeName,
           'last_step': unlockLastStep,
@@ -5407,8 +5481,7 @@ class _UnlockPageState extends State<UnlockPage> {
         } else {
           if (!mounted) return;
           setState(() {
-            err = 'Wrong username or PIN. '
-                '[diagnostic: step=$unlockLastStep, type=$typeName]';
+            err = kUnlockDeviceSafeError;
             loading = false;
           });
           return;
@@ -5493,18 +5566,19 @@ class _UnlockPageState extends State<UnlockPage> {
         err = e.message;
         loading = false;
       });
-    } catch (e) {
+    } catch (e, stack) {
       if (app.handleApiException(e)) return;
       final typeName = e.runtimeType.toString();
       final msg = e.toString();
       final head = msg.length > 120 ? msg.substring(0, 120) : msg;
       releaseWebDiagnosticPrint('[zk-unlock-diag] '
           'last_step=legacy_fallback type=$typeName head=$head');
+      debugAuthFailureTrace('zk-unlock-diag', e, stack,
+          step: 'legacy_fallback');
       vlog('unlock.legacy.failed', {'error_type': typeName});
       if (!mounted) return;
       setState(() {
-        err = 'Wrong username or PIN. '
-            '[diagnostic: step=legacy_fallback, type=$typeName]';
+        err = kUnlockDeviceSafeError;
         loading = false;
       });
     }

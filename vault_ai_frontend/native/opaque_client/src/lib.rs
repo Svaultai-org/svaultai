@@ -1,0 +1,224 @@
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use opaque_ke::ciphersuite::CipherSuite;
+use opaque_ke::{
+    ClientLogin, ClientLoginFinishParameters, ClientRegistration,
+    ClientRegistrationFinishParameters, CredentialResponse, Identifiers, RegistrationResponse,
+    Ristretto255,
+};
+use rand::rngs::OsRng;
+use serde_json::json;
+use sha2::Sha512;
+use zeroize::{Zeroize, Zeroizing};
+
+#[derive(Default)]
+struct VaultAiSuite;
+
+impl CipherSuite for VaultAiSuite {
+    type OprfCs = Ristretto255;
+    type KeyExchange = opaque_ke::key_exchange::tripledh::TripleDh<Ristretto255, Sha512>;
+    type Ksf = argon2::Argon2<'static>;
+}
+
+fn cstr(ptr: *const c_char) -> Result<Zeroizing<String>, ()> {
+    if ptr.is_null() {
+        return Ok(Zeroizing::new(String::new()));
+    }
+    unsafe { CStr::from_ptr(ptr) }
+        .to_str()
+        .map(|s| Zeroizing::new(s.to_owned()))
+        .map_err(|_| ())
+}
+
+fn b64d(s: &str) -> Result<Zeroizing<Vec<u8>>, ()> {
+    URL_SAFE_NO_PAD
+        .decode(s.as_bytes())
+        .map(Zeroizing::new)
+        .map_err(|_| ())
+}
+
+fn b64e(raw: &[u8]) -> String {
+    URL_SAFE_NO_PAD.encode(raw)
+}
+
+fn output(text: String) -> *mut c_char {
+    CString::new(text)
+        .unwrap_or_else(|_| CString::new("{\"ok\":false,\"error\":\"json_failed\"}").unwrap())
+        .into_raw()
+}
+
+fn ok(value: serde_json::Value) -> *mut c_char {
+    output(value.to_string())
+}
+
+fn err(code: &str) -> *mut c_char {
+    ok(json!({"ok": false, "error": code}))
+}
+
+fn optional_identifier(value: &str) -> Option<&[u8]> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.as_bytes())
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vaultai_opaque_client_start_registration(
+    password: *const c_char,
+) -> *mut c_char {
+    let password = match cstr(password) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let mut rng = OsRng;
+    match ClientRegistration::<VaultAiSuite>::start(&mut rng, password.as_bytes()) {
+        Ok(result) => ok(json!({
+            "ok": true,
+            "clientRegistrationState": b64e(result.state.serialize().as_slice()),
+            "registrationRequest": b64e(result.message.serialize().as_slice()),
+        })),
+        Err(_) => err("protocol_failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vaultai_opaque_client_finish_registration(
+    password: *const c_char,
+    registration_response: *const c_char,
+    client_registration_state: *const c_char,
+    client_identifier: *const c_char,
+    server_identifier: *const c_char,
+) -> *mut c_char {
+    let password = match cstr(password) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let response_bytes = match cstr(registration_response).and_then(|s| b64d(&s)) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let state_bytes = match cstr(client_registration_state).and_then(|s| b64d(&s)) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let client_id = match cstr(client_identifier) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let server_id = match cstr(server_identifier) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let state = match ClientRegistration::<VaultAiSuite>::deserialize(state_bytes.as_slice()) {
+        Ok(value) => value,
+        Err(_) => return err("protocol_failed"),
+    };
+    let response =
+        match RegistrationResponse::<VaultAiSuite>::deserialize(response_bytes.as_slice()) {
+            Ok(value) => value,
+            Err(_) => return err("protocol_failed"),
+        };
+    let params = ClientRegistrationFinishParameters::new(
+        Identifiers {
+            client: optional_identifier(&client_id),
+            server: optional_identifier(&server_id),
+        },
+        None,
+    );
+    let mut rng = OsRng;
+    match state.finish(&mut rng, password.as_bytes(), response, params) {
+        Ok(result) => ok(json!({
+            "ok": true,
+            "registrationRecord": b64e(result.message.serialize().as_slice()),
+            "exportKey": b64e(result.export_key.as_slice()),
+            "serverStaticPublicKey": b64e(result.server_s_pk.serialize().as_slice()),
+        })),
+        Err(_) => err("protocol_failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vaultai_opaque_client_start_login(password: *const c_char) -> *mut c_char {
+    let password = match cstr(password) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let mut rng = OsRng;
+    match ClientLogin::<VaultAiSuite>::start(&mut rng, password.as_bytes()) {
+        Ok(result) => ok(json!({
+            "ok": true,
+            "clientLoginState": b64e(result.state.serialize().as_slice()),
+            "startLoginRequest": b64e(result.message.serialize().as_slice()),
+        })),
+        Err(_) => err("protocol_failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vaultai_opaque_client_finish_login(
+    client_login_state: *const c_char,
+    login_response: *const c_char,
+    password: *const c_char,
+    client_identifier: *const c_char,
+    server_identifier: *const c_char,
+) -> *mut c_char {
+    let state_bytes = match cstr(client_login_state).and_then(|s| b64d(&s)) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let response_bytes = match cstr(login_response).and_then(|s| b64d(&s)) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let password = match cstr(password) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let client_id = match cstr(client_identifier) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let server_id = match cstr(server_identifier) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let state = match ClientLogin::<VaultAiSuite>::deserialize(state_bytes.as_slice()) {
+        Ok(value) => value,
+        Err(_) => return err("auth_failed"),
+    };
+    let response = match CredentialResponse::<VaultAiSuite>::deserialize(response_bytes.as_slice())
+    {
+        Ok(value) => value,
+        Err(_) => return err("auth_failed"),
+    };
+    let params = ClientLoginFinishParameters::new(
+        None,
+        Identifiers {
+            client: optional_identifier(&client_id),
+            server: optional_identifier(&server_id),
+        },
+        None,
+    );
+    let mut rng = OsRng;
+    match state.finish(&mut rng, password.as_bytes(), response, params) {
+        Ok(result) => ok(json!({
+            "ok": true,
+            "finishLoginRequest": b64e(result.message.serialize().as_slice()),
+            "sessionKey": b64e(result.session_key.as_slice()),
+            "exportKey": b64e(result.export_key.as_slice()),
+            "serverStaticPublicKey": b64e(result.server_s_pk.serialize().as_slice()),
+        })),
+        Err(_) => err("auth_failed"),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn vaultai_opaque_client_free_string(value: *mut c_char) {
+    if !value.is_null() {
+        let mut bytes = CString::from_raw(value).into_bytes_with_nul();
+        bytes.zeroize();
+    }
+}

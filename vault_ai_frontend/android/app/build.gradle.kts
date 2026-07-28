@@ -91,6 +91,9 @@ android {
         // at the flutter build command line still overrides it for
         // staging or per-tester deploys.
         // ---------------------------------------------------------------
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        }
     }
 
     signingConfigs {
