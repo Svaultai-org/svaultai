@@ -253,7 +253,8 @@ class VaultChatCard {
       final isLoginDetail =
           safeType == kVcrCardLogin && (rawData['view'] == 'detail');
       final isGeneratedLoginDraft = safeType == kVcrCardGeneratedLogin &&
-          (rawData['view'] == 'create_draft');
+          (rawData['view'] == 'create_draft' ||
+              rawData['view'] == 'create_draft_batch');
       final isMemoryProposal = safeType == kVcrCardMemoryProposal &&
           (rawData['view'] == 'save_proposal');
       if (isLoginDetail) {
@@ -453,7 +454,20 @@ const Set<String> _kGeneratedLoginDraftKeys = <String>{
   'email',
   'url',
   'title',
+  'drafts',
+  'count',
 };
+
+Map<String, dynamic> _sanitizeGeneratedLoginDraftRow(Map raw) {
+  final out = <String, dynamic>{};
+  for (final entry in raw.entries) {
+    final key = entry.key.toString();
+    if (!_kGeneratedLoginDraftKeys.contains(key)) continue;
+    if (key == 'drafts') continue;
+    out[key] = entry.value;
+  }
+  return out;
+}
 
 Map<String, dynamic> _sanitizeGeneratedLoginDraft(
   Map<String, dynamic> raw,
@@ -461,9 +475,20 @@ Map<String, dynamic> _sanitizeGeneratedLoginDraft(
   final out = <String, dynamic>{};
   for (final entry in raw.entries) {
     if (!_kGeneratedLoginDraftKeys.contains(entry.key)) continue;
-    // Values in this allowlist are all leaf types (String, List<String>)
-    // — no nested maps to recurse into.
-    out[entry.key] = entry.value;
+    if (entry.key == 'drafts') {
+      final drafts = <Map<String, dynamic>>[];
+      final rawDrafts = entry.value;
+      if (rawDrafts is List) {
+        for (final item in rawDrafts) {
+          if (item is Map) {
+            drafts.add(_sanitizeGeneratedLoginDraftRow(item));
+          }
+        }
+      }
+      out[entry.key] = drafts;
+    } else {
+      out[entry.key] = entry.value;
+    }
   }
   return out;
 }

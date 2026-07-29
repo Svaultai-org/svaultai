@@ -46,6 +46,8 @@ class UploadJob {
   final String name;
 
   
+  final String? displayName;
+
   final String kind;
 
   
@@ -87,6 +89,7 @@ class UploadJob {
     required this.kind,
     required this.size,
     required this.readBytes,
+    this.displayName,
     this.mimeType,
     this.relativePath,
     this.importId,

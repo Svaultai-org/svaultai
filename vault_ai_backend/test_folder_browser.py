@@ -76,6 +76,28 @@ class BuildFolderTreeTests(unittest.TestCase):
         self.assertEqual(len(tree["files"]), 1)
         self.assertEqual(tree["files"][0]["file_name"], "loose.pdf")
 
+    def test_folder_tree_includes_ciphertext_metadata_for_client_decrypt(self):
+        rows = [
+            {
+                **_row(
+                    id="1",
+                    file_name="Unnamed file",
+                    saved_name=None,
+                    relative_path=None,
+                ),
+                "saved_name_ciphertext": b"ciphertext",
+            },
+        ]
+        with patch("main.list_uploaded_files", return_value=rows) as mocked:
+            tree = build_folder_tree(vault_id="vault-1")
+
+        mocked.assert_called_once_with("vault-1", include_ciphertext=True)
+        self.assertEqual(len(tree["files"]), 1)
+        self.assertEqual(
+            tree["files"][0]["saved_name_ciphertext"],
+            "Y2lwaGVydGV4dA",
+        )
+
     def test_nested_view_returns_subfolders_and_files_at_path(self):
         rows = [
             _row(

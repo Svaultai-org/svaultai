@@ -3448,7 +3448,10 @@ def build_folder_tree(
     sanitised_path = _sanitize_relative_path(path) if path else None
     at_root = not sanitised_path
 
-    rows = list_uploaded_files(vault_id)
+    rows = [
+        _uploaded_file_for_wire(row)
+        for row in list_uploaded_files(vault_id, include_ciphertext=True)
+    ]
 
     folders_count: dict[str, int] = {}
     files_at_path: list[dict] = []
@@ -7960,15 +7963,23 @@ def save_uploaded_file(
     }
 
 
-def list_uploaded_files(vault_id: str):
+def list_uploaded_files(vault_id: str, *, include_ciphertext: bool = False):
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        ciphertext_columns = (
+            """,
+                   file_name_ciphertext, saved_name_ciphertext,
+                   content_type_ciphertext, detected_type_ciphertext,
+                   detected_service_ciphertext, asset_type_ciphertext"""
+            if include_ciphertext else ""
+        )
         cursor.execute(
-            """
+            f"""
             SELECT id, file_name, content_type, file_size, detected_type,
                    detected_service, autosaved_secret, saved_name, asset_type,
                    needs_naming, created_at, relative_path
+                   {ciphertext_columns}
             FROM uploaded_files
             WHERE vault_id = %s
               AND upload_status = 'complete'
@@ -7979,6 +7990,35 @@ def list_uploaded_files(vault_id: str):
         return cursor.fetchall() or []
     finally:
         conn.close()
+
+
+_UPLOADED_FILE_CIPHERTEXT_COLUMNS = (
+    "file_name_ciphertext",
+    "saved_name_ciphertext",
+    "content_type_ciphertext",
+    "detected_type_ciphertext",
+    "detected_service_ciphertext",
+    "asset_type_ciphertext",
+)
+
+
+def _b64url_db_bytes(value) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, memoryview):
+        raw = value.tobytes()
+    elif isinstance(value, (bytes, bytearray)):
+        raw = bytes(value)
+    else:
+        return None
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _uploaded_file_for_wire(row) -> dict:
+    out = dict(row)
+    for col in _UPLOADED_FILE_CIPHERTEXT_COLUMNS:
+        out[col] = _b64url_db_bytes(out.get(col))
+    return out
 
 
 def _get_uploaded_files_for_chat(vault_id: str, file_ids: list[str]) -> list[dict]:
@@ -10693,7 +10733,7 @@ async def upload_file_endpoint(
             f"text_present={bool(text_for_classification)} "
             f"text_len={len(text_for_classification)} "
             f"auto_named={result['auto_named']} "
-            f"saved_name={auto_saved_name!r} "
+            f"saved_name_present={auto_saved_name is not None} "
             f"auto_doc_type={auto_classified_doc_type!r} "
             f"asset_type={result.get('asset_type')!r}",
             flush=True,
@@ -10743,7 +10783,10 @@ async def list_files_endpoint(
 
     verify_vault_pin(vault_id, payload.pin)
 
-    files = list_uploaded_files(vault_id)
+    files = [
+        _uploaded_file_for_wire(row)
+        for row in list_uploaded_files(vault_id, include_ciphertext=True)
+    ]
     return {"files": files}
 
 
@@ -12840,6 +12883,128 @@ async def chat_endpoint(
             return resp
 
         try:
+            from vault_pending_draft_confirm import (
+                is_pending_draft_confirm_phrase as _cred_save_confirm_phrase,
+            )
+            _credential_save_preconfirm = _cred_save_confirm_phrase(
+                decrypted_message or "",
+            )
+        except Exception:
+            _credential_save_preconfirm = False
+        try:
+            _credential_cancel_preconfirm = bool(
+                re.match(
+                    r"^\s*(?:cancel|discard|never\s+mind|nevermind|"
+                    r"forget\s+it)\s*[.!]?\s*$",
+                    decrypted_message or "",
+                    re.IGNORECASE,
+                )
+            )
+        except Exception:
+            _credential_cancel_preconfirm = False
+
+        _selection_hint_is_generated_login = False
+        try:
+            _selection_hint = req.selection_hint
+            _selection_hint_is_generated_login = (
+                isinstance(_selection_hint, dict)
+                and str(_selection_hint.get("kind") or "").strip().lower()
+                == "generated_login_draft"
+            )
+        except Exception:
+            _selection_hint_is_generated_login = False
+
+        _memory_proposal_owns_confirm = False
+        if (
+            (_credential_save_preconfirm or _credential_cancel_preconfirm)
+            and not _selection_hint_is_generated_login
+        ):
+            try:
+                from durable_personal_memory import (
+                    has_pending_memory_proposal
+                    as _has_pending_memory_proposal,
+                )
+                _memory_proposal_owns_confirm = _has_pending_memory_proposal(
+                    vault_id,
+                    str((principal or {}).get("token_id") or ""),
+                )
+            except Exception:
+                _memory_proposal_owns_confirm = False
+
+        if (
+            (_credential_save_preconfirm or _credential_cancel_preconfirm)
+            and not _memory_proposal_owns_confirm
+        ):
+            try:
+                _credential_confirm_memory = (
+                    memory if "memory" in locals() else {}
+                )
+                if _credential_save_preconfirm:
+                    from vault_pending_credential_confirm import (
+                        save_pending_credential
+                        as _save_pending_credential,
+                    )
+                    _pending_credential_result = _save_pending_credential(
+                        vault_id=vault_id,
+                        key=key,
+                        memory=_credential_confirm_memory,
+                        save_secret_tool=save_secret_tool,
+                        selection_hint=req.selection_hint,
+                    )
+                else:
+                    from vault_pending_credential_confirm import (
+                        discard_pending_credential
+                        as _discard_pending_credential,
+                    )
+                    _pending_credential_result = (
+                        _discard_pending_credential(
+                            vault_id=vault_id,
+                            memory=_credential_confirm_memory,
+                            selection_hint=req.selection_hint,
+                        )
+                    )
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] pending_credential_confirm_failed "
+                    "vault=%s action=%s",
+                    (vault_id or "")[:8] + "...",
+                    "save" if _credential_save_preconfirm else "cancel",
+                )
+                _pending_credential_result = None
+                if _credential_save_preconfirm:
+                    return encrypted_reply(
+                        "I couldn't save that login right now. Try again "
+                        "in a moment."
+                    )
+            if _pending_credential_result is not None:
+                try:
+                    from vault_active_context import (
+                        clear_active_context as _clear_active_ctx_now,
+                    )
+                    _clear_active_ctx_now(vault_id)
+                except Exception:
+                    pass
+                try:
+                    from vault_chat_active_entity import (
+                        clear_active_entity as _clear_active_entity_now,
+                    )
+                    _clear_active_entity_now(vault_id)
+                except Exception:
+                    pass
+                try:
+                    request.state.chat_path = "pending_credential_confirmed"
+                except Exception:
+                    pass
+                logger.info(
+                    "[CHAT-TRACE] pending_credential_confirmed "
+                    "vault=%s source=%s action=%s",
+                    (vault_id or "")[:8] + "...",
+                    _pending_credential_result.source,
+                    _pending_credential_result.action,
+                )
+                return encrypted_reply(_pending_credential_result.reply_text)
+
+        try:
             from durable_personal_memory import (
                 handle_personal_memory_turn as _handle_personal_memory_turn,
             )
@@ -13982,6 +14147,7 @@ async def chat_endpoint(
                     active_entity_getter=_det_get_active,
                     active_entity_setter=_det_set_active,
                     chat_request_id=_chat_request_id or "",
+                    credential_saver=save_secret_tool,
                 )
             except Exception:
                 logger.exception(

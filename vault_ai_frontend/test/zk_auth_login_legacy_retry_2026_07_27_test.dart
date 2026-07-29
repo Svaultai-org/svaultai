@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vault_ai_frontend/services/opaque_client_stub.dart'
+import 'package:vault_ai_frontend/services/opaque_client_native.dart'
     show OpaqueAuthenticationFailed;
 import 'package:vault_ai_frontend/services/vault_handle.dart';
 import 'package:vault_ai_frontend/services/zk_auth_service.dart';

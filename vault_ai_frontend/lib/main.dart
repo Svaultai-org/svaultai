@@ -25,6 +25,7 @@ import 'package:flutter_web_plugins/url_strategy.dart' as web_plugins;
 import 'route_guard.dart';
 import 'services/inheritance_reveal_classify.dart' as inh_classify;
 import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -46,6 +47,9 @@ import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
+import 'services/attachment_title_binding.dart';
+import 'services/native_media_capture.dart';
+import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
@@ -486,6 +490,7 @@ String _newAttachmentId() {
 class _Attachment {
   final String id;
   final String name;
+  final String? displayName;
   final String kind;
   final String? mimeType;
   final int size;
@@ -505,6 +510,7 @@ class _Attachment {
     required this.kind,
     required this.size,
     required this.readBytes,
+    this.displayName,
     this.mimeType,
     this.relativePath,
     this.importId,
@@ -512,10 +518,11 @@ class _Attachment {
     this.uploaded = false,
   });
 
-  _Attachment copy() {
+  _Attachment copy({String? displayName}) {
     return _Attachment(
       id: id,
       name: name,
+      displayName: displayName ?? this.displayName,
       kind: kind,
       size: size,
       readBytes: readBytes,
@@ -7053,10 +7060,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
+  String? _audioRecordingName;
 
   final VideoRecorder _videoRecorder = VideoRecorder();
   bool _isVideoRecording = false;
   String? _videoPreviewViewType;
+
+  late final NativeMediaCaptureService _nativeMediaCapture;
+  late final RecordingStorage _recordingStorage;
 
   late final UploadQueueController _uploadQueue;
 
@@ -10452,6 +10463,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
     _uploadQueue.addListener(_onUploadQueueChanged);
     _folderPicker = createFolderPickerService();
+    _nativeMediaCapture = createNativeMediaCaptureService();
+    _recordingStorage = createRecordingStorage();
     _initSpeech();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final app = context.read<AppState>();
@@ -10555,6 +10568,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
 
+    if (!await _ensureMicrophonePermission(
+      'Microphone permission is needed to record voice.',
+    )) {
+      return;
+    }
+
     bool granted;
     try {
       granted = await _audioRecorder.hasPermission();
@@ -10562,19 +10581,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       granted = false;
     }
     if (!granted) {
-      _showSnack(
+      _showPermissionSnack(
         'Microphone permission was denied or unavailable.',
       );
       return;
     }
 
     try {
+      final recordingName = generateVoiceRecordingFilename(
+        now: DateTime.now(),
+      );
+      final recordingPath = await _recordingStorage.audioPath(recordingName);
       await _audioRecorder.start(
         const RecordConfig(encoder: AudioEncoder.aacLc),
-        path: 'vault_audio_${DateTime.now().millisecondsSinceEpoch}.m4a',
+        path: recordingPath,
       );
-      if (mounted) setState(() => _isRecording = true);
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+          _audioRecordingName = recordingName;
+        });
+      }
     } catch (_) {
+      _audioRecordingName = null;
       _showSnack('Could not start recording.');
     }
   }
@@ -10584,14 +10613,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       path = await _audioRecorder.stop();
     } catch (_) {}
-    if (mounted) setState(() => _isRecording = false);
+    final recordedName = _audioRecordingName ??
+        generateVoiceRecordingFilename(now: DateTime.now());
+    if (mounted) {
+      setState(() {
+        _isRecording = false;
+        _audioRecordingName = null;
+      });
+    } else {
+      _audioRecordingName = null;
+    }
 
     if (path == null || path.isEmpty) return;
 
     Uint8List bytes;
     try {
-      final response = await http.get(Uri.parse(path));
-      bytes = response.bodyBytes;
+      bytes = await _recordingStorage.readAndMaybeDelete(path);
     } catch (_) {
       _showSnack('Could not read the recording.');
       return;
@@ -10614,7 +10651,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       attachments.add(
         _Attachment(
           id: _newAttachmentId(),
-          name: generateVoiceRecordingFilename(now: DateTime.now()),
+          name: recordedName,
           kind: 'audio',
           readBytes: () async => recordedBytes,
           size: recordedBytes.length,
@@ -10626,6 +10663,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Future<void> _toggleVideoRecording() async {
     if (sending) return;
+
+    if (!kIsWeb && _nativeMediaCapture.isSupported) {
+      await _captureNativeVideo();
+      return;
+    }
 
     if (_isRecording) {
       _showSnack('Stop audio recording before recording video.');
@@ -10711,6 +10753,119 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ),
       );
     });
+  }
+
+  Future<void> _captureNativePhoto() async {
+    if (sending) return;
+    if (!await _ensureCameraPermission(
+      'Camera permission is needed to take a photo.',
+    )) {
+      return;
+    }
+    CapturedMedia? captured;
+    try {
+      captured = await _nativeMediaCapture.capturePhoto();
+    } catch (_) {
+      _showSnack('Could not take a photo.');
+      return;
+    }
+    if (captured == null) return;
+    _ingestCapturedMedia(captured);
+  }
+
+  Future<void> _captureNativeVideo() async {
+    if (sending) return;
+    if (_isRecording) {
+      _showSnack('Stop audio recording before recording video.');
+      return;
+    }
+    if (_isListening) {
+      _showSnack('Stop voice input before recording video.');
+      return;
+    }
+    if (!await _ensureCameraAndMicrophonePermission(
+      'Camera and microphone permissions are needed to record video.',
+    )) {
+      return;
+    }
+
+    CapturedMedia? captured;
+    try {
+      captured = await _nativeMediaCapture.captureVideo();
+    } catch (_) {
+      _showSnack('Could not record a video.');
+      return;
+    }
+    if (captured == null) return;
+    _ingestCapturedMedia(captured);
+  }
+
+  void _ingestCapturedMedia(CapturedMedia captured) {
+    final sizeError = _checkUploadSize(captured.bytes.length);
+    if (sizeError != null) {
+      _showSnack(sizeError);
+      return;
+    }
+    final capturedBytes = captured.bytes;
+    if (!mounted) return;
+    setState(() {
+      attachments.add(
+        _Attachment(
+          id: _newAttachmentId(),
+          name: captured.name,
+          kind: captured.kind,
+          readBytes: () async => capturedBytes,
+          size: capturedBytes.length,
+          mimeType: captured.mimeType,
+        ),
+      );
+    });
+  }
+
+  Future<bool> _ensureMicrophonePermission(String message) async {
+    if (kIsWeb) return true;
+    try {
+      final status = await Permission.microphone.request();
+      if (status.isGranted || status.isLimited) return true;
+    } catch (_) {
+      _showPermissionSnack(message);
+      return false;
+    }
+    _showPermissionSnack(message);
+    return false;
+  }
+
+  Future<bool> _ensureCameraPermission(String message) async {
+    if (kIsWeb) return true;
+    try {
+      final status = await Permission.camera.request();
+      if (status.isGranted || status.isLimited) return true;
+    } catch (_) {
+      _showPermissionSnack(message);
+      return false;
+    }
+    _showPermissionSnack(message);
+    return false;
+  }
+
+  Future<bool> _ensureCameraAndMicrophonePermission(String message) async {
+    if (kIsWeb) return true;
+    final cameraOk = await _ensureCameraPermission(message);
+    if (!cameraOk) return false;
+    return _ensureMicrophonePermission(message);
+  }
+
+  void _showPermissionSnack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        action: SnackBarAction(
+          label: 'Settings',
+          onPressed: openAppSettings,
+        ),
+      ),
+    );
   }
 
   Widget _buildRecordingBanner() {
@@ -11197,6 +11352,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw Exception('Upload succeeded but no file_id was returned.');
     }
 
+    final requestedDisplayName = job.displayName?.trim();
+    var displayNameCommitted = false;
+    String? displayNameWarning;
+    if (requestedDisplayName != null && requestedDisplayName.isNotEmpty) {
+      try {
+        await ctx.client.nameVaultFile(
+          vaultName: ctx.vaultName,
+          fileId: fileId,
+          savedName: requestedDisplayName,
+          pin: ctx.pin,
+          authToken: ctx.authToken,
+        );
+        displayNameCommitted = true;
+      } catch (_) {
+        displayNameWarning = 'Saved the file, but I could not save its title. '
+            'Rename it from Files.';
+      }
+    }
+
     // ZK client-finalize of server-inferred document metadata.
     // For ZK vaults the backend INSERTs uploaded_files rows with
     // detected_type / detected_service / asset_type = NULL. We
@@ -11215,8 +11389,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     return UploadResult(
       fileId: fileId,
-      autoNamed: result['auto_named'] == true,
-      message: result['message']?.toString(),
+      autoNamed: result['auto_named'] == true || displayNameCommitted,
+      message: displayNameWarning ??
+          (displayNameCommitted
+              ? 'Saved "$requestedDisplayName".'
+              : result['message']?.toString()),
       renamed: result['renamed'] == true,
       originalSavedName: result['original_saved_name']?.toString(),
     );
@@ -11385,33 +11562,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Widget _buildAttachmentPlusMenu() {
+    final maxMenuHeight = math.max(
+      260.0,
+      math.min(420.0, MediaQuery.of(context).size.height - 180.0),
+    );
+    final supportsNativeCapture =
+        !kIsWeb && _nativeMediaCapture.isSupported;
+    final supportsVideoRecording = kIsWeb || supportsNativeCapture;
+    final supportsFolderUpload = _folderPicker.isSupported;
+
     return PopupMenuButton<String>(
       tooltip: 'Add attachment',
       icon: const Icon(Icons.add_circle_outline),
+      constraints: BoxConstraints(
+        minWidth: 260,
+        maxWidth: 320,
+        maxHeight: maxMenuHeight,
+      ),
       enabled: !sending,
       onSelected: (value) async {
-        switch (value) {
-          case 'file':
-            await _pickFile();
-            break;
-          case 'photo':
-            await _pickImage();
-            break;
-          case 'video':
-            await _pickVideo();
-            break;
-          case 'audio':
-            await _pickAudio();
-            break;
-          case 'folder':
-            await _pickFolder();
-            break;
-          case 'voice':
-            _toggleRecording();
-            break;
-          case 'record_video':
-            _toggleVideoRecording();
-            break;
+        try {
+          switch (value) {
+            case 'file':
+              await _pickFile();
+              break;
+            case 'take_photo':
+              await _captureNativePhoto();
+              break;
+            case 'photo':
+              await _pickImage();
+              break;
+            case 'video':
+              await _pickVideo();
+              break;
+            case 'audio':
+              await _pickAudio();
+              break;
+            case 'folder':
+              await _pickFolder();
+              break;
+            case 'voice':
+              await _toggleRecording();
+              break;
+            case 'record_video':
+              await _toggleVideoRecording();
+              break;
+          }
+        } catch (_) {
+          _showSnack('Could not open that attachment action.');
         }
       },
       itemBuilder: (context) => [
@@ -11423,6 +11621,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             title: Text(AppLocalizations.of(context).filesUploadFile),
           ),
         ),
+        if (supportsNativeCapture)
+          const PopupMenuItem(
+            value: 'take_photo',
+            child: ListTile(
+              dense: true,
+              leading: Icon(Icons.add_a_photo_outlined),
+              title: Text('Take photo'),
+            ),
+          ),
         PopupMenuItem(
           value: 'photo',
           child: ListTile(
@@ -11447,21 +11654,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             title: Text(AppLocalizations.of(context).filesUploadAudio),
           ),
         ),
-        PopupMenuItem(
-          value: 'folder',
-          enabled: _folderPicker.isSupported,
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.folder_open),
-            title: Text(AppLocalizations.of(context).filesUploadFolder),
-            subtitle: _folderPicker.isSupported
-                ? null
-                : Text(
-                    _folderPicker.unsupportedReason,
-                    style: const TextStyle(fontSize: 11),
-                  ),
+        if (supportsFolderUpload)
+          PopupMenuItem(
+            value: 'folder',
+            child: ListTile(
+              dense: true,
+              leading: const Icon(Icons.folder_open),
+              title: Text(AppLocalizations.of(context).filesUploadFolder),
+            ),
           ),
-        ),
         const PopupMenuDivider(),
         PopupMenuItem(
           value: 'voice',
@@ -11471,7 +11672,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             title: Text(AppLocalizations.of(context).filesRecordVoice),
           ),
         ),
-        if (kIsWeb)
+        if (supportsVideoRecording)
           PopupMenuItem(
             value: 'record_video',
             child: ListTile(
@@ -11954,6 +12155,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         UploadJob(
           id: a.id,
           name: a.name,
+          displayName: a.displayName,
           kind: a.kind,
           size: a.size,
           mimeType: a.mimeType,
@@ -13755,10 +13957,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     //   "cancel"   -> state machine ACTION_CANCEL branch — clears
     //                  the pending draft + the active entity pin.
     if (action == 'generated_login_save') {
+      final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
+      final service = (data?['service'] as String?)?.trim() ?? '';
+      if (draftId.isNotEmpty) {
+        _nextSelectionHint = {
+          'kind': 'generated_login_draft',
+          'id': draftId,
+          if (service.isNotEmpty) 'service': service,
+        };
+      }
       _sendQuickPrompt('save it');
       return;
     }
     if (action == 'generated_login_cancel') {
+      final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
+      final service = (data?['service'] as String?)?.trim() ?? '';
+      if (draftId.isNotEmpty) {
+        _nextSelectionHint = {
+          'kind': 'generated_login_draft',
+          'id': draftId,
+          if (service.isNotEmpty) 'service': service,
+        };
+      }
       _sendQuickPrompt('cancel');
       return;
     }
@@ -14119,7 +14339,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
 
     final client = VaultAIClient(baseUrl: backendBaseUrl);
-    final pendingAttachments = attachments.map((a) => a.copy()).toList();
+    final replyLanguageCode = app.chatReplyLanguageCode;
+    final rawPendingAttachments = attachments.map((a) => a.copy()).toList();
+    final attachmentTitle = attachmentTitleFromComposerText(
+      text,
+      attachmentCount: rawPendingAttachments.length,
+    );
+    final pendingAttachments = attachmentTitle == null
+        ? rawPendingAttachments
+        : [
+            for (var i = 0; i < rawPendingAttachments.length; i++)
+              i == 0
+                  ? rawPendingAttachments[i].copy(displayName: attachmentTitle)
+                  : rawPendingAttachments[i],
+          ];
 
     if (pendingAttachments.isNotEmpty) {
       final plannedBytes =
@@ -14154,7 +14387,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final attachmentSummaries = pendingAttachments
         .map((a) => ChatAttachmentSummary(
-              name: a.name,
+              name: a.displayName ?? a.name,
               kind: a.kind,
               mimeType: a.mimeType,
               size: a.size,
@@ -14173,6 +14406,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
     _scrollToBottom();
 
+    var uploadedFileIds = <String>[];
+    final hadAttachments = pendingAttachments.isNotEmpty;
+    var uploadCommitted = false;
+
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
 
@@ -14182,11 +14419,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         pin: pin,
         authToken: authToken,
         pendingAttachments: pendingAttachments,
-        accompanyingText: text,
+        accompanyingText: attachmentTitle == null ? text : null,
       );
-      final uploadedFileIds = uploadOutcome.uploadedIds;
+      uploadedFileIds = uploadOutcome.uploadedIds;
+      uploadCommitted = uploadedFileIds.isNotEmpty;
 
-      final hadAttachments = pendingAttachments.isNotEmpty;
       if (hadAttachments) {
         await app.refreshVaultStats();
         await _loadVaultFiles();
@@ -14194,6 +14431,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
 
       if (text.isEmpty && uploadedFileIds.isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          sending = false;
+        });
+        return;
+      }
+
+      if (hadAttachments && attachmentTitle != null) {
         if (!mounted) return;
         setState(() {
           sending = false;
@@ -14268,26 +14513,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         return;
       }
-      final _chatRequestId =
+      final chatRequestId =
           '${DateTime.now().microsecondsSinceEpoch}_${ctxSnapshot.generation}';
-      final _keyFp = await cryptoFingerprintForKey(ctxSnapshot.key);
-      final _saltFp = cryptoFingerprintForSaltBase64(ctxSnapshot.saltBase64);
+      final keyFp = await cryptoFingerprintForKey(ctxSnapshot.key);
+      final saltFp = cryptoFingerprintForSaltBase64(ctxSnapshot.saltBase64);
       final encryptedMessage = await encryptWithContext(
         plaintext: text,
         context: ctxSnapshot,
       );
       vlog('chat.body.diag', {
-        'chat_request_id': _chatRequestId,
+        'chat_request_id': chatRequestId,
         'vault_id': ctxSnapshot.vaultId,
         'context_generation': ctxSnapshot.generation,
-        'key_fp12': _keyFp,
-        'salt_fp12_sent': _saltFp,
+        'key_fp12': keyFp,
+        'salt_fp12_sent': saltFp,
         'iterations_sent': ctxSnapshot.iterations,
         'kdf_fields_present': true,
         'encrypted_length': encryptedMessage.length,
       });
 
-      final _hintForThisSend = _nextSelectionHint;
+      final hintForThisSend = _nextSelectionHint;
       _nextSelectionHint = null;
       // The kdf metadata sent to the server MUST be the same fields
       // from the same ctxSnapshot the encryption used above — no
@@ -14299,8 +14544,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         pin: pin,
         authToken: authToken,
         uploadedFileIds: uploadedFileIds,
-        appLocale: context.read<AppState>().chatReplyLanguageCode,
-        selectionHint: _hintForThisSend,
+        appLocale: replyLanguageCode,
+        selectionHint: hintForThisSend,
         kdfSaltUsed: ctxSnapshot.saltBase64,
         kdfIterationsUsed: ctxSnapshot.iterations,
       );
@@ -14322,15 +14567,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             // finalize fails (network drop, tab close, crypto
             // error) the memory is not saved — the correct ZK
             // failure mode. No plaintext ever hits the DB.
-            final _stripped = extractAndStripMemoryProposal(
+            final stripped = extractAndStripMemoryProposal(
               buffer: buffer,
               alreadyFinalized: memoryProposalFinalized,
             );
-            buffer = _stripped.strippedBuffer;
-            if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
+            buffer = stripped.strippedBuffer;
+            if (stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
               unawaited(_finalizeMemoryProposalBestEffort(
-                jsonPayload: _stripped.jsonPayload!,
+                jsonPayload: stripped.jsonPayload!,
                 authToken: authToken,
               ));
             }
@@ -14516,7 +14761,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       setState(() {
         thinking = false;
-        msgs.add(_Msg('assistant', 'Connection error: $e'));
+        msgs.add(_Msg(
+          'assistant',
+          uploadCommitted && hadAttachments
+              ? 'Your file was saved. I could not complete the optional '
+                  'follow-up.'
+              : 'I could not complete that request. Try again.',
+        ));
         sending = false;
       });
       _scrollToBottom();
@@ -14604,7 +14855,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Widget _buildComposer(bool isMobile) {
     final vr = VaultResponsive.of(context);
 
-    final canSend = !sending && input.text.trim().isNotEmpty;
+    final canSend =
+        !sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty);
 
     Widget _attachmentIcon() => SizedBox(
           key: const Key('composer_attachment_button'),

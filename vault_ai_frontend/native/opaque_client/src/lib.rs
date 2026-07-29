@@ -65,6 +65,17 @@ fn optional_identifier(value: &str) -> Option<&[u8]> {
     }
 }
 
+fn key_stretching() -> Result<argon2::Argon2<'static>, ()> {
+    // Match @serenity-kit/opaque's default "memory-constrained" Argon2id
+    // parameters used by the production web client.
+    let params = argon2::Params::new(1 << 16, 3, 4, None).map_err(|_| ())?;
+    Ok(argon2::Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        params,
+    ))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn vaultai_opaque_client_start_registration(
     password: *const c_char,
@@ -121,12 +132,16 @@ pub unsafe extern "C" fn vaultai_opaque_client_finish_registration(
             Ok(value) => value,
             Err(_) => return err("protocol_failed"),
         };
+    let ksf = match key_stretching() {
+        Ok(value) => value,
+        Err(_) => return err("protocol_failed"),
+    };
     let params = ClientRegistrationFinishParameters::new(
         Identifiers {
             client: optional_identifier(&client_id),
             server: optional_identifier(&server_id),
         },
-        None,
+        Some(&ksf),
     );
     let mut rng = OsRng;
     match state.finish(&mut rng, password.as_bytes(), response, params) {
@@ -194,13 +209,17 @@ pub unsafe extern "C" fn vaultai_opaque_client_finish_login(
         Ok(value) => value,
         Err(_) => return err("auth_failed"),
     };
+    let ksf = match key_stretching() {
+        Ok(value) => value,
+        Err(_) => return err("protocol_failed"),
+    };
     let params = ClientLoginFinishParameters::new(
         None,
         Identifiers {
             client: optional_identifier(&client_id),
             server: optional_identifier(&server_id),
         },
-        None,
+        Some(&ksf),
     );
     let mut rng = OsRng;
     match state.finish(&mut rng, password.as_bytes(), response, params) {
@@ -220,5 +239,111 @@ pub unsafe extern "C" fn vaultai_opaque_client_free_string(value: *mut c_char) {
     if !value.is_null() {
         let mut bytes = CString::from_raw(value).into_bytes_with_nul();
         bytes.zeroize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opaque_ke::{ServerLogin, ServerLoginParameters, ServerRegistration, ServerSetup};
+
+    fn register_with_web_ksf(
+        setup: &ServerSetup<VaultAiSuite>,
+        password: &[u8],
+        credential_id: &[u8],
+    ) -> Vec<u8> {
+        let mut rng = OsRng;
+        let client_start = ClientRegistration::<VaultAiSuite>::start(&mut rng, password).unwrap();
+        let server_start =
+            ServerRegistration::start(setup, client_start.message, credential_id).unwrap();
+        let ksf = key_stretching().unwrap();
+        let client_finish = client_start
+            .state
+            .finish(
+                &mut rng,
+                password,
+                server_start.message,
+                ClientRegistrationFinishParameters::new(
+                    Identifiers {
+                        client: None,
+                        server: None,
+                    },
+                    Some(&ksf),
+                ),
+            )
+            .unwrap();
+        ServerRegistration::<VaultAiSuite>::finish(client_finish.message)
+            .serialize()
+            .to_vec()
+    }
+
+    fn login_with_ksf(
+        setup: &ServerSetup<VaultAiSuite>,
+        record_bytes: &[u8],
+        password: &[u8],
+        credential_id: &[u8],
+        ksf: Option<&argon2::Argon2<'static>>,
+    ) -> bool {
+        let mut rng = OsRng;
+        let client_start = ClientLogin::<VaultAiSuite>::start(&mut rng, password).unwrap();
+        let record = ServerRegistration::<VaultAiSuite>::deserialize(record_bytes).unwrap();
+        let server_start = ServerLogin::start(
+            &mut rng,
+            setup,
+            Some(record),
+            client_start.message,
+            credential_id,
+            ServerLoginParameters::default(),
+        )
+        .unwrap();
+        let client_finish = match client_start.state.finish(
+            &mut rng,
+            password,
+            server_start.message,
+            ClientLoginFinishParameters::new(
+                None,
+                Identifiers {
+                    client: None,
+                    server: None,
+                },
+                ksf,
+            ),
+        ) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        match server_start
+            .state
+            .finish(client_finish.message, ServerLoginParameters::default())
+        {
+            Ok(server_finish) => client_finish.session_key == server_finish.session_key,
+            Err(_) => false,
+        }
+    }
+
+    #[test]
+    fn web_compatible_ksf_is_required_for_android_login() {
+        let mut rng = OsRng;
+        let setup = ServerSetup::<VaultAiSuite>::new(&mut rng);
+        let credential_id = b"test-credential-id";
+        let password = b"test-pin";
+        let record = register_with_web_ksf(&setup, password, credential_id);
+
+        assert!(!login_with_ksf(
+            &setup,
+            &record,
+            password,
+            credential_id,
+            None,
+        ));
+
+        let ksf = key_stretching().unwrap();
+        assert!(login_with_ksf(
+            &setup,
+            &record,
+            password,
+            credential_id,
+            Some(&ksf),
+        ));
     }
 }

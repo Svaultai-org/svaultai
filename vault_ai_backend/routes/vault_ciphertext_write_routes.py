@@ -260,8 +260,11 @@ def uploaded_file_metadata_ciphertext(
             file_id=payload.file_id, updated_columns=[],
         )
 
-    set_ct_clauses = ", ".join(f"{ct} = %s" for _, ct, _ in updates_ct)
-    set_null_clauses = ", ".join(f"{legacy} = NULL" for legacy, _, _ in updates_ct)
+    saved_name_updated = any(legacy == "saved_name" for legacy, _, _ in updates_ct)
+    set_clauses = [f"{ct} = %s" for _, ct, _ in updates_ct]
+    set_clauses.extend(f"{legacy} = NULL" for legacy, _, _ in updates_ct)
+    if saved_name_updated:
+        set_clauses.append("needs_naming = FALSE")
     params: list[Any] = [v for _, _, v in updates_ct]
     params.extend([payload.file_id, principal["vault_id"]])
 
@@ -271,8 +274,7 @@ def uploaded_file_metadata_ciphertext(
         cur.execute(
             f"""
             UPDATE uploaded_files
-               SET {set_ct_clauses},
-                   {set_null_clauses}
+               SET {", ".join(set_clauses)}
              WHERE id = %s
                AND vault_id = %s
             """,
@@ -282,6 +284,14 @@ def uploaded_file_metadata_ciphertext(
             conn.rollback()
             raise HTTPException(status_code=404, detail="file not found")
         conn.commit()
+        if saved_name_updated:
+            try:
+                from vault_tool_result_cache import invalidate_for_event
+                invalidate_for_event(
+                    vault_id=principal["vault_id"], event="file_renamed",
+                )
+            except Exception:
+                pass
     finally:
         conn.close()
 

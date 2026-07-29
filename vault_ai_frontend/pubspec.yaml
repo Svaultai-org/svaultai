@@ -4,7 +4,7 @@ publish_to: 'none'
 # Store-facing marketing version + build number. Bump the +N build
 # number for EVERY submission (App Store Connect + Play Console
 # reject a duplicate build number for the same marketing version).
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -59,11 +59,14 @@ dependencies:
   # No audio leaves the device.
   speech_to_text: ^7.0.0
 
-  # Audio recording (Phase 9.5B). On web, recording stays in browser
-  # memory (MediaRecorder Blob URL). On mobile later, the package writes
-  # to a temporary app-private file — we must explicitly delete that file
-  # after reading the bytes. This phase is web-only.
+  # Audio/video capture. Web audio/video stays in browser memory;
+  # native audio uses an app-private temp file that is deleted after
+  # reading, and native camera capture feeds the same encrypted upload
+  # pipeline as picker-selected files.
   record: ^6.0.0
+  path_provider: ^2.1.5
+  image_picker: ^1.1.2
+  permission_handler: ^12.0.3
 
   # 2026-06-29 — Receive-only QR for Crypto Vault. Pure Dart, no
   # native code, no network. Renders the saved crypto wallet address

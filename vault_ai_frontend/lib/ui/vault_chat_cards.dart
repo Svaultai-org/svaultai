@@ -1641,24 +1641,28 @@ class _GeneratedLoginCard extends StatefulWidget {
 }
 
 class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
-  bool _passwordRevealed = false;
-  bool _dispatched = false; // debounce Save/Cancel double-taps
+  final Set<String> _passwordRevealedDrafts = <String>{};
+  final Set<String> _dispatchedDrafts = <String>{};
 
   Map<String, dynamic> get _data =>
       widget.card.data ?? const <String, dynamic>{};
 
-  String _readString(String primary, [String? alt]) {
-    final v = _data[primary];
+  String _readStringFrom(
+    Map<String, dynamic> data,
+    String primary, [
+    String? alt,
+  ]) {
+    final v = data[primary];
     if (v is String && v.isNotEmpty) return v;
     if (alt != null) {
-      final v2 = _data[alt];
+      final v2 = data[alt];
       if (v2 is String && v2.isNotEmpty) return v2;
     }
     return '';
   }
 
-  List<String> get _actions {
-    final raw = _data['actions'];
+  List<String> _actionsFrom(Map<String, dynamic> data) {
+    final raw = data['actions'];
     if (raw is List) {
       return raw
           .whereType<String>()
@@ -1675,190 +1679,291 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     _snack(context, '$label copied');
   }
 
+  String _dispatchKey(String draftId, String service) {
+    if (draftId.isNotEmpty) return draftId;
+    if (service.isNotEmpty) return service;
+    return 'draft';
+  }
+
+  bool _isDispatched(String draftId, String service) {
+    return _dispatchedDrafts.contains(_dispatchKey(draftId, service));
+  }
+
+  bool _isPasswordRevealed(String draftId, String service) {
+    return _passwordRevealedDrafts.contains(_dispatchKey(draftId, service));
+  }
+
+  void _togglePasswordReveal(String draftId, String service) {
+    final key = _dispatchKey(draftId, service);
+    setState(() {
+      if (_passwordRevealedDrafts.contains(key)) {
+        _passwordRevealedDrafts.remove(key);
+      } else {
+        _passwordRevealedDrafts.add(key);
+      }
+    });
+  }
+
   void _handleSave(String draftId, String service) {
-    if (_dispatched) return;
-    setState(() => _dispatched = true);
+    final key = _dispatchKey(draftId, service);
+    if (_dispatchedDrafts.contains(key)) return;
+    setState(() => _dispatchedDrafts.add(key));
     widget.onSave?.call(draftId, service);
   }
 
   void _handleCancel(String draftId, String service) {
-    if (_dispatched) return;
-    setState(() => _dispatched = true);
+    final key = _dispatchKey(draftId, service);
+    if (_dispatchedDrafts.contains(key)) return;
+    setState(() => _dispatchedDrafts.add(key));
     widget.onCancel?.call(draftId, service);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.card.view == 'create_draft_batch') {
+      final rawDrafts = _data['drafts'];
+      final drafts = <Map<String, dynamic>>[];
+      if (rawDrafts is List) {
+        for (final item in rawDrafts) {
+          if (item is Map<String, dynamic>) {
+            drafts.add(item);
+          }
+        }
+      }
+      if (drafts.isEmpty) {
+        return _legacyPlaceholder(context);
+      }
+      return _shell(
+        testKey: kVcrCardKeyGeneratedLogin,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Login drafts',
+              style: kWalletSectionHeadingStyle,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${drafts.length} drafts ready to review.',
+              style: const TextStyle(
+                color: kWalletTextMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (var i = 0; i < drafts.length; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: kWalletBorder),
+                  borderRadius: BorderRadius.circular(8),
+                  color: kWalletBgBase,
+                ),
+                child: _buildDraftReview(
+                  drafts[i],
+                  suffix: 'batch_$i',
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
     // Not the create-draft view? Fall back to the legacy
     // "generated logins list" placeholder for any future view kind.
     if (widget.card.view != 'create_draft') {
       return _legacyPlaceholder(context);
     }
 
-    final service = _readString('service', 'service_name');
-    final username = _readString('username');
-    final password = _readString('password');
-    final draftId = _readString('draft_id');
-    final email = _readString('email');
-    final url = _readString('url');
-    final title = _readString('title');
-    final actions = _actions;
-
     return _shell(
       testKey: kVcrCardKeyGeneratedLogin,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Title line: service name, prominent. Never masked.
-          Text(
-            service.isNotEmpty ? service : 'New login',
-            style: kWalletSectionHeadingStyle,
-            key: const Key(
-              'vault_chat_card_generated_login_service',
-            ),
+      child: _buildDraftReview(_data),
+    );
+  }
+
+  Widget _buildDraftReview(
+    Map<String, dynamic> data, {
+    String suffix = '',
+  }) {
+    final service = _readStringFrom(data, 'service', 'service_name');
+    final username = _readStringFrom(data, 'username');
+    final password = _readStringFrom(data, 'password');
+    final draftId = _readStringFrom(data, 'draft_id');
+    final email = _readStringFrom(data, 'email');
+    final url = _readStringFrom(data, 'url');
+    final title = _readStringFrom(data, 'title');
+    final actions = _actionsFrom(data);
+    final dispatched = _isDispatched(draftId, service);
+    final passwordRevealed = _isPasswordRevealed(draftId, service);
+    String keyed(String base) => suffix.isEmpty ? base : '${base}_$suffix';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Title line: service name, prominent. Never masked.
+        Text(
+          service.isNotEmpty ? service : 'New login',
+          style: kWalletSectionHeadingStyle,
+          key: Key(
+            keyed('vault_chat_card_generated_login_service'),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'Draft — review the values, then Save or Cancel.',
-            style: TextStyle(
-              color: kWalletTextMuted,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Draft — review the values, then Save or Cancel.',
+          style: TextStyle(
+            color: kWalletTextMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+
+        const SizedBox(height: 12),
+
+        if (username.isNotEmpty)
+          _GenLoginRow(
+            label: 'Username',
+            value: username,
+            valueKey: keyed(
+              'vault_chat_card_generated_login_username_value',
             ),
+            copyKey: keyed(
+              'vault_chat_card_generated_login_username_copy',
+            ),
+            obscure: false,
+            onCopy: () => _copy('Username', username),
           ),
 
-          const SizedBox(height: 12),
-
-          if (username.isNotEmpty)
-            _GenLoginRow(
-              label: 'Username',
-              value: username,
-              valueKey: 'vault_chat_card_generated_login_username_value',
-              copyKey: 'vault_chat_card_generated_login_username_copy',
-              obscure: false,
-              onCopy: () => _copy('Username', username),
+        if (password.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _GenLoginRow(
+            label: 'Password',
+            value: password,
+            valueKey: keyed(
+              'vault_chat_card_generated_login_password_value',
             ),
-
-          if (password.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _GenLoginRow(
-              label: 'Password',
-              value: password,
-              valueKey: 'vault_chat_card_generated_login_password_value',
-              copyKey: 'vault_chat_card_generated_login_password_copy',
-              obscure: !_passwordRevealed,
-              onCopy: () => _copy('Password', password),
-              onToggleReveal: () => setState(
-                () => _passwordRevealed = !_passwordRevealed,
-              ),
-              revealKey: 'vault_chat_card_generated_login_password_reveal',
-              revealed: _passwordRevealed,
+            copyKey: keyed(
+              'vault_chat_card_generated_login_password_copy',
             ),
-          ],
-
-          // Optional rows. Only render when the backend supplied a
-          // value.
-          if (email.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _GenLoginRow(
-              label: 'Email',
-              value: email,
-              valueKey: 'vault_chat_card_generated_login_email_value',
-              copyKey: 'vault_chat_card_generated_login_email_copy',
-              obscure: false,
-              onCopy: () => _copy('Email', email),
+            obscure: !passwordRevealed,
+            onCopy: () => _copy('Password', password),
+            onToggleReveal: () => _togglePasswordReveal(draftId, service),
+            revealKey: keyed(
+              'vault_chat_card_generated_login_password_reveal',
             ),
-          ],
-          if (url.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _GenLoginRow(
-              label: 'Website',
-              value: url,
-              valueKey: 'vault_chat_card_generated_login_url_value',
-              copyKey: 'vault_chat_card_generated_login_url_copy',
-              obscure: false,
-              onCopy: () => _copy('URL', url),
-            ),
-          ],
-          if (title.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            _GenLoginRow(
-              label: 'Title',
-              value: title,
-              valueKey: 'vault_chat_card_generated_login_title_value',
-              copyKey: 'vault_chat_card_generated_login_title_copy',
-              obscure: false,
-              onCopy: () => _copy('Title', title),
-            ),
-          ],
-
-          const SizedBox(height: 16),
-
-          // Action row: Save + Cancel. Save is primary (accent),
-          // Cancel is a low-emphasis button so accidental taps are
-          // rarer than intentional saves.
-          Row(
-            children: [
-              if (actions.contains('save'))
-                Expanded(
-                  child: ElevatedButton.icon(
-                    key: const Key(
-                      'vault_chat_card_generated_login_save',
-                    ),
-                    onPressed: _dispatched
-                        ? null
-                        : () => _handleSave(draftId, service),
-                    icon: const Icon(Icons.check_rounded, size: 18),
-                    label: const Text('Save login'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kWalletAccentPrimary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-              if (actions.contains('save') && actions.contains('cancel'))
-                const SizedBox(width: 10),
-              if (actions.contains('cancel'))
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const Key(
-                      'vault_chat_card_generated_login_cancel',
-                    ),
-                    onPressed: _dispatched
-                        ? null
-                        : () => _handleCancel(draftId, service),
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    label: const Text('Cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kWalletTextPrimary,
-                      side: const BorderSide(color: kWalletBorder),
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+            revealed: passwordRevealed,
           ),
         ],
-      ),
+
+        // Optional rows. Only render when the backend supplied a
+        // value.
+        if (email.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _GenLoginRow(
+            label: 'Email',
+            value: email,
+            valueKey: keyed(
+              'vault_chat_card_generated_login_email_value',
+            ),
+            copyKey: keyed(
+              'vault_chat_card_generated_login_email_copy',
+            ),
+            obscure: false,
+            onCopy: () => _copy('Email', email),
+          ),
+        ],
+        if (url.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _GenLoginRow(
+            label: 'Website',
+            value: url,
+            valueKey: keyed('vault_chat_card_generated_login_url_value'),
+            copyKey: keyed('vault_chat_card_generated_login_url_copy'),
+            obscure: false,
+            onCopy: () => _copy('URL', url),
+          ),
+        ],
+        if (title.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _GenLoginRow(
+            label: 'Title',
+            value: title,
+            valueKey: keyed(
+              'vault_chat_card_generated_login_title_value',
+            ),
+            copyKey: keyed('vault_chat_card_generated_login_title_copy'),
+            obscure: false,
+            onCopy: () => _copy('Title', title),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+
+        // Action row: Save + Cancel. Save is primary (accent),
+        // Cancel is a low-emphasis button so accidental taps are
+        // rarer than intentional saves.
+        Row(
+          children: [
+            if (actions.contains('save'))
+              Expanded(
+                child: ElevatedButton.icon(
+                  key: Key(
+                    keyed('vault_chat_card_generated_login_save'),
+                  ),
+                  onPressed:
+                      dispatched ? null : () => _handleSave(draftId, service),
+                  icon: const Icon(Icons.check_rounded, size: 18),
+                  label: const Text('Save login'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kWalletAccentPrimary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            if (actions.contains('save') && actions.contains('cancel'))
+              const SizedBox(width: 10),
+            if (actions.contains('cancel'))
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: Key(
+                    keyed('vault_chat_card_generated_login_cancel'),
+                  ),
+                  onPressed:
+                      dispatched ? null : () => _handleCancel(draftId, service),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('Cancel'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: kWalletTextPrimary,
+                    side: const BorderSide(color: kWalletBorder),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
     );
   }
 

@@ -384,6 +384,30 @@ def test_save_it_persists_current_memory_proposal(memory_store):
     )
 
 
+def test_pending_memory_proposal_helper_tracks_current_session(memory_store):
+    assert not dpm.has_pending_memory_proposal("vault-a", "session-a")
+    dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my name is Kola",
+        source_message_id="proposal-msg",
+        session_id="session-a",
+    )
+
+    assert dpm.has_pending_memory_proposal("vault-a", "session-a")
+    assert not dpm.has_pending_memory_proposal("vault-a", "session-b")
+
+    saved = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="save-msg",
+        session_id="session-a",
+    )
+    assert saved is not None
+    assert not dpm.has_pending_memory_proposal("vault-a", "session-a")
+
+
 def test_bare_save_it_without_memory_proposal_does_not_steal_other_flows(memory_store):
     for text in (
         "save it",
@@ -445,6 +469,51 @@ def test_maiden_name_proposal_save_recall_update_and_forget(memory_store):
     _assert_plaintext_absent_from_persistent_columns(
         memory_store,
         ["Lodato", "Rossi"],
+    )
+
+
+def test_self_name_proposal_save_recall_restart_and_forget(memory_store):
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my name is Kola",
+        source_message_id="name-proposal",
+        session_id="session-a",
+    )
+    assert proposal is not None
+    decoded = dpm.json.loads(proposal)
+    assert decoded["type"] == "vault_chat_card"
+    assert decoded["intent"] == "vault_memory_save_proposal"
+    data = decoded["card"]["data"]
+    assert data["title"] == "Your name"
+    assert data["value"] == "Kola"
+    assert data["attribute"] == "display_name"
+    assert memory_store.active_rows("vault-a") == []
+
+    saved = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="name-save",
+        session_id="session-a",
+    )
+    assert "Saved" in (saved or "")
+    assert "Kola" in _handle(memory_store, "what is my name")
+
+    restarted = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="what is my name?",
+        source_message_id="name-after-restart",
+    )
+    assert restarted == "Your name is Kola."
+
+    forgot = _handle(memory_store, "forget my name")
+    assert "Forgot" in forgot
+    assert "don't have" in _handle(memory_store, "what is my name")
+    _assert_plaintext_absent_from_persistent_columns(
+        memory_store,
+        ["Kola", "display_name"],
     )
 
 

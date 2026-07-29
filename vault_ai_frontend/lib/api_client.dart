@@ -13,9 +13,58 @@ void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
       ? ''
-      : data.entries.map((e) => '${e.key}=${e.value}').join(' ');
+      : data.entries
+          .map((e) => '${e.key}=${_safeVlogValue(tag, e.key, e.value)}')
+          .join(' ');
 
   print('[vault-debug] $tag $payload');
+}
+
+String _safeVlogValue(String tag, String key, Object? value) {
+  if (value == null) return 'null';
+  final lowerKey = key.toLowerCase();
+  final lowerTag = tag.toLowerCase();
+  final text = value.toString();
+  if (lowerKey == 'url') {
+    return _safeUrlForLog(text);
+  }
+  if (lowerKey.contains('vault_name') ||
+      lowerKey.contains('vaultname') ||
+      lowerKey.contains('username') ||
+      lowerKey.contains('display_name') ||
+      lowerKey.contains('token') ||
+      lowerKey.contains('authorization') ||
+      lowerKey.contains('password') ||
+      lowerKey.contains('secret') ||
+      lowerKey.contains('ciphertext') ||
+      lowerKey.contains('credential') ||
+      lowerKey == 'body' ||
+      lowerKey == 'response_body' ||
+      lowerKey == 'errorbody' ||
+      lowerKey == 'prompt' ||
+      lowerKey == 'query' ||
+      lowerKey == 'message' ||
+      (lowerTag.contains('chat') && lowerKey.contains('error'))) {
+    return '<redacted>';
+  }
+  if (lowerKey.contains('pin') &&
+      lowerKey != 'pin_len' &&
+      lowerKey != 'pinlen' &&
+      lowerKey != 'pin_present') {
+    return '<redacted>';
+  }
+  return text;
+}
+
+String _safeUrlForLog(String raw) {
+  try {
+    final uri = Uri.parse(raw);
+    final queryKeys = uri.queryParameters.keys.toList()..sort();
+    final query = queryKeys.isEmpty ? '' : '?${queryKeys.join('&')}';
+    return uri.replace(query: '').toString() + query;
+  } catch (_) {
+    return '<redacted-url>';
+  }
 }
 
 void _vlogRequest(String label, Uri uri, Map<String, String> headers) {
@@ -3278,6 +3327,7 @@ class VaultAIClient {
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid /folders response format');
     }
+    await _decryptUploadedFileMetadataForActiveZkVault(decoded);
     return decoded;
   }
 
@@ -3559,7 +3609,59 @@ class VaultAIClient {
       throw Exception('Invalid list files response format');
     }
 
+    await _decryptUploadedFileMetadataForActiveZkVault(decoded);
     return decoded;
+  }
+
+  Future<void> _decryptUploadedFileMetadataForActiveZkVault(
+    Map<String, dynamic> decoded,
+  ) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) return;
+    final files = decoded['files'];
+    if (files is! List) return;
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final metaKey = await hierarchy.metadataKey();
+
+    Future<String?> decryptField(Object? value) async {
+      if (value is! String || value.isEmpty) return null;
+      try {
+        final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
+          metaKey,
+          vault_key_hierarchy.b64urlDecode(value),
+        );
+        return utf8.decode(plaintext);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    for (var i = 0; i < files.length; i++) {
+      final item = files[i];
+      if (item is! Map) continue;
+      final map =
+          item is Map<String, dynamic> ? item : Map<String, dynamic>.from(item);
+      if (!identical(map, item)) {
+        files[i] = map;
+      }
+      Future<void> fill(String plain, String encrypted) async {
+        final decrypted = await decryptField(map[encrypted]);
+        if (decrypted != null && decrypted.trim().isNotEmpty) {
+          map[plain] = decrypted;
+        }
+      }
+
+      await fill('file_name', 'file_name_ciphertext');
+      await fill('saved_name', 'saved_name_ciphertext');
+      if ((map['saved_name']?.toString().trim().isNotEmpty ?? false) &&
+          map['saved_name_ciphertext'] is String) {
+        map['needs_naming'] = false;
+      }
+      await fill('content_type', 'content_type_ciphertext');
+      await fill('detected_type', 'detected_type_ciphertext');
+      await fill('detected_service', 'detected_service_ciphertext');
+      await fill('asset_type', 'asset_type_ciphertext');
+    }
   }
 
   Future<Map<String, dynamic>> getVaultStats({

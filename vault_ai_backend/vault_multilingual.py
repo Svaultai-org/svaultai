@@ -7,9 +7,9 @@ Goals of this module:
     latin-alphabet stopwords. Deterministic. No network calls.
 
   * Decide the final reply language given (app_locale header/body,
-    detected language). "The user's writing language wins" is the
-    default. If the message is empty or ambiguous, fall back to
-    the app_locale. If neither is known, fall back to English.
+    detected language). The explicit app/UI locale wins unless the
+    user has not supplied one; lightweight Latin keyword detection is
+    too weak to override the conversation language.
 
   * Provide multilingual regex bundles for the highest-signal
     intents and refusal categories: delete-vault, forgot-pin,
@@ -490,9 +490,9 @@ def resolve_reply_language(
     """Decide what language VaultAI should reply in.
 
     Priority (highest wins):
-      1. Detected language of the current message.
-      2. The user's explicit app_locale (Settings selection).
-      3. The Accept-Language HTTP header.
+      1. The user's explicit app_locale (Settings selection).
+      2. The Accept-Language HTTP header.
+      3. Detected language of the current message.
       4. English.
 
     The detected message language wins so that a user who has
@@ -500,14 +500,14 @@ def resolve_reply_language(
     the natural expectation. The app_locale is a fallback for
     short / non-linguistic messages ("ok", "help", "?").
     """
-    if detected_from_message and (
-        detected_from_message in SUPPORTED_REPLY_LANGUAGE_CODES
-    ):
-        return detected_from_message
     for hint in (app_locale_hint, header_locale_hint):
         norm = normalise_locale_code(hint)
         if norm:
             return norm
+    if detected_from_message and (
+        detected_from_message in SUPPORTED_REPLY_LANGUAGE_CODES
+    ):
+        return detected_from_message
     return DEFAULT_REPLY_LANGUAGE
 
 

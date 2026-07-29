@@ -658,6 +658,53 @@ void main() {
   });
 
 
+  group('Vault chat card actions through ChatMessageList', () {
+    testWidgets('memory proposal save reaches the chat action callback',
+        (tester) async {
+      String? action;
+      Map<String, dynamic>? payload;
+      final msg = _vaultCardMsg(
+        intent: 'vault_memory_save_proposal',
+        card: {
+          'cardType': 'vault_memory_proposal_card',
+          'view': 'save_proposal',
+          'data': {
+            'schema': 'vault_memory_proposal_v1',
+            'proposal_id': 'mem-name-1',
+            'title': 'Your name',
+            'value': 'Kola',
+            'memory_type': 'personal_fact',
+            'category': 'identity',
+            'subject': 'self',
+            'attribute': 'display_name',
+            'actions': ['save', 'edit', 'cancel'],
+          },
+        },
+      );
+
+      await tester.pumpWidget(_wrap(ChatMessageList(
+        messages: [msg],
+        thinking: false,
+        streaming: false,
+        isMobile: false,
+        onCardAction: (_, nextAction, data) {
+          action = nextAction;
+          payload = data;
+        },
+      )));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('vault_chat_card_memory_save')));
+      await tester.pumpAndSettle();
+
+      expect(action, 'memory_proposal_save');
+      expect(payload, isNotNull);
+      expect(payload!['attribute'], 'display_name');
+      expect(payload!['value'], 'Kola');
+    });
+  });
+
+
 
   group('Non-vault chat still renders normal text bubbles', () {
 

@@ -93,6 +93,34 @@ def test_uploaded_file_metadata_rejects_plaintext_leak() -> None:
     assert "saved_name" in excinfo.value.detail
 
 
+def test_uploaded_file_saved_name_ciphertext_clears_needs_naming() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    src = inspect.getsource(mod.uploaded_file_metadata_ciphertext)
+    assert 'legacy == "saved_name"' in src
+    assert "needs_naming = FALSE" in src
+    assert "invalidate_for_event" in src
+
+
+def test_uploaded_file_ciphertext_path_does_not_log_plaintext_names() -> None:
+    import inspect
+    import main
+
+    src = inspect.getsource(main.upload_file_endpoint)
+    assert "saved_name_present=" in src
+    assert "saved_name={auto_saved_name!r}" not in src
+
+
+def test_list_files_returns_ciphertext_metadata_for_client_decrypt() -> None:
+    import inspect
+    import main
+
+    src = inspect.getsource(main.list_files_endpoint)
+    assert "include_ciphertext=True" in src
+    assert "_uploaded_file_for_wire" in src
+
+
 def test_notification_ciphertext_rejects_plaintext_leak() -> None:
     from fastapi import HTTPException
     req = NotificationCiphertextRequest(

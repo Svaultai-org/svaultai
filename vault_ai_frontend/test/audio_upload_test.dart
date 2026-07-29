@@ -203,4 +203,69 @@ void main() {
       );
     });
   });
+
+  group('Native recording and capture guards', () {
+    test('voice recorder uses platform storage instead of URL-fetching '
+        'native file paths', () {
+      final src = _readLib('main.dart');
+      expect(
+        src,
+        contains('createRecordingStorage()'),
+        reason: 'chat screen must initialize the conditional recording '
+            'storage helper',
+      );
+      expect(
+        src,
+        contains('await _recordingStorage.audioPath(recordingName)'),
+        reason: 'native audio capture needs an app-private temp path',
+      );
+      expect(
+        src,
+        contains('await _recordingStorage.readAndMaybeDelete(path)'),
+        reason: 'native recordings must be read locally and cleaned up',
+      );
+      expect(
+        src,
+        isNot(contains('http.get(Uri.parse(path))')),
+        reason: 'Android recorder paths are local files, not URLs',
+      );
+    });
+
+    test('record voice action is awaited and permission-gated', () {
+      final src = _readLib('main.dart');
+      expect(src, contains("case 'voice':"));
+      expect(
+        src,
+        contains('await _toggleRecording();'),
+        reason: 'plugin exceptions must stay in the local menu handler',
+      );
+      expect(
+        src,
+        contains('Permission.microphone.request()'),
+        reason: 'microphone permission must be requested only for voice '
+            'recording/capture actions',
+      );
+      expect(src, contains('openAppSettings'));
+    });
+
+    test('Android camera capture uses native media capture service', () {
+      final src = _readLib('main.dart');
+      expect(src, contains('createNativeMediaCaptureService()'));
+      expect(src, contains("case 'take_photo':"));
+      expect(src, contains('await _captureNativePhoto();'));
+      expect(src, contains("case 'record_video':"));
+      expect(src, contains('await _toggleVideoRecording();'));
+      expect(src, contains('!kIsWeb && _nativeMediaCapture.isSupported'));
+    });
+
+    test('native capture implementation uses camera source only in IO file',
+        () {
+      final src = _readLib('services/native_media_capture_io.dart');
+      expect(src, contains('ImageSource.camera'));
+      expect(src, contains('capturePhoto()'));
+      expect(src, contains('captureVideo()'));
+      expect(src, contains("kind: 'image'"));
+      expect(src, contains("kind: 'video'"));
+    });
+  });
 }

@@ -39,6 +39,7 @@ _CONFIRM_PATTERNS: tuple[str, ...] = (
     r"^\s*save\s*[.!?]*\s*$",
     r"^\s*please[\s,.!]+save(?:\s+(?:it|this|that|now))?\s*[.!?]*\s*$",
     r"^\s*yes[\s,.!]+save(?:\s+(?:it|this|that|now))?\s*[.!?]*\s*$",
+    r"^\s*(?:yea|yeah|yep|yup)\s*[.!?]*\s*$",
     r"^\s*(?:yea|yeah|yep|yup)[\s,.!]+save(?:\s+(?:it|this|that|now))?"
     r"\s*[.!?]*\s*$",
     r"^\s*confirm\s+save\s*[.!?]*\s*$",

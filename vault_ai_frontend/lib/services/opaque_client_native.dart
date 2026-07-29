@@ -8,6 +8,7 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io' show Platform;
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
@@ -236,7 +237,25 @@ class OpaqueClient {
     );
   }
 
-  static ClientRegistrationFinish finishRegistration({
+  static Future<ClientRegistrationFinish> finishRegistration({
+    required String password,
+    required String registrationResponse,
+    required String clientRegistrationState,
+    String? clientIdentifier,
+    String? serverIdentifier,
+  }) {
+    return Isolate.run(
+      () => _finishRegistrationSync(
+        password: password,
+        registrationResponse: registrationResponse,
+        clientRegistrationState: clientRegistrationState,
+        clientIdentifier: clientIdentifier,
+        serverIdentifier: serverIdentifier,
+      ),
+    );
+  }
+
+  static ClientRegistrationFinish _finishRegistrationSync({
     required String password,
     required String registrationResponse,
     required String clientRegistrationState,
@@ -286,7 +305,25 @@ class OpaqueClient {
     );
   }
 
-  static ClientLoginFinish finishLogin({
+  static Future<ClientLoginFinish> finishLogin({
+    required String clientLoginState,
+    required String loginResponse,
+    required String password,
+    String? clientIdentifier,
+    String? serverIdentifier,
+  }) {
+    return Isolate.run(
+      () => _finishLoginSync(
+        clientLoginState: clientLoginState,
+        loginResponse: loginResponse,
+        password: password,
+        clientIdentifier: clientIdentifier,
+        serverIdentifier: serverIdentifier,
+      ),
+    );
+  }
+
+  static ClientLoginFinish _finishLoginSync({
     required String clientLoginState,
     required String loginResponse,
     required String password,

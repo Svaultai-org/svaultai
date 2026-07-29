@@ -439,7 +439,8 @@ _SAVE_INTENT_RE = re.compile(
 )
 _SAVE_SIMPLE_RE = re.compile(
     r"^\s*(?:save|store|keep|remember|do\s+it|go\s+ahead|"
-    r"looks?\s+good|that\s+works|perfect|yes\s+save|ok\s+save)"
+    r"looks?\s+good|that\s+works|perfect|yea|yeah|yep|yup|"
+    r"yes\s+save|ok\s+save)"
     r"[\s.!?]*$",
     re.IGNORECASE,
 )

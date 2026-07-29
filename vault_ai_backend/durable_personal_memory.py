@@ -199,6 +199,22 @@ _BLOOD_TYPE_RECALL_RE = re.compile(
     r"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?blood\s+type" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
+_SELF_NAME_FACT_RE = re.compile(
+    r"^\s*my\s+name\s+is\s+(?:(?:actually|really)\s+)?"
+    r"(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_SELF_NAME_RECALL_RE = re.compile(
+    r"^\s*(?:what(?:'s|\s+is)|who\s+am)\s+(?:is\s+)?"
+    r"(?:my\s+name|i)\s*" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_SELF_NAME_FORGET_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
+    r"(?:(?:the\s+)?memory\s+about\s+)?(?:my\s+)?name"
+    + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
 _GENERIC_TITLE_RECALL_RE = re.compile(
     r"^\s*(?:show\s+me\s+)?(?:the\s+)?memory\s+called\s+"
     r"(?P<title>.+?)" + _END_PUNCT_RE,
@@ -510,6 +526,25 @@ def _parse_fact_statement(
             needs_clarification=not bool(value),
         )
 
+    m = _SELF_NAME_FACT_RE.match(text)
+    if m:
+        value = _clip(m.group("value"), 120)
+        return PersonalMemoryIntent(
+            action=action,
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="display_name",
+            title="Your name",
+            memory_type="identity",
+            category="identity",
+            value=value,
+            display_value=value,
+            tags=("identity", "name"),
+            is_correction=is_correction,
+            needs_clarification=not bool(value),
+        )
+
     m = _LIKE_FACT_RE.match(text)
     if m:
         value = _clip(m.group("value"))
@@ -627,6 +662,17 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             category="travel",
             place=place,
         )
+    if _SELF_NAME_FORGET_RE.match(text):
+        return PersonalMemoryIntent(
+            action="forget",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="display_name",
+            title="Your name",
+            memory_type="identity",
+            category="identity",
+        )
     generic_forget = _generic_forget_intent(text)
     if generic_forget is not None:
         return generic_forget
@@ -703,6 +749,17 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             title="Blood type",
             memory_type="identity",
             category="medical",
+        )
+    if _SELF_NAME_RECALL_RE.match(text):
+        return PersonalMemoryIntent(
+            action="recall",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="display_name",
+            title="Your name",
+            memory_type="identity",
+            category="identity",
         )
     generic_recall = _generic_query_from_text(text)
     if generic_recall is not None:
@@ -1217,6 +1274,8 @@ def _missing_text(intent: PersonalMemoryIntent) -> str:
         return "I don't have your favorite place saved yet."
     if intent.attribute == "blood_type":
         return "I don't have your blood type saved yet."
+    if intent.attribute == "display_name":
+        return "I don't have your name saved yet."
     return "I don't have that memory saved yet."
 
 
@@ -1240,6 +1299,8 @@ def _saved_text(intent: PersonalMemoryIntent, verb: str = "Saved") -> str:
         return f"{verb}: your favorite place is {display}."
     if intent.attribute == "blood_type":
         return f"{verb}: your blood type is {display}."
+    if intent.attribute == "display_name":
+        return f"{verb}: your name is {display}."
     return f"{verb}: {intent.title}."
 
 
@@ -1270,6 +1331,8 @@ def _recall_text(intent: PersonalMemoryIntent, payload: dict[str, Any]) -> str:
         return f"Your favorite place is {display}."
     if intent.attribute == "blood_type":
         return f"Your blood type is {display}."
+    if intent.attribute == "display_name":
+        return f"Your name is {display}."
     return f"{payload.get('title') or intent.title}: {display}"
 
 
@@ -1590,6 +1653,8 @@ def _forget_memory(vault_id: str, key: bytes, intent: PersonalMemoryIntent) -> s
             return f"Forgot {_format_possessive(intent.subject_display)} birthday."
         if intent.attribute == "maiden_name":
             return f"Forgot {_format_possessive(intent.subject_display)} maiden name."
+        if intent.attribute == "display_name":
+            return "Forgot your name."
         return f"Forgot {intent.title}."
     except Exception as exc:
         try:
@@ -1652,6 +1717,13 @@ def _peek_pending_proposal(
     item = _PENDING_PROPOSALS.get(_pending_key(vault_id, session_id))
     payload = item.get("payload") if isinstance(item, dict) else None
     return payload if isinstance(payload, dict) else None
+
+
+def has_pending_memory_proposal(
+    vault_id: str,
+    session_id: Optional[str],
+) -> bool:
+    return _peek_pending_proposal(vault_id, session_id) is not None
 
 
 def _proposal_envelope(intent: PersonalMemoryIntent) -> str:

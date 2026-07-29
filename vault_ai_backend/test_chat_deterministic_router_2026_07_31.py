@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from types import SimpleNamespace
 from typing import Any, Optional
 from unittest import mock
 
@@ -49,6 +50,8 @@ from vault_chat_deterministic_router import (
     CHAT_PATH_DETERMINISTIC_NAMED_AMBIGUOUS,
     CHAT_PATH_DETERMINISTIC_NAMED_OBJECT,
     KIND_CREDENTIAL_DRAFT,
+    KIND_CREDENTIAL_DRAFT_BATCH,
+    KIND_CREDENTIAL_SAVED,
     KIND_NAMED_OBJECT_AMBIGUOUS,
     KIND_NAMED_OBJECT_FILE,
     RESPONSE_TYPE_CREDENTIAL_DRAFT,
@@ -57,7 +60,6 @@ from vault_chat_deterministic_router import (
     RouteOutcome,
     try_route_deterministically,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -580,6 +582,47 @@ class BuildCredentialDraftEnvelopeTest(unittest.TestCase):
         self.assertEqual(data_full["url"],   "https://example.com")
         self.assertEqual(data_full["title"], "Personal")
 
+    def test_batch_shape_contains_each_distinct_draft(self):
+        payloads = [
+            {
+                "draft_id": "draft-fb-1",
+                "service_name": "Facebook",
+                "username": "facebook-user",
+                "password": "Password1!",
+            },
+            {
+                "draft_id": "draft-ig-1",
+                "service_name": "Instagram",
+                "username": "instagram-user",
+                "password": "Password2!",
+            },
+            {
+                "draft_id": "draft-hbo-1",
+                "service_name": "HBO max",
+                "username": "hbo-user",
+                "password": "Password3!",
+            },
+        ]
+        env = json.loads(det._build_credential_draft_batch_envelope(payloads))
+        self.assertEqual(env["type"], "vault_chat_card")
+        self.assertEqual(
+            env["intent"], "vault_generated_login_create_draft",
+        )
+        card = env["card"]
+        self.assertEqual(card["cardType"], "vault_generated_login_card")
+        self.assertEqual(card["view"], "create_draft_batch")
+        data = card["data"]
+        self.assertEqual(data["view"], "create_draft_batch")
+        self.assertEqual(data["count"], 3)
+        self.assertEqual(
+            [d["service"] for d in data["drafts"]],
+            ["Facebook", "Instagram", "HBO max"],
+        )
+        self.assertEqual(
+            [d["draft_id"] for d in data["drafts"]],
+            ["draft-fb-1", "draft-ig-1", "draft-hbo-1"],
+        )
+
 
 class ExtractServiceFromMessageTest(unittest.TestCase):
 
@@ -629,6 +672,27 @@ class ExtractServiceFromMessageTest(unittest.TestCase):
         # "create me a new login" — "new" is a stopword, no real service.
         self.assertIsNone(
             det._extract_service_from_message("create me a new login"),
+        )
+
+
+    def test_multi_login_services_are_distinct(self):
+        services = det._extract_credential_services_from_message(
+            "generate me Facebook logins, Instagram logins and HBO max login",
+        )
+        self.assertEqual(services, ["Facebook", "Instagram", "HBO max"])
+
+    def test_and_save_connector_not_part_of_service_name(self):
+        self.assertEqual(
+            det._extract_service_from_message(
+                "create and save a Facebook login",
+            ),
+            "Facebook",
+        )
+        self.assertEqual(
+            det._extract_credential_services_from_message(
+                "create and save a Facebook login",
+            ),
+            ["Facebook"],
         )
 
 
@@ -884,6 +948,92 @@ class TryRouteBug4CredentialCreationTest(unittest.TestCase):
         self.assertTrue(len(data["password"]) > 0)
         self.assertEqual(data["actions"], ["save", "cancel"])
         self.assertTrue(len(data["draft_id"]) > 0)
+
+    def test_multi_login_request_creates_all_drafts(self):
+        drafter_calls: list = []
+
+        def spy_drafter(**kwargs):
+            drafter_calls.append(dict(kwargs))
+            return _stub_drafter_ok(**kwargs)
+
+        outcome = try_route_deterministically(
+            vault_id=_VAULT_ID,
+            session_id=_SESSION_ID,
+            key=_KEY,
+            decrypted_message=(
+                "generate me Facebook logins, Instagram logins "
+                "and HBO max login"
+            ),
+            files_lister=lambda: [],
+            credential_drafter=spy_drafter,
+            active_entity_getter=lambda vid, session_id=None: None,
+            active_entity_setter=lambda *a, **k: True,
+            chat_request_id=_REQ,
+        )
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.kind, KIND_CREDENTIAL_DRAFT_BATCH)
+        self.assertEqual(
+            [c["service_name"] for c in drafter_calls],
+            ["Facebook", "Instagram", "HBO max"],
+        )
+        env = json.loads(outcome.envelope_json)
+        data = env["card"]["data"]
+        self.assertEqual(data["view"], "create_draft_batch")
+        self.assertEqual(data["count"], 3)
+        self.assertEqual(
+            [d["service_name"] for d in data["drafts"]],
+            ["Facebook", "Instagram", "HBO max"],
+        )
+
+    def test_plain_create_login_returns_draft_not_saved_text(self):
+        outcome = try_route_deterministically(
+            vault_id=_VAULT_ID,
+            session_id=_SESSION_ID,
+            key=_KEY,
+            decrypted_message="create me a Facebook login",
+            files_lister=lambda: [],
+            credential_drafter=_stub_drafter_ok,
+            active_entity_getter=lambda vid, session_id=None: None,
+            active_entity_setter=lambda *a, **k: True,
+            chat_request_id=_REQ,
+        )
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.kind, KIND_CREDENTIAL_DRAFT)
+        env = json.loads(outcome.envelope_json)
+        self.assertEqual(env["intent"], "vault_generated_login_create_draft")
+
+    def test_explicit_create_and_save_consumes_generated_draft(self):
+        confirm_calls: list[dict] = []
+
+        def fake_confirm(**kwargs):
+            confirm_calls.append(dict(kwargs))
+            return SimpleNamespace(service_name="Facebook")
+
+        with mock.patch(
+            "vault_pending_credential_confirm.save_pending_credential",
+            fake_confirm,
+        ):
+            outcome = try_route_deterministically(
+                vault_id=_VAULT_ID,
+                session_id=_SESSION_ID,
+                key=_KEY,
+                decrypted_message="create and save a Facebook login",
+                files_lister=lambda: [],
+                credential_drafter=_stub_drafter_ok,
+                active_entity_getter=lambda vid, session_id=None: None,
+                active_entity_setter=lambda *a, **k: True,
+                chat_request_id=_REQ,
+                credential_saver=lambda *a, **k: True,
+            )
+
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.kind, KIND_CREDENTIAL_SAVED)
+        self.assertEqual(len(confirm_calls), 1)
+        hint = confirm_calls[0]["selection_hint"]
+        self.assertEqual(hint["id"], "draft-Facebook-01")
+        self.assertIsNotNone(confirm_calls[0]["save_secret_tool"])
+        self.assertIn("Saved your Facebook login", outcome.envelope_json)
+        self.assertNotIn("GeneratedPassword12345", outcome.envelope_json)
 
     def test_prime_login_email_username(self):
         drafter_calls: list = []

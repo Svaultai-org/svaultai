@@ -468,6 +468,7 @@ void main() {
         'Upload audio':  'filesUploadAudio',
         'Upload folder': 'filesUploadFolder',
         'Record voice':  'filesRecordVoice',
+        'Record video':  'filesRecordVideo',
       };
       for (final entry in optionToKey.entries) {
         final option = entry.key;
@@ -513,13 +514,18 @@ void main() {
       );
     });
 
-    test('folder option in + menu is disabled when picker is '
+    test('folder option in + menu is hidden when picker is '
         'unsupported on the platform', () {
       final src = readMain();
       expect(
         src,
-        contains('enabled: _folderPicker.isSupported'),
-        reason: 'folder option must grey out when not supported',
+        contains('if (supportsFolderUpload)'),
+        reason: 'folder option must not be built on unsupported mobile',
+      );
+      expect(
+        src,
+        isNot(contains('enabled: _folderPicker.isSupported')),
+        reason: 'unsupported mobile folder upload must be hidden, not disabled',
       );
     });
   });

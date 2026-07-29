@@ -435,6 +435,96 @@ void main() {
       expect(find.text('HBO Max'), findsOneWidget);
     });
 
+    testWidgets('generated login batch renders every requested draft',
+        (tester) async {
+      final saved = <String>[];
+      final response = _parse(
+        intent: 'vault_generated_login_create_draft',
+        card: {
+          'cardType': 'vault_generated_login_card',
+          'view': 'create_draft_batch',
+          'data': {
+            'view': 'create_draft_batch',
+            'schema': 'vault_generated_login_draft_batch_v1',
+            'count': 3,
+            'actions': ['save', 'cancel'],
+            'drafts': [
+              {
+                'view': 'create_draft',
+                'service': 'Facebook',
+                'service_name': 'Facebook',
+                'username': 'facebook-user',
+                'password': 'Password1!',
+                'draft_id': 'draft-facebook',
+                'actions': ['save', 'cancel'],
+              },
+              {
+                'view': 'create_draft',
+                'service': 'Instagram',
+                'service_name': 'Instagram',
+                'username': 'instagram-user',
+                'password': 'Password2!',
+                'draft_id': 'draft-instagram',
+                'actions': ['save', 'cancel'],
+              },
+              {
+                'view': 'create_draft',
+                'service': 'HBO max',
+                'service_name': 'HBO max',
+                'username': 'hbo-user',
+                'password': 'Password3!',
+                'draft_id': 'draft-hbo',
+                'actions': ['save', 'cancel'],
+              },
+            ],
+          },
+        },
+      );
+      final drafts = response.card.data!['drafts'] as List;
+      expect(drafts, hasLength(3));
+      expect(drafts.first['password'], 'Password1!');
+
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(
+          response: response,
+          onGeneratedLoginSave: (draftId, service) {
+            saved.add('$draftId:$service');
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Facebook'), findsOneWidget);
+      expect(find.text('Instagram'), findsOneWidget);
+      expect(find.text('HBO max'), findsOneWidget);
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save_batch_0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save_batch_1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save_batch_2')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const Key('vault_chat_card_generated_login_save_batch_0')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('vault_chat_card_generated_login_save_batch_1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(saved, [
+        'draft-facebook:Facebook',
+        'draft-instagram:Instagram',
+      ]);
+    });
+
     testWidgets('billing card renders with route-to-checkout wording',
         (tester) async {
       var opened = false;

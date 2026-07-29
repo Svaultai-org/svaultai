@@ -35,6 +35,7 @@
 
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:async';
 import 'dart:math' show Random;
 
 import 'package:cryptography/cryptography.dart';
@@ -200,16 +201,18 @@ class ZkClientLoginFinish {
 
 abstract class ZkOpaqueClient {
   Future<void> ready();
-  ZkClientRegistrationStart startRegistration({required String password});
-  ZkClientRegistrationFinish finishRegistration({
+  FutureOr<ZkClientRegistrationStart> startRegistration({
+    required String password,
+  });
+  FutureOr<ZkClientRegistrationFinish> finishRegistration({
     required String password,
     required String registrationResponse,
     required String clientRegistrationState,
     String? clientIdentifier,
     String? serverIdentifier,
   });
-  ZkClientLoginStart startLogin({required String password});
-  ZkClientLoginFinish finishLogin({
+  FutureOr<ZkClientLoginStart> startLogin({required String password});
+  FutureOr<ZkClientLoginFinish> finishLogin({
     required String clientLoginState,
     required String loginResponse,
     required String password,
@@ -234,19 +237,21 @@ class DefaultZkOpaqueClient implements ZkOpaqueClient {
   }
 
   @override
-  ZkClientRegistrationFinish finishRegistration({
+  Future<ZkClientRegistrationFinish> finishRegistration({
     required String password,
     required String registrationResponse,
     required String clientRegistrationState,
     String? clientIdentifier,
     String? serverIdentifier,
-  }) {
-    final finish = OpaqueClient.finishRegistration(
-      password: password,
-      registrationResponse: registrationResponse,
-      clientRegistrationState: clientRegistrationState,
-      clientIdentifier: clientIdentifier,
-      serverIdentifier: serverIdentifier,
+  }) async {
+    final finish = await Future<ClientRegistrationFinish>.value(
+      OpaqueClient.finishRegistration(
+        password: password,
+        registrationResponse: registrationResponse,
+        clientRegistrationState: clientRegistrationState,
+        clientIdentifier: clientIdentifier,
+        serverIdentifier: serverIdentifier,
+      ),
     );
     return ZkClientRegistrationFinish(
       finish.registrationRecord,
@@ -265,19 +270,21 @@ class DefaultZkOpaqueClient implements ZkOpaqueClient {
   }
 
   @override
-  ZkClientLoginFinish finishLogin({
+  Future<ZkClientLoginFinish> finishLogin({
     required String clientLoginState,
     required String loginResponse,
     required String password,
     String? clientIdentifier,
     String? serverIdentifier,
-  }) {
-    final finish = OpaqueClient.finishLogin(
-      clientLoginState: clientLoginState,
-      loginResponse: loginResponse,
-      password: password,
-      clientIdentifier: clientIdentifier,
-      serverIdentifier: serverIdentifier,
+  }) async {
+    final finish = await Future<ClientLoginFinish>.value(
+      OpaqueClient.finishLogin(
+        clientLoginState: clientLoginState,
+        loginResponse: loginResponse,
+        password: password,
+        clientIdentifier: clientIdentifier,
+        serverIdentifier: serverIdentifier,
+      ),
     );
     return ZkClientLoginFinish(
       finish.finishLoginRequest,
@@ -425,7 +432,7 @@ class ZkAuthService {
     final lookupV1 = deriveUsernameLookupV1(vaultName);
     final lookupV1B64 = vaultHandleB64Url(lookupV1);
 
-    final startResult = _opaque.startRegistration(password: pin);
+    final startResult = await _opaque.startRegistration(password: pin);
 
     final initResponse = await _post(
       '/auth/zk-register-init',
@@ -437,7 +444,7 @@ class ZkAuthService {
     );
     final ke2 = initResponse['ke2'] as String;
 
-    final finishResult = _opaque.finishRegistration(
+    final finishResult = await _opaque.finishRegistration(
       password: pin,
       registrationResponse: ke2,
       clientRegistrationState: startResult.clientRegistrationState,
@@ -578,7 +585,7 @@ class ZkAuthService {
       String? clientIdentifier,
       required bool legacy,
     }) async {
-      final start = _opaque.startLogin(password: pin);
+      final start = await _opaque.startLogin(password: pin);
       step(legacy ? 'opaque_legacy_start_login' : 'opaque_start_login');
 
       // Include ``username_lookup`` (32-byte client-derived id) when
@@ -602,7 +609,7 @@ class ZkAuthService {
       final slotId = initResponse['slot_id'] as String;
 
       try {
-        final finish = _opaque.finishLogin(
+        final finish = await _opaque.finishLogin(
           clientLoginState: start.clientLoginState,
           loginResponse: ke2,
           password: pin,
@@ -707,7 +714,7 @@ class ZkAuthService {
     final handleBytes = vaultHandleFromDisplay(vaultHandle);
     final handleDisplay = vaultHandleToDisplay(handleBytes);
 
-    final regStart = _opaque.startRegistration(password: pin);
+    final regStart = await _opaque.startRegistration(password: pin);
     final initResponse = await _post(
       '/auth/zk-repair-init',
       {
@@ -717,7 +724,7 @@ class ZkAuthService {
       bearerToken: currentSessionToken,
     );
 
-    final regFinish = _opaque.finishRegistration(
+    final regFinish = await _opaque.finishRegistration(
       password: pin,
       registrationResponse: initResponse['ke2'] as String,
       clientRegistrationState: regStart.clientRegistrationState,
@@ -801,7 +808,7 @@ class ZkAuthService {
     final handleBytes = generateVaultHandle();
     final handleDisplay = vaultHandleToDisplay(handleBytes);
 
-    final regStart = _opaque.startRegistration(password: pin);
+    final regStart = await _opaque.startRegistration(password: pin);
 
     final initResponse = await _post(
       '/auth/zk-register-init',
@@ -812,7 +819,7 @@ class ZkAuthService {
     );
     final ke2 = initResponse['ke2'] as String;
 
-    final regFinish = _opaque.finishRegistration(
+    final regFinish = await _opaque.finishRegistration(
       password: pin,
       registrationResponse: ke2,
       clientRegistrationState: regStart.clientRegistrationState,

@@ -67,9 +67,9 @@ plaintext, or Stripe/session tokens.
   * It does not decrypt anything the caller has not already handed
     it (needs the AES key to render thumbnails; that is the ONLY
     crypto dependency).
-  * It does not persist credentials — only creates the DRAFT
-    (via `generate_credential_draft`), which the existing state
-    machine confirms and saves on "save it".
+  * It only persists credentials when the user explicitly asks to
+    create/generate AND save in the same request. Plain create/generate
+    still produces a reviewable draft.
   * It does not touch Stripe, deletion, or authentication.
   * It cannot bypass PIN gates or trusted-device checks — those
     ran upstream before chat_endpoint decrypted the message.
@@ -116,6 +116,8 @@ KIND_NAMED_OBJECT_FILE:      str = "named_object_file"
 KIND_NAMED_OBJECT_LOGIN:     str = "named_object_login"
 KIND_NAMED_OBJECT_AMBIGUOUS: str = "named_object_ambiguous"
 KIND_CREDENTIAL_DRAFT:       str = "credential_draft"
+KIND_CREDENTIAL_DRAFT_BATCH: str = "credential_draft_batch"
+KIND_CREDENTIAL_SAVED:       str = "credential_saved"
 
 
 # Response types the frontend recognizes. The frontend chat parser
@@ -131,6 +133,19 @@ RESPONSE_TYPE_CREDENTIAL_DRAFT:        str = "vault_generated_login_card"
 # or with more than one verb-clause is deferred to the planner —
 # we only handle short, unambiguous imperatives.
 _MAX_ROUTABLE_CHARS: int = 200
+
+
+_SAVE_NOW_RE = re.compile(
+    r"\b("
+    r"save\s+it\s+now|"
+    r"save\s+now|"
+    r"generate\s+and\s+save|"
+    r"create\s+and\s+save|"
+    r"and\s+save\s+it|"
+    r"save\s+this\s+one"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -677,6 +692,132 @@ def _build_credential_draft_envelope(draft_payload: dict, service: str) -> str:
     return json.dumps(envelope, ensure_ascii=False)
 
 
+def _draft_payload_to_card_data(draft_payload: dict, service: str) -> dict:
+    display_service = str(
+        draft_payload.get("service_name")
+        or draft_payload.get("service")
+        or service
+        or ""
+    )
+    data = {
+        "view": "create_draft",
+        "service": display_service,
+        "service_name": display_service,
+        "username": str(draft_payload.get("username") or ""),
+        "password": str(draft_payload.get("password") or ""),
+        "draft_id": str(draft_payload.get("draft_id") or ""),
+        "explicit_fields": list(draft_payload.get("explicit_fields") or []),
+        "actions": ["save", "cancel"],
+        "schema": "vault_generated_login_draft_v1",
+    }
+    if draft_payload.get("email"):
+        data["email"] = str(draft_payload["email"])
+    if draft_payload.get("url"):
+        data["url"] = str(draft_payload["url"])
+    if draft_payload.get("title"):
+        data["title"] = str(draft_payload["title"])
+    return data
+
+
+def _build_credential_draft_batch_envelope(
+    draft_payloads: list[dict],
+) -> str:
+    drafts = [
+        _draft_payload_to_card_data(
+            payload,
+            str(payload.get("service_name") or payload.get("service") or ""),
+        )
+        for payload in draft_payloads
+    ]
+    services = [
+        str(d.get("service_name") or d.get("service") or "").strip()
+        for d in drafts
+        if str(d.get("service_name") or d.get("service") or "").strip()
+    ]
+    service_list = ", ".join(services)
+    envelope = {
+        "type": "vault_chat_card",
+        "schema": "vault_chat_response_v1",
+        "intent": "vault_generated_login_create_draft",
+        "message": (
+            f"I prepared {len(drafts)} login drafts"
+            + (f" for {service_list}." if service_list else ".")
+            + " Review each one before saving it."
+        ),
+        "card": {
+            "cardType": "vault_generated_login_card",
+            "view": "create_draft_batch",
+            "data": {
+                "schema": "vault_generated_login_draft_batch_v1",
+                "view": "create_draft_batch",
+                "drafts": drafts,
+                "count": len(drafts),
+                "actions": ["save", "cancel"],
+            },
+        },
+        "resolved_by": "deterministic_router",
+    }
+    return json.dumps(envelope, ensure_ascii=False)
+
+
+def _has_explicit_save_now_phrase(message: str) -> bool:
+    return bool(_SAVE_NOW_RE.search(message or ""))
+
+
+def _save_generated_drafts_after_confirmation(
+    *,
+    vault_id: str,
+    key: bytes,
+    draft_payloads: list[dict],
+    credential_saver: Optional[Callable[..., Any]],
+) -> tuple[bool, list[str]]:
+    if credential_saver is None:
+        return False, []
+    from vault_pending_credential_confirm import save_pending_credential
+
+    saved_services: list[str] = []
+    for payload in draft_payloads:
+        draft_id = str(payload.get("draft_id") or "").strip()
+        if not draft_id:
+            return False, saved_services
+        try:
+            result = save_pending_credential(
+                vault_id=vault_id,
+                key=key,
+                memory={},
+                save_secret_tool=credential_saver,
+                selection_hint={
+                    "kind": "generated_login_draft",
+                    "id": draft_id,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "[DETERMINISTIC-ROUTER] credential_save raised vault=%s",
+                (vault_id or "")[:8] + "...",
+            )
+            return False, saved_services
+        if result is None:
+            return False, saved_services
+        saved_service = str(result.service_name or "").strip()
+        if saved_service:
+            saved_services.append(saved_service)
+    return True, saved_services
+
+
+def _format_saved_credential_reply(services: list[str]) -> str:
+    clean = [s for s in services if str(s or "").strip()]
+    if len(clean) == 1:
+        return f"Saved your {clean[0].title()} login to your vault 🔐"
+    if clean:
+        return (
+            f"Saved {len(clean)} logins to your vault: "
+            + ", ".join(clean)
+            + " 🔐"
+        )
+    return "Saved the login to your vault 🔐"
+
+
 # ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
@@ -738,6 +879,7 @@ def try_route_deterministically(
     active_entity_getter: Callable[..., Optional[dict]],
     active_entity_setter: Callable[..., bool],
     chat_request_id: str = "",
+    credential_saver: Optional[Callable[..., Any]] = None,
 ) -> Optional[RouteOutcome]:
     """Attempt to fully handle the request without touching the LLM.
 
@@ -761,6 +903,7 @@ def try_route_deterministically(
             active_entity_getter=active_entity_getter,
             active_entity_setter=active_entity_setter,
             chat_request_id=chat_request_id,
+            credential_saver=credential_saver,
         )
     except Exception:
         logger.exception(
@@ -787,6 +930,7 @@ def _try_route_inner(
     active_entity_getter: Callable[..., Optional[dict]],
     active_entity_setter: Callable[..., bool],
     chat_request_id: str,
+    credential_saver: Optional[Callable[..., Any]] = None,
 ) -> Optional[RouteOutcome]:
     if not vault_id or not decrypted_message:
         return None
@@ -825,6 +969,134 @@ def _try_route_inner(
         cred_cmd = extract_credential_command(decrypted_message)
     except Exception:
         cred_cmd = None
+
+    services_from_text = _extract_credential_services_from_message(
+        decrypted_message
+    )
+    if services_from_text and not (
+        cred_cmd is not None and cred_cmd.action == ACTION_CREATE
+    ):
+        draft_payloads: list[dict] = []
+        for service in services_from_text[:5]:
+            try:
+                draft_raw = credential_drafter(
+                    vault_id=vault_id,
+                    key=key,
+                    service_name=service,
+                    username=None,
+                    password=None,
+                    email=None,
+                    url=None,
+                    title=None,
+                )
+            except Exception:
+                logger.exception(
+                    "[DETERMINISTIC-ROUTER] credential_drafter raised - "
+                    "falling through vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
+                _trace(
+                    request_id=chat_request_id,
+                    route="deterministic",
+                    intent="credential_create",
+                    fallback_reason="drafter_raised",
+                )
+                return None
+            try:
+                draft_payload = json.loads(draft_raw or "{}")
+            except Exception:
+                draft_payload = {}
+            if draft_payload.get("error") or not draft_payload.get("draft_id"):
+                _trace(
+                    request_id=chat_request_id,
+                    route="deterministic",
+                    intent="credential_create",
+                    fallback_reason=str(
+                        draft_payload.get("error") or "drafter_returned_empty"
+                    ),
+                )
+                return None
+            draft_payloads.append(draft_payload)
+
+        if _has_explicit_save_now_phrase(decrypted_message):
+            saved, saved_services = _save_generated_drafts_after_confirmation(
+                vault_id=vault_id,
+                key=key,
+                draft_payloads=draft_payloads,
+                credential_saver=credential_saver,
+            )
+            if not saved:
+                _trace(
+                    request_id=chat_request_id,
+                    route="deterministic",
+                    intent="credential_create",
+                    fallback_reason="save_failed",
+                )
+                return None
+            _trace(
+                request_id=chat_request_id,
+                route="deterministic",
+                intent="credential_create",
+                exact_match_count=len(saved_services),
+                resolved_object_type="generated_login",
+                action="save",
+                response_type="credential_saved",
+                explicit_username_present=False,
+                explicit_password_present=False,
+                generated_username=True,
+                generated_password=True,
+            )
+            return RouteOutcome(
+                kind=KIND_CREDENTIAL_SAVED,
+                envelope_json=_format_saved_credential_reply(saved_services),
+                chat_path_tag=CHAT_PATH_DETERMINISTIC_CREDENTIAL_CREATE,
+                pin_active_entity=None,
+            )
+
+        if len(draft_payloads) > 1:
+            envelope = _build_credential_draft_batch_envelope(draft_payloads)
+            pin_active = None
+            kind = KIND_CREDENTIAL_DRAFT_BATCH
+        else:
+            envelope = _build_credential_draft_envelope(
+                draft_payloads[0], services_from_text[0],
+            )
+            pin_active = (
+                "generated_login_draft",
+                {
+                    "draft_id": str(
+                        draft_payloads[0].get("draft_id") or ""
+                    ),
+                    "service": services_from_text[0],
+                },
+                services_from_text[0],
+                ("show", "save", "cancel", "edit"),
+            )
+            kind = KIND_CREDENTIAL_DRAFT
+
+        _trace(
+            request_id=chat_request_id,
+            route="deterministic",
+            intent="credential_create",
+            candidate_name_len=sum(len(s) for s in services_from_text),
+            exact_match_count=len(draft_payloads),
+            resolved_object_type="generated_login_draft",
+            resolved_object_id_hash=_short_hash(
+                str(draft_payloads[0].get("draft_id") or ""),
+            ),
+            action="create",
+            response_type=RESPONSE_TYPE_CREDENTIAL_DRAFT,
+            explicit_username_present=False,
+            explicit_password_present=False,
+            generated_username=True,
+            generated_password=True,
+        )
+        return RouteOutcome(
+            kind=kind,
+            envelope_json=envelope,
+            chat_path_tag=CHAT_PATH_DETERMINISTIC_CREDENTIAL_CREATE,
+            pin_active_entity=pin_active,
+        )
 
     if cred_cmd is not None and cred_cmd.action == ACTION_CREATE:
         # Service must be identifiable — either from the extractor or
@@ -877,6 +1149,56 @@ def _try_route_inner(
                     explicit_password_present=explicit_password_present,
                 )
                 return None
+            if _has_explicit_save_now_phrase(decrypted_message):
+                saved, saved_services = _save_generated_drafts_after_confirmation(
+                    vault_id=vault_id,
+                    key=key,
+                    draft_payloads=[draft_payload],
+                    credential_saver=credential_saver,
+                )
+                if not saved:
+                    _trace(
+                        request_id=chat_request_id,
+                        route="deterministic",
+                        intent="credential_create",
+                        fallback_reason="save_failed",
+                        explicit_username_present=explicit_username_present,
+                        explicit_password_present=explicit_password_present,
+                    )
+                    return None
+                _trace(
+                    request_id=chat_request_id,
+                    route="deterministic",
+                    intent="credential_create",
+                    candidate_name_len=len(service),
+                    exact_match_count=1,
+                    resolved_object_type="generated_login",
+                    resolved_object_id_hash=_short_hash(
+                        str(draft_payload.get("draft_id") or ""),
+                    ),
+                    action="save",
+                    response_type="credential_saved",
+                    explicit_username_present=explicit_username_present,
+                    explicit_password_present=explicit_password_present,
+                    generated_username=(
+                        "username" not in (
+                            draft_payload.get("explicit_fields") or []
+                        )
+                    ),
+                    generated_password=(
+                        "password" not in (
+                            draft_payload.get("explicit_fields") or []
+                        )
+                    ),
+                )
+                return RouteOutcome(
+                    kind=KIND_CREDENTIAL_SAVED,
+                    envelope_json=_format_saved_credential_reply(
+                        saved_services,
+                    ),
+                    chat_path_tag=CHAT_PATH_DETERMINISTIC_CREDENTIAL_CREATE,
+                    pin_active_entity=None,
+                )
             envelope = _build_credential_draft_envelope(
                 draft_payload, service,
             )
@@ -1045,8 +1367,7 @@ _SERVICE_FROM_CREATE_RE: re.Pattern[str] = re.compile(
     (?:create|save|make|generate|set\s+up|add)
     (?:\s+(?:me|my|us))?
     \s+
-    (?:an|the|my|a)?
-    \s*
+    (?:(?:an|the|my|a)\s+)?
     (?P<service>[A-Za-z0-9][A-Za-z0-9\.\-\s&]{0,40}?)
     \s+
     (?:login|account|credential|credentials|password|sign[\s-]?in)
@@ -1060,7 +1381,7 @@ _SERVICE_FROM_CREATE_RE: re.Pattern[str] = re.compile(
 # clause reversed the sentence order).
 _SERVICE_FROM_FOR_RE: re.Pattern[str] = re.compile(
     r"""
-    \bfor\s+(?:my|the|our)?\s*
+    \bfor\s+(?:(?:my|the|our)\s+)?
     (?P<service>[A-Za-z0-9][A-Za-z0-9\.\-\s&]{0,40}?)
     \s+
     (?:login|account|credential|credentials|password)
@@ -1076,6 +1397,8 @@ _SERVICE_STOPWORDS: frozenset[str] = frozenset({
     "new", "another", "quick", "fresh", "extra", "second",
     "third", "different", "additional", "spare", "temporary",
     "test", "throwaway", "one", "same", "similar",
+    "and", "or", "me", "my", "us", "a", "an", "the",
+    "save", "create", "generate", "make", "add", "set", "up",
 })
 
 
@@ -1110,6 +1433,59 @@ def _extract_service_from_message(message: str) -> Optional[str]:
     return None
 
 
+def _extract_credential_services_from_message(message: str) -> list[str]:
+    if not isinstance(message, str) or not message.strip():
+        return []
+    lowered = message.lower()
+    if not re.search(
+        r"\b(create|save|make|generate|set\s+up|add)\b", lowered
+    ):
+        return []
+    tail = re.sub(
+        r"^\s*(?:please\s+|can\s+you\s+|could\s+you\s+)?"
+        r"(?:create|save|make|generate|set\s+up|add)"
+        r"(?:\s+(?:me|my|us))?\s+",
+        "",
+        message,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    matches = re.finditer(
+        r"""
+        (?P<service>[A-Za-z0-9][A-Za-z0-9\.\-\s&]{0,40}?)
+        \s+
+        (?:logins?|accounts?|credentials?|passwords?|sign[\s-]?ins?)
+        \b
+        """,
+        tail,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    services: list[str] = []
+    seen: set[str] = set()
+    for m in matches:
+        candidate = str(m.group("service") or "").strip()
+        candidate = re.sub(
+            r"^(?:and|or|me|my|us|an|a|the|new|fresh|another)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip(" ,.!?")
+        tokens = [t.strip(".,!?") for t in candidate.split() if t.strip()]
+        while tokens and tokens[0].lower() in _SERVICE_STOPWORDS:
+            tokens.pop(0)
+        if not tokens:
+            continue
+        cleaned = " ".join(tokens)[:80].strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        services.append(cleaned)
+    return services
+
+
 __all__ = [
     "CHAT_PATH_DETERMINISTIC_FOLLOWUP",
     "CHAT_PATH_DETERMINISTIC_NAMED_OBJECT",
@@ -1121,6 +1497,8 @@ __all__ = [
     "KIND_NAMED_OBJECT_LOGIN",
     "KIND_NAMED_OBJECT_AMBIGUOUS",
     "KIND_CREDENTIAL_DRAFT",
+    "KIND_CREDENTIAL_DRAFT_BATCH",
+    "KIND_CREDENTIAL_SAVED",
     "RESPONSE_TYPE_VAULT_FILE",
     "RESPONSE_TYPE_FILE_DISAMBIGUATION",
     "RESPONSE_TYPE_FILE_SEARCH_RESULTS",
