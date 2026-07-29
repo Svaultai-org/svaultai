@@ -12919,14 +12919,25 @@ async def chat_endpoint(
             (_credential_save_preconfirm or _credential_cancel_preconfirm)
             and not _selection_hint_is_generated_login
         ):
+            _pending_credential_exists = False
+            try:
+                from vault_credential_draft import get_draft as _peek_cred_draft
+                _pending_credential_exists = (
+                    _peek_cred_draft(vault_id=vault_id) is not None
+                )
+            except Exception:
+                _pending_credential_exists = False
             try:
                 from durable_personal_memory import (
                     has_pending_memory_proposal
                     as _has_pending_memory_proposal,
                 )
-                _memory_proposal_owns_confirm = _has_pending_memory_proposal(
-                    vault_id,
-                    str((principal or {}).get("token_id") or ""),
+                _memory_proposal_owns_confirm = (
+                    not _pending_credential_exists
+                    and _has_pending_memory_proposal(
+                        vault_id,
+                        str((principal or {}).get("token_id") or ""),
+                    )
                 )
             except Exception:
                 _memory_proposal_owns_confirm = False
@@ -13027,6 +13038,33 @@ async def chat_endpoint(
             except Exception:
                 pass
             return encrypted_reply(_personal_memory_reply)
+
+        try:
+            _capability_q = bool(
+                re.match(
+                    r"^\s*(?:what\s+can\s+you\s+do|what\s+do\s+you\s+do|"
+                    r"how\s+can\s+you\s+help|what\s+are\s+you\s+able\s+to\s+do)"
+                    r"\s*[?.!]*\s*$",
+                    decrypted_message or "",
+                    re.IGNORECASE,
+                )
+            )
+        except Exception:
+            _capability_q = False
+        if _capability_q:
+            try:
+                request.state.chat_path = "capability_question"
+            except Exception:
+                pass
+            return encrypted_reply(
+                "I can help with your vault in a few practical ways: "
+                "save and retrieve files by name, organize files and "
+                "folders, store and recall personal memories, generate "
+                "and save login drafts, retrieve, edit, and delete saved "
+                "credentials, manage supported inheritance flows, and "
+                "help with supported wallet screens. I cannot move funds "
+                "or reveal protected data without your local approval."
+            )
 
                                                                
         _direct_ai_tools_enabled = os.getenv(

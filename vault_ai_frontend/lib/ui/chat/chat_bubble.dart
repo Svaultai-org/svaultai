@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../tokens.dart';
 import '../../services/vault_chat_router.dart' as vcr;
@@ -48,7 +50,7 @@ class ChatBubble extends StatelessWidget {
   final CryptoWalletActionCallback? onCryptoWalletAction;
 
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
-  final void Function(
+  final FutureOr<void> Function(
       ChatMessage msg, String action, Map<String, dynamic>? data)? onCardAction;
 
   final VoidCallback? onBrainSearchDeeper;
@@ -326,7 +328,7 @@ class _CardBubble extends StatelessWidget {
   final bool isShowMoreFilesInFlight;
   final void Function(String fileId)? onShowRelated;
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
-  final void Function(
+  final FutureOr<void> Function(
       ChatMessage msg, String action, Map<String, dynamic>? data)? onCardAction;
   final Future<Map<String, dynamic>?> Function(String jobId)? onDeepAnswerPoll;
   final void Function(Map<String, dynamic> snapshot)? onDeepAnswerReady;
@@ -647,7 +649,7 @@ class _CardBubble extends StatelessWidget {
       },
       onMemoryProposalSave: (data) {
         if (onCardAction != null) {
-          onCardAction!(msg, 'memory_proposal_save', data);
+          return onCardAction!(msg, 'memory_proposal_save', data);
         }
       },
       onMemoryProposalCancel: () {

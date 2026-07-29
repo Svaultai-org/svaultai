@@ -277,6 +277,55 @@ def test_aliases_recall_the_same_structured_fact(memory_store):
     )
 
 
+def test_birthday_without_year_is_complete_useful_memory(memory_store):
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my mother's birthday is Feb 6",
+        source_message_id="proposal-msg",
+        session_id="session-a",
+    )
+    assert proposal is not None
+    decoded = dpm.json.loads(proposal)
+    data = decoded["card"]["data"]
+    assert data["title"] == "Mother's birthday"
+    assert data["value"] == "February 6"
+    assert data["event_date"] == "--02-06"
+
+    saved = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="save-msg",
+        session_id="session-a",
+    )
+    assert saved is not None
+    assert "February 6" in saved
+    recall = _handle(memory_store, "when is my mother's birthday")
+    assert "February 6" in recall
+    assert "missing details" not in saved.lower()
+    assert all(row["event_date"] is None for row in memory_store.rows)
+
+
+def test_missing_detail_followup_uses_active_memory_context(memory_store):
+    reply = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my mom birthday is blursday",
+        source_message_id="proposal-msg",
+        session_id="session-a",
+    )
+    assert reply == "What month and day should I save for your mom's birthday?"
+    followup = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="what is the missing details",
+        source_message_id="followup-msg",
+        session_id="session-a",
+    )
+    assert followup == reply
+
+
 def test_save_this_about_me_with_colon(memory_store):
     reply = _handle(
         memory_store,
@@ -285,6 +334,31 @@ def test_save_this_about_me_with_colon(memory_store):
     assert "Saved" in reply
     assert "January 30, 1965" in _handle(
         memory_store, "when is my mom's birthday"
+    )
+
+
+def test_travel_recall_variants_do_not_route_to_files(memory_store):
+    saved = _handle(memory_store, "remember I traveled to the USA on April 7, 2026")
+    assert "Saved" in saved
+    for question in (
+        "when was my travel to the USA",
+        "when was my trip to USA",
+        "what date was my USA trip",
+        "when did I travel to the USA",
+    ):
+        reply = _handle(memory_store, question)
+        assert "April 7, 2026" in reply
+        assert "file" not in reply.lower()
+
+
+def test_name_address_variants_recall_same_identity(memory_store):
+    _handle(memory_store, "remember my name is Earl")
+    assert _handle(memory_store, "what is my name") == "Your name is Earl."
+    assert _handle(memory_store, "how do you address me") == (
+        "I'll address you as Earl."
+    )
+    assert _handle(memory_store, "what should you call me") == (
+        "I'll address you as Earl."
     )
 
 

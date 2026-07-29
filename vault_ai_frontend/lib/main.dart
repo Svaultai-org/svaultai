@@ -51,6 +51,7 @@ import 'services/attachment_title_binding.dart';
 import 'services/native_media_capture.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
+import 'services/vault_local_file_lookup.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
@@ -671,6 +672,27 @@ void releaseWebDiagnosticPrint(String message) {
   print(message);
 }
 
+const bool kAuthTimingDiagnosticsEnabled = bool.fromEnvironment(
+  'VAULTAI_AUTH_TIMING_DIAGNOSTICS',
+  defaultValue: false,
+);
+
+void authTimingDiagnosticPrint(
+  String stage,
+  Duration elapsed, {
+  bool success = true,
+  int? httpStatus,
+}) {
+  if (!kAuthTimingDiagnosticsEnabled) return;
+  final statusPart = httpStatus == null ? '' : ' http_status=$httpStatus';
+  // ignore: avoid_print
+  print(
+    '[auth-timing] stage=$stage '
+    'elapsed_ms=${elapsed.inMilliseconds} '
+    'success=$success$statusPart',
+  );
+}
+
 const String kAuthDeviceSafeError =
     'Sign in could not be completed on this device. Please try again.';
 const String kUnlockDeviceSafeError =
@@ -924,7 +946,13 @@ class AppState extends ChangeNotifier {
     return 'en';
   }
 
-  String get chatReplyLanguageCode => effectiveLanguageCode;
+  String get chatReplyLanguageCode {
+    final manual = _appLocale?.languageCode;
+    if (manual != null && isSupportedLanguageCode(manual)) {
+      return manual;
+    }
+    return 'en';
+  }
 
   Future<void> setAppLocale(Locale? value) async {
     if (value != null && !isSupportedLanguageCode(value.languageCode)) {
@@ -2059,10 +2087,8 @@ class AppState extends ChangeNotifier {
         'route_target': '/chat',
       });
 
-      await refreshAvailableVaults();
-
-      await refreshNotifications();
-      vlog('pin.timing.refresh_fan', {'elapsed_ms': tick()});
+      _refreshSessionListsBestEffort(this);
+      vlog('pin.timing.refresh_fan_queued', {'elapsed_ms': tick()});
 
       vlog('pin.timing.verify_pin_total', {
         'elapsed_ms': DateTime.now().difference(tTotal0).inMilliseconds,
@@ -2750,10 +2776,21 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
         children: [
           if (showMenuButton)
             Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: IconButton(
-                onPressed: onMenuTap,
-                icon: const Icon(Icons.menu_rounded, size: 24),
+              padding: const EdgeInsets.only(right: 4),
+              child: Semantics(
+                container: true,
+                identifier: 'top_nav_menu_button',
+                button: true,
+                child: IconButton(
+                  constraints: const BoxConstraints.tightFor(
+                    width: 40,
+                    height: 40,
+                  ),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onMenuTap,
+                  icon: const Icon(Icons.menu_rounded, size: 24),
+                ),
               ),
             ),
           Container(
@@ -2805,21 +2842,33 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                     label: const Text('Help & FAQ'),
                   ),
                 if (!isMobile)
-                  TextButton(
-                    onPressed: () => Navigator.pushNamed(context, '/login'),
-                    child: Text(AppLocalizations.of(context).commonSignIn),
+                  Semantics(
+                    container: true,
+                    identifier: 'auth_landing_sign_in_button',
+                    button: true,
+                    child: TextButton(
+                      key: const Key('auth_landing_sign_in_button'),
+                      onPressed: () => Navigator.pushNamed(context, '/login'),
+                      child: Text(AppLocalizations.of(context).commonSignIn),
+                    ),
                   ),
                 Padding(
                   padding: const EdgeInsets.only(right: 14),
-                  child: FilledButton(
-                    onPressed: () => Navigator.pushNamed(
-                      context,
-                      isMobile ? '/login' : '/signup',
-                    ),
-                    child: Text(
-                      isMobile
-                          ? AppLocalizations.of(context).commonSignIn
-                          : AppLocalizations.of(context).commonSignUp,
+                  child: Semantics(
+                    container: true,
+                    identifier: 'auth_landing_primary_button',
+                    button: true,
+                    child: FilledButton(
+                      key: const Key('auth_landing_primary_button'),
+                      onPressed: () => Navigator.pushNamed(
+                        context,
+                        isMobile ? '/login' : '/signup',
+                      ),
+                      child: Text(
+                        isMobile
+                            ? AppLocalizations.of(context).commonSignIn
+                            : AppLocalizations.of(context).commonSignUp,
+                      ),
                     ),
                   ),
                 ),
@@ -3739,6 +3788,17 @@ Future<void> _registerDeviceBestEffort(String authToken) async {
   } catch (_) {}
 }
 
+void _refreshSessionListsBestEffort(AppState app) {
+  unawaited(() async {
+    try {
+      await app.refreshAvailableVaults();
+    } catch (_) {}
+    try {
+      await app.refreshNotifications();
+    } catch (_) {}
+  }());
+}
+
 /// Decide whether a failed consume call should keep the pending
 /// token around for a later login attempt.
 ///
@@ -4184,8 +4244,7 @@ Future<bool> _deriveKeyAndUnlock({
   }
   app.markUnlocked();
 
-  await app.refreshAvailableVaults();
-  await app.refreshNotifications();
+  _refreshSessionListsBestEffort(app);
   _scheduleMetadataMigration(app: app);
   return true;
 }
@@ -4333,6 +4392,21 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       err = null;
     });
 
+    final authTiming = Stopwatch()..start();
+    void pageTiming(
+      String stage, {
+      bool success = true,
+      int? httpStatus,
+    }) {
+      authTimingDiagnosticPrint(
+        stage,
+        authTiming.elapsed,
+        success: success,
+        httpStatus: httpStatus,
+      );
+    }
+
+    pageTiming('submit_entry');
     final app = context.read<AppState>();
 
     // Post-2026-07-19 primary login path: derive the vault_handle
@@ -4445,6 +4519,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
         );
+        pageTiming('secure_store_complete');
         await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
           loginResult.sessionToken,
@@ -4506,6 +4581,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                 'vaultName': resolvedVaultName,
               });
             }
+            pageTiming('vault_pbkdf2_complete');
           } else {
             vlog('login.zk.meta_missing_fields', {
               'has_salt': _zkLoginSalt != null,
@@ -4534,12 +4610,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   loginResult.vaultId,
         });
         app.markUnlocked();
-        try {
-          await app.refreshAvailableVaults();
-        } catch (_) {}
-        try {
-          await app.refreshNotifications();
-        } catch (_) {}
+        _refreshSessionListsBestEffort(app);
+        pageTiming('session_hydrated');
         // Both post-login side-effects below can throw independently
         // of the authenticated session. If either raises, the user
         // is ALREADY authenticated — we must not surface a raw
@@ -4559,6 +4631,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           );
         } catch (_) {}
         if (!mounted) return;
+        pageTiming('authenticated_route_visible');
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e, stack) {
@@ -4683,6 +4756,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         displayNameValue: display,
         vaultHandleValue: vaultHandle,
       );
+      pageTiming('secure_store_complete');
       inheritanceRevealDiag('normal_login_legacy_success', {
         'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
         'has_vault_handle':
@@ -4694,6 +4768,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
       await _deriveKeyAndUnlock(app: app, pin: pin);
+      pageTiming('key_unwrap_complete');
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
@@ -4703,6 +4778,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       );
       if (!mounted) return;
       if (!adoptedNav) {
+        pageTiming('authenticated_route_visible');
         Navigator.pushReplacementNamed(context, '/chat');
       }
     } on InvalidCredentialsException catch (e) {
@@ -4780,32 +4856,50 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   style: TextStyle(color: Color(0xFFB4B4B4)),
                 ),
                 const SizedBox(height: 14),
-                TextField(
-                  controller: vaultNameCtrl,
-                  autocorrect: false,
-                  enabled: !loading,
-                  decoration: const InputDecoration(labelText: 'Vault name'),
+                Semantics(
+                  container: true,
+                  identifier: 'auth_vault_name_field',
+                  textField: true,
+                  child: TextField(
+                    key: const Key('auth_vault_name_field'),
+                    controller: vaultNameCtrl,
+                    autocorrect: false,
+                    enabled: !loading,
+                    decoration: const InputDecoration(labelText: 'Vault name'),
+                  ),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: pinCtrl,
-                  keyboardType: TextInputType.number,
-                  obscureText: true,
-                  maxLength: 64,
-                  enabled: !loading,
-                  decoration: const InputDecoration(
-                    counterText: '',
-                    labelText: 'PIN',
-                    helperText: 'Enter your 6–64 digit PIN.',
+                Semantics(
+                  container: true,
+                  identifier: 'auth_pin_field',
+                  textField: true,
+                  child: TextField(
+                    key: const Key('auth_pin_field'),
+                    controller: pinCtrl,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    maxLength: 64,
+                    enabled: !loading,
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      labelText: 'PIN',
+                      helperText: 'Enter your 6–64 digit PIN.',
+                    ),
+                    onSubmitted: loading ? null : (_) => _submit(),
                   ),
-                  onSubmitted: loading ? null : (_) => _submit(),
                 ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton(
-                    onPressed: loading ? null : _submit,
-                    child: Text(loading ? 'Signing in…' : 'Sign in'),
+                  child: Semantics(
+                    container: true,
+                    identifier: 'auth_sign_in_button',
+                    button: true,
+                    child: FilledButton(
+                      key: const Key('auth_sign_in_button'),
+                      onPressed: loading ? null : _submit,
+                      child: Text(loading ? 'Signing in…' : 'Sign in'),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -5014,12 +5108,7 @@ class _SignupPageState extends State<SignupPage> {
         });
       }
       app.markUnlocked();
-      try {
-        await app.refreshAvailableVaults();
-      } catch (_) {}
-      try {
-        await app.refreshNotifications();
-      } catch (_) {}
+      _refreshSessionListsBestEffort(app);
 
       if (!mounted) return;
       // Successful ZK registration enters the app directly. The
@@ -5298,6 +5387,21 @@ class _UnlockPageState extends State<UnlockPage> {
       err = null;
     });
 
+    final authTiming = Stopwatch()..start();
+    void pageTiming(
+      String stage, {
+      bool success = true,
+      int? httpStatus,
+    }) {
+      authTimingDiagnosticPrint(
+        stage,
+        authTiming.elapsed,
+        success: success,
+        httpStatus: httpStatus,
+      );
+    }
+
+    pageTiming('submit_entry');
     // Under the corrected identity model (ed825aa), lastVaultName
     // holds the USER-TYPED vault name — the same string used for
     // both signing in and as the vault AI's name. Only sessions
@@ -5343,6 +5447,7 @@ class _UnlockPageState extends State<UnlockPage> {
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
         );
+        pageTiming('secure_store_complete');
         await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
           loginResult.sessionToken,
@@ -5392,6 +5497,7 @@ class _UnlockPageState extends State<UnlockPage> {
                 'vaultName': resolvedVaultName,
               });
             }
+            pageTiming('vault_pbkdf2_complete');
           } else {
             vlog('unlock.zk.meta_missing_fields', {
               'has_salt': _zkUnlockSalt != null,
@@ -5420,12 +5526,8 @@ class _UnlockPageState extends State<UnlockPage> {
                   loginResult.vaultId,
         });
         app.markUnlocked();
-        try {
-          await app.refreshAvailableVaults();
-        } catch (_) {}
-        try {
-          await app.refreshNotifications();
-        } catch (_) {}
+        _refreshSessionListsBestEffort(app);
+        pageTiming('session_hydrated');
         // Post-login side-effects are best-effort; a failure here
         // must not surface as a raw Dart exception (the old
         // "Null check operator used on a null value" symptom).
@@ -5436,6 +5538,7 @@ class _UnlockPageState extends State<UnlockPage> {
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
         }
         if (!mounted) return;
+        pageTiming('authenticated_route_visible');
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e, stack) {
@@ -5530,6 +5633,7 @@ class _UnlockPageState extends State<UnlockPage> {
         displayNameValue: display,
         vaultHandleValue: vaultHandle,
       );
+      pageTiming('secure_store_complete');
       inheritanceRevealDiag('normal_unlock_legacy_success', {
         'vault_fpr': inheritanceRevealIdFingerprint(vaultId),
         'has_vault_handle':
@@ -5541,6 +5645,7 @@ class _UnlockPageState extends State<UnlockPage> {
       await _registerDeviceBestEffort(token);
       await _autoConsumeInheritanceTokenIfPresent(token, app);
       await _deriveKeyAndUnlock(app: app, pin: pin);
+      pageTiming('key_unwrap_complete');
       if (!mounted) return;
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
@@ -5550,6 +5655,7 @@ class _UnlockPageState extends State<UnlockPage> {
       );
       if (!mounted) return;
       if (!adoptedNav) {
+        pageTiming('authenticated_route_visible');
         Navigator.pushReplacementNamed(context, '/chat');
       }
     } on InvalidCredentialsException catch (e) {
@@ -5641,27 +5747,39 @@ class _UnlockPageState extends State<UnlockPage> {
                   style: TextStyle(color: Color(0xFFB4B4B4)),
                 ),
                 const SizedBox(height: 14),
-                TextField(
-                  controller: pinCtrl,
-                  keyboardType: TextInputType.number,
-                  obscureText: true,
-                  autofocus: true,
-                  maxLength: 64,
-                  enabled: !loading,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 22, letterSpacing: 10),
-                  decoration: const InputDecoration(
-                    counterText: '',
-                    hintText: '••••••',
+                Semantics(
+                  container: true,
+                  identifier: 'auth_unlock_pin_field',
+                  textField: true,
+                  child: TextField(
+                    key: const Key('auth_unlock_pin_field'),
+                    controller: pinCtrl,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    autofocus: true,
+                    maxLength: 64,
+                    enabled: !loading,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 22, letterSpacing: 10),
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      hintText: '••••••',
+                    ),
+                    onSubmitted: loading ? null : (_) => _submit(),
                   ),
-                  onSubmitted: loading ? null : (_) => _submit(),
                 ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton(
-                    onPressed: loading ? null : _submit,
-                    child: Text(loading ? 'Unlocking…' : 'Unlock'),
+                  child: Semantics(
+                    container: true,
+                    identifier: 'auth_unlock_button',
+                    button: true,
+                    child: FilledButton(
+                      key: const Key('auth_unlock_button'),
+                      onPressed: loading ? null : _submit,
+                      child: Text(loading ? 'Unlocking…' : 'Unlock'),
+                    ),
                   ),
                 ),
                 TextButton(
@@ -6034,6 +6152,7 @@ class _PinGatePageState extends State<PinGatePage> {
                   const SizedBox(height: 12),
                 ],
                 TextField(
+                  key: const Key('pin_gate_pin_field'),
                   controller: pinController,
                   keyboardType: TextInputType.number,
                   obscureText: true,
@@ -6063,6 +6182,7 @@ class _PinGatePageState extends State<PinGatePage> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
+                    key: const Key('pin_gate_submit_button'),
                     onPressed:
                         (_submitting || (mode && !_acknowledgedNoRecovery))
                             ? null
@@ -10453,6 +10573,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   @override
   void initState() {
     super.initState();
+    final initialChatTiming = Stopwatch()..start();
     _uploadQueue = UploadQueueController(
       action: _runUploadAction,
       maxConcurrency: 3,
@@ -10496,10 +10617,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ),
           );
         });
+        authTimingDiagnosticPrint(
+          'initial_chat_visible',
+          initialChatTiming.elapsed,
+        );
       }
       await app.refreshVaultStats();
       await _loadVaultFiles();
       await _loadVaultLogins();
+      authTimingDiagnosticPrint(
+        'initial_vault_data_loaded',
+        initialChatTiming.elapsed,
+      );
     });
   }
 
@@ -11566,122 +11695,175 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       260.0,
       math.min(420.0, MediaQuery.of(context).size.height - 180.0),
     );
-    final supportsNativeCapture =
-        !kIsWeb && _nativeMediaCapture.isSupported;
+    final supportsNativeCapture = !kIsWeb && _nativeMediaCapture.isSupported;
     final supportsVideoRecording = kIsWeb || supportsNativeCapture;
     final supportsFolderUpload = _folderPicker.isSupported;
 
-    return PopupMenuButton<String>(
-      tooltip: 'Add attachment',
-      icon: const Icon(Icons.add_circle_outline),
-      constraints: BoxConstraints(
-        minWidth: 260,
-        maxWidth: 320,
-        maxHeight: maxMenuHeight,
-      ),
-      enabled: !sending,
-      onSelected: (value) async {
-        try {
-          switch (value) {
-            case 'file':
-              await _pickFile();
-              break;
-            case 'take_photo':
-              await _captureNativePhoto();
-              break;
-            case 'photo':
-              await _pickImage();
-              break;
-            case 'video':
-              await _pickVideo();
-              break;
-            case 'audio':
-              await _pickAudio();
-              break;
-            case 'folder':
-              await _pickFolder();
-              break;
-            case 'voice':
-              await _toggleRecording();
-              break;
-            case 'record_video':
-              await _toggleVideoRecording();
-              break;
+    return Semantics(
+      container: true,
+      identifier: 'attachment_menu_button',
+      button: true,
+      child: PopupMenuButton<String>(
+        key: const Key('attachment_menu_button'),
+        tooltip: 'Add attachment',
+        icon: const Icon(Icons.add_circle_outline),
+        constraints: BoxConstraints(
+          minWidth: 260,
+          maxWidth: 320,
+          maxHeight: maxMenuHeight,
+        ),
+        enabled: !sending,
+        onSelected: (value) async {
+          try {
+            switch (value) {
+              case 'file':
+                await _pickFile();
+                break;
+              case 'take_photo':
+                await _captureNativePhoto();
+                break;
+              case 'photo':
+                await _pickImage();
+                break;
+              case 'video':
+                await _pickVideo();
+                break;
+              case 'audio':
+                await _pickAudio();
+                break;
+              case 'folder':
+                await _pickFolder();
+                break;
+              case 'voice':
+                await _toggleRecording();
+                break;
+              case 'record_video':
+                await _toggleVideoRecording();
+                break;
+            }
+          } catch (_) {
+            _showSnack('Could not open that attachment action.');
           }
-        } catch (_) {
-          _showSnack('Could not open that attachment action.');
-        }
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'file',
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.attach_file),
-            title: Text(AppLocalizations.of(context).filesUploadFile),
-          ),
-        ),
-        if (supportsNativeCapture)
-          const PopupMenuItem(
-            value: 'take_photo',
-            child: ListTile(
-              dense: true,
-              leading: Icon(Icons.add_a_photo_outlined),
-              title: Text('Take photo'),
-            ),
-          ),
-        PopupMenuItem(
-          value: 'photo',
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.image),
-            title: Text(AppLocalizations.of(context).filesUploadPhoto),
-          ),
-        ),
-        PopupMenuItem(
-          value: 'video',
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.videocam_outlined),
-            title: Text(AppLocalizations.of(context).filesUploadVideo),
-          ),
-        ),
-        PopupMenuItem(
-          value: 'audio',
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.audiotrack),
-            title: Text(AppLocalizations.of(context).filesUploadAudio),
-          ),
-        ),
-        if (supportsFolderUpload)
+        },
+        itemBuilder: (context) => [
           PopupMenuItem(
-            value: 'folder',
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.folder_open),
-              title: Text(AppLocalizations.of(context).filesUploadFolder),
+            key: const Key('attachment_menu_upload_file'),
+            value: 'file',
+            child: Semantics(
+              container: true,
+              identifier: 'attachment_menu_upload_file',
+              button: true,
+              child: ListTile(
+                dense: true,
+                leading: const Icon(Icons.attach_file),
+                title: Text(AppLocalizations.of(context).filesUploadFile),
+              ),
             ),
           ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'voice',
-          child: ListTile(
-            dense: true,
-            leading: const Icon(Icons.mic_none),
-            title: Text(AppLocalizations.of(context).filesRecordVoice),
-          ),
-        ),
-        if (supportsVideoRecording)
+          if (supportsNativeCapture)
+            PopupMenuItem(
+              key: const Key('attachment_menu_take_photo'),
+              value: 'take_photo',
+              child: Semantics(
+                container: true,
+                identifier: 'attachment_menu_take_photo',
+                button: true,
+                child: ListTile(
+                  dense: true,
+                  leading: Icon(Icons.add_a_photo_outlined),
+                  title: Text('Take photo'),
+                ),
+              ),
+            ),
           PopupMenuItem(
-            value: 'record_video',
-            child: ListTile(
-              dense: true,
-              leading: const Icon(Icons.videocam),
-              title: Text(AppLocalizations.of(context).filesRecordVideo),
+            key: const Key('attachment_menu_upload_photo'),
+            value: 'photo',
+            child: Semantics(
+              container: true,
+              identifier: 'attachment_menu_upload_photo',
+              button: true,
+              child: ListTile(
+                dense: true,
+                leading: const Icon(Icons.image),
+                title: Text(AppLocalizations.of(context).filesUploadPhoto),
+              ),
             ),
           ),
-      ],
+          PopupMenuItem(
+            key: const Key('attachment_menu_upload_video'),
+            value: 'video',
+            child: Semantics(
+              container: true,
+              identifier: 'attachment_menu_upload_video',
+              button: true,
+              child: ListTile(
+                dense: true,
+                leading: const Icon(Icons.videocam_outlined),
+                title: Text(AppLocalizations.of(context).filesUploadVideo),
+              ),
+            ),
+          ),
+          PopupMenuItem(
+            key: const Key('attachment_menu_upload_audio'),
+            value: 'audio',
+            child: Semantics(
+              container: true,
+              identifier: 'attachment_menu_upload_audio',
+              button: true,
+              child: ListTile(
+                dense: true,
+                leading: const Icon(Icons.audiotrack),
+                title: Text(AppLocalizations.of(context).filesUploadAudio),
+              ),
+            ),
+          ),
+          if (supportsFolderUpload)
+            PopupMenuItem(
+              key: const Key('attachment_menu_upload_folder'),
+              value: 'folder',
+              child: Semantics(
+                container: true,
+                identifier: 'attachment_menu_upload_folder',
+                button: true,
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.folder_open),
+                  title: Text(AppLocalizations.of(context).filesUploadFolder),
+                ),
+              ),
+            ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            key: const Key('attachment_menu_record_voice'),
+            value: 'voice',
+            child: Semantics(
+              container: true,
+              identifier: 'attachment_menu_record_voice',
+              button: true,
+              child: ListTile(
+                dense: true,
+                leading: const Icon(Icons.mic_none),
+                title: Text(AppLocalizations.of(context).filesRecordVoice),
+              ),
+            ),
+          ),
+          if (supportsVideoRecording)
+            PopupMenuItem(
+              key: const Key('attachment_menu_record_video'),
+              value: 'record_video',
+              child: Semantics(
+                container: true,
+                identifier: 'attachment_menu_record_video',
+                button: true,
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.videocam),
+                  title: Text(AppLocalizations.of(context).filesRecordVideo),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -13911,11 +14093,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   ///   * choose_login — legacy chooser-card path (title only).
   ///     Retained for backwards compatibility; also sends a natural
   ///     prompt without a hint.
-  void _handleChatCardAction(
+  Future<void> _handleChatCardAction(
     _Msg msg,
     String action,
     Map<String, dynamic>? data,
-  ) {
+  ) async {
     if (action == 'select_login_by_id') {
       final id = (data?['id'] as String?)?.trim() ?? '';
       final title = (data?['title'] as String?)?.trim() ?? '';
@@ -13985,7 +14167,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (action == 'memory_proposal_save') {
       final payload =
           data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
-      unawaited(_saveMemoryProposalFromCard(payload));
+      await _saveMemoryProposalFromCard(payload);
       return;
     }
     if (action == 'memory_proposal_cancel') {
@@ -14002,7 +14184,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vaultName = app.vaultName;
     if (token == null || vaultName == null || vaultName.isEmpty) {
       _showSnack('Session expired. Please sign in again.');
-      return;
+      throw StateError('memory_save_session_unavailable');
     }
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
@@ -14019,8 +14201,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Memory saved');
     } on InvalidVaultUnlockException {
       _showSnack('Your vault is locked. Please enter your PIN again.');
+      throw StateError('memory_save_vault_locked');
     } catch (e) {
       _showSnack('Could not save memory.');
+      throw StateError('memory_save_failed');
     }
   }
 
@@ -14269,6 +14453,61 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  Future<bool> _tryLocalVaultFileLookupReply(String text) async {
+    if (attachments.isNotEmpty) return false;
+    final query = extractLocalFileLookupQuery(text);
+    if (query == null) return false;
+
+    if (vaultFiles.isEmpty && !loadingFiles) {
+      await _loadVaultFiles();
+    }
+    if (!mounted) return true;
+
+    final match = resolveLocalVaultFileLookup(
+      query: query,
+      files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
+            id: file.id,
+            fileName: file.fileName,
+            savedName: file.savedName,
+            mimeType: file.contentType,
+            assetType: file.assetType,
+            relativePath: file.relativePath,
+            sizeBytes: file.fileSize,
+          )),
+    );
+    if (match == null) return false;
+
+    final file = match.entry;
+    final label = file.displayName;
+    final savedName = (file.savedName ?? '').trim();
+    final relativePath = (file.relativePath ?? '').trim();
+    final assetType = (file.assetType ?? '').trim();
+    final payload = <String, dynamic>{
+      if (savedName.isNotEmpty) 'saved_name': savedName,
+      if (relativePath.isNotEmpty) 'relative_path': relativePath,
+      if (assetType.isNotEmpty) 'asset_type': assetType,
+      if (file.sizeBytes > 0) 'size_bytes': file.sizeBytes,
+    };
+
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      _nextSelectionHint = {'kind': 'file', 'id': file.id};
+      input.clear();
+      msgs.add(_Msg('user', text));
+      msgs.add(_Msg(
+        'assistant',
+        'Here is "$label" from your vault.',
+        kind: ChatMessage.kVaultFile,
+        fileId: file.id,
+        fileName: file.fileName,
+        mimeType: file.mimeType,
+        payload: payload.isEmpty ? null : payload,
+      ));
+    });
+    _scrollToBottom();
+    return true;
+  }
+
   Future<void> _send() async {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
@@ -14331,6 +14570,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // persistent AI keeper's name and role.
     if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
       input.clear();
+      return;
+    }
+
+    if (await _tryLocalVaultFileLookupReply(text)) {
       return;
     }
 
@@ -14902,6 +15145,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final iconColor = canSend ? Colors.white : Colors.white54;
       return Semantics(
         button: true,
+        identifier: 'composer_send_button',
         label: sending
             ? AppLocalizations.of(context).chatSending
             : AppLocalizations.of(context).chatSendButton,
@@ -14926,29 +15170,35 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
 
-    final textField = TextField(
-      controller: input,
-      enabled: !sending,
-      decoration: InputDecoration(
-        hintText: isMobile
-            ? 'Ask Svaultai…'
-            : AppLocalizations.of(context).chatComposerHint,
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        isDense: true,
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: 4,
-          vertical: isMobile ? 8 : 10,
+    final textField = Semantics(
+      container: true,
+      identifier: 'chat_composer_field',
+      textField: true,
+      child: TextField(
+        key: const Key('chat_composer_field'),
+        controller: input,
+        enabled: !sending,
+        decoration: InputDecoration(
+          hintText: isMobile
+              ? 'Ask Svaultai…'
+              : AppLocalizations.of(context).chatComposerHint,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: 4,
+            vertical: isMobile ? 8 : 10,
+          ),
         ),
+        minLines: vr.composerMinLines,
+        maxLines: vr.composerMaxLines,
+        textInputAction: TextInputAction.newline,
+        keyboardType: TextInputType.multiline,
+        onChanged: (_) {
+          setState(() {});
+        },
       ),
-      minLines: vr.composerMinLines,
-      maxLines: vr.composerMaxLines,
-      textInputAction: TextInputAction.newline,
-      keyboardType: TextInputType.multiline,
-      onChanged: (_) {
-        setState(() {});
-      },
     );
 
     return SafeArea(
@@ -14994,6 +15244,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       children: [
         Expanded(
           child: ChatMessageList(
+            key: const Key('chat_message_list'),
             messages: msgs,
             thinking: thinking,
 
@@ -15218,71 +15469,77 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1000),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: double.infinity,
-                padding: EdgeInsets.all(
-                    MediaQuery.of(context).size.width < 600 ? 16 : 24),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2F2F2F),
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            AppLocalizations.of(context).filesTitle,
-                            style: TextStyle(
-                                fontSize: vrHeadline(context),
-                                fontWeight: FontWeight.w800),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Open and manage files saved in your vault.',
-                            style: TextStyle(
-                              color: Color(0xFFB4B4B4),
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _loadVaultFiles,
-                      icon: const Icon(Icons.refresh),
-                      label: Text(
-                        AppLocalizations.of(context).commonRefresh,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              const ZkSemanticSearchUnavailableBanner(),
-              if (_folderTreeData != null)
-                FolderBrowser(
-                  treeData: _folderTreeData!,
-                  isMobile: isMobile,
-                  searchQuery: _folderSearchQuery,
-                  onSearchChanged: (q) {
-                    setState(() {
-                      _folderSearchQuery = q;
-                    });
-                  },
-                  onNavigateToPath: _navigateToFolder,
-                  fileItemBuilder: (json) => _buildVaultFileCard(
-                    _VaultStoredFile.fromJson(json),
+          child: Semantics(
+            container: true,
+            identifier: 'files_list',
+            child: Column(
+              key: const Key('files_list'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(
+                      MediaQuery.of(context).size.width < 600 ? 16 : 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2F2F2F),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white10),
                   ),
-                )
-              else
-                ...vaultFiles.map(_buildVaultFileCard),
-            ],
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              AppLocalizations.of(context).filesTitle,
+                              style: TextStyle(
+                                  fontSize: vrHeadline(context),
+                                  fontWeight: FontWeight.w800),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Open and manage files saved in your vault.',
+                              style: TextStyle(
+                                color: Color(0xFFB4B4B4),
+                                fontSize: 15,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        key: const Key('files_refresh_button'),
+                        onPressed: _loadVaultFiles,
+                        icon: const Icon(Icons.refresh),
+                        label: Text(
+                          AppLocalizations.of(context).commonRefresh,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const ZkSemanticSearchUnavailableBanner(),
+                if (_folderTreeData != null)
+                  FolderBrowser(
+                    treeData: _folderTreeData!,
+                    isMobile: isMobile,
+                    searchQuery: _folderSearchQuery,
+                    onSearchChanged: (q) {
+                      setState(() {
+                        _folderSearchQuery = q;
+                      });
+                    },
+                    onNavigateToPath: _navigateToFolder,
+                    fileItemBuilder: (json) => _buildVaultFileCard(
+                      _VaultStoredFile.fromJson(json),
+                    ),
+                  )
+                else
+                  ...vaultFiles.map(_buildVaultFileCard),
+              ],
+            ),
           ),
         ),
       ),
@@ -15302,94 +15559,106 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         file.relativePath!,
     ];
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(
-              color: const Color(0xFF10A37F).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(16),
+    return Semantics(
+      container: true,
+      identifier: 'files_file_card_${file.id}',
+      child: Container(
+        key: ValueKey('files_file_card_${file.id}'),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2A2A2A),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(
+                () {
+                  if (_isVideoMime(file.contentType) ||
+                      file.assetType == 'video') {
+                    return Icons.videocam_outlined;
+                  }
+                  if (_isAudioMime(file.contentType) ||
+                      file.assetType == 'audio') {
+                    return Icons.audiotrack;
+                  }
+                  if (_isImageMime(file.contentType) ||
+                      file.assetType == 'image') {
+                    return Icons.image_outlined;
+                  }
+                  return Icons.insert_drive_file_outlined;
+                }(),
+                color: const Color(0xFF10A37F),
+              ),
             ),
-            child: Icon(
-              () {
-                if (_isVideoMime(file.contentType) ||
-                    file.assetType == 'video') {
-                  return Icons.videocam_outlined;
-                }
-                if (_isAudioMime(file.contentType) ||
-                    file.assetType == 'audio') {
-                  return Icons.audiotrack;
-                }
-                if (_isImageMime(file.contentType) ||
-                    file.assetType == 'image') {
-                  return Icons.image_outlined;
-                }
-                return Icons.insert_drive_file_outlined;
-              }(),
-              color: const Color(0xFF10A37F),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  // 2026-07-21 c2f917e follow-up: never surface
-                  // vault_name in normal UI. Use display_name; fall
-                  // back to the neutral 'Vault' literal.
-                  'Hidden for privacy. Ask ${context.read<AppState>().displayName?.trim().isNotEmpty == true ? context.read<AppState>().displayName!.trim() : 'Vault'} in chat to retrieve this file.',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Color(0xFFB4B4B4),
-                    fontSize: 13,
+                  const SizedBox(height: 4),
+                  Text(
+                    // 2026-07-21 c2f917e follow-up: never surface
+                    // vault_name in normal UI. Use display_name; fall
+                    // back to the neutral 'Vault' literal.
+                    'Hidden for privacy. Ask ${context.read<AppState>().displayName?.trim().isNotEmpty == true ? context.read<AppState>().displayName!.trim() : 'Vault'} in chat to retrieve this file.',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Color(0xFFB4B4B4),
+                      fontSize: 13,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  subtitleParts.join(' • '),
-                  style: const TextStyle(
-                    color: Color(0xFF8E8E8E),
-                    fontSize: 12,
+                  const SizedBox(height: 6),
+                  Text(
+                    subtitleParts.join(' • '),
+                    style: const TextStyle(
+                      color: Color(0xFF8E8E8E),
+                      fontSize: 12,
+                    ),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Semantics(
+              container: true,
+              identifier: 'files_file_ask_${file.id}',
+              button: true,
+              child: Tooltip(
+                message:
+                    context.read<AppState>().displayName?.trim().isNotEmpty ==
+                            true
+                        ? 'Ask ${context.read<AppState>().displayName!.trim()}'
+                        : 'Ask Vault',
+                child: IconButton(
+                  key: ValueKey('files_file_ask_${file.id}'),
+                  onPressed: () => _askBrainAboutFile(file),
+                  icon: const Icon(Icons.smart_toy_outlined),
+                  color: const Color(0xFF10A37F),
                 ),
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          OutlinedButton.icon(
-            onPressed: () => _askBrainAboutFile(file),
-            icon: const Icon(Icons.smart_toy_outlined),
-            label: Text(
-              // 2026-07-21 c2f917e follow-up: user-visible AI-address
-              // uses display_name, not vault_name.
-              context.read<AppState>().displayName?.trim().isNotEmpty == true
-                  ? 'Ask ${context.read<AppState>().displayName!.trim()}'
-                  : 'Ask Vault',
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -15618,53 +15887,60 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final radius = compact ? 12.0 : 16.0;
       final marginBottom = compact ? 4.0 : 8.0;
 
-      return InkWell(
-        onTap: () {
-          setState(() => selectedSection = section);
-          Navigator.of(context).maybePop();
-        },
-        borderRadius: BorderRadius.circular(radius),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          margin: EdgeInsets.only(bottom: marginBottom),
-          padding: EdgeInsets.symmetric(
-            horizontal: horizontalPad,
-            vertical: verticalPadding,
-          ),
-          decoration: BoxDecoration(
-            color: selected
-                ? const Color(0xFF10A37F).withValues(alpha: 0.14)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(
-              color: selected
-                  ? const Color(0xFF10A37F).withValues(alpha: 0.35)
-                  : Colors.white10,
+      return Semantics(
+        container: true,
+        identifier: 'sidebar_section_${section.name}',
+        button: true,
+        selected: selected,
+        child: InkWell(
+          key: ValueKey('sidebar_section_${section.name}'),
+          onTap: () {
+            setState(() => selectedSection = section);
+            Navigator.of(context).maybePop();
+          },
+          borderRadius: BorderRadius.circular(radius),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            margin: EdgeInsets.only(bottom: marginBottom),
+            padding: EdgeInsets.symmetric(
+              horizontal: horizontalPad,
+              vertical: verticalPadding,
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: iconSize,
+            decoration: BoxDecoration(
+              color: selected
+                  ? const Color(0xFF10A37F).withValues(alpha: 0.14)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(
                 color: selected
-                    ? const Color(0xFF10A37F)
-                    : const Color(0xFF9CA3AF),
+                    ? const Color(0xFF10A37F).withValues(alpha: 0.35)
+                    : Colors.white10,
               ),
-              SizedBox(width: compact ? 10 : 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: selected ? Colors.white : const Color(0xFFC7C7C7),
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    fontSize: labelFont,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: iconSize,
+                  color: selected
+                      ? const Color(0xFF10A37F)
+                      : const Color(0xFF9CA3AF),
                 ),
-              ),
-            ],
+                SizedBox(width: compact ? 10 : 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: selected ? Colors.white : const Color(0xFFC7C7C7),
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      fontSize: labelFont,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -17086,14 +17362,10 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
 }) async {
   final opId = VaultCryptoRegistry.nextOperationId();
 
-  final algorithm = Pbkdf2(
-    macAlgorithm: Hmac.sha256(),
+  final secretKey = await _deriveVaultPbkdf2Key(
+    pin: pin,
+    pinSaltBase64: pinSaltBase64,
     iterations: iterations,
-    bits: 256,
-  );
-  final secretKey = await algorithm.deriveKey(
-    secretKey: SecretKey(utf8.encode(pin)),
-    nonce: base64Decode(pinSaltBase64),
   );
 
   final gen = VaultCryptoRegistry.nextGeneration();
@@ -17133,6 +17405,35 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
   _VaultCrypto._activeVaultName = vaultName;
 
   return context;
+}
+
+Future<SecretKey> _deriveVaultPbkdf2Key({
+  required String pin,
+  required String pinSaltBase64,
+  required int iterations,
+}) async {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    final keyBytes = await OpaqueClient.pbkdf2HmacSha256(
+      password: pin,
+      saltBase64: pinSaltBase64,
+      iterations: iterations,
+    );
+    if (keyBytes.length != 32) {
+      vlog('crypto.pbkdf2.native_bad_length', {'length': keyBytes.length});
+      throw StateError('Native PBKDF2 returned an invalid key length.');
+    }
+    return SecretKey(keyBytes);
+  }
+
+  final algorithm = Pbkdf2(
+    macAlgorithm: Hmac.sha256(),
+    iterations: iterations,
+    bits: 256,
+  );
+  return algorithm.deriveKey(
+    secretKey: SecretKey(utf8.encode(pin)),
+    nonce: base64Decode(pinSaltBase64),
+  );
 }
 
 /// Encrypt [plaintext] using [context.key] atomically. No implicit

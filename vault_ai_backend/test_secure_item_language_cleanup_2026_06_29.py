@@ -172,5 +172,31 @@ class TestFollowupClarifyLanguage(unittest.TestCase):
         self.assertIn("Bank Account", msg)
 
 
+class TestChatReplyLanguageStability(unittest.TestCase):
+    def test_accept_language_does_not_switch_english_chat_to_french(self) -> None:
+        import vault_multilingual as mling
+
+        self.assertEqual(
+            mling.resolve_reply_language(
+                detected_from_message=mling.detect_language("my name is Kola"),
+                app_locale_hint=None,
+                header_locale_hint="fr-FR",
+            ),
+            "en",
+        )
+
+    def test_explicit_app_language_still_wins_for_short_messages(self) -> None:
+        import vault_multilingual as mling
+
+        self.assertEqual(
+            mling.resolve_reply_language(
+                detected_from_message=None,
+                app_locale_hint="fr",
+                header_locale_hint="en-US",
+            ),
+            "fr",
+        )
+
+
 if __name__ == "__main__":                    
     unittest.main()

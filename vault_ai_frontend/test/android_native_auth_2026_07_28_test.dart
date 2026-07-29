@@ -105,6 +105,30 @@ void main() {
     expect(rustSource, isNot(contains('/auth/login')));
   });
 
+  test('Android vault PBKDF2 uses native FFI and web keeps Dart fallback', () {
+    expect(cargoSource, contains('pbkdf2 = "0.12"'));
+    expect(rustSource, contains('vaultai_pbkdf2_hmac_sha256'));
+    expect(rustSource, contains('pbkdf2_hmac::<Sha256>'));
+    expect(rustSource, contains('let mut key = Zeroizing::new([0u8; 32])'));
+    expect(nativeSource, contains('pbkdf2HmacSha256'));
+    expect(
+      mainSource,
+      contains('defaultTargetPlatform == TargetPlatform.android'),
+    );
+    expect(
+      mainSource,
+      contains('final keyBytes = await OpaqueClient.pbkdf2HmacSha256'),
+    );
+    expect(mainSource, contains('if (keyBytes.length != 32)'));
+    expect(
+      mainSource,
+      contains(
+          "throw StateError('Native PBKDF2 returned an invalid key length.')"),
+    );
+    expect(mainSource, contains('return SecretKey(keyBytes);'));
+    expect(mainSource, contains('final algorithm = Pbkdf2('));
+  });
+
   test('Android OPAQUE native build covers production ABIs', () {
     for (final abi in const ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86']) {
       expect(gradleSource, contains(abi));

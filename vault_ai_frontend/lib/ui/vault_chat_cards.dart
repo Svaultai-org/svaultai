@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -34,6 +36,7 @@ const String kVcrCardKeySecureItem = 'vault_chat_card_secure_item';
 const String kVcrCardKeyLogin = 'vault_chat_card_login';
 const String kVcrCardKeyGeneratedLogin = 'vault_chat_card_generated_login';
 const String kVcrCardKeyMemoryProposal = 'vault_chat_card_memory_proposal';
+const Duration kMemoryProposalSaveTimeout = Duration(seconds: 30);
 const String kVcrCardKeyIdDocument = 'vault_chat_card_id_document';
 const String kVcrCardKeyBillingStatus = 'vault_chat_card_billing_status';
 const String kVcrCardKeyStorageUsage = 'vault_chat_card_storage_usage';
@@ -94,7 +97,8 @@ class VaultChatCardView extends StatelessWidget {
   /// `generated_login_cancel` action names.
   final void Function(String draftId, String service)? onGeneratedLoginSave;
   final void Function(String draftId, String service)? onGeneratedLoginCancel;
-  final void Function(Map<String, dynamic> data)? onMemoryProposalSave;
+  final FutureOr<void> Function(Map<String, dynamic> data)?
+      onMemoryProposalSave;
   final VoidCallback? onMemoryProposalCancel;
 
   final bool cryptoEntitled;
@@ -224,11 +228,15 @@ Widget _shell({
   required Widget child,
   Color? accent,
 }) {
-  return Container(
-    key: Key(testKey),
-    padding: const EdgeInsets.all(14),
-    decoration: walletDarkCard(accent: accent),
-    child: child,
+  return Semantics(
+    container: true,
+    identifier: testKey,
+    child: Container(
+      key: Key(testKey),
+      padding: const EdgeInsets.all(14),
+      decoration: walletDarkCard(accent: accent),
+      child: child,
+    ),
   );
 }
 
@@ -1448,7 +1456,7 @@ class _LoginRow extends StatelessWidget {
 /// through the PIN-gated encrypted memory API.
 class _MemoryProposalCard extends StatefulWidget {
   final VaultChatCard card;
-  final void Function(Map<String, dynamic> data)? onSave;
+  final FutureOr<void> Function(Map<String, dynamic> data)? onSave;
   final VoidCallback? onCancel;
 
   const _MemoryProposalCard({
@@ -1464,7 +1472,10 @@ class _MemoryProposalCard extends StatefulWidget {
 class _MemoryProposalCardState extends State<_MemoryProposalCard> {
   late final TextEditingController _titleCtrl;
   late final TextEditingController _valueCtrl;
-  bool _dispatched = false;
+  bool _saving = false;
+  bool _saved = false;
+  bool _cancelled = false;
+  String? _error;
 
   Map<String, dynamic> get _data =>
       widget.card.data ?? const <String, dynamic>{};
@@ -1492,26 +1503,45 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
     super.dispose();
   }
 
-  void _save() {
-    if (_dispatched) return;
+  Future<void> _save() async {
+    if (_saving || _saved || _cancelled) return;
     final title = _titleCtrl.text.trim();
     final value = _valueCtrl.text.trim();
     if (title.isEmpty || value.isEmpty) {
       _snack(context, 'Add a title and value first');
       return;
     }
-    setState(() => _dispatched = true);
-    widget.onSave?.call(<String, dynamic>{
-      ..._data,
-      'title': title,
-      'value': value,
-      'body': value,
+    setState(() {
+      _saving = true;
+      _error = null;
     });
+    try {
+      final saveResult = widget.onSave?.call(<String, dynamic>{
+        ..._data,
+        'title': title,
+        'value': value,
+        'body': value,
+      });
+      if (saveResult is Future) {
+        await saveResult.timeout(kMemoryProposalSaveTimeout);
+      }
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _saved = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Could not save memory. Try again.';
+      });
+    }
   }
 
   void _cancel() {
-    if (_dispatched) return;
-    setState(() => _dispatched = true);
+    if (_saving || _saved || _cancelled) return;
+    setState(() => _cancelled = true);
     widget.onCancel?.call();
   }
 
@@ -1546,7 +1576,7 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
           TextField(
             key: const Key('vault_chat_card_memory_title_field'),
             controller: _titleCtrl,
-            enabled: !_dispatched,
+            enabled: !_saving && !_saved && !_cancelled,
             style: kWalletBodyStyle,
             decoration: const InputDecoration(
               labelText: 'Title',
@@ -1557,7 +1587,7 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
           TextField(
             key: const Key('vault_chat_card_memory_value_field'),
             controller: _valueCtrl,
-            enabled: !_dispatched,
+            enabled: !_saving && !_saved && !_cancelled,
             style: kWalletBodyStyle,
             minLines: 1,
             maxLines: 4,
@@ -1576,38 +1606,82 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
               if (eventDate.isNotEmpty) _pillMasked(eventDate),
             ],
           ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _error!,
+              key: const Key('vault_chat_card_memory_error'),
+              style: const TextStyle(
+                color: Color(0xFFFFB4A9),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (_saved) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Memory saved.',
+              key: Key('vault_chat_card_memory_saved'),
+              style: TextStyle(
+                color: Color(0xFF6AD97F),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
-                child: ElevatedButton.icon(
-                  key: const Key('vault_chat_card_memory_save'),
-                  onPressed: _dispatched ? null : _save,
-                  icon: const Icon(Icons.check_rounded, size: 18),
-                  label: const Text('Save memory'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kWalletAccentPrimary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: Semantics(
+                  container: true,
+                  identifier: 'vault_chat_card_memory_save',
+                  button: true,
+                  child: ElevatedButton.icon(
+                    key: const Key('vault_chat_card_memory_save'),
+                    onPressed: (_saving || _saved || _cancelled) ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.check_rounded, size: 18),
+                    label: Text(_saving ? 'Saving...' : 'Save memory'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kWalletAccentPrimary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: OutlinedButton.icon(
-                  key: const Key('vault_chat_card_memory_cancel'),
-                  onPressed: _dispatched ? null : _cancel,
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  label: const Text('Cancel'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: kWalletTextPrimary,
-                    side: const BorderSide(color: kWalletBorder),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                child: Semantics(
+                  container: true,
+                  identifier: 'vault_chat_card_memory_cancel',
+                  button: true,
+                  child: OutlinedButton.icon(
+                    key: const Key('vault_chat_card_memory_cancel'),
+                    onPressed:
+                        (_saving || _saved || _cancelled) ? null : _cancel,
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    label: const Text('Cancel'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kWalletTextPrimary,
+                      side: const BorderSide(color: kWalletBorder),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
                   ),
                 ),
@@ -1909,26 +1983,31 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
           children: [
             if (actions.contains('save'))
               Expanded(
-                child: ElevatedButton.icon(
-                  key: Key(
-                    keyed('vault_chat_card_generated_login_save'),
-                  ),
-                  onPressed:
-                      dispatched ? null : () => _handleSave(draftId, service),
-                  icon: const Icon(Icons.check_rounded, size: 18),
-                  label: const Text('Save login'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kWalletAccentPrimary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 12,
+                child: Semantics(
+                  container: true,
+                  identifier: keyed('vault_chat_card_generated_login_save'),
+                  button: true,
+                  child: ElevatedButton.icon(
+                    key: Key(
+                      keyed('vault_chat_card_generated_login_save'),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    textStyle: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
+                    onPressed:
+                        dispatched ? null : () => _handleSave(draftId, service),
+                    icon: const Icon(Icons.check_rounded, size: 18),
+                    label: const Text('Save login'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kWalletAccentPrimary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),
@@ -1937,26 +2016,32 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
               const SizedBox(width: 10),
             if (actions.contains('cancel'))
               Expanded(
-                child: OutlinedButton.icon(
-                  key: Key(
-                    keyed('vault_chat_card_generated_login_cancel'),
-                  ),
-                  onPressed:
-                      dispatched ? null : () => _handleCancel(draftId, service),
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  label: const Text('Cancel'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: kWalletTextPrimary,
-                    side: const BorderSide(color: kWalletBorder),
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 12,
+                child: Semantics(
+                  container: true,
+                  identifier: keyed('vault_chat_card_generated_login_cancel'),
+                  button: true,
+                  child: OutlinedButton.icon(
+                    key: Key(
+                      keyed('vault_chat_card_generated_login_cancel'),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    textStyle: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
+                    onPressed: dispatched
+                        ? null
+                        : () => _handleCancel(draftId, service),
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    label: const Text('Cancel'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kWalletTextPrimary,
+                      side: const BorderSide(color: kWalletBorder),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),

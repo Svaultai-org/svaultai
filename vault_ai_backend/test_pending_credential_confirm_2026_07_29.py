@@ -110,10 +110,12 @@ def test_chat_endpoint_checks_credentials_before_memory_router():
     assert cred_pos < memory_pos
 
 
-def test_unscoped_save_it_after_memory_proposal_skips_credential_confirm():
+def test_unscoped_save_it_prefers_live_credential_draft_over_memory_proposal():
     src = Path("main.py").read_text(encoding="utf-8")
+    pending_pos = src.index("_pending_credential_exists")
     guard_pos = src.index("has_pending_memory_proposal")
     cred_branch_pos = src.index("save_pending_credential")
     memory_pos = src.index("handle_personal_memory_turn")
-    assert guard_pos < cred_branch_pos < memory_pos
+    assert pending_pos < guard_pos < cred_branch_pos < memory_pos
+    assert "not _pending_credential_exists" in src
     assert "_selection_hint_is_generated_login" in src

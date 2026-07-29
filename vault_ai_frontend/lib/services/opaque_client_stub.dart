@@ -3,6 +3,7 @@
 // to run these on Android/iOS/desktop is a bug.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 class OpaqueUnavailable implements Exception {
   final String reason;
@@ -68,6 +69,14 @@ class OpaqueClient {
   }
 
   static String? vendorVersion() => null;
+
+  static Future<Uint8List> pbkdf2HmacSha256({
+    required String password,
+    required String saltBase64,
+    required int iterations,
+  }) {
+    throw UnsupportedError('non-web platform');
+  }
 
   static ClientRegistrationStart startRegistration(
       {required String password}) {

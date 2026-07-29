@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -249,7 +251,9 @@ void main() {
               },
             },
           ),
-          onMemoryProposalSave: (data) => saved = data,
+          onMemoryProposalSave: (data) {
+            saved = data;
+          },
           onMemoryProposalCancel: () => cancelled = true,
         ),
       ));
@@ -274,6 +278,161 @@ void main() {
       expect(saved!['value'], 'December 13, 1975');
       expect(saved!['attribute'], 'birthday');
       expect(cancelled, isFalse);
+    });
+
+    testWidgets('memory proposal shows progress then saved after backend success',
+        (tester) async {
+      final completer = Completer<void>();
+      var saveCalls = 0;
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(
+          response: _parse(
+            intent: 'vault_memory_save_proposal',
+            card: {
+              'cardType': 'vault_memory_proposal_card',
+              'view': 'save_proposal',
+              'data': {
+                'schema': 'vault_memory_proposal_v1',
+                'proposal_id': 'mem-1',
+                'title': 'Preferred name',
+                'value': 'Kola',
+                'memory_type': 'identity',
+                'category': 'personal',
+                'actions': ['save', 'edit', 'cancel'],
+              },
+            },
+          ),
+          onMemoryProposalSave: (_) {
+            saveCalls += 1;
+            return completer.future;
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('vault_chat_card_memory_save')));
+      await tester.pump();
+      expect(find.text('Saving...'), findsOneWidget);
+      expect(saveCalls, 1);
+
+      completer.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('vault_chat_card_memory_saved')),
+          findsOneWidget);
+      expect(find.text('Memory saved.'), findsOneWidget);
+      expect(
+        tester.widget<ElevatedButton>(
+          find.byKey(const Key('vault_chat_card_memory_save')),
+        ).onPressed,
+        isNull,
+      );
+    });
+
+    testWidgets('memory proposal failure re-enables retry without duplicating',
+        (tester) async {
+      var saveCalls = 0;
+      final first = Completer<void>();
+      final second = Completer<void>();
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(
+          response: _parse(
+            intent: 'vault_memory_save_proposal',
+            card: {
+              'cardType': 'vault_memory_proposal_card',
+              'view': 'save_proposal',
+              'data': {
+                'schema': 'vault_memory_proposal_v1',
+                'proposal_id': 'mem-1',
+                'title': 'Preferred name',
+                'value': 'Kola',
+                'memory_type': 'identity',
+                'category': 'personal',
+                'actions': ['save', 'edit', 'cancel'],
+              },
+            },
+          ),
+          onMemoryProposalSave: (_) {
+            saveCalls += 1;
+            return saveCalls == 1 ? first.future : second.future;
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('vault_chat_card_memory_save')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('vault_chat_card_memory_save')));
+      await tester.pump();
+      expect(saveCalls, 1);
+
+      first.completeError(StateError('backend failed'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('vault_chat_card_memory_error')),
+          findsOneWidget);
+      expect(
+        tester.widget<ElevatedButton>(
+          find.byKey(const Key('vault_chat_card_memory_save')),
+        ).onPressed,
+        isNotNull,
+      );
+
+      await tester.tap(find.byKey(const Key('vault_chat_card_memory_save')));
+      await tester.pump();
+      expect(saveCalls, 2);
+
+      second.complete();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('vault_chat_card_memory_saved')),
+          findsOneWidget);
+    });
+
+    testWidgets('memory proposal timeout re-enables safe retry',
+        (tester) async {
+      var saveCalls = 0;
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(
+          response: _parse(
+            intent: 'vault_memory_save_proposal',
+            card: {
+              'cardType': 'vault_memory_proposal_card',
+              'view': 'save_proposal',
+              'data': {
+                'schema': 'vault_memory_proposal_v1',
+                'proposal_id': 'mem-1',
+                'title': 'Preferred name',
+                'value': 'Kola',
+                'memory_type': 'identity',
+                'category': 'personal',
+                'actions': ['save', 'edit', 'cancel'],
+              },
+            },
+          ),
+          onMemoryProposalSave: (_) {
+            saveCalls += 1;
+            return Completer<void>().future;
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('vault_chat_card_memory_save')));
+      await tester.pump();
+      expect(find.text('Saving...'), findsOneWidget);
+
+      await tester.pump(kMemoryProposalSaveTimeout + const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(saveCalls, 1);
+      expect(find.byKey(const Key('vault_chat_card_memory_error')),
+          findsOneWidget);
+      expect(
+        tester.widget<ElevatedButton>(
+          find.byKey(const Key('vault_chat_card_memory_save')),
+        ).onPressed,
+        isNotNull,
+      );
     });
 
     testWidgets(

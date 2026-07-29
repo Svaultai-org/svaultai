@@ -458,7 +458,17 @@ def detect_language(text: str) -> Optional[str]:
     padded = f" {s.lower()} "
     for lang, kws in _LATIN_KEYWORDS_BY_LANG.items():
         for kw in kws:
-            if kw in padded:
+            needle = str(kw or "").lower()
+            bare = needle.strip()
+            if (
+                bare
+                and len(bare) <= 3
+                and re.fullmatch(r"[a-z]+", bare)
+            ):
+                if re.search(rf"(?<![a-z]){re.escape(bare)}(?![a-z])", padded):
+                    return lang
+                continue
+            if needle in padded:
                 return lang
 
     return None
@@ -490,24 +500,22 @@ def resolve_reply_language(
     """Decide what language VaultAI should reply in.
 
     Priority (highest wins):
-      1. The user's explicit app_locale (Settings selection).
-      2. The Accept-Language HTTP header.
-      3. Detected language of the current message.
-      4. English.
+      1. Detected non-English language of the current message.
+      2. The user's explicit app_locale (Settings selection).
+      3. English.
 
-    The detected message language wins so that a user who has
-    English selected but writes "hola" gets Spanish back — that's
-    the natural expectation. The app_locale is a fallback for
-    short / non-linguistic messages ("ok", "help", "?").
+    The HTTP Accept-Language header is deliberately not used for
+    chat replies. Device/browser locale should not make an English
+    conversation drift after a short sentence or a person's name.
     """
-    for hint in (app_locale_hint, header_locale_hint):
-        norm = normalise_locale_code(hint)
-        if norm:
-            return norm
     if detected_from_message and (
         detected_from_message in SUPPORTED_REPLY_LANGUAGE_CODES
+        and detected_from_message != DEFAULT_REPLY_LANGUAGE
     ):
         return detected_from_message
+    norm = normalise_locale_code(app_locale_hint)
+    if norm:
+        return norm
     return DEFAULT_REPLY_LANGUAGE
 
 

@@ -14,6 +14,7 @@
 
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:typed_data';
 
 @JS('vaultaiOpaqueReady')
 external JSPromise<JSAny?>? get _vaultaiOpaqueReady;
@@ -121,6 +122,14 @@ class OpaqueClient {
   }
 
   static String? vendorVersion() => _vaultaiOpaqueVendorVersion;
+
+  static Future<Uint8List> pbkdf2HmacSha256({
+    required String password,
+    required String saltBase64,
+    required int iterations,
+  }) {
+    throw OpaqueUnavailable('native PBKDF2 is available on Android only');
+  }
 
   static ClientRegistrationStart startRegistration({
     required String password,

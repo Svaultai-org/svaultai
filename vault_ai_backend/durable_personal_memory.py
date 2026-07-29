@@ -172,10 +172,28 @@ _TRAVEL_FACT_RE = re.compile(
     r"(?P<place>.+?)\s+on\s+(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
-_TRAVEL_RECALL_RE = re.compile(
-    r"^\s*(?:when|what\s+date)\s+did\s+i\s+"
-    r"(?:travel|travell|go|fly)\s+to\s+(?P<place>.+?)" + _END_PUNCT_RE,
+_TRIP_FACT_RE = re.compile(
+    r"^\s*(?:my\s+)?(?:trip|travel)\s+to\s+"
+    r"(?P<place>.+?)\s+(?:was|is|=|:)\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
+)
+_TRAVEL_RECALL_PATTERNS = (
+    re.compile(
+        r"^\s*(?:when|what\s+date)\s+did\s+i\s+"
+        r"(?:travel|travell|go|fly)\s+to\s+(?P<place>.+?)"
+        + _END_PUNCT_RE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:when|what\s+date)\s+was\s+(?:my\s+)?"
+        r"(?:trip|travel)\s+to\s+(?P<place>.+?)" + _END_PUNCT_RE,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*what\s+date\s+was\s+(?:my\s+)?(?P<place>.+?)\s+"
+        r"(?:trip|travel)" + _END_PUNCT_RE,
+        re.IGNORECASE,
+    ),
 )
 _TRAVEL_FORGET_RE = re.compile(
     r"^\s*(?:please\s+)?(?:forget|delete|remove)\s+"
@@ -207,6 +225,13 @@ _SELF_NAME_FACT_RE = re.compile(
 _SELF_NAME_RECALL_RE = re.compile(
     r"^\s*(?:what(?:'s|\s+is)|who\s+am)\s+(?:is\s+)?"
     r"(?:my\s+name|i)\s*" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_SELF_ADDRESS_RECALL_RE = re.compile(
+    r"^\s*(?:how\s+(?:do|should)\s+you\s+address\s+me|"
+    r"what\s+should\s+you\s+call\s+me|"
+    r"what\s+do\s+you\s+call\s+me|"
+    r"what\s+should\s+i\s+be\s+called)\s*" + _END_PUNCT_RE,
     re.IGNORECASE,
 )
 _SELF_NAME_FORGET_RE = re.compile(
@@ -290,6 +315,22 @@ _MONTH_DAY_YEAR_RE = re.compile(
     r"(?P<d>\d{1,2})(?:st|nd|rd|th)?\s*,?\s+(?P<y>\d{4})\s*$",
     re.IGNORECASE,
 )
+_DAY_MONTH_RE = re.compile(
+    r"^\s*(?P<d>\d{1,2})(?:st|nd|rd|th)?\s+"
+    r"(?P<m>[A-Za-z]+)\s*$",
+    re.IGNORECASE,
+)
+_MONTH_DAY_RE = re.compile(
+    r"^\s*(?P<m>[A-Za-z]+)\s+"
+    r"(?P<d>\d{1,2})(?:st|nd|rd|th)?\s*$",
+    re.IGNORECASE,
+)
+_MISSING_DETAILS_FOLLOWUP_RE = re.compile(
+    r"^\s*(?:what(?:'s|\s+is|s)?\s+(?:the\s+)?missing\s+details?|"
+    r"which\s+details?\s+(?:are|is)\s+missing|"
+    r"what\s+details?\s+do\s+you\s+need)\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -323,6 +364,7 @@ class PersonalMemoryIntent:
 
 
 _PENDING_PROPOSALS: dict[tuple[str, str], dict[str, Any]] = {}
+_PENDING_CLARIFICATIONS: dict[tuple[str, str], str] = {}
 
 
 def _clean_message(message: str) -> str:
@@ -339,6 +381,23 @@ def _slug(value: str) -> str:
     return text.strip("_")[:80] or "item"
 
 
+def _store_pending_clarification(
+    vault_id: str,
+    session_id: Optional[str],
+    message: str,
+) -> None:
+    if not vault_id or not message:
+        return
+    _PENDING_CLARIFICATIONS[_pending_key(vault_id, session_id)] = message
+
+
+def _pop_pending_clarification(
+    vault_id: str,
+    session_id: Optional[str],
+) -> Optional[str]:
+    return _PENDING_CLARIFICATIONS.pop(_pending_key(vault_id, session_id), None)
+
+
 def _title_case(value: str) -> str:
     words = [w for w in re.split(r"\s+", value.strip()) if w]
     if not words:
@@ -346,11 +405,19 @@ def _title_case(value: str) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in words)
 
 
+def _normalise_place(value: str) -> str:
+    return re.sub(r"^\s*the\s+", "", value or "", flags=re.IGNORECASE).strip()
+
+
 def _subject_parts(raw: str) -> tuple[str, str, str]:
     return _SUBJECT_ALIASES.get(raw.strip().lower(), (raw, raw, raw))
 
 
-def _parse_date_text(text: str) -> tuple[Optional[str], Optional[str]]:
+def _parse_date_text(
+    text: str,
+    *,
+    allow_partial: bool = False,
+) -> tuple[Optional[str], Optional[str]]:
     value = (text or "").strip().rstrip(".")
     m = _ISO_RE.match(value)
     if m:
@@ -366,6 +433,22 @@ def _parse_date_text(text: str) -> tuple[Optional[str], Optional[str]]:
         else:
             m = _DAY_MONTH_YEAR_RE.match(value) or _MONTH_DAY_YEAR_RE.match(value)
             if not m:
+                if allow_partial:
+                    partial = _DAY_MONTH_RE.match(value) or _MONTH_DAY_RE.match(value)
+                    if partial:
+                        month_name = partial.group("m").strip().lower()
+                        month = _MONTHS.get(month_name)
+                        if not month:
+                            return None, None
+                        day = int(partial.group("d"))
+                        try:
+                            parsed = date(2000, month, day)
+                        except ValueError:
+                            return None, None
+                        return (
+                            f"--{month:02d}-{day:02d}",
+                            f"{parsed.strftime('%B')} {day}",
+                        )
                 return None, None
             y = int(m.group("y"))
             month_name = m.group("m").strip().lower()
@@ -387,7 +470,10 @@ def _with_action(intent: PersonalMemoryIntent, action: str) -> PersonalMemoryInt
 def _birthday_intent(match: re.Match[str], *, action: str,
                      is_correction: bool = False) -> PersonalMemoryIntent:
     subject, display, relationship = _subject_parts(match.group("subject"))
-    normalized, display_value = _parse_date_text(match.group("value"))
+    normalized, display_value = _parse_date_text(
+        match.group("value"),
+        allow_partial=True,
+    )
     title = f"{display.title()}'s birthday"
     return PersonalMemoryIntent(
         action=action,
@@ -404,7 +490,7 @@ def _birthday_intent(match: re.Match[str], *, action: str,
         event_date=normalized,
         tags=("family", "date"),
         is_correction=is_correction,
-        needs_clarification=normalized is None,
+        needs_clarification=display_value is None,
     )
 
 
@@ -466,8 +552,10 @@ def _parse_fact_statement(
         )
 
     m = _TRAVEL_FACT_RE.match(text)
+    if not m:
+        m = _TRIP_FACT_RE.match(text)
     if m:
-        place = _clip(m.group("place"), 120)
+        place = _clip(_normalise_place(m.group("place")), 120)
         normalized, display_value = _parse_date_text(m.group("value"))
         return PersonalMemoryIntent(
             action=action,
@@ -650,7 +738,7 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
         )
     m = _TRAVEL_FORGET_RE.match(text)
     if m:
-        place = _clip(m.group("place"), 120)
+        place = _clip(_normalise_place(m.group("place")), 120)
         return PersonalMemoryIntent(
             action="forget",
             subject="self",
@@ -714,20 +802,21 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             memory_type="date",
             category="life_event",
         )
-    m = _TRAVEL_RECALL_RE.match(text)
-    if m:
-        place = _clip(m.group("place"), 120)
-        return PersonalMemoryIntent(
-            action="recall",
-            subject="self",
-            subject_display="you",
-            relationship="self",
-            attribute=f"travel_date:{_slug(place)}",
-            title=f"Trip to {_title_case(place)}",
-            memory_type="travel",
-            category="travel",
-            place=place,
-        )
+    for pattern in _TRAVEL_RECALL_PATTERNS:
+        m = pattern.match(text)
+        if m:
+            place = _clip(_normalise_place(m.group("place")), 120)
+            return PersonalMemoryIntent(
+                action="recall",
+                subject="self",
+                subject_display="you",
+                relationship="self",
+                attribute=f"travel_date:{_slug(place)}",
+                title=f"Trip to {_title_case(place)}",
+                memory_type="travel",
+                category="travel",
+                place=place,
+            )
     if _FAVORITE_PLACE_RECALL_RE.match(text):
         return PersonalMemoryIntent(
             action="recall",
@@ -758,6 +847,17 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             relationship="self",
             attribute="display_name",
             title="Your name",
+            memory_type="identity",
+            category="identity",
+        )
+    if _SELF_ADDRESS_RECALL_RE.match(text):
+        return PersonalMemoryIntent(
+            action="recall",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="display_name",
+            title="Preferred form of address",
             memory_type="identity",
             category="identity",
         )
@@ -1304,6 +1404,27 @@ def _saved_text(intent: PersonalMemoryIntent, verb: str = "Saved") -> str:
     return f"{verb}: {intent.title}."
 
 
+def _clarification_text(intent: PersonalMemoryIntent) -> str:
+    if intent.attribute == "birthday":
+        return (
+            f"What month and day should I save for "
+            f"{_format_possessive(intent.subject_display)} birthday?"
+        )
+    if intent.attribute == "wedding_anniversary":
+        return "What date should I save for your wedding anniversary?"
+    if intent.attribute.startswith("travel_date:"):
+        place = intent.place or "that trip"
+        return f"What date should I save for your trip to {place}?"
+    if intent.attribute == "display_name":
+        return "What name should I remember for you?"
+    if intent.attribute == "maiden_name":
+        return (
+            f"What should I save as "
+            f"{_format_possessive(intent.subject_display)} maiden name?"
+        )
+    return "What detail should I save for that memory?"
+
+
 def _recall_text(intent: PersonalMemoryIntent, payload: dict[str, Any]) -> str:
     display = str(
         payload.get("display_value")
@@ -1332,6 +1453,8 @@ def _recall_text(intent: PersonalMemoryIntent, payload: dict[str, Any]) -> str:
     if intent.attribute == "blood_type":
         return f"Your blood type is {display}."
     if intent.attribute == "display_name":
+        if intent.title == "Preferred form of address":
+            return f"I'll address you as {display}."
         return f"Your name is {display}."
     return f"{payload.get('title') or intent.title}: {display}"
 
@@ -1368,9 +1491,12 @@ def _save_memory(
     intent: PersonalMemoryIntent,
     *,
     source_message_id: Optional[str],
+    session_id: Optional[str] = None,
 ) -> str:
     if intent.needs_clarification:
-        return "I can save that memory, but I need the missing details first."
+        reply = _clarification_text(intent)
+        _store_pending_clarification(vault_id, session_id, reply)
+        return reply
 
     digest = _lookup_hash(key, intent.canonical_key)
     conn = None
@@ -2009,6 +2135,12 @@ def handle_personal_memory_turn(
     source_message_id: Optional[str] = None,
     session_id: Optional[str] = None,
 ) -> Optional[str]:
+    cleaned = _clean_message(message)
+    if _MISSING_DETAILS_FOLLOWUP_RE.match(cleaned):
+        return (
+            _pop_pending_clarification(vault_id, session_id)
+            or "I do not have an active memory detail question right now."
+        )
     intent = parse_personal_memory_intent(message)
     if intent is None:
         return None
@@ -2032,11 +2164,17 @@ def handle_personal_memory_turn(
         return "Memory proposal cancelled."
     if intent.action == "save":
         return _save_memory(
-            vault_id, key, intent, source_message_id=source_message_id
+            vault_id,
+            key,
+            intent,
+            source_message_id=source_message_id,
+            session_id=session_id,
         )
     if intent.action == "propose":
         if intent.needs_clarification:
-            return "I can save that memory, but I need the missing details first."
+            reply = _clarification_text(intent)
+            _store_pending_clarification(vault_id, session_id, reply)
+            return reply
         payload = _payload_for_intent(
             intent,
             source_message_id=source_message_id,

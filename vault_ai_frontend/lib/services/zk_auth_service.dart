@@ -47,6 +47,10 @@ import 'vault_handle.dart';
 const int _mvkBytes = 32;
 const int _skVaultBytes = 32;
 const int _aesGcmNonceBytes = 12;
+const bool _authTimingDiagnosticsEnabled = bool.fromEnvironment(
+  'VAULTAI_AUTH_TIMING_DIAGNOSTICS',
+  defaultValue: false,
+);
 
 /// Legacy PIN-verifier constants.
 ///
@@ -544,6 +548,22 @@ class ZkAuthService {
     required String pin,
     void Function(String stepDone)? onStep,
   }) async {
+    final authTiming = Stopwatch()..start();
+    void timing(
+      String stage, {
+      bool success = true,
+      int? httpStatus,
+    }) {
+      if (!_authTimingDiagnosticsEnabled) return;
+      final statusPart = httpStatus == null ? '' : ' http_status=$httpStatus';
+      // ignore: avoid_print
+      print(
+        '[auth-timing] stage=$stage '
+        'elapsed_ms=${authTiming.elapsedMilliseconds} '
+        'success=$success$statusPart',
+      );
+    }
+
     void step(String s) {
       // Always print — this is the ONE place we can rely on to see
       // pre-HTTP progress in a production browser console. Release
@@ -563,6 +583,7 @@ class ZkAuthService {
     step('begin');
     await _opaque.ready();
     step('opaque_ready');
+    timing('opaque_ready');
 
     final Uint8List handleBytes;
     String? usernameLookupB64;
@@ -580,6 +601,7 @@ class ZkAuthService {
 
     final handleDisplay = vaultHandleToDisplay(handleBytes);
     step('handle_encoded');
+    timing('identifier_derived');
 
     Future<({ZkClientLoginFinish finish, String slotId})> finishLoginAttempt({
       String? clientIdentifier,
@@ -587,6 +609,9 @@ class ZkAuthService {
     }) async {
       final start = await _opaque.startLogin(password: pin);
       step(legacy ? 'opaque_legacy_start_login' : 'opaque_start_login');
+      timing(
+        legacy ? 'opaque_legacy_start_complete' : 'opaque_start_complete',
+      );
 
       // Include ``username_lookup`` (32-byte client-derived id) when
       // we have it: the server uses it as a fallback lookup key when
@@ -604,6 +629,12 @@ class ZkAuthService {
         },
       );
       step(legacy ? 'opaque_legacy_post_login_init' : 'post_login_init');
+      timing(
+        legacy
+            ? 'opaque_legacy_zk_login_init_complete'
+            : 'zk_login_init_complete',
+        httpStatus: 200,
+      );
 
       final ke2 = initResponse['ke2'] as String;
       final slotId = initResponse['slot_id'] as String;
@@ -616,8 +647,17 @@ class ZkAuthService {
           clientIdentifier: clientIdentifier,
         );
         step(legacy ? 'opaque_legacy_finish_success' : 'opaque_finish_login');
+        timing(
+          legacy
+              ? 'opaque_legacy_finish_complete'
+              : 'opaque_finish_complete',
+        );
         return (finish: finish, slotId: slotId);
       } on OpaqueAuthenticationFailed {
+        timing(
+          legacy ? 'opaque_legacy_finish_complete' : 'opaque_finish_complete',
+          success: false,
+        );
         if (legacy) {
           step('opaque_legacy_finish_rejected');
         }
@@ -666,6 +706,7 @@ class ZkAuthService {
       },
     );
     step('post_login_finalize');
+    timing('zk_login_finalize_complete', httpStatus: 200);
 
     final kek = await _deriveKek(finish.exportKey);
     final wrappedMvk = _b64urlDecode(finalizeResponse['wrapped_mvk'] as String);
@@ -681,6 +722,7 @@ class ZkAuthService {
     final skVaultBytes = await _unwrap(kek, wrappedSkVault);
     final skVault = SecretKey(skVaultBytes);
     step('unwrap_mvk');
+    timing('key_unwrap_complete');
 
     final displayNameKey = await _deriveDisplayNameKey(mvk);
     final displayName =

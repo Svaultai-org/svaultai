@@ -1,5 +1,3 @@
-
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -11,13 +9,11 @@ import '../primitives.dart';
 import '../tokens.dart';
 import 'chat_models.dart';
 
-
 bool _vaultAiDeepScanDebugUiEnabled = false;
 bool isDeepScanDebugUiEnabled() => _vaultAiDeepScanDebugUiEnabled;
 void setDeepScanDebugUiEnabled(bool enabled) {
   _vaultAiDeepScanDebugUiEnabled = enabled;
 }
-
 
 bool _isImageMime(String? mime) =>
     (mime ?? '').toLowerCase().startsWith('image/');
@@ -34,7 +30,6 @@ IconData _iconForMime(String? mime) {
   if (m == 'application/pdf') return Icons.picture_as_pdf_outlined;
   return Icons.insert_drive_file_outlined;
 }
-
 
 const List<String> _kForbiddenEmptyStatePhrases = <String>[
   'no matches yet',
@@ -63,7 +58,6 @@ String _sanitizeStaleEmptyStateText({
     return original;
   }
   if (kDebugMode) {
-    
     print(
       '[file_search_results] sanitized_stale_copy '
       'is_complete=$isComplete count=$count '
@@ -87,11 +81,9 @@ String _sanitizeStaleEmptyStateText({
     }
     return 'No matching files found in your vault.';
   }
-  
-  
+
   return '';
 }
-
 
 class VaultFileCard extends StatelessWidget {
   final ChatMessage msg;
@@ -127,8 +119,7 @@ class VaultFileCard extends StatelessWidget {
     final assetType = (p['asset_type'] as String?)?.trim();
     final size = p['size_bytes'] is int ? p['size_bytes'] as int : null;
     final savedName = (p['saved_name'] as String?)?.trim();
-    
-    
+
     final relativePath = (p['relative_path'] as String?)?.trim();
     final tags = (p['tags'] is List)
         ? (p['tags'] as List).whereType<String>().toList()
@@ -174,8 +165,7 @@ class VaultFileCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: VaultText.subtitle,
                     ),
-                    if (relativePath != null &&
-                        relativePath.isNotEmpty) ...[
+                    if (relativePath != null && relativePath.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Row(
                         children: [
@@ -226,46 +216,58 @@ class VaultFileCard extends StatelessWidget {
               // Disable BOTH buttons while either action is in flight
               // for this file — a user should not be able to start a
               // download mid-view or fire a second view.
-              FilledButton.icon(
-                key: const Key('vault_file_card_view_btn'),
-                onPressed: (isViewInFlight || isDownloadInFlight)
-                    ? null
-                    : onOpen,
-                icon: isViewInFlight
-                    ? const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : const Icon(Icons.visibility_outlined, size: 18),
-                label: Text(
-                  isViewInFlight
-                      ? 'Opening…'
-                      : AppLocalizations.of(context).commonView,
+              Semantics(
+                container: true,
+                identifier: 'vault_file_card_view_btn',
+                button: true,
+                child: FilledButton.icon(
+                  key: const Key('vault_file_card_view_btn'),
+                  onPressed:
+                      (isViewInFlight || isDownloadInFlight) ? null : onOpen,
+                  icon: isViewInFlight
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.visibility_outlined, size: 18),
+                  label: Text(
+                    isViewInFlight
+                        ? 'Opening…'
+                        : AppLocalizations.of(context).commonView,
+                  ),
                 ),
               ),
-              OutlinedButton.icon(
-                key: const Key('vault_file_card_download_btn'),
-                onPressed: (isViewInFlight || isDownloadInFlight)
-                    ? null
-                    : (onDownload ?? onOpen),
-                icon: isDownloadInFlight
-                    ? const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : const Icon(Icons.file_download_outlined, size: 18),
-                label: Text(
-                  isDownloadInFlight
-                      ? 'Downloading…'
-                      : AppLocalizations.of(context).commonDownload,
+              Semantics(
+                container: true,
+                identifier: 'vault_file_card_download_btn',
+                button: true,
+                child: OutlinedButton.icon(
+                  key: const Key('vault_file_card_download_btn'),
+                  onPressed: (isViewInFlight || isDownloadInFlight)
+                      ? null
+                      : (onDownload ?? onOpen),
+                  icon: isDownloadInFlight
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.file_download_outlined, size: 18),
+                  label: Text(
+                    isDownloadInFlight
+                        ? 'Downloading…'
+                        : AppLocalizations.of(context).commonDownload,
+                  ),
                 ),
               ),
               if (onShowRelated != null && (msg.fileId ?? '').isNotEmpty)
                 OutlinedButton.icon(
+                  key: const Key('vault_file_card_show_related_btn'),
                   onPressed: (isViewInFlight || isDownloadInFlight)
                       ? null
                       : () => onShowRelated!(msg.fileId!),
@@ -306,7 +308,6 @@ String _formatBytes(int bytes) {
   if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
   return '$bytes B';
 }
-
 
 class VaultFileListCard extends StatefulWidget {
   final ChatMessage msg;
@@ -360,7 +361,6 @@ class VaultFileListCard extends StatefulWidget {
   @override
   State<VaultFileListCard> createState() => _VaultFileListCardState();
 
-  
   static ChatMessage _toFileMessage(
     Map<String, dynamic> raw,
     ChatMessage list,
@@ -372,10 +372,8 @@ class VaultFileListCard extends StatefulWidget {
     final payload = <String, dynamic>{
       if (relativePath != null && relativePath.isNotEmpty)
         'relative_path': relativePath,
-      if (savedName != null && savedName.isNotEmpty)
-        'saved_name': savedName,
-      if (assetType != null && assetType.isNotEmpty)
-        'asset_type': assetType,
+      if (savedName != null && savedName.isNotEmpty) 'saved_name': savedName,
+      if (assetType != null && assetType.isNotEmpty) 'asset_type': assetType,
       if (size is int) 'size_bytes': size,
     };
     return ChatMessage(
@@ -392,8 +390,6 @@ class VaultFileListCard extends StatefulWidget {
 }
 
 class _VaultFileListCardState extends State<VaultFileListCard> {
-  
-  
   String? _expandedFileId;
 
   @override
@@ -406,9 +402,8 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
         ? (p['files'] as List).whereType<Map>().toList()
         : const <Map>[];
 
-    final totalCount = p['total_count'] is int
-        ? p['total_count'] as int
-        : rawFiles.length;
+    final totalCount =
+        p['total_count'] is int ? p['total_count'] as int : rawFiles.length;
     final shownCount = rawFiles.length > VaultFileListCard.maxRows
         ? VaultFileListCard.maxRows
         : rawFiles.length;
@@ -423,8 +418,7 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
         : (requestedName != null && requestedName.isNotEmpty
             ? 'Files named "$requestedName"'
             : 'Matching files');
-    final headerSubtitle =
-        totalCount == 1 ? '1 file' : '$totalCount files';
+    final headerSubtitle = totalCount == 1 ? '1 file' : '$totalCount files';
 
     final onOpen = widget.onOpen;
     final onLoadRelated = widget.onLoadRelated;
@@ -459,10 +453,8 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
                   itemBuilder: (context, i) {
                     final raw = files[i].cast<String, dynamic>();
                     final fid = (raw['file_id'] as String?) ?? '';
-                    final canExpand =
-                        onLoadRelated != null && fid.isNotEmpty;
-                    final isExpanded =
-                        canExpand && _expandedFileId == fid;
+                    final canExpand = onLoadRelated != null && fid.isNotEmpty;
+                    final isExpanded = canExpand && _expandedFileId == fid;
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
@@ -475,17 +467,14 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
                           onDownload: widget.onDownload == null
                               ? null
                               : () => widget.onDownload!.call(
-                                    VaultFileListCard._toFileMessage(
-                                        raw, msg),
+                                    VaultFileListCard._toFileMessage(raw, msg),
                                   ),
-                          isViewInFlight:
-                              widget.viewInFlight.contains(fid),
+                          isViewInFlight: widget.viewInFlight.contains(fid),
                           isDownloadInFlight:
                               widget.downloadInFlight.contains(fid),
                           onShowRelated: canExpand
                               ? () => setState(() {
-                                    _expandedFileId =
-                                        isExpanded ? null : fid;
+                                    _expandedFileId = isExpanded ? null : fid;
                                   })
                               : null,
                         ),
@@ -519,12 +508,12 @@ class _VaultFileListCardState extends State<VaultFileListCard> {
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
                   key: const Key('vault_file_list_show_more_btn'),
-                  onPressed: widget.isShowMoreInFlight
-                      ? null
-                      : widget.onShowMore,
+                  onPressed:
+                      widget.isShowMoreInFlight ? null : widget.onShowMore,
                   icon: widget.isShowMoreInFlight
                       ? const SizedBox(
-                          width: 14, height: 14,
+                          width: 14,
+                          height: 14,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
                           ),
@@ -585,13 +574,10 @@ class _VaultFileListRow extends StatelessWidget {
     final savedName = (file['saved_name'] as String?)?.trim();
     final relativePath = (file['relative_path'] as String?)?.trim();
     final mime = (file['mime_type'] as String?) ?? '';
-    final size = file['size_bytes'] is int
-        ? file['size_bytes'] as int
-        : null;
+    final size = file['size_bytes'] is int ? file['size_bytes'] as int : null;
 
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     final busy = isViewInFlight || isDownloadInFlight;
     final fileId = (file['file_id'] as String?) ?? '';
@@ -626,8 +612,7 @@ class _VaultFileListRow extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: VaultText.subtitle.copyWith(fontSize: 15),
                   ),
-                  if (relativePath != null &&
-                      relativePath.isNotEmpty) ...[
+                  if (relativePath != null && relativePath.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Row(
                       children: [
@@ -656,12 +641,11 @@ class _VaultFileListRow extends StatelessWidget {
                       // even if a client formatter drifts.
                       final serverSize =
                           (file['size_display'] as String?)?.trim();
-                      final sizeStr = (serverSize != null &&
-                              serverSize.isNotEmpty)
-                          ? serverSize
-                          : (size != null ? _formatBytes(size) : null);
-                      final uploaded =
-                          (file['uploaded_at'] as String?)?.trim();
+                      final sizeStr =
+                          (serverSize != null && serverSize.isNotEmpty)
+                              ? serverSize
+                              : (size != null ? _formatBytes(size) : null);
+                      final uploaded = (file['uploaded_at'] as String?)?.trim();
                       final parts = <String>[
                         if (mime.isNotEmpty) mime,
                         if (sizeStr != null) sizeStr,
@@ -690,38 +674,48 @@ class _VaultFileListRow extends StatelessWidget {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8),
                 child: SizedBox(
-                  width: 16, height: 16,
+                  width: 16,
+                  height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               )
             else ...[
-              IconButton(
-                key: Key('vault_file_list_row_view_$fileId'),
-                tooltip: AppLocalizations.of(context).commonView,
-                onPressed: onOpen,
-                icon: const Icon(
-                  Icons.open_in_new,
-                  size: 18,
-                  color: VaultColors.accentBright,
-                ),
-              ),
-              if (onDownload != null)
-                IconButton(
-                  key: Key('vault_file_list_row_download_$fileId'),
-                  tooltip:
-                      AppLocalizations.of(context).commonDownload,
-                  onPressed: onDownload,
-                  visualDensity: VisualDensity.compact,
+              Semantics(
+                container: true,
+                identifier: 'vault_file_list_row_view',
+                button: true,
+                child: IconButton(
+                  key: Key('vault_file_list_row_view_$fileId'),
+                  tooltip: AppLocalizations.of(context).commonView,
+                  onPressed: onOpen,
                   icon: const Icon(
-                    Icons.file_download_outlined,
+                    Icons.open_in_new,
                     size: 18,
                     color: VaultColors.accentBright,
                   ),
                 ),
+              ),
+              if (onDownload != null)
+                Semantics(
+                  container: true,
+                  identifier: 'vault_file_list_row_download',
+                  button: true,
+                  child: IconButton(
+                    key: Key('vault_file_list_row_download_$fileId'),
+                    tooltip: AppLocalizations.of(context).commonDownload,
+                    onPressed: onDownload,
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(
+                      Icons.file_download_outlined,
+                      size: 18,
+                      color: VaultColors.accentBright,
+                    ),
+                  ),
+                ),
               if (onShowRelated != null)
                 IconButton(
-                  tooltip: AppLocalizations.of(context)
-                      .chatCardShowRelated,
+                  key: Key('vault_file_list_row_related_$fileId'),
+                  tooltip: AppLocalizations.of(context).chatCardShowRelated,
                   onPressed: onShowRelated,
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(
@@ -744,8 +738,18 @@ class _VaultFileListRow extends StatelessWidget {
     try {
       final dt = DateTime.parse(iso).toLocal();
       const months = [
-        'Jan','Feb','Mar','Apr','May','Jun',
-        'Jul','Aug','Sep','Oct','Nov','Dec',
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
       ];
       return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
     } catch (_) {
@@ -753,7 +757,6 @@ class _VaultFileListRow extends StatelessWidget {
     }
   }
 }
-
 
 class MemoryCard extends StatelessWidget {
   final ChatMessage msg;
@@ -858,7 +861,6 @@ class _MemoryItemRow extends StatelessWidget {
   }
 }
 
-
 class RelationshipCard extends StatelessWidget {
   final ChatMessage msg;
   const RelationshipCard({super.key, required this.msg});
@@ -897,7 +899,8 @@ class RelationshipCard extends StatelessWidget {
               spacing: VaultSpacing.sm,
               runSpacing: VaultSpacing.sm,
               children: nodes
-                  .map((n) => _RelationshipNode(node: n.cast<String, dynamic>()))
+                  .map(
+                      (n) => _RelationshipNode(node: n.cast<String, dynamic>()))
                   .toList(),
             ),
           ],
@@ -909,17 +912,28 @@ class RelationshipCard extends StatelessWidget {
   String _humanRelType(String t) {
     if (t.isEmpty) return '';
     switch (t) {
-      case 'travel_related':   return 'Travel cluster';
-      case 'identity_related': return 'Identity cluster';
-      case 'business_related': return 'Business cluster';
-      case 'finance_related':  return 'Finance cluster';
-      case 'tax_related':      return 'Tax cluster';
-      case 'medical_related':  return 'Medical cluster';
-      case 'family_related':   return 'Family cluster';
-      case 'security_related': return 'Security cluster';
-      case 'media_related':    return 'Media cluster';
-      case 'inheritance_related': return 'Inheritance cluster';
-      default:                 return t.replaceAll('_', ' ');
+      case 'travel_related':
+        return 'Travel cluster';
+      case 'identity_related':
+        return 'Identity cluster';
+      case 'business_related':
+        return 'Business cluster';
+      case 'finance_related':
+        return 'Finance cluster';
+      case 'tax_related':
+        return 'Tax cluster';
+      case 'medical_related':
+        return 'Medical cluster';
+      case 'family_related':
+        return 'Family cluster';
+      case 'security_related':
+        return 'Security cluster';
+      case 'media_related':
+        return 'Media cluster';
+      case 'inheritance_related':
+        return 'Inheritance cluster';
+      default:
+        return t.replaceAll('_', ' ');
     }
   }
 }
@@ -945,7 +959,8 @@ class _RelationshipNode extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(_iconForHint(iconHint), size: 14, color: VaultColors.accentBright),
+          Icon(_iconForHint(iconHint),
+              size: 14, color: VaultColors.accentBright),
           const SizedBox(width: VaultSpacing.sm),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 220),
@@ -963,26 +978,41 @@ class _RelationshipNode extends StatelessWidget {
 
   IconData _iconForHint(String hint) {
     switch (hint) {
-      case 'passport':       return Icons.book_outlined;
-      case 'visa':           return Icons.flight_takeoff;
-      case 'id_card':        return Icons.badge_outlined;
-      case 'driver_license': return Icons.directions_car_outlined;
-      case 'invoice':        return Icons.receipt_long_outlined;
-      case 'receipt':        return Icons.receipt_outlined;
-      case 'contract':       return Icons.handshake_outlined;
-      case 'agreement':      return Icons.description_outlined;
-      case 'medical':        return Icons.medical_information_outlined;
-      case 'tax':            return Icons.account_balance_outlined;
-      case 'business':       return Icons.business_center_outlined;
-      case 'insurance':      return Icons.shield_outlined;
-      case 'memory':         return Icons.auto_awesome_outlined;
-      case 'travel':         return Icons.flight;
-      case 'family':         return Icons.people_outline;
-      default:               return Icons.circle_outlined;
+      case 'passport':
+        return Icons.book_outlined;
+      case 'visa':
+        return Icons.flight_takeoff;
+      case 'id_card':
+        return Icons.badge_outlined;
+      case 'driver_license':
+        return Icons.directions_car_outlined;
+      case 'invoice':
+        return Icons.receipt_long_outlined;
+      case 'receipt':
+        return Icons.receipt_outlined;
+      case 'contract':
+        return Icons.handshake_outlined;
+      case 'agreement':
+        return Icons.description_outlined;
+      case 'medical':
+        return Icons.medical_information_outlined;
+      case 'tax':
+        return Icons.account_balance_outlined;
+      case 'business':
+        return Icons.business_center_outlined;
+      case 'insurance':
+        return Icons.shield_outlined;
+      case 'memory':
+        return Icons.auto_awesome_outlined;
+      case 'travel':
+        return Icons.flight;
+      case 'family':
+        return Icons.people_outline;
+      default:
+        return Icons.circle_outlined;
     }
   }
 }
-
 
 class ConciergeCard extends StatelessWidget {
   final ChatMessage msg;
@@ -1061,28 +1091,40 @@ class ConciergeCard extends StatelessWidget {
 
   IconData _iconForHint(String hint) {
     switch (hint) {
-      case 'travel':      return Icons.flight_takeoff;
-      case 'tax':         return Icons.account_balance_outlined;
-      case 'inheritance': return Icons.family_restroom_outlined;
-      case 'security':    return Icons.shield_outlined;
-      case 'identity':    return Icons.badge_outlined;
-      case 'finance':     return Icons.payments_outlined;
-      case 'medical':     return Icons.medical_services_outlined;
-      default:            return Icons.lightbulb_outline;
+      case 'travel':
+        return Icons.flight_takeoff;
+      case 'tax':
+        return Icons.account_balance_outlined;
+      case 'inheritance':
+        return Icons.family_restroom_outlined;
+      case 'security':
+        return Icons.shield_outlined;
+      case 'identity':
+        return Icons.badge_outlined;
+      case 'finance':
+        return Icons.payments_outlined;
+      case 'medical':
+        return Icons.medical_services_outlined;
+      default:
+        return Icons.lightbulb_outline;
     }
   }
 
   String _severityLabel(String s) {
     switch (s.toLowerCase()) {
-      case 'critical': return 'CRITICAL';
-      case 'warning':  return 'WARNING';
-      case 'info':     return 'INFO';
-      case 'ok':       return 'OK';
-      default:         return s.toUpperCase();
+      case 'critical':
+        return 'CRITICAL';
+      case 'warning':
+        return 'WARNING';
+      case 'info':
+        return 'INFO';
+      case 'ok':
+        return 'OK';
+      default:
+        return s.toUpperCase();
     }
   }
 }
-
 
 class ExpiryCard extends StatelessWidget {
   final ChatMessage msg;
@@ -1098,7 +1140,6 @@ class ExpiryCard extends StatelessWidget {
         : const <Map>[];
     final summary = p['summary'] as String?;
 
-    
     final worst = _worstSeverity(items);
     final accentColor = VaultColors.forSeverity(worst);
 
@@ -1160,9 +1201,8 @@ class _ExpiryRow extends StatelessWidget {
     final docLabel = (item['doc_label'] as String?) ?? '';
     final phrase = (item['phrase'] as String?) ?? '';
     final date = (item['expiry_date'] as String?) ?? '';
-    final daysUntil = item['days_until'] is int
-        ? item['days_until'] as int
-        : null;
+    final daysUntil =
+        item['days_until'] is int ? item['days_until'] as int : null;
     final severity = ((item['severity'] as String?) ?? 'info').toLowerCase();
     final type = (item['expiry_type'] as String?) ?? '';
 
@@ -1188,7 +1228,9 @@ class _ExpiryRow extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  docLabel.isNotEmpty ? docLabel : (type.isNotEmpty ? type : 'Document'),
+                  docLabel.isNotEmpty
+                      ? docLabel
+                      : (type.isNotEmpty ? type : 'Document'),
                   style: VaultText.subtitle.copyWith(fontSize: 15),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1219,54 +1261,68 @@ class _ExpiryRow extends StatelessWidget {
 
   IconData _iconForType(String t) {
     switch (t) {
-      case 'passport':       return Icons.book_outlined;
-      case 'visa':           return Icons.flight_takeoff;
-      case 'id_card':        return Icons.badge_outlined;
-      case 'driver_license': return Icons.directions_car_outlined;
-      case 'insurance':      return Icons.shield_outlined;
-      case 'tax':            return Icons.account_balance_outlined;
-      case 'contract':       return Icons.handshake_outlined;
-      case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
-      default:               return Icons.event_outlined;
+      case 'passport':
+        return Icons.book_outlined;
+      case 'visa':
+        return Icons.flight_takeoff;
+      case 'id_card':
+        return Icons.badge_outlined;
+      case 'driver_license':
+        return Icons.directions_car_outlined;
+      case 'insurance':
+        return Icons.shield_outlined;
+      case 'tax':
+        return Icons.account_balance_outlined;
+      case 'contract':
+        return Icons.handshake_outlined;
+      case 'subscription':
+        return Icons.autorenew;
+      case 'inheritance':
+        return Icons.family_restroom_outlined;
+      default:
+        return Icons.event_outlined;
     }
   }
 
   String _daysLabel(int days) {
-    if (days < 0)  return '${-days}d ago';
+    if (days < 0) return '${-days}d ago';
     if (days == 0) return 'Today';
     if (days == 1) return '1 day';
     return '${days}d';
   }
 }
 
-
 const Map<String, IconData> _kTypeBucketIcons = <String, IconData>{
-  'PDFs':         Icons.picture_as_pdf_outlined,
-  'Images':       Icons.image_outlined,
-  'Videos':       Icons.movie_outlined,
-  'Audio':        Icons.audiotrack,
-  'Documents':    Icons.description_outlined,
+  'PDFs': Icons.picture_as_pdf_outlined,
+  'Images': Icons.image_outlined,
+  'Videos': Icons.movie_outlined,
+  'Audio': Icons.audiotrack,
+  'Documents': Icons.description_outlined,
   'Spreadsheets': Icons.table_chart_outlined,
-  'Archives':     Icons.folder_zip_outlined,
-  'Scripts':      Icons.code,
+  'Archives': Icons.folder_zip_outlined,
+  'Scripts': Icons.code,
 };
 
 const Map<String, IconData> _kTravelDocIcons = <String, IconData>{
-  'passport':        Icons.book_outlined,
-  'visa':            Icons.flight_takeoff,
-  'boarding_pass':   Icons.airplane_ticket_outlined,
-  'ticket':          Icons.confirmation_number_outlined,
+  'passport': Icons.book_outlined,
+  'visa': Icons.flight_takeoff,
+  'boarding_pass': Icons.airplane_ticket_outlined,
+  'ticket': Icons.confirmation_number_outlined,
   'hotel_itinerary': Icons.hotel_outlined,
 };
 
 String _prettyTravelDocType(String code) {
   switch (code) {
-    case 'passport':        return 'Passport';
-    case 'visa':            return 'Visa';
-    case 'boarding_pass':   return 'Boarding pass';
-    case 'ticket':          return 'Ticket';
-    case 'hotel_itinerary': return 'Hotel itinerary';
+    case 'passport':
+      return 'Passport';
+    case 'visa':
+      return 'Visa';
+    case 'boarding_pass':
+      return 'Boarding pass';
+    case 'ticket':
+      return 'Ticket';
+    case 'hotel_itinerary':
+      return 'Hotel itinerary';
     default:
       return code
           .split('_')
@@ -1274,7 +1330,6 @@ String _prettyTravelDocType(String code) {
           .join(' ');
   }
 }
-
 
 class VaultInventoryCard extends StatefulWidget {
   final ChatMessage msg;
@@ -1287,7 +1342,6 @@ class VaultInventoryCard extends StatefulWidget {
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
 
   final void Function(String fileId)? onShowRelated;
-
 
   static const int maxRecentRows = 10;
 
@@ -1321,8 +1375,7 @@ class _VaultInventoryCardState extends State<VaultInventoryCard> {
     final p = msg.payload ?? const <String, dynamic>{};
     final totalFiles = p['total_files'] is int ? p['total_files'] as int : 0;
     final totalBytes = p['total_bytes'] is int ? p['total_bytes'] as int : 0;
-    final folderCount =
-        p['folder_count'] is int ? p['folder_count'] as int : 0;
+    final folderCount = p['folder_count'] is int ? p['folder_count'] as int : 0;
 
     final folders = (p['top_folders'] is List)
         ? (p['top_folders'] as List)
@@ -1435,10 +1488,8 @@ class _VaultInventoryCardState extends State<VaultInventoryCard> {
                   itemBuilder: (context, i) {
                     final raw = shownRecent[i];
                     final fid = (raw['file_id'] as String?) ?? '';
-                    final canExpand =
-                        onLoadRelated != null && fid.isNotEmpty;
-                    final isExpanded =
-                        canExpand && _expandedFileId == fid;
+                    final canExpand = onLoadRelated != null && fid.isNotEmpty;
+                    final isExpanded = canExpand && _expandedFileId == fid;
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
@@ -1451,17 +1502,14 @@ class _VaultInventoryCardState extends State<VaultInventoryCard> {
                           onDownload: widget.onDownload == null
                               ? null
                               : () => widget.onDownload!.call(
-                                    VaultFileListCard._toFileMessage(
-                                        raw, msg),
+                                    VaultFileListCard._toFileMessage(raw, msg),
                                   ),
-                          isViewInFlight:
-                              widget.viewInFlight.contains(fid),
+                          isViewInFlight: widget.viewInFlight.contains(fid),
                           isDownloadInFlight:
                               widget.downloadInFlight.contains(fid),
                           onShowRelated: canExpand
                               ? () => setState(() {
-                                    _expandedFileId =
-                                        isExpanded ? null : fid;
+                                    _expandedFileId = isExpanded ? null : fid;
                                   })
                               : null,
                         ),
@@ -1496,8 +1544,7 @@ class _VaultInventoryCardState extends State<VaultInventoryCard> {
     final folderPart = folderCount > 0
         ? ' across $folderCount folder${folderCount == 1 ? '' : 's'}'
         : '';
-    final sizePart =
-        totalBytes > 0 ? ' · ${_formatBytes(totalBytes)}' : '';
+    final sizePart = totalBytes > 0 ? ' · ${_formatBytes(totalBytes)}' : '';
     return 'Your vault has $totalFiles file'
         '${totalFiles == 1 ? '' : 's'}$folderPart$sizePart.';
   }
@@ -1508,8 +1555,14 @@ class _TypeBreakdownRow extends StatelessWidget {
   const _TypeBreakdownRow({required this.typeCounts});
 
   static const List<String> _kDisplayOrder = [
-    'PDFs', 'Images', 'Videos', 'Audio',
-    'Documents', 'Spreadsheets', 'Archives', 'Scripts',
+    'PDFs',
+    'Images',
+    'Videos',
+    'Audio',
+    'Documents',
+    'Spreadsheets',
+    'Archives',
+    'Scripts',
   ];
 
   @override
@@ -1578,7 +1631,6 @@ class _FolderSummaryRow extends StatelessWidget {
   }
 }
 
-
 class TravelReadinessCard extends StatelessWidget {
   final ChatMessage msg;
   const TravelReadinessCard({super.key, required this.msg});
@@ -1586,8 +1638,7 @@ class TravelReadinessCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = msg.payload ?? const <String, dynamic>{};
-    final confidence =
-        (p['confidence'] as String?)?.toLowerCase() ?? 'blocked';
+    final confidence = (p['confidence'] as String?)?.toLowerCase() ?? 'blocked';
     final found = (p['found'] is List)
         ? (p['found'] as List).whereType<String>().toList()
         : const <String>[];
@@ -1632,7 +1683,7 @@ class TravelReadinessCard extends StatelessWidget {
               msg.text.trim().isNotEmpty
                   ? msg.text
                   : "Upload a passport, visa, or boarding pass to start a "
-                    "travel readiness check.",
+                      "travel readiness check.",
               style: VaultText.body,
             ),
           ],
@@ -1729,28 +1780,40 @@ class TravelReadinessCard extends StatelessWidget {
 
   String _severityForConfidence(String c) {
     switch (c) {
-      case 'ready':   return 'ok';
-      case 'partial': return 'warning';
-      case 'blocked': return 'critical';
-      default:        return 'info';
+      case 'ready':
+        return 'ok';
+      case 'partial':
+        return 'warning';
+      case 'blocked':
+        return 'critical';
+      default:
+        return 'info';
     }
   }
 
   String _statusLabel(String c) {
     switch (c) {
-      case 'ready':   return 'READY';
-      case 'partial': return 'PARTIAL';
-      case 'blocked': return 'BLOCKED';
-      default:        return c.toUpperCase();
+      case 'ready':
+        return 'READY';
+      case 'partial':
+        return 'PARTIAL';
+      case 'blocked':
+        return 'BLOCKED';
+      default:
+        return c.toUpperCase();
     }
   }
 
   String _statusSubtitle(String c) {
     switch (c) {
-      case 'ready':   return "You're travel-ready.";
-      case 'partial': return 'Some items are missing or expiring.';
-      case 'blocked': return 'Blockers found.';
-      default:        return '';
+      case 'ready':
+        return "You're travel-ready.";
+      case 'partial':
+        return 'Some items are missing or expiring.';
+      case 'blocked':
+        return 'Blockers found.';
+      default:
+        return '';
     }
   }
 
@@ -1824,8 +1887,8 @@ class _ReadinessSection extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Icon(items[i].icon, size: 14,
-                      color: VaultColors.textSecondary),
+                  Icon(items[i].icon,
+                      size: 14, color: VaultColors.textSecondary),
                   const SizedBox(width: VaultSpacing.sm),
                   Expanded(
                     child: Text(
@@ -1850,23 +1913,17 @@ class _ReadinessLine {
   const _ReadinessLine({required this.icon, required this.label});
 }
 
-
 class CredentialFileSearchCard extends StatefulWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
 
-  
   final void Function(String fileId)? onShowRelated;
 
-  
   final void Function()? onScanRemaining;
 
-  
   final bool Function({
     required String intent,
     required String normalizedQuery,
@@ -1892,11 +1949,9 @@ class CredentialFileSearchCard extends StatefulWidget {
 
 class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
   String? _expandedFileId;
-  
-  
+
   bool _scanRequested = false;
 
-  
   static const String _kIntent = 'search_files_for_credentials';
   static const String _kNormalizedQuery = '';
 
@@ -1916,7 +1971,6 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
     final onLoadRelated = widget.onLoadRelated;
     final p = msg.payload ?? const <String, dynamic>{};
 
-    
     final allFiles = (p['files'] is List)
         ? (p['files'] as List)
             .whereType<Map>()
@@ -1924,18 +1978,13 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
             .toList()
         : const <Map<String, dynamic>>[];
 
-    
     final verifiedFiles = allFiles.where((f) {
       final tier = (f['tier'] as String?)?.toLowerCase();
-      if (tier != null
-          && tier != 'confirmed'
-          && tier.isNotEmpty) {
+      if (tier != null && tier != 'confirmed' && tier.isNotEmpty) {
         return false;
       }
       final conf = (f['confidence'] as String?)?.toLowerCase();
-      if (conf != null
-          && conf != 'strong'
-          && conf.isNotEmpty) {
+      if (conf != null && conf != 'strong' && conf.isNotEmpty) {
         return false;
       }
       return true;
@@ -1951,11 +2000,9 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
         p['not_scanned_count'] is int ? p['not_scanned_count'] as int : 0;
     final scannedCount =
         p['scanned_count'] is int ? p['scanned_count'] as int : 0;
-    
-    
+
     final isPartial = p['is_partial'] == true || notScanned > 0;
-    
-    
+
     final isStale = p['stale'] == true;
     final hostScanIsActive = _hostKnowsScanActive();
     if (isStale && hostScanIsActive) {
@@ -2000,15 +2047,13 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
         padding: const EdgeInsets.only(bottom: VaultSpacing.md),
         child: _HonestyHint(
           icon: Icons.history_outlined,
-          text:
-              'Older results — a fresh scan is running. These rows '
+          text: 'Older results — a fresh scan is running. These rows '
               'reflect a previous check; the new answer will replace '
               'them once the scan finishes.',
         ),
       );
     }
 
-    
     if (verifiedFiles.isEmpty) {
       final emptyHeadline = scannedCount > 0
           ? "I didn't find any files with saved credentials."
@@ -2056,7 +2101,6 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
       ));
     }
 
-    
     final n = verifiedFiles.length;
     final headline = n == 1
         ? 'I found 1 file with saved credentials.'
@@ -2092,8 +2136,6 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
               ),
             ),
           ),
-          
-          
           if (isDeepScanDebugUiEnabled() && notScanned > 0) ...[
             const SizedBox(height: VaultSpacing.md),
             _NotScannedFooter(count: notScanned),
@@ -2145,8 +2187,7 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
                   ),
                   onShowRelated: canExpand
                       ? () => setState(() {
-                            _expandedFileId =
-                                isExpanded ? null : fid;
+                            _expandedFileId = isExpanded ? null : fid;
                           })
                       : null,
                 ),
@@ -2169,7 +2210,6 @@ class _CredentialFileSearchCardState extends State<CredentialFileSearchCard> {
     );
   }
 }
-
 
 class _HonestyHint extends StatelessWidget {
   final IconData icon;
@@ -2198,7 +2238,6 @@ class _HonestyHint extends StatelessWidget {
     );
   }
 }
-
 
 class _OlderResultsPlaceholder extends StatelessWidget {
   const _OlderResultsPlaceholder();
@@ -2239,7 +2278,6 @@ class _OlderResultsPlaceholder extends StatelessWidget {
   }
 }
 
-
 class _ScanRemainingButton extends StatelessWidget {
   final int fileCount;
   final bool scanRequested;
@@ -2268,9 +2306,7 @@ class _ScanRemainingButton extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: disabled ? null : onTap,
         icon: Icon(
-          disabled
-              ? Icons.hourglass_top_outlined
-              : Icons.play_circle_outline,
+          disabled ? Icons.hourglass_top_outlined : Icons.play_circle_outline,
           size: 16,
         ),
         label: Text(label),
@@ -2278,7 +2314,6 @@ class _ScanRemainingButton extends StatelessWidget {
     );
   }
 }
-
 
 class _NotScannedFooter extends StatelessWidget {
   final int count;
@@ -2308,9 +2343,9 @@ class _NotScannedFooter extends StatelessWidget {
             child: Text(
               count == 1
                   ? 'Some files could not be scanned because text '
-                    'extraction is not available yet (1 file).'
+                      'extraction is not available yet (1 file).'
                   : 'Some files could not be scanned because text '
-                    'extraction is not available yet ($count files).',
+                      'extraction is not available yet ($count files).',
               style: VaultText.caption,
             ),
           ),
@@ -2324,7 +2359,6 @@ class _CredentialFileRow extends StatelessWidget {
   final Map<String, dynamic> file;
   final VoidCallback? onOpen;
 
-  
   final VoidCallback? onShowRelated;
 
   const _CredentialFileRow({
@@ -2347,11 +2381,9 @@ class _CredentialFileRow extends StatelessWidget {
             .take(3)
             .toList()
         : const <String>[];
-    
-    
-    final recordCount = (file['record_count'] is int)
-        ? file['record_count'] as int
-        : 0;
+
+    final recordCount =
+        (file['record_count'] is int) ? file['record_count'] as int : 0;
     final evidenceLabel =
         ((file['evidence_source_label'] as String?) ?? '').trim();
     final duplicatePaths = (file['duplicate_paths'] is List)
@@ -2361,9 +2393,8 @@ class _CredentialFileRow extends StatelessWidget {
             .toList()
         : const <String>[];
 
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     return InkWell(
       onTap: onOpen,
@@ -2488,11 +2519,9 @@ class _CredentialFileRow extends StatelessWidget {
   }
 }
 
-
 class CredentialExtractionReviewCard extends StatelessWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
   static const int maxRows = 50;
@@ -2517,15 +2546,13 @@ class CredentialExtractionReviewCard extends StatelessWidget {
         ? (p['file'] as Map).cast<String, dynamic>()
         : const <String, dynamic>{};
     final textAvailable = p['text_available'] == true;
-    final fileLabel = (fileMap['saved_name'] is String
-            && (fileMap['saved_name'] as String).trim().isNotEmpty)
+    final fileLabel = (fileMap['saved_name'] is String &&
+            (fileMap['saved_name'] as String).trim().isNotEmpty)
         ? (fileMap['saved_name'] as String).trim()
-        : ((fileMap['file_name'] as String?)?.trim()
-            ?? 'the selected file');
+        : ((fileMap['file_name'] as String?)?.trim() ?? 'the selected file');
 
-    final shown = records.length > maxRows
-        ? records.take(maxRows).toList()
-        : records;
+    final shown =
+        records.length > maxRows ? records.take(maxRows).toList() : records;
 
     return VaultCard(
       padding: const EdgeInsets.all(VaultSpacing.lg),
@@ -2544,13 +2571,11 @@ class CredentialExtractionReviewCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: VaultSpacing.md),
-          if (msg.text.trim().isNotEmpty)
-            Text(msg.text, style: VaultText.body),
+          if (msg.text.trim().isNotEmpty) Text(msg.text, style: VaultText.body),
           const SizedBox(height: VaultSpacing.md),
           _HonestyHint(
             icon: Icons.shield_outlined,
-            text:
-                'I will not save anything until you confirm. Password '
+            text: 'I will not save anything until you confirm. Password '
                 'values are never shown — only that a password is '
                 'present in each record.',
           ),
@@ -2558,8 +2583,7 @@ class CredentialExtractionReviewCard extends StatelessWidget {
             const SizedBox(height: VaultSpacing.md),
             _HonestyHint(
               icon: Icons.info_outline,
-              text:
-                  "I don't have the file's text yet. Run vault "
+              text: "I don't have the file's text yet. Run vault "
                   'analysis to extract it, then ask again.',
             ),
           ],
@@ -2586,7 +2610,6 @@ class CredentialExtractionReviewCard extends StatelessWidget {
     );
   }
 }
-
 
 class _ExtractionReviewRow extends StatelessWidget {
   final Map<String, dynamic> record;
@@ -2660,9 +2683,7 @@ class _ExtractionReviewRow extends StatelessWidget {
             runSpacing: VaultSpacing.xs,
             children: [
               MetaPill(
-                label: passwordPresent
-                    ? 'password present'
-                    : 'no password',
+                label: passwordPresent ? 'password present' : 'no password',
                 icon: passwordPresent
                     ? Icons.key_outlined
                     : Icons.key_off_outlined,
@@ -2690,17 +2711,13 @@ class _ExtractionReviewRow extends StatelessWidget {
   }
 }
 
-
 class DeepAnswerProgressCard extends StatefulWidget {
   final ChatMessage msg;
 
-  
   final Future<Map<String, dynamic>?> Function(String jobId)? onPoll;
 
-  
   final void Function(Map<String, dynamic> snapshot)? onReady;
 
-  
   final Duration pollInterval;
 
   const DeepAnswerProgressCard({
@@ -2712,8 +2729,7 @@ class DeepAnswerProgressCard extends StatefulWidget {
   });
 
   @override
-  State<DeepAnswerProgressCard> createState() =>
-      _DeepAnswerProgressCardState();
+  State<DeepAnswerProgressCard> createState() => _DeepAnswerProgressCardState();
 }
 
 class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
@@ -2721,7 +2737,6 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
   Timer? _timer;
   bool _terminal = false;
 
-  
   int _lastScanned = 0;
   int _stalledTicks = 0;
   static const int _stalledThreshold = 3;
@@ -2773,8 +2788,6 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
     final jobId = _snapshot?['job_id'] as String?;
     final onPoll = widget.onPoll;
     if (jobId == null || jobId.isEmpty || onPoll == null) {
-      
-      
       _terminal = true;
       return;
     }
@@ -2782,8 +2795,6 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
     try {
       fresh = await onPoll(jobId);
     } catch (_) {
-      
-      
       _scheduleNextPoll();
       return;
     }
@@ -2829,39 +2840,33 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
         (coverage['pending'] is int) ? coverage['pending'] as int : 0;
     final processing =
         (coverage['processing'] is int) ? coverage['processing'] as int : 0;
-    final unsupported = (coverage['unsupported'] is int)
-        ? coverage['unsupported'] as int
-        : 0;
-    final failed =
-        (coverage['failed'] is int) ? coverage['failed'] as int : 0;
+    final unsupported =
+        (coverage['unsupported'] is int) ? coverage['unsupported'] as int : 0;
+    final failed = (coverage['failed'] is int) ? coverage['failed'] as int : 0;
     final fractionDenom = total > 0 ? total : 1;
     final fraction = (scanned / fractionDenom).clamp(0.0, 1.0).toDouble();
     final remaining = pending + processing;
 
     final isFailedRaw = status == 'failed';
     final isReadyRaw = status == 'ready';
-    
-    
-    final isLyingAboutCompletion =
-        isReadyRaw && total > 0 && scanned == 0;
+
+    final isLyingAboutCompletion = isReadyRaw && total > 0 && scanned == 0;
     final isReady = isReadyRaw && !isLyingAboutCompletion;
     final isFailed = isFailedRaw || isLyingAboutCompletion;
 
     final backendBlockerReason =
         (progress['blocker_reason'] as String?)?.trim() ?? '';
-    final stalled = !isReady && !isFailed && (
-        backendBlockerReason.isNotEmpty
-        || _stalledTicks >= _stalledThreshold);
+    final stalled = !isReady &&
+        !isFailed &&
+        (backendBlockerReason.isNotEmpty || _stalledTicks >= _stalledThreshold);
 
-    
     if (!isDeepScanDebugUiEnabled()) {
       if (isReady) {
         return const SizedBox.shrink();
       }
       if (isFailed || stalled) {
         return _SimpleAssistantBubble(
-          text:
-              "I couldn't finish checking the vault because file "
+          text: "I couldn't finish checking the vault because file "
               'analysis is not moving. Try running vault analysis '
               'or check the backend workers.',
         );
@@ -2876,7 +2881,6 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
       );
     }
 
-    
     final isPreparing = !isReady && !isFailed && scanned == 0 && remaining > 0;
     final subtitle = isFailed
         ? "Scan didn't finish"
@@ -2989,8 +2993,7 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
             const SizedBox(height: VaultSpacing.md),
             _HonestyHint(
               icon: Icons.error_outline,
-              text:
-                  "I couldn't finish reading your vault. Try the "
+              text: "I couldn't finish reading your vault. Try the "
                   'question again, or run vault analysis from settings.',
             ),
           ],
@@ -2999,7 +3002,6 @@ class _DeepAnswerProgressCardState extends State<DeepAnswerProgressCard> {
     );
   }
 }
-
 
 class _SimpleAssistantBubble extends StatelessWidget {
   final String text;
@@ -3033,7 +3035,6 @@ class _SimpleAssistantBubble extends StatelessWidget {
     );
   }
 }
-
 
 class _ScanTypingDots extends StatefulWidget {
   const _ScanTypingDots();
@@ -3074,10 +3075,10 @@ class _ScanTypingDotsState extends State<_ScanTypingDots>
               for (int i = 0; i < 3; i++) ...[
                 if (i > 0) const SizedBox(width: 4),
                 Opacity(
-                  opacity:
-                      0.30 + 0.70 * _dotPhase(_ctrl.value, i / 3.0),
+                  opacity: 0.30 + 0.70 * _dotPhase(_ctrl.value, i / 3.0),
                   child: Container(
-                    width: 5, height: 5,
+                    width: 5,
+                    height: 5,
                     decoration: const BoxDecoration(
                       color: VaultColors.textTertiary,
                       shape: BoxShape.circle,
@@ -3092,22 +3093,19 @@ class _ScanTypingDotsState extends State<_ScanTypingDots>
     );
   }
 
-  
   double _dotPhase(double t, double offset) {
     final phase = (t - offset) % 1.0;
     final norm = phase < 0 ? phase + 1.0 : phase;
-    
+
     if (norm < 0.25) return norm / 0.25;
     if (norm < 0.5) return 1.0 - (norm - 0.25) / 0.25;
     return 0.0;
   }
 }
 
-
 class RelatedFilesCard extends StatelessWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
   static const int maxRows = 12;
@@ -3128,9 +3126,10 @@ class RelatedFilesCard extends StatelessWidget {
             .toList()
         : const <Map<String, dynamic>>[];
 
-    final anchorLabel = (anchor['saved_name'] as String?)?.trim().isNotEmpty == true
-        ? (anchor['saved_name'] as String).trim()
-        : ((anchor['file_name'] as String?)?.trim() ?? 'this file');
+    final anchorLabel =
+        (anchor['saved_name'] as String?)?.trim().isNotEmpty == true
+            ? (anchor['saved_name'] as String).trim()
+            : ((anchor['file_name'] as String?)?.trim() ?? 'this file');
 
     if (results.isEmpty) {
       return VaultCard(
@@ -3150,7 +3149,7 @@ class RelatedFilesCard extends StatelessWidget {
               msg.text.trim().isNotEmpty
                   ? msg.text
                   : "I couldn't find any clearly related files for "
-                    "$anchorLabel.",
+                      "$anchorLabel.",
               style: VaultText.body,
             ),
           ],
@@ -3158,7 +3157,8 @@ class RelatedFilesCard extends StatelessWidget {
       );
     }
 
-    final shown = results.length > maxRows ? results.take(maxRows).toList() : results;
+    final shown =
+        results.length > maxRows ? results.take(maxRows).toList() : results;
     final allWeak = shown.every((r) =>
         ((r['confidence'] as String?) ?? 'weak').toLowerCase() == 'weak');
 
@@ -3245,7 +3245,8 @@ class _RelatedFileRow extends StatelessWidget {
     final fileName = (file['file_name'] as String?) ?? 'file';
     final savedName = (file['saved_name'] as String?)?.trim();
     final relativePath = (file['relative_path'] as String?)?.trim();
-    final confidence = ((file['confidence'] as String?) ?? 'weak').toLowerCase();
+    final confidence =
+        ((file['confidence'] as String?) ?? 'weak').toLowerCase();
     final reasons = (file['reasons'] is List)
         ? (file['reasons'] as List)
             .whereType<Map>()
@@ -3253,9 +3254,8 @@ class _RelatedFileRow extends StatelessWidget {
             .toList()
         : const <Map<String, dynamic>>[];
 
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     final mime = (file['mime_type'] as String?) ?? '';
     final reasonsLine = reasons
@@ -3342,7 +3342,7 @@ class _RelatedFileRow extends StatelessWidget {
 }
 
 class _ConfidenceBadge extends StatelessWidget {
-  final String confidence; 
+  final String confidence;
   const _ConfidenceBadge({required this.confidence});
 
   @override
@@ -3368,17 +3368,13 @@ class _ConfidenceBadge extends StatelessWidget {
   }
 }
 
-
 class FileDisambiguationCard extends StatelessWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
   static const int maxRows = 50;
 
-  
   static const double maxListHeight = 360;
 
   const FileDisambiguationCard({
@@ -3433,16 +3429,14 @@ class FileDisambiguationCard extends StatelessWidget {
           CardHeader(
             icon: Icons.help_outline,
             iconColor: VaultColors.severityInfo,
-            title: title?.isNotEmpty == true
-                ? title!
-                : 'Which file do you mean?',
-            subtitle: '${files.length} candidate${files.length == 1 ? '' : 's'}',
+            title:
+                title?.isNotEmpty == true ? title! : 'Which file do you mean?',
+            subtitle:
+                '${files.length} candidate${files.length == 1 ? '' : 's'}',
           ),
           if (msg.text.trim().isNotEmpty) ...[
             const SizedBox(height: VaultSpacing.sm),
             Text(
-              
-              
               _headlineOnly(msg.text),
               style: VaultText.body,
             ),
@@ -3491,12 +3485,10 @@ class FileDisambiguationCard extends StatelessWidget {
     );
   }
 
-  
   static String _headlineOnly(String message) {
     final lines = message.trim().split('\n');
     final headlineLines = <String>[];
     for (final line in lines) {
-      
       if (RegExp(r'^\s*\d+\.\s+').hasMatch(line)) break;
       headlineLines.add(line);
     }
@@ -3525,36 +3517,27 @@ class _FileDisambiguationRow extends StatelessWidget {
     final reasons = (file['reasons'] is List)
         ? (file['reasons'] as List).whereType<String>().toList()
         : const <String>[];
-    
+
     final isBestMatch = file['best_match'] == true;
     final isMostlyCredentials = file['mostly_credentials'] == true;
-    
-    
+
     final purposeLabel = (file['purpose_label'] as String?)?.trim();
 
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
-    
-    
-    final bestMatchReason = (isBestMatch &&
-            purposeLabel != null &&
-            purposeLabel.isNotEmpty)
-        ? 'Best match because most of the document appears to be '
-            '$purposeLabel.'
-        : null;
-    final reasonsLine = reasons
-        .map((r) => r.trim())
-        .where((s) => s.isNotEmpty)
-        .join(' · ');
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
-    
-    final borderColor = isBestMatch
-        ? VaultColors.accentBright
-        : VaultColors.borderSubtle;
-    final bgColor = isBestMatch
-        ? VaultColors.accentSoft
-        : VaultColors.surfaceMuted;
+    final bestMatchReason =
+        (isBestMatch && purposeLabel != null && purposeLabel.isNotEmpty)
+            ? 'Best match because most of the document appears to be '
+                '$purposeLabel.'
+            : null;
+    final reasonsLine =
+        reasons.map((r) => r.trim()).where((s) => s.isNotEmpty).join(' · ');
+
+    final borderColor =
+        isBestMatch ? VaultColors.accentBright : VaultColors.borderSubtle;
+    final bgColor =
+        isBestMatch ? VaultColors.accentSoft : VaultColors.surfaceMuted;
 
     return InkWell(
       onTap: onOpen,
@@ -3569,8 +3552,6 @@ class _FileDisambiguationRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            
-            
             Container(
               width: 28,
               height: 28,
@@ -3620,8 +3601,6 @@ class _FileDisambiguationRow extends StatelessWidget {
                       ],
                     ],
                   ),
-                  
-                  
                   if (bestMatchReason != null) ...[
                     const SizedBox(height: 4),
                     Text(
@@ -3663,8 +3642,6 @@ class _FileDisambiguationRow extends StatelessWidget {
                       ],
                     ),
                   ],
-                  
-                  
                   if (reasonsLine.isNotEmpty && bestMatchReason == null) ...[
                     const SizedBox(height: 4),
                     Text(
@@ -3694,23 +3671,17 @@ class _FileDisambiguationRow extends StatelessWidget {
   }
 }
 
-
 class FileSearchResultsCard extends StatefulWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
   static const int maxRows = 100;
 
-  
   static const double maxListHeight = 420;
 
-  
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
 
-  
   final void Function(String fileId)? onShowRelated;
 
   const FileSearchResultsCard({
@@ -3735,31 +3706,24 @@ class _FileSearchResultsCardState extends State<FileSearchResultsCard> {
     final onLoadRelated = widget.onLoadRelated;
     final p = msg.payload ?? const <String, dynamic>{};
     final query = (p['query'] as String?)?.trim() ?? '';
-    final pendingCount = (p['pending_count'] is int)
-        ? p['pending_count'] as int
-        : 0;
+    final pendingCount =
+        (p['pending_count'] is int) ? p['pending_count'] as int : 0;
     final files = (p['results'] is List)
         ? (p['results'] as List)
             .whereType<Map>()
             .map((m) => m.cast<String, dynamic>())
             .toList()
         : const <Map<String, dynamic>>[];
-    
-    
-    final queryKind =
-        ((p['query_kind'] as String?) ?? '').toLowerCase().trim();
+
+    final queryKind = ((p['query_kind'] as String?) ?? '').toLowerCase().trim();
     final isStrictIdPhoto = queryKind == 'id_photo_visual';
 
     final title = isStrictIdPhoto
         ? 'ID photo results'
-        : (query.isNotEmpty
-            ? 'Search results for "$query"'
-            : 'Search results');
+        : (query.isNotEmpty ? 'Search results for "$query"' : 'Search results');
 
-    
-    final isComplete = p['is_complete'] is bool
-        ? p['is_complete'] as bool
-        : true;
+    final isComplete =
+        p['is_complete'] is bool ? p['is_complete'] as bool : true;
     String emptySubtitle;
     if (isComplete) {
       emptySubtitle = 'No matches found';
@@ -3769,11 +3733,9 @@ class _FileSearchResultsCardState extends State<FileSearchResultsCard> {
     final nonEmptySubtitle = isComplete
         ? '${files.length} match${files.length == 1 ? '' : 'es'}'
         : 'Partial results · ${files.length} match'
-          '${files.length == 1 ? '' : 'es'} so far';
+            '${files.length == 1 ? '' : 'es'} so far';
 
-    
-    final requestedPersonName =
-        (p['requested_person_name'] as String?)?.trim();
+    final requestedPersonName = (p['requested_person_name'] as String?)?.trim();
     final displayText = _sanitizeStaleEmptyStateText(
       original: msg.text,
       isComplete: isComplete,
@@ -3842,10 +3804,8 @@ class _FileSearchResultsCardState extends State<FileSearchResultsCard> {
                 itemBuilder: (context, i) {
                   final raw = shown[i];
                   final fid = (raw['file_id'] as String?) ?? '';
-                  final canExpand =
-                      onLoadRelated != null && fid.isNotEmpty;
-                  final isExpanded =
-                      canExpand && _expandedFileId == fid;
+                  final canExpand = onLoadRelated != null && fid.isNotEmpty;
+                  final isExpanded = canExpand && _expandedFileId == fid;
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -3857,8 +3817,7 @@ class _FileSearchResultsCardState extends State<FileSearchResultsCard> {
                         ),
                         onShowRelated: canExpand
                             ? () => setState(() {
-                                  _expandedFileId =
-                                      isExpanded ? null : fid;
+                                  _expandedFileId = isExpanded ? null : fid;
                                 })
                             : null,
                       ),
@@ -3927,7 +3886,6 @@ class _FileSearchResultRow extends StatefulWidget {
   final Map<String, dynamic> file;
   final VoidCallback? onOpen;
 
-  
   final VoidCallback? onShowRelated;
 
   const _FileSearchResultRow({
@@ -3941,8 +3899,6 @@ class _FileSearchResultRow extends StatefulWidget {
 }
 
 class _FileSearchResultRowState extends State<_FileSearchResultRow> {
-  
-  
   bool _innerExpanded = false;
 
   @override
@@ -3957,24 +3913,18 @@ class _FileSearchResultRowState extends State<_FileSearchResultRow> {
         ((file['match_type'] as String?) ?? '').toLowerCase().trim();
     final matchReason = (file['match_reason'] as String?)?.trim() ?? '';
     final matchConfidence =
-        ((file['match_confidence'] as String?) ?? 'weak')
-            .toLowerCase()
-            .trim();
+        ((file['match_confidence'] as String?) ?? 'weak').toLowerCase().trim();
     final purposeLabel = (file['purpose_label'] as String?)?.trim();
-    
-    
+
     final isArchiveMatch = file['is_archive_match'] == true;
-    
-    
-    final thumbnailBase64 =
-        (file['thumbnail_base64'] as String?)?.trim();
+
+    final thumbnailBase64 = (file['thumbnail_base64'] as String?)?.trim();
     final documentType =
         ((file['document_type'] as String?) ?? '').toLowerCase().trim();
     final matchedName = (file['matched_name'] as String?)?.trim();
     final fileKind =
         ((file['file_kind'] as String?) ?? '').toLowerCase().trim();
-    
-    
+
     final detailsRaw = file['archive_match_details'];
     final archiveDetails = detailsRaw is Map<String, dynamic>
         ? detailsRaw
@@ -3987,14 +3937,12 @@ class _FileSearchResultRowState extends State<_FileSearchResultRow> {
             .toList()
         : const <Map<String, dynamic>>[];
     final totalInnerRaw = archiveDetails?['total_inner_matches'];
-    final totalInner = totalInnerRaw is int
-        ? totalInnerRaw
-        : innerMatches.length;
+    final totalInner =
+        totalInnerRaw is int ? totalInnerRaw : innerMatches.length;
     final hasInnerMatches = isArchiveMatch && innerMatches.isNotEmpty;
 
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     return InkWell(
       onTap: onOpen,
@@ -4034,8 +3982,6 @@ class _FileSearchResultRowState extends State<_FileSearchResultRow> {
                       _ConfidenceBadge(confidence: matchConfidence),
                     ],
                   ),
-                  
-                  
                   if (documentType.isNotEmpty && documentType != 'unknown') ...[
                     const SizedBox(height: 4),
                     Align(
@@ -4043,8 +3989,6 @@ class _FileSearchResultRowState extends State<_FileSearchResultRow> {
                       child: _DocumentTypeChip(documentType: documentType),
                     ),
                   ],
-                  
-                  
                   if (matchedName != null && matchedName.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Row(
@@ -4182,7 +4126,6 @@ class _FileSearchResultRowState extends State<_FileSearchResultRow> {
   }
 }
 
-
 class _ResultLeadingThumb extends StatelessWidget {
   final String? thumbnailBase64;
   final IconData fallbackIcon;
@@ -4221,7 +4164,8 @@ class _ResultLeadingThumb extends StatelessWidget {
               gaplessPlayback: true,
               filterQuality: FilterQuality.medium,
               errorBuilder: (_, __, ___) => _IconFallback(
-                icon: fallbackIcon, fileKind: fileKind,
+                icon: fallbackIcon,
+                fileKind: fileKind,
               ),
             ),
           ),
@@ -4249,7 +4193,6 @@ class _IconFallback extends StatelessWidget {
     );
   }
 }
-
 
 class _DocumentTypeChip extends StatelessWidget {
   final String documentType;
@@ -4288,29 +4231,33 @@ class _DocumentTypeChip extends StatelessWidget {
 
   static String _humanLabel(String code) {
     switch (code) {
-      case 'driver_license': return 'Driver license';
-      case 'passport':       return 'Passport';
-      case 'id_photo':       return 'ID photo';
+      case 'driver_license':
+        return 'Driver license';
+      case 'passport':
+        return 'Passport';
+      case 'id_photo':
+        return 'ID photo';
       default:
         return code
             .split('_')
-            .map((p) => p.isEmpty
-                ? p
-                : p[0].toUpperCase() + p.substring(1))
+            .map((p) => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1))
             .join(' ');
     }
   }
 
   static IconData _iconFor(String code) {
     switch (code) {
-      case 'driver_license': return Icons.directions_car_outlined;
-      case 'passport':       return Icons.book_outlined;
-      case 'id_photo':       return Icons.badge_outlined;
-      default:               return Icons.description_outlined;
+      case 'driver_license':
+        return Icons.directions_car_outlined;
+      case 'passport':
+        return Icons.book_outlined;
+      case 'id_photo':
+        return Icons.badge_outlined;
+      default:
+        return Icons.description_outlined;
     }
   }
 }
-
 
 class _ArchiveContentChip extends StatelessWidget {
   const _ArchiveContentChip();
@@ -4325,7 +4272,6 @@ class _ArchiveContentChip extends StatelessWidget {
   }
 }
 
-
 class _InnerMatchesToggle extends StatelessWidget {
   final bool expanded;
   final int totalInner;
@@ -4339,9 +4285,8 @@ class _InnerMatchesToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = expanded
-        ? 'Hide inner matches'
-        : 'Show inner matches ($totalInner)';
+    final label =
+        expanded ? 'Hide inner matches' : 'Show inner matches ($totalInner)';
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(VaultRadius.sm),
@@ -4354,9 +4299,7 @@ class _InnerMatchesToggle extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              expanded
-                  ? Icons.expand_less
-                  : Icons.expand_more,
+              expanded ? Icons.expand_less : Icons.expand_more,
               size: 16,
               color: VaultColors.accentBright,
             ),
@@ -4375,24 +4318,19 @@ class _InnerMatchesToggle extends StatelessWidget {
   }
 }
 
-
 class _InnerMatchesList extends StatelessWidget {
   final List<Map<String, dynamic>> inner;
 
-  
   static const int maxRows = 20;
 
   const _InnerMatchesList({required this.inner});
 
   @override
   Widget build(BuildContext context) {
-    final shown =
-        inner.length > maxRows ? inner.take(maxRows).toList() : inner;
+    final shown = inner.length > maxRows ? inner.take(maxRows).toList() : inner;
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.sm),
       decoration: BoxDecoration(
-        
-        
         color: VaultColors.surfaceMuted,
         borderRadius: BorderRadius.circular(VaultRadius.sm),
         border: Border.all(color: VaultColors.borderSubtle),
@@ -4423,12 +4361,9 @@ class _InnerMatchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    
-    
     final path = (entry['path'] as String?)?.trim() ?? '';
     final reason = (entry['reason'] as String?)?.trim() ?? '';
-    final kind =
-        ((entry['kind'] as String?) ?? '').toLowerCase().trim();
+    final kind = ((entry['kind'] as String?) ?? '').toLowerCase().trim();
 
     if (path.isEmpty) {
       return const SizedBox.shrink();
@@ -4488,7 +4423,6 @@ class _InnerMatchRow extends StatelessWidget {
   }
 }
 
-
 class _MatchTypeChip extends StatelessWidget {
   final String matchType;
   const _MatchTypeChip({required this.matchType});
@@ -4524,23 +4458,17 @@ class _MatchTypeChip extends StatelessWidget {
   }
 }
 
-
 class RelatedFilesGraphCard extends StatefulWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
 
-  
   final void Function(String fileId)? onShowRelated;
 
-  
   static const int maxRows = 100;
 
-  
   static const double maxListHeight = 460;
 
   const RelatedFilesGraphCard({
@@ -4645,12 +4573,9 @@ class _RelatedFilesGraphCardState extends State<RelatedFilesGraphCard> {
                       : (fileRaw is Map
                           ? fileRaw.cast<String, dynamic>()
                           : null);
-                  final fid =
-                      (fileMap?['file_id'] as String?) ?? '';
-                  final canExpand =
-                      onLoadRelated != null && fid.isNotEmpty;
-                  final isExpanded =
-                      canExpand && _expandedFileId == fid;
+                  final fid = (fileMap?['file_id'] as String?) ?? '';
+                  final canExpand = onLoadRelated != null && fid.isNotEmpty;
+                  final isExpanded = canExpand && _expandedFileId == fid;
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -4661,14 +4586,14 @@ class _RelatedFilesGraphCardState extends State<RelatedFilesGraphCard> {
                           if (fileMap == null) return;
                           onOpen?.call(
                             VaultFileListCard._toFileMessage(
-                              fileMap, msg,
+                              fileMap,
+                              msg,
                             ),
                           );
                         },
                         onShowRelated: canExpand
                             ? () => setState(() {
-                                  _expandedFileId =
-                                      isExpanded ? null : fid;
+                                  _expandedFileId = isExpanded ? null : fid;
                                 })
                             : null,
                       ),
@@ -4786,7 +4711,6 @@ class _RelatedGraphFileRow extends StatelessWidget {
   final Map<String, dynamic> entry;
   final VoidCallback? onOpen;
 
-  
   final VoidCallback? onShowRelated;
 
   const _RelatedGraphFileRow({
@@ -4807,16 +4731,13 @@ class _RelatedGraphFileRow extends StatelessWidget {
     final savedName = (file['saved_name'] as String?)?.trim();
     final relativePath = (file['relative_path'] as String?)?.trim();
     final mime = (file['mime_type'] as String?) ?? '';
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     final relationshipType =
         ((entry['relationship_type'] as String?) ?? '').toLowerCase().trim();
     final confidenceLabel =
-        ((entry['confidence_label'] as String?) ?? 'weak')
-            .toLowerCase()
-            .trim();
+        ((entry['confidence_label'] as String?) ?? 'weak').toLowerCase().trim();
     final reasonsRaw = entry['reasons'];
     final reasons = reasonsRaw is List
         ? reasonsRaw
@@ -4957,7 +4878,6 @@ class _RelatedGraphFileRow extends StatelessWidget {
   }
 }
 
-
 class _RelationshipTypeChip extends StatelessWidget {
   final String relationshipType;
   const _RelationshipTypeChip({required this.relationshipType});
@@ -4995,7 +4915,6 @@ class _RelationshipTypeChip extends StatelessWidget {
   }
 }
 
-
 const int _kInlineRelatedMaxRows = 6;
 
 class _InlineRelatedSection extends StatefulWidget {
@@ -5005,7 +4924,6 @@ class _InlineRelatedSection extends StatefulWidget {
   final void Function(ChatMessage fileMsg)? onOpen;
   final VoidCallback onCollapse;
 
-  
   final void Function(String fileId)? onShowFullGraph;
 
   const _InlineRelatedSection({
@@ -5018,8 +4936,7 @@ class _InlineRelatedSection extends StatefulWidget {
   });
 
   @override
-  State<_InlineRelatedSection> createState() =>
-      _InlineRelatedSectionState();
+  State<_InlineRelatedSection> createState() => _InlineRelatedSectionState();
 }
 
 class _InlineRelatedSectionState extends State<_InlineRelatedSection> {
@@ -5268,7 +5185,6 @@ class _InlineErrorRow extends StatelessWidget {
   }
 }
 
-
 class _InlineRelatedRow extends StatelessWidget {
   final Map<String, dynamic> entry;
   final ChatMessage parentMsg;
@@ -5292,16 +5208,13 @@ class _InlineRelatedRow extends StatelessWidget {
     final savedName = (file['saved_name'] as String?)?.trim();
     final relativePath = (file['relative_path'] as String?)?.trim();
     final mime = (file['mime_type'] as String?) ?? '';
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     final relationshipType =
         ((entry['relationship_type'] as String?) ?? '').toLowerCase().trim();
     final confidenceLabel =
-        ((entry['confidence_label'] as String?) ?? 'weak')
-            .toLowerCase()
-            .trim();
+        ((entry['confidence_label'] as String?) ?? 'weak').toLowerCase().trim();
     final reasonsRaw = entry['reasons'];
     final reasons = reasonsRaw is List
         ? reasonsRaw
@@ -5421,7 +5334,6 @@ class _InlineRelatedRow extends StatelessWidget {
   }
 }
 
-
 class _InlineMoreFooter extends StatelessWidget {
   final int hiddenCount;
   final VoidCallback? onShowFullGraph;
@@ -5452,8 +5364,6 @@ class _InlineMoreFooter extends StatelessWidget {
             horizontal: VaultSpacing.xs + 2,
             vertical: 2,
           ),
-          
-          
           child: Wrap(
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
@@ -5482,20 +5392,15 @@ class _InlineMoreFooter extends StatelessWidget {
   }
 }
 
-
 class VaultRelationshipClustersCard extends StatelessWidget {
   final ChatMessage msg;
 
-  
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
   final void Function(String fileId)? onShowRelated;
 
-  
   static const int maxClusters = 100;
 
-  
   static const double maxListHeight = 520;
 
   const VaultRelationshipClustersCard({
@@ -5594,10 +5499,8 @@ class _VaultClusterRow extends StatefulWidget {
   final void Function(ChatMessage fileMsg)? onOpen;
   final void Function(String fileId)? onShowRelated;
 
-  
   static const int previewFiles = 5;
 
-  
   static const int detailFilesCap = 50;
 
   const _VaultClusterRow({
@@ -5612,8 +5515,6 @@ class _VaultClusterRow extends StatefulWidget {
 }
 
 class _VaultClusterRowState extends State<_VaultClusterRow> {
-  
-  
   bool _isExpanded = false;
 
   @override
@@ -5624,15 +5525,12 @@ class _VaultClusterRowState extends State<_VaultClusterRow> {
     final parentMsg = widget.parentMsg;
 
     final title = (cluster['title'] as String?)?.trim() ?? 'Connected group';
-    final clusterType = ((cluster['cluster_type'] as String?) ?? '')
-        .toLowerCase()
-        .trim();
-    final confidence = ((cluster['confidence'] as String?) ?? 'weak')
-        .toLowerCase()
-        .trim();
-    final fileCount = cluster['file_count'] is int
-        ? cluster['file_count'] as int
-        : 0;
+    final clusterType =
+        ((cluster['cluster_type'] as String?) ?? '').toLowerCase().trim();
+    final confidence =
+        ((cluster['confidence'] as String?) ?? 'weak').toLowerCase().trim();
+    final fileCount =
+        cluster['file_count'] is int ? cluster['file_count'] as int : 0;
     final reasonsRaw = cluster['main_reasons'];
     final reasons = reasonsRaw is List
         ? reasonsRaw
@@ -5651,16 +5549,14 @@ class _VaultClusterRowState extends State<_VaultClusterRow> {
     final cappedFiles = files.length > _VaultClusterRow.detailFilesCap
         ? files.take(_VaultClusterRow.detailFilesCap).toList()
         : files;
-    final hasDetailToggle =
-        cappedFiles.length > _VaultClusterRow.previewFiles;
+    final hasDetailToggle = cappedFiles.length > _VaultClusterRow.previewFiles;
     final shownFiles = _isExpanded
         ? cappedFiles
         : (cappedFiles.length > _VaultClusterRow.previewFiles
             ? cappedFiles.take(_VaultClusterRow.previewFiles).toList()
             : cappedFiles);
     final hiddenCount = cappedFiles.length - shownFiles.length;
-    
-    
+
     final trueOverflow = fileCount - cappedFiles.length;
     final warningsRaw = cluster['warnings'];
     final warnings = warningsRaw is List
@@ -5836,9 +5732,8 @@ class _ClusterFileRow extends StatelessWidget {
     final relativePath = (file['relative_path'] as String?)?.trim();
     final mime = (file['mime_type'] as String?) ?? '';
     final fid = (file['file_id'] as String?) ?? '';
-    final title = (savedName != null && savedName.isNotEmpty)
-        ? savedName
-        : fileName;
+    final title =
+        (savedName != null && savedName.isNotEmpty) ? savedName : fileName;
 
     void tapOpen() {
       if (fid.isEmpty || onOpen == null) return;
@@ -5934,7 +5829,6 @@ class _ClusterFileRow extends StatelessWidget {
   }
 }
 
-
 class _ClusterTypeChip extends StatelessWidget {
   final String clusterType;
   const _ClusterTypeChip({required this.clusterType});
@@ -5968,7 +5862,6 @@ class _ClusterTypeChip extends StatelessWidget {
     );
   }
 }
-
 
 class _ViewClusterToggle extends StatelessWidget {
   final bool expanded;
@@ -6021,32 +5914,39 @@ class _ViewClusterToggle extends StatelessWidget {
 
 IconData _iconForClusterType(String t) {
   switch (t) {
-    case 'identity':        return Icons.badge_outlined;
-    case 'travel':          return Icons.flight_takeoff_outlined;
-    case 'finance':         return Icons.account_balance_outlined;
-    case 'tax':             return Icons.receipt_long_outlined;
-    case 'application':     return Icons.description_outlined;
-    case 'company':         return Icons.business_outlined;
-    case 'duplicates':      return Icons.copy_all_outlined;
-    case 'archive_content': return Icons.folder_zip_outlined;
-    case 'same_person':     return Icons.person_outline;
-    case 'same_folder':     return Icons.folder_outlined;
-    default:                return Icons.hub_outlined;
+    case 'identity':
+      return Icons.badge_outlined;
+    case 'travel':
+      return Icons.flight_takeoff_outlined;
+    case 'finance':
+      return Icons.account_balance_outlined;
+    case 'tax':
+      return Icons.receipt_long_outlined;
+    case 'application':
+      return Icons.description_outlined;
+    case 'company':
+      return Icons.business_outlined;
+    case 'duplicates':
+      return Icons.copy_all_outlined;
+    case 'archive_content':
+      return Icons.folder_zip_outlined;
+    case 'same_person':
+      return Icons.person_outline;
+    case 'same_folder':
+      return Icons.folder_outlined;
+    default:
+      return Icons.hub_outlined;
   }
 }
-
 
 class VaultBrainAnswerCard extends StatelessWidget {
   final ChatMessage msg;
   final void Function(ChatMessage fileMsg)? onOpen;
 
-  
   final VoidCallback? onSearchDeeper;
 
-  
   static const int maxRows = 12;
 
-  
   static const double maxListHeight = 320;
 
   const VaultBrainAnswerCard({
@@ -6073,9 +5973,8 @@ class VaultBrainAnswerCard extends StatelessWidget {
     final continuationAvailable = (p['continuation_available'] == true);
     final body = msg.text;
 
-    final shown = evidence.length > maxRows
-        ? evidence.take(maxRows).toList()
-        : evidence;
+    final shown =
+        evidence.length > maxRows ? evidence.take(maxRows).toList() : evidence;
 
     final subtitle = noEvidence
         ? 'No matching vault content'
@@ -6096,9 +5995,8 @@ class VaultBrainAnswerCard extends StatelessWidget {
             icon: noEvidence
                 ? Icons.search_off_outlined
                 : Icons.psychology_outlined,
-            iconColor: noEvidence
-                ? VaultColors.textSecondary
-                : VaultColors.accent,
+            iconColor:
+                noEvidence ? VaultColors.textSecondary : VaultColors.accent,
             title: 'Vault Brain',
             subtitle: subtitle,
           ),
@@ -6130,8 +6028,8 @@ class VaultBrainAnswerCard extends StatelessWidget {
                     row: row,
                     onTap: () {
                       final fid = (row['file_id'] as String?)?.trim() ?? '';
-                      final fname = (row['file_name'] as String?)?.trim() ??
-                          'file';
+                      final fname =
+                          (row['file_name'] as String?)?.trim() ?? 'file';
                       if (fid.isEmpty || onOpen == null) return;
                       onOpen!(ChatMessage(
                         'assistant',
@@ -6165,7 +6063,6 @@ class VaultBrainAnswerCard extends StatelessWidget {
   }
 }
 
-
 class _BrainCoverageStrip extends StatelessWidget {
   final Map<String, dynamic> coverage;
 
@@ -6175,9 +6072,8 @@ class _BrainCoverageStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final isComplete = coverage['is_complete'] == true;
     final hasFailures = coverage['has_failures'] == true;
-    final totalFiles = (coverage['total_files'] is int)
-        ? coverage['total_files'] as int
-        : 0;
+    final totalFiles =
+        (coverage['total_files'] is int) ? coverage['total_files'] as int : 0;
     final indexedFiles = (coverage['files_with_embedded_chunks'] is int)
         ? coverage['files_with_embedded_chunks'] as int
         : 0;
@@ -6195,15 +6091,11 @@ class _BrainCoverageStrip extends StatelessWidget {
     return Row(
       children: [
         Icon(
-          isComplete
-              ? Icons.check_circle_outline
-              : Icons.sync_outlined,
+          isComplete ? Icons.check_circle_outline : Icons.sync_outlined,
           size: 14,
           color: hasFailures
               ? VaultColors.textTertiary
-              : (isComplete
-                  ? VaultColors.accent
-                  : VaultColors.textSecondary),
+              : (isComplete ? VaultColors.accent : VaultColors.textSecondary),
         ),
         const SizedBox(width: 4),
         Expanded(
@@ -6219,7 +6111,6 @@ class _BrainCoverageStrip extends StatelessWidget {
   }
 }
 
-
 class _BrainEvidenceRow extends StatelessWidget {
   final Map<String, dynamic> row;
   final VoidCallback onTap;
@@ -6234,12 +6125,12 @@ class _BrainEvidenceRow extends StatelessWidget {
     final fileName = (row['file_name'] as String?)?.trim() ?? '';
     final snippet = (row['snippet'] as String?)?.trim() ?? '';
     final source = (row['extraction_source'] as String?)?.trim() ?? '';
-    final score = (row['score'] is num) ? (row['score'] as num).toDouble() : 0.0;
+    final score =
+        (row['score'] is num) ? (row['score'] as num).toDouble() : 0.0;
 
     final sourceLabel = _prettySource(source);
-    final scoreLabel = score > 0
-        ? '${(score * 100).toStringAsFixed(0)}%'
-        : null;
+    final scoreLabel =
+        score > 0 ? '${(score * 100).toStringAsFixed(0)}%' : null;
 
     return InkWell(
       onTap: onTap,
@@ -6293,66 +6184,76 @@ class _BrainEvidenceRow extends StatelessWidget {
 
   String? _prettySource(String s) {
     switch (s) {
-      case 'pdf_text':         return 'PDF';
-      case 'ocr':              return 'OCR';
-      case 'image_ocr':        return 'OCR';
-      case 'docx':             return 'DOCX';
-      case 'txt':              return 'Text';
-      case 'html':             return 'HTML';
-      case 'json':             return 'JSON';
-      case 'csv':              return 'CSV';
-      case 'xlsx':             return 'XLSX';
-      case 'archive':          return 'Archive';
-      case 'audio_transcript': return 'Audio';
-      case 'video_transcript': return 'Video';
-      case 'video_frame':      return 'Frame';
-      case 'plain_text':       return 'Text';
-      default:                 return null;
+      case 'pdf_text':
+        return 'PDF';
+      case 'ocr':
+        return 'OCR';
+      case 'image_ocr':
+        return 'OCR';
+      case 'docx':
+        return 'DOCX';
+      case 'txt':
+        return 'Text';
+      case 'html':
+        return 'HTML';
+      case 'json':
+        return 'JSON';
+      case 'csv':
+        return 'CSV';
+      case 'xlsx':
+        return 'XLSX';
+      case 'archive':
+        return 'Archive';
+      case 'audio_transcript':
+        return 'Audio';
+      case 'video_transcript':
+        return 'Video';
+      case 'video_frame':
+        return 'Frame';
+      case 'plain_text':
+        return 'Text';
+      default:
+        return null;
     }
   }
 }
 
-
 const Map<String, IconData> kSecureItemChatIcons = <String, IconData>{
-  'login':                       Icons.lock_outline,
-  'credential':                  Icons.vpn_key_outlined,
-  'device':                      Icons.devices_other_outlined,
-  'device_info':                 Icons.devices_other_outlined,
-  'imei':                        Icons.smartphone_outlined,
-  'serial_number':               Icons.numbers_outlined,
-  'document_note':               Icons.sticky_note_2_outlined,
-  'recovery_code':               Icons.shield_outlined,
-  'recovery_phrase':             Icons.shield_outlined,
-  'backup_code':                 Icons.backup_outlined,
-  'private_note':                Icons.notes_outlined,
-  'account_note':                Icons.note_outlined,
-  'bank':                        Icons.account_balance_outlined,
-  'card':                        Icons.credit_card_outlined,
-  'license_key':                 Icons.key_outlined,
-  'product_key':                 Icons.key_outlined,
-  'activation_key':              Icons.key_outlined,
-  'private_key':                 Icons.key_outlined,
-  'other':                       Icons.inventory_2_outlined,
-  'other_secret':                Icons.policy_outlined,
-  'crypto_wallet_address':       Icons.account_balance_wallet_outlined,
-  'crypto_seed_phrase':          Icons.password_outlined,
-  'crypto_private_key':          Icons.key_outlined,
-  'crypto_recovery_phrase':      Icons.shield_outlined,
-  'crypto_note':                 Icons.notes_outlined,
-  'crypto_transaction_note':     Icons.receipt_long_outlined,
-  'crypto_exchange_note':        Icons.swap_horiz_outlined,
+  'login': Icons.lock_outline,
+  'credential': Icons.vpn_key_outlined,
+  'device': Icons.devices_other_outlined,
+  'device_info': Icons.devices_other_outlined,
+  'imei': Icons.smartphone_outlined,
+  'serial_number': Icons.numbers_outlined,
+  'document_note': Icons.sticky_note_2_outlined,
+  'recovery_code': Icons.shield_outlined,
+  'recovery_phrase': Icons.shield_outlined,
+  'backup_code': Icons.backup_outlined,
+  'private_note': Icons.notes_outlined,
+  'account_note': Icons.note_outlined,
+  'bank': Icons.account_balance_outlined,
+  'card': Icons.credit_card_outlined,
+  'license_key': Icons.key_outlined,
+  'product_key': Icons.key_outlined,
+  'activation_key': Icons.key_outlined,
+  'private_key': Icons.key_outlined,
+  'other': Icons.inventory_2_outlined,
+  'other_secret': Icons.policy_outlined,
+  'crypto_wallet_address': Icons.account_balance_wallet_outlined,
+  'crypto_seed_phrase': Icons.password_outlined,
+  'crypto_private_key': Icons.key_outlined,
+  'crypto_recovery_phrase': Icons.shield_outlined,
+  'crypto_note': Icons.notes_outlined,
+  'crypto_transaction_note': Icons.receipt_long_outlined,
+  'crypto_exchange_note': Icons.swap_horiz_outlined,
   'crypto_hardware_wallet_note': Icons.usb_outlined,
 };
-
 
 bool _chatIsLoginLike(String itemType) {
   return itemType == 'login' || itemType == 'credential';
 }
 
-
-String? _pullRevealedValue(
-    String itemType, Map<String, dynamic> preview) {
-  
+String? _pullRevealedValue(String itemType, Map<String, dynamic> preview) {
   final List<String> keys;
   if (itemType == 'imei') {
     keys = const ['imei_1', 'imei_2'];
@@ -6370,8 +6271,7 @@ String? _pullRevealedValue(
     keys = const ['private_value', 'private_word', 'secret_value'];
   } else if (itemType == 'account_note') {
     keys = const ['account_notes'];
-  } else if (itemType == 'backup_code'
-      || itemType == 'recovery_code') {
+  } else if (itemType == 'backup_code' || itemType == 'recovery_code') {
     keys = const ['backup_codes', 'recovery_code'];
   } else if (itemType == 'license_key') {
     keys = const ['license_key'];
@@ -6393,14 +6293,12 @@ String? _pullRevealedValue(
   return null;
 }
 
-
 String _chatPreviewLineFor(
-  String itemType, Map<String, dynamic> preview, {
+  String itemType,
+  Map<String, dynamic> preview, {
   required bool reveal,
 }) {
   if (reveal) {
-    
-    
     if (_chatIsLoginLike(itemType)) {
       final username = (preview['username'] as String?)?.trim() ?? '';
       final password = (preview['password'] as String?)?.trim() ?? '';
@@ -6412,13 +6310,30 @@ String _chatPreviewLineFor(
       return 'Login saved';
     }
     for (final key in const [
-      'wallet_address', 'imei_1', 'imei_2', 'serial_number',
-      'serial', 'mac_address', 'mac', 'phone_number', 'phone',
-      'recovery_code', 'backup_codes', 'private_value',
-      'private_word', 'secret_value', 'account_notes',
-      'seed_phrase', 'private_key', 'recovery_phrase',
-      'crypto_note', 'transaction_note', 'exchange_note',
-      'hardware_wallet_note', 'license_key', 'product_key',
+      'wallet_address',
+      'imei_1',
+      'imei_2',
+      'serial_number',
+      'serial',
+      'mac_address',
+      'mac',
+      'phone_number',
+      'phone',
+      'recovery_code',
+      'backup_codes',
+      'private_value',
+      'private_word',
+      'secret_value',
+      'account_notes',
+      'seed_phrase',
+      'private_key',
+      'recovery_phrase',
+      'crypto_note',
+      'transaction_note',
+      'exchange_note',
+      'hardware_wallet_note',
+      'license_key',
+      'product_key',
       'activation_key',
     ]) {
       final value = preview[key];
@@ -6453,44 +6368,36 @@ String _chatPreviewLineFor(
     if (mask.isNotEmpty) return mask;
     return 'Wallet address saved';
   }
-  if (itemType == 'crypto_seed_phrase'
-      || itemType == 'crypto_private_key'
-      || itemType == 'crypto_recovery_phrase') {
+  if (itemType == 'crypto_seed_phrase' ||
+      itemType == 'crypto_private_key' ||
+      itemType == 'crypto_recovery_phrase') {
     return '•••••• hidden — open only when you mean to read it';
   }
-  if (itemType == 'private_note'
-      || itemType == 'account_note'
-      || itemType == 'private_key'
-      || itemType == 'recovery_phrase'
-      || itemType == 'license_key'
-      || itemType == 'product_key'
-      || itemType == 'activation_key'
-      || itemType == 'backup_code'
-      || itemType == 'recovery_code') {
+  if (itemType == 'private_note' ||
+      itemType == 'account_note' ||
+      itemType == 'private_key' ||
+      itemType == 'recovery_phrase' ||
+      itemType == 'license_key' ||
+      itemType == 'product_key' ||
+      itemType == 'activation_key' ||
+      itemType == 'backup_code' ||
+      itemType == 'recovery_code') {
     return '•••••• hidden';
   }
   return 'Stored securely';
 }
 
-
 class SecureItemCardActions {
-  
-  
   final void Function(String itemId, String title, String itemType)? onView;
 
-  
   final void Function(String itemId, String title, String itemType)? onReveal;
 
-  
   final void Function(String username)? onCopyUsername;
 
-  
   final void Function(String value)? onCopyValue;
 
-  
   final void Function(String title, String itemType)? onEdit;
 
-  
   final void Function(String title, String itemType)? onDelete;
 
   const SecureItemCardActions({
@@ -6503,12 +6410,10 @@ class SecureItemCardActions {
   });
 }
 
-
 class SecureItemResultsCard extends StatelessWidget {
   final ChatMessage msg;
   final SecureItemCardActions actions;
 
-  
   static const int maxRows = 50;
 
   const SecureItemResultsCard({
@@ -6527,16 +6432,13 @@ class SecureItemResultsCard extends StatelessWidget {
             .toList()
         : const <Map<String, dynamic>>[];
     final reveal = p['reveal'] == true;
-    
-    
+
     final rawMode = (p['display_mode'] as String?)?.trim() ?? '';
-    final isDetail = rawMode == 'detail'
-        || (rawMode.isEmpty && reveal && items.length == 1);
+    final isDetail =
+        rawMode == 'detail' || (rawMode.isEmpty && reveal && items.length == 1);
     final count = (p['count'] is int) ? p['count'] as int : items.length;
     final message = (p['message'] as String?)?.trim() ?? '';
-    final shown = items.length > maxRows
-        ? items.take(maxRows).toList()
-        : items;
+    final shown = items.length > maxRows ? items.take(maxRows).toList() : items;
 
     final headerLine = message.isNotEmpty
         ? message
@@ -6583,23 +6485,21 @@ class SecureItemResultsCard extends StatelessWidget {
             ),
           ),
           ...shown.map((row) => _SecureItemRow(
-            row: row,
-            reveal: reveal,
-            isDetail: isDetail,
-            actions: actions,
-          )),
+                row: row,
+                reveal: reveal,
+                isDetail: isDetail,
+                actions: actions,
+              )),
         ],
       ),
     );
   }
 }
 
-
 class _SecureItemRow extends StatelessWidget {
   final Map<String, dynamic> row;
   final bool reveal;
-  
-  
+
   final bool isDetail;
   final SecureItemCardActions actions;
 
@@ -6612,30 +6512,27 @@ class _SecureItemRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final itemId   = (row['item_id'] as String?)?.trim() ?? '';
-    final title    = (row['title']   as String?)?.trim() ?? '';
-    final itemType = (row['type']    as String?)?.trim() ?? 'other';
-    final chip = (row['category_label'] as String?)?.trim()
-        ?? itemType;
+    final itemId = (row['item_id'] as String?)?.trim() ?? '';
+    final title = (row['title'] as String?)?.trim() ?? '';
+    final itemType = (row['type'] as String?)?.trim() ?? 'other';
+    final chip = (row['category_label'] as String?)?.trim() ?? itemType;
     final preview = (row['preview'] is Map)
         ? Map<String, dynamic>.from(row['preview'] as Map)
         : const <String, dynamic>{};
-    final icon = kSecureItemChatIcons[itemType]
-        ?? Icons.inventory_2_outlined;
+    final icon = kSecureItemChatIcons[itemType] ?? Icons.inventory_2_outlined;
     final previewLine = _chatPreviewLineFor(
-      itemType, preview, reveal: reveal,
+      itemType,
+      preview,
+      reveal: reveal,
     );
 
     final isLogin = _chatIsLoginLike(itemType);
-    final username = isLogin
-        ? ((preview['username'] as String?)?.trim() ?? '')
-        : '';
-    final password = isLogin
-        ? ((preview['password'] as String?)?.trim() ?? '')
-        : '';
-    final nonLoginValue = !isLogin && reveal
-        ? (_pullRevealedValue(itemType, preview) ?? '')
-        : '';
+    final username =
+        isLogin ? ((preview['username'] as String?)?.trim() ?? '') : '';
+    final password =
+        isLogin ? ((preview['password'] as String?)?.trim() ?? '') : '';
+    final nonLoginValue =
+        !isLogin && reveal ? (_pullRevealedValue(itemType, preview) ?? '') : '';
     final detailFields = isLogin && reveal
         ? _secureItemDetailFields(
             preview,
@@ -6659,13 +6556,16 @@ class _SecureItemRow extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 38, height: 38,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: const Color(0xFF10A37F).withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  icon, color: const Color(0xFF10A37F), size: 18,
+                  icon,
+                  color: const Color(0xFF10A37F),
+                  size: 18,
                 ),
               ),
               const SizedBox(width: 10),
@@ -6686,11 +6586,11 @@ class _SecureItemRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 7, vertical: 1,
+                        horizontal: 7,
+                        vertical: 1,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10A37F)
-                            .withValues(alpha: 0.16),
+                        color: const Color(0xFF10A37F).withValues(alpha: 0.16),
                         borderRadius: BorderRadius.circular(7),
                       ),
                       child: Text(
@@ -6732,8 +6632,6 @@ class _SecureItemRow extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              
-              
               if (!isDetail)
                 TextButton.icon(
                   key: const Key('secure_item_chat_card_view'),
@@ -6742,7 +6640,8 @@ class _SecureItemRow extends StatelessWidget {
                       : () => actions.onView!(itemId, title, itemType),
                   icon: const Icon(Icons.visibility_outlined, size: 14),
                   label: const Text(
-                    'View', style: TextStyle(fontSize: 12),
+                    'View',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
               if (isLogin && username.isNotEmpty)
@@ -6753,11 +6652,10 @@ class _SecureItemRow extends StatelessWidget {
                       : () => actions.onCopyUsername!(username),
                   icon: const Icon(Icons.copy_outlined, size: 14),
                   label: const Text(
-                    'Copy username', style: TextStyle(fontSize: 12),
+                    'Copy username',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
-              
-              
               if (isLogin && reveal && password.isNotEmpty)
                 TextButton.icon(
                   key: const Key('secure_item_chat_card_copy_password'),
@@ -6766,11 +6664,10 @@ class _SecureItemRow extends StatelessWidget {
                       : () => actions.onCopyValue!(password),
                   icon: const Icon(Icons.copy_outlined, size: 14),
                   label: const Text(
-                    'Copy password', style: TextStyle(fontSize: 12),
+                    'Copy password',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
-              
-              
               if (!isLogin && reveal && nonLoginValue.isNotEmpty)
                 TextButton.icon(
                   key: const Key('secure_item_chat_card_copy_value'),
@@ -6779,7 +6676,8 @@ class _SecureItemRow extends StatelessWidget {
                       : () => actions.onCopyValue!(nonLoginValue),
                   icon: const Icon(Icons.copy_outlined, size: 14),
                   label: const Text(
-                    'Copy value', style: TextStyle(fontSize: 12),
+                    'Copy value',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
               TextButton.icon(
@@ -6797,7 +6695,8 @@ class _SecureItemRow extends StatelessWidget {
                     : () => actions.onDelete!(title, itemType),
                 icon: const Icon(Icons.delete_outline, size: 14),
                 label: const Text(
-                  'Delete', style: TextStyle(fontSize: 12),
+                  'Delete',
+                  style: TextStyle(fontSize: 12),
                 ),
               ),
             ],
@@ -6807,7 +6706,6 @@ class _SecureItemRow extends StatelessWidget {
     );
   }
 }
-
 
 class _SecureItemDetailField {
   final String label;
@@ -6862,9 +6760,8 @@ List<_SecureItemDetailField> _secureItemDetailFields(
   return out;
 }
 
-
 class _DetailBody extends StatelessWidget {
-  final bool   isLogin;
+  final bool isLogin;
   final String username;
   final String password;
   final String nonLoginValue;
@@ -6882,8 +6779,6 @@ class _DetailBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    
-    
     const String _kMissingValueCopy =
         "No saved value attached. Ask your vault to look it up "
         "again.";
@@ -6907,8 +6802,8 @@ class _DetailBody extends StatelessWidget {
               _DetailRow(
                 label: fields[i].label,
                 value: fields[i].value,
-                valueKey: fields[i].valueKey
-                    ?? Key('secure_item_chat_card_detail_field_$i'),
+                valueKey: fields[i].valueKey ??
+                    Key('secure_item_chat_card_detail_field_$i'),
               ),
             ],
           ],
@@ -6926,8 +6821,6 @@ class _DetailBody extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.white12),
       ),
-      
-      
       child: SelectableText(
         nonLoginValue,
         key: const Key('secure_item_chat_card_detail_value'),
@@ -6942,11 +6835,10 @@ class _DetailBody extends StatelessWidget {
   }
 }
 
-
 class _DetailRow extends StatelessWidget {
   final String label;
   final String value;
-  final Key?   valueKey;
+  final Key? valueKey;
 
   const _DetailRow({
     required this.label,
@@ -6969,8 +6861,6 @@ class _DetailRow extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 3),
-        
-        
         SelectableText(
           value,
           key: valueKey,
@@ -6985,7 +6875,6 @@ class _DetailRow extends StatelessWidget {
     );
   }
 }
-
 
 class _DetailFallback extends StatelessWidget {
   final String text;

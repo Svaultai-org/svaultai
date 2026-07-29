@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io' show Platform;
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -77,6 +78,11 @@ typedef _FinishLoginNative = Pointer<Utf8> Function(
   Pointer<Utf8>,
   Pointer<Utf8>,
 );
+typedef _Pbkdf2HmacSha256Native = Pointer<Utf8> Function(
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Uint32,
+);
 typedef _FreeNative = Void Function(Pointer<Utf8>);
 
 typedef _StartRegistrationDart = Pointer<Utf8> Function(Pointer<Utf8>);
@@ -94,6 +100,11 @@ typedef _FinishLoginDart = Pointer<Utf8> Function(
   Pointer<Utf8>,
   Pointer<Utf8>,
   Pointer<Utf8>,
+);
+typedef _Pbkdf2HmacSha256Dart = Pointer<Utf8> Function(
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  int,
 );
 typedef _FreeDart = void Function(Pointer<Utf8>);
 
@@ -113,6 +124,10 @@ class _NativeOpaqueBindings {
         finishLogin = lib.lookupFunction<_FinishLoginNative, _FinishLoginDart>(
           'vaultai_opaque_client_finish_login',
         ),
+        pbkdf2HmacSha256 =
+            lib.lookupFunction<_Pbkdf2HmacSha256Native, _Pbkdf2HmacSha256Dart>(
+          'vaultai_pbkdf2_hmac_sha256',
+        ),
         freeString = lib.lookupFunction<_FreeNative, _FreeDart>(
           'vaultai_opaque_client_free_string',
         );
@@ -121,6 +136,7 @@ class _NativeOpaqueBindings {
   final _FinishRegistrationDart finishRegistration;
   final _StartLoginDart startLogin;
   final _FinishLoginDart finishLogin;
+  final _Pbkdf2HmacSha256Dart pbkdf2HmacSha256;
   final _FreeDart freeString;
 
   static _NativeOpaqueBindings? _instance;
@@ -219,6 +235,43 @@ class OpaqueClient {
   }
 
   static String? vendorVersion() => 'opaque-ke-native-4.x';
+
+  static Future<Uint8List> pbkdf2HmacSha256({
+    required String password,
+    required String saltBase64,
+    required int iterations,
+  }) {
+    return Isolate.run(
+      () => _pbkdf2HmacSha256Sync(
+        password: password,
+        saltBase64: saltBase64,
+        iterations: iterations,
+      ),
+    );
+  }
+
+  static Uint8List _pbkdf2HmacSha256Sync({
+    required String password,
+    required String saltBase64,
+    required int iterations,
+  }) {
+    if (iterations <= 0 || iterations > 0xFFFFFFFF) {
+      throw OpaqueUnavailable('native PBKDF2 iterations are invalid');
+    }
+    final bindings = _NativeOpaqueBindings.instance;
+    final result = _withUtf8([password, saltBase64], (args) {
+      return _decodeNativeResult(
+        bindings.pbkdf2HmacSha256(args[0], args[1], iterations),
+        bindings: bindings,
+        operation: 'pbkdf2_hmac_sha256',
+      );
+    });
+    final keyBase64 = result['key'];
+    if (keyBase64 is! String || keyBase64.isEmpty) {
+      throw OpaqueUnavailable('native PBKDF2 returned no key');
+    }
+    return Uint8List.fromList(base64Decode(keyBase64));
+  }
 
   static ClientRegistrationStart startRegistration({
     required String password,

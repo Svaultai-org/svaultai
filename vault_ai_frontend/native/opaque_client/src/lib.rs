@@ -1,7 +1,11 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
+use pbkdf2::pbkdf2_hmac;
 use opaque_ke::ciphersuite::CipherSuite;
 use opaque_ke::{
     ClientLogin, ClientLoginFinishParameters, ClientRegistration,
@@ -10,7 +14,7 @@ use opaque_ke::{
 };
 use rand::rngs::OsRng;
 use serde_json::json;
-use sha2::Sha512;
+use sha2::{Sha256, Sha512};
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Default)]
@@ -41,6 +45,14 @@ fn b64d(s: &str) -> Result<Zeroizing<Vec<u8>>, ()> {
 
 fn b64e(raw: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(raw)
+}
+
+fn b64d_standard_or_url(s: &str) -> Result<Zeroizing<Vec<u8>>, ()> {
+    STANDARD
+        .decode(s.as_bytes())
+        .or_else(|_| URL_SAFE_NO_PAD.decode(s.as_bytes()))
+        .map(Zeroizing::new)
+        .map_err(|_| ())
 }
 
 fn output(text: String) -> *mut c_char {
@@ -235,6 +247,31 @@ pub unsafe extern "C" fn vaultai_opaque_client_finish_login(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn vaultai_pbkdf2_hmac_sha256(
+    password: *const c_char,
+    salt_base64: *const c_char,
+    iterations: u32,
+) -> *mut c_char {
+    if iterations == 0 {
+        return err("bad_input");
+    }
+    let password = match cstr(password) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let salt = match cstr(salt_base64).and_then(|s| b64d_standard_or_url(&s)) {
+        Ok(value) => value,
+        Err(_) => return err("bad_input"),
+    };
+    let mut key = Zeroizing::new([0u8; 32]);
+    pbkdf2_hmac::<Sha256>(password.as_bytes(), salt.as_slice(), iterations, &mut key[..]);
+    ok(json!({
+        "ok": true,
+        "key": STANDARD.encode(key.as_slice()),
+    }))
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn vaultai_opaque_client_free_string(value: *mut c_char) {
     if !value.is_null() {
         let mut bytes = CString::from_raw(value).into_bytes_with_nul();
@@ -246,6 +283,20 @@ pub unsafe extern "C" fn vaultai_opaque_client_free_string(value: *mut c_char) {
 mod tests {
     use super::*;
     use opaque_ke::{ServerLogin, ServerLoginParameters, ServerRegistration, ServerSetup};
+
+    fn hex_to_bytes(value: &str) -> Vec<u8> {
+        assert_eq!(value.len() % 2, 0);
+        (0..value.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&value[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    fn pbkdf2_sha256(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
+        let mut key = [0u8; 32];
+        pbkdf2_hmac::<Sha256>(password, salt, iterations, &mut key);
+        key
+    }
 
     fn register_with_web_ksf(
         setup: &ServerSetup<VaultAiSuite>,
@@ -345,5 +396,35 @@ mod tests {
             credential_id,
             Some(&ksf),
         ));
+    }
+
+    #[test]
+    fn pbkdf2_hmac_sha256_matches_fixed_vectors() {
+        let cases = [
+            (
+                b"password".as_slice(),
+                b"salt".as_slice(),
+                1,
+                "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b",
+            ),
+            (
+                b"password".as_slice(),
+                b"salt".as_slice(),
+                2,
+                "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43",
+            ),
+            (
+                b"password".as_slice(),
+                b"salt".as_slice(),
+                4096,
+                "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a",
+            ),
+        ];
+        for (password, salt, iterations, expected_hex) in cases {
+            assert_eq!(
+                pbkdf2_sha256(password, salt, iterations).to_vec(),
+                hex_to_bytes(expected_hex),
+            );
+        }
     }
 }

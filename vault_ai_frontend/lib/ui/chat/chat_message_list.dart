@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
@@ -45,7 +47,7 @@ class ChatMessageList extends StatefulWidget {
   final void Function(String fileId)? onShowRelated;
 
   final Future<Map<String, dynamic>?> Function(String fileId)? onLoadRelated;
-  final void Function(
+  final FutureOr<void> Function(
       ChatMessage msg, String action, Map<String, dynamic>? data)? onCardAction;
 
   final Future<Map<String, dynamic>?> Function(String jobId)? onDeepAnswerPoll;
@@ -270,12 +272,19 @@ class _ChatMessageListState extends State<ChatMessageList> {
           onOpenCryptoUpgrade: widget.onOpenCryptoUpgrade,
         );
 
+        final messageIdentifier =
+            msg.isUser ? 'chat_user_message' : 'chat_assistant_message';
         return RepaintBoundary(
+          key: ValueKey('${messageIdentifier}_$index'),
           child: FadeSlideIn(
             animate: firstSeen,
             duration: VaultMotion.emphasized,
             offset: 10,
-            child: bubble,
+            child: Semantics(
+              container: true,
+              identifier: messageIdentifier,
+              child: bubble,
+            ),
           ),
         );
       },

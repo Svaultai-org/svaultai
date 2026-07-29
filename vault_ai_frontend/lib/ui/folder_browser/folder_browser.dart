@@ -1,7 +1,4 @@
-
-
 import 'package:flutter/material.dart';
-
 
 class FolderNode {
   final String name;
@@ -17,19 +14,13 @@ class FolderNode {
   }
 }
 
-
 class FolderTreeData {
-  
-  
   final String path;
 
-  
   final List<String> breadcrumbs;
 
-  
   final List<FolderNode> folders;
 
-  
   final List<Map<String, dynamic>> files;
 
   const FolderTreeData({
@@ -48,9 +39,8 @@ class FolderTreeData {
             ))
         .toList(growable: false);
     final files = (json['files'] as List<dynamic>? ?? const [])
-        .map<Map<String, dynamic>>((e) => e is Map<String, dynamic>
-            ? e
-            : Map<String, dynamic>.from(e as Map))
+        .map<Map<String, dynamic>>((e) =>
+            e is Map<String, dynamic> ? e : Map<String, dynamic>.from(e as Map))
         .toList(growable: false);
     final breadcrumbs = (json['breadcrumbs'] as List<dynamic>? ?? const [])
         .map((e) => e.toString())
@@ -63,32 +53,23 @@ class FolderTreeData {
     );
   }
 
-  
   bool get isEmpty => folders.isEmpty && files.isEmpty;
 }
 
-
 class FolderBrowser extends StatelessWidget {
-  
   final FolderTreeData treeData;
 
-  
   final void Function(String path) onNavigateToPath;
 
-  
   final Widget Function(Map<String, dynamic> file) fileItemBuilder;
 
-  
   final String searchQuery;
   final ValueChanged<String>? onSearchChanged;
 
-  
   final bool isMobile;
 
-  
   final Widget? headerSlot;
 
-  
   static const double maxHeightDesktop = 520;
   static const double maxHeightMobile = 360;
 
@@ -108,11 +89,9 @@ class FolderBrowser extends StatelessWidget {
     final maxHeight = isMobile ? maxHeightMobile : maxHeightDesktop;
     final filtered = _applySearchFilter(treeData, searchQuery);
     return Container(
-      margin: EdgeInsets.fromLTRB(
-          isMobile ? 12 : 16, 0, isMobile ? 12 : 16, 0),
+      margin: EdgeInsets.fromLTRB(isMobile ? 12 : 16, 0, isMobile ? 12 : 16, 0),
       padding: EdgeInsets.symmetric(
-          horizontal: isMobile ? 12 : 16,
-          vertical: isMobile ? 10 : 14),
+          horizontal: isMobile ? 12 : 16, vertical: isMobile ? 10 : 14),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(16),
@@ -175,7 +154,6 @@ class FolderBrowser extends StatelessWidget {
     );
   }
 
-  
   static FolderTreeData _applySearchFilter(
     FolderTreeData data,
     String query,
@@ -190,6 +168,7 @@ class FolderBrowser extends StatelessWidget {
         if (value == null) return false;
         return value.toString().toLowerCase().contains(q);
       }
+
       return matches(file['file_name']) ||
           matches(file['saved_name']) ||
           matches(file['relative_path']);
@@ -202,7 +181,6 @@ class FolderBrowser extends StatelessWidget {
     );
   }
 }
-
 
 class _Breadcrumbs extends StatelessWidget {
   final List<String> breadcrumbs;
@@ -217,8 +195,6 @@ class _Breadcrumbs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    
-    
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -253,7 +229,6 @@ class _Breadcrumbs extends StatelessWidget {
   }
 }
 
-
 class _Crumb extends StatelessWidget {
   final String label;
   final IconData? icon;
@@ -277,8 +252,7 @@ class _Crumb extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: EdgeInsets.symmetric(
-            horizontal: isMobile ? 6 : 8,
-            vertical: isMobile ? 4 : 6),
+            horizontal: isMobile ? 6 : 8, vertical: isMobile ? 4 : 6),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -291,8 +265,7 @@ class _Crumb extends StatelessWidget {
               style: TextStyle(
                 color: fg,
                 fontSize: isMobile ? 12 : 13,
-                fontWeight:
-                    isCurrent ? FontWeight.w700 : FontWeight.w500,
+                fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
               ),
             ),
           ],
@@ -301,7 +274,6 @@ class _Crumb extends StatelessWidget {
     );
   }
 }
-
 
 class _SearchField extends StatefulWidget {
   final String initialQuery;
@@ -335,40 +307,45 @@ class _SearchFieldState extends State<_SearchField> {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: _controller,
-      onChanged: widget.onChanged,
-      style: const TextStyle(color: Colors.white, fontSize: 13),
-      decoration: InputDecoration(
-        hintText: 'Search files and folders',
-        hintStyle: const TextStyle(color: Color(0xFF8E8E8E)),
-        isDense: true,
-        prefixIcon: Icon(
-          Icons.search,
-          size: widget.isMobile ? 18 : 20,
-          color: const Color(0xFF8E8E8E),
-        ),
-        suffixIcon: _controller.text.isEmpty
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.close, size: 16),
-                onPressed: () {
-                  _controller.clear();
-                  widget.onChanged('');
-                  setState(() {});
-                },
-              ),
-        filled: true,
-        fillColor: const Color(0xFF2F2F2F),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
+    return Semantics(
+      container: true,
+      identifier: 'files_search_field',
+      textField: true,
+      child: TextField(
+        key: const Key('files_search_field'),
+        controller: _controller,
+        onChanged: widget.onChanged,
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        decoration: InputDecoration(
+          hintText: 'Search files and folders',
+          hintStyle: const TextStyle(color: Color(0xFF8E8E8E)),
+          isDense: true,
+          prefixIcon: Icon(
+            Icons.search,
+            size: widget.isMobile ? 18 : 20,
+            color: const Color(0xFF8E8E8E),
+          ),
+          suffixIcon: _controller.text.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () {
+                    _controller.clear();
+                    widget.onChanged('');
+                    setState(() {});
+                  },
+                ),
+          filled: true,
+          fillColor: const Color(0xFF2F2F2F),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
         ),
       ),
     );
   }
 }
-
 
 class _FolderRow extends StatelessWidget {
   final FolderNode folder;
@@ -391,8 +368,7 @@ class _FolderRow extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: EdgeInsets.symmetric(
-            horizontal: isMobile ? 10 : 14,
-            vertical: isMobile ? 10 : 12),
+            horizontal: isMobile ? 10 : 14, vertical: isMobile ? 10 : 12),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.03),
           borderRadius: BorderRadius.circular(12),
@@ -453,7 +429,6 @@ class _FolderRow extends StatelessWidget {
   }
 }
 
-
 class _EmptyState extends StatelessWidget {
   final bool isSearching;
 
@@ -465,9 +440,7 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Center(
         child: Text(
-          isSearching
-              ? 'No matches.'
-              : 'This folder is empty.',
+          isSearching ? 'No matches.' : 'This folder is empty.',
           style: const TextStyle(
             color: Color(0xFF8E8E8E),
             fontSize: 13,

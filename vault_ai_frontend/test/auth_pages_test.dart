@@ -252,9 +252,9 @@ void main() {
     test('reads vault name from AppState.lastVaultName (not a form '
         'field)', () {
       final src = _readLib('main.dart');
-      // 15k covers the UnlockPage class + submit body + build body
-      // after the 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
+      // Covers the UnlockPage class + submit body + build body after
+      // diagnostic and timing instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 25000);
       
       
       expect(
@@ -270,9 +270,9 @@ void main() {
       
       
       final src = _readLib('main.dart');
-      // 15k covers the UnlockPage class + submit body + build body
-      // after the 2026-07-21 diagnostic instrumentation.
-      final window = _windowAfter(src, 'class UnlockPage', length: 15000);
+      // Covers the UnlockPage class + submit body + build body after
+      // diagnostic and timing instrumentation.
+      final window = _windowAfter(src, 'class UnlockPage', length: 25000);
       expect(window, contains("'Welcome back'"));
       expect(
         window,
