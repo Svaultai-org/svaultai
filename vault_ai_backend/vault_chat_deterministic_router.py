@@ -1450,6 +1450,67 @@ def _extract_credential_services_from_message(message: str) -> list[str]:
         count=1,
         flags=re.IGNORECASE,
     )
+
+    def clean_candidate(candidate: str) -> str:
+        candidate = str(candidate or "").strip()
+        candidate = re.sub(
+            r"\b(?:logins?|accounts?|credentials?|passwords?|"
+            r"sign[\s-]?ins?)\b\.?\s*$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        candidate = re.sub(
+            r"^(?:and|or|me|my|us|an|a|the|new|fresh|another)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip(" ,.!?")
+        tokens = [t.strip(".,!?") for t in candidate.split() if t.strip()]
+        while tokens and tokens[0].lower() in _SERVICE_STOPWORDS:
+            tokens.pop(0)
+        return " ".join(tokens)[:80].strip()
+
+    def append_candidate(candidate: str) -> None:
+        cleaned = clean_candidate(candidate)
+        if not cleaned:
+            return
+        key = cleaned.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        services.append(cleaned)
+
+    services: list[str] = []
+    seen: set[str] = set()
+
+    # "Facebook, Instagram, and HBO Max logins" uses one trailing
+    # item-type noun for the whole list. The older extractor only saw
+    # the final "HBO Max logins" pair and silently omitted the earlier
+    # services. Split that shared-noun form before the per-item scan.
+    shared_noun = re.match(
+        r"""
+        ^\s*
+        (?P<service_list>[A-Za-z0-9][A-Za-z0-9\.\-\s,&]{1,160}?)
+        \s+
+        (?:logins?|accounts?|credentials?|passwords?|sign[\s-]?ins?)
+        \s*[.!?]*\s*$
+        """,
+        tail,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    if shared_noun:
+        raw_list = str(shared_noun.group("service_list") or "")
+        if "," in raw_list or re.search(r"\band\b", raw_list, re.IGNORECASE):
+            parts = [
+                p for p in re.split(r"\s*,\s*|\s+\band\b\s+", raw_list)
+                if p.strip()
+            ]
+            for part in parts:
+                append_candidate(part)
+            if len(services) > 1:
+                return services
+
     matches = re.finditer(
         r"""
         (?P<service>[A-Za-z0-9][A-Za-z0-9\.\-\s&]{0,40}?)
@@ -1460,29 +1521,8 @@ def _extract_credential_services_from_message(message: str) -> list[str]:
         tail,
         re.IGNORECASE | re.VERBOSE,
     )
-    services: list[str] = []
-    seen: set[str] = set()
     for m in matches:
-        candidate = str(m.group("service") or "").strip()
-        candidate = re.sub(
-            r"^(?:and|or|me|my|us|an|a|the|new|fresh|another)\s+",
-            "",
-            candidate,
-            flags=re.IGNORECASE,
-        ).strip(" ,.!?")
-        tokens = [t.strip(".,!?") for t in candidate.split() if t.strip()]
-        while tokens and tokens[0].lower() in _SERVICE_STOPWORDS:
-            tokens.pop(0)
-        if not tokens:
-            continue
-        cleaned = " ".join(tokens)[:80].strip()
-        if not cleaned:
-            continue
-        key = cleaned.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        services.append(cleaned)
+        append_candidate(str(m.group("service") or ""))
     return services
 
 

@@ -681,6 +681,12 @@ class ExtractServiceFromMessageTest(unittest.TestCase):
         )
         self.assertEqual(services, ["Facebook", "Instagram", "HBO max"])
 
+    def test_multi_login_shared_trailing_noun_services_are_distinct(self):
+        services = det._extract_credential_services_from_message(
+            "Create Facebook, Instagram, and HBO Max logins.",
+        )
+        self.assertEqual(services, ["Facebook", "Instagram", "HBO Max"])
+
     def test_and_save_connector_not_part_of_service_name(self):
         self.assertEqual(
             det._extract_service_from_message(
@@ -983,6 +989,39 @@ class TryRouteBug4CredentialCreationTest(unittest.TestCase):
         self.assertEqual(
             [d["service_name"] for d in data["drafts"]],
             ["Facebook", "Instagram", "HBO max"],
+        )
+
+    def test_multi_login_shared_trailing_noun_creates_all_drafts(self):
+        drafter_calls: list = []
+
+        def spy_drafter(**kwargs):
+            drafter_calls.append(dict(kwargs))
+            return _stub_drafter_ok(**kwargs)
+
+        outcome = try_route_deterministically(
+            vault_id=_VAULT_ID,
+            session_id=_SESSION_ID,
+            key=_KEY,
+            decrypted_message="Create Facebook, Instagram, and HBO Max logins.",
+            files_lister=lambda: [],
+            credential_drafter=spy_drafter,
+            active_entity_getter=lambda vid, session_id=None: None,
+            active_entity_setter=lambda *a, **k: True,
+            chat_request_id=_REQ,
+        )
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.kind, KIND_CREDENTIAL_DRAFT_BATCH)
+        self.assertEqual(
+            [c["service_name"] for c in drafter_calls],
+            ["Facebook", "Instagram", "HBO Max"],
+        )
+        env = json.loads(outcome.envelope_json)
+        data = env["card"]["data"]
+        self.assertEqual(data["view"], "create_draft_batch")
+        self.assertEqual(data["count"], 3)
+        self.assertEqual(
+            [d["service_name"] for d in data["drafts"]],
+            ["Facebook", "Instagram", "HBO Max"],
         )
 
     def test_plain_create_login_returns_draft_not_saved_text(self):
