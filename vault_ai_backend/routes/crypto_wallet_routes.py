@@ -636,9 +636,9 @@ def _validate_idempotency_key(raw: Optional[str]) -> Optional[str]:
 
 
 ALLOWED_NETWORKS_FOR_ASSET: dict[str, frozenset[str]] = {
-    "ETH":        frozenset({"Ethereum Sepolia"}),
-    "USDT_ERC20": frozenset({"Ethereum Sepolia"}),
-    "USDC_ERC20": frozenset({"Ethereum Sepolia"}),
+    "ETH":        frozenset({"ethereum_sepolia"}),
+    "USDT_ERC20": frozenset({"ethereum_sepolia"}),
+    "USDC_ERC20": frozenset({"ethereum_sepolia"}),
 }
 
 
@@ -956,17 +956,13 @@ def _record_matches_network(
 ) -> bool:
 
 
-    from evm_networks import (
-        NETWORK_ETHEREUM_MAINNET, NETWORK_ETHEREUM_SEPOLIA,
-    )
+    from evm_networks import normalize_network_id
+    requested = normalize_network_id(requested_network_id)
+    stored = normalize_network_id(stored_network)
+    if stored and requested:
+        return stored == requested
+
     label = stored_network.strip().lower()
-    if requested_network_id == NETWORK_ETHEREUM_MAINNET:
-        return label in {"ethereum_mainnet", "ethereum mainnet", "mainnet"}
-    if requested_network_id == NETWORK_ETHEREUM_SEPOLIA:
-        return label in {
-            "ethereum_sepolia", "ethereum sepolia",
-            "ethereum sepolia testnet", "sepolia",
-        }
     if requested_network_id == NETWORK_SOLANA_MAINNET:
         return label in {
             "solana_mainnet", "solana mainnet", "solana",
@@ -1343,8 +1339,10 @@ def create_wallet_account(
         }
 
                        
+    from evm_networks import network_display_name, normalize_network_id
+    payload_network = normalize_network_id(payload.network)
     allowed = ALLOWED_NETWORKS_FOR_ASSET.get(norm, frozenset())
-    if payload.network not in allowed:
+    if payload_network not in allowed:
         raise HTTPException(
             status_code=422,
             detail={
@@ -1390,7 +1388,7 @@ def create_wallet_account(
     record = {
         "schema":                SCHEMA_CRYPTO_WALLET_ACCOUNT_V1,
         "asset":                 norm,
-        "network":               payload.network,
+        "network":               network_display_name(payload_network),
         "walletLabel":           payload.walletLabel,
         "publicAddress":         payload.publicAddress,
         "encryptedWalletSecret": payload.encryptedWalletSecret,
@@ -2230,7 +2228,7 @@ def _resolve_network_for_route(
 ) -> tuple[Optional[str], Optional[dict[str, Any]]]:
 
 
-    from evm_networks import is_known_network, normalize_network_id
+    from evm_networks import normalize_network_config, normalize_network_id
     nid = normalize_network_id(raw_network)
     if nid == NETWORK_SOLANA_MAINNET:
         return nid, None
@@ -2238,9 +2236,10 @@ def _resolve_network_for_route(
         return nid, None
     if nid == NETWORK_MONERO_MAINNET:
         return nid, None
-    if not is_known_network(nid):
+    cfg = normalize_network_config(raw_network)
+    if cfg is None:
         return None, _unknown_network_envelope(raw_network)
-    return nid, None
+    return cfg.id, None
 
 
 @router.get("/crypto/wallet/network/{network}/{asset}")

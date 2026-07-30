@@ -338,6 +338,11 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
               COALESCE(s.storage_bytes_grant, 0)  AS storage_bytes_grant,
               s.storage_bytes_grant_expires_at,
               s.current_period_end,
+              (
+                s.source = 'admin_grant'
+                AND s.current_period_end IS NOT NULL
+                AND NOW() > s.current_period_end
+              ) AS admin_grant_expired,
               COALESCE(s.cancel_at_period_end, FALSE) AS cancel_at_period_end,
               COALESCE(t.encrypted_bytes, 0)      AS used_bytes
             FROM accounts a
@@ -377,8 +382,15 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         )
 
     status = str(row["status"])
+    source = str(row["source"])
     purchased = int(row["purchased_bytes"])
+    block_count_val = int(row["block_count"])
     grant = int(row["storage_bytes_grant"])
+
+    if bool(row.get("admin_grant_expired")):
+        status = "expired"
+        purchased = 0
+        block_count_val = 0
 
                                                                     
     grant_expires = row["storage_bytes_grant_expires_at"]
@@ -396,8 +408,6 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
             grant = 0
 
     purchased_active = _purchased_bytes_active(status, purchased)
-    block_count_val = int(row["block_count"])
-
                                                                            
     if block_count_val > 0 and purchased_active > 0:
         effective = purchased_active
@@ -428,10 +438,10 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         effective_limit_bytes=effective,
         used_bytes=used,
         percent_used=pct,
-        block_count=int(row["block_count"]),
+        block_count=block_count_val,
         self_service_max_blocks=ceiling,
         status=status,
-        source=str(row["source"]),
+        source=source,
         current_period_end=period_end_iso,
         cancel_at_period_end=bool(row["cancel_at_period_end"]),
         block_price_cents_usd=price,

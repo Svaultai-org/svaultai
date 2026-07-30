@@ -510,9 +510,12 @@ class RouteIntegrationTests(unittest.TestCase):
         self.assertEqual(body["transactions"], [])
 
     def test_T18_mainnet_blocked(self) -> None:
-        resp = self._client.get(
-            "/crypto/wallet/network/ethereum_mainnet/ETH/transactions",
-        )
+        with mock.patch.dict(os.environ, {
+            "VAULTAI_CRYPTO_ETH_MAINNET_RECEIVE_ENABLED": "false",
+        }, clear=False):
+            resp = self._client.get(
+                "/crypto/wallet/network/ethereum_mainnet/ETH/transactions",
+            )
         body = resp.json()
                                                                     
         self.assertEqual(body.get("wallet_engine"), "network_not_enabled")

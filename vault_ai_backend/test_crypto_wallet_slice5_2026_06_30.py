@@ -88,6 +88,55 @@ class NetworkRegistryTests(unittest.TestCase):
             cfg.token_contract_env_prefix, "ETHEREUM_MAINNET",
         )
 
+    def test_N2_network_aliases_normalize_to_authoritative_records(self) -> None:
+        from evm_networks import (
+            NETWORK_ETHEREUM_MAINNET, NETWORK_ETHEREUM_SEPOLIA,
+            chain_id_for, network_config, normalize_network_id,
+        )
+
+        sepolia_inputs = (
+            "ethereum_sepolia",
+            "Ethereum Sepolia",
+            "ethereum sepolia",
+            "sepolia",
+            "ethereum testnet",
+        )
+        for raw in sepolia_inputs:
+            self.assertEqual(
+                normalize_network_id(raw),
+                NETWORK_ETHEREUM_SEPOLIA,
+                raw,
+            )
+            cfg = network_config(raw)
+            self.assertIsNotNone(cfg, raw)
+            self.assertEqual(cfg.chain_id, 11155111)
+            self.assertTrue(cfg.is_testnet)
+            self.assertEqual(cfg.native_asset, "ETH")
+            self.assertEqual(cfg.rpc_env_var, "ETHEREUM_SEPOLIA_RPC_URL")
+
+        mainnet_inputs = (
+            "ethereum_mainnet",
+            "Ethereum Mainnet",
+            "ethereum mainnet",
+            "ethereum",
+            "mainnet",
+        )
+        for raw in mainnet_inputs:
+            self.assertEqual(
+                normalize_network_id(raw),
+                NETWORK_ETHEREUM_MAINNET,
+                raw,
+            )
+            cfg = network_config(raw)
+            self.assertIsNotNone(cfg, raw)
+            self.assertEqual(cfg.chain_id, 1)
+            self.assertFalse(cfg.is_testnet)
+            self.assertEqual(cfg.native_asset, "ETH")
+            self.assertEqual(cfg.rpc_env_var, "ETHEREUM_MAINNET_RPC_URL")
+
+        self.assertEqual(chain_id_for("Ethereum Sepolia"), 11155111)
+        self.assertEqual(chain_id_for("Ethereum Mainnet"), 1)
+
     def test_N3_default_enabled_states(self) -> None:
         from evm_networks import is_receive_enabled, is_send_enabled
                                                        
@@ -159,7 +208,10 @@ class NetworkRegistryTests(unittest.TestCase):
             is_known_network, rpc_url_for, token_contract_for,
             is_send_enabled, is_receive_enabled,
         )
-        for bad in ("polkadot", "", None, "ETHEREUM_SEPOLIA", "12345"):
+        for bad in (
+            "polkadot", "", None, "ETHEREUM_SEPOLIA", "ethereum-sep",
+            "12345",
+        ):
             self.assertFalse(is_known_network(bad))
                                                                       
             self.assertEqual(rpc_url_for(bad or ""), "")
@@ -368,6 +420,120 @@ class SepoliaNetworkDelegationTests(_AuthedRouteCase):
             )
         body = resp.json()
         self.assertEqual(body["wallet_engine"], "no_account")
+
+    def test_sepolia_network_create_accepts_canonical_network_id(self) -> None:
+        self._enable_engine()
+        c = self._client()
+        with patch(
+            "routes.crypto_wallet_routes._load_wallet_account_record",
+            return_value=None,
+        ), patch(
+            "routes.crypto_wallet_routes._insert_wallet_account_record",
+        ) as inserted:
+            resp = c.post(
+                "/crypto/wallet/network/ethereum_sepolia/ETH/create",
+                json={
+                    "walletLabel": "QA ETH wallet",
+                    "publicAddress": "0x" + "1" * 40,
+                    "network": "ethereum_sepolia",
+                    "encryptedWalletSecret": "encrypted-secret",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["wallet_engine"], "created")
+        inserted.assert_called_once()
+
+    def test_display_alias_create_is_retrievable_by_canonical_route(self) -> None:
+        self._enable_engine()
+        c = self._client()
+        stored: dict[str, dict] = {}
+
+        def load_record(vault_id, service):
+            return stored.get(service)
+
+        def insert_record(vault_id, service, record):
+            stored[service] = record
+
+        with patch(
+            "routes.crypto_wallet_routes._load_wallet_account_record",
+            side_effect=load_record,
+        ), patch(
+            "routes.crypto_wallet_routes._insert_wallet_account_record",
+            side_effect=insert_record,
+        ):
+            created = c.post(
+                "/crypto/wallet/network/Ethereum%20Sepolia/ETH/create",
+                json={
+                    "walletLabel": "QA ETH wallet",
+                    "publicAddress": "0x" + "1" * 40,
+                    "network": "Ethereum Sepolia",
+                    "encryptedWalletSecret": "encrypted-secret",
+                },
+            )
+            duplicate = c.post(
+                "/crypto/wallet/network/ethereum_sepolia/ETH/create",
+                json={
+                    "walletLabel": "Second QA ETH wallet",
+                    "publicAddress": "0x" + "2" * 40,
+                    "network": "ethereum_sepolia",
+                    "encryptedWalletSecret": "encrypted-secret-2",
+                },
+            )
+            received = c.get(
+                "/crypto/wallet/network/ethereum_sepolia/ETH/receive",
+            )
+
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["wallet_engine"], "created")
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(duplicate.json()["wallet_engine"], "account_exists")
+        self.assertEqual(received.status_code, 200)
+        self.assertEqual(received.json()["wallet_engine"], "receive_ready")
+        self.assertEqual(received.json()["publicAddress"], "0x" + "1" * 40)
+        self.assertEqual(sorted(stored.keys()), ["ETH"])
+
+    def test_sepolia_draft_and_status_accept_canonical_network_id(self) -> None:
+        self._enable_engine()
+        os.environ["ETHEREUM_SEPOLIA_RPC_URL"] = "https://example.com"
+        import vault_config
+        vault_config.reset_for_tests()
+        c = self._client()
+        tx_hash = "0x" + "a" * 64
+        with patch(
+            "ethereum_sepolia_proxy.eth_get_transaction_count",
+            return_value=7,
+        ), patch(
+            "ethereum_sepolia_proxy.eth_gas_price_wei",
+            return_value=1_000_000_000,
+        ), patch(
+            "ethereum_sepolia_proxy.eth_estimate_gas",
+            return_value=21_000,
+        ), patch(
+            "ethereum_sepolia_proxy.eth_get_transaction_receipt",
+            return_value=None,
+        ):
+            draft = c.post(
+                "/crypto/wallet/network/ethereum_sepolia/ETH/send/draft",
+                json={
+                    "fromAddress": "0x" + "1" * 40,
+                    "destinationAddress": "0x" + "2" * 40,
+                    "amountEth": "0.00001",
+                },
+            )
+            status = c.get(
+                f"/crypto/wallet/network/ethereum_sepolia/ETH/"
+                f"transaction/{tx_hash}",
+            )
+
+        self.assertEqual(draft.status_code, 200)
+        self.assertEqual(draft.json()["status"], "draft_ready")
+        self.assertEqual(draft.json()["chainId"], 11155111)
+        self.assertEqual(draft.json()["network"], "Ethereum Sepolia")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["status"], "pending")
+        self.assertEqual(status.json()["network"], "Ethereum Sepolia")
 
 
 class NetworkCatalogRouteTests(_AuthedRouteCase):

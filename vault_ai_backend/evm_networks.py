@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -89,12 +90,30 @@ DEFAULT_TOKEN_DECIMALS: dict[str, int] = {
 }
 
 
+_NETWORK_ALIASES: dict[str, str] = {
+    "ethereum": NETWORK_ETHEREUM_MAINNET,
+    "ethereum mainnet": NETWORK_ETHEREUM_MAINNET,
+    "mainnet": NETWORK_ETHEREUM_MAINNET,
+    "ethereum sepolia": NETWORK_ETHEREUM_SEPOLIA,
+    "ethereum sepolia testnet": NETWORK_ETHEREUM_SEPOLIA,
+    "ethereum testnet": NETWORK_ETHEREUM_SEPOLIA,
+    "sepolia": NETWORK_ETHEREUM_SEPOLIA,
+}
+
+
+def _display_alias_key(network_id: str) -> str:
+    return re.sub(r"\s+", " ", network_id.strip()).lower()
+
+
 def normalize_network_id(network_id: Optional[str]) -> str:
 
 
     if not isinstance(network_id, str):
         return ""
-    return network_id.strip()
+    raw = network_id.strip()
+    if raw in _REGISTRY:
+        return raw
+    return _NETWORK_ALIASES.get(_display_alias_key(raw), "")
 
 
 def is_known_network(network_id: Optional[str]) -> bool:
@@ -105,6 +124,16 @@ def network_config(network_id: str) -> Optional[EvmNetworkConfig]:
 
 
     return _REGISTRY.get(normalize_network_id(network_id))
+
+
+def normalize_network_config(
+    network_id: Optional[str],
+) -> Optional[EvmNetworkConfig]:
+
+
+    if not isinstance(network_id, str):
+        return None
+    return network_config(network_id)
 
 
 def asset_is_supported_on_network(asset: str, network_id: str) -> bool:
@@ -199,6 +228,7 @@ __all__ = [
     "normalize_network_id",
     "is_known_network",
     "network_config",
+    "normalize_network_config",
     "asset_is_supported_on_network",
     "networks_for_asset",
     "rpc_url_for",
