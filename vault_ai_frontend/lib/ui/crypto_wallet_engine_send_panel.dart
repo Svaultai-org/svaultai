@@ -115,6 +115,12 @@ const String kEthSendChainMismatchError =
     'Network changed before signing. Review the transaction again.';
 const String kMainnetSendPausedBanner =
     'Mainnet sending is temporarily paused.';
+const String kMainnetSendUnsignedDraftOpenMessage =
+    'A previous unsigned send draft is still open.';
+const String kMainnetSendPendingTransactionMessage =
+    'A Mainnet transaction is pending.';
+const String kMainnetSendResumeDraftLabel = 'Resume draft';
+const String kMainnetSendCancelDraftLabel = 'Cancel draft';
 const String kMainnetSendBroadcastSafeError = 'Could not submit transaction.';
 const String kMainnetSendRateLimitedError =
     'Too many recent send attempts. Wait a moment before retrying.';
@@ -544,6 +550,8 @@ class _CryptoWalletEngineSendPanelState
     extends State<CryptoWalletEngineSendPanel> {
   _Stage _stage = _Stage.form;
   String? _error;
+  String? _draftConflictKind;
+  String? _draftConflictTxHash;
 
   final TextEditingController _destCtrl = TextEditingController();
   final TextEditingController _amountCtrl = TextEditingController();
@@ -780,6 +788,8 @@ class _CryptoWalletEngineSendPanelState
   bool get _isRetryablePinFailure =>
       _error == kEthSendErrorPinWrong ||
       _error == kEthSendErrorPinVerificationFailed;
+
+  bool get _hasDraftConflict => _draftConflictKind != null;
 
   bool get _hasRetryableFeeError {
     final err = _error;
@@ -1223,6 +1233,7 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Future<void> _onReview() async {
+    if (_hasDraftConflict) return;
     // 2026-07-14 (Round 11 — release wiring): block a NEW Send if
     // the release-update controller has detected a pending
     // update. The user must reload before starting a fresh Send.
@@ -1251,6 +1262,15 @@ class _CryptoWalletEngineSendPanelState
     } finally {
       _draftInFlight = false;
     }
+  }
+
+  Future<void> _resumeDraftConflict() async {
+    setState(() {
+      _draftConflictKind = null;
+      _draftConflictTxHash = null;
+      _error = null;
+    });
+    await _onReview();
   }
 
   Future<void> _onReviewInner() async {
@@ -1414,6 +1434,8 @@ class _CryptoWalletEngineSendPanelState
     }
     setState(() {
       _error = null;
+      _draftConflictKind = null;
+      _draftConflictTxHash = null;
       _stage = _Stage.loadingDraft;
     });
     try {
@@ -1474,11 +1496,31 @@ class _CryptoWalletEngineSendPanelState
       }
       if (status != 'draft_ready') {
         final msg = (body['message'] ?? '').toString();
+        final recovery = body['recovery'];
+        final recoveryMap = recovery is Map
+            ? recovery.cast<String, dynamic>()
+            : const <String, dynamic>{};
+        final conflictKind = (recoveryMap['kind'] ??
+                body['draftStatus'] ??
+                '')
+            .toString();
+        final conflictTxHash = (body['txHash'] ??
+                recoveryMap['txHash'] ??
+                '')
+            .toString();
+        final isDraftConflict = status == 'draft_conflict' ||
+            walletEngine == 'draft_conflict';
         setState(() {
           _stage = _Stage.form;
-          _error = widget.isMainnet
-              ? (msg.isNotEmpty ? msg : kMainnetSendFeeEstimateFailedError)
-              : kEthSendErrorDraftUnavailable;
+          _draftConflictKind = isDraftConflict ? conflictKind : null;
+          _draftConflictTxHash = isDraftConflict && conflictTxHash.isNotEmpty
+              ? conflictTxHash
+              : null;
+          _error = isDraftConflict
+              ? _draftConflictCopy(conflictKind, fallback: msg)
+              : widget.isMainnet
+                  ? (msg.isNotEmpty ? msg : kMainnetSendFeeEstimateFailedError)
+                  : kEthSendErrorDraftUnavailable;
         });
         return;
       }
@@ -2232,6 +2274,10 @@ class _CryptoWalletEngineSendPanelState
             text: _error!,
             tone: WalletSendWarningTone.critical,
           ),
+          if (_draftConflictKind != null) ...[
+            const SizedBox(height: 8),
+            _buildDraftConflictRecoveryActions(),
+          ],
         ],
       ],
     );
@@ -2267,6 +2313,68 @@ class _CryptoWalletEngineSendPanelState
           Expanded(child: Text(label)),
         ],
       ),
+    );
+  }
+
+  String _draftConflictCopy(String kind, {required String fallback}) {
+    if (kind == 'unsigned_stale' ||
+        kind == 'draft_created' ||
+        kind == 'quote_ready' ||
+        kind == 'awaiting_pin') {
+      return kMainnetSendUnsignedDraftOpenMessage;
+    }
+    if (kind == 'submitted' ||
+        kind == 'broadcast_uncertain' ||
+        kind == 'signed_not_broadcast' ||
+        kind == 'broadcasting' ||
+        kind == 'signing' ||
+        kind == 'mainnet_pending_transaction') {
+      return kMainnetSendPendingTransactionMessage;
+    }
+    return fallback.isNotEmpty ? fallback : kMainnetSendPendingTransactionMessage;
+  }
+
+  Widget _buildDraftConflictRecoveryActions() {
+    final kind = _draftConflictKind ?? '';
+    final hasHash = (_draftConflictTxHash ?? '').isNotEmpty;
+    final isUnsigned = kind == 'unsigned_stale' ||
+        kind == 'draft_created' ||
+        kind == 'quote_ready' ||
+        kind == 'awaiting_pin';
+    if (isUnsigned) {
+      return Wrap(
+        key: const Key('eth_send_panel_unsigned_draft_recovery'),
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton(
+            key: const Key('eth_send_panel_resume_unsigned_draft_btn'),
+            onPressed: _resumeDraftConflict,
+            child: const Text(kMainnetSendResumeDraftLabel),
+          ),
+          TextButton(
+            key: const Key('eth_send_panel_cancel_unsigned_draft_btn'),
+            onPressed: () {
+              setState(() {
+                _draftConflictKind = null;
+                _draftConflictTxHash = null;
+                _error = null;
+              });
+            },
+            child: const Text(kMainnetSendCancelDraftLabel),
+          ),
+        ],
+      );
+    }
+    if (!hasHash) return const SizedBox.shrink();
+    return Wrap(
+      key: const Key('eth_send_panel_pending_tx_recovery'),
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _buildCheckStatusAction(_draftConflictTxHash!),
+        _buildExplorerAction(_draftConflictTxHash!),
+      ],
     );
   }
 
@@ -2733,7 +2841,7 @@ class _CryptoWalletEngineSendPanelState
       key: const Key('eth_send_panel_review_btn'),
       // 2026-07-14 (Round 8 hardening): disabled while drafting so
       // a rapid double-tap does not spawn a second draft.
-      onPressed: _draftInFlight ? null : _onReview,
+      onPressed: (_draftInFlight || _hasDraftConflict) ? null : _onReview,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),

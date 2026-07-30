@@ -135,7 +135,34 @@ class FakeMainnetStore:
                     d.get("network_id") == network_id
                     and d.get("sender_address_lower") == sender_lower
                     and d.get("consumed_at") is None
+                    and d.get("local_tx_hash") in (None, "")
                     and d.get("expires_at", 0) > now
+                    and (
+                        not d.get("claim_token")
+                        or (d.get("claim_expires_at", 0) or 0) <= now
+                    )
+                ):
+                    d["expires_at"] = now
+            for d in self._drafts.values():
+                if (
+                    d.get("network_id") == network_id
+                    and d.get("sender_address_lower") == sender_lower
+                    and d.get("expires_at", 0) > now
+                    and (
+                        (
+                            d.get("consumed_at") is None
+                            and d.get("claim_token")
+                            and (d.get("claim_expires_at", 0) or 0) > now
+                        )
+                        or (
+                            d.get("consumed_at") is not None
+                            and d.get("local_tx_hash")
+                            and d.get("broadcast_outcome") in (
+                                None, "submitted", "submission_uncertain",
+                                "already_known",
+                            )
+                        )
+                    )
                 ):
                     return None
             draft_id = secrets.token_urlsafe(24)
@@ -162,6 +189,100 @@ class FakeMainnetStore:
                 "local_tx_hash":        None,
                 "broadcast_outcome":    None,
                 "outcome_recorded_at":  None,
+            }
+            return draft_id
+
+    def register_draft_ciphertext_first(
+        self,
+        *,
+        vault_id: str,
+        network_id: str,
+        sender_address_lookup_hash: bytes,
+        draft_payload_ciphertext: bytes,
+        nonce: int,
+        gas_limit: int,
+        gas_price: int,
+        chain_id: int,
+        ttl_secs: int = 300,
+    ) -> Optional[str]:
+        if self.fail_register:
+            raise RuntimeError("simulated register-draft DB failure")
+        now = _time.time()
+        with self._lock:
+            for did, d in list(self._drafts.items()):
+                if d.get("expires_at", 0) <= now:
+                    self._drafts.pop(did, None)
+            for d in self._drafts.values():
+                if (
+                    d.get("network_id") == network_id
+                    and d.get("vault_id") == str(vault_id)
+                    and (
+                        d.get("sender_address_lookup_hash")
+                            == sender_address_lookup_hash
+                        or d.get("sender_address_lookup_hash") is None
+                    )
+                    and d.get("consumed_at") is None
+                    and d.get("local_tx_hash") in (None, "")
+                    and d.get("expires_at", 0) > now
+                    and (
+                        not d.get("claim_token")
+                        or (d.get("claim_expires_at", 0) or 0) <= now
+                    )
+                ):
+                    d["expires_at"] = now
+            for d in self._drafts.values():
+                if (
+                    d.get("network_id") == network_id
+                    and d.get("vault_id") == str(vault_id)
+                    and (
+                        d.get("sender_address_lookup_hash")
+                            == sender_address_lookup_hash
+                        or d.get("sender_address_lookup_hash") is None
+                    )
+                    and d.get("expires_at", 0) > now
+                    and (
+                        (
+                            d.get("consumed_at") is None
+                            and d.get("claim_token")
+                            and (d.get("claim_expires_at", 0) or 0) > now
+                        )
+                        or (
+                            d.get("consumed_at") is not None
+                            and d.get("local_tx_hash")
+                            and d.get("broadcast_outcome") in (
+                                None, "submitted", "submission_uncertain",
+                                "already_known",
+                            )
+                        )
+                    )
+                ):
+                    return None
+            draft_id = secrets.token_urlsafe(24)
+            self._drafts[draft_id] = {
+                "draft_id":                   draft_id,
+                "vault_id":                   str(vault_id),
+                "network_id":                 network_id,
+                "sender_address_lower":       None,
+                "sender_address":             None,
+                "asset":                      None,
+                "destination_address":        None,
+                "value_wei":                  0,
+                "data_hex":                   None,
+                "nonce":                      int(nonce),
+                "gas_limit":                  int(gas_limit),
+                "gas_price":                  int(gas_price),
+                "chain_id":                   int(chain_id),
+                "transaction_to":             None,
+                "created_at":                 now,
+                "expires_at":                 now + int(ttl_secs),
+                "claim_token":                None,
+                "claim_expires_at":           None,
+                "consumed_at":                None,
+                "local_tx_hash":              None,
+                "broadcast_outcome":          None,
+                "outcome_recorded_at":        None,
+                "draft_payload_ciphertext":   draft_payload_ciphertext,
+                "sender_address_lookup_hash": sender_address_lookup_hash,
             }
             return draft_id
 

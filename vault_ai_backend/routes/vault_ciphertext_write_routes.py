@@ -707,6 +707,9 @@ def crypto_draft_ciphertext_persist(
 
     drafts_table = _CRYPTO_DRAFTS_TABLE[network]
     locks_table = _CRYPTO_LOCKS_TABLE[network]
+    sender_column = (
+        "sender_address_lower" if network == "mainnet" else "sender_address"
+    )
 
     conn = get_db()
     try:
@@ -714,7 +717,7 @@ def crypto_draft_ciphertext_persist(
 
         cur.execute(
             f"""
-            SELECT sender_address
+            SELECT {sender_column} AS sender_address
               FROM {drafts_table}
              WHERE draft_id = %s
                AND vault_id = %s
@@ -726,22 +729,39 @@ def crypto_draft_ciphertext_persist(
             raise HTTPException(status_code=404, detail="draft not found")
         old_sender = row["sender_address"]
 
-        cur.execute(
-            f"""
-            UPDATE {drafts_table}
-               SET draft_payload_ciphertext = %s
-             WHERE draft_id = %s
-               AND vault_id = %s
-            """,
-            (payload_ct, payload.draft_id, str(principal["vault_id"])),
-        )
+        if network == "mainnet":
+            cur.execute(
+                f"""
+                UPDATE {drafts_table}
+                   SET draft_payload_ciphertext = %s,
+                       sender_address_lookup_hash = %s
+                 WHERE draft_id = %s
+                   AND vault_id = %s
+                """,
+                (
+                    payload_ct,
+                    lookup_hash,
+                    payload.draft_id,
+                    str(principal["vault_id"]),
+                ),
+            )
+        else:
+            cur.execute(
+                f"""
+                UPDATE {drafts_table}
+                   SET draft_payload_ciphertext = %s
+                 WHERE draft_id = %s
+                   AND vault_id = %s
+                """,
+                (payload_ct, payload.draft_id, str(principal["vault_id"])),
+            )
 
         if old_sender:
             cur.execute(
                 f"""
                 UPDATE {locks_table}
                    SET sender_address_lookup_hash = %s
-                 WHERE sender_address = %s
+                 WHERE {sender_column} = %s
                 """,
                 (lookup_hash, old_sender),
             )

@@ -71,6 +71,8 @@ _DDL = [
         local_tx_hash           TEXT,
         broadcast_outcome       TEXT,
         outcome_recorded_at     TIMESTAMPTZ,
+        draft_payload_ciphertext BYTEA,
+        sender_address_lookup_hash BYTEA,
         CONSTRAINT crypto_mainnet_drafts_outcome_value_check CHECK (
             broadcast_outcome IS NULL
             OR broadcast_outcome IN (
@@ -209,12 +211,8 @@ class RealPostgresRaceSafety(unittest.TestCase):
 
 
 
-    def test_two_connections_racing_register_only_one_succeeds(self):
-        """Two concurrent register_draft calls for the same sender:
-        exactly one returns a draft_id, the other returns None.
-        Because register_draft takes a transaction-scoped advisory
-        lock the race is deterministic even without CI orchestration.
-        """
+    def test_unsigned_draft_can_be_replaced_but_claimed_draft_blocks(self):
+        """Unsigned drafts do not block; an active signing claim does."""
         sender = "0x" + "aa" * 20
 
 
@@ -224,8 +222,25 @@ class RealPostgresRaceSafety(unittest.TestCase):
 
 
         did_b = _seed_active_draft_via_store(self._store, None, sender)
-        self.assertIsNone(did_b,
-            msg="second register for same sender must return None")
+        self.assertIsNotNone(did_b,
+            msg="abandoned unsigned draft must be replaced")
+        found, err = self._store.load_draft_readonly(
+            draft_id=did_a, vault_id="v-int",
+            network_id="ethereum_mainnet",
+        )
+        self.assertIsNone(found)
+        self.assertEqual(err, "unknown_or_expired_draft")
+
+        claim, err = self._store.claim_draft(
+            draft_id=did_b, vault_id="v-int",
+            network_id="ethereum_mainnet",
+        )
+        self.assertIsNone(err)
+        self.assertIsNotNone(claim)
+
+        did_c = _seed_active_draft_via_store(self._store, None, sender)
+        self.assertIsNone(did_c,
+            msg="active signing claim must block")
 
 
 

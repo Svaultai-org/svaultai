@@ -417,7 +417,7 @@ class SharedStoreCrossWorkerSemantics(unittest.TestCase):
         self.assertFalse(found["consumed"])
 
 
-    def test_single_active_draft_per_sender_across_workers(self):
+    def test_abandoned_unsigned_draft_can_be_replaced_across_workers(self):
         addr = "0x" + "bb" * 20
 
         did_a = self._worker_a.register_draft(
@@ -442,8 +442,48 @@ class SharedStoreCrossWorkerSemantics(unittest.TestCase):
             gas_limit=21000, gas_price=1_000_000_000,
             chain_id=1, transaction_to=_DEST_ADDR,
         )
+        self.assertIsNotNone(did_b,
+            msg="unsigned, unbroadcast drafts must not block forever")
+        found, err = self._worker_a.load_draft_readonly(
+            draft_id=did_a, vault_id="v-2", network_id="ethereum_mainnet",
+        )
+        self.assertIsNone(found)
+        self.assertEqual(err, "unknown_or_expired_draft")
+
+
+    def test_claimed_signing_draft_blocks_across_workers(self):
+        addr = "0x" + "bd" * 20
+
+        did_a = self._worker_a.register_draft(
+            vault_id="v-2b",
+            network_id="ethereum_mainnet",
+            sender_address=addr,
+            asset="ETH",
+            destination_address=_DEST_ADDR,
+            value_wei=1, data_hex="0x", nonce=0,
+            gas_limit=21000, gas_price=1_000_000_000,
+            chain_id=1, transaction_to=_DEST_ADDR,
+        )
+        self.assertIsNotNone(did_a)
+        claim, err = self._worker_a.claim_draft(
+            draft_id=did_a, vault_id="v-2b",
+            network_id="ethereum_mainnet",
+        )
+        self.assertIsNone(err)
+        self.assertIsNotNone(claim)
+
+        did_b = self._worker_b.register_draft(
+            vault_id="v-2b",
+            network_id="ethereum_mainnet",
+            sender_address=addr,
+            asset="ETH",
+            destination_address=_DEST_ADDR,
+            value_wei=1, data_hex="0x", nonce=1,
+            gas_limit=21000, gas_price=1_000_000_000,
+            chain_id=1, transaction_to=_DEST_ADDR,
+        )
         self.assertIsNone(did_b,
-            msg="worker B must see the active draft worker A registered")
+            msg="worker B must see worker A's active signing claim")
 
 
     def test_draft_consumed_on_worker_a_cannot_be_replayed_on_worker_b(self):

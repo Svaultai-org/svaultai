@@ -90,6 +90,52 @@ _ALLOWED_BROADCAST_OUTCOMES: frozenset[str] = frozenset({
 })
 
 
+def _expire_abandoned_unsigned_sender_drafts(
+    cur: Any,
+    *,
+    network_id: str,
+    sender_address_lower: Optional[str] = None,
+    vault_id: Optional[str] = None,
+    sender_address_lookup_hash: Optional[bytes] = None,
+) -> int:
+    """Expire unsigned, unbroadcast drafts before conflict checks."""
+    if sender_address_lookup_hash is not None:
+        scope_sql = """
+           AND vault_id = %s
+           AND sender_address_lookup_hash = %s
+        """
+        params: list[Any] = [
+            network_id, str(vault_id), sender_address_lookup_hash,
+        ]
+    elif sender_address_lower is not None:
+        scope_sql = "AND sender_address_lower = %s"
+        params = [network_id, sender_address_lower]
+    else:
+        scope_sql = """
+           AND vault_id = %s
+           AND draft_payload_ciphertext IS NOT NULL
+           AND sender_address_lower IS NULL
+        """
+        params = [network_id, str(vault_id)]
+    cur.execute(
+        f"""
+        UPDATE crypto_mainnet_drafts
+           SET expires_at = NOW()
+         WHERE network_id = %s
+           {scope_sql}
+           AND consumed_at IS NULL
+           AND local_tx_hash IS NULL
+           AND expires_at > NOW()
+           AND (
+                claim_token IS NULL
+             OR claim_expires_at <= NOW()
+           )
+        """,
+        tuple(params),
+    )
+    return int(getattr(cur, "rowcount", 0) or 0)
+
+
 def _addr_lower(addr: str) -> str:
     return (addr or "").strip().lower()
 
@@ -137,14 +183,37 @@ def register_draft(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
             (lock_seed,),
         )
+        _expire_abandoned_unsigned_sender_drafts(
+            cur,
+            network_id=network_id,
+            sender_address_lower=sender_lower,
+        )
         cur.execute(
             """
             SELECT draft_id
               FROM crypto_mainnet_drafts
              WHERE network_id = %s
                AND sender_address_lower = %s
-               AND consumed_at IS NULL
                AND expires_at > NOW()
+               AND (
+                    (
+                        consumed_at IS NULL
+                        AND claim_token IS NOT NULL
+                        AND claim_expires_at > NOW()
+                    )
+                 OR (
+                        consumed_at IS NOT NULL
+                        AND local_tx_hash IS NOT NULL
+                        AND (
+                             broadcast_outcome IS NULL
+                          OR broadcast_outcome IN (
+                                'submitted',
+                                'submission_uncertain',
+                                'already_known'
+                             )
+                        )
+                    )
+               )
              LIMIT 1
             """,
             (network_id, sender_lower),
@@ -228,19 +297,64 @@ def register_draft_ciphertext_first(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
             (lock_seed,),
         )
+        try:
+            _expire_abandoned_unsigned_sender_drafts(
+                cur,
+                network_id=network_id,
+                vault_id=str(vault_id),
+                sender_address_lookup_hash=sender_address_lookup_hash,
+            )
+            _expire_abandoned_unsigned_sender_drafts(
+                cur,
+                network_id=network_id,
+                vault_id=str(vault_id),
+            )
+            duplicate_scope_sql = (
+                """
+                AND vault_id = %s
+                AND (
+                     sender_address_lookup_hash = %s
+                  OR sender_address_lookup_hash IS NULL
+                )
+                """
+            )
+            duplicate_params: tuple[Any, ...] = (
+                network_id, str(vault_id), sender_address_lookup_hash,
+            )
+        except Exception:
+            conn.rollback()
+            raise
         cur.execute(
-            """
+            f"""
             SELECT draft_id
               FROM crypto_mainnet_drafts
              WHERE network_id = %s
                AND draft_payload_ciphertext IS NOT NULL
                AND sender_address_lower IS NULL
-               AND consumed_at IS NULL
                AND expires_at > NOW()
-               AND vault_id = %s
+               {duplicate_scope_sql}
+               AND (
+                    (
+                        consumed_at IS NULL
+                        AND claim_token IS NOT NULL
+                        AND claim_expires_at > NOW()
+                    )
+                 OR (
+                        consumed_at IS NOT NULL
+                        AND local_tx_hash IS NOT NULL
+                        AND (
+                             broadcast_outcome IS NULL
+                          OR broadcast_outcome IN (
+                                'submitted',
+                                'submission_uncertain',
+                                'already_known'
+                             )
+                        )
+                    )
+               )
              LIMIT 1
             """,
-            (network_id, str(vault_id)),
+            duplicate_params,
         )
         if cur.fetchone() is not None:
             conn.rollback()
@@ -253,7 +367,7 @@ def register_draft_ciphertext_first(
                 destination_address, value_wei_str, data_hex,
                 nonce, gas_limit, gas_price_str, chain_id,
                 transaction_to, expires_at,
-                draft_payload_ciphertext
+                draft_payload_ciphertext, sender_address_lookup_hash
             ) VALUES (
                 %s, %s, %s,
                 NULL, NULL,
@@ -261,7 +375,7 @@ def register_draft_ciphertext_first(
                 %s, %s, %s, %s,
                 NULL,
                 NOW() + (INTERVAL '1 second' * %s),
-                %s
+                %s, %s
             )
             """,
             (
@@ -269,6 +383,7 @@ def register_draft_ciphertext_first(
                 int(nonce), int(gas_limit),
                 str(int(gas_price)), int(chain_id),
                 int(ttl_secs), draft_payload_ciphertext,
+                sender_address_lookup_hash,
             ),
         )
         conn.commit()
@@ -941,6 +1056,7 @@ __all__ = [
     "BROADCAST_OUTCOME_ALREADY_KNOWN",
     "BROADCAST_OUTCOME_EXPLICITLY_REJECTED",
     "register_draft",
+    "register_draft_ciphertext_first",
     "load_draft_readonly",
     "claim_draft",
     "release_claimed_draft",

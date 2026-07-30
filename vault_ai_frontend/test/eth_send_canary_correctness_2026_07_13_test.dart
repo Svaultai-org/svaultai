@@ -784,6 +784,41 @@ void main() {
       expect(store.byHash('0xdeadbeef'), isNotNull);
       expect(store.byHash('0xDEADBEEF'), isNotNull);
     });
+
+    test('empty tx hash cannot create a pending transfer row', () {
+      final store = LocalOutgoingTxStore();
+      final now = DateTime.utc(2026, 7, 30);
+      store.upsert(LocalOutgoingTx(
+        txHash: '', fromAddress: _kFrom, toAddress: _kDest,
+        amount: '1', unit: 'ETH', feeWei: null,
+        networkId: kEvmNetworkEthereumMainnet, asset: 'ETH',
+        createdAt: now, updatedAt: now,
+        status: LocalOutgoingTxStatus.submitting,
+      ));
+      expect(store.all, isEmpty);
+      expect(store.hasBlockingTransfer(
+        networkId: kEvmNetworkEthereumMainnet, asset: 'ETH',
+      ), isFalse);
+    });
+
+    test('submitted local row is blocking until terminal', () {
+      final store = LocalOutgoingTxStore();
+      final now = DateTime.utc(2026, 7, 30);
+      store.upsert(LocalOutgoingTx(
+        txHash: '0xdd', fromAddress: _kFrom, toAddress: _kDest,
+        amount: '1', unit: 'ETH', feeWei: null,
+        networkId: kEvmNetworkEthereumMainnet, asset: 'ETH',
+        createdAt: now, updatedAt: now,
+        status: LocalOutgoingTxStatus.submissionUncertain,
+      ));
+      expect(store.hasBlockingTransfer(
+        networkId: kEvmNetworkEthereumMainnet, asset: 'ETH',
+      ), isTrue);
+      store.updateStatus('0xdd', LocalOutgoingTxStatus.confirmed);
+      expect(store.hasBlockingTransfer(
+        networkId: kEvmNetworkEthereumMainnet, asset: 'ETH',
+      ), isFalse);
+    });
   });
 
 

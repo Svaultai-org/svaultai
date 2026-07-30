@@ -220,6 +220,10 @@ Future<void> _pumpMainnetPanel(
         network: kEvmNetworkEthereumMainnet,
         mainnetSendEnabled: mainnetSendEnabled,
         mainnetSendPaused: mainnetSendPaused,
+        fetchAvailableBalance: () async => 10.0,
+        fetchAvailableBalanceWei: () async => BigInt.parse(
+          '10000000000000000000',
+        ),
       ),
     ),
   ));
@@ -410,6 +414,50 @@ void main() {
       expect(client.draftSepoliaCount, equals(0));
       expect(client.broadcastSepoliaCount, equals(0));
       expect(client.encryptedSecretSepoliaCount, equals(0));
+    });
+
+    testWidgets('SS6b: draft conflict renders unsigned-draft recovery copy',
+        (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: const {
+          'status': 'draft_conflict',
+          'wallet_engine': 'draft_conflict',
+          'draftStatus': 'unsigned_stale',
+          'message': 'old backend copy',
+        },
+        encryptedSecretResponse: const {
+          'status':                'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted', 'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(tester, client: client);
+      await tester.enterText(
+        find.byKey(const Key('eth_send_panel_destination_input')),
+        _kDestAddress,
+      );
+      await tester.enterText(
+        find.byKey(const Key('eth_send_panel_amount_input')),
+        '0.01',
+      );
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_review_btn')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(kMainnetSendUnsignedDraftOpenMessage), findsOneWidget);
+      expect(
+        find.byKey(const Key('eth_send_panel_unsigned_draft_recovery')),
+        findsOneWidget,
+      );
+      expect(find.text(kMainnetSendResumeDraftLabel), findsOneWidget);
+      final reviewButton = tester.widget<ElevatedButton>(
+        find.byKey(const Key('eth_send_panel_review_btn')),
+      );
+      expect(reviewButton.onPressed, isNull);
+      expect(client.broadcastNetworkCount, equals(0));
     });
 
     testWidgets(

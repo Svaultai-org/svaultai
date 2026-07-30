@@ -246,8 +246,23 @@ class LocalOutgoingTxStore extends ChangeNotifier {
 
   /// Insert-or-replace by hash.
   void upsert(LocalOutgoingTx row) {
+    if (row.txHash.trim().isEmpty) {
+      return;
+    }
     _byHash[_norm(row.txHash)] = row;
     notifyListeners();
+  }
+
+  /// True only for signed/broadcast-known rows that still need
+  /// protection from duplicate user action. Unsigned drafts are not
+  /// represented in this store and an empty hash can never block.
+  bool hasBlockingTransfer({
+    required String networkId,
+    required String asset,
+  }) {
+    return rowsFor(networkId: networkId, asset: asset).any(
+      (row) => row.txHash.trim().isNotEmpty && !row.status.isTerminal,
+    );
   }
 
   /// Update status of an existing row. No-op if the row is unknown.

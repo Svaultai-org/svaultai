@@ -216,6 +216,16 @@ class MainnetSendRouteTests(unittest.TestCase):
 
         import evm_rpc
         with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url",
+            side_effect=lambda rpc_url: urls_seen.append(
+                ("chain_id", rpc_url),
+            ) or 1,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url",
+            side_effect=lambda rpc_url: urls_seen.append(
+                ("block_number", rpc_url),
+            ) or 123,
+        ), mock.patch.object(
             evm_rpc, "eth_get_transaction_count_at_url",
             side_effect=_nonce,
         ), mock.patch.object(
@@ -245,7 +255,7 @@ class MainnetSendRouteTests(unittest.TestCase):
         self.assertEqual(body["gasLimit"], "21000")
         self.assertEqual(body["gasPrice"], "1000000000")
                                                     
-        self.assertEqual(len(urls_seen), 4)
+        self.assertEqual(len(urls_seen), 6)
         for _, url in urls_seen:
             self.assertEqual(url, "https://example.invalid/mainnet")
             self.assertNotIn("sepolia", url.lower())
@@ -348,14 +358,20 @@ class MainnetSendRouteTests(unittest.TestCase):
         )
         self._create_mainnet_eth_record()
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
-        resp = self._client.post(
-            "/crypto/wallet/network/ethereum_mainnet/USDT_ERC20/send/draft",
-            json={
-                "fromAddress":         _FROM_ADDR,
-                "destinationAddress":  _DEST_ADDR,
-                "amountEth":           "1.0",
-            },
-        )
+        import evm_rpc
+        with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url", return_value=1,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url", return_value=123,
+        ):
+            resp = self._client.post(
+                "/crypto/wallet/network/ethereum_mainnet/USDT_ERC20/send/draft",
+                json={
+                    "fromAddress":         _FROM_ADDR,
+                    "destinationAddress":  _DEST_ADDR,
+                    "amountEth":           "1.0",
+                },
+            )
         body = resp.json()
         self.assertEqual(body["status"], "draft_unavailable")
         self.assertEqual(body["reason"], "token_contract_not_configured")
@@ -390,6 +406,12 @@ class MainnetSendRouteTests(unittest.TestCase):
 
         import evm_rpc
         with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url",
+            side_effect=lambda rpc_url: urls_seen.append(rpc_url) or 1,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url",
+            side_effect=lambda rpc_url: urls_seen.append(rpc_url) or 123,
+        ), mock.patch.object(
             evm_rpc, "eth_get_transaction_count_at_url",
             side_effect=_nonce,
         ), mock.patch.object(
@@ -457,6 +479,10 @@ class MainnetSendRouteTests(unittest.TestCase):
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
         import evm_rpc
         with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url", return_value=1,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url", return_value=123,
+        ), mock.patch.object(
             evm_rpc, "eth_get_transaction_count_at_url",
             return_value=5,
         ), mock.patch.object(
@@ -922,6 +948,8 @@ class SourceGuardTests(unittest.TestCase):
     def test_S21_evm_rpc_whitelist_is_closed_set(self) -> None:
         from evm_rpc import ALLOWED_RPC_METHODS
         expected = {
+            "eth_chainId",
+            "eth_blockNumber",
             "eth_getBalance", "eth_call",
             "eth_getTransactionCount", "eth_gasPrice",
             "eth_estimateGas", "eth_sendRawTransaction",

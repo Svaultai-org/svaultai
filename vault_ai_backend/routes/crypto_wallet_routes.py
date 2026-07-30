@@ -3443,12 +3443,17 @@ def _create_mainnet_send_draft(
         return {
             "wallet_engine": "draft_conflict",
             "status":        "draft_conflict",
+            "draftStatus":   "nonterminal",
             "asset":         norm,
             "network":       "Ethereum Mainnet",
+            "recovery": {
+                "kind": "mainnet_pending_transaction",
+                "canCheckStatus": False,
+                "canViewTransaction": False,
+            },
             "message": (
-                "Another mainnet draft for this wallet is still in "
-                "flight. Wait for the previous transaction to be "
-                "broadcast or expire before drafting a new one."
+                "A Mainnet send is still being finalized. Check "
+                "activity before drafting a new one."
             ),
         }
 
