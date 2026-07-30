@@ -591,6 +591,111 @@ def test_self_name_proposal_save_recall_restart_and_forget(memory_store):
     )
 
 
+def test_self_name_proposal_save_replaces_existing_display_name(memory_store):
+    dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my name is Earl",
+        source_message_id="old-name-proposal",
+        session_id="session-a",
+    )
+    saved_old = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="old-name-save",
+        session_id="session-a",
+    )
+    assert "Saved" in (saved_old or "")
+    assert "Earl" in _handle(memory_store, "what is my name")
+
+    dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my name is Kola",
+        source_message_id="new-name-proposal",
+        session_id="session-a",
+    )
+    saved_new = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="new-name-save",
+        session_id="session-a",
+    )
+    assert "Updated" in (saved_new or "")
+    assert _handle(memory_store, "what is my name") == "Your name is Kola."
+    assert len(memory_store.active_rows("vault-a")) == 1
+
+
+def test_self_name_replacement_preserves_unrelated_and_other_vault(memory_store):
+    _handle(memory_store, "remember my favorite place is Los Angeles")
+    _handle(memory_store, "remember my name is Earl")
+    _handle(memory_store, "remember my name is Kola.")
+    _handle(memory_store, "remember my name is Kay")
+    _handle(memory_store, "remember my name is Other", vault_id="vault-b")
+
+    active = memory_store.active_rows("vault-a")
+    payloads = [_payload(row) for row in active]
+    display_names = [
+        payload for payload in payloads
+        if payload["attribute"] == "display_name"
+    ]
+    favorite_places = [
+        payload for payload in payloads
+        if payload["attribute"] == "favorite_place"
+    ]
+
+    assert len(display_names) == 1
+    assert display_names[0]["display_value"] == "Kay"
+    assert len(favorite_places) == 1
+    assert favorite_places[0]["display_value"] == "Los Angeles"
+    assert _handle(memory_store, "what is my name") == "Your name is Kay."
+    assert _handle(memory_store, "what is my favorite place") == (
+        "Your favorite place is Los Angeles."
+    )
+    assert _handle(memory_store, "what is my name", vault_id="vault-b") == (
+        "Your name is Other."
+    )
+
+
+def test_call_me_replaces_preferred_name_and_forget_removes_current(memory_store):
+    _handle(memory_store, "remember my name is Earl")
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="Call me Kay.",
+        source_message_id="call-me-kay-proposal",
+        session_id="session-a",
+    )
+    assert proposal is not None
+    data = dpm.json.loads(proposal)["card"]["data"]
+    assert data["attribute"] == "display_name"
+    assert data["value"] == "Kay"
+
+    saved = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="call-me-kay-save",
+        session_id="session-a",
+    )
+    assert "Updated" in (saved or "")
+    assert _handle(memory_store, "what is my name?") == "Your name is Kay."
+    assert _handle(memory_store, "what should you call me?") == (
+        "I'll address you as Kay."
+    )
+    assert _handle(memory_store, "how should you address me?") == (
+        "I'll address you as Kay."
+    )
+    assert len(memory_store.active_rows("vault-a")) == 1
+
+    forgot = _handle(memory_store, "forget my name")
+    assert "Forgot" in forgot
+    assert "don't have" in _handle(memory_store, "what is my name")
+    assert memory_store.active_rows("vault-a") == []
+
+
 def test_travel_memory_immediate_after_save_and_encrypted_list(memory_store):
     proposal = dpm.handle_personal_memory_turn(
         vault_id="vault-a",

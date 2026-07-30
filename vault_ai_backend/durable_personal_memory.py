@@ -222,6 +222,12 @@ _SELF_NAME_FACT_RE = re.compile(
     r"(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
+_SELF_CALL_ME_FACT_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:call\s+me|address\s+me\s+as|"
+    r"refer\s+to\s+me\s+as|you\s+can\s+call\s+me)\s+"
+    r"(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
 _SELF_NAME_RECALL_RE = re.compile(
     r"^\s*(?:what(?:'s|\s+is)|who\s+am)\s+(?:is\s+)?"
     r"(?:my\s+name|i)\s*" + _END_PUNCT_RE,
@@ -374,6 +380,11 @@ def _clean_message(message: str) -> str:
 def _clip(value: Any, max_len: int = _MAX_FIELD_LEN) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     return text[:max_len]
+
+
+def _display_name_value(value: Any) -> str:
+    text = _clip(value, 120)
+    return re.sub(r"[.!?]+$", "", text).strip()
 
 
 def _slug(value: str) -> str:
@@ -614,9 +625,9 @@ def _parse_fact_statement(
             needs_clarification=not bool(value),
         )
 
-    m = _SELF_NAME_FACT_RE.match(text)
+    m = _SELF_NAME_FACT_RE.match(text) or _SELF_CALL_ME_FACT_RE.match(text)
     if m:
-        value = _clip(m.group("value"), 120)
+        value = _display_name_value(m.group("value"))
         return PersonalMemoryIntent(
             action=action,
             subject="self",
@@ -1529,7 +1540,12 @@ def _save_memory(
                     f"I already have that saved: "
                     f"{_saved_text(intent, verb='').lstrip(': ').rstrip('.') }."
                 )
-            if not intent.is_correction:
+            auto_replace_existing = (
+                intent.subject == "self"
+                and intent.attribute == "display_name"
+                and intent.action == "save"
+            )
+            if not intent.is_correction and not auto_replace_existing:
                 conn.rollback()
                 return (
                     f"I already have {intent.title} saved. If that is wrong, "
