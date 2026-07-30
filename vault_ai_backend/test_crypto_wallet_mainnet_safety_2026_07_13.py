@@ -171,8 +171,18 @@ class MainnetEthBalancePlusGasCheck(unittest.TestCase):
         # and idempotency cache are pristine between tests.
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
         _seed_wallet(self._wallet_mod)
+        import evm_rpc
+        self._chain_patch = mock.patch.multiple(
+            evm_rpc,
+            eth_chain_id_at_url=mock.DEFAULT,
+            eth_block_number_at_url=mock.DEFAULT,
+        )
+        self._chain_mocks = self._chain_patch.start()
+        self._chain_mocks["eth_chain_id_at_url"].return_value = 1
+        self._chain_mocks["eth_block_number_at_url"].return_value = 19_000_000
 
     def tearDown(self) -> None:
+        self._chain_patch.stop()
         _clear_all_env()
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
 
@@ -265,6 +275,27 @@ class MainnetEthBalancePlusGasCheck(unittest.TestCase):
         ):
             body = self._post_eth_draft("0.05")
         self.assertEqual(body["status"], "draft_ready")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["blockNumber"], 19_000_000)
+        self.assertEqual(body["confirmedBalanceWei"], str(balance_wei))
+        self.assertEqual(body["spendableBalanceWei"], str(balance_wei))
+        self.assertEqual(body["estimatedFeeWei"], str(fee_wei))
+        self.assertEqual(body["maximumFeeWei"], str(fee_wei))
+        self.assertEqual(body["totalMaximumDebitWei"], str(value_wei + fee_wei))
+        self.assertEqual(body["remainingBalanceWei"], "1")
+
+    def test_eth_send_rejected_when_rpc_reports_wrong_chain(self) -> None:
+        import evm_rpc
+        self._chain_mocks["eth_chain_id_at_url"].return_value = 11155111
+        with mock.patch.object(
+            evm_rpc, "eth_get_transaction_count_at_url",
+        ) as nonce:
+            body = self._post_eth_draft("0.05")
+        self.assertEqual(body["status"], "draft_unavailable")
+        self.assertEqual(body["reason"], "chain_mismatch")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["chainIdObserved"], 11155111)
+        nonce.assert_not_called()
 
     def test_eth_send_rejected_when_balance_check_rpc_fails(
         self,
@@ -327,8 +358,18 @@ class MainnetErc20BalanceAndGasCheck(unittest.TestCase):
         _enable_mainnet_send()
         self._client, self._app, self._wallet_mod = _make_app_client()
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
+        import evm_rpc
+        self._chain_patch = mock.patch.multiple(
+            evm_rpc,
+            eth_chain_id_at_url=mock.DEFAULT,
+            eth_block_number_at_url=mock.DEFAULT,
+        )
+        self._chain_mocks = self._chain_patch.start()
+        self._chain_mocks["eth_chain_id_at_url"].return_value = 1
+        self._chain_mocks["eth_block_number_at_url"].return_value = 19_000_000
 
     def tearDown(self) -> None:
+        self._chain_patch.stop()
         _clear_all_env()
         self._wallet_mod.reset_mainnet_safety_state_for_tests()
 
@@ -426,6 +467,17 @@ class MainnetErc20BalanceAndGasCheck(unittest.TestCase):
         ):
             body = self._post_usdt_draft("1.0")
         self.assertEqual(body["status"], "draft_ready")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["blockNumber"], 19_000_000)
+        self.assertEqual(body["confirmedBalanceWei"], str(1 * (10 ** 18)))
+        self.assertEqual(body["spendableBalanceWei"], str(1 * (10 ** 18)))
+        self.assertEqual(body["estimatedFeeWei"], str(60_000 * 1_000_000_000))
+        self.assertEqual(body["maximumFeeWei"], str(60_000 * 1_000_000_000))
+        self.assertEqual(body["totalMaximumDebitWei"], str(60_000 * 1_000_000_000))
+        self.assertEqual(
+            body["remainingBalanceWei"],
+            str((1 * (10 ** 18)) - (60_000 * 1_000_000_000)),
+        )
 
 
 class MainnetWalletBroadcastConcurrency(unittest.TestCase):
@@ -788,6 +840,8 @@ class MainnetRpcMethodContract(unittest.TestCase):
             ALLOWED_RPC_METHODS,
             frozenset({
                 "eth_getBalance",
+                "eth_chainId",
+                "eth_blockNumber",
                 "eth_call",
                 "eth_getTransactionCount",
                 "eth_gasPrice",

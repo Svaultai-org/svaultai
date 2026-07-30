@@ -332,6 +332,19 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   }
 
   @override
+  void didUpdateWidget(covariant CryptoWalletEnginePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.authToken != widget.authToken ||
+        oldWidget.apiClient != widget.apiClient) {
+      setState(() {
+        _features = null;
+        _liveStore.clear();
+      });
+      _loadFeatures();
+    }
+  }
+
+  @override
   void dispose() {
     _liveStore.removeListener(_onLiveStoreChanged);
     super.dispose();
@@ -707,6 +720,24 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
       );
       return;
     }
+    final assetState = liveAssetState[assetForPanel];
+    final ethState = liveAssetState['ETH'];
+    final isToken =
+        assetForPanel == 'USDT_ERC20' || assetForPanel == 'USDC_ERC20';
+    double? parseAmount(DashboardAssetLiveState? s) {
+      final raw = s?.balanceAmount;
+      if (raw == null || raw.isEmpty) return null;
+      return double.tryParse(raw);
+    }
+
+    BigInt? parseBaseUnits(DashboardAssetLiveState? s) {
+      final raw = s?.spendableBalanceBaseUnits ??
+          s?.confirmedBalanceBaseUnits ??
+          s?.balanceBaseUnits;
+      if (raw == null || raw.isEmpty) return null;
+      return BigInt.tryParse(raw);
+    }
+
     if (!ctx.mounted) return;
     showCryptoWalletSheet<void>(
       context: ctx,
@@ -725,6 +756,11 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         network: effectiveNetwork,
         mainnetSendEnabled: sendEnabled,
         mainnetSendPaused: sendPaused,
+        fetchAvailableBalance: () async => parseAmount(assetState),
+        fetchAvailableBalanceWei: () async => parseBaseUnits(assetState),
+        fetchEthBalance: isToken ? () async => parseAmount(ethState) : null,
+        fetchEthBalanceWei:
+            isToken ? () async => parseBaseUnits(ethState) : null,
       ),
     );
   }
@@ -801,6 +837,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
           child: RefreshIndicator(
             key: const Key('crypto_wallet_engine_page_refresh_indicator'),
             onRefresh: () async {
+              await onFeatureRefreshRequested?.call();
               final cb = onAssetLiveRefreshRequested;
               if (cb == null) return;
               for (final asset in kCryptoWalletEngineAssets) {

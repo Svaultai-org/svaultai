@@ -307,6 +307,12 @@ class MainnetRoutesTests(unittest.TestCase):
 
         import evm_rpc
         with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url",
+            return_value=1,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url",
+            return_value=19_000_000,
+        ), mock.patch.object(
             evm_rpc, "eth_get_balance_wei_at_url",
             side_effect=_stub,
         ):
@@ -318,8 +324,44 @@ class MainnetRoutesTests(unittest.TestCase):
         self.assertEqual(body["availableAmount"], "1.5")
         self.assertEqual(body["unit"], "ETH")
         self.assertEqual(body["network"], "Ethereum Mainnet")
+        self.assertEqual(body["networkId"], "ethereum_mainnet")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["blockNumber"], 19_000_000)
+        self.assertEqual(
+            body["confirmedBalanceWei"], "1500000000000000000",
+        )
+        self.assertEqual(
+            body["spendableBalanceWei"], "1500000000000000000",
+        )
                                                                
         self.assertEqual(captured_urls, ["https://example.invalid/mainnet"])
+
+    def test_M9b_mainnet_balance_rejects_wrong_chain(self) -> None:
+        _set_env(
+            VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED="true",
+            VAULTAI_CRYPTO_ETH_MAINNET_RECEIVE_ENABLED="true",
+            ETHEREUM_MAINNET_RPC_URL="https://example.invalid/mainnet",
+        )
+        import evm_rpc
+        with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url",
+            return_value=11155111,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url",
+            return_value=19_000_000,
+        ), mock.patch.object(
+            evm_rpc, "eth_get_balance_wei_at_url",
+        ) as get_balance:
+            resp = self._client.get(
+                "/crypto/wallet/network/ethereum_mainnet/ETH/balance"
+                "?address=0x" + "bb" * 20,
+            )
+        body = resp.json()
+        self.assertEqual(body["balanceStatus"], "unavailable")
+        self.assertEqual(body["reason"], "chain_mismatch")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["chainIdObserved"], 11155111)
+        get_balance.assert_not_called()
 
     def test_M8b_mainnet_balance_rpc_error(self) -> None:
         _set_env(
@@ -334,6 +376,12 @@ class MainnetRoutesTests(unittest.TestCase):
             raise EvmRpcError("upstream_io")
 
         with mock.patch.object(
+            evm_rpc, "eth_chain_id_at_url",
+            return_value=1,
+        ), mock.patch.object(
+            evm_rpc, "eth_block_number_at_url",
+            return_value=19_000_000,
+        ), mock.patch.object(
             evm_rpc, "eth_get_balance_wei_at_url",
             side_effect=_stub_err,
         ):

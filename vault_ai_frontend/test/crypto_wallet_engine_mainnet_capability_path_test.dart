@@ -8,11 +8,12 @@ import 'package:vault_ai_frontend/ui/crypto_wallet_engine_page.dart';
 
 class _CapabilityClient extends VaultAIClient {
   Map<String, dynamic> featuresResponse;
+  Object? featuresError;
 
   int featuresCalls = 0;
   final List<String> receiveNetworkCalls = [];
 
-  _CapabilityClient(this.featuresResponse)
+  _CapabilityClient(this.featuresResponse, {this.featuresError})
       : super(baseUrl: 'http://test.invalid');
 
   @override
@@ -20,6 +21,8 @@ class _CapabilityClient extends VaultAIClient {
     required String authToken,
   }) async {
     featuresCalls += 1;
+    final error = featuresError;
+    if (error != null) throw error;
     return featuresResponse;
   }
 
@@ -67,6 +70,7 @@ Map<String, dynamic> _mainnetFeatures({
 Future<void> _pumpWallet(
   WidgetTester tester, {
   required _CapabilityClient client,
+  String authToken = 'tok',
 }) async {
   tester.view.physicalSize = const Size(1200, 2400);
   tester.view.devicePixelRatio = 1.0;
@@ -79,7 +83,7 @@ Future<void> _pumpWallet(
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: CryptoWalletEnginePage(
-          authToken: 'tok',
+          authToken: authToken,
           apiClient: client,
           encryptForVault: (plaintext) async => 'ct:$plaintext',
           decryptForVault: (ciphertext) async => 'pk',
@@ -150,6 +154,84 @@ void main() {
         expect(
           find.text('Mainnet sending is temporarily paused.'),
           findsWidgets,
+        );
+      },
+    );
+
+    testWidgets(
+      'receive enabled but send disabled keeps Receive visible and Send hidden',
+      (tester) async {
+        final client = _CapabilityClient(_mainnetFeatures(
+          mainnetSendEnabled: false,
+          mainnetSendPaused: false,
+        ));
+
+        await _pumpWallet(tester, client: client);
+
+        for (final asset in const ['ETH', 'USDT_ERC20', 'USDC_ERC20']) {
+          expect(
+            find.byKey(Key('crypto_wallet_engine_card_receive_btn_$asset')),
+            findsOneWidget,
+            reason: '$asset Receive should remain available from receive '
+                'capability even when send is disabled',
+          );
+          expect(
+            find.byKey(Key('crypto_wallet_engine_card_send_btn_$asset')),
+            findsNothing,
+            reason: '$asset Send must not infer permission from receive',
+          );
+        }
+      },
+    );
+
+    testWidgets(
+      'features request failure fails closed instead of enabling send',
+      (tester) async {
+        final client = _CapabilityClient(
+          _mainnetFeatures(
+            mainnetSendEnabled: true,
+            mainnetSendPaused: false,
+          ),
+          featuresError: Exception('capability unavailable'),
+        );
+
+        await _pumpWallet(tester, client: client);
+
+        expect(client.featuresCalls, 1);
+        for (final asset in const ['ETH', 'USDT_ERC20', 'USDC_ERC20']) {
+          expect(
+            find.byKey(Key('crypto_wallet_engine_card_send_btn_$asset')),
+            findsNothing,
+          );
+        }
+      },
+    );
+
+    testWidgets(
+      'auth token change clears stale enabled capability and reloads disabled',
+      (tester) async {
+        final client = _CapabilityClient(_mainnetFeatures(
+          mainnetSendEnabled: true,
+          mainnetSendPaused: false,
+        ));
+
+        await _pumpWallet(tester, client: client, authToken: 'tok-account-a');
+        expect(
+          find.byKey(const Key('crypto_wallet_engine_card_send_btn_ETH')),
+          findsOneWidget,
+        );
+
+        client.featuresResponse = _mainnetFeatures(
+          mainnetSendEnabled: false,
+          mainnetSendPaused: false,
+        );
+        await _pumpWallet(tester, client: client, authToken: 'tok-account-b');
+
+        expect(client.featuresCalls, 2);
+        expect(
+          find.byKey(const Key('crypto_wallet_engine_card_send_btn_ETH')),
+          findsNothing,
+          reason: 'Account B must not inherit Account A capability state',
         );
       },
     );

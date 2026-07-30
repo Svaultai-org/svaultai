@@ -158,6 +158,27 @@ void main() {
       expect(feats.mainnetSendEnabled, isFalse);
     });
 
+    test('PF1c: malformed capability fields fail closed', () {
+      final feats = CryptoWalletFeatures.fromBackend(const {
+        'walletEngineEnabled': 'true',
+        'mainnetReceiveEnabled': 'true',
+        'mainnetErc20ReceiveEnabled': 1,
+        'mainnetSendEnabled': 'yes',
+        'mainnetSendPaused': 'false',
+        'defaultNetwork': 1,
+        'defaultNetworkConfigValid': 'true',
+        'supportedNetworks': 'ethereum_mainnet',
+      });
+
+      expect(feats.walletEngineEnabled, isFalse);
+      expect(feats.effectiveMainnetReceiveEnabled, isFalse);
+      expect(feats.effectiveMainnetErc20ReceiveEnabled, isFalse);
+      expect(feats.effectiveMainnetSendEnabled, isFalse);
+      expect(feats.defaultNetwork, isEmpty);
+      expect(feats.defaultNetworkConfigValid, isFalse);
+      expect(feats.supportedNetworks, isEmpty);
+    });
+
     test('PF2: effectiveMainnetSendEnabled follows backend enabled + pause',
         () {
       
@@ -179,13 +200,23 @@ void main() {
       expect(feats.effectiveMainnetSendEnabled, isFalse);
     });
 
-    test('PF-receive-effective: receive flags also AND with build flag',
+    test('PF-receive-effective: receive follows backend capability',
         () {
       final feats = CryptoWalletFeatures.fromBackend(const {
         'mainnetReceiveEnabled':    true,
         'mainnetErc20ReceiveEnabled': true,
       });
       
+      expect(feats.effectiveMainnetReceiveEnabled, isTrue);
+      expect(feats.effectiveMainnetErc20ReceiveEnabled, isTrue);
+    });
+
+    test('PF-receive-effective: backend-off remains disabled', () {
+      final feats = CryptoWalletFeatures.fromBackend(const {
+        'mainnetReceiveEnabled': false,
+        'mainnetErc20ReceiveEnabled': false,
+      });
+
       expect(feats.effectiveMainnetReceiveEnabled, isFalse);
       expect(feats.effectiveMainnetErc20ReceiveEnabled, isFalse);
     });

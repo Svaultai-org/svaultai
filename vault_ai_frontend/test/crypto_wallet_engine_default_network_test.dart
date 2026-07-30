@@ -150,16 +150,24 @@ void main() {
       );
     });
 
-    test('mainnetActive gates on compile-time receive flag', () {
+    test('mainnetActive follows backend receive capability', () {
       final f = CryptoWalletFeatures.fromBackend({
         'defaultNetwork': 'ethereum_mainnet',
         'defaultNetworkConfigValid': true,
         'mainnetReceiveEnabled': true,
         'mainnetErc20ReceiveEnabled': true,
       });
-      final compileTimeOn = kCryptoWalletEngineMainnetReceiveEnabled
-          && kCryptoWalletEngineMainnetErc20ReceiveEnabled;
-      expect(f.mainnetActive, equals(compileTimeOn && f.isMainnetDefault));
+      expect(f.mainnetActive, isTrue);
+    });
+
+    test('mainnetActive fails closed when backend receive is disabled', () {
+      final f = CryptoWalletFeatures.fromBackend({
+        'defaultNetwork': 'ethereum_mainnet',
+        'defaultNetworkConfigValid': true,
+        'mainnetReceiveEnabled': false,
+        'mainnetErc20ReceiveEnabled': true,
+      });
+      expect(f.mainnetActive, isFalse);
     });
   });
 

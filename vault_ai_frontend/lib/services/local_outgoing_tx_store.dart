@@ -30,7 +30,6 @@
 
 import 'package:flutter/foundation.dart';
 
-
 /// Coarse local status classification. Maps 1:1 to the honest
 /// user-facing state; NOT a mirror of the backend's
 /// `broadcast_outcome` (which is finer-grained).
@@ -73,7 +72,6 @@ enum LocalOutgoingTxStatus {
   dropped,
 }
 
-
 extension LocalOutgoingTxStatusX on LocalOutgoingTxStatus {
   String get wireName {
     switch (this) {
@@ -110,12 +108,17 @@ extension LocalOutgoingTxStatusX on LocalOutgoingTxStatus {
   }
 }
 
-
 /// A single local outgoing transaction record. Persisted only for
 /// the current session. Merged with indexer results by `txHash`
 /// (case-insensitive).
 @immutable
 class LocalOutgoingTx {
+  /// Deterministic local attempt identifier. Generated before the
+  /// broadcast call and stable across the row's lifecycle so the UI
+  /// can reason about "one user confirmation -> one outgoing
+  /// attempt" even before/alongside the transaction hash.
+  final String localAttemptId;
+
   /// keccak256(rawSignedTx). Non-empty. Case is preserved.
   final String txHash;
 
@@ -142,6 +145,12 @@ class LocalOutgoingTx {
   /// Asset id (`ETH`, `USDT_ERC20`, `USDC_ERC20`).
   final String asset;
 
+  /// EVM chain id from the server-authorized draft.
+  final int? chainId;
+
+  /// EVM nonce from the server-authorized draft.
+  final BigInt? nonce;
+
   /// Local wall-clock time the row was created (broadcast start).
   final DateTime createdAt;
 
@@ -156,6 +165,7 @@ class LocalOutgoingTx {
   final String? reason;
 
   const LocalOutgoingTx({
+    String? localAttemptId,
     required this.txHash,
     required this.fromAddress,
     required this.toAddress,
@@ -164,11 +174,13 @@ class LocalOutgoingTx {
     required this.feeWei,
     required this.networkId,
     required this.asset,
+    this.chainId,
+    this.nonce,
     required this.createdAt,
     required this.updatedAt,
     required this.status,
     this.reason,
-  });
+  }) : localAttemptId = localAttemptId ?? txHash;
 
   LocalOutgoingTx copyWith({
     LocalOutgoingTxStatus? status,
@@ -184,6 +196,9 @@ class LocalOutgoingTx {
       feeWei: feeWei,
       networkId: networkId,
       asset: asset,
+      localAttemptId: localAttemptId,
+      chainId: chainId,
+      nonce: nonce,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       status: status ?? this.status,
@@ -191,7 +206,6 @@ class LocalOutgoingTx {
     );
   }
 }
-
 
 /// In-memory store of local outgoing transactions for the current
 /// session. Widgets read via `provider`.
@@ -212,9 +226,11 @@ class LocalOutgoingTxStore extends ChangeNotifier {
     required String networkId,
     required String asset,
   }) {
-    final xs = _byHash.values.where(
-      (r) => r.networkId == networkId && r.asset == asset,
-    ).toList();
+    final xs = _byHash.values
+        .where(
+          (r) => r.networkId == networkId && r.asset == asset,
+        )
+        .toList();
     xs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return xs;
   }
@@ -258,7 +274,6 @@ class LocalOutgoingTxStore extends ChangeNotifier {
     notifyListeners();
   }
 }
-
 
 /// Documented time window after which a `submissionUncertain` row
 /// is escalated to `dropped` — the backend has said "not yet

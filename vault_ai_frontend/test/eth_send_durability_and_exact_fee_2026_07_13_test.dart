@@ -31,7 +31,6 @@ import 'package:vault_ai_frontend/services/local_outgoing_tx_store.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_activity_card.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_send_panel.dart';
 
-
 const List<LocalizationsDelegate<Object?>> _l10n = [
   AppLocalizations.delegate,
   GlobalMaterialLocalizations.delegate,
@@ -39,17 +38,15 @@ const List<LocalizationsDelegate<Object?>> _l10n = [
   GlobalCupertinoLocalizations.delegate,
 ];
 
-
 const String _kFrom = '0xDA3D577784075Eb7011E60Cb8A5f0AE33f682855';
 const String _kDest = '0x7C49215A2cB86aaC3e6308EA4D6206912578e870';
 const String _kAmount = '0.0056';
 
-
 Map<String, Object?> _draftReadyEth({
   String amountEth = _kAmount,
-  String amountWei = '5600000000000000',   // 0.0056 * 1e18
-  String gasLimit  = '21000',
-  String gasPrice  = '20000000000',        // 20 gwei → fee = 4.2e14 wei
+  String amountWei = '5600000000000000', // 0.0056 * 1e18
+  String gasLimit = '21000',
+  String gasPrice = '20000000000', // 20 gwei → fee = 4.2e14 wei
 }) {
   return {
     'status': 'draft_ready',
@@ -62,7 +59,7 @@ Map<String, Object?> _draftReadyEth({
     'nonce': '3',
     'gasLimit': gasLimit,
     'gasPrice': gasPrice,
-    'chainId': 1,
+    'chainId': 11155111,
     'feeUnit': 'wei',
   };
 }
@@ -78,7 +75,7 @@ Map<String, Object?> _draftReadyUsdt({
     'fromAddress': _kFrom,
     'destinationAddress': _kDest,
     'amount': amount,
-    'amountBaseUnits': '5000000',  // 5.0 USDT with 6 decimals
+    'amountBaseUnits': '5000000', // 5.0 USDT with 6 decimals
     'unit': 'USDT',
     'transactionTo': '0xdadadadadadadadadadadadadadadadadadadada',
     'transactionValueWei': '0',
@@ -90,13 +87,12 @@ Map<String, Object?> _draftReadyUsdt({
     'nonce': '3',
     'gasLimit': gasLimit,
     'gasPrice': gasPrice,
-    'chainId': 1,
+    'chainId': 11155111,
     'feeUnit': 'wei',
     'tokenContract': '0xdadadadadadadadadadadadadadadadadadadada',
     'decimals': 6,
   };
 }
-
 
 class _FakeDurabilityClient extends VaultAIClient {
   final Map<String, dynamic> draftResponse;
@@ -167,8 +163,7 @@ class _FakeDurabilityClient extends VaultAIClient {
   }
 
   @override
-  Future<Map<String, dynamic>>
-      broadcastCryptoWalletSignedTransaction({
+  Future<Map<String, dynamic>> broadcastCryptoWalletSignedTransaction({
     required String asset,
     required String authToken,
     required Object signedTransaction,
@@ -178,8 +173,7 @@ class _FakeDurabilityClient extends VaultAIClient {
   }
 
   @override
-  Future<Map<String, dynamic>>
-      broadcastCryptoWalletSignedTransactionNetwork({
+  Future<Map<String, dynamic>> broadcastCryptoWalletSignedTransactionNetwork({
     required String network,
     required String asset,
     required String authToken,
@@ -192,14 +186,12 @@ class _FakeDurabilityClient extends VaultAIClient {
   }
 
   @override
-  Future<Map<String, dynamic>>
-      getCryptoWalletOutgoingHistoryNetwork({
+  Future<Map<String, dynamic>> getCryptoWalletOutgoingHistoryNetwork({
     required String network,
     required String authToken,
   }) async {
     outgoingHistoryCallCount++;
-    return outgoingHistoryResponse ??
-        const {'status': 'ok', 'outgoing': []};
+    return outgoingHistoryResponse ?? const {'status': 'ok', 'outgoing': []};
   }
 
   @override
@@ -219,7 +211,6 @@ class _FakeDurabilityClient extends VaultAIClient {
   }) async =>
       const {'transactionsStatus': 'unavailable', 'transactions': []};
 }
-
 
 Future<void> _pumpPanel(
   WidgetTester tester, {
@@ -256,8 +247,7 @@ Future<void> _pumpPanel(
   await tester.pump();
 }
 
-
-Future<void> _driveThroughToPin(
+Future<void> _driveThroughToReview(
   WidgetTester tester, {
   String amount = _kAmount,
 }) async {
@@ -271,10 +261,16 @@ Future<void> _driveThroughToPin(
   );
   await tester.tap(find.byKey(const Key('eth_send_panel_review_btn')));
   await tester.pumpAndSettle();
+}
+
+Future<void> _driveThroughToPin(
+  WidgetTester tester, {
+  String amount = _kAmount,
+}) async {
+  await _driveThroughToReview(tester, amount: amount);
   await tester.tap(find.byKey(const Key('eth_send_panel_confirm_btn')));
   await tester.pumpAndSettle();
 }
-
 
 void main() {
   group('Integer-exact fee authorization — ETH', () {
@@ -293,8 +289,8 @@ void main() {
         },
       );
       // valueWei = 5.6e15, fee = 21000 * 20e9 = 4.2e14, sum = 6.02e15.
-      final exactAvail = BigInt.from(5600000000000000)
-          + BigInt.from(21000) * BigInt.from(20000000000);
+      final exactAvail = BigInt.from(5600000000000000) +
+          BigInt.from(21000) * BigInt.from(20000000000);
       await _pumpPanel(
         tester,
         client: client,
@@ -305,7 +301,8 @@ void main() {
       await _driveThroughToPin(tester);
       // PIN dialog. Submit the PIN.
       await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
+        find.byKey(const Key('eth_send_panel_pin_input')),
+        '1234',
       );
       await tester.tap(
         find.byKey(const Key('eth_send_panel_pin_confirm')),
@@ -315,7 +312,7 @@ void main() {
       expect(client.draftCallCount, 1);
       expect(client.encryptedSecretCallCount, 1);
       expect(client.broadcastCallCount, 1,
-        reason: 'Exactly-at-the-limit balance MUST be authorized.');
+          reason: 'Exactly-at-the-limit balance MUST be authorized.');
     });
 
     testWidgets(
@@ -332,9 +329,9 @@ void main() {
           'txHash': '0xdeadbeef',
         },
       );
-      final shortByOneWei = BigInt.from(5600000000000000)
-          + BigInt.from(21000) * BigInt.from(20000000000)
-          - BigInt.one;
+      final shortByOneWei = BigInt.from(5600000000000000) +
+          BigInt.from(21000) * BigInt.from(20000000000) -
+          BigInt.one;
       await _pumpPanel(
         tester,
         client: client,
@@ -342,21 +339,14 @@ void main() {
         fetchAvailableBalance: () async => 1.0,
         fetchAvailableBalanceWei: () async => shortByOneWei,
       );
-      await _driveThroughToPin(tester);
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester);
       // Draft ran (backend gate is separate), but NO signing, NO
       // secret fetch, NO broadcast.
       expect(client.draftCallCount, 1);
       expect(client.encryptedSecretCallCount, 0,
-        reason: '1-wei short MUST block secret fetch.');
+          reason: '1-wei short MUST block secret fetch.');
       expect(client.broadcastCallCount, 0,
-        reason: '1-wei short MUST block broadcast.');
+          reason: '1-wei short MUST block broadcast.');
       expect(
         find.text(kMainnetSendExactFeeInsufficientEthError),
         findsOneWidget,
@@ -365,8 +355,7 @@ void main() {
 
     testWidgets(
         'fetchAvailableBalanceWei returns null → BLOCKED, no secret '
-        'fetch, no broadcast, error "exact fee unverified"',
-        (tester) async {
+        'fetch, no broadcast, error "exact fee unverified"', (tester) async {
       final client = _FakeDurabilityClient(
         draftResponse: _draftReadyEth().cast<String, dynamic>(),
         encryptedSecretResponse: const {
@@ -385,18 +374,11 @@ void main() {
         fetchAvailableBalance: () async => 1.0,
         fetchAvailableBalanceWei: () async => null,
       );
-      await _driveThroughToPin(tester);
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester);
       expect(client.encryptedSecretCallCount, 0);
       expect(client.broadcastCallCount, 0);
       expect(
-        find.text(kMainnetSendExactFeeUnverifiedError),
+        find.text(kMainnetSendBalanceUnverifiedError),
         findsOneWidget,
       );
     });
@@ -423,18 +405,11 @@ void main() {
         fetchAvailableBalanceWei: () async =>
             throw Exception('rpc down mid-flow'),
       );
-      await _driveThroughToPin(tester);
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester);
       expect(client.encryptedSecretCallCount, 0);
       expect(client.broadcastCallCount, 0);
       expect(
-        find.text(kMainnetSendExactFeeUnverifiedError),
+        find.text(kMainnetSendBalanceUnverifiedError),
         findsOneWidget,
       );
     });
@@ -471,18 +446,11 @@ void main() {
         fetchAvailableBalance: () async => 999999.0,
         fetchAvailableBalanceWei: () async => exact - BigInt.one,
       );
-      await _driveThroughToPin(tester);
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester);
       expect(client.encryptedSecretCallCount, 0,
-        reason: 'BigInt subtraction of 1 wei from a 78-bit balance '
-                'MUST block signing. A double conversion would round '
-                'past this boundary and mis-allow the transaction.');
+          reason: 'BigInt subtraction of 1 wei from a 78-bit balance '
+              'MUST block signing. A double conversion would round '
+              'past this boundary and mis-allow the transaction.');
       expect(client.broadcastCallCount, 0);
     });
 
@@ -493,8 +461,8 @@ void main() {
       // Balance = 5.6e15 + 21000 * 20e9 = 6.02e15 wei. Fine for the
       // FIRST draft (gasPrice=20 gwei). Backend re-draft with a
       // higher gasPrice must be BLOCKED by the exact fee re-check.
-      final oldBalance = BigInt.from(5600000000000000)
-          + BigInt.from(21000) * BigInt.from(20000000000);
+      final oldBalance = BigInt.from(5600000000000000) +
+          BigInt.from(21000) * BigInt.from(20000000000);
       final client = _FakeDurabilityClient(
         // The re-drafted response uses 100 gwei — 5x the original.
         draftResponse: _draftReadyEth(
@@ -518,25 +486,17 @@ void main() {
         // number of wei.
         fetchAvailableBalanceWei: () async => oldBalance,
       );
-      await _driveThroughToPin(tester);
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester);
       expect(client.broadcastCallCount, 0);
       expect(client.encryptedSecretCallCount, 0,
-        reason: 'Draft-bumped gas price must trigger integer-exact '
-                're-check failure BEFORE any secret fetch.');
+          reason: 'Draft-bumped gas price must trigger integer-exact '
+              're-check failure BEFORE any secret fetch.');
       expect(
         find.text(kMainnetSendExactFeeInsufficientEthError),
         findsOneWidget,
       );
     });
   });
-
 
   group('Integer-exact fee authorization — ERC-20', () {
     testWidgets(
@@ -565,14 +525,7 @@ void main() {
         // ETH exactly one wei short of the fee.
         fetchEthBalanceWei: () async => feeWei - BigInt.one,
       );
-      await _driveThroughToPin(tester, amount: '5');
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester, amount: '5');
       expect(client.encryptedSecretCallCount, 0);
       expect(client.broadcastCallCount, 0);
       expect(
@@ -609,7 +562,8 @@ void main() {
       );
       await _driveThroughToPin(tester, amount: '5');
       await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
+        find.byKey(const Key('eth_send_panel_pin_input')),
+        '1234',
       );
       await tester.tap(
         find.byKey(const Key('eth_send_panel_pin_confirm')),
@@ -623,8 +577,7 @@ void main() {
       );
     });
 
-    testWidgets(
-        'ERC20 both exact — authorized, secret + broadcast happen',
+    testWidgets('ERC20 both exact — authorized, secret + broadcast happen',
         (tester) async {
       final client = _FakeDurabilityClient(
         draftResponse: _draftReadyUsdt().cast<String, dynamic>(),
@@ -649,7 +602,8 @@ void main() {
       );
       await _driveThroughToPin(tester, amount: '5');
       await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
+        find.byKey(const Key('eth_send_panel_pin_input')),
+        '1234',
       );
       await tester.tap(
         find.byKey(const Key('eth_send_panel_pin_confirm')),
@@ -660,8 +614,8 @@ void main() {
     });
   });
 
-
-  group('Ordering: balance → draft → exact fee re-check → secret '
+  group(
+      'Ordering: balance → draft → exact fee re-check → secret '
       'fetch → sign → broadcast', () {
     testWidgets(
         'exact-fee failure aborts BEFORE the encrypted secret is '
@@ -684,25 +638,17 @@ void main() {
         fetchAvailableBalance: () async => 1.0,
         fetchAvailableBalanceWei: () async => BigInt.one,
       );
-      await _driveThroughToPin(tester);
-      await tester.enterText(
-        find.byKey(const Key('eth_send_panel_pin_input')), '1234',
-      );
-      await tester.tap(
-        find.byKey(const Key('eth_send_panel_pin_confirm')),
-      );
-      await tester.pumpAndSettle();
+      await _driveThroughToReview(tester);
       // KEY ORDERING INVARIANT:
       //   PIN dialog succeeded → BUT encrypted secret was NEVER
       //   fetched because the exact-fee gate blocked. The user's
       //   private key ciphertext never left the backend.
       expect(client.encryptedSecretCallCount, 0,
-        reason: 'Encrypted secret fetch MUST come AFTER the exact '
-                'fee gate.');
+          reason: 'Encrypted secret fetch MUST come AFTER the exact '
+              'fee gate.');
       expect(client.broadcastCallCount, 0);
     });
   });
-
 
   group('Durable outgoing history — DurableOutgoingHistoryStore', () {
     test('parses backend rows into typed BigInt records', () {
@@ -741,7 +687,8 @@ void main() {
         }),
       ]);
       final rows = store.rowsFor(
-        networkId: 'ethereum_mainnet', asset: 'ETH',
+        networkId: 'ethereum_mainnet',
+        asset: 'ETH',
       );
       expect(rows.length, 1);
       final r = rows.single;
@@ -776,8 +723,8 @@ void main() {
               'feeWei': '21000',
               'chainId': 1,
               'localTxHash':
-              '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-              'aaaaaaaaaaaaaaaa',
+                  '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                      'aaaaaaaaaaaaaaaa',
               'broadcastOutcome': 'submitted',
               'createdAt': 1.0,
               'consumedAt': 2.0,
@@ -793,7 +740,8 @@ void main() {
       await store.refresh('ethereum_mainnet');
       expect(client.outgoingHistoryCallCount, 1);
       final rows = store.rowsFor(
-        networkId: 'ethereum_mainnet', asset: 'ETH',
+        networkId: 'ethereum_mainnet',
+        asset: 'ETH',
       );
       expect(rows.length, 1);
       expect(rows.single.draftId, 'drft-refresh-1');
@@ -838,25 +786,24 @@ void main() {
           'outcomeRecordedAt': c,
         });
       }
+
       store.seedForNetwork('ethereum_mainnet', [
         mk('old', 100.0),
         mk('new', 300.0),
         mk('mid', 200.0),
       ]);
       final rows = store.rowsFor(
-        networkId: 'ethereum_mainnet', asset: 'ETH',
+        networkId: 'ethereum_mainnet',
+        asset: 'ETH',
       );
-      expect(rows.map((r) => r.draftId).toList(),
-          ['new', 'mid', 'old']);
+      expect(rows.map((r) => r.draftId).toList(), ['new', 'mid', 'old']);
     });
   });
-
 
   group('Three-source merge precedence', () {
     testWidgets(
         'chain-observed (indexer) confirmed WINS over durable '
-        'submission_uncertain and local submissionUncertain',
-        (tester) async {
+        'submission_uncertain and local submissionUncertain', (tester) async {
       const hash = '0x'
           '783ddc09728b26884c78da47ee408c40'
           'daa75c89e03700deb216e98ed77c415b';
@@ -866,28 +813,30 @@ void main() {
         broadcastResponse: const {},
         outgoingHistoryResponse: {
           'status': 'ok',
-          'outgoing': <Map<String, Object?>>[{
-            'draftId': 'drft-durable',
-            'networkId': 'ethereum_mainnet',
-            'asset': 'ETH',
-            'unit': 'ETH',
-            'decimals': 18,
-            'fromAddress': _kFrom,
-            'destinationAddress': _kDest,
-            'transactionTo': _kDest,
-            'valueWei': '5600000000000000',
-            'amountBaseUnits': '5600000000000000',
-            'dataHex': '0x',
-            'gasLimit': '21000',
-            'gasPrice': '20000000000',
-            'feeWei': '420000000000000',
-            'chainId': 1,
-            'localTxHash': hash,
-            'broadcastOutcome': 'submission_uncertain',
-            'createdAt': 100.0,
-            'consumedAt': 101.0,
-            'outcomeRecordedAt': 102.0,
-          }],
+          'outgoing': <Map<String, Object?>>[
+            {
+              'draftId': 'drft-durable',
+              'networkId': 'ethereum_mainnet',
+              'asset': 'ETH',
+              'unit': 'ETH',
+              'decimals': 18,
+              'fromAddress': _kFrom,
+              'destinationAddress': _kDest,
+              'transactionTo': _kDest,
+              'valueWei': '5600000000000000',
+              'amountBaseUnits': '5600000000000000',
+              'dataHex': '0x',
+              'gasLimit': '21000',
+              'gasPrice': '20000000000',
+              'feeWei': '420000000000000',
+              'chainId': 1,
+              'localTxHash': hash,
+              'broadcastOutcome': 'submission_uncertain',
+              'createdAt': 100.0,
+              'consumedAt': 101.0,
+              'outcomeRecordedAt': 102.0,
+            }
+          ],
         },
       );
       // Wire a client that DOES surface an indexer row that names
@@ -959,8 +908,7 @@ void main() {
     testWidgets(
         'durable submitted WINS over stale local submitting when '
         'no chain observation exists', (tester) async {
-      const hash =
-          '0x11111111111111111111111111111111'
+      const hash = '0x11111111111111111111111111111111'
           '11111111111111111111111111111111';
       final client = _FakeDurabilityClient(
         draftResponse: const {},
@@ -968,28 +916,30 @@ void main() {
         broadcastResponse: const {},
         outgoingHistoryResponse: {
           'status': 'ok',
-          'outgoing': <Map<String, Object?>>[{
-            'draftId': 'drft-durable-only',
-            'networkId': 'ethereum_mainnet',
-            'asset': 'ETH',
-            'unit': 'ETH',
-            'decimals': 18,
-            'fromAddress': _kFrom,
-            'destinationAddress': _kDest,
-            'transactionTo': _kDest,
-            'valueWei': '5600000000000000',
-            'amountBaseUnits': '5600000000000000',
-            'dataHex': '0x',
-            'gasLimit': '21000',
-            'gasPrice': '20000000000',
-            'feeWei': '420000000000000',
-            'chainId': 1,
-            'localTxHash': hash,
-            'broadcastOutcome': 'submitted',
-            'createdAt': 2000.0,   // durable is fresh
-            'consumedAt': 2000.0,
-            'outcomeRecordedAt': 2000.0,
-          }],
+          'outgoing': <Map<String, Object?>>[
+            {
+              'draftId': 'drft-durable-only',
+              'networkId': 'ethereum_mainnet',
+              'asset': 'ETH',
+              'unit': 'ETH',
+              'decimals': 18,
+              'fromAddress': _kFrom,
+              'destinationAddress': _kDest,
+              'transactionTo': _kDest,
+              'valueWei': '5600000000000000',
+              'amountBaseUnits': '5600000000000000',
+              'dataHex': '0x',
+              'gasLimit': '21000',
+              'gasPrice': '20000000000',
+              'feeWei': '420000000000000',
+              'chainId': 1,
+              'localTxHash': hash,
+              'broadcastOutcome': 'submitted',
+              'createdAt': 2000.0, // durable is fresh
+              'consumedAt': 2000.0,
+              'outcomeRecordedAt': 2000.0,
+            }
+          ],
         },
       );
       final local = LocalOutgoingTxStore();
@@ -1030,7 +980,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text(kActivityStatusSubmitted), findsOneWidget);
       expect(
-        find.text(kActivityStatusSubmissionUncertain), findsNothing,
+        find.text(kActivityStatusSubmissionUncertain),
+        findsNothing,
       );
     });
 
@@ -1040,15 +991,15 @@ void main() {
       // Broadcast just happened this session — the local row says
       // `submitting`, the durable snapshot from mount does not yet
       // include this hash. Local should surface it.
-      const hash =
-          '0x22222222222222222222222222222222'
+      const hash = '0x22222222222222222222222222222222'
           '22222222222222222222222222222222';
       final client = _FakeDurabilityClient(
         draftResponse: const {},
         encryptedSecretResponse: const {},
         broadcastResponse: const {},
         outgoingHistoryResponse: const {
-          'status': 'ok', 'outgoing': <Map<String, Object?>>[],
+          'status': 'ok',
+          'outgoing': <Map<String, Object?>>[],
         },
       );
       final local = LocalOutgoingTxStore();
@@ -1090,10 +1041,8 @@ void main() {
     testWidgets(
         'a durable-only row (no local, no indexer) still renders — '
         'simulating a fresh Flutter web reload where the in-memory '
-        'store is empty but the backend still has the row',
-        (tester) async {
-      const hash =
-          '0x33333333333333333333333333333333'
+        'store is empty but the backend still has the row', (tester) async {
+      const hash = '0x33333333333333333333333333333333'
           '33333333333333333333333333333333';
       final client = _FakeDurabilityClient(
         draftResponse: const {},
@@ -1101,28 +1050,30 @@ void main() {
         broadcastResponse: const {},
         outgoingHistoryResponse: {
           'status': 'ok',
-          'outgoing': <Map<String, Object?>>[{
-            'draftId': 'drft-durable-solo',
-            'networkId': 'ethereum_mainnet',
-            'asset': 'ETH',
-            'unit': 'ETH',
-            'decimals': 18,
-            'fromAddress': _kFrom,
-            'destinationAddress': _kDest,
-            'transactionTo': _kDest,
-            'valueWei': '5600000000000000',
-            'amountBaseUnits': '5600000000000000',
-            'dataHex': '0x',
-            'gasLimit': '21000',
-            'gasPrice': '20000000000',
-            'feeWei': '420000000000000',
-            'chainId': 1,
-            'localTxHash': hash,
-            'broadcastOutcome': 'submission_uncertain',
-            'createdAt': 100.0,
-            'consumedAt': 101.0,
-            'outcomeRecordedAt': 102.0,
-          }],
+          'outgoing': <Map<String, Object?>>[
+            {
+              'draftId': 'drft-durable-solo',
+              'networkId': 'ethereum_mainnet',
+              'asset': 'ETH',
+              'unit': 'ETH',
+              'decimals': 18,
+              'fromAddress': _kFrom,
+              'destinationAddress': _kDest,
+              'transactionTo': _kDest,
+              'valueWei': '5600000000000000',
+              'amountBaseUnits': '5600000000000000',
+              'dataHex': '0x',
+              'gasLimit': '21000',
+              'gasPrice': '20000000000',
+              'feeWei': '420000000000000',
+              'chainId': 1,
+              'localTxHash': hash,
+              'broadcastOutcome': 'submission_uncertain',
+              'createdAt': 100.0,
+              'consumedAt': 101.0,
+              'outcomeRecordedAt': 102.0,
+            }
+          ],
         },
       );
       // Local store is EMPTY — this is exactly the browser-reload
@@ -1163,8 +1114,7 @@ void main() {
     testWidgets(
         'indexer + durable + local reporting the same hash render '
         'exactly ONCE (no duplicate rows)', (tester) async {
-      const hash =
-          '0x44444444444444444444444444444444'
+      const hash = '0x44444444444444444444444444444444'
           '44444444444444444444444444444444';
       final client = _FakeDurabilityClient(
         draftResponse: const {},
@@ -1172,28 +1122,30 @@ void main() {
         broadcastResponse: const {},
         outgoingHistoryResponse: {
           'status': 'ok',
-          'outgoing': <Map<String, Object?>>[{
-            'draftId': 'drft-multi-source',
-            'networkId': 'ethereum_mainnet',
-            'asset': 'ETH',
-            'unit': 'ETH',
-            'decimals': 18,
-            'fromAddress': _kFrom,
-            'destinationAddress': _kDest,
-            'transactionTo': _kDest,
-            'valueWei': '5600000000000000',
-            'amountBaseUnits': '5600000000000000',
-            'dataHex': '0x',
-            'gasLimit': '21000',
-            'gasPrice': '20000000000',
-            'feeWei': '420000000000000',
-            'chainId': 1,
-            'localTxHash': hash,
-            'broadcastOutcome': 'submitted',
-            'createdAt': 100.0,
-            'consumedAt': 101.0,
-            'outcomeRecordedAt': 102.0,
-          }],
+          'outgoing': <Map<String, Object?>>[
+            {
+              'draftId': 'drft-multi-source',
+              'networkId': 'ethereum_mainnet',
+              'asset': 'ETH',
+              'unit': 'ETH',
+              'decimals': 18,
+              'fromAddress': _kFrom,
+              'destinationAddress': _kDest,
+              'transactionTo': _kDest,
+              'valueWei': '5600000000000000',
+              'amountBaseUnits': '5600000000000000',
+              'dataHex': '0x',
+              'gasLimit': '21000',
+              'gasPrice': '20000000000',
+              'feeWei': '420000000000000',
+              'chainId': 1,
+              'localTxHash': hash,
+              'broadcastOutcome': 'submitted',
+              'createdAt': 100.0,
+              'consumedAt': 101.0,
+              'outcomeRecordedAt': 102.0,
+            }
+          ],
         },
       );
       final withIndexer = _IndexerFakeClient(
@@ -1255,16 +1207,16 @@ void main() {
     });
   });
 
-
   group('DurableOutgoingHistoryStore + activity card wiring', () {
-    testWidgets(
-        'activity card refreshes durable store on mount', (tester) async {
+    testWidgets('activity card refreshes durable store on mount',
+        (tester) async {
       final client = _FakeDurabilityClient(
         draftResponse: const {},
         encryptedSecretResponse: const {},
         broadcastResponse: const {},
         outgoingHistoryResponse: const {
-          'status': 'ok', 'outgoing': <Map<String, Object?>>[],
+          'status': 'ok',
+          'outgoing': <Map<String, Object?>>[],
         },
       );
       final durable = DurableOutgoingHistoryStore(
@@ -1285,13 +1237,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(client.outgoingHistoryCallCount, greaterThanOrEqualTo(1),
-        reason: 'Mounting the activity card MUST kick a durable '
-                'history refresh so a browser reload immediately '
-                'populates from Postgres.');
+          reason: 'Mounting the activity card MUST kick a durable '
+              'history refresh so a browser reload immediately '
+              'populates from Postgres.');
     });
   });
 }
-
 
 /// Test helper that composes a base client with a canned indexer
 /// response, so `listCryptoWalletTransactionsNetwork` returns rows
@@ -1319,13 +1270,13 @@ class _IndexerFakeClient extends VaultAIClient {
   }
 
   @override
-  Future<Map<String, dynamic>>
-      getCryptoWalletOutgoingHistoryNetwork({
+  Future<Map<String, dynamic>> getCryptoWalletOutgoingHistoryNetwork({
     required String network,
     required String authToken,
   }) async {
     return base.getCryptoWalletOutgoingHistoryNetwork(
-      network: network, authToken: authToken,
+      network: network,
+      authToken: authToken,
     );
   }
 }

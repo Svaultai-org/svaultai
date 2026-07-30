@@ -1,5 +1,3 @@
-
-
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -12,8 +10,7 @@ import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
 import '../services/ethereum_transaction.dart';
 import '../services/zk_active_mvk.dart' as zk_mvk_store;
-import '../services/zk_outgoing_history_helper.dart'
-    as zk_history_helper;
+import '../services/zk_outgoing_history_helper.dart' as zk_history_helper;
 import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/evm_networks.dart';
 import '../services/local_outgoing_tx_store.dart';
@@ -21,7 +18,6 @@ import '../services/recipient_qr_parser.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
-
 
 // 2026-07-13: The sheet chrome now supplies the sheet title
 // ("Send ETH"). We keep the constants below for backward-compat with
@@ -34,7 +30,6 @@ const String kEthSendMainnetNetworkBadge = 'Ethereum Mainnet';
 const String kEthSendMainnetSendDisabledBanner =
     'Mainnet send is not enabled in this build. Switch to Ethereum '
     'Sepolia or ask the operator to enable mainnet send.';
-
 
 // 2026-07-13 canary correctness: the previous flow required the user
 // to type a phrase like "SEND ETH" AFTER the Review stage and BEFORE
@@ -76,6 +71,7 @@ const String kMainnetSendEthGasBalanceUnverifiedError =
     'check to try again. Svaultai will not sign or broadcast a token '
     'transfer while the parent ETH balance is unknown.';
 const String kMainnetSendRetryBalanceLabel = 'Retry balance check';
+const String kMainnetSendRetryFeeLabel = 'Retry fee estimate';
 
 // Retained for backward-compat with pre-existing tests that assert
 // on the exact warning string. Runtime code no longer displays it.
@@ -110,17 +106,24 @@ const String kMainnetSendExactFeeGateFailedKey =
     'eth_send_panel_exact_fee_gate_failed';
 const String kMainnetSendFeeEstimateFailedError =
     'Could not estimate network fee. Review and try again.';
+const String kMainnetSendFeeQuoteExpiredError =
+    'Balance or fee quote expired. Tap Review to refresh before signing.';
+const String kMainnetSendFeeQuoteChangedError =
+    'Network fee or balance changed. Review the updated amounts before '
+    'signing.';
+const String kEthSendChainMismatchError =
+    'Network changed before signing. Review the transaction again.';
 const String kMainnetSendPausedBanner =
     'Mainnet sending is temporarily paused.';
-const String kMainnetSendBroadcastSafeError =
-    'Could not submit transaction.';
+const String kMainnetSendBroadcastSafeError = 'Could not submit transaction.';
 const String kMainnetSendRateLimitedError =
     'Too many recent send attempts. Wait a moment before retrying.';
+const Duration kWalletSendQuoteTtl = Duration(seconds: 45);
 
 // 2026-07-13 canary correctness: result screen states + explorer.
-const String kEthSendResultHeadingSubmitted   = 'Transaction submitted';
-const String kEthSendResultHeadingUncertain   = 'Transaction status is uncertain';
-const String kEthSendResultHeadingRejected    = 'Transaction rejected';
+const String kEthSendResultHeadingSubmitted = 'Transaction submitted';
+const String kEthSendResultHeadingUncertain = 'Transaction status is uncertain';
+const String kEthSendResultHeadingRejected = 'Transaction rejected';
 const String kEthSendResultBodySubmitted =
     'Ethereum accepted this transaction. It should appear in your '
     'wallet activity once a node includes it in a block.';
@@ -135,10 +138,10 @@ const String kEthSendResultBodyRejected =
     'policy; retrying requires a fresh draft.';
 const String kEthSendResultViewExplorerLabel = 'View on explorer';
 const String kEthSendResultViewActivityLabel = 'View activity';
-const String kEthSendResultCheckStatusLabel  = 'Check status';
-const String kEthSendResultReturnFormLabel   = 'Start a new send';
-const String kEthSendResultCopyHashLabel     = 'Copy transaction hash';
-const String kEthSendResultCopiedSnackbar    = 'Transaction hash copied';
+const String kEthSendResultCheckStatusLabel = 'Check status';
+const String kEthSendResultReturnFormLabel = 'Start a new send';
+const String kEthSendResultCopyHashLabel = 'Copy transaction hash';
+const String kEthSendResultCopiedSnackbar = 'Transaction hash copied';
 
 /// Mainnet Etherscan URL for a given tx hash. Sepolia handled by
 /// `sepolia.etherscan.io`.
@@ -171,7 +174,6 @@ const String kMainnetSendConfirmPhraseStageKey =
 const String kMainnetSendConfirmPhraseContinueBtnKey =
     'eth_send_panel_mainnet_confirm_phrase_continue_btn';
 
-
 String mainnetSendConfirmPhraseFor(String asset) {
   switch (asset) {
     case 'ETH':
@@ -195,6 +197,7 @@ String mainnetSendConfirmPhrasePromptFor(String asset) {
   }
   return kMainnetSendConfirmPhrasePromptEth;
 }
+
 const String kEthSendDestinationLabel = 'Destination address';
 const String kEthSendAmountLabel = 'Amount (ETH)';
 const String kEthSendMaxActionLabel = 'Max';
@@ -229,14 +232,23 @@ const String kEthSendBroadcastPendingLabel = 'Signing and broadcasting…';
 const String kEthSendSuccessHeading = 'Transaction submitted';
 const String kEthSendErrorBroadcastFailed = 'Broadcast failed.';
 const String kEthSendErrorPinWrong =
-    'PIN failed. The transaction was not signed and was not '
-    'broadcast.';
+    'Incorrect PIN. The transaction was not signed.';
+const String kEthSendErrorPinVerificationFailed =
+    'PIN verification is temporarily unavailable. Nothing was signed or sent.';
 const String kEthSendErrorDraftUnavailable =
     'The backend could not fetch the network fee data. Try again '
     'shortly.';
 const String kEthSendErrorEncryptedSecretMissing =
     'No wallet account for this asset. Create a wallet from the '
     'Receive panel first.';
+const String kEthSendErrorSigningKeyUnavailable =
+    'Your wallet signing key is unavailable. Unlock the vault and try again.';
+const String kEthSendErrorWalletKeyDecryptFailed =
+    'Wallet key decryption failed. The transaction was not signed.';
+const String kEthSendErrorLocalSigningFailed =
+    'Transaction signing failed. The transaction was not broadcast.';
+const String kEthSendErrorBroadcastUnknown =
+    'Broadcast status is unknown. Check pending transactions before retrying.';
 const String kEthSendFormValidationMissingFields =
     'Enter both the destination address and the amount.';
 const String kEthSendFormValidationBadAmount =
@@ -271,16 +283,29 @@ const String kEthSendFormValidationSelfSend =
     'Destination address matches your wallet. Refusing to draft a '
     'self-send. Enter a different recipient.';
 
-
 enum _Stage {
   form,
   loadingDraft,
   review,
-  
-  
+
   confirmPhrase,
   signing,
   submitted,
+}
+
+enum WalletSendReadinessState {
+  loading,
+  ready,
+  insufficientFunds,
+  balanceUnavailable,
+  feeUnavailable,
+  networkUnavailable,
+  invalidRecipient,
+  invalidAmount,
+  signingUnavailable,
+  broadcasting,
+  success,
+  failed,
 }
 
 class _DraftFields {
@@ -295,9 +320,6 @@ class _DraftFields {
   final String transactionTo;
   final String dataHex;
   final int chainId;
-
-
-
 
   final String? draftId;
   const _DraftFields({
@@ -315,47 +337,98 @@ class _DraftFields {
     this.draftId,
   });
 
-  
   BigInt get feeWei => gasLimit * gasPrice;
 }
 
+class _FeeQuote {
+  final String transactionType;
+  final BigInt gasLimit;
+  final BigInt? gasPriceWei;
+  final BigInt? maxFeePerGasWei;
+  final BigInt? maxPriorityFeePerGasWei;
+  final BigInt estimatedFeeWei;
+  final BigInt maximumFeeWei;
+  final DateTime fetchedAt;
+  final DateTime expiresAt;
+  final int? blockNumber;
+  final int chainId;
+  final String source;
+
+  const _FeeQuote({
+    required this.transactionType,
+    required this.gasLimit,
+    required this.gasPriceWei,
+    required this.maxFeePerGasWei,
+    required this.maxPriorityFeePerGasWei,
+    required this.estimatedFeeWei,
+    required this.maximumFeeWei,
+    required this.fetchedAt,
+    required this.expiresAt,
+    required this.blockNumber,
+    required this.chainId,
+    required this.source,
+  });
+
+  bool isExpired(DateTime now) => !now.isBefore(expiresAt);
+}
+
+class _BalanceQuote {
+  final BigInt confirmedBalanceWei;
+  final BigInt? pendingBalanceWei;
+  final BigInt spendableBalanceWei;
+  final BigInt reservedFeeWei;
+  final BigInt amountWei;
+  final BigInt totalMaximumDebitWei;
+  final BigInt remainingBalanceWei;
+  final int? blockNumber;
+  final DateTime fetchedAt;
+  final DateTime expiresAt;
+  final int chainId;
+  final String sourceStatus;
+
+  const _BalanceQuote({
+    required this.confirmedBalanceWei,
+    required this.pendingBalanceWei,
+    required this.spendableBalanceWei,
+    required this.reservedFeeWei,
+    required this.amountWei,
+    required this.totalMaximumDebitWei,
+    required this.remainingBalanceWei,
+    required this.blockNumber,
+    required this.fetchedAt,
+    required this.expiresAt,
+    required this.chainId,
+    required this.sourceStatus,
+  });
+
+  bool isExpired(DateTime now) => !now.isBefore(expiresAt);
+}
 
 class CryptoWalletEngineSendPanel extends StatefulWidget {
   final String authToken;
   final String fromAddress;
   final VaultAIClient client;
-  
-  
+
   final Future<String> Function(String ciphertext) decryptForVault;
-  
-  
+
   final bool Function() isVaultKeyAvailable;
-  
-  
+
   final Future<bool> Function(String pin)? verifyPin;
 
-  
   final String asset;
 
-  
   final String? prefilledDestination;
   final String? prefilledAmount;
 
-  
   final String network;
-
 
   final bool mainnetSendEnabled;
 
-
   final bool mainnetSendPaused;
 
-  
   final Future<bool> Function(String destination)? isKnownDestination;
 
-
   final Future<double?> Function()? fetchAvailableBalance;
-
 
   final Future<double?> Function()? fetchEthBalance;
 
@@ -374,7 +447,6 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   /// — the wallet must have BOTH enough tokens AND enough ETH for
   /// gas (`gasLimit * gasPrice`).
   final Future<BigInt?> Function()? fetchEthBalanceWei;
-
 
   final String Function()? idempotencyKeyGenerator;
 
@@ -429,6 +501,10 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   ///               to a normal EOA send.
   final Future<bool?> Function(String address)? isContractDestination;
 
+  /// Test hook for quote-expiry assertions. Production uses wall
+  /// clock time.
+  final DateTime Function()? clock;
+
   const CryptoWalletEngineSendPanel({
     super.key,
     required this.authToken,
@@ -454,6 +530,7 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     this.launchUrl,
     this.onSuccessfulBroadcast,
     this.isContractDestination,
+    this.clock,
   });
 
   bool get isMainnet => network == kEvmNetworkEthereumMainnet;
@@ -490,7 +567,6 @@ class _CryptoWalletEngineSendPanelState
   String? _broadcastReason;
   String? _broadcastMessage;
 
-  
   bool _isKnownRecipient = false;
   bool _recipientCheckRan = false;
 
@@ -506,30 +582,58 @@ class _CryptoWalletEngineSendPanelState
   bool _draftInFlight = false;
   bool _balanceCheckUnverified = false;
   bool _insufficientGas = false;
+  _FeeQuote? _feeQuote;
+  _BalanceQuote? _balanceQuote;
+  BigInt? _maxReservedFeeWei;
+  BigInt? _maxRemainingBalanceWei;
+  Future<double?>? _availableBalanceFuture;
+  DateTime? _availableBalanceUpdatedAt;
+  bool _suppressMaxQuoteClear = false;
 
-  
   bool _broadcastInFlight = false;
   String? _idempotencyKey;
+
+  DateTime _now() => widget.clock?.call() ?? DateTime.now();
 
   @override
   void initState() {
     super.initState();
 
-
     if (widget.prefilledDestination != null &&
         widget.prefilledDestination!.isNotEmpty) {
       _destCtrl.text = widget.prefilledDestination!;
     }
-    if (widget.prefilledAmount != null &&
-        widget.prefilledAmount!.isNotEmpty) {
+    if (widget.prefilledAmount != null && widget.prefilledAmount!.isNotEmpty) {
       _amountCtrl.text = widget.prefilledAmount!;
     }
+    if (widget.fetchAvailableBalance != null) {
+      _availableBalanceFuture = _loadAvailableBalance();
+    }
+    _destCtrl.addListener(_clearMaxQuoteOnInputChange);
+    _amountCtrl.addListener(_clearMaxQuoteOnInputChange);
     _destFocus.addListener(_maybeScrollFocusedFieldIntoView);
     _amountFocus.addListener(_maybeScrollFocusedFieldIntoView);
   }
 
   @override
+  void didUpdateWidget(covariant CryptoWalletEngineSendPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fetchAvailableBalance != widget.fetchAvailableBalance ||
+        oldWidget.asset != widget.asset ||
+        oldWidget.network != widget.network ||
+        oldWidget.fromAddress != widget.fromAddress) {
+      _availableBalanceUpdatedAt = null;
+      _availableBalanceFuture =
+          widget.fetchAvailableBalance == null ? null : _loadAvailableBalance();
+      _feeQuote = null;
+      _balanceQuote = null;
+    }
+  }
+
+  @override
   void dispose() {
+    _destCtrl.removeListener(_clearMaxQuoteOnInputChange);
+    _amountCtrl.removeListener(_clearMaxQuoteOnInputChange);
     _destFocus.removeListener(_maybeScrollFocusedFieldIntoView);
     _amountFocus.removeListener(_maybeScrollFocusedFieldIntoView);
     _destFocus.dispose();
@@ -539,6 +643,23 @@ class _CryptoWalletEngineSendPanelState
     _amountCtrl.dispose();
     _confirmPhraseCtrl.dispose();
     super.dispose();
+  }
+
+  void _clearMaxQuoteOnInputChange() {
+    if (_suppressMaxQuoteClear) return;
+    if (_maxReservedFeeWei == null &&
+        _maxRemainingBalanceWei == null &&
+        _feeQuote == null &&
+        _balanceQuote == null) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _maxReservedFeeWei = null;
+      _maxRemainingBalanceWei = null;
+      _feeQuote = null;
+      _balanceQuote = null;
+    });
   }
 
   // 2026-07-13 mobile-keyboard fix: when either the Destination or
@@ -569,10 +690,380 @@ class _CryptoWalletEngineSendPanelState
     if (widget.idempotencyKeyGenerator != null) {
       return widget.idempotencyKeyGenerator!();
     }
-    
-    
+
     final now = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
     return 'snd-${widget.asset.toLowerCase()}-$now';
+  }
+
+  WalletSendReadinessState get _sendReadiness {
+    if (_stage == _Stage.loadingDraft || _draftInFlight) {
+      return WalletSendReadinessState.loading;
+    }
+    if (_stage == _Stage.signing || _broadcastInFlight) {
+      return WalletSendReadinessState.broadcasting;
+    }
+    if (_stage == _Stage.submitted) {
+      final status = _broadcastStatus ?? 'submitted';
+      if (status == 'submitted' ||
+          status == 'already_submitted' ||
+          status == 'submission_uncertain') {
+        return WalletSendReadinessState.success;
+      }
+      return WalletSendReadinessState.failed;
+    }
+    final err = _error;
+    if (_balanceCheckUnverified ||
+        err == kMainnetSendBalanceUnverifiedError ||
+        err == kMainnetSendEthGasBalanceUnverifiedError ||
+        err == kMainnetSendExactFeeUnverifiedError) {
+      return WalletSendReadinessState.balanceUnavailable;
+    }
+    if (err == kEthSendMaxTemporarilyUnavailableError ||
+        err == kEthSendMaxRequiresDraftError ||
+        err == kEthSendMaxRequiresDestinationError ||
+        err == kMainnetSendFeeEstimateFailedError ||
+        err == kMainnetSendFeeQuoteExpiredError ||
+        err == kMainnetSendFeeQuoteChangedError) {
+      return WalletSendReadinessState.feeUnavailable;
+    }
+    if (err == kMainnetSendPausedBanner ||
+        err == kEthSendMainnetSendDisabledBanner ||
+        err == kMainnetSendRateLimitedError ||
+        err == kSendUpdatePendingError) {
+      return WalletSendReadinessState.networkUnavailable;
+    }
+    if (err == kEthSendFormValidationBadAddress ||
+        err == kEthSendFormValidationBadChecksum ||
+        err == kEthSendFormValidationSelfSend ||
+        err == kEthSendFormValidationContractRecipientWarning) {
+      return WalletSendReadinessState.invalidRecipient;
+    }
+    if (err == kEthSendFormValidationMissingFields ||
+        err == kEthSendFormValidationBadAmount ||
+        err == kEthSendFormValidationExcessiveDecimalsError ||
+        err == kEthSendFormValidationScientificNotationError ||
+        err == kEthSendFormValidationUnicodeWhitespaceError ||
+        err == kEthSendFormValidationOverflowError) {
+      return WalletSendReadinessState.invalidAmount;
+    }
+    if (err == kMainnetSendInsufficientBalanceError ||
+        err == kMainnetSendExactFeeInsufficientEthError ||
+        err == kMainnetSendExactFeeInsufficientGasEthError ||
+        err == kMainnetSendExactFeeInsufficientTokenError) {
+      return WalletSendReadinessState.insufficientFunds;
+    }
+    if (err == kEthSendErrorEncryptedSecretMissing ||
+        err == kEthSendErrorSigningKeyUnavailable ||
+        err == kEthSendErrorWalletKeyDecryptFailed ||
+        err == kEthSendErrorLocalSigningFailed ||
+        err == 'Unlock your vault with your PIN before sending.' ||
+        (err != null &&
+            (err.startsWith('Could not fetch encrypted secret') ||
+                err.startsWith('Local decrypt failed') ||
+                err.startsWith('Local signing failed')))) {
+      return WalletSendReadinessState.signingUnavailable;
+    }
+    if (err == kEthSendErrorPinWrong ||
+        err == kEthSendErrorPinVerificationFailed ||
+        err == kEthSendErrorBroadcastUnknown ||
+        err == kEthSendErrorBroadcastFailed ||
+        err == kMainnetSendBroadcastSafeError ||
+        (err != null && err.startsWith('Broadcast failed'))) {
+      return WalletSendReadinessState.failed;
+    }
+    if (_stage == _Stage.review && _draft != null) {
+      return WalletSendReadinessState.ready;
+    }
+    return WalletSendReadinessState.loading;
+  }
+
+  bool get _isRetryablePinFailure =>
+      _error == kEthSendErrorPinWrong ||
+      _error == kEthSendErrorPinVerificationFailed;
+
+  bool get _hasRetryableFeeError {
+    final err = _error;
+    if (err == null) return false;
+    if (_sendReadiness == WalletSendReadinessState.feeUnavailable) {
+      return true;
+    }
+    return widget.isMainnet &&
+        !_balanceCheckUnverified &&
+        _stage == _Stage.form &&
+        (err.startsWith('Cannot draft a mainnet send') ||
+            err.startsWith('Cannot estimate fee'));
+  }
+
+  bool get _canConfirmReview {
+    if (_stage != _Stage.review || _draft == null || _broadcastInFlight) {
+      return false;
+    }
+    final readiness = _sendReadiness;
+    return readiness == WalletSendReadinessState.ready ||
+        _isRetryablePinFailure;
+  }
+
+  bool get _canRetryReadinessFromReview {
+    if (_stage != _Stage.review || _draft == null || _broadcastInFlight) {
+      return false;
+    }
+    final readiness = _sendReadiness;
+    return readiness == WalletSendReadinessState.balanceUnavailable ||
+        readiness == WalletSendReadinessState.feeUnavailable ||
+        readiness == WalletSendReadinessState.insufficientFunds ||
+        readiness == WalletSendReadinessState.networkUnavailable;
+  }
+
+  Future<void> _retryReviewFromFreshQuote() async {
+    if (_draftInFlight) return;
+    setState(() {
+      _draft = null;
+      _idempotencyKey = null;
+      _stage = _Stage.form;
+      _error = null;
+      _balanceCheckUnverified = false;
+      _insufficientGas = false;
+      _feeQuote = null;
+      _balanceQuote = null;
+      _maxReservedFeeWei = null;
+      _maxRemainingBalanceWei = null;
+    });
+    await _onReview();
+  }
+
+  Future<double?> _loadAvailableBalance() async {
+    final loader = widget.fetchAvailableBalance;
+    if (loader == null) return null;
+    try {
+      final bal = await loader();
+      if (mounted && bal != null) {
+        setState(() => _availableBalanceUpdatedAt = _now());
+      }
+      return bal;
+    } catch (_) {
+      if (mounted) {
+        setState(() => _availableBalanceUpdatedAt = null);
+      }
+      return null;
+    }
+  }
+
+  void _refreshAvailableBalanceLine() {
+    final loader = widget.fetchAvailableBalance;
+    if (loader == null) return;
+    setState(() {
+      _availableBalanceUpdatedAt = null;
+      _availableBalanceFuture = _loadAvailableBalance();
+      _balanceCheckUnverified = false;
+      if (_error == kMainnetSendBalanceUnverifiedError ||
+          _error == kMainnetSendEthGasBalanceUnverifiedError) {
+        _error = null;
+      }
+    });
+  }
+
+  String _formatUpdatedAt(DateTime dt) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}';
+  }
+
+  int? _parseIntField(Object? raw) {
+    if (raw == null) return null;
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw.toString());
+  }
+
+  BigInt? _parseBigIntField(Object? raw) {
+    if (raw == null) return null;
+    final s = raw.toString().trim();
+    if (s.isEmpty) return null;
+    return BigInt.tryParse(s);
+  }
+
+  _FeeQuote _feeQuoteFromDraft(
+    _DraftFields draft, {
+    Map<String, dynamic>? sourceBody,
+    String source = 'send_draft',
+  }) {
+    final fetchedAt = _now();
+    final blockNumber = _parseIntField(sourceBody?['blockNumber']);
+    final gasPrice = _parseBigIntField(
+          sourceBody?['gasPriceWei'] ?? sourceBody?['gasPrice'],
+        ) ??
+        draft.gasPrice;
+    final gasLimit =
+        _parseBigIntField(sourceBody?['gasLimit']) ?? draft.gasLimit;
+    final maxFee = _parseBigIntField(
+          sourceBody?['authorizedMaxFeeBaseUnits'],
+        ) ??
+        gasLimit * gasPrice;
+    final sourceName =
+        (sourceBody?['feeSource'] ?? sourceBody?['source'] ?? source)
+            .toString();
+    final chainId = _parseIntField(sourceBody?['chainId']) ?? draft.chainId;
+    return _FeeQuote(
+      transactionType: 'legacy',
+      gasLimit: gasLimit,
+      gasPriceWei: gasPrice,
+      maxFeePerGasWei: null,
+      maxPriorityFeePerGasWei: null,
+      estimatedFeeWei: gasLimit * gasPrice,
+      maximumFeeWei: maxFee,
+      fetchedAt: fetchedAt,
+      expiresAt: fetchedAt.add(kWalletSendQuoteTtl),
+      blockNumber: blockNumber,
+      chainId: chainId,
+      source: sourceName.isEmpty ? source : sourceName,
+    );
+  }
+
+  Future<_FeeQuote?> _refreshFeeQuoteForDraft(_DraftFields draft) async {
+    try {
+      final resp = await widget.client.postCryptoWalletSendFeeEstimateNetwork(
+        network: widget.network,
+        fromAddress: draft.fromAddress,
+        destinationAddress: draft.destinationAddress,
+        asset: widget.asset,
+        authToken: widget.authToken,
+      );
+      if (resp['status'] != 'fee_estimate_ready') return null;
+      return _feeQuoteFromDraft(
+        draft,
+        sourceBody: resp,
+        source: 'fee_estimate',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<_BalanceQuote?> _buildBalanceQuote({
+    required _DraftFields draft,
+    required _FeeQuote feeQuote,
+  }) async {
+    final expectedChainId = kEvmNetworkChainId[widget.network];
+    if (expectedChainId != null && feeQuote.chainId != expectedChainId) {
+      return null;
+    }
+    final isToken = widget.asset != 'ETH';
+    BigInt? confirmed;
+    BigInt amountWei;
+    if (isToken) {
+      if (widget.fetchEthBalanceWei == null) return null;
+      try {
+        confirmed = await widget.fetchEthBalanceWei!();
+      } catch (_) {
+        confirmed = null;
+      }
+      amountWei = BigInt.zero;
+    } else {
+      if (widget.fetchAvailableBalanceWei == null) return null;
+      try {
+        confirmed = await widget.fetchAvailableBalanceWei!();
+      } catch (_) {
+        confirmed = null;
+      }
+      amountWei = draft.valueWei;
+    }
+    if (confirmed == null) return null;
+    final spendable = confirmed < BigInt.zero ? BigInt.zero : confirmed;
+    final reservedFee = feeQuote.maximumFeeWei;
+    final total = amountWei + reservedFee;
+    final fetchedAt = _now();
+    return _BalanceQuote(
+      confirmedBalanceWei: confirmed,
+      pendingBalanceWei: null,
+      spendableBalanceWei: spendable,
+      reservedFeeWei: reservedFee,
+      amountWei: amountWei,
+      totalMaximumDebitWei: total,
+      remainingBalanceWei: spendable - total,
+      blockNumber: feeQuote.blockNumber,
+      fetchedAt: fetchedAt,
+      expiresAt: fetchedAt.add(kWalletSendQuoteTtl),
+      chainId: feeQuote.chainId,
+      sourceStatus: 'confirmed_balance_available_pending_unknown',
+    );
+  }
+
+  _BalanceQuote? _balanceQuoteFromDraftResponse({
+    required _DraftFields draft,
+    required _FeeQuote feeQuote,
+    required Map<String, dynamic> body,
+  }) {
+    final fetchedAt = _now();
+    final expectedChainId = kEvmNetworkChainId[widget.network];
+    final chainId = _parseIntField(body['chainId']) ?? feeQuote.chainId;
+    if (expectedChainId != null && chainId != expectedChainId) {
+      return null;
+    }
+    final confirmed = _parseBigIntField(body['confirmedBalanceWei']);
+    final spendable = _parseBigIntField(body['spendableBalanceWei']) ??
+        confirmed;
+    if (confirmed == null || spendable == null) return null;
+    final pending = _parseBigIntField(body['pendingBalanceWei']);
+    final total = _parseBigIntField(body['totalMaximumDebitWei']) ??
+        (widget.asset == 'ETH'
+            ? draft.valueWei + feeQuote.maximumFeeWei
+            : feeQuote.maximumFeeWei);
+    final remaining = _parseBigIntField(body['remainingBalanceWei']) ??
+        (spendable - total);
+    return _BalanceQuote(
+      confirmedBalanceWei: confirmed,
+      pendingBalanceWei: pending,
+      spendableBalanceWei: spendable,
+      reservedFeeWei: feeQuote.maximumFeeWei,
+      amountWei: widget.asset == 'ETH' ? draft.valueWei : BigInt.zero,
+      totalMaximumDebitWei: total,
+      remainingBalanceWei: remaining,
+      blockNumber: _parseIntField(body['blockNumber']) ?? feeQuote.blockNumber,
+      fetchedAt: fetchedAt,
+      expiresAt: fetchedAt.add(kWalletSendQuoteTtl),
+      chainId: chainId,
+      sourceStatus: 'mainnet_draft_verified_balance',
+    );
+  }
+
+  Future<String?> _refreshQuotesBeforeSigning(_DraftFields draft) async {
+    final expectedChainId = kEvmNetworkChainId[widget.network];
+    if (expectedChainId != null && draft.chainId != expectedChainId) {
+      return kEthSendChainMismatchError;
+    }
+    final now = _now();
+    var feeQuote = _feeQuote ?? _feeQuoteFromDraft(draft);
+    if (feeQuote.isExpired(now) ||
+        (_balanceQuote != null && _balanceQuote!.isExpired(now))) {
+      return kMainnetSendFeeQuoteExpiredError;
+    }
+    if (widget.isMainnet) {
+      final refreshed = await _refreshFeeQuoteForDraft(draft);
+      if (refreshed == null) {
+        return kMainnetSendFeeEstimateFailedError;
+      }
+      if (refreshed.chainId != draft.chainId ||
+          refreshed.gasLimit != feeQuote.gasLimit ||
+          refreshed.gasPriceWei != feeQuote.gasPriceWei ||
+          refreshed.maximumFeeWei != feeQuote.maximumFeeWei) {
+        if (mounted) {
+          setState(() {
+            _feeQuote = refreshed;
+            _balanceQuote = null;
+          });
+        }
+        return kMainnetSendFeeQuoteChangedError;
+      }
+      feeQuote = refreshed;
+      if (mounted) setState(() => _feeQuote = refreshed);
+    }
+    if (widget.fetchAvailableBalanceWei != null || widget.isMainnet) {
+      final bq = await _buildBalanceQuote(draft: draft, feeQuote: feeQuote);
+      if (bq == null) {
+        return kMainnetSendExactFeeUnverifiedError;
+      }
+      if (mounted) setState(() => _balanceQuote = bq);
+    }
+    return null;
   }
 
   bool _looksLikeEthAddress(String s) =>
@@ -601,8 +1092,7 @@ class _CryptoWalletEngineSendPanelState
       Uint8List.fromList(lower.codeUnits),
     );
     // Serialize hash as lowercase hex string once.
-    final hex = hash.map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
+    final hex = hash.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     for (var i = 0; i < 40; i++) {
       final c = body[i];
       final nibble = int.parse(hex[i], radix: 16);
@@ -618,8 +1108,7 @@ class _CryptoWalletEngineSendPanelState
   bool _isSelfSend(String destination) {
     // Case-insensitive compare so a checksummed vs lowercase pair
     // still triggers the guard.
-    return destination.toLowerCase() ==
-        widget.fromAddress.toLowerCase();
+    return destination.toLowerCase() == widget.fromAddress.toLowerCase();
   }
 
   // 2026-07-14 (Round 7 hardening): decimals per asset.
@@ -654,20 +1143,21 @@ class _CryptoWalletEngineSendPanelState
     // spaces so we can catch Unicode-whitespace) but numeric
     // parsing uses the ASCII-trimmed body.
     for (final r in amount.runes) {
-      if (r == 0x0020 || r == 0x0009) continue; // plain space, tab (trimmed anyway)
+      if (r == 0x0020 || r == 0x0009)
+        continue; // plain space, tab (trimmed anyway)
       if (r == 0x002E) continue; // '.'
       if (r >= 0x0030 && r <= 0x0039) continue; // 0-9
       // Any other whitespace category (NBSP U+00A0, thin space
       // U+2009, zero-width U+200B, etc.) is rejected.
-      if (r == 0x00A0
-          || r == 0x1680
-          || (r >= 0x2000 && r <= 0x200F)
-          || r == 0x2028
-          || r == 0x2029
-          || r == 0x202F
-          || r == 0x205F
-          || r == 0x3000
-          || r == 0xFEFF) {
+      if (r == 0x00A0 ||
+          r == 0x1680 ||
+          (r >= 0x2000 && r <= 0x200F) ||
+          r == 0x2028 ||
+          r == 0x2029 ||
+          r == 0x202F ||
+          r == 0x205F ||
+          r == 0x3000 ||
+          r == 0xFEFF) {
         return kEthSendFormValidationUnicodeWhitespaceError;
       }
       // Everything else — including e/E for scientific, minus,
@@ -785,8 +1275,8 @@ class _CryptoWalletEngineSendPanelState
     // 2026-07-14 (Round 6 hardening): if the address is mixed-case,
     // it MUST pass the EIP-55 checksum. All-lower or all-upper is
     // permitted (no checksum applied by the sender).
-    if (_isMixedCaseAddress(destination)
-        && !_isEip55ChecksumValid(destination)) {
+    if (_isMixedCaseAddress(destination) &&
+        !_isEip55ChecksumValid(destination)) {
       setState(() => _error = kEthSendFormValidationBadChecksum);
       return;
     }
@@ -805,7 +1295,8 @@ class _CryptoWalletEngineSendPanelState
     // rejection instead of being silently trimmed to a valid
     // number.
     final strictErr = _strictAmountValidation(
-      _amountCtrl.text, _amountDecimalsForAsset(widget.asset),
+      _amountCtrl.text,
+      _amountDecimalsForAsset(widget.asset),
     );
     if (strictErr != null) {
       setState(() => _error = strictErr);
@@ -817,7 +1308,6 @@ class _CryptoWalletEngineSendPanelState
       return;
     }
 
-    
     // 2026-07-13 canary correctness: balance verification is a
     // HARD GATE whenever the caller wired `fetchAvailableBalance`.
     // If we cannot load the sender balance, we refuse to advance
@@ -829,6 +1319,13 @@ class _CryptoWalletEngineSendPanelState
     //
     // Applied on BOTH mainnet and sepolia (when hook provided) so
     // testnet flows don't drift out of parity with mainnet.
+    if (widget.isMainnet && widget.fetchAvailableBalance == null) {
+      setState(() {
+        _balanceCheckUnverified = true;
+        _error = kMainnetSendBalanceUnverifiedError;
+      });
+      return;
+    }
     if (widget.fetchAvailableBalance != null) {
       _balanceCheckUnverified = false;
       _insufficientGas = false;
@@ -891,14 +1388,12 @@ class _CryptoWalletEngineSendPanelState
       }
     }
 
-    
     if (widget.isMainnet) {
       _isKnownRecipient = false;
       _recipientCheckRan = true;
       if (widget.isKnownDestination != null) {
         try {
-          _isKnownRecipient =
-              await widget.isKnownDestination!(destination);
+          _isKnownRecipient = await widget.isKnownDestination!(destination);
         } catch (_) {
           _isKnownRecipient = false;
         }
@@ -973,25 +1468,21 @@ class _CryptoWalletEngineSendPanelState
         final msg = (body['message'] ?? '').toString();
         setState(() {
           _stage = _Stage.form;
-          _error = msg.isNotEmpty
-              ? msg
-              : kMainnetSendInsufficientBalanceError;
+          _error = msg.isNotEmpty ? msg : kMainnetSendInsufficientBalanceError;
         });
         return;
       }
       if (status != 'draft_ready') {
-
-
+        final msg = (body['message'] ?? '').toString();
         setState(() {
           _stage = _Stage.form;
           _error = widget.isMainnet
-              ? kMainnetSendFeeEstimateFailedError
+              ? (msg.isNotEmpty ? msg : kMainnetSendFeeEstimateFailedError)
               : kEthSendErrorDraftUnavailable;
         });
         return;
       }
-      
-      
+
       final isToken = widget.asset != 'ETH';
       final draft = _DraftFields(
         fromAddress: body['fromAddress'].toString(),
@@ -1010,22 +1501,63 @@ class _CryptoWalletEngineSendPanelState
         transactionTo: isToken
             ? body['transactionTo'].toString()
             : body['destinationAddress'].toString(),
-        draftId: (body['draftId'] is String && (body['draftId'] as String).isNotEmpty)
+        draftId: (body['draftId'] is String &&
+                (body['draftId'] as String).isNotEmpty)
             ? body['draftId'] as String
             : null,
-        dataHex: isToken
-            ? body['dataHex'].toString()
-            : '',
+        dataHex: isToken ? body['dataHex'].toString() : '',
         chainId: (body['chainId'] as num).toInt(),
       );
+      final feeQuote = _feeQuoteFromDraft(
+        draft,
+        sourceBody: body,
+        source: 'send_draft',
+      );
+      _BalanceQuote? balanceQuote;
+      if (widget.fetchAvailableBalanceWei != null || widget.isMainnet) {
+        balanceQuote = _balanceQuoteFromDraftResponse(
+              draft: draft,
+              feeQuote: feeQuote,
+              body: body,
+            ) ??
+            await _buildBalanceQuote(
+              draft: draft,
+              feeQuote: feeQuote,
+            );
+        if (balanceQuote == null) {
+          setState(() {
+            _stage = _Stage.form;
+            _balanceCheckUnverified = true;
+            _error = widget.asset == 'ETH'
+                ? kMainnetSendBalanceUnverifiedError
+                : kMainnetSendEthGasBalanceUnverifiedError;
+          });
+          return;
+        }
+        if (balanceQuote.totalMaximumDebitWei >
+            balanceQuote.spendableBalanceWei) {
+          setState(() {
+            _stage = _Stage.form;
+            _error = widget.asset == 'ETH'
+                ? kMainnetSendExactFeeInsufficientEthError
+                : kMainnetSendExactFeeInsufficientGasEthError;
+          });
+          return;
+        }
+      }
       setState(() {
         _draft = draft;
+        _feeQuote = feeQuote;
+        _balanceQuote = balanceQuote;
         _stage = _Stage.review;
+        _balanceCheckUnverified = false;
       });
-    } catch (e) {
+    } catch (_) {
       setState(() {
         _stage = _Stage.form;
-        _error = 'Draft failed: $e';
+        _error = widget.isMainnet
+            ? kMainnetSendFeeEstimateFailedError
+            : kEthSendErrorDraftUnavailable;
       });
     }
   }
@@ -1047,34 +1579,44 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Future<void> _onConfirmAndPin() async {
-    if (!widget.isVaultKeyAvailable()) {
-      setState(() => _error =
-          'Unlock your vault with your PIN before sending.');
+    if (!_canConfirmReview) {
+      if (_canRetryReadinessFromReview) {
+        await _retryReviewFromFreshQuote();
+      }
       return;
     }
-    
-    
+    if (!widget.isVaultKeyAvailable()) {
+      setState(() => _error = kEthSendErrorSigningKeyUnavailable);
+      return;
+    }
+
     if (_broadcastInFlight || _submittedTxHash != null) {
       return;
     }
     final pin = await _showPinDialog();
-    if (pin == null) return; 
-    
+    if (pin == null) return;
+
     _broadcastInFlight = true;
     _idempotencyKey ??= _generateIdempotencyKey();
     setState(() {
       _stage = _Stage.signing;
       _error = null;
     });
-    
+
     if (widget.verifyPin != null) {
       bool ok;
       try {
         ok = await widget.verifyPin!(pin);
       } catch (_) {
-        ok = false;
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = kEthSendErrorPinVerificationFailed;
+        });
+        return;
       }
       if (!ok) {
+        _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
           _error = kEthSendErrorPinWrong;
@@ -1108,12 +1650,23 @@ class _CryptoWalletEngineSendPanelState
     // The wei-hook is thus an OPTIONAL client-side belt-and-braces
     // — but when wired, its verdict is binding.
     final draftForGate = _draft;
-    if (draftForGate != null &&
-        widget.fetchAvailableBalanceWei != null) {
+    if (draftForGate != null) {
+      final quoteError = await _refreshQuotesBeforeSigning(draftForGate);
+      if (quoteError != null) {
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = quoteError;
+        });
+        return;
+      }
+    }
+    if (draftForGate != null && widget.fetchAvailableBalanceWei != null) {
       final gateError = await _verifyExactFeeAuthorization(
         draft: draftForGate,
       );
       if (gateError != null) {
+        _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
           _error = gateError;
@@ -1131,10 +1684,12 @@ class _CryptoWalletEngineSendPanelState
               authToken: widget.authToken,
             )
           : await widget.client.getCryptoWalletEncryptedSecret(
-              asset: widget.asset, authToken: widget.authToken,
+              asset: widget.asset,
+              authToken: widget.authToken,
             );
       final status = (body['status'] ?? '').toString();
       if (status != 'encrypted_secret_ready') {
+        _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
           _error = kEthSendErrorEncryptedSecretMissing;
@@ -1143,25 +1698,26 @@ class _CryptoWalletEngineSendPanelState
       }
       encryptedSecret = body['encryptedWalletSecret'].toString();
     } catch (e) {
+      _broadcastInFlight = false;
       setState(() {
         _stage = _Stage.review;
-        _error = 'Could not fetch encrypted secret: $e';
+        _error = kEthSendErrorSigningKeyUnavailable;
       });
       return;
     }
-    
+
     String? privateKeyHex;
     try {
       privateKeyHex = await widget.decryptForVault(encryptedSecret);
     } catch (e) {
+      _broadcastInFlight = false;
       setState(() {
         _stage = _Stage.review;
-        _error = 'Local decrypt failed: $e';
+        _error = kEthSendErrorWalletKeyDecryptFailed;
       });
       return;
     }
-    
-    
+
     String? signedTx;
     try {
       final draft = _draft!;
@@ -1176,11 +1732,11 @@ class _CryptoWalletEngineSendPanelState
         privateKeyHex: privateKeyHex,
       );
     } catch (e) {
-      
       privateKeyHex = null;
+      _broadcastInFlight = false;
       setState(() {
         _stage = _Stage.review;
-        _error = 'Local signing failed: $e';
+        _error = kEthSendErrorLocalSigningFailed;
       });
       return;
     }
@@ -1200,8 +1756,7 @@ class _CryptoWalletEngineSendPanelState
 
     try {
       final Map<String, dynamic> body = widget.isMainnet
-          ? await widget.client
-              .broadcastCryptoWalletSignedTransactionNetwork(
+          ? await widget.client.broadcastCryptoWalletSignedTransactionNetwork(
               network: widget.network,
               asset: widget.asset,
               authToken: widget.authToken,
@@ -1249,8 +1804,8 @@ class _CryptoWalletEngineSendPanelState
       // is what the user sees on the result screen (backend-echoed
       // if present, local otherwise); do NOT confuse it with the
       // store key.
-      final displayHash = txHashRaw.isNotEmpty
-          ? txHashRaw : localHashAtBroadcast;
+      final displayHash =
+          txHashRaw.isNotEmpty ? txHashRaw : localHashAtBroadcast;
       if (status == 'submitted' || status == 'already_submitted') {
         _updateOutgoingRow(
           localHashAtBroadcast,
@@ -1290,8 +1845,7 @@ class _CryptoWalletEngineSendPanelState
         });
         return;
       }
-      if (status == 'broadcast_rejected' ||
-          status == 'broadcast_unavailable') {
+      if (status == 'broadcast_rejected' || status == 'broadcast_unavailable') {
         _updateOutgoingRow(
           localHashAtBroadcast,
           LocalOutgoingTxStatus.explicitlyRejected,
@@ -1344,12 +1898,8 @@ class _CryptoWalletEngineSendPanelState
         _submittedTxHash = localHashAtBroadcast;
         _broadcastStatus = 'submission_uncertain';
         _broadcastReason = 'broadcast_http_error';
-        _stage = widget.isMainnet
-            ? _Stage.submitted
-            : _Stage.review;
-        _error = widget.isMainnet
-            ? null
-            : '$kEthSendErrorBroadcastFailed';
+        _stage = widget.isMainnet ? _Stage.submitted : _Stage.review;
+        _error = widget.isMainnet ? null : '$kEthSendErrorBroadcastFailed';
       });
     } finally {
       _broadcastInFlight = false;
@@ -1371,7 +1921,7 @@ class _CryptoWalletEngineSendPanelState
     required _DraftFields draft,
   }) async {
     final isToken = widget.asset != 'ETH';
-    final BigInt feeWei = draft.gasLimit * draft.gasPrice;
+    final BigInt feeWei = _feeQuote?.maximumFeeWei ?? draft.feeWei;
     BigInt? availableBaseUnits;
     try {
       availableBaseUnits = await widget.fetchAvailableBalanceWei!();
@@ -1398,7 +1948,8 @@ class _CryptoWalletEngineSendPanelState
     // its unit; the amount was validated against the same base-unit
     // interpretation that produced the draft.
     final BigInt tokenBase = _tokenAmountToBaseUnits(
-      draft.amount, draft.unit,
+      draft.amount,
+      draft.unit,
     );
     if (tokenBase > availableBaseUnits) {
       return kMainnetSendExactFeeInsufficientTokenError;
@@ -1486,7 +2037,9 @@ class _CryptoWalletEngineSendPanelState
   }) {
     final store = widget.outgoingTxStore;
     if (store == null) return;
+    final now = _now();
     store.upsert(LocalOutgoingTx(
+      localAttemptId: _idempotencyKey ?? txHash,
       txHash: txHash,
       fromAddress: draft.fromAddress,
       toAddress: draft.destinationAddress,
@@ -1495,8 +2048,10 @@ class _CryptoWalletEngineSendPanelState
       feeWei: draft.feeWei,
       networkId: widget.network,
       asset: widget.asset,
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
+      chainId: draft.chainId,
+      nonce: draft.nonce,
+      createdAt: now,
+      updatedAt: now,
       status: LocalOutgoingTxStatus.submitting,
     ));
   }
@@ -1579,8 +2134,6 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Future<String?> _showPinDialog() async {
-    
-    
     return showDialog<String>(
       context: context,
       builder: (ctx) => const _EthSendPinDialog(),
@@ -1599,9 +2152,7 @@ class _CryptoWalletEngineSendPanelState
     final sheetKey = isMainnet ? 'eth_send_panel_mainnet' : 'eth_send_panel';
     final chip = walletSendNetworkChip(
       key: Key('${sheetKey}_network_chip'),
-      label: isMainnet
-          ? kEthSendMainnetNetworkBadge
-          : kEthSendNetworkBadge,
+      label: isMainnet ? kEthSendMainnetNetworkBadge : kEthSendNetworkBadge,
       isMainnet: isMainnet,
     );
     // Compact mainnet warnings: at most ONE row visible above the
@@ -1628,9 +2179,8 @@ class _CryptoWalletEngineSendPanelState
           key: const Key('eth_send_panel_mainnet_real_funds'),
           text: widget.asset == 'ETH'
               ? kEvmNetworkMainnetSendRealFundsHeadline
-              : kEvmNetworkMainnetTokenSendRealFundsHeadline
-                  .replaceAll('{token}',
-                      widget.asset == 'USDT_ERC20' ? 'USDT' : 'USDC'),
+              : kEvmNetworkMainnetTokenSendRealFundsHeadline.replaceAll(
+                  '{token}', widget.asset == 'USDT_ERC20' ? 'USDT' : 'USDC'),
         );
       }
     }
@@ -1709,7 +2259,8 @@ class _CryptoWalletEngineSendPanelState
       child: Row(
         children: [
           const SizedBox(
-            width: 18, height: 18,
+            width: 18,
+            height: 18,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: 12),
@@ -1788,12 +2339,39 @@ class _CryptoWalletEngineSendPanelState
         // balance hook is wired (Sepolia tests).
         FutureBuilder<double?>(
           key: const Key('eth_send_panel_available_balance_line'),
-          future: (widget.fetchAvailableBalance != null)
-              ? widget.fetchAvailableBalance!()
-              : Future<double?>.value(null),
+          future: _availableBalanceFuture,
           builder: (context, snap) {
+            if (widget.fetchAvailableBalance == null) {
+              return const SizedBox.shrink();
+            }
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Loading available balance...',
+                        key: Key('eth_send_panel_available_balance_loading'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: kWalletTextMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
             final bal = snap.data;
-            if (bal == null) return const SizedBox.shrink();
             final unit = widget.asset == 'ETH'
                 ? 'ETH'
                 : (widget.asset == 'USDT_ERC20'
@@ -1801,19 +2379,87 @@ class _CryptoWalletEngineSendPanelState
                     : widget.asset == 'USDC_ERC20'
                         ? 'USDC'
                         : widget.asset);
+            if (bal == null) {
+              return Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Available balance unavailable',
+                      key: Key('eth_send_panel_available_balance_unavailable'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: kWalletAccentWarning,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    TextButton.icon(
+                      key: const Key(
+                          'eth_send_panel_available_balance_retry_btn'),
+                      onPressed: _refreshAvailableBalanceLine,
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              );
+            }
+            final updatedAt = _availableBalanceUpdatedAt;
             return Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                'Available: $bal $unit',
-                key: const Key(
-                    'eth_send_panel_available_balance_text'),
-                style: const TextStyle(
-                  fontSize: 12, color: kWalletTextMuted,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    updatedAt == null
+                        ? 'Available balance: $bal $unit'
+                        : 'Available balance: $bal $unit '
+                            '(updated ${_formatUpdatedAt(updatedAt)})',
+                    key: const Key('eth_send_panel_available_balance_text'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: kWalletTextMuted,
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key(
+                        'eth_send_panel_available_balance_refresh_btn'),
+                    onPressed: _refreshAvailableBalanceLine,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Refresh balance'),
+                  ),
+                ],
               ),
             );
           },
         ),
+        if (widget.asset == 'ETH' &&
+            _maxReservedFeeWei != null &&
+            _maxRemainingBalanceWei != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Reserved for network fee: '
+            '${_formatWeiAsEth(_maxReservedFeeWei!)} ETH',
+            key: const Key('eth_send_panel_max_fee_reserved_text'),
+            style: const TextStyle(
+              fontSize: 12,
+              color: kWalletTextMuted,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Estimated remaining balance: '
+            '${_formatWeiAsEth(_maxRemainingBalanceWei!)} ETH',
+            key: const Key('eth_send_panel_max_remaining_text'),
+            style: const TextStyle(
+              fontSize: 12,
+              color: kWalletTextMuted,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1850,8 +2496,7 @@ class _CryptoWalletEngineSendPanelState
     // hard-coded 21000×100gwei fallback.
     if (widget.asset == 'ETH') {
       final destination = _destCtrl.text.trim();
-      if (destination.isEmpty ||
-          !_looksLikeEthAddress(destination)) {
+      if (destination.isEmpty || !_looksLikeEthAddress(destination)) {
         setState(() {
           _error = kEthSendMaxRequiresDestinationError;
         });
@@ -1880,12 +2525,18 @@ class _CryptoWalletEngineSendPanelState
       if (target <= BigInt.zero) {
         setState(() {
           _error = kMainnetSendInsufficientBalanceError;
+          _maxReservedFeeWei = null;
+          _maxRemainingBalanceWei = null;
         });
         return;
       }
+      _suppressMaxQuoteClear = true;
       _amountCtrl.text = _formatMaxWeiAsEth(target);
+      _suppressMaxQuoteClear = false;
       setState(() {
         _error = null;
+        _maxReservedFeeWei = feeWei;
+        _maxRemainingBalanceWei = wei - target - feeWei;
       });
       return;
     }
@@ -1902,12 +2553,15 @@ class _CryptoWalletEngineSendPanelState
       });
       return;
     }
-    final decimals = (widget.asset == 'USDT_ERC20' ||
-            widget.asset == 'USDC_ERC20')
-        ? 6
-        : 18;
+    final decimals =
+        (widget.asset == 'USDT_ERC20' || widget.asset == 'USDC_ERC20') ? 6 : 18;
+    _suppressMaxQuoteClear = true;
     _amountCtrl.text = _formatMaxBaseUnits(wei, decimals);
-    setState(() {});
+    _suppressMaxQuoteClear = false;
+    setState(() {
+      _maxReservedFeeWei = null;
+      _maxRemainingBalanceWei = null;
+    });
   }
 
   Future<BigInt?> _fetchAuthorizedMaxFeeWei({
@@ -1915,11 +2569,8 @@ class _CryptoWalletEngineSendPanelState
   }) async {
     Map<String, dynamic>? resp;
     try {
-      resp = await widget.client
-          .postCryptoWalletSendFeeEstimateNetwork(
-        network: widget.isMainnet
-            ? 'ethereum_mainnet'
-            : 'ethereum_sepolia',
+      resp = await widget.client.postCryptoWalletSendFeeEstimateNetwork(
+        network: widget.isMainnet ? 'ethereum_mainnet' : 'ethereum_sepolia',
         fromAddress: widget.fromAddress,
         destinationAddress: destination,
         asset: widget.asset,
@@ -1929,6 +2580,13 @@ class _CryptoWalletEngineSendPanelState
       return null;
     }
     if (resp['status'] != 'fee_estimate_ready') return null;
+    final expectedChainId = kEvmNetworkChainId[
+      widget.isMainnet ? 'ethereum_mainnet' : 'ethereum_sepolia'
+    ];
+    final chainId = _parseIntField(resp['chainId']);
+    if (expectedChainId != null && chainId != expectedChainId) {
+      return null;
+    }
     final raw = (resp['authorizedMaxFeeBaseUnits'] ?? '').toString();
     return BigInt.tryParse(raw);
   }
@@ -2019,8 +2677,8 @@ class _CryptoWalletEngineSendPanelState
             key: const Key('eth_send_panel_eip681_confirm_dialog'),
             title: const Text('Replace amount?'),
             content: Text(
-              kEthSendFormValidationEip681AmountConfirmPrompt
-                  + '\n\nScanned amount: $ethStr ETH',
+              kEthSendFormValidationEip681AmountConfirmPrompt +
+                  '\n\nScanned amount: $ethStr ETH',
             ),
             actions: [
               TextButton(
@@ -2068,7 +2726,9 @@ class _CryptoWalletEngineSendPanelState
     // retry.
     final label = _balanceCheckUnverified
         ? kMainnetSendRetryBalanceLabel
-        : kEthSendReviewButtonLabel;
+        : _hasRetryableFeeError
+            ? kMainnetSendRetryFeeLabel
+            : kEthSendReviewButtonLabel;
     return ElevatedButton(
       key: const Key('eth_send_panel_review_btn'),
       // 2026-07-14 (Round 8 hardening): disabled while drafting so
@@ -2085,9 +2745,13 @@ class _CryptoWalletEngineSendPanelState
     final d = _draft!;
     final isToken = widget.asset != 'ETH';
     final isMainnet = widget.isMainnet;
-    final networkLabel = isMainnet
-        ? 'Ethereum Mainnet'
-        : 'Ethereum Sepolia';
+    final networkLabel = isMainnet ? 'Ethereum Mainnet' : 'Ethereum Sepolia';
+    final feeQuote = _feeQuote;
+    final balanceQuote = _balanceQuote;
+    final displayFeeWei = feeQuote?.estimatedFeeWei ?? d.feeWei;
+    final maximumDebitWei = balanceQuote?.totalMaximumDebitWei ??
+        (isToken ? displayFeeWei : d.valueWei + displayFeeWei);
+    final remainingWei = balanceQuote?.remainingBalanceWei;
     final feeNotice = isToken
         ? (isMainnet
             ? 'Gas requires mainnet ETH on this wallet.'
@@ -2133,13 +2797,14 @@ class _CryptoWalletEngineSendPanelState
               child: const Row(
                 children: [
                   Icon(Icons.warning_amber_rounded,
-                       size: 16, color: kWalletAccentWarning),
+                      size: 16, color: kWalletAccentWarning),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       kEthSendFormValidationContractRecipientWarning,
                       style: TextStyle(
-                        color: kWalletAccentWarning, fontSize: 12,
+                        color: kWalletAccentWarning,
+                        fontSize: 12,
                       ),
                     ),
                   ),
@@ -2148,10 +2813,35 @@ class _CryptoWalletEngineSendPanelState
             ),
           ),
         WalletSendKvRow(label: 'Amount', value: '${d.amount} ${d.unit}'),
+        if (balanceQuote != null) ...[
+          WalletSendKvRow(
+            label: 'Available',
+            value: '${_formatWeiAsEth(balanceQuote.confirmedBalanceWei)} ETH',
+          ),
+          WalletSendKvRow(
+            label: 'Pending',
+            value: balanceQuote.pendingBalanceWei == null
+                ? 'Unavailable'
+                : '${_formatWeiAsEth(balanceQuote.pendingBalanceWei!)} ETH',
+          ),
+          WalletSendKvRow(
+            label: 'Spendable',
+            value: '${_formatWeiAsEth(balanceQuote.spendableBalanceWei)} ETH',
+          ),
+        ],
         WalletSendKvRow(
-          label: 'Network fee',
-          value: '${_formatWeiAsEth(d.feeWei)} ETH',
+          label: 'Estimated fee',
+          value: '${_formatWeiAsEth(displayFeeWei)} ETH',
         ),
+        WalletSendKvRow(
+          label: 'Maximum debit',
+          value: '${_formatWeiAsEth(maximumDebitWei)} ETH',
+        ),
+        if (remainingWei != null)
+          WalletSendKvRow(
+            label: 'Remaining',
+            value: '${_formatWeiAsEth(remainingWei)} ETH',
+          ),
         if (feeNotice != null)
           WalletSendKvRow(label: 'Fee notice', value: feeNotice),
         WalletSendKvRow(label: 'Network', value: networkLabel),
@@ -2195,13 +2885,29 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Widget _buildReviewFooter(BuildContext ctx) {
+    if (_canRetryReadinessFromReview) {
+      final readiness = _sendReadiness;
+      final label = readiness == WalletSendReadinessState.balanceUnavailable
+          ? kMainnetSendRetryBalanceLabel
+          : kEthSendReviewButtonLabel;
+      return ElevatedButton(
+        key: const Key('eth_send_panel_retry_readiness_btn'),
+        onPressed: _retryReviewFromFreshQuote,
+        style: walletPrimaryButtonStyle().copyWith(
+          minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
+        ),
+        child: Text(label),
+      );
+    }
     return ElevatedButton(
       key: const Key('eth_send_panel_confirm_btn'),
-      onPressed: _onReviewConfirmTap,
+      onPressed: _canConfirmReview ? _onReviewConfirmTap : null,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
-      child: const Text(kEthSendReviewConfirmButtonLabel),
+      child: Text(
+        _isRetryablePinFailure ? 'Retry PIN' : kEthSendReviewConfirmButtonLabel,
+      ),
     );
   }
 
@@ -2234,9 +2940,7 @@ class _CryptoWalletEngineSendPanelState
   Widget _buildConfirmPhraseFooter(BuildContext ctx) {
     return ElevatedButton(
       key: const Key(kMainnetSendConfirmPhraseContinueBtnKey),
-      onPressed: _broadcastInFlight
-          ? null
-          : _onMainnetConfirmPhraseContinue,
+      onPressed: _broadcastInFlight ? null : _onMainnetConfirmPhraseContinue,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
@@ -2313,7 +3017,8 @@ class _CryptoWalletEngineSendPanelState
   Widget _buildBalanceUnverifiedBanner() {
     return WalletSendWarning(
       key: const Key(kMainnetSendBalanceUnverifiedKey),
-      text: kMainnetSendBalanceUnverifiedWarning,
+      text: kMainnetSendBalanceUnverifiedError,
+      tone: WalletSendWarningTone.critical,
     );
   }
 
@@ -2340,8 +3045,8 @@ class _CryptoWalletEngineSendPanelState
     final status = _broadcastStatus ?? 'submitted';
     final hash = _submittedTxHash ?? '';
     final isUncertain = status == 'submission_uncertain';
-    final isRejected = status == 'broadcast_rejected'
-        || status == 'broadcast_unavailable';
+    final isRejected =
+        status == 'broadcast_rejected' || status == 'broadcast_unavailable';
     final heading = isRejected
         ? kEthSendResultHeadingRejected
         : (isUncertain
@@ -2379,8 +3084,10 @@ class _CryptoWalletEngineSendPanelState
             'Reason: ${_broadcastReason!}',
             key: const Key('eth_send_panel_result_backend_reason'),
             style: const TextStyle(
-                color: kWalletTextMuted, fontSize: 11,
-                fontWeight: FontWeight.w600, letterSpacing: 0.4),
+                color: kWalletTextMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4),
           ),
         ],
         const SizedBox(height: 14),
@@ -2414,8 +3121,10 @@ class _CryptoWalletEngineSendPanelState
           const Text(
             'Transaction hash',
             style: TextStyle(
-                color: kWalletTextMuted, fontSize: 11,
-                fontWeight: FontWeight.w600, letterSpacing: 0.4),
+                color: kWalletTextMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4),
           ),
           const SizedBox(height: 4),
           SelectableText(
@@ -2454,7 +3163,8 @@ class _CryptoWalletEngineSendPanelState
 
   Widget _buildExplorerAction(String hash) {
     final url = ethExplorerUrlFor(
-      network: widget.network, txHash: hash,
+      network: widget.network,
+      txHash: hash,
     );
     return FilledButton.icon(
       key: const Key('eth_send_panel_explorer_btn'),
@@ -2482,8 +3192,7 @@ class _CryptoWalletEngineSendPanelState
       onPressed: () async {
         try {
           final body = widget.isMainnet
-              ? await widget.client
-                  .getCryptoWalletTransactionStatusNetwork(
+              ? await widget.client.getCryptoWalletTransactionStatusNetwork(
                   network: widget.network,
                   asset: widget.asset,
                   authToken: widget.authToken,
@@ -2520,8 +3229,12 @@ class _CryptoWalletEngineSendPanelState
           _broadcastMessage = null;
           _draft = null;
           _idempotencyKey = null;
+          _feeQuote = null;
+          _balanceQuote = null;
           _stage = _Stage.form;
           _error = null;
+          _maxReservedFeeWei = null;
+          _maxRemainingBalanceWei = null;
         });
       },
       style: OutlinedButton.styleFrom(
@@ -2537,17 +3250,21 @@ class _CryptoWalletEngineSendPanelState
     LocalOutgoingTxStatus? next;
     switch (backendStatus) {
       case 'confirmed':
-        next = LocalOutgoingTxStatus.confirmed; break;
+        next = LocalOutgoingTxStatus.confirmed;
+        break;
       case 'failed':
-        next = LocalOutgoingTxStatus.failed; break;
+        next = LocalOutgoingTxStatus.failed;
+        break;
       case 'pending':
-        next = LocalOutgoingTxStatus.pending; break;
+        next = LocalOutgoingTxStatus.pending;
+        break;
       case 'not_found':
         // The tx has never been seen on any Ethereum node. Do NOT
         // mark it confirmed; keep it as `submissionUncertain` — the
         // user is told the tx is not visible and can decide whether
         // to consider it dropped after enough time passes.
-        next = LocalOutgoingTxStatus.submissionUncertain; break;
+        next = LocalOutgoingTxStatus.submissionUncertain;
+        break;
       default:
         return;
     }
@@ -2558,9 +3275,9 @@ class _CryptoWalletEngineSendPanelState
         // Only upgrade `submission_uncertain` → `submitted` when
         // the backend actually confirms; do NOT downgrade a
         // `submitted` result screen.
-        if (next == LocalOutgoingTxStatus.confirmed
-            || next == LocalOutgoingTxStatus.failed
-            || next == LocalOutgoingTxStatus.pending) {
+        if (next == LocalOutgoingTxStatus.confirmed ||
+            next == LocalOutgoingTxStatus.failed ||
+            next == LocalOutgoingTxStatus.pending) {
           _broadcastStatus = 'submitted';
         }
       });
@@ -2568,8 +3285,6 @@ class _CryptoWalletEngineSendPanelState
   }
 
   String _formatWeiAsEth(BigInt wei) {
-    
-    
     final whole = wei ~/ BigInt.from(1000000000000000000);
     final frac = wei - (whole * BigInt.from(1000000000000000000));
     var fracStr = frac.toString().padLeft(18, '0');
@@ -2579,7 +3294,6 @@ class _CryptoWalletEngineSendPanelState
     return '$whole.$fracStr';
   }
 }
-
 
 class _EthSendPinDialog extends StatefulWidget {
   const _EthSendPinDialog();

@@ -320,8 +320,9 @@ void main() {
                       BigInt.from(20000000000))
                   .toString(),
           'feeSource': 'eth_estimateGas_x_gasPrice',
-          'network': 'ethereum_mainnet',
+          'network': 'ethereum_sepolia',
           'asset': 'ETH',
+          'chainId': 11155111,
         },
       );
       await _pumpEth(tester,

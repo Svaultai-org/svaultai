@@ -534,6 +534,11 @@ class _CryptoWalletEngineAssetDetailPageState
           _balanceUnit = result.balanceUnit;
           _balanceReason = null;
           _balanceLoading = false;
+          final rawBase = result.spendableBalanceBaseUnits ??
+              result.confirmedBalanceBaseUnits ??
+              result.balanceBaseUnits;
+          _balanceBaseUnits =
+              rawBase == null ? null : BigInt.tryParse(rawBase);
           // A successful live refresh clears any prior optimistic
           // pending debit — the chain has caught up.
           _pendingDebitWei = null;
@@ -603,7 +608,9 @@ class _CryptoWalletEngineAssetDetailPageState
       // (token) + trxBalanceSun for the parent-TRX check.
       BigInt? primary;
       if (asset == 'ETH') {
-        final w = body['weiAmount'];
+        final w = body['spendableBalanceWei'] ??
+            body['confirmedBalanceWei'] ??
+            body['weiAmount'];
         if (w != null) primary = BigInt.tryParse(w.toString());
       } else if (asset == 'SOL') {
         final l = body['lamports'] ?? body['availableBaseUnits'];
@@ -634,7 +641,9 @@ class _CryptoWalletEngineAssetDetailPageState
           final ethStatus =
               (ethBody['balanceStatus'] ?? '').toString();
           if (ethStatus == 'available') {
-            final w = ethBody['weiAmount'];
+            final w = ethBody['spendableBalanceWei'] ??
+                ethBody['confirmedBalanceWei'] ??
+                ethBody['weiAmount'];
             if (w != null && mounted) {
               setState(() {
                 _ethBalanceWei = BigInt.tryParse(w.toString());

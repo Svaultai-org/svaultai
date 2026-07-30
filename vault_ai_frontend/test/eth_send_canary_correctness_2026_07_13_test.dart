@@ -71,6 +71,7 @@ class _FakeCanaryClient extends VaultAIClient {
     required this.draftResponse,
     required this.encryptedSecretResponse,
     required this.broadcastResponse,
+    // ignore: unused_element_parameter
     this.statusResponse,
   }) : super(baseUrl: 'http://test.invalid');
 
@@ -179,7 +180,7 @@ Map<String, Object?> _draftReady() => const {
       'nonce': '3',
       'gasLimit': '21000',
       'gasPrice': '20000000000',
-      'chainId': 1,
+      'chainId': 11155111,
       'feeUnit': 'wei',
     };
 

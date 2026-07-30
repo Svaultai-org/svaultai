@@ -130,12 +130,12 @@ class CryptoWalletFeatures {
         supportedAssetsByNetwork = const {};
 
   factory CryptoWalletFeatures.fromBackend(Map<String, dynamic> raw) {
-    bool b(String k) => (raw[k] as bool?) ?? false;
-    String s(String k) => (raw[k] as String?) ?? '';
-    final nets = (raw['supportedNetworks'] as List?)
-            ?.map((e) => e.toString())
-            .toList() ??
-        const <String>[];
+    bool b(String k) => raw[k] is bool ? raw[k] as bool : false;
+    String s(String k) => raw[k] is String ? raw[k] as String : '';
+    final rawNetworks = raw['supportedNetworks'];
+    final nets = rawNetworks is List
+        ? rawNetworks.map((e) => e.toString()).toList()
+        : const <String>[];
     final assets = <String, List<String>>{};
     final rawAssets = raw['supportedAssetsByNetwork'];
     if (rawAssets is Map) {
@@ -188,12 +188,10 @@ class CryptoWalletFeatures {
 
 
   bool get effectiveMainnetReceiveEnabled =>
-      mainnetReceiveEnabled
-      && kCryptoWalletEngineMainnetReceiveEnabled;
+      mainnetReceiveEnabled;
 
   bool get effectiveMainnetErc20ReceiveEnabled =>
-      mainnetErc20ReceiveEnabled
-      && kCryptoWalletEngineMainnetErc20ReceiveEnabled;
+      mainnetErc20ReceiveEnabled;
 
   bool get effectiveMainnetSendEnabled =>
       mainnetSendEnabled

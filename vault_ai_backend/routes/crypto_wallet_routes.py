@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -2519,10 +2520,12 @@ def _get_mainnet_balance(
 
 
     from evm_networks import (
-        NETWORK_ETHEREUM_MAINNET, is_receive_enabled, token_contract_for,
+        NETWORK_ETHEREUM_MAINNET, chain_id_for, is_receive_enabled,
+        token_contract_for,
     )
     from evm_rpc import (
         EvmRpcError, erc20_balance_of_at_url,
+        eth_block_number_at_url, eth_chain_id_at_url,
         eth_get_balance_wei_at_url, is_valid_eth_address,
     )
     from vault_config import (
@@ -2534,17 +2537,23 @@ def _get_mainnet_balance(
     norm = _normalize_asset(asset)
     is_eth = norm == "ETH"
     is_token = norm in ERC20_TOKEN_ASSETS
+    expected_chain_id = chain_id_for(NETWORK_ETHEREUM_MAINNET) or 1
 
     if not is_eth and not is_token:
         return {
             "schema":          SCHEMA_CRYPTO_WALLET_BALANCE_V1,
             "asset":           norm,
             "network":         "Ethereum Mainnet",
+            "networkId":       NETWORK_ETHEREUM_MAINNET,
+            "chainId":         expected_chain_id,
             "publicAddress":   address or "",
             "balanceStatus":   WALLET_BALANCE_STATUS_UNAVAILABLE,
             "availableAmount": None,
             "unit":            None,
             "updatedAt":       None,
+            "fetchedAt":       None,
+            "expiresAt":       None,
+            "providerStatus":  "unavailable",
             "reason":          "asset_not_enabled_on_mainnet",
         }
 
@@ -2571,11 +2580,17 @@ def _get_mainnet_balance(
             "schema":          SCHEMA_CRYPTO_WALLET_BALANCE_V1,
             "asset":           norm,
             "network":         "Ethereum Mainnet",
+            "networkId":       NETWORK_ETHEREUM_MAINNET,
+            "chainId":         expected_chain_id,
             "publicAddress":   address or "",
             "balanceStatus":   WALLET_BALANCE_STATUS_UNAVAILABLE,
             "availableAmount": None,
             "unit":            token_unit if is_token else None,
             "updatedAt":       None,
+            "fetchedAt":       None,
+            "expiresAt":       None,
+            "blockNumber":     None,
+            "providerStatus":  "unavailable",
             "reason":          reason,
         }
 
@@ -2584,6 +2599,21 @@ def _get_mainnet_balance(
     rpc_url = ethereum_mainnet_rpc_url()
     if not rpc_url:
         return _unavailable("rpc_not_configured")
+
+    try:
+        observed_chain_id = eth_chain_id_at_url(rpc_url)
+        block_number = eth_block_number_at_url(rpc_url)
+    except EvmRpcError as exc:
+        return _unavailable(exc.code)
+    if observed_chain_id != expected_chain_id:
+        body = _unavailable("chain_mismatch")
+        body["chainIdObserved"] = observed_chain_id
+        return body
+
+    fetched_at = datetime.now(timezone.utc)
+    expires_at = fetched_at + timedelta(seconds=30)
+    fetched_at_s = fetched_at.isoformat().replace("+00:00", "Z")
+    expires_at_s = expires_at.isoformat().replace("+00:00", "Z")
 
     if is_token:
         contract = token_contract_for(NETWORK_ETHEREUM_MAINNET, norm)
@@ -2604,12 +2634,21 @@ def _get_mainnet_balance(
             "schema":          SCHEMA_CRYPTO_WALLET_BALANCE_V1,
             "asset":           norm,
             "network":         "Ethereum Mainnet",
+            "networkId":       NETWORK_ETHEREUM_MAINNET,
             "publicAddress":   address,
             "balanceStatus":   WALLET_BALANCE_STATUS_AVAILABLE,
             "availableAmount": format(token_value, "f"),
             "unit":            token_unit,
-            "updatedAt":       None,
+            "updatedAt":       fetched_at_s,
+            "fetchedAt":       fetched_at_s,
+            "expiresAt":       expires_at_s,
+            "blockNumber":     block_number,
+            "chainId":         observed_chain_id,
+            "providerStatus":  "ok",
             "baseUnits":       str(base_units),
+            "confirmedBalanceBaseUnits": str(base_units),
+            "pendingBalanceBaseUnits": None,
+            "spendableBalanceBaseUnits": str(base_units),
             "tokenContract":   contract,
             "decimals":        decimals,
         }
@@ -2623,12 +2662,21 @@ def _get_mainnet_balance(
         "schema":          SCHEMA_CRYPTO_WALLET_BALANCE_V1,
         "asset":           norm,
         "network":         "Ethereum Mainnet",
+        "networkId":       NETWORK_ETHEREUM_MAINNET,
         "publicAddress":   address,
         "balanceStatus":   WALLET_BALANCE_STATUS_AVAILABLE,
         "availableAmount": format(eth_value, "f"),
         "unit":            "ETH",
-        "updatedAt":       None,
+        "updatedAt":       fetched_at_s,
+        "fetchedAt":       fetched_at_s,
+        "expiresAt":       expires_at_s,
+        "blockNumber":     block_number,
+        "chainId":         observed_chain_id,
+        "providerStatus":  "ok",
         "weiAmount":       str(wei),
+        "confirmedBalanceWei": str(wei),
+        "pendingBalanceWei": None,
+        "spendableBalanceWei": str(wei),
     }
 
 
@@ -2957,6 +3005,7 @@ def _create_mainnet_send_draft(
     from evm_rpc import (
         EvmRpcError, encode_erc20_transfer_calldata,
         erc20_balance_of_at_url,
+        eth_block_number_at_url, eth_chain_id_at_url,
         eth_estimate_gas_at_url, eth_gas_price_wei_at_url,
         eth_get_balance_wei_at_url,
         eth_get_transaction_count_at_url, is_valid_eth_address,
@@ -3112,6 +3161,34 @@ def _create_mainnet_send_draft(
             "message": (
                 "Cannot draft a mainnet send: the operator has not "
                 "configured an Ethereum Mainnet RPC endpoint."
+            ),
+        }
+    expected_chain_id = chain_id_for(NETWORK_ETHEREUM_MAINNET) or 1
+    try:
+        observed_chain_id = eth_chain_id_at_url(rpc_url)
+        block_number = eth_block_number_at_url(rpc_url)
+    except EvmRpcError as exc:
+        return {
+            "status":  "draft_unavailable",
+            "asset":   norm,
+            "network": "Ethereum Mainnet",
+            "reason":  exc.code,
+            "message": (
+                "Cannot draft a mainnet send: the upstream Ethereum "
+                "Mainnet RPC could not verify the network."
+            ),
+        }
+    if observed_chain_id != expected_chain_id:
+        return {
+            "status":          "draft_unavailable",
+            "asset":           norm,
+            "network":         "Ethereum Mainnet",
+            "reason":          "chain_mismatch",
+            "chainId":         expected_chain_id,
+            "chainIdObserved": observed_chain_id,
+            "message": (
+                "Cannot draft a mainnet send: the configured RPC is "
+                "not Ethereum Mainnet."
             ),
         }
 
@@ -3331,7 +3408,7 @@ def _create_mainnet_send_draft(
         str(principal["vault_id"])[:8] + "…", norm,
     )
 
-    mainnet_chain_id = chain_id_for(NETWORK_ETHEREUM_MAINNET)
+    mainnet_chain_id = observed_chain_id
 
 
 
@@ -3396,6 +3473,14 @@ def _create_mainnet_send_draft(
             "gasLimit":            str(gas_limit),
             "gasPrice":            str(gas_price),
             "chainId":             mainnet_chain_id,
+            "blockNumber":         block_number,
+            "confirmedBalanceWei": str(eth_balance_wei),
+            "spendableBalanceWei": str(eth_balance_wei),
+            "pendingBalanceWei":   None,
+            "estimatedFeeWei":     str(fee_wei),
+            "maximumFeeWei":       str(fee_wei),
+            "totalMaximumDebitWei": str(fee_wei),
+            "remainingBalanceWei": str(eth_balance_wei - fee_wei),
             "feeUnit":             "ETH",
             "realFundsWarning": (
                 "This sends real tokens on Ethereum Mainnet. Gas is "
@@ -3416,6 +3501,14 @@ def _create_mainnet_send_draft(
         "gasLimit":           str(gas_limit),
         "gasPrice":           str(gas_price),
         "chainId":            mainnet_chain_id,
+        "blockNumber":        block_number,
+        "confirmedBalanceWei": str(eth_balance_wei),
+        "spendableBalanceWei": str(eth_balance_wei),
+        "pendingBalanceWei":  None,
+        "estimatedFeeWei":    str(fee_wei),
+        "maximumFeeWei":      str(fee_wei),
+        "totalMaximumDebitWei": str(value_wei + fee_wei),
+        "remainingBalanceWei": str(eth_balance_wei - value_wei - fee_wei),
         "feeUnit":            "ETH",
         "realFundsWarning": (
             "This sends real ETH on Ethereum Mainnet. Transactions "
@@ -4613,6 +4706,7 @@ def _get_mainnet_send_fee_estimate(
     )
     from evm_rpc import (
         EvmRpcError, encode_erc20_transfer_calldata,
+        eth_block_number_at_url, eth_chain_id_at_url,
         eth_estimate_gas_at_url, eth_gas_price_wei_at_url,
         is_valid_eth_address,
     )
@@ -4653,6 +4747,32 @@ def _get_mainnet_send_fee_estimate(
             "message": (
                 "Cannot estimate fee: mainnet RPC is not "
                 "configured."
+            ),
+        }
+    expected_chain_id = chain_id_for(NETWORK_ETHEREUM_MAINNET) or 1
+    try:
+        observed_chain_id = eth_chain_id_at_url(rpc_url)
+        block_number = eth_block_number_at_url(rpc_url)
+    except EvmRpcError as exc:
+        return {
+            "status":  "fee_estimate_unavailable",
+            "network": "ethereum_mainnet",
+            "reason":  exc.code,
+            "message": (
+                "Cannot estimate fee: mainnet RPC could not verify "
+                "the network."
+            ),
+        }
+    if observed_chain_id != expected_chain_id:
+        return {
+            "status":          "fee_estimate_unavailable",
+            "network":         "ethereum_mainnet",
+            "reason":          "chain_mismatch",
+            "chainId":         expected_chain_id,
+            "chainIdObserved": observed_chain_id,
+            "message": (
+                "Cannot estimate fee: configured RPC is not "
+                "Ethereum Mainnet."
             ),
         }
     is_token = norm in ("USDT_ERC20", "USDC_ERC20")
@@ -4711,12 +4831,13 @@ def _get_mainnet_send_fee_estimate(
         "status":                   "fee_estimate_ready",
         "network":                  "ethereum_mainnet",
         "asset":                    norm,
-        "chainId":                  chain_id_for(
-            NETWORK_ETHEREUM_MAINNET,
-        ),
+        "chainId":                  observed_chain_id,
+        "blockNumber":              block_number,
         "authorizedMaxFeeBaseUnits": str(fee_wei),
         "gasLimit":                 str(int(gas_limit)),
         "gasPriceWei":              str(int(gas_price)),
+        "estimatedFeeWei":          str(fee_wei),
+        "maximumFeeWei":            str(fee_wei),
         "feeSource":                "eth_estimateGas_x_gasPrice",
     }
 

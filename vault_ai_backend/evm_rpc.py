@@ -17,6 +17,8 @@ _ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 
 ALLOWED_RPC_METHODS: frozenset[str] = frozenset({
+    "eth_chainId",
+    "eth_blockNumber",
     "eth_getBalance",
     "eth_call",
     "eth_getTransactionCount",
@@ -203,6 +205,18 @@ def _parse_hex_int(result: object) -> int:
 
 
 _ALLOWED_BLOCK_TAGS: frozenset[str] = frozenset({"latest", "pending"})
+
+
+def eth_chain_id_at_url(rpc_url: str) -> int:
+
+    body = _emit_rpc_at_url(rpc_url, "eth_chainId", [])
+    return _parse_hex_int(body.get("result"))
+
+
+def eth_block_number_at_url(rpc_url: str) -> int:
+
+    body = _emit_rpc_at_url(rpc_url, "eth_blockNumber", [])
+    return _parse_hex_int(body.get("result"))
 
 
 def eth_get_balance_wei_at_url(
@@ -435,6 +449,8 @@ __all__ = [
     "is_valid_eth_address",
     "is_valid_signed_tx_hex",
     "is_valid_tx_hash",
+    "eth_chain_id_at_url",
+    "eth_block_number_at_url",
     "eth_get_balance_wei_at_url",
     "encode_erc20_balance_of_calldata",
     "erc20_balance_of_at_url",

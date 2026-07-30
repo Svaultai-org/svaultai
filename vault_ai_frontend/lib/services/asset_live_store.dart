@@ -91,11 +91,15 @@ class AssetLiveStore extends ChangeNotifier {
 
 
 
-  void resetForTest() {
+  void clear() {
     _states.clear();
     _seqCounter.clear();
     _seqLatestApplied.clear();
     notifyListeners();
+  }
+
+  void resetForTest() {
+    clear();
   }
 
   void _log(String message) {

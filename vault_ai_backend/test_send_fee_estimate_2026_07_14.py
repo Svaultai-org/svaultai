@@ -122,13 +122,15 @@ def _make_client(vault_id: str = _VAULT):
     from fastapi.testclient import TestClient
     from routes import crypto_wallet_routes as m
     from routes.crypto_wallet_routes import (
-        router, verify_trusted_device,
+        require_crypto_entitlement, router, verify_trusted_device,
     )
     app = FastAPI()
     app.include_router(router)
-    app.dependency_overrides[verify_trusted_device] = lambda: {
+    principal = {
         "vault_id": vault_id,
     }
+    app.dependency_overrides[verify_trusted_device] = lambda: principal
+    app.dependency_overrides[require_crypto_entitlement] = lambda: principal
     return TestClient(app), app, m
 
 
@@ -173,6 +175,12 @@ class EthFeeEstimate(unittest.TestCase):
 
     def test_happy_path_returns_gas_x_price(self):
         with mock.patch(
+            "evm_rpc.eth_chain_id_at_url",
+            return_value=1,
+        ), mock.patch(
+            "evm_rpc.eth_block_number_at_url",
+            return_value=19_000_001,
+        ), mock.patch(
             "evm_rpc.eth_estimate_gas_at_url",
             return_value=21000,
         ), mock.patch(
@@ -191,12 +199,20 @@ class EthFeeEstimate(unittest.TestCase):
         )
         self.assertEqual(body["gasLimit"], "21000")
         self.assertEqual(body["gasPriceWei"], "20000000000")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["blockNumber"], 19_000_001)
         self.assertEqual(
             body["feeSource"], "eth_estimateGas_x_gasPrice",
         )
 
     def test_erc20_transfer_uses_calldata(self):
         with mock.patch(
+            "evm_rpc.eth_chain_id_at_url",
+            return_value=1,
+        ), mock.patch(
+            "evm_rpc.eth_block_number_at_url",
+            return_value=19_000_002,
+        ), mock.patch(
             "evm_rpc.eth_estimate_gas_at_url",
             return_value=65000,
         ) as est, mock.patch(
@@ -213,6 +229,8 @@ class EthFeeEstimate(unittest.TestCase):
         self.assertNotEqual(kwargs.get("data_hex"), "0x")
         # Must target the token contract, not the ETH destination.
         self.assertNotEqual(kwargs.get("to_address"), _ETH_B)
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["blockNumber"], 19_000_002)
 
     def test_invalid_destination_fails_closed(self):
         r = self._hit(dest_addr="not-an-address")
@@ -233,6 +251,12 @@ class EthFeeEstimate(unittest.TestCase):
     def test_rpc_unreachable_fails_closed_temporarily(self):
         from evm_rpc import EvmRpcError
         with mock.patch(
+            "evm_rpc.eth_chain_id_at_url",
+            return_value=1,
+        ), mock.patch(
+            "evm_rpc.eth_block_number_at_url",
+            return_value=19_000_003,
+        ), mock.patch(
             "evm_rpc.eth_estimate_gas_at_url",
             side_effect=EvmRpcError("rpc_unreachable"),
         ):
@@ -241,6 +265,25 @@ class EthFeeEstimate(unittest.TestCase):
         body = r.json()
         self.assertEqual(body["status"], "fee_estimate_unavailable")
         self.assertEqual(body["reason"], "rpc_unreachable")
+
+    def test_wrong_chain_fails_closed_before_fee_rpc(self):
+        with mock.patch(
+            "evm_rpc.eth_chain_id_at_url",
+            return_value=11155111,
+        ), mock.patch(
+            "evm_rpc.eth_block_number_at_url",
+            return_value=19_000_004,
+        ), mock.patch(
+            "evm_rpc.eth_estimate_gas_at_url",
+        ) as est:
+            r = self._hit()
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "fee_estimate_unavailable")
+        self.assertEqual(body["reason"], "chain_mismatch")
+        self.assertEqual(body["chainId"], 1)
+        self.assertEqual(body["chainIdObserved"], 11155111)
+        est.assert_not_called()
 
     def test_rpc_not_configured_fails_closed(self):
         os.environ.pop("ETHEREUM_MAINNET_RPC_URL", None)
@@ -257,6 +300,10 @@ class EthFeeEstimate(unittest.TestCase):
         # never touches the state machine.
         before = dict(self._m._solana_store._drafts)
         with mock.patch(
+            "evm_rpc.eth_chain_id_at_url", return_value=1,
+        ), mock.patch(
+            "evm_rpc.eth_block_number_at_url", return_value=19_000_005,
+        ), mock.patch(
             "evm_rpc.eth_estimate_gas_at_url", return_value=21000,
         ), mock.patch(
             "evm_rpc.eth_gas_price_wei_at_url",
