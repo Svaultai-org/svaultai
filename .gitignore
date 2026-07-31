@@ -42,6 +42,14 @@ yarn-error.log
 !.env.production.example
 !**/.env.example
 !**/.env.production.example
+production.env
+acceptance.local.json
+key.properties
+*.jks
+*.keystore
+*.p12
+*.cer
+*.mobileprovision
 *.key
 *.pem
 
@@ -91,3 +99,16 @@ tool-results/
 *.db
 *.sqlite
 *.sqlite3
+
+# Local QA / release-transfer artifacts
+.qa/
+.webdriver/
+.release-tools/
+.release-worktree-*/
+release_staging/
+.cargo-target-android-smoke*/
+.cargo-target-msvc-android-smoke/
+android_*.png
+web_*.png
+android_window*.xml
+flutter_analyze_current.txt
