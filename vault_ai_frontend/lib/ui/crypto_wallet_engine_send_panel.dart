@@ -127,6 +127,8 @@ const String kMainnetSendBroadcastSafeError = 'Could not submit transaction.';
 const String kMainnetSendRateLimitedError =
     'Too many recent send attempts. Wait a moment before retrying.';
 const Duration kWalletSendQuoteTtl = Duration(seconds: 45);
+const bool kMainnetSendTraceEnabled =
+    bool.fromEnvironment('VAULTAI_MAINNET_SEND_TRACE');
 
 // 2026-07-13 canary correctness: result screen states + explorer.
 const String kEthSendResultHeadingSubmitted = 'Transaction submitted';
@@ -438,9 +440,17 @@ class _QuoteChangeSnapshot {
   });
 }
 
+String _mainnetSendFingerprint(String value) {
+  final hash = KeccakDigest(256).process(
+    Uint8List.fromList(value.trim().toLowerCase().codeUnits),
+  );
+  return hash.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+}
+
 class _MainnetSendApprovalEnvelope {
-  final String sender;
-  final String recipient;
+  final String attemptId;
+  final String senderFingerprint;
+  final String recipientFingerprint;
   final BigInt amountWei;
   final int chainId;
   final BigInt nonce;
@@ -451,8 +461,9 @@ class _MainnetSendApprovalEnvelope {
   final DateTime expiresAt;
 
   const _MainnetSendApprovalEnvelope({
-    required this.sender,
-    required this.recipient,
+    required this.attemptId,
+    required this.senderFingerprint,
+    required this.recipientFingerprint,
     required this.amountWei,
     required this.chainId,
     required this.nonce,
@@ -466,12 +477,42 @@ class _MainnetSendApprovalEnvelope {
   bool isExpired(DateTime now) => !now.isBefore(expiresAt);
 
   bool matchesDraft(_DraftFields draft) {
-    return sender == draft.fromAddress.trim().toLowerCase() &&
-        recipient == draft.destinationAddress.trim().toLowerCase() &&
+    return senderFingerprint == _mainnetSendFingerprint(draft.fromAddress) &&
+        recipientFingerprint ==
+            _mainnetSendFingerprint(draft.destinationAddress) &&
         amountWei == draft.valueWei &&
         chainId == draft.chainId &&
         nonce == draft.nonce &&
         gasLimit == draft.gasLimit;
+  }
+}
+
+class CryptoWalletMainnetSendApprovalSession {
+  _MainnetSendApprovalEnvelope? _envelope;
+
+  _MainnetSendApprovalEnvelope? _restoreFor({
+    required _DraftFields draft,
+    required DateTime now,
+  }) {
+    final envelope = _envelope;
+    if (envelope == null) return null;
+    if (envelope.isExpired(now) || !envelope.matchesDraft(draft)) {
+      _envelope = null;
+      return null;
+    }
+    return envelope;
+  }
+
+  void _save(_MainnetSendApprovalEnvelope envelope) {
+    _envelope = envelope;
+  }
+
+  void _clear() {
+    _envelope = null;
+  }
+
+  void clear() {
+    _clear();
   }
 }
 
@@ -576,6 +617,13 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   /// clock time.
   final DateTime Function()? clock;
 
+  /// Active Mainnet fee approval state for the currently open send
+  /// sheet. Owners pass this from outside the panel so an approved
+  /// updated-fee ceiling survives harmless rebuilds, PIN dialog
+  /// transitions, and keyboard/lifecycle churn without persisting
+  /// PINs, keys, addresses, or signed data.
+  final CryptoWalletMainnetSendApprovalSession? mainnetApprovalSession;
+
   const CryptoWalletEngineSendPanel({
     super.key,
     required this.authToken,
@@ -602,6 +650,7 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     this.onSuccessfulBroadcast,
     this.isContractDestination,
     this.clock,
+    this.mainnetApprovalSession,
   });
 
   bool get isMainnet => network == kEvmNetworkEthereumMainnet;
@@ -668,8 +717,53 @@ class _CryptoWalletEngineSendPanelState
   bool _broadcastInFlight = false;
   bool _updatedQuoteAcceptInFlight = false;
   String? _idempotencyKey;
+  late final CryptoWalletMainnetSendApprovalSession _ownedApprovalSession =
+      CryptoWalletMainnetSendApprovalSession();
 
   DateTime _now() => widget.clock?.call() ?? DateTime.now();
+
+  CryptoWalletMainnetSendApprovalSession get _approvalSession =>
+      widget.mainnetApprovalSession ?? _ownedApprovalSession;
+
+  String _shortDraftRef(String? draftId) {
+    if (draftId == null || draftId.isEmpty) return 'none';
+    if (draftId.length <= 10) return draftId;
+    return '${draftId.substring(0, 6)}...${draftId.substring(draftId.length - 4)}';
+  }
+
+  void _traceMainnetSend(String event, Map<String, Object?> fields) {
+    if (!kMainnetSendTraceEnabled || !widget.isMainnet) return;
+    final parts = <String>['event=$event'];
+    for (final entry in fields.entries) {
+      final value = entry.value;
+      if (value == null) {
+        parts.add('${entry.key}=null');
+      } else if (value is bool || value is num || value is BigInt) {
+        parts.add('${entry.key}=$value');
+      } else {
+        parts.add('${entry.key}=${value.toString()}');
+      }
+    }
+    debugPrint('[mainnet-send-trace] ${parts.join(' ')}');
+  }
+
+  void _saveApprovalEnvelope(_MainnetSendApprovalEnvelope envelope) {
+    _approvalEnvelope = envelope;
+    _approvalSession._save(envelope);
+  }
+
+  void _setApprovalEnvelope(_MainnetSendApprovalEnvelope? envelope) {
+    if (envelope == null) {
+      _clearApprovalEnvelope();
+    } else {
+      _saveApprovalEnvelope(envelope);
+    }
+  }
+
+  void _clearApprovalEnvelope() {
+    _approvalEnvelope = null;
+    _approvalSession._clear();
+  }
 
   @override
   void initState() {
@@ -694,8 +788,7 @@ class _CryptoWalletEngineSendPanelState
   @override
   void didUpdateWidget(covariant CryptoWalletEngineSendPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.fetchAvailableBalance != widget.fetchAvailableBalance ||
-        oldWidget.asset != widget.asset ||
+    if (oldWidget.asset != widget.asset ||
         oldWidget.network != widget.network ||
         oldWidget.fromAddress != widget.fromAddress) {
       _availableBalanceUpdatedAt = null;
@@ -704,12 +797,18 @@ class _CryptoWalletEngineSendPanelState
       _feeQuote = null;
       _balanceQuote = null;
       _quoteChangeSnapshot = null;
-      _approvalEnvelope = null;
+      _clearApprovalEnvelope();
+    } else if (oldWidget.fetchAvailableBalance !=
+        widget.fetchAvailableBalance) {
+      _availableBalanceUpdatedAt = null;
+      _availableBalanceFuture =
+          widget.fetchAvailableBalance == null ? null : _loadAvailableBalance();
     }
   }
 
   @override
   void dispose() {
+    _clearApprovalEnvelope();
     _destCtrl.removeListener(_clearMaxQuoteOnInputChange);
     _amountCtrl.removeListener(_clearMaxQuoteOnInputChange);
     _destFocus.removeListener(_maybeScrollFocusedFieldIntoView);
@@ -740,7 +839,7 @@ class _CryptoWalletEngineSendPanelState
       _feeQuote = null;
       _balanceQuote = null;
       _quoteChangeSnapshot = null;
-      _approvalEnvelope = null;
+      _clearApprovalEnvelope();
     });
   }
 
@@ -904,6 +1003,11 @@ class _CryptoWalletEngineSendPanelState
     if (_draftInFlight) return;
     final preservedApproval =
         preserveApprovalEnvelope ? _approvalEnvelope : null;
+    _traceMainnetSend('fresh_draft_retry_begin', {
+      'preserve_approval': preserveApprovalEnvelope,
+      'approval_present': preservedApproval != null,
+      'old_draft_ref': _shortDraftRef(_draft?.draftId),
+    });
     setState(() {
       _draft = null;
       _idempotencyKey = null;
@@ -914,7 +1018,7 @@ class _CryptoWalletEngineSendPanelState
       _feeQuote = null;
       _balanceQuote = null;
       _quoteChangeSnapshot = null;
-      _approvalEnvelope = preservedApproval;
+      _setApprovalEnvelope(preservedApproval);
       _maxReservedFeeWei = null;
       _maxRemainingBalanceWei = null;
     });
@@ -939,10 +1043,17 @@ class _CryptoWalletEngineSendPanelState
     try {
       final draft = _draft;
       final feeQuote = _feeQuote;
+      _traceMainnetSend('updated_fee_accept_begin', {
+        'approval_present': _approvalEnvelope != null,
+        'draft_ref': _shortDraftRef(draft?.draftId),
+        'maximum_fee_wei': feeQuote?.maximumFeeWei,
+      });
       if (draft != null && feeQuote != null) {
-        _approvalEnvelope = _buildApprovalEnvelope(
-          draft: draft,
-          feeQuote: feeQuote,
+        _saveApprovalEnvelope(
+          _buildApprovalEnvelope(
+            draft: draft,
+            feeQuote: feeQuote,
+          ),
         );
       }
       await _retryReviewFromFreshQuote(preserveApprovalEnvelope: true);
@@ -1181,8 +1292,9 @@ class _CryptoWalletEngineSendPanelState
     final now = approvedAt ?? _now();
     final approvedFee = _approvedFeeCeilingFor(feeQuote);
     return _MainnetSendApprovalEnvelope(
-      sender: draft.fromAddress.trim().toLowerCase(),
-      recipient: draft.destinationAddress.trim().toLowerCase(),
+      attemptId: _generateIdempotencyKey(),
+      senderFingerprint: _mainnetSendFingerprint(draft.fromAddress),
+      recipientFingerprint: _mainnetSendFingerprint(draft.destinationAddress),
       amountWei: draft.valueWei,
       chainId: draft.chainId,
       nonce: draft.nonce,
@@ -1209,6 +1321,8 @@ class _CryptoWalletEngineSendPanelState
         existing.matchesDraft(draft)) {
       return existing;
     }
+    final restored = _approvalSession._restoreFor(draft: draft, now: now);
+    if (restored != null) return restored;
     return _buildApprovalEnvelope(
       draft: draft,
       feeQuote: feeQuote,
@@ -1260,7 +1374,25 @@ class _CryptoWalletEngineSendPanelState
     final previousFeeQuote = feeQuote;
     final previousBalanceQuote = _balanceQuote;
     if (widget.isMainnet) {
+      _traceMainnetSend('pre_sign_refresh_begin', {
+        'approval_present': _approvalEnvelope != null,
+        'draft_ref': _shortDraftRef(draft.draftId),
+        'nonce': draft.nonce,
+        'gas_limit': draft.gasLimit,
+      });
       var approval = _approvalEnvelope;
+      if (approval == null || !approval.matchesDraft(draft)) {
+        final restored = _approvalSession._restoreFor(draft: draft, now: now);
+        if (restored != null) {
+          approval = restored;
+          _traceMainnetSend('approval_restored_or_created', {
+            'restored': true,
+            'approved_max_fee_wei': approval.approvedMaximumFeeWei,
+            'approved_max_debit_wei': approval.approvedMaximumDebitWei,
+          });
+          if (mounted) setState(() => _saveApprovalEnvelope(approval!));
+        }
+      }
       if (approval == null || !approval.matchesDraft(draft)) {
         if (feeQuote.isExpired(now) ||
             (_balanceQuote != null && _balanceQuote!.isExpired(now))) {
@@ -1271,14 +1403,27 @@ class _CryptoWalletEngineSendPanelState
           feeQuote: feeQuote,
           approvedAt: now,
         );
-        if (mounted) setState(() => _approvalEnvelope = approval);
+        _traceMainnetSend('approval_restored_or_created', {
+          'restored': false,
+          'approved_max_fee_wei': approval.approvedMaximumFeeWei,
+          'approved_max_debit_wei': approval.approvedMaximumDebitWei,
+        });
+        if (mounted) setState(() => _saveApprovalEnvelope(approval!));
       }
       if (approval.isExpired(now)) {
-        if (mounted) setState(() => _approvalEnvelope = null);
+        _traceMainnetSend('pre_sign_refresh_return', {
+          'branch': 'approval_expired',
+          'draft_ref': _shortDraftRef(draft.draftId),
+        });
+        if (mounted) setState(_clearApprovalEnvelope);
         return kMainnetSendFeeQuoteExpiredError;
       }
       final refreshed = await _refreshFeeQuoteForDraft(draft);
       if (refreshed == null) {
+        _traceMainnetSend('pre_sign_refresh_return', {
+          'branch': 'fee_estimate_failed',
+          'draft_ref': _shortDraftRef(draft.draftId),
+        });
         return kMainnetSendFeeEstimateFailedError;
       }
       final updatedBalance = await _buildBalanceQuote(
@@ -1286,6 +1431,10 @@ class _CryptoWalletEngineSendPanelState
         feeQuote: refreshed,
       );
       if (updatedBalance == null) {
+        _traceMainnetSend('pre_sign_refresh_return', {
+          'branch': 'balance_unverified',
+          'draft_ref': _shortDraftRef(draft.draftId),
+        });
         return kMainnetSendExactFeeUnverifiedError;
       }
       final updatedMaximumDebit = _maximumDebitFor(
@@ -1302,6 +1451,20 @@ class _CryptoWalletEngineSendPanelState
       final balanceInsufficient =
           updatedBalance.spendableBalanceWei < updatedMaximumDebit;
       if (structuralChange || feeExceedsApproval || balanceInsufficient) {
+        _traceMainnetSend('pre_sign_refresh_return', {
+          'branch': balanceInsufficient
+              ? 'balance_insufficient'
+              : structuralChange
+                  ? 'structural_change'
+                  : 'fee_above_approval',
+          'chain_equal': refreshed.chainId == draft.chainId,
+          'gas_limit_equal': refreshed.gasLimit == approval.gasLimit,
+          'fee_delta_wei':
+              refreshed.maximumFeeWei - approval.approvedMaximumFeeWei,
+          'debit_delta_wei':
+              updatedMaximumDebit - approval.approvedMaximumDebitWei,
+          'draft_ref': _shortDraftRef(draft.draftId),
+        });
         if (mounted) {
           setState(() {
             _feeQuote = refreshed;
@@ -1313,7 +1476,7 @@ class _CryptoWalletEngineSendPanelState
               previousBalance: previousBalanceQuote,
               updatedBalance: updatedBalance,
             );
-            _approvalEnvelope = null;
+            _clearApprovalEnvelope();
           });
         }
         if (balanceInsufficient) {
@@ -1324,11 +1487,18 @@ class _CryptoWalletEngineSendPanelState
         return kMainnetSendFeeQuoteChangedError;
       }
       if (mounted) {
+        _traceMainnetSend('pre_sign_refresh_accept', {
+          'draft_ref': _shortDraftRef(draft.draftId),
+          'maximum_fee_wei': refreshed.maximumFeeWei,
+          'approved_max_fee_wei': approval.approvedMaximumFeeWei,
+          'maximum_debit_wei': updatedMaximumDebit,
+          'approved_max_debit_wei': approval.approvedMaximumDebitWei,
+        });
         setState(() {
           _feeQuote = refreshed;
           _balanceQuote = updatedBalance;
           _quoteChangeSnapshot = null;
-          _approvalEnvelope = approval;
+          _saveApprovalEnvelope(approval!);
         });
       }
       return null;
@@ -1854,15 +2024,26 @@ class _CryptoWalletEngineSendPanelState
           return;
         }
       }
+      final reviewApproval = _approvalEnvelopeForReview(
+        draft: draft,
+        feeQuote: feeQuote,
+      );
+      _traceMainnetSend('fresh_draft_ready', {
+        'new_draft_ref': _shortDraftRef(draft.draftId),
+        'approval_present': reviewApproval != null,
+        'nonce': draft.nonce,
+        'gas_limit': draft.gasLimit,
+        'maximum_fee_wei': feeQuote.maximumFeeWei,
+        'total_maximum_debit_wei': balanceQuote?.totalMaximumDebitWei,
+        'confirmed_balance_wei': balanceQuote?.confirmedBalanceWei,
+        'spendable_balance_wei': balanceQuote?.spendableBalanceWei,
+      });
       setState(() {
         _draft = draft;
         _feeQuote = feeQuote;
         _balanceQuote = balanceQuote;
         _quoteChangeSnapshot = null;
-        _approvalEnvelope = _approvalEnvelopeForReview(
-          draft: draft,
-          feeQuote: feeQuote,
-        );
+        _setApprovalEnvelope(reviewApproval);
         _stage = _Stage.review;
         _balanceCheckUnverified = false;
       });
@@ -1909,7 +2090,7 @@ class _CryptoWalletEngineSendPanelState
     }
     final pin = await _showPinDialog();
     if (pin == null) {
-      if (mounted) setState(() => _approvalEnvelope = null);
+      if (mounted) setState(_clearApprovalEnvelope);
       return;
     }
 
@@ -1970,6 +2151,12 @@ class _CryptoWalletEngineSendPanelState
     if (draftForGate != null) {
       final quoteError = await _refreshQuotesBeforeSigning(draftForGate);
       if (quoteError != null) {
+        _traceMainnetSend('confirm_return_review', {
+          'branch': 'quote_gate',
+          'error_code': quoteError,
+          'approval_present': _approvalEnvelope != null,
+          'draft_ref': _shortDraftRef(draftForGate.draftId),
+        });
         _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
@@ -1978,7 +2165,9 @@ class _CryptoWalletEngineSendPanelState
         return;
       }
     }
-    if (draftForGate != null && widget.fetchAvailableBalanceWei != null) {
+    if (draftForGate != null &&
+        !widget.isMainnet &&
+        widget.fetchAvailableBalanceWei != null) {
       final gateError = await _verifyExactFeeAuthorization(
         draft: draftForGate,
       );
@@ -2124,6 +2313,7 @@ class _CryptoWalletEngineSendPanelState
       final displayHash =
           txHashRaw.isNotEmpty ? txHashRaw : localHashAtBroadcast;
       if (status == 'submitted' || status == 'already_submitted') {
+        _clearApprovalEnvelope();
         _updateOutgoingRow(
           localHashAtBroadcast,
           LocalOutgoingTxStatus.submitted,
@@ -2147,6 +2337,7 @@ class _CryptoWalletEngineSendPanelState
         return;
       }
       if (status == 'submission_uncertain') {
+        _clearApprovalEnvelope();
         _updateOutgoingRow(
           localHashAtBroadcast,
           LocalOutgoingTxStatus.submissionUncertain,
@@ -2163,6 +2354,7 @@ class _CryptoWalletEngineSendPanelState
         return;
       }
       if (status == 'broadcast_rejected' || status == 'broadcast_unavailable') {
+        _clearApprovalEnvelope();
         _updateOutgoingRow(
           localHashAtBroadcast,
           LocalOutgoingTxStatus.explicitlyRejected,
@@ -2182,6 +2374,7 @@ class _CryptoWalletEngineSendPanelState
       // Legacy Sepolia path uses the presence of `txHash` as the
       // success signal.
       if (!widget.isMainnet && txHashRaw.isNotEmpty) {
+        _clearApprovalEnvelope();
         _updateOutgoingRow(
           localHashAtBroadcast,
           LocalOutgoingTxStatus.submitted,
@@ -3762,7 +3955,7 @@ class _CryptoWalletEngineSendPanelState
           _feeQuote = null;
           _balanceQuote = null;
           _quoteChangeSnapshot = null;
-          _approvalEnvelope = null;
+          _clearApprovalEnvelope();
           _updatedQuoteAcceptInFlight = false;
           _stage = _Stage.form;
           _error = null;

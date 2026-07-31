@@ -320,6 +320,8 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
   CryptoWalletFeatures? _features;
 
   final AssetLiveStore _liveStore = AssetLiveStore.instance;
+  final CryptoWalletMainnetSendApprovalSession _mainnetSendApprovalSession =
+      CryptoWalletMainnetSendApprovalSession();
 
   final GlobalKey _activitySectionKey =
       GlobalKey(debugLabel: 'crypto_wallet_engine_activity_section');
@@ -346,6 +348,7 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
 
   @override
   void dispose() {
+    _mainnetSendApprovalSession.clear();
     _liveStore.removeListener(_onLiveStoreChanged);
     super.dispose();
   }
@@ -524,6 +527,7 @@ class _CryptoWalletEnginePageState extends State<CryptoWalletEnginePage> {
       moneroWalletAdapter: widget.moneroWalletAdapter,
       moneroScannerAdapter: widget.moneroScannerAdapter,
       activitySectionKey: _activitySectionKey,
+      mainnetApprovalSession: _mainnetSendApprovalSession,
     );
   }
 }
@@ -553,6 +557,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
   final Future<void> Function(String asset)? onAssetLiveRefreshRequested;
   final MoneroWalletAdapter moneroWalletAdapter;
   final MoneroScannerAdapter moneroScannerAdapter;
+  final CryptoWalletMainnetSendApprovalSession mainnetApprovalSession;
 
   final Key activitySectionKey;
 
@@ -576,6 +581,7 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
     this.onAssetLiveRefreshRequested,
     required this.moneroWalletAdapter,
     required this.moneroScannerAdapter,
+    required this.mainnetApprovalSession,
     Key? activitySectionKey,
   }) : activitySectionKey = activitySectionKey ??
             const Key('crypto_wallet_engine_activity_section');
@@ -756,13 +762,14 @@ class _CryptoWalletEnginePageBody extends StatelessWidget {
         network: effectiveNetwork,
         mainnetSendEnabled: sendEnabled,
         mainnetSendPaused: sendPaused,
+        mainnetApprovalSession: mainnetApprovalSession,
         fetchAvailableBalance: () async => parseAmount(assetState),
         fetchAvailableBalanceWei: () async => parseBaseUnits(assetState),
         fetchEthBalance: isToken ? () async => parseAmount(ethState) : null,
         fetchEthBalanceWei:
             isToken ? () async => parseBaseUnits(ethState) : null,
       ),
-    );
+    ).whenComplete(mainnetApprovalSession.clear);
   }
 
   void _showNotReadyBanner(BuildContext ctx, String message) {

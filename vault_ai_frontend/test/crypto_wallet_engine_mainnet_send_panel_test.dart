@@ -291,6 +291,59 @@ Future<void> _pumpMainnetPanel(
   await tester.pumpAndSettle();
 }
 
+Future<void> _pumpMainnetPanelWithParentRebuild(
+  WidgetTester tester, {
+  required _FakeMainnetClient client,
+  Future<bool> Function(String)? verifyPin,
+  Future<String> Function(String)? decryptForVault,
+}) async {
+  var rebuildGeneration = 0;
+  await tester.pumpWidget(MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: StatefulBuilder(
+      builder: (context, setParentState) {
+        return Scaffold(
+          body: Column(
+            children: [
+              TextButton(
+                key: const Key('eth_send_panel_parent_rebuild_btn'),
+                onPressed: () {
+                  setParentState(() {
+                    rebuildGeneration++;
+                  });
+                },
+                child: Text('rebuild $rebuildGeneration'),
+              ),
+              Expanded(
+                child: CryptoWalletEngineSendPanel(
+                  authToken: 'tok',
+                  fromAddress: _kFromAddress,
+                  client: client,
+                  decryptForVault:
+                      decryptForVault ?? ((ciphertext) async => _kPlaintextPk),
+                  isVaultKeyAvailable: () => true,
+                  verifyPin: verifyPin,
+                  network: kEvmNetworkEthereumMainnet,
+                  mainnetSendEnabled: true,
+                  fetchAvailableBalance: () async {
+                    rebuildGeneration.hashCode;
+                    return 10.0;
+                  },
+                  fetchAvailableBalanceWei: () async => BigInt.parse(
+                    '10000000000000000000',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    ),
+  ));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _reviewEthSend(
   WidgetTester tester, {
   String destination = _kDestAddress,
@@ -746,6 +799,92 @@ void main() {
       expect(client.encryptedSecretNetworkCount, equals(1));
       expect(client.broadcastNetworkCount, equals(1));
       expect(client.lastBroadcastBody?['draftId'], equals('draft-updated'));
+    });
+
+    testWidgets(
+        'SS6c3b: accepted ceiling survives parent rebuild when the '
+        'fresh draft still carries stale fee fields', (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        draftResponses: [
+          _mainnetEthDraftReady(
+            gasPrice: '20000000000',
+            draftId: 'draft-initial',
+          ),
+          _mainnetEthDraftReady(
+            gasPrice: '20000000000',
+            draftId: 'draft-updated-stale-fee',
+          ),
+        ],
+        feeEstimateResponses: [
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000000',
+            'authorizedMaxFeeBaseUnits': '630000000000000',
+            'confirmedBalanceWei': '10000000000000000000',
+            'spendableBalanceWei': '10000000000000000000',
+            'totalMaximumDebitWei': '10630000000000000',
+            'remainingBalanceWei': '9989370000000000000',
+            'blockNumber': 201,
+            'quoteId': 'quote-updated',
+            'expiresAt': '2026-07-31T12:00:45Z',
+          },
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000001',
+            'authorizedMaxFeeBaseUnits': '630000000021000',
+            'confirmedBalanceWei': '10000000000000000000',
+            'spendableBalanceWei': '10000000000000000000',
+            'totalMaximumDebitWei': '10630000000021000',
+            'remainingBalanceWei': '9989369999999979000',
+            'blockNumber': 202,
+            'quoteId': 'quote-tiny-later',
+            'expiresAt': '2026-07-31T12:00:45Z',
+          },
+        ],
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanelWithParentRebuild(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_accept_updated_fee_btn')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_parent_rebuild_btn')),
+      );
+      await tester.pumpAndSettle();
+      await _confirmWithPin(tester);
+
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsNothing);
+      expect(find.text(_kTxHash), findsOneWidget);
+      expect(client.draftNetworkCount, equals(2));
+      expect(client.feeEstimateNetworkCount, equals(2));
+      expect(client.encryptedSecretNetworkCount, equals(1));
+      expect(client.broadcastNetworkCount, equals(1));
+      expect(
+        client.lastBroadcastBody?['draftId'],
+        equals('draft-updated-stale-fee'),
+      );
     });
 
     testWidgets(

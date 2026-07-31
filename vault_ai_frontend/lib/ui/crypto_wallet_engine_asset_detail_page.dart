@@ -236,6 +236,8 @@ class _CryptoWalletEngineAssetDetailPageState
   // user stranded mid-scroll.
   final ScrollController _pageScrollCtrl = ScrollController();
   final GlobalKey _balanceCardAnchorKey = GlobalKey();
+  final CryptoWalletMainnetSendApprovalSession
+      _mainnetSendApprovalSession = CryptoWalletMainnetSendApprovalSession();
 
 
   MoneroSyncStatus? _moneroScannerStatus;
@@ -312,6 +314,7 @@ class _CryptoWalletEngineAssetDetailPageState
 
   @override
   void dispose() {
+    _mainnetSendApprovalSession.clear();
     _pageScrollCtrl.dispose();
     super.dispose();
   }
@@ -1065,6 +1068,7 @@ class _CryptoWalletEngineAssetDetailPageState
         mainnetSendEnabled:
             widget.features?.effectiveMainnetSendEnabled ?? false,
         mainnetSendPaused: widget.features?.mainnetSendPaused ?? false,
+        mainnetApprovalSession: _mainnetSendApprovalSession,
         fetchAvailableBalance: () async {
           final s = _balance;
           if (s == null || s.isEmpty) return null;
@@ -1088,6 +1092,7 @@ class _CryptoWalletEngineAssetDetailPageState
         },
       ),
     ).whenComplete(() {
+      _mainnetSendApprovalSession.clear();
       // 2026-07-13 (Round 5 hardening): mirror the Receive-sheet
       // pattern. Sending a transaction always warrants a live
       // balance refresh — even the "cancelled" case, because the

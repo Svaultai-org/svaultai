@@ -7229,6 +7229,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   List<VaultLoginItem> vaultLogins = [];
 
   _DashboardSection selectedSection = _DashboardSection.chat;
+  final CryptoWalletMainnetSendApprovalSession _chatMainnetSendApprovalSession =
+      CryptoWalletMainnetSendApprovalSession();
 
   List<Map<String, dynamic>> beneficiaries = [];
   List<Map<String, dynamic>> inheritances = [];
@@ -11272,6 +11274,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   @override
   void dispose() {
+    _chatMainnetSendApprovalSession.clear();
     if (_speech.isListening) {
       _speech.cancel();
     }
@@ -14391,8 +14394,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         asset: asset,
         prefilledDestination: request.destinationAddress,
         prefilledAmount: request.amount,
+        mainnetApprovalSession: _chatMainnetSendApprovalSession,
       ),
-    );
+    ).whenComplete(_chatMainnetSendApprovalSession.clear);
   }
 
   /// Regex covering the ACCOUNT-USERNAME intent set — questions
