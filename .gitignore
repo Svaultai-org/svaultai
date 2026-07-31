@@ -102,6 +102,7 @@ tool-results/
 
 # Local QA / release-transfer artifacts
 .qa/
+.config/
 .webdriver/
 .release-tools/
 .release-worktree-*/

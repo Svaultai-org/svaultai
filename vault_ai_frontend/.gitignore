@@ -35,6 +35,7 @@ migrate_working_dir/
 
 # Local QA/runtime-only acceptance settings.
 .qa/
+.config/
 
 # Symbolication related
 app.*.symbols
