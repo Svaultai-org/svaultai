@@ -112,6 +112,7 @@ const String kMainnetSendFeeQuoteChangedError =
     'The fee or balance changed. Nothing was signed or sent.';
 const String kMainnetSendAcceptUpdatedFeeLabel =
     'Accept updated fee and continue';
+const int kMainnetSendFeeApprovalToleranceBps = 5;
 const String kEthSendChainMismatchError =
     'Network changed before signing. Review the transaction again.';
 const String kMainnetSendPausedBanner =
@@ -420,6 +421,8 @@ class _QuoteChangeSnapshot {
   final BigInt updatedMaximumDebitWei;
   final BigInt? oldRemainingBalanceWei;
   final BigInt? updatedRemainingBalanceWei;
+  final BigInt approvedMaximumFeeWei;
+  final BigInt approvedMaximumDebitWei;
 
   const _QuoteChangeSnapshot({
     required this.oldAmountLabel,
@@ -430,7 +433,46 @@ class _QuoteChangeSnapshot {
     required this.updatedMaximumDebitWei,
     required this.oldRemainingBalanceWei,
     required this.updatedRemainingBalanceWei,
+    required this.approvedMaximumFeeWei,
+    required this.approvedMaximumDebitWei,
   });
+}
+
+class _MainnetSendApprovalEnvelope {
+  final String sender;
+  final String recipient;
+  final BigInt amountWei;
+  final int chainId;
+  final BigInt nonce;
+  final BigInt gasLimit;
+  final BigInt approvedMaximumFeeWei;
+  final BigInt approvedMaximumDebitWei;
+  final DateTime approvedAt;
+  final DateTime expiresAt;
+
+  const _MainnetSendApprovalEnvelope({
+    required this.sender,
+    required this.recipient,
+    required this.amountWei,
+    required this.chainId,
+    required this.nonce,
+    required this.gasLimit,
+    required this.approvedMaximumFeeWei,
+    required this.approvedMaximumDebitWei,
+    required this.approvedAt,
+    required this.expiresAt,
+  });
+
+  bool isExpired(DateTime now) => !now.isBefore(expiresAt);
+
+  bool matchesDraft(_DraftFields draft) {
+    return sender == draft.fromAddress.trim().toLowerCase() &&
+        recipient == draft.destinationAddress.trim().toLowerCase() &&
+        amountWei == draft.valueWei &&
+        chainId == draft.chainId &&
+        nonce == draft.nonce &&
+        gasLimit == draft.gasLimit;
+  }
 }
 
 class CryptoWalletEngineSendPanel extends StatefulWidget {
@@ -616,6 +658,7 @@ class _CryptoWalletEngineSendPanelState
   _FeeQuote? _feeQuote;
   _BalanceQuote? _balanceQuote;
   _QuoteChangeSnapshot? _quoteChangeSnapshot;
+  _MainnetSendApprovalEnvelope? _approvalEnvelope;
   BigInt? _maxReservedFeeWei;
   BigInt? _maxRemainingBalanceWei;
   Future<double?>? _availableBalanceFuture;
@@ -661,6 +704,7 @@ class _CryptoWalletEngineSendPanelState
       _feeQuote = null;
       _balanceQuote = null;
       _quoteChangeSnapshot = null;
+      _approvalEnvelope = null;
     }
   }
 
@@ -685,7 +729,8 @@ class _CryptoWalletEngineSendPanelState
         _maxRemainingBalanceWei == null &&
         _feeQuote == null &&
         _balanceQuote == null &&
-        _quoteChangeSnapshot == null) {
+        _quoteChangeSnapshot == null &&
+        _approvalEnvelope == null) {
       return;
     }
     if (!mounted) return;
@@ -695,6 +740,7 @@ class _CryptoWalletEngineSendPanelState
       _feeQuote = null;
       _balanceQuote = null;
       _quoteChangeSnapshot = null;
+      _approvalEnvelope = null;
     });
   }
 
@@ -852,8 +898,12 @@ class _CryptoWalletEngineSendPanelState
         readiness == WalletSendReadinessState.networkUnavailable;
   }
 
-  Future<void> _retryReviewFromFreshQuote() async {
+  Future<void> _retryReviewFromFreshQuote({
+    bool preserveApprovalEnvelope = false,
+  }) async {
     if (_draftInFlight) return;
+    final preservedApproval =
+        preserveApprovalEnvelope ? _approvalEnvelope : null;
     setState(() {
       _draft = null;
       _idempotencyKey = null;
@@ -864,9 +914,9 @@ class _CryptoWalletEngineSendPanelState
       _feeQuote = null;
       _balanceQuote = null;
       _quoteChangeSnapshot = null;
+      _approvalEnvelope = preservedApproval;
       _maxReservedFeeWei = null;
       _maxRemainingBalanceWei = null;
-      _updatedQuoteAcceptInFlight = false;
     });
     await _onReview();
   }
@@ -887,7 +937,15 @@ class _CryptoWalletEngineSendPanelState
     }
     _updatedQuoteAcceptInFlight = true;
     try {
-      await _retryReviewFromFreshQuote();
+      final draft = _draft;
+      final feeQuote = _feeQuote;
+      if (draft != null && feeQuote != null) {
+        _approvalEnvelope = _buildApprovalEnvelope(
+          draft: draft,
+          feeQuote: feeQuote,
+        );
+      }
+      await _retryReviewFromFreshQuote(preserveApprovalEnvelope: true);
     } finally {
       _updatedQuoteAcceptInFlight = false;
     }
@@ -1098,14 +1156,64 @@ class _CryptoWalletEngineSendPanelState
         : feeQuote.maximumFeeWei;
   }
 
-  bool _balanceQuoteChanged(_BalanceQuote? previous, _BalanceQuote? updated) {
-    if (previous == null || updated == null) return previous != updated;
-    return previous.confirmedBalanceWei != updated.confirmedBalanceWei ||
-        previous.spendableBalanceWei != updated.spendableBalanceWei ||
-        previous.pendingBalanceWei != updated.pendingBalanceWei ||
-        previous.totalMaximumDebitWei != updated.totalMaximumDebitWei ||
-        previous.remainingBalanceWei != updated.remainingBalanceWei ||
-        previous.chainId != updated.chainId;
+  BigInt _approvedFeeCeilingFor(_FeeQuote feeQuote) {
+    final bps = BigInt.from(kMainnetSendFeeApprovalToleranceBps);
+    final divisor = BigInt.from(10000);
+    final tolerance =
+        (feeQuote.maximumFeeWei * bps + divisor - BigInt.one) ~/ divisor;
+    return feeQuote.maximumFeeWei + tolerance;
+  }
+
+  BigInt _maximumDebitForApprovedFee({
+    required _DraftFields draft,
+    required BigInt maximumFeeWei,
+  }) {
+    return widget.asset == 'ETH'
+        ? draft.valueWei + maximumFeeWei
+        : maximumFeeWei;
+  }
+
+  _MainnetSendApprovalEnvelope _buildApprovalEnvelope({
+    required _DraftFields draft,
+    required _FeeQuote feeQuote,
+    DateTime? approvedAt,
+  }) {
+    final now = approvedAt ?? _now();
+    final approvedFee = _approvedFeeCeilingFor(feeQuote);
+    return _MainnetSendApprovalEnvelope(
+      sender: draft.fromAddress.trim().toLowerCase(),
+      recipient: draft.destinationAddress.trim().toLowerCase(),
+      amountWei: draft.valueWei,
+      chainId: draft.chainId,
+      nonce: draft.nonce,
+      gasLimit: draft.gasLimit,
+      approvedMaximumFeeWei: approvedFee,
+      approvedMaximumDebitWei: _maximumDebitForApprovedFee(
+        draft: draft,
+        maximumFeeWei: approvedFee,
+      ),
+      approvedAt: now,
+      expiresAt: now.add(kWalletSendQuoteTtl),
+    );
+  }
+
+  _MainnetSendApprovalEnvelope? _approvalEnvelopeForReview({
+    required _DraftFields draft,
+    required _FeeQuote feeQuote,
+  }) {
+    if (!widget.isMainnet) return null;
+    final now = _now();
+    final existing = _approvalEnvelope;
+    if (existing != null &&
+        !existing.isExpired(now) &&
+        existing.matchesDraft(draft)) {
+      return existing;
+    }
+    return _buildApprovalEnvelope(
+      draft: draft,
+      feeQuote: feeQuote,
+      approvedAt: now,
+    );
   }
 
   _QuoteChangeSnapshot _buildQuoteChangeSnapshot({
@@ -1116,6 +1224,7 @@ class _CryptoWalletEngineSendPanelState
     required _BalanceQuote? updatedBalance,
   }) {
     final amountLabel = '${draft.amount} ${draft.unit}';
+    final approvedMaximumFeeWei = _approvedFeeCeilingFor(updatedFee);
     return _QuoteChangeSnapshot(
       oldAmountLabel: amountLabel,
       updatedAmountLabel: amountLabel,
@@ -1133,6 +1242,11 @@ class _CryptoWalletEngineSendPanelState
       ),
       oldRemainingBalanceWei: previousBalance?.remainingBalanceWei,
       updatedRemainingBalanceWei: updatedBalance?.remainingBalanceWei,
+      approvedMaximumFeeWei: approvedMaximumFeeWei,
+      approvedMaximumDebitWei: _maximumDebitForApprovedFee(
+        draft: draft,
+        maximumFeeWei: approvedMaximumFeeWei,
+      ),
     );
   }
 
@@ -1145,23 +1259,49 @@ class _CryptoWalletEngineSendPanelState
     var feeQuote = _feeQuote ?? _feeQuoteFromDraft(draft);
     final previousFeeQuote = feeQuote;
     final previousBalanceQuote = _balanceQuote;
-    if (feeQuote.isExpired(now) ||
-        (_balanceQuote != null && _balanceQuote!.isExpired(now))) {
-      return kMainnetSendFeeQuoteExpiredError;
-    }
     if (widget.isMainnet) {
+      var approval = _approvalEnvelope;
+      if (approval == null || !approval.matchesDraft(draft)) {
+        if (feeQuote.isExpired(now) ||
+            (_balanceQuote != null && _balanceQuote!.isExpired(now))) {
+          return kMainnetSendFeeQuoteExpiredError;
+        }
+        approval = _buildApprovalEnvelope(
+          draft: draft,
+          feeQuote: feeQuote,
+          approvedAt: now,
+        );
+        if (mounted) setState(() => _approvalEnvelope = approval);
+      }
+      if (approval.isExpired(now)) {
+        if (mounted) setState(() => _approvalEnvelope = null);
+        return kMainnetSendFeeQuoteExpiredError;
+      }
       final refreshed = await _refreshFeeQuoteForDraft(draft);
       if (refreshed == null) {
         return kMainnetSendFeeEstimateFailedError;
       }
-      if (refreshed.chainId != draft.chainId ||
-          refreshed.gasLimit != feeQuote.gasLimit ||
-          refreshed.gasPriceWei != feeQuote.gasPriceWei ||
-          refreshed.maximumFeeWei != feeQuote.maximumFeeWei) {
-        final updatedBalance = await _buildBalanceQuote(
-          draft: draft,
-          feeQuote: refreshed,
-        );
+      final updatedBalance = await _buildBalanceQuote(
+        draft: draft,
+        feeQuote: refreshed,
+      );
+      if (updatedBalance == null) {
+        return kMainnetSendExactFeeUnverifiedError;
+      }
+      final updatedMaximumDebit = _maximumDebitFor(
+        draft: draft,
+        feeQuote: refreshed,
+        balanceQuote: updatedBalance,
+      );
+      final structuralChange = refreshed.chainId != draft.chainId ||
+          refreshed.gasLimit != approval.gasLimit ||
+          updatedBalance.chainId != draft.chainId;
+      final feeExceedsApproval =
+          refreshed.maximumFeeWei > approval.approvedMaximumFeeWei ||
+              updatedMaximumDebit > approval.approvedMaximumDebitWei;
+      final balanceInsufficient =
+          updatedBalance.spendableBalanceWei < updatedMaximumDebit;
+      if (structuralChange || feeExceedsApproval || balanceInsufficient) {
         if (mounted) {
           setState(() {
             _feeQuote = refreshed;
@@ -1173,32 +1313,34 @@ class _CryptoWalletEngineSendPanelState
               previousBalance: previousBalanceQuote,
               updatedBalance: updatedBalance,
             );
+            _approvalEnvelope = null;
           });
+        }
+        if (balanceInsufficient) {
+          return widget.asset == 'ETH'
+              ? kMainnetSendExactFeeInsufficientEthError
+              : kMainnetSendExactFeeInsufficientGasEthError;
         }
         return kMainnetSendFeeQuoteChangedError;
       }
-      feeQuote = refreshed;
-      if (mounted) setState(() => _feeQuote = refreshed);
+      if (mounted) {
+        setState(() {
+          _feeQuote = refreshed;
+          _balanceQuote = updatedBalance;
+          _quoteChangeSnapshot = null;
+          _approvalEnvelope = approval;
+        });
+      }
+      return null;
     }
-    if (widget.fetchAvailableBalanceWei != null || widget.isMainnet) {
+    if (feeQuote.isExpired(now) ||
+        (_balanceQuote != null && _balanceQuote!.isExpired(now))) {
+      return kMainnetSendFeeQuoteExpiredError;
+    }
+    if (widget.fetchAvailableBalanceWei != null) {
       final bq = await _buildBalanceQuote(draft: draft, feeQuote: feeQuote);
       if (bq == null) {
         return kMainnetSendExactFeeUnverifiedError;
-      }
-      if (_balanceQuoteChanged(previousBalanceQuote, bq)) {
-        if (mounted) {
-          setState(() {
-            _balanceQuote = bq;
-            _quoteChangeSnapshot = _buildQuoteChangeSnapshot(
-              draft: draft,
-              previousFee: previousFeeQuote,
-              updatedFee: feeQuote,
-              previousBalance: previousBalanceQuote,
-              updatedBalance: bq,
-            );
-          });
-        }
-        return kMainnetSendFeeQuoteChangedError;
       }
       if (mounted) setState(() => _balanceQuote = bq);
     }
@@ -1717,6 +1859,10 @@ class _CryptoWalletEngineSendPanelState
         _feeQuote = feeQuote;
         _balanceQuote = balanceQuote;
         _quoteChangeSnapshot = null;
+        _approvalEnvelope = _approvalEnvelopeForReview(
+          draft: draft,
+          feeQuote: feeQuote,
+        );
         _stage = _Stage.review;
         _balanceCheckUnverified = false;
       });
@@ -1762,7 +1908,10 @@ class _CryptoWalletEngineSendPanelState
       return;
     }
     final pin = await _showPinDialog();
-    if (pin == null) return;
+    if (pin == null) {
+      if (mounted) setState(() => _approvalEnvelope = null);
+      return;
+    }
 
     _broadcastInFlight = true;
     _idempotencyKey ??= _generateIdempotencyKey();
@@ -3162,6 +3311,44 @@ class _CryptoWalletEngineSendPanelState
             _formatOptionalWeiAsEth(snapshot.oldRemainingBalanceWei),
             _formatOptionalWeiAsEth(snapshot.updatedRemainingBalanceWei),
           ),
+          const SizedBox(height: 6),
+          _buildQuoteLimitRow(
+            'Approved maximum fee',
+            '${_formatWeiAsEth(snapshot.approvedMaximumFeeWei)} ETH',
+          ),
+          _buildQuoteLimitRow(
+            'Approved maximum debit',
+            '${_formatWeiAsEth(snapshot.approvedMaximumDebitWei)} ETH',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuoteLimitRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: kWalletTextSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(
+              color: kWalletTextPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
@@ -3575,6 +3762,7 @@ class _CryptoWalletEngineSendPanelState
           _feeQuote = null;
           _balanceQuote = null;
           _quoteChangeSnapshot = null;
+          _approvalEnvelope = null;
           _updatedQuoteAcceptInFlight = false;
           _stage = _Stage.form;
           _error = null;

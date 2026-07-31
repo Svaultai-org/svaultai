@@ -13,6 +13,8 @@ class _FakeMainnetClient extends VaultAIClient {
   Map<String, dynamic> encryptedSecretResponse;
   Map<String, dynamic> broadcastResponse;
   Map<String, dynamic>? feeEstimateResponse;
+  List<Map<String, dynamic>>? draftResponses;
+  List<Map<String, dynamic>>? feeEstimateResponses;
   Object? throwOnBroadcast;
   Duration? draftDelay;
 
@@ -33,8 +35,27 @@ class _FakeMainnetClient extends VaultAIClient {
     required this.encryptedSecretResponse,
     required this.broadcastResponse,
     this.feeEstimateResponse,
+    this.draftResponses,
+    this.feeEstimateResponses,
     this.throwOnBroadcast,
   }) : super(baseUrl: 'http://test.invalid');
+
+  Map<String, dynamic> _nextDraftResponse() {
+    final queued = draftResponses;
+    if (queued != null && queued.isNotEmpty) {
+      draftResponse = queued.removeAt(0);
+    }
+    return draftResponse;
+  }
+
+  Map<String, dynamic>? _nextFeeEstimateResponse() {
+    final queued = feeEstimateResponses;
+    if (queued != null && queued.isNotEmpty) {
+      feeEstimateResponse = queued.removeAt(0);
+      return feeEstimateResponse;
+    }
+    return feeEstimateResponse;
+  }
 
   @override
   Future<Map<String, dynamic>> createCryptoWalletSendDraft({
@@ -56,7 +77,7 @@ class _FakeMainnetClient extends VaultAIClient {
       'destinationAddress': destinationAddress,
       'amountEth': amountEth,
     };
-    return draftResponse;
+    return _nextDraftResponse();
   }
 
   @override
@@ -84,7 +105,7 @@ class _FakeMainnetClient extends VaultAIClient {
       'amountEth': amountEth,
       'amountSol': amountSol,
     };
-    return draftResponse;
+    return _nextDraftResponse();
   }
 
   @override
@@ -147,6 +168,7 @@ class _FakeMainnetClient extends VaultAIClient {
       'asset': asset,
       'signedTransaction': signedTransaction,
       if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
+      if (draftId != null) 'draftId': draftId,
     };
     if (throwOnBroadcast != null) throw throwOnBroadcast!;
     return broadcastResponse;
@@ -161,7 +183,8 @@ class _FakeMainnetClient extends VaultAIClient {
     required String authToken,
   }) async {
     feeEstimateNetworkCount++;
-    return feeEstimateResponse ??
+    final queued = _nextFeeEstimateResponse();
+    return queued ??
         {
           'status': 'fee_estimate_ready',
           'chainId': 1,
@@ -183,20 +206,30 @@ const String _kPlaintextPk =
 const String _kTxHash =
     '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
 
-Map<String, dynamic> _mainnetEthDraftReady() => {
+Map<String, dynamic> _mainnetEthDraftReady({
+  String amountEth = '0.01',
+  String amountWei = '10000000000000000',
+  String destinationAddress = _kDestAddress,
+  String gasPrice = '20000000000',
+  String gasLimit = '21000',
+  String nonce = '0',
+  String? draftId,
+}) =>
+    {
       'status': 'draft_ready',
       'asset': 'ETH',
       'network': 'Ethereum Mainnet',
       'fromAddress': _kFromAddress,
-      'destinationAddress': _kDestAddress,
-      'amountEth': '0.01',
-      'amountWei': '10000000000000000',
-      'nonce': '0',
-      'gasLimit': '21000',
-      'gasPrice': '20000000000',
+      'destinationAddress': destinationAddress,
+      'amountEth': amountEth,
+      'amountWei': amountWei,
+      'nonce': nonce,
+      'gasLimit': gasLimit,
+      'gasPrice': gasPrice,
       'chainId': 1,
       'feeUnit': 'ETH',
       'realFundsWarning': kEvmNetworkMainnetSendRealFundsHeadline,
+      if (draftId != null) 'draftId': draftId,
     };
 
 Map<String, dynamic> _mainnetUsdtDraftReady() => {
@@ -255,6 +288,34 @@ Future<void> _pumpMainnetPanel(
       ),
     ),
   ));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _reviewEthSend(
+  WidgetTester tester, {
+  String destination = _kDestAddress,
+  String amount = '0.01',
+}) async {
+  await tester.enterText(
+    find.byKey(const Key('eth_send_panel_destination_input')),
+    destination,
+  );
+  await tester.enterText(
+    find.byKey(const Key('eth_send_panel_amount_input')),
+    amount,
+  );
+  await tester.tap(find.byKey(const Key('eth_send_panel_review_btn')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _confirmWithPin(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('eth_send_panel_confirm_btn')));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byKey(const Key('eth_send_panel_pin_input')),
+    '123456',
+  );
+  await tester.tap(find.byKey(const Key('eth_send_panel_pin_confirm')));
   await tester.pumpAndSettle();
 }
 
@@ -547,6 +608,10 @@ void main() {
       expect(find.text('Updated: 0.000630 ETH'), findsOneWidget);
       expect(find.text('Old: 0.010420 ETH'), findsOneWidget);
       expect(find.text('Updated: 0.010630 ETH'), findsOneWidget);
+      expect(find.text('Approved maximum fee'), findsOneWidget);
+      expect(find.text('0.000630315 ETH'), findsOneWidget);
+      expect(find.text('Approved maximum debit'), findsOneWidget);
+      expect(find.text('0.010630315 ETH'), findsOneWidget);
       expect(find.text(kMainnetSendAcceptUpdatedFeeLabel), findsOneWidget);
       expect(client.encryptedSecretNetworkCount, equals(0));
       expect(client.broadcastNetworkCount, equals(0));
@@ -611,7 +676,338 @@ void main() {
     });
 
     testWidgets(
-        'SS6d: balance changes after PIN stop before secret fetch, '
+        'SS6c3: accept updated fee preserves a ceiling through redraft '
+        'and a second tiny fee fluctuation', (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        draftResponses: [
+          _mainnetEthDraftReady(
+            gasPrice: '20000000000',
+            draftId: 'draft-initial',
+          ),
+          _mainnetEthDraftReady(
+            gasPrice: '30000000000',
+            draftId: 'draft-updated',
+          ),
+        ],
+        feeEstimateResponses: [
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000000',
+            'authorizedMaxFeeBaseUnits': '630000000000000',
+            'feeSource': 'test_fee_changed_first',
+          },
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000001',
+            'authorizedMaxFeeBaseUnits': '630000000021000',
+            'feeSource': 'test_fee_changed_tiny_second',
+          },
+        ],
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+
+      expect(client.feeEstimateNetworkCount, equals(1));
+      expect(client.encryptedSecretNetworkCount, equals(0));
+      expect(client.broadcastNetworkCount, equals(0));
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_accept_updated_fee_btn')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(client.draftNetworkCount, equals(2));
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsNothing);
+
+      await _confirmWithPin(tester);
+
+      expect(find.text(_kTxHash), findsOneWidget);
+      expect(client.feeEstimateNetworkCount, equals(2));
+      expect(client.encryptedSecretNetworkCount, equals(1));
+      expect(client.broadcastNetworkCount, equals(1));
+      expect(client.lastBroadcastBody?['draftId'], equals('draft-updated'));
+    });
+
+    testWidgets(
+        'SS6c4: accepted fee ceiling exceeded by the second refresh stops '
+        'before secrets or broadcast', (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        draftResponses: [
+          _mainnetEthDraftReady(
+            gasPrice: '20000000000',
+            draftId: 'draft-initial',
+          ),
+          _mainnetEthDraftReady(
+            gasPrice: '30000000000',
+            draftId: 'draft-updated',
+          ),
+        ],
+        feeEstimateResponses: [
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000000',
+            'authorizedMaxFeeBaseUnits': '630000000000000',
+            'feeSource': 'test_fee_changed_first',
+          },
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30015000001',
+            'authorizedMaxFeeBaseUnits': '630315000021000',
+            'feeSource': 'test_fee_above_ceiling',
+          },
+        ],
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_accept_updated_fee_btn')),
+      );
+      await tester.pumpAndSettle();
+      await _confirmWithPin(tester);
+
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsOneWidget);
+      expect(find.text(kMainnetSendAcceptUpdatedFeeLabel), findsOneWidget);
+      expect(client.encryptedSecretNetworkCount, equals(0));
+      expect(client.broadcastNetworkCount, equals(0));
+      expect(client.draftNetworkCount, equals(2));
+    });
+
+    testWidgets('SS6c4b: accepted fee exactly equal to ceiling proceeds once',
+        (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        draftResponses: [
+          _mainnetEthDraftReady(
+            gasPrice: '20000000000',
+            draftId: 'draft-initial',
+          ),
+          _mainnetEthDraftReady(
+            gasPrice: '30000000000',
+            draftId: 'draft-updated',
+          ),
+        ],
+        feeEstimateResponses: [
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000000',
+            'authorizedMaxFeeBaseUnits': '630000000000000',
+            'feeSource': 'test_fee_changed_first',
+          },
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30015000000',
+            'authorizedMaxFeeBaseUnits': '630315000000000',
+            'feeSource': 'test_fee_equal_ceiling',
+          },
+        ],
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_accept_updated_fee_btn')),
+      );
+      await tester.pumpAndSettle();
+      await _confirmWithPin(tester);
+
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsNothing);
+      expect(find.text(_kTxHash), findsOneWidget);
+      expect(client.encryptedSecretNetworkCount, equals(1));
+      expect(client.broadcastNetworkCount, equals(1));
+    });
+
+    testWidgets('SS6c4c: gas limit change invalidates accepted approval',
+        (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        draftResponses: [
+          _mainnetEthDraftReady(
+            gasPrice: '20000000000',
+            draftId: 'draft-initial',
+          ),
+          _mainnetEthDraftReady(
+            gasPrice: '30000000000',
+            draftId: 'draft-updated',
+          ),
+        ],
+        feeEstimateResponses: [
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21000',
+            'gasPriceWei': '30000000000',
+            'authorizedMaxFeeBaseUnits': '630000000000000',
+            'feeSource': 'test_fee_changed_first',
+          },
+          {
+            'status': 'fee_estimate_ready',
+            'chainId': 1,
+            'gasLimit': '21001',
+            'gasPriceWei': '30000000000',
+            'authorizedMaxFeeBaseUnits': '630030000000000',
+            'feeSource': 'test_gas_limit_changed',
+          },
+        ],
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+      await tester.tap(
+        find.byKey(const Key('eth_send_panel_accept_updated_fee_btn')),
+      );
+      await tester.pumpAndSettle();
+      await _confirmWithPin(tester);
+
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsOneWidget);
+      expect(client.encryptedSecretNetworkCount, equals(0));
+      expect(client.broadcastNetworkCount, equals(0));
+    });
+
+    testWidgets('SS6c5: fee decrease after PIN continues automatically',
+        (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        feeEstimateResponse: const {
+          'status': 'fee_estimate_ready',
+          'chainId': 1,
+          'gasLimit': '21000',
+          'gasPriceWei': '19999999999',
+          'authorizedMaxFeeBaseUnits': '419999999979000',
+          'feeSource': 'test_fee_decrease',
+        },
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsNothing);
+      expect(find.text(_kTxHash), findsOneWidget);
+      expect(client.encryptedSecretNetworkCount, equals(1));
+      expect(client.broadcastNetworkCount, equals(1));
+    });
+
+    testWidgets('SS6c6: changed block number only does not require reapproval',
+        (tester) async {
+      final client = _FakeMainnetClient(
+        draftResponse: _mainnetEthDraftReady(),
+        feeEstimateResponse: const {
+          'status': 'fee_estimate_ready',
+          'chainId': 1,
+          'gasLimit': '21000',
+          'gasPriceWei': '20000000000',
+          'authorizedMaxFeeBaseUnits': '420000000000000',
+          'feeSource': 'test_same_fee_new_block',
+          'blockNumber': 12345678,
+          'quoteId': 'quote-new-block',
+        },
+        encryptedSecretResponse: const {
+          'status': 'encrypted_secret_ready',
+          'encryptedWalletSecret': 'CT-mainnet',
+        },
+        broadcastResponse: const {
+          'status': 'submitted',
+          'txHash': _kTxHash,
+        },
+      );
+      await _pumpMainnetPanel(
+        tester,
+        client: client,
+        verifyPin: (_) async => true,
+      );
+
+      await _reviewEthSend(tester);
+      await _confirmWithPin(tester);
+
+      expect(find.text(kMainnetSendFeeQuoteChangedError), findsNothing);
+      expect(find.text(_kTxHash), findsOneWidget);
+      expect(client.encryptedSecretNetworkCount, equals(1));
+      expect(client.broadcastNetworkCount, equals(1));
+    });
+
+    testWidgets(
+        'SS6d: insufficient balance after PIN stops before secret fetch, '
         'signing, or broadcast', (tester) async {
       var balanceCalls = 0;
       final client = _FakeMainnetClient(
@@ -631,9 +1027,8 @@ void main() {
         verifyPin: (_) async => true,
         fetchAvailableBalanceWei: () async {
           balanceCalls++;
-          return BigInt.parse(balanceCalls == 1
-              ? '10000000000000000000'
-              : '9000000000000000000');
+          return BigInt.parse(
+              balanceCalls == 1 ? '10000000000000000000' : '1000000000000');
         },
       );
       await tester.enterText(
@@ -655,10 +1050,8 @@ void main() {
       await tester.tap(find.byKey(const Key('eth_send_panel_pin_confirm')));
       await tester.pumpAndSettle();
 
-      expect(find.text(kMainnetSendFeeQuoteChangedError), findsOneWidget);
-      expect(find.text('Old: 9.989580 ETH'), findsOneWidget);
-      expect(find.text('Updated: 8.989580 ETH'), findsOneWidget);
-      expect(find.text(kMainnetSendAcceptUpdatedFeeLabel), findsOneWidget);
+      expect(
+          find.text(kMainnetSendExactFeeInsufficientEthError), findsOneWidget);
       expect(client.encryptedSecretNetworkCount, equals(0));
       expect(client.broadcastNetworkCount, equals(0));
     });
