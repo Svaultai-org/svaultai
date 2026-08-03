@@ -534,12 +534,9 @@ class TestPart9_FaqAndChatRouting(unittest.TestCase):
         from vault_faq_content import FAQ_BY_ID
         from vault_faq_router import build_faq_envelope
         for fid in (
-            "delete-my-vault",
-            "what-happens-when-i-delete-my-vault",
-            "can-i-recover-deleted-vault",
-            "crypto-when-vault-deleted",
-            "why-inactive-unpaid-deleted",
-            "how-to-prevent-auto-deletion",
+            "delete-vault",
+            "deletion-and-blockchain",
+            "inactive-unsubscribed-vault",
         ):
             with self.subTest(id=fid):
                 q = FAQ_BY_ID[fid]["question"]
@@ -576,7 +573,7 @@ class TestPart9_FaqAndChatRouting(unittest.TestCase):
         from vault_faq_content import (
             FAQ_BY_ID, FAQ_ACTION_OPEN_DELETE_VAULT,
         )
-        entry = FAQ_BY_ID["delete-my-vault"]
+        entry = FAQ_BY_ID["delete-vault"]
         actions = entry.get("related_actions", ())
         self.assertIn(
             FAQ_ACTION_OPEN_DELETE_VAULT, actions,
@@ -604,12 +601,9 @@ class TestPart10_NoPendingDeletionCopy(unittest.TestCase):
     )
 
     _POLICY_FAQ_IDS = (
-        "why-inactive-unpaid-deleted",
-        "how-to-prevent-auto-deletion",
-        "delete-my-vault",
-        "what-happens-when-i-delete-my-vault",
-        "can-i-recover-deleted-vault",
-        "crypto-when-vault-deleted",
+        "inactive-unsubscribed-vault",
+        "delete-vault",
+        "deletion-and-blockchain",
     )
 
     def test_policy_copy_never_uses_grace_or_pending_language(self):
