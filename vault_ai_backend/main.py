@@ -12728,6 +12728,9 @@ async def chat_endpoint(
             _detected_lang = _mling.detect_language(
                 decrypted_message or ""
             )
+            _requested_lang = _mling.detect_requested_language(
+                decrypted_message or ""
+            )
             _app_locale_hint = req.app_locale
             if not _app_locale_hint:
                 try:
@@ -12746,6 +12749,7 @@ async def chat_endpoint(
                 _header_locale_hint = None
             _reply_language = _mling.resolve_reply_language(
                 detected_from_message=_detected_lang,
+                requested_from_message=_requested_lang,
                 app_locale_hint=_app_locale_hint,
                 header_locale_hint=_header_locale_hint,
             )

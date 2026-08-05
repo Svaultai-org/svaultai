@@ -299,6 +299,15 @@ def build_prompt(snapshot: TurnSnapshot) -> list[dict]:
     system_body = _SYSTEM_PROMPT.replace(
         "{tools_block}", _render_tools_block(),
     )
+    reply_language = str(snapshot.reply_language or "en").strip() or "en"
+    system_body += (
+        "\n\n# RESPONSE LANGUAGE (MANDATORY)\n"
+        f"The current response language is `{reply_language}`. "
+        "For conversational_reply and request_clarification, write the "
+        "entire user-facing string naturally in that language. Do not "
+        "default to English. This controls wording only; choose vault "
+        "tools solely from the user's intent.\n"
+    )
     user_payload = {
         "snapshot": snapshot.to_prompt_dict(),
         "instructions": (

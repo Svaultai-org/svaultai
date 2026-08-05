@@ -37,10 +37,52 @@ SUPPORTED_REPLY_LANGUAGE_CODES = frozenset({
     "en", "ar", "fr", "es", "ja", "ko", "zh",
     "pt", "de", "it", "hi", "ur", "bn", "ru", "tr", "id",
     "vi", "th", "sw", "ha", "yo", "ig", "so", "am",
+    "nl", "pl", "ro", "uk", "el", "he", "fa", "pa", "ta",
+    "te", "mr", "gu", "ne", "si", "ms", "tl", "zu", "af",
 })
 
 
 DEFAULT_REPLY_LANGUAGE = "en"
+
+_LANGUAGE_ALIASES: dict[str, str] = {
+    "english": "en", "spanish": "es", "castilian": "es",
+    "french": "fr", "german": "de", "italian": "it",
+    "portuguese": "pt", "brazilian portuguese": "pt",
+    "dutch": "nl", "polish": "pl", "romanian": "ro",
+    "russian": "ru", "ukrainian": "uk", "turkish": "tr",
+    "greek": "el", "arabic": "ar", "hebrew": "he",
+    "persian": "fa", "farsi": "fa", "urdu": "ur", "hindi": "hi",
+    "bengali": "bn", "bangla": "bn", "punjabi": "pa",
+    "tamil": "ta", "telugu": "te", "marathi": "mr",
+    "gujarati": "gu", "nepali": "ne", "sinhala": "si",
+    "sinhalese": "si", "chinese": "zh", "mandarin": "zh",
+    "mandarin chinese": "zh", "japanese": "ja", "korean": "ko",
+    "thai": "th", "vietnamese": "vi", "indonesian": "id",
+    "bahasa indonesia": "id", "malay": "ms", "bahasa melayu": "ms",
+    "tagalog": "tl", "filipino": "tl", "swahili": "sw",
+    "somali": "so", "amharic": "am", "hausa": "ha",
+    "yoruba": "yo", "igbo": "ig", "zulu": "zu", "afrikaans": "af",
+}
+
+_DIRECTIVE_PREFIX = re.compile(
+    r"(?:\b(?:reply|respond|answer|write|speak|say|explain|translate)"
+    r"(?:\s+(?:this|that|it|to\s+me))?\s+(?:in|using)\s+|"
+    r"\b(?:tell\s+me|talk\s+to\s+me)\b[^.!?]{0,100}?\bin\s+|"
+    r"\b(?:in|using)\s+)(?P<language>[\w -]{2,40})",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def detect_requested_language(text: str) -> Optional[str]:
+    """Return the explicitly requested language for this response only."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    for match in _DIRECTIVE_PREFIX.finditer(text.strip()):
+        candidate = re.sub(r"\s+", " ", match.group("language").lower()).strip()
+        for alias in sorted(_LANGUAGE_ALIASES, key=len, reverse=True):
+            if candidate == alias or candidate.startswith(alias + " "):
+                return _LANGUAGE_ALIASES[alias]
+    return None
 
 
 
@@ -494,20 +536,27 @@ def normalise_locale_code(raw: Optional[str]) -> Optional[str]:
 def resolve_reply_language(
     *,
     detected_from_message: Optional[str],
+    requested_from_message: Optional[str] = None,
     app_locale_hint: Optional[str],
     header_locale_hint: Optional[str] = None,
 ) -> str:
     """Decide what language VaultAI should reply in.
 
     Priority (highest wins):
-      1. The user's explicit app locale.
-      2. Detected language when no app locale is available.
-      3. Device/browser locale when neither is available.
-      4. English.
-
-    Per-message language directives are parsed separately by the general-chat
-    router and therefore still override this ambient-locale decision.
+      1. A language explicitly requested in this message.
+      2. The current message's confidently detected non-English language.
+      3. The user's app locale.
+      4. Device/browser locale.
+      5. English.
     """
+    norm = normalise_locale_code(requested_from_message)
+    if norm:
+        return norm
+    if detected_from_message and (
+        detected_from_message in SUPPORTED_REPLY_LANGUAGE_CODES
+        and detected_from_message != DEFAULT_REPLY_LANGUAGE
+    ):
+        return detected_from_message
     norm = normalise_locale_code(app_locale_hint)
     if norm:
         return norm
@@ -686,6 +735,7 @@ def translate_to_english_router_query(text: str) -> Optional[str]:
 __all__ = [
     "SUPPORTED_REPLY_LANGUAGE_CODES",
     "DEFAULT_REPLY_LANGUAGE",
+    "detect_requested_language",
     "detect_language",
     "normalise_locale_code",
     "resolve_reply_language",

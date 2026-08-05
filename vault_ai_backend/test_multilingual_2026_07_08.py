@@ -103,14 +103,14 @@ class TestNormaliseLocale(unittest.TestCase):
 
 
 class TestResolveReplyLanguage(unittest.TestCase):
-    def test_app_locale_preserves_active_language(self):
+    def test_current_message_language_overrides_ambient_app_locale(self):
 
         got = mling.resolve_reply_language(
             detected_from_message="ko",
             app_locale_hint="en",
             header_locale_hint="en-US",
         )
-        self.assertEqual(got, "en")
+        self.assertEqual(got, "ko")
 
     def test_app_locale_when_message_not_language(self):
 
@@ -144,13 +144,13 @@ class TestResolveReplyLanguage(unittest.TestCase):
         )
         self.assertEqual(got, "ko")
 
-    def test_person_name_does_not_override_english_app_locale(self):
+    def test_confident_current_language_overrides_english_app_locale(self):
         got = mling.resolve_reply_language(
             detected_from_message="fr",
             app_locale_hint="en",
             header_locale_hint="en-US",
         )
-        self.assertEqual(got, "en")
+        self.assertEqual(got, "fr")
 
 
 class TestMultilingualIntentMatchers(unittest.TestCase):
