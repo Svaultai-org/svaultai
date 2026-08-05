@@ -123,32 +123,20 @@ output ONE JSON object matching the provided schema. Output JSON \
 only. Never prose. Never markdown. Never code blocks.
 
 INTENTS (closed set — pick exactly one):
-- capability_question        "what can you do", "what are you", \
-"help me", "how does this work"
-- identity_question          "who are you", "are you AI"
-- casual_chat                greetings, thanks, "ok"
-- vault_summary              "what's in my vault", "summarize", \
-"how big is my vault"
-- vault_activity             "what did I recently add", "what \
-changed this week"
-- document_search            "find me X for Y", "do I have", \
-"show me my passport"
-- file_read                  user names a specific file or asks \
-"what does this file say"
-- media_read                 "what's in this video", "transcribe \
-this audio"
-- credential_lookup          "what's my Chase password", "show \
-login for X"
-- credential_creation_draft  "create a username and password for \
-X", "generate a password"
-- credential_save_confirmation user said "save it", "save it \
-now", "generate and save" — confirming a prior draft
-- expiry_check               "what's expiring", "what should I \
-renew", "when does my passport expire"
-- entity_lookup              "who is in my vault", "what \
-companies", "what people show up"
-- category_browse            "show my tax documents", "list my \
-IDs", "what categories of things do I have"
+- capability_question        assistant ability or product-help request
+- identity_question          assistant identity or nature request
+- casual_chat                greeting, thanks, social, or discourse turn
+- vault_summary              explicit whole-vault summary or size request
+- vault_activity             explicit recent vault activity request
+- document_search            retrieval verb plus a document target
+- file_read                  explicit inspection of a named file
+- media_read                 explicit inspection or transcription of media
+- credential_lookup          explicit retrieval of saved credentials
+- credential_creation_draft  explicit credential generation request
+- credential_save_confirmation confirmation of an active credential draft
+- expiry_check               explicit expiry or renewal request
+- entity_lookup              explicit vault person or organization lookup
+- category_browse            explicit request to browse a vault category
 - unknown                    nothing else fits
 
 FLAGS:
@@ -177,21 +165,11 @@ save_secret, generate_credential_draft,
 save_generated_credential_after_confirmation,
 find_in_vault.
 
-EXAMPLES (just for shape — the real input may differ):
-- "What can you do?" → intent=capability_question, all flags \
-FALSE except is_simple_capability_question=TRUE, planned_tools=[]
-- "Find a photo ID for Louis Iodato" → intent=document_search, \
-needs_vault_search=TRUE, needs_file_reading=TRUE, \
-needs_ocr_image_pdf_reading=TRUE, \
-planned_tools=["find_in_vault"]
-- "Create username and password for Union Bank" → \
-intent=credential_creation_draft, \
-needs_credential_action=TRUE, \
-planned_tools=["get_credential_metadata", \
-"generate_credential_draft"]
-- "Save it now" → intent=credential_save_confirmation, \
-needs_credential_action=TRUE, \
-planned_tools=["save_generated_credential_after_confirmation"]
+SHAPE RULES:
+- General, identity, and capability intents set the simple flag and use no tools.
+- Document retrieval sets search/read flags and selects only retrieval tools.
+- Credential creation sets the credential flag and selects draft tools.
+- Draft confirmation selects the save-confirmation tool only with live context.
 
 reasoning: ≤140 chars short rationale.
 confidence: 0.0–1.0, your honest belief in the classification.
@@ -203,17 +181,15 @@ def _conservative_fallback(reason: str) -> PlannerDecision:
 
     return PlannerDecision(
         intent="unknown",
-        needs_vault_search=True,
+        # A planner failure does not imply retrieval intent. Unknown turns
+        # remain tool-free instead of silently becoming vault searches.
+        needs_vault_search=False,
         needs_file_reading=False,
         needs_ocr_image_pdf_reading=False,
         needs_credential_action=False,
         is_simple_capability_question=False,
         needs_stronger_model=False,
-        planned_tools=(
-            "get_vault_status",
-            "list_vault_files",
-            "search_extracted_text",
-        ),
+        planned_tools=(),
         reasoning=f"fallback: {reason}"[:200],
         confidence=0.0,
         source="fallback",

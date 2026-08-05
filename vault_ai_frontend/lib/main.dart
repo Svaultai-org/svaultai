@@ -755,6 +755,9 @@ Future<void> main() async {
         'webOrigin': webOrigin ?? '-',
       });
 
+      // Must run before device-id creation: Keychain survives uninstall, so a
+      // fresh install needs to purge stale identity/session records first.
+      await NativeSecureStore.purgeIosKeychainAfterReinstallIfNeeded();
       final deviceId = await getOrCreateDeviceId();
       setApiClientDeviceId(deviceId);
       vlog('device-id-set', {
@@ -2685,7 +2688,10 @@ class SvaultaiApp extends StatelessWidget {
         '/storage': (_) => const StoragePage(),
         kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
       },
-      initialRoute: '/',
+      // Native users should arrive at authentication immediately. Keep `/`
+      // available for explicit public/marketing navigation, but do not make
+      // the promotional landing page the app's startup screen.
+      initialRoute: '/login',
     );
   }
 }
@@ -14402,8 +14408,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// Regex covering the ACCOUNT-USERNAME intent set — questions
   /// specifically about the human login identifier the user typed
   /// at signup. Anchored + case-insensitive so casual chat and
-  /// AI-side questions ("what is your name", "who are you",
-  /// "what should I call you", "what is your role") do NOT match
+  /// AI-side identity questions do NOT match
   /// and fall through cleanly to the LLM with the corrected
   /// identity context.
   ///
@@ -14426,8 +14431,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// the LLM path, never sends the raw canonical username to the
   /// backend, never surfaces the VLT handle / UUID / exception.
   ///
-  /// AI-side identity questions ("who are you", "what is your
-  /// name", "what is your role") are NOT intercepted here — they
+  /// AI-side identity questions are NOT intercepted here — they
   /// fall through to the LLM which answers using the server-
   /// injected vault-AI identity context.
   bool _tryDirectAccountUsernameReply(String text, AppState app) {
@@ -14567,8 +14571,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // the backend. Never surfaces a raw exception, VLT handle,
     // UUID, or display name as the login identifier.
     //
-    // AI-side identity questions ("who are you", "what is your
-    // name", "what is your role") deliberately do NOT match this
+    // AI-side identity questions deliberately do NOT match this
     // regex — they fall through to the LLM path where the server-
     // injected vault-AI identity context answers with the
     // persistent AI keeper's name and role.
@@ -15178,30 +15181,44 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       container: true,
       identifier: 'chat_composer_field',
       textField: true,
-      child: TextField(
-        key: const Key('chat_composer_field'),
-        controller: input,
-        enabled: !sending,
-        decoration: InputDecoration(
-          hintText: isMobile
-              ? 'Ask Svaultai…'
-              : AppLocalizations.of(context).chatComposerHint,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(
-            horizontal: 4,
-            vertical: isMobile ? 8 : 10,
-          ),
-        ),
-        minLines: vr.composerMinLines,
-        maxLines: vr.composerMaxLines,
-        textInputAction: TextInputAction.newline,
-        keyboardType: TextInputType.multiline,
-        onChanged: (_) {
-          setState(() {});
+      child: Focus(
+        onKeyEvent: (node, event) {
+          if (!isMobile &&
+              event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.enter &&
+              !HardwareKeyboard.instance.isShiftPressed) {
+            if (canSend) _send();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
         },
+        child: TextField(
+          key: const Key('chat_composer_field'),
+          controller: input,
+          enabled: !sending,
+          decoration: InputDecoration(
+            hintText: isMobile
+                ? 'Ask Svaultai…'
+                : AppLocalizations.of(context).chatComposerHint,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: 4,
+              vertical: isMobile ? 8 : 10,
+            ),
+          ),
+          minLines: vr.composerMinLines,
+          maxLines: vr.composerMaxLines,
+          textInputAction:
+              isMobile ? TextInputAction.send : TextInputAction.newline,
+          keyboardType: TextInputType.multiline,
+          onSubmitted: isMobile && canSend ? (_) => _send() : null,
+          onChanged: (_) {
+            setState(() {});
+          },
+        ),
       ),
     );
 
@@ -15859,7 +15876,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => _sendQuickPrompt('What can you do?'),
+                    onPressed: () =>
+                        _sendQuickPrompt('Describe your capabilities'),
                     icon: const Icon(Icons.auto_awesome_outlined, size: 18),
                     label: Text(
                       AppLocalizations.of(context).chatQuickWhatCanYouDo,

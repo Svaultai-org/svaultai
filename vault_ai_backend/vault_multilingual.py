@@ -500,20 +500,22 @@ def resolve_reply_language(
     """Decide what language VaultAI should reply in.
 
     Priority (highest wins):
-      1. Detected non-English language of the current message.
-      2. The user's explicit app_locale (Settings selection).
-      3. English.
+      1. The user's explicit app locale.
+      2. Detected language when no app locale is available.
+      3. Device/browser locale when neither is available.
+      4. English.
 
-    The HTTP Accept-Language header is deliberately not used for
-    chat replies. Device/browser locale should not make an English
-    conversation drift after a short sentence or a person's name.
+    Per-message language directives are parsed separately by the general-chat
+    router and therefore still override this ambient-locale decision.
     """
+    norm = normalise_locale_code(app_locale_hint)
+    if norm:
+        return norm
     if detected_from_message and (
         detected_from_message in SUPPORTED_REPLY_LANGUAGE_CODES
-        and detected_from_message != DEFAULT_REPLY_LANGUAGE
     ):
         return detected_from_message
-    norm = normalise_locale_code(app_locale_hint)
+    norm = normalise_locale_code(header_locale_hint)
     if norm:
         return norm
     return DEFAULT_REPLY_LANGUAGE

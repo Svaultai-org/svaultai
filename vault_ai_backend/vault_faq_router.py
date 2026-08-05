@@ -46,11 +46,11 @@ _PATTERNS_BY_ID: dict[str, tuple[re.Pattern, ...]] = {
 
 
     "what-is-vaultai": tuple(re.compile(p, re.IGNORECASE) for p in (
-        r"\bwhat\s+is\s+vault\s*ai\b",
-        r"\bwhat\s+does\s+vault\s*ai\s+do\b",
-        r"\bwhat\s+can\s+vault\s*ai\s+do\b",
-        r"\bhow\s+does\s+vault\s*ai\s+work\b",
-        r"\bwhat['’]?s\s+vault\s*ai\b",
+        r"\bwhat\s+is\s+s?vault\s*ai\b",
+        r"\bwhat\s+does\s+s?vault\s*ai\s+do\b",
+        r"\bwhat\s+can\s+s?vault\s*ai\s+do\b",
+        r"\bhow\s+does\s+s?vault\s*ai\s+work\b",
+        r"\bwhat['’]?s\s+s?vault\s*ai\b",
     )),
     "what-can-i-save": tuple(re.compile(p, re.IGNORECASE) for p in (
         r"\bwhat\s+can\s+i\s+save\b",
@@ -87,8 +87,8 @@ _PATTERNS_BY_ID: dict[str, tuple[re.Pattern, ...]] = {
     "is-my-vault-encrypted": tuple(
         re.compile(p, re.IGNORECASE) for p in (
             r"\bis\s+my\s+vault\s+encrypted\b",
-            r"\bdoes\s+vault\s*ai\s+encrypt\b",
-            r"\bis\s+vault\s*ai\s+encrypted\b",
+            r"\bdoes\s+s?vault\s*ai\s+encrypt\b",
+            r"\bis\s+s?vault\s*ai\s+encrypted\b",
         )
     ),
     "can-vaultai-read-secrets": tuple(
@@ -546,15 +546,15 @@ for _id in _PATTERNS_BY_ID:
 
 
 _GENERIC_HELP_HINT_RE = re.compile(
-    r"\b(?:how\s+do\s+i|how\s+to|how\s+does|how\s+is|"
+    r"\b(?:how\s+do\s+i|how\s+to|how\s+does|how\s+is|explain\s+how|"
     r"what\s+is|what[’']?s|what\s+happens|what\s+will\s+happen|"
     r"what\s+can|"
     r"what\s+should|what\s+file\s+types|"
     r"why\s+is|why\s+does|why\s+can['’]?t|why\s+do|"
     r"why\s+are|why\s+was|why\s+should|why\s+shouldn['’]?t|"
     r"when\s+are|"
-    r"is\s+my|is\s+crypto|"
-    r"can\s+i|can\s+vault\s*ai|can\s+someone|can\s+anyone|"
+    r"is\s+my|is\s+there|is\s+crypto|"
+    r"can\s+i|can\s+s?vault\s*ai|can\s+someone|can\s+anyone|"
     r"will\s+(?:my|deleting|vault\s*ai)|"
     r"are\s+(?:my|id|passwords?)|which\s+"
     r"(?:assets?|coins?|file\s+types)|"
@@ -577,6 +577,31 @@ def looks_like_faq_message(message: str) -> bool:
 
 
 def _match_faq_id(message: str) -> Optional[str]:
+    # Category-level vocabulary covers natural FAQ variants without mapping
+    # complete QA sentences to fixed answers.
+    tokens = set(re.findall(r"[a-z0-9]+", message.lower()))
+    if (
+        tokens & {"employee", "employees", "staff"}
+        and tokens & {"see", "access", "read"}
+        and tokens & {"file", "files", "data", "vault"}
+    ) or ({"master", "key"} <= tokens):
+        return "can-vaultai-read-secrets"
+    if (
+        tokens & {"private", "privacy", "trust"}
+        and tokens & {"information", "data", "vault", "svaultai"}
+    ):
+        return "is-my-vault-encrypted"
+    if (
+        "inactivity" in tokens
+        and tokens & {"month", "months", "inactive", "delete", "deletion"}
+    ):
+        return "why-inactive-unpaid-deleted"
+    if (
+        tokens & {"explain", "describe"}
+        and tokens & {"app", "svaultai"}
+        and tokens & {"work", "works", "working"}
+    ):
+        return "what-is-vaultai"
     for faq_id, patterns in _PATTERNS_BY_ID.items():
         for p in patterns:
             if p.search(message):

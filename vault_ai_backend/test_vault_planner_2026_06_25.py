@@ -183,15 +183,12 @@ class CoerceDecisionTests(unittest.TestCase):
 
 
 class ConservativeFallbackTests(unittest.TestCase):
-    def test_fallback_keeps_chat_path_alive_with_safe_tools(self):
+    def test_fallback_keeps_unknown_turn_tool_free(self):
         d = vp._conservative_fallback("api_error")
         self.assertEqual(d.source, "fallback")
-                                                             
-                                                               
+        self.assertFalse(d.needs_vault_search)
         self.assertFalse(d.can_skip_tools())
-                                             
-        self.assertIn("get_vault_status", d.planned_tools)
-        self.assertIn("search_extracted_text", d.planned_tools)
+        self.assertEqual(d.planned_tools, ())
 
 
 def _run(coro):

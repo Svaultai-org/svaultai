@@ -8733,9 +8733,15 @@ async def ai_stream(
                                                               
         if not any_content_streamed:
             from vault_chat_safety_sanitizer import (
+                SENTENCE_GENERAL_RESPONSE_FAILED,
                 SENTENCE_GENERIC_TOOL_FAILED,
+                _SEARCH_TOOL_NAMES,
             )
-            _reply_buf.append(SENTENCE_GENERIC_TOOL_FAILED)
+            _reply_buf.append(
+                SENTENCE_GENERIC_TOOL_FAILED
+                if tool_name in _SEARCH_TOOL_NAMES
+                else SENTENCE_GENERAL_RESPONSE_FAILED
+            )
 
                                                                     
         _full_reply = "".join(_reply_buf)
@@ -13968,6 +13974,38 @@ async def chat_endpoint(
             )
             return encrypted_reply(json.dumps(_fast_envelope))
 
+        # Retrieval-free general conversation guard. Explicit vault actions
+        # and FAQ cards have already had first refusal in the fast router.
+        # A handled turn returns before drains, memory, planner, tools, or
+        # deep-answer code can run.
+        try:
+            from vault_chat_general_router import route_general_chat
+            _general_route = route_general_chat(
+                decrypted_message or "", _reply_language or "en",
+            )
+        except Exception:
+            logger.exception("[CHAT-TRACE] general_chat_router_failed")
+            _general_route = None
+        if _general_route is not None:
+            try:
+                request.state.chat_path = "deterministic_general_chat"
+            except Exception:
+                pass
+            if os.getenv(
+                "VAULTAI_CHAT_ROUTING_QA_DIAGNOSTICS", "false",
+            ).strip().lower() in ("1", "true", "yes", "on"):
+                logger.info(
+                    "[CHAT-ROUTE-QA] route=general intent=%s "
+                    "underlying_intent=%s language=%s "
+                    "requested_language=%s planner=not_run "
+                    "tool_eligibility=none search_invoked=false "
+                    "response_error=none",
+                    _general_route.intent,
+                    _general_route.underlying_intent,
+                    _general_route.language,
+                    str(_general_route.requested_language).lower(),
+                )
+            return encrypted_reply(_general_route.response)
 
         if _cfp is not None:
             _cfp.emit_span(
