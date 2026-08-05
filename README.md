@@ -1,4 +1,4 @@
-# VaultAI
+# SVaultAI
 
 **Your private digital vault with an assistant that speaks your language.**
 
