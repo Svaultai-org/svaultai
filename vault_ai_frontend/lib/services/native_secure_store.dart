@@ -1,4 +1,10 @@
-import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show
+        TargetPlatform,
+        defaultTargetPlatform,
+        kIsWeb,
+        kReleaseMode,
+        visibleForTesting;
 import 'package:flutter/widgets.dart' show WidgetsFlutterBinding;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +24,29 @@ class NativeSecureStore {
   static bool useSharedPreferencesForTesting = false;
 
   static bool get _failClosedOnSecureStorageError => kReleaseMode && !kIsWeb;
+
+  static const _iosInstallMarker = 'vaultai_ios_install_marker_v1';
+  static const _iosReinstallSensitiveKeys = <String>[
+    'session_token',
+    'last_vault_name',
+    'last_display_name',
+    'last_vault_handle',
+    'vaultai_device_id_v1',
+  ];
+
+  /// Keychain records can survive uninstall while UserDefaults cannot. On a
+  /// fresh iOS install, discard records left by a previous installation before
+  /// hydrate can reuse a stale session or device identity.
+  static Future<void> purgeIosKeychainAfterReinstallIfNeeded() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_iosInstallMarker) == true) return;
+    for (final key in _iosReinstallSensitiveKeys) {
+      await _trySecureDelete(key);
+      await prefs.remove(key);
+    }
+    await prefs.setBool(_iosInstallMarker, true);
+  }
 
   static Future<String?> _trySecureRead(String key) async {
     try {
