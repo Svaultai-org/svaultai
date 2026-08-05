@@ -8158,7 +8158,10 @@ async def ai_stream(
     last_user_message: str = "",
     token_id: str = "",
     force_no_tools: bool = False,
+    tool_routing_message: str = "",
 ):
+    tool_name: Optional[str] = None
+    _search_attempted = False
     try:
                                                              
                                                                 
@@ -8200,22 +8203,26 @@ async def ai_stream(
             )
 
                                                                   
-        try:
-            from vault_planner import plan_user_message
-            _planner = await plan_user_message(
-                message=last_user_message or "",
-                recent_history=[
-                    m for m in (messages or [])[-5:]
-                    if isinstance(m, dict)
-                    and m.get("role") in ("user", "assistant")
-                ],
-            )
-        except Exception:
-            logger.exception("[CHAT-TRACE] planner failed")
+        _routing_message = tool_routing_message or last_user_message or ""
+        if force_no_tools:
             _planner = None
+        else:
+            try:
+                from vault_planner import plan_user_message
+                _planner = await plan_user_message(
+                    message=_routing_message,
+                    recent_history=[
+                        m for m in (messages or [])[-5:]
+                        if isinstance(m, dict)
+                        and m.get("role") in ("user", "assistant")
+                    ],
+                )
+            except Exception:
+                logger.exception("[CHAT-TRACE] planner failed")
+                _planner = None
 
                                                              
-        allowed_tools = _vault_functions_for_message(last_user_message)
+        allowed_tools = _vault_functions_for_message(_routing_message)
 
                                                                   
         _skip_tools = False
@@ -8248,7 +8255,7 @@ async def ai_stream(
             try:
                 from vault_tool_router import filter_function_schemas
                 partitioned = filter_function_schemas(
-                    allowed_tools, last_user_message or "",
+                    allowed_tools, _routing_message,
                 )
                 if partitioned:
                     allowed_tools = partitioned
@@ -8468,6 +8475,8 @@ async def ai_stream(
             except json.JSONDecodeError:
                 args = {}
             logger.info("Tool called: %s", tool_name)
+            from vault_chat_safety_sanitizer import _SEARCH_TOOL_NAMES
+            _search_attempted = tool_name in _SEARCH_TOOL_NAMES
                                                                     
                                                                      
             _entered_find_in_vault = (tool_name == "find_in_vault")
@@ -8857,9 +8866,15 @@ async def ai_stream(
     except Exception:
         logger.exception("OpenAI stream error")
         from vault_chat_safety_sanitizer import (
+            SENTENCE_GENERAL_RESPONSE_FAILED,
             SENTENCE_GENERIC_TOOL_FAILED,
+            _SEARCH_TOOL_NAMES,
         )
-        yield SENTENCE_GENERIC_TOOL_FAILED.encode("utf-8")
+        yield (
+            SENTENCE_GENERIC_TOOL_FAILED
+            if _search_attempted
+            else SENTENCE_GENERAL_RESPONSE_FAILED
+        ).encode("utf-8")
 
 
 @app.get("/")
@@ -13088,6 +13103,25 @@ async def chat_endpoint(
                                                                    
         def _route_to_ai_planner_stream(*, force_no_tools: bool = False):
             safe_message = redact_message(decrypted_message)
+            _tool_routing_message = ""
+            _compound_instruction = ""
+            try:
+                from vault_chat_general_router import analyze_compound_message
+                _compound = analyze_compound_message(decrypted_message or "")
+                if len(_compound.clauses) > 1:
+                    if _compound.vault_clauses:
+                        _tool_routing_message = "\n".join(
+                            _compound.vault_clauses
+                        )
+                    elif force_no_tools:
+                        _compound_instruction = (
+                            "The user supplied multiple general-chat clauses. "
+                            "Answer every clause separately, in order, using "
+                            "the language requested by that clause. Number the "
+                            "answers. Do not search or claim to inspect vault data."
+                        )
+            except Exception:
+                logger.exception("[CHAT-TRACE] compound_analysis_failed")
             prompt_context = _build_chat_prompt_context(
                 vault_id=vault_id,
                 request=request,
@@ -13128,6 +13162,10 @@ async def chat_endpoint(
                 messages.append({
                     "role": "system", "content": _dynamic_context,
                 })
+            if _compound_instruction:
+                messages.append({
+                    "role": "system", "content": _compound_instruction,
+                })
             try:
                 from vault_history_compressor import compress_messages
                 _compressed = compress_messages(messages)
@@ -13148,6 +13186,7 @@ async def chat_endpoint(
                         last_user_message=safe_message or "",
                         token_id=str(principal.get("token_id") or ""),
                         force_no_tools=force_no_tools,
+                        tool_routing_message=_tool_routing_message,
                     ):
                         chunk_str = chunk.decode("utf-8")
                         encrypted_chunk = encrypt_message(chunk_str, key)

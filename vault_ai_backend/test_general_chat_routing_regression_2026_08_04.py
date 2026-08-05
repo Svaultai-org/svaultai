@@ -11,6 +11,7 @@ from vault_chat_general_router import (
     INTENT_LANGUAGE_RESPONSE_REQUEST,
     INTENT_UNKNOWN_GENERAL,
     classify_general_intent,
+    analyze_compound_message,
     has_language_directive,
     route_general_chat,
 )
@@ -122,6 +123,110 @@ def test_endpoint_language_model_route_forces_empty_tool_set():
     source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
     assert "_route_to_ai_planner_stream(force_no_tools=True)" in source
     assert "if force_no_tools:" in source
+
+
+@pytest.mark.parametrize("message,expected_count", (
+    (
+        "tell me about yourself in Tagalog\n"
+        "tell me about yourself in Filipino\n"
+        "explain SVaultAI in French\n"
+        "reply in Arabic\n"
+        "what can you do in Somali",
+        5,
+    ),
+    ("tell me about yourself in French; what can you do in Somali", 2),
+    ("1. reply in Arabic\n2. explain SVaultAI in French", 2),
+    ("- reply in Tagalog\n* what can you do in Somali", 2),
+    ("reply in French and then tell me about yourself in Filipino", 2),
+))
+def test_compound_general_chat_is_model_only_and_retrieval_free(message, expected_count):
+    analysis = analyze_compound_message(message)
+    assert len(analysis.clauses) == expected_count
+    assert len(analysis.general_clauses) == expected_count
+    assert analysis.vault_clauses == ()
+    route = route_general_chat(message)
+    assert route is not None
+    assert route.model_response_required
+    assert route.response == ""
+    assert route.clauses == analysis.clauses
+
+
+@pytest.mark.parametrize("message,expected_vault_text", (
+    (
+        "tell me about yourself in French\nshow my passport in Spanish",
+        "show my passport in Spanish",
+    ),
+    (
+        "reply in Arabic; tell me my ETH balance in Arabic",
+        "tell me my ETH balance in Arabic",
+    ),
+    (
+        "what can you do in Somali\nshow my saved login in German",
+        "show my saved login in German",
+    ),
+    (
+        "explain SVaultAI in French; show my beneficiary connection",
+        "show my beneficiary connection",
+    ),
+))
+def test_mixed_compound_preserves_only_explicit_vault_clauses(message, expected_vault_text):
+    analysis = analyze_compound_message(message)
+    assert analysis.general_clauses
+    assert analysis.vault_clauses == (expected_vault_text,)
+    assert route_general_chat(message) is None
+
+
+@pytest.mark.parametrize("message", (
+    "please explain this ???; and something else unclear",
+    "1. hello there\n2. ???",
+))
+def test_malformed_compound_general_chat_never_becomes_search(message):
+    analysis = analyze_compound_message(message)
+    assert analysis.vault_clauses == ()
+    route = route_general_chat(message)
+    assert route is not None
+    assert route.model_response_required
+
+
+def test_non_search_stream_failure_uses_neutral_copy_source_guard():
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    assert "if _search_attempted" in source
+    assert "_search_attempted = tool_name in _SEARCH_TOOL_NAMES" in source
+    assert "SENTENCE_GENERAL_RESPONSE_FAILED" in source
+    assert "tool_routing_message=_tool_routing_message" in source
+
+
+@pytest.mark.asyncio
+async def test_tool_free_provider_failure_returns_neutral_not_search_copy(monkeypatch):
+    import main
+    import vault_ai_provider
+    from vault_chat_safety_sanitizer import (
+        SENTENCE_GENERAL_RESPONSE_FAILED,
+        SENTENCE_GENERIC_TOOL_FAILED,
+    )
+
+    class _Completions:
+        async def create(self, **kwargs):
+            assert "tools" not in kwargs
+            assert "tool_choice" not in kwargs
+            raise RuntimeError("synthetic provider failure")
+
+    class _Client:
+        class _Chat:
+            completions = _Completions()
+        chat = _Chat()
+
+    monkeypatch.setattr(vault_ai_provider, "get_chat_client", lambda: _Client())
+    monkeypatch.setattr(vault_ai_provider, "active_provider_name", lambda: "test")
+    chunks = []
+    async for chunk in main.ai_stream(
+        [{"role": "user", "content": "compound general chat"}],
+        "vault-test", b"key", last_user_message="compound general chat",
+        force_no_tools=True,
+    ):
+        chunks.append(chunk.decode("utf-8"))
+    assert "".join(chunks) == SENTENCE_GENERAL_RESPONSE_FAILED
+    assert SENTENCE_GENERIC_TOOL_FAILED not in "".join(chunks)
 
 
 @pytest.mark.parametrize("message", (

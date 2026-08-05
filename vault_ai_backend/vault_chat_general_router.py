@@ -43,6 +43,14 @@ class GeneralChatRoute:
     response: str
     requested_language: bool = False
     model_response_required: bool = False
+    clauses: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CompoundMessage:
+    clauses: tuple[str, ...]
+    general_clauses: tuple[str, ...]
+    vault_clauses: tuple[str, ...]
 
 
 _LANGUAGES = {
@@ -67,6 +75,11 @@ _OPEN_LANGUAGE_DIRECTIVE_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?", re.IGNORECASE)
+_LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+_COMPOUND_SEPARATOR_RE = re.compile(
+    r"\r?\n+|\s*;\s*|\s+\band\s+then\b\s+",
+    re.IGNORECASE,
+)
 
 # Reusable intent vocabulary. Classification requires combinations across
 # these sets rather than matching a whole sentence.
@@ -160,6 +173,37 @@ def _has_explicit_vault_intent(tokens: set[str]) -> bool:
     return (action and private_domain) or possessive_fact
 
 
+def split_compound_message(message: str) -> tuple[str, ...]:
+    """Split command-like clauses without encoding complete QA phrases."""
+    if not isinstance(message, str) or not message.strip():
+        return ()
+    normalized = re.sub(r"\s*,\s*(?=(?:then\s+)?(?:tell|explain|reply|answer|respond|show|find|open|list|save|delete|what|how)\b)", "\n", message, flags=re.IGNORECASE)
+    parts = _COMPOUND_SEPARATOR_RE.split(normalized)
+    clauses = []
+    for part in parts:
+        clean = _LIST_PREFIX_RE.sub("", part).strip(" \t,.-")
+        if clean:
+            clauses.append(clean)
+    return tuple(clauses)
+
+
+def analyze_compound_message(message: str) -> CompoundMessage:
+    clauses = split_compound_message(message)
+    general: list[str] = []
+    vault: list[str] = []
+    for clause in clauses:
+        tokens = set(_tokens(clause))
+        if _has_explicit_vault_intent(tokens):
+            vault.append(clause)
+        elif _semantic_general_intent(clause) != INTENT_UNKNOWN_GENERAL or has_language_directive(clause):
+            general.append(clause)
+        else:
+            # Unknown compound prose is non-retrieval by default. It must not
+            # become search merely because it is malformed or multi-clause.
+            general.append(clause)
+    return CompoundMessage(clauses, tuple(general), tuple(vault))
+
+
 def _semantic_general_intent(message: str) -> str:
     ordered = _tokens(message)
     tokens = set(ordered)
@@ -189,6 +233,21 @@ def classify_general_intent(message: str) -> str:
 
 
 def route_general_chat(message: str, default_language: str = "en") -> Optional[GeneralChatRoute]:
+    compound = analyze_compound_message(message)
+    if len(compound.clauses) > 1:
+        if compound.vault_clauses:
+            return None
+        return GeneralChatRoute(
+            INTENT_LANGUAGE_RESPONSE_REQUEST
+            if any(has_language_directive(c) for c in compound.clauses)
+            else INTENT_GENERAL_CHAT,
+            INTENT_GENERAL_CHAT,
+            default_language,
+            "",
+            any(has_language_directive(c) for c in compound.clauses),
+            True,
+            compound.clauses,
+        )
     underlying = _semantic_general_intent(message)
     requested = requested_response_language(message)
     open_language_request = has_language_directive(message)
@@ -227,5 +286,6 @@ def route_general_chat(message: str, default_language: str = "en") -> Optional[G
 
 __all__ = [name for name in globals() if name.startswith("INTENT_")] + [
     "GeneralChatRoute", "requested_response_language", "has_language_directive",
+    "CompoundMessage", "split_compound_message", "analyze_compound_message",
     "classify_general_intent", "route_general_chat",
 ]
