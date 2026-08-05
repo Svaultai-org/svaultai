@@ -8157,6 +8157,7 @@ async def ai_stream(
     messages, vault_id: str, key: bytes,
     last_user_message: str = "",
     token_id: str = "",
+    force_no_tools: bool = False,
 ):
     try:
                                                              
@@ -8219,6 +8220,9 @@ async def ai_stream(
                                                                   
         _skip_tools = False
         _planner_used = False
+        if force_no_tools:
+            _skip_tools = True
+            _planner_used = True
         if _planner is not None:
             try:
                 if _planner.can_skip_tools():
@@ -13082,7 +13086,7 @@ async def chat_endpoint(
         ).strip().lower() in ("1", "true", "yes", "on")
 
                                                                    
-        def _route_to_ai_planner_stream():
+        def _route_to_ai_planner_stream(*, force_no_tools: bool = False):
             safe_message = redact_message(decrypted_message)
             prompt_context = _build_chat_prompt_context(
                 vault_id=vault_id,
@@ -13143,6 +13147,7 @@ async def chat_endpoint(
                         key,
                         last_user_message=safe_message or "",
                         token_id=str(principal.get("token_id") or ""),
+                        force_no_tools=force_no_tools,
                     ):
                         chunk_str = chunk.decode("utf-8")
                         encrypted_chunk = encrypt_message(chunk_str, key)
@@ -14009,6 +14014,8 @@ async def chat_endpoint(
                     _general_route.language,
                     str(_general_route.requested_language).lower(),
                 )
+            if _general_route.model_response_required:
+                return _route_to_ai_planner_stream(force_no_tools=True)
             return encrypted_reply(_general_route.response)
 
         if _cfp is not None:

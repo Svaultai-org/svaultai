@@ -42,6 +42,7 @@ class GeneralChatRoute:
     language: str
     response: str
     requested_language: bool = False
+    model_response_required: bool = False
 
 
 _LANGUAGES = {
@@ -55,6 +56,14 @@ _LANGUAGE_DIRECTIVE_RE = re.compile(
     r"\b(?:in|into|answer|respond|reply|speak|translate|say)\b"
     r"(?:\s+(?:to|me|it|that|your|last|answer|response))*\s+"
     r"(?P<language>" + "|".join(map(re.escape, _LANGUAGES)) + r")\b",
+    re.IGNORECASE,
+)
+_OPEN_LANGUAGE_DIRECTIVE_RE = re.compile(
+    r"\b(?:answer|respond|reply|speak|write|translate|say)\b"
+    r"[^.!?\n]{0,40}\b(?:in|into|using)\s+"
+    r"(?P<language>[A-Za-z][A-Za-z -]{1,38})\b|"
+    r"\b(?:tell\s+me|explain)\b[^.!?\n]{0,100}\bin\s+"
+    r"(?P<language_tail>[A-Za-z][A-Za-z -]{1,38})\b",
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?", re.IGNORECASE)
@@ -78,7 +87,7 @@ _SMALL_TALK_CUES = frozenset({"how", "doing", "going", "today", "working"})
 
 _RETRIEVAL_VERBS = frozenset({"find", "search", "show", "open", "list", "retrieve", "inspect", "recall"})
 _MUTATION_VERBS = frozenset({"upload", "save", "rename", "delete", "move", "edit", "forget", "generate", "send", "update"})
-_FILE_TERMS = frozenset({"vault", "file", "files", "document", "documents", "passport", "receipt", "video", "videos", "uploaded"})
+_FILE_TERMS = frozenset({"vault", "file", "files", "document", "documents", "passport", "receipt", "contract", "contracts", "video", "videos", "uploaded"})
 _MEMORY_TERMS = frozenset({"memory", "remember", "name", "birthday", "trip", "favorite", "city"})
 _CREDENTIAL_TERMS = frozenset({"login", "logins", "credential", "credentials", "password", "username"})
 _WALLET_TERMS = frozenset({"wallet", "eth", "btc", "sol", "trx", "balance", "transaction"})
@@ -134,10 +143,20 @@ def requested_response_language(message: str) -> Optional[str]:
     return _LANGUAGES.get(match.group("language").lower()) if match else None
 
 
+def has_language_directive(message: str) -> bool:
+    """Return true for any syntactically named response language."""
+    if not isinstance(message, str) or not message.strip():
+        return False
+    return bool(
+        _LANGUAGE_DIRECTIVE_RE.search(message)
+        or _OPEN_LANGUAGE_DIRECTIVE_RE.search(message)
+    )
+
+
 def _has_explicit_vault_intent(tokens: set[str]) -> bool:
     action = bool(tokens & (_RETRIEVAL_VERBS | _MUTATION_VERBS))
     private_domain = bool(tokens & (_FILE_TERMS | _MEMORY_TERMS | _CREDENTIAL_TERMS | _WALLET_TERMS | _INHERITANCE_TERMS))
-    possessive_fact = "my" in tokens and bool(tokens & (_MEMORY_TERMS | _FILE_TERMS))
+    possessive_fact = "my" in tokens and private_domain
     return (action and private_domain) or possessive_fact
 
 
@@ -166,19 +185,28 @@ def classify_general_intent(message: str) -> str:
     base = _semantic_general_intent(message)
     if base == INTENT_UNKNOWN_GENERAL:
         return base
-    return INTENT_LANGUAGE_RESPONSE_REQUEST if requested_response_language(message) else base
+    return INTENT_LANGUAGE_RESPONSE_REQUEST if has_language_directive(message) else base
 
 
 def route_general_chat(message: str, default_language: str = "en") -> Optional[GeneralChatRoute]:
     underlying = _semantic_general_intent(message)
     requested = requested_response_language(message)
+    open_language_request = has_language_directive(message)
+    explicit_vault_intent = _has_explicit_vault_intent(set(_tokens(message)))
+    if explicit_vault_intent:
+        return None
     # A bare language directive is itself safe general conversation.
-    if underlying == INTENT_UNKNOWN_GENERAL and requested:
+    if underlying == INTENT_UNKNOWN_GENERAL and open_language_request:
         underlying = INTENT_GENERAL_CHAT
     if underlying == INTENT_UNKNOWN_GENERAL:
         return None
-    intent = INTENT_LANGUAGE_RESPONSE_REQUEST if requested else underlying
+    intent = INTENT_LANGUAGE_RESPONSE_REQUEST if open_language_request else underlying
     language = requested or (default_language if default_language in _RESPONSES else "en")
+    if open_language_request:
+        return GeneralChatRoute(
+            intent, underlying, requested or default_language, "",
+            True, True,
+        )
     tokens = set(_tokens(message))
     if underlying == INTENT_ASSISTANT_IDENTITY:
         kind = "identity"
@@ -198,6 +226,6 @@ def route_general_chat(message: str, default_language: str = "en") -> Optional[G
 
 
 __all__ = [name for name in globals() if name.startswith("INTENT_")] + [
-    "GeneralChatRoute", "requested_response_language",
+    "GeneralChatRoute", "requested_response_language", "has_language_directive",
     "classify_general_intent", "route_general_chat",
 ]

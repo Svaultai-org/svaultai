@@ -11,6 +11,7 @@ from vault_chat_general_router import (
     INTENT_LANGUAGE_RESPONSE_REQUEST,
     INTENT_UNKNOWN_GENERAL,
     classify_general_intent,
+    has_language_directive,
     route_general_chat,
 )
 from vault_chat_safety_sanitizer import (
@@ -42,7 +43,11 @@ def test_screenshot_cases_are_retrieval_free(message, intent, language):
     assert route is not None
     assert route.intent == intent
     assert route.language == language
-    assert route.response
+    if intent == INTENT_LANGUAGE_RESPONSE_REQUEST:
+        assert route.model_response_required
+        assert route.response == ""
+    else:
+        assert route.response
     assert "part of the search" not in route.response.lower()
     assert "didn't find" not in route.response.lower()
 
@@ -92,6 +97,31 @@ def test_language_directive_preserves_non_retrieval_route(message, language):
     }
     assert route.language == language
     assert route.requested_language
+    assert route.model_response_required
+    assert route.response == ""
+
+
+@pytest.mark.parametrize("message", (
+    "tell me about yourself in Tagalog",
+    "tell me about yourself in Filipino",
+    "reply in Welsh",
+    "write your answer in Icelandic",
+    "explain privacy in Yoruba",
+))
+def test_open_language_requests_use_model_only_general_route(message):
+    assert has_language_directive(message)
+    route = route_general_chat(message)
+    assert route is not None
+    assert route.intent == INTENT_LANGUAGE_RESPONSE_REQUEST
+    assert route.requested_language
+    assert route.model_response_required
+    assert route.response == ""
+
+
+def test_endpoint_language_model_route_forces_empty_tool_set():
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    assert "_route_to_ai_planner_stream(force_no_tools=True)" in source
+    assert "if force_no_tools:" in source
 
 
 @pytest.mark.parametrize("message", (
@@ -102,6 +132,17 @@ def test_language_directive_preserves_non_retrieval_route(message, language):
 ))
 def test_explicit_vault_requests_are_not_swallowed(message):
     assert classify_general_intent(message) == INTENT_UNKNOWN_GENERAL
+    assert route_general_chat(message) is None
+
+
+@pytest.mark.parametrize("message", (
+    "show my passport in Spanish",
+    "find my contract and answer in French",
+    "tell me my ETH balance in Arabic",
+    "show my saved login in German",
+    "open my video and reply in Tagalog",
+))
+def test_language_request_does_not_swallow_explicit_vault_route(message):
     assert route_general_chat(message) is None
 
 
