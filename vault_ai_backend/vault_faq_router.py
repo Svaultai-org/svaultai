@@ -58,11 +58,33 @@ _GENERIC_HELP_HINT_RE = re.compile(
 def looks_like_faq_message(message: str) -> bool:
     if not isinstance(message, str) or not _GENERIC_HELP_HINT_RE.search(message):
         return False
-    return any(pattern.search(message) for patterns in _PATTERNS_BY_ID.values()
-               for pattern in patterns)
+    return _semantic_faq_id(message) is not None or any(
+        pattern.search(message) for patterns in _PATTERNS_BY_ID.values()
+        for pattern in patterns
+    )
+
+
+def _semantic_faq_id(message: str) -> Optional[str]:
+    """Match FAQ concepts compositionally, without sentence conditions."""
+    tokens = set(re.findall(r"[a-z0-9]+", message.lower()))
+    if (
+        tokens & {"private", "privacy", "trust"}
+        and tokens & {"information", "data", "vault", "svaultai"}
+    ):
+        return "files-encrypted"
+    if (
+        tokens & {"explain", "describe"}
+        and tokens & {"app", "svaultai"}
+        and tokens & {"work", "works", "working"}
+    ):
+        return "what-is-svaultai"
+    return None
 
 
 def _match_faq_id(message: str) -> Optional[str]:
+    semantic_id = _semantic_faq_id(message)
+    if semantic_id is not None:
+        return semantic_id
     for faq_id, patterns in _PATTERNS_BY_ID.items():
         if any(pattern.search(message) for pattern in patterns):
             return faq_id

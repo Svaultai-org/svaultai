@@ -33,6 +33,24 @@ SENTENCE_GENERIC_TOOL_FAILED = (
     "a moment."
 )
 
+SENTENCE_GENERAL_RESPONSE_FAILED = (
+    "I couldn't complete that response. Please try again."
+)
+
+_SEARCH_TOOL_NAMES = frozenset({
+    "find_in_vault", "search_extracted_text", "search_vault_content",
+    "list_vault_files", "list_files_by_category", "read_file_text",
+    "read_image_with_vision", "read_media_transcript",
+})
+
+
+def _tool_failure_sentence(tool_name: str) -> str:
+    return (
+        SENTENCE_GENERIC_TOOL_FAILED
+        if str(tool_name or "") in _SEARCH_TOOL_NAMES
+        else SENTENCE_GENERAL_RESPONSE_FAILED
+    )
+
 
 _ERROR_KEYS = ("error", "errors", "exception", "fault", "failure")
 
@@ -115,20 +133,20 @@ def sanitize_tool_result(
 
 
     if raw_result is None:
-        return SENTENCE_GENERIC_TOOL_FAILED
+        return _tool_failure_sentence(tool_name)
 
                                                    
     payload: Any = None
     if isinstance(raw_result, str):
         text = raw_result.strip()
         if not text:
-            return SENTENCE_GENERIC_TOOL_FAILED
+            return _tool_failure_sentence(tool_name)
         if not looks_like_raw_json(text):
             return text
         try:
             payload = json.loads(text)
         except Exception:
-            return SENTENCE_GENERIC_TOOL_FAILED
+            return _tool_failure_sentence(tool_name)
     else:
         payload = raw_result
 
@@ -141,7 +159,7 @@ def sanitize_tool_result(
     if isinstance(payload, dict):
         for k in _ERROR_KEYS:
             if payload.get(k):
-                return SENTENCE_GENERIC_TOOL_FAILED
+                return _tool_failure_sentence(tool_name)
 
                                                                
     if isinstance(payload, dict):
@@ -170,7 +188,7 @@ def sanitize_user_facing_text(text: str) -> str:
     try:
         payload = json.loads(text)
     except Exception:
-        return SENTENCE_GENERIC_TOOL_FAILED
+        return SENTENCE_GENERAL_RESPONSE_FAILED
     if _payload_says_unavailable(payload):
         return SENTENCE_VAULT_UNAVAILABLE
     if _payload_says_locked(payload):
@@ -178,7 +196,7 @@ def sanitize_user_facing_text(text: str) -> str:
     if isinstance(payload, dict):
         for k in _ERROR_KEYS:
             if payload.get(k):
-                return SENTENCE_GENERIC_TOOL_FAILED
+                return SENTENCE_GENERAL_RESPONSE_FAILED
                                                             
                                                             
     return SENTENCE_EMPTY_RESULT
@@ -189,6 +207,7 @@ __all__ = [
     "SENTENCE_VAULT_LOCKED",
     "SENTENCE_EMPTY_RESULT",
     "SENTENCE_GENERIC_TOOL_FAILED",
+    "SENTENCE_GENERAL_RESPONSE_FAILED",
     "looks_like_raw_json",
     "sanitize_tool_result",
     "sanitize_user_facing_text",

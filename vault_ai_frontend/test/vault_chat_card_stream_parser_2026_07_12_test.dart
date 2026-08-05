@@ -607,7 +607,7 @@ void main() {
       final src = _mainSrc();
 
       expect(
-        RegExp(r'final\s+structuredNow\s*=\s*\n\s*_tryParseAssistantStructuredMessage\(buffer\);')
+        RegExp(r'final\s+structuredNow\s*=\s*_tryParseAssistantStructuredMessage\(buffer\);')
             .hasMatch(src),
         isTrue,
         reason: 'the chunk-level parse must run so a completed JSON '
@@ -616,7 +616,7 @@ void main() {
             'message visible to the user',
       );
       expect(
-        RegExp(r"final\s+_Msg\s+replacement\s*=\s*structuredNow\s*\?\?\s*\n\s*_Msg\('assistant',\s*buffer\);")
+        RegExp(r"final\s+_Msg\s+replacement\s*=\s*structuredNow\s*\?\?\s*_Msg\('assistant',\s*buffer\);")
             .hasMatch(src),
         isTrue,
         reason: 'the placeholder committed to msgs[i] must ALREADY '
