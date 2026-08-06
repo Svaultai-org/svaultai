@@ -142,6 +142,7 @@ def _restore_session_secret_between_tests():
 
 
 _CRYPTO_TEST_SENSITIVE_ENV_KEYS = (
+    "VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED",
     "VAULTAI_CRYPTO_XMR_ENABLED",
     "VAULTAI_CRYPTO_XMR_SEND_ENABLED",
     "VAULTAI_CRYPTO_XMR_SCANNER_MODE",
@@ -184,10 +185,6 @@ def _reset_crypto_env_between_tests():
         vault_config.reset_for_tests()
     except Exception:
         pass
-
-
-def pytest_configure(config):                                             
-    pass
 
 
 @pytest.fixture(autouse=True)
@@ -234,3 +231,50 @@ def _default_crypto_entitlement_passes_in_tests(monkeypatch):
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_secure_item_delete_handlers_between_tests():
+    """Contain legacy tests that replace delete handlers by assignment.
+
+    Those stubs previously leaked into later files and made confirmation
+    tests pass or fail based on collection order.  Snapshot and restore the
+    production callables around every test so the suite is order-independent.
+    """
+    try:
+        import vault_secure_item_save as secure_item_save
+        original_execute = secure_item_save._execute_pending_delete
+        original_cancel = secure_item_save._cancel_pending_delete
+    except Exception:
+        yield
+        return
+    try:
+        yield
+    finally:
+        secure_item_save._execute_pending_delete = original_execute
+        secure_item_save._cancel_pending_delete = original_cancel
+_PINNED_PROCESS_PATH = os.environ.get("PATH", "")
+
+
+@pytest.fixture(autouse=True)
+def _restore_process_path_between_tests():
+    """Prevent test-local executable-path mutations leaking by order."""
+    os.environ["PATH"] = _PINNED_PROCESS_PATH
+    yield
+    os.environ["PATH"] = _PINNED_PROCESS_PATH
+
+
+@pytest.fixture(autouse=True)
+def _reset_chat_state_between_tests():
+    """Make shared chat state independent of collection order."""
+    try:
+        from vault_chat_state_store import reset_chat_state_backend_for_tests
+        reset_chat_state_backend_for_tests()
+    except Exception:
+        pass
+    yield
+    try:
+        from vault_chat_state_store import reset_chat_state_backend_for_tests
+        reset_chat_state_backend_for_tests()
+    except Exception:
+        pass

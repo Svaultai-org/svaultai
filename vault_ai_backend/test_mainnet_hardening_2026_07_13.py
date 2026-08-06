@@ -89,10 +89,14 @@ def _make_app_client():
     from routes.crypto_wallet_routes import (
         router,
         verify_trusted_device,
+        require_crypto_entitlement,
     )
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[verify_trusted_device] = lambda: {
+        "vault_id": _TEST_VAULT_ID,
+    }
+    app.dependency_overrides[require_crypto_entitlement] = lambda: {
         "vault_id": _TEST_VAULT_ID,
     }
     return TestClient(app), app, wallet_module
@@ -257,6 +261,16 @@ class MainnetDraftRegistryAndBroadcastBinding(unittest.TestCase):
             "asset": "ETH", "network": "ethereum_mainnet",
             "publicAddress": _FROM_ADDR,
         }
+        self._chain_id_patch = mock.patch(
+            "evm_rpc.eth_chain_id_at_url", return_value=1,
+        )
+        self._block_number_patch = mock.patch(
+            "evm_rpc.eth_block_number_at_url", return_value=20_000_000,
+        )
+        self._chain_id_patch.start()
+        self._block_number_patch.start()
+        self.addCleanup(self._chain_id_patch.stop)
+        self.addCleanup(self._block_number_patch.stop)
 
     def tearDown(self) -> None:
         _clear_all()
@@ -487,6 +501,16 @@ class MainnetBalanceCheckBlockTag(unittest.TestCase):
             "asset": "ETH", "network": "ethereum_mainnet",
             "publicAddress": _FROM_ADDR,
         }
+        self._chain_id_patch = mock.patch(
+            "evm_rpc.eth_chain_id_at_url", return_value=1,
+        )
+        self._block_number_patch = mock.patch(
+            "evm_rpc.eth_block_number_at_url", return_value=20_000_000,
+        )
+        self._chain_id_patch.start()
+        self._block_number_patch.start()
+        self.addCleanup(self._chain_id_patch.stop)
+        self.addCleanup(self._block_number_patch.stop)
 
     def tearDown(self) -> None:
         _clear_all()

@@ -45,6 +45,8 @@ if not _node_available():
         allow_module_level=True,
     )
 
+_NODE_EXE = shutil.which("node")
+
 
 _DEFAULT_NPM_DIR = Path.home() / "scratch-opaque-npm"
 _NPM_DIR = Path(
@@ -136,10 +138,14 @@ def _client_script() -> str:
 def _client_call(stage: str, **kwargs) -> dict:
     script = _client_script()
     payload = {"stage": stage, **kwargs}
+    child_env = dict(os.environ)
+    for unsafe_name in ("NODE_OPTIONS", "OPENSSL_CONF", "RANDFILE"):
+        child_env.pop(unsafe_name, None)
+    child_env["INPUT"] = json.dumps(payload)
     proc = subprocess.run(
-        ["node", "-e", script],
+        [_NODE_EXE, "-e", script],
         input="",
-        env={**os.environ, "INPUT": json.dumps(payload)},
+        env=child_env,
         capture_output=True,
         text=True,
         timeout=60,

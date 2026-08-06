@@ -255,12 +255,18 @@ class HandlerSourceGuardTests(unittest.TestCase):
         self.assertGreater(memory_ok, -1)
         self.assertIn('memory.get("pending_login_draft")', self._src)
 
-    def test_pending_login_draft_handler_runs_before_brain(self):
-        handler = self._src.find('memory.get("pending_login_draft")')
-        brain = self._src.find("Phase 2")
-        self.assertGreater(handler, -1)
-        if brain > -1:
-            self.assertLess(handler, brain)
+    def test_generated_login_create_is_not_general_chat(self):
+        from vault_chat_general_router import route_general_chat
+        from vault_chat_router import build_vault_chat_envelope
+
+        message = "create me a login for GitHub"
+        self.assertIsNone(route_general_chat(message, "en"))
+        envelope = build_vault_chat_envelope(message)
+        self.assertIsNotNone(envelope)
+        self.assertEqual(
+            envelope.get("intent"),
+            "vault_generated_login_create_draft",
+        )
 
 
 class PickHandlerLogicTests(unittest.TestCase):

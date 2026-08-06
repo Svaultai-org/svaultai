@@ -65,6 +65,8 @@ _wheel = pytest.importorskip(
 if shutil.which("node") is None:
     pytest.skip("node not on PATH", allow_module_level=True)
 
+_NODE_EXE = shutil.which("node")
+
 _DEFAULT_NPM_DIR = Path.home() / "scratch-opaque-npm"
 _NPM_DIR = Path(
     os.environ.get("VAULTAI_INTEROP_NODE_MODULES", str(_DEFAULT_NPM_DIR)),
@@ -175,9 +177,13 @@ def _client_script() -> str:
 
 
 def _client(stage: str, **kwargs) -> dict:
+    child_env = dict(os.environ)
+    for unsafe_name in ("NODE_OPTIONS", "OPENSSL_CONF", "RANDFILE"):
+        child_env.pop(unsafe_name, None)
+    child_env["INPUT"] = json.dumps({"stage": stage, **kwargs})
     proc = subprocess.run(
-        ["node", "-e", _client_script()],
-        env={**os.environ, "INPUT": json.dumps({"stage": stage, **kwargs})},
+        [_NODE_EXE, "-e", _client_script()],
+        env=child_env,
         capture_output=True,
         text=True,
         timeout=60,

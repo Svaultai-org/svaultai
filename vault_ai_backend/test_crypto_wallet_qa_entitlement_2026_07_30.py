@@ -220,12 +220,19 @@ class EntitlementForgeryAndIsolationTests(unittest.TestCase):
 
     def test_revoked_entitlement_state_restores_403(self):
         client = _client_for()
-        with patch("crypto_entitlement._resolve_upgraded_flag",
-                   return_value=True):
-            granted = client.get("/crypto/wallet/accounts")
-        with patch("crypto_entitlement._resolve_upgraded_flag",
-                   return_value=False):
-            revoked = client.get("/crypto/wallet/accounts")
+        # Keep the route body DB-free: this test proves the dependency gate,
+        # not wallet-account listing. The dependency still runs before the
+        # deliberately disabled engine response.
+        with patch(
+            "routes.crypto_wallet_routes.crypto_wallet_engine_enabled",
+            return_value=False,
+        ):
+            with patch("crypto_entitlement._resolve_upgraded_flag",
+                       return_value=True):
+                granted = client.get("/crypto/wallet/accounts")
+            with patch("crypto_entitlement._resolve_upgraded_flag",
+                       return_value=False):
+                revoked = client.get("/crypto/wallet/accounts")
 
         self.assertNotEqual(granted.status_code, 403)
         self.assertEqual(revoked.status_code, 403)

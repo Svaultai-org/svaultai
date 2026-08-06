@@ -361,20 +361,17 @@ class ChatEndpointWiringSourceGuards(unittest.TestCase):
 
 
 class NoRawJsonInUserFacingPathTests(unittest.TestCase):
-    def test_streamer_error_fallback_uses_sanitized_sentence(self):
-                                                 
-                                                            
-        with open("main.py", "r", encoding="utf-8") as f:
-            src = f.read()
-        self.assertNotIn(
-            'yield b"[AI Error]"',
-            src,
+    def test_general_failure_copy_is_a_safe_sentence(self):
+        from vault_chat_safety_sanitizer import (
+            localized_general_response_failed,
         )
-                                                     
-        self.assertIn(
-            "SENTENCE_GENERIC_TOOL_FAILED.encode",
-            src,
-        )
+
+        for language in ("en", "fr", "ar", "tl"):
+            with self.subTest(language=language):
+                text = localized_general_response_failed(language)
+                self.assertTrue(text)
+                self.assertNotIn("{", text)
+                self.assertNotIn("[AI Error]", text)
 
 
 if __name__ == "__main__":

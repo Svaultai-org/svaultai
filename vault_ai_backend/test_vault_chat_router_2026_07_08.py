@@ -163,23 +163,29 @@ class IntentClassificationTests(unittest.TestCase):
             "vault_generated_login_list",
         )
 
-    def test_generated_login_create_declines_to_deterministic_router(self):
+    def test_generated_login_create_declares_structured_intent(self):
         r = self._f("Create a generated login draft")
         self.assertEqual(
             r["intent"],
-            "vault_unrecognized",
+            "vault_generated_login_create_draft",
         )
-        self.assertEqual(r["card"]["cardType"], "vault_unrecognized_card")
+        self.assertEqual(
+            r["card"]["cardType"], "vault_generated_login_card",
+        )
 
 
-    def test_generated_login_create_envelope_is_not_built_by_legacy_router(
+    def test_generated_login_create_envelope_has_frontend_contract(
         self,
     ):
         from vault_chat_router import build_vault_chat_envelope
 
-        self.assertIsNone(
-            build_vault_chat_envelope("create me a new login for hbo"),
+        envelope = build_vault_chat_envelope(
+            "create me a new login for hbo",
         )
+        self.assertEqual(
+            envelope["intent"], "vault_generated_login_create_draft",
+        )
+        self.assertEqual(envelope["type"], "vault_chat_card")
 
 
     def test_id_document_intents(self):

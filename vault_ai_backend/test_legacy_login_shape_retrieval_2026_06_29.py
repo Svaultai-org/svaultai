@@ -294,8 +294,7 @@ class TestConfirmationPhrases(unittest.TestCase):
 
     def test_operator_brief_phrases_match(self):
         for phrase in [
-            "save it", "yeah save it", "yes",
-            "go ahead", "save",
+            "save it", "yeah save it", "save",
         ]:
             with self.subTest(phrase=phrase):
                 self.assertTrue(

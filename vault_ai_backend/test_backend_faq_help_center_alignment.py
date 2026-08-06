@@ -17,7 +17,7 @@ FRONTEND = ROOT / "vault_ai_frontend" / "lib" / "help_center_content.dart"
 
 class TestBackendFaqAlignment(unittest.TestCase):
     def test_curated_count_and_nonempty_copy(self):
-        self.assertEqual(len(FAQ_ENTRIES), 25)
+        self.assertEqual(len(FAQ_ENTRIES), 27)
         self.assertTrue(all(e["question"].strip() and e["answer"].strip()
                             for e in FAQ_ENTRIES))
 

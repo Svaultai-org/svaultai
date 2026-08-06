@@ -370,7 +370,7 @@ class TestFaqAnswersHonorContentRules(unittest.TestCase):
 
     def test_forgot_pin_is_honest_about_recovery(self):
         from vault_faq_content import FAQ_BY_ID
-        answer = FAQ_BY_ID["if-i-forget-my-pin"]["answer"].lower()
+        answer = FAQ_BY_ID["forgot-pin"]["answer"].lower()
 
         self.assertIn("recovery may not be possible", answer)
 

@@ -82,7 +82,7 @@ def test_session_principal_is_a_dict_and_rejects_attribute_access() -> None:
 
 
 class _FakeCursor:
-    """Minimal psycopg2 cursor stand-in.
+    """Minimal production DB cursor stand-in.
 
     Understands only the two SQL shapes the pairing flow issues:
 
@@ -96,7 +96,7 @@ class _FakeCursor:
         self._last_row: Optional[dict] = None
         self.rowcount = 0
 
-    # psycopg2 uses ``execute(sql, params)``; keep the same shape.
+    # The production DB driver uses ``execute(sql, params)``; keep the same shape.
     def execute(self, sql: str, params: tuple = ()) -> None:
         s = " ".join(sql.split()).upper()
         if "INSERT INTO BENEFICIARY_LINKS" in s:

@@ -21,6 +21,7 @@
 # Test runner.
 pytest>=7.0
 pytest-subtests>=0.10
+pytest-asyncio>=1.0
 
 # FastAPI TestClient lives in `starlette`, but Starlette's TestClient
 # requires `httpx` (FastAPI 0.110+ enforces this). Pin to avoid the

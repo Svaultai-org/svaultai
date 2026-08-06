@@ -84,11 +84,14 @@ def _make_client(vault_id: str = _VAULT):
     from fastapi.testclient import TestClient
     from routes import crypto_wallet_routes as m
     from routes.crypto_wallet_routes import (
-        router, verify_trusted_device,
+        router, verify_trusted_device, require_crypto_entitlement,
     )
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[verify_trusted_device] = lambda: {
+        "vault_id": vault_id,
+    }
+    app.dependency_overrides[require_crypto_entitlement] = lambda: {
         "vault_id": vault_id,
     }
     return TestClient(app), app, m
