@@ -147,6 +147,10 @@ def test_compound_general_chat_is_model_only_and_retrieval_free(message, expecte
     assert route.model_response_required
     assert route.response == ""
     assert route.clauses == analysis.clauses
+    assert [c.clause_id for c in analysis.clause_objects] == [
+        f"clause-{i}" for i in range(1, expected_count + 1)
+    ]
+    assert all(not c.tool_eligible for c in analysis.clause_objects)
 
 
 @pytest.mark.parametrize("message,expected_vault_text", (
@@ -172,6 +176,43 @@ def test_mixed_compound_preserves_only_explicit_vault_clauses(message, expected_
     assert analysis.general_clauses
     assert analysis.vault_clauses == (expected_vault_text,)
     assert route_general_chat(message) is None
+    assert [c.tool_eligible for c in analysis.clause_objects].count(True) == 1
+    assert next(
+        c.text for c in analysis.clause_objects if c.tool_eligible
+    ) == expected_vault_text
+
+
+@pytest.mark.parametrize("message", (
+    "tell me about yourself in Tagalog\nexplain security in Persian",
+    "1. what can you do in Somali\n2. explain inheritance in Swahili",
+    "reply in Arabic; explain privacy in Hindi",
+))
+def test_compound_language_chat_cannot_be_consumed_by_faq(message):
+    from vault_faq_router import build_faq_envelope, looks_like_faq_message
+    assert not looks_like_faq_message(message)
+    assert build_faq_envelope(message) is None
+    route = route_general_chat(message)
+    assert route is not None
+    assert route.model_response_required
+
+
+def test_mixed_clause_languages_and_intents_are_independent():
+    analysis = analyze_compound_message(
+        "tell me about yourself in French\nshow my passport in Spanish"
+    )
+    first, second = analysis.clause_objects
+    assert first.requested_language == "fr"
+    assert first.tool_eligible is False
+    assert second.requested_language == "es"
+    assert second.intent == "file_search"
+    assert second.tool_eligible is True
+
+
+def test_endpoint_enforces_compound_boundary_before_fast_router():
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    assert "len(_compound_analysis.clauses) > 1" in source
+    assert 'request.state.chat_path = "compound_mixed_planner"' in source
+    assert "return _route_to_ai_planner_stream(force_no_tools=False)" in source
 
 
 @pytest.mark.parametrize("message", (

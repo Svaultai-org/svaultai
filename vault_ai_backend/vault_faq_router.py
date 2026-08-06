@@ -60,6 +60,9 @@ _GENERIC_HELP_HINT_RE = re.compile(
 def looks_like_faq_message(message: str) -> bool:
     if not isinstance(message, str) or not _GENERIC_HELP_HINT_RE.search(message):
         return False
+    from vault_chat_general_router import split_compound_message
+    if len(split_compound_message(message)) > 1:
+        return False
     return _semantic_faq_id(message) is not None or any(
         pattern.search(message) for patterns in _PATTERNS_BY_ID.values()
         for pattern in patterns
@@ -173,6 +176,9 @@ def _build_faq_card(faq_id: str) -> dict[str, Any]:
 
 def build_faq_envelope(message: str) -> Optional[dict[str, Any]]:
     if not isinstance(message, str):
+        return None
+    from vault_chat_general_router import split_compound_message
+    if len(split_compound_message(message)) > 1:
         return None
     faq_id = _match_faq_id(message.strip())
     if faq_id is None:

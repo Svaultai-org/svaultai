@@ -13287,6 +13287,14 @@ async def chat_endpoint(
             _cfp = None
 
         _fast_envelope: dict | None = None
+        _compound_analysis = None
+        try:
+            from vault_chat_general_router import analyze_compound_message
+            _compound_analysis = analyze_compound_message(
+                decrypted_message or "",
+            )
+        except Exception:
+            logger.exception("[CHAT-TRACE] compound_pre_router_failed")
 
 
 
@@ -13662,7 +13670,13 @@ async def chat_endpoint(
                 (vault_id or "")[:8] + "...",
             )
 
-        if _cfp is not None:
+        if (
+            _cfp is not None
+            and not (
+                _compound_analysis is not None
+                and len(_compound_analysis.clauses) > 1
+            )
+        ):
             try:
                 _cfp.emit_span(
                     _cfp.SPAN_FAST_ROUTER_START,
@@ -14116,6 +14130,21 @@ async def chat_endpoint(
                     response_language=_general_route.language,
                 )
             return encrypted_reply(_general_route.response)
+
+        # A mixed compound must be planned from its explicit vault clauses,
+        # never classified as one fuzzy FAQ/search request. General clauses
+        # remain tool-free; only the clause text copied into
+        # tool_routing_message can grant tool eligibility.
+        if (
+            _compound_analysis is not None
+            and len(_compound_analysis.clauses) > 1
+            and _compound_analysis.vault_clauses
+        ):
+            try:
+                request.state.chat_path = "compound_mixed_planner"
+            except Exception:
+                pass
+            return _route_to_ai_planner_stream(force_no_tools=False)
 
         if _cfp is not None:
             _cfp.emit_span(

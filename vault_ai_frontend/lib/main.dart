@@ -72,6 +72,7 @@ import 'media_player.dart';
 import 'pdf_preview.dart';
 import 'file_downloader.dart';
 import 'video_recorder.dart';
+import 'web_video_recorder_dialog.dart';
 
 import 'ui/theme.dart';
 import 'ui/responsive.dart';
@@ -7167,6 +7168,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   final input = TextEditingController();
+  bool _composerSubmitStarting = false;
   final List<_Msg> msgs = <_Msg>[];
   final List<_Attachment> attachments = [];
   final ScrollController _scrollController = ScrollController();
@@ -7216,11 +7218,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
+  // Legacy inline-banner state remains false on the web. Web recording now
+  // lives entirely inside WebVideoRecorderDialog.
+  bool _isVideoRecording = false;
+  String? _videoPreviewViewType;
   String? _audioRecordingName;
 
   final VideoRecorder _videoRecorder = VideoRecorder();
-  bool _isVideoRecording = false;
-  String? _videoPreviewViewType;
 
   late final NativeMediaCaptureService _nativeMediaCapture;
   late final RecordingStorage _recordingStorage;
@@ -10849,11 +10853,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _toggleVideoRecording() async {
     if (sending) return;
 
+    if (kIsWeb) {
+      await _openWebVideoRecorder();
+      return;
+    }
+
     if (!kIsWeb && _nativeMediaCapture.isSupported) {
       await _captureNativeVideo();
       return;
     }
+    _showSnack('Video recording is unavailable on this device.');
+  }
 
+  Future<void> _openWebVideoRecorder() async {
     if (_isRecording) {
       _showSnack('Stop audio recording before recording video.');
       return;
@@ -10862,81 +10874,40 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Stop voice input before recording video.');
       return;
     }
-
-    if (_isVideoRecording) {
-      await _stopVideoRecording();
-      return;
-    }
-
-    bool granted;
-    try {
-      granted = await _videoRecorder.requestPermission();
-    } catch (_) {
-      granted = false;
-    }
-    if (!granted) {
-      _showSnack(
-        'Camera/microphone permission was denied or unavailable.',
-      );
-      return;
-    }
-
-    final viewType =
-        'vault-video-preview-${DateTime.now().microsecondsSinceEpoch}';
-    _videoRecorder.registerPreview(viewType);
-
-    try {
-      _videoRecorder.start();
-      if (mounted) {
-        setState(() {
-          _isVideoRecording = true;
-          _videoPreviewViewType = viewType;
-        });
-      }
-    } catch (_) {
-      _showSnack('Could not start video recording.');
-      _videoRecorder.cancel();
-    }
-  }
-
-  Future<void> _stopVideoRecording() async {
-    Uint8List? bytes;
-    try {
-      bytes = await _videoRecorder.stop();
-    } catch (_) {
-      bytes = null;
-    }
-    if (mounted) {
-      setState(() {
-        _isVideoRecording = false;
-        _videoPreviewViewType = null;
-      });
-    }
-
-    if (bytes == null || bytes.isEmpty) {
-      _showSnack('Recording is empty.');
-      return;
-    }
-
-    final sizeError = _checkUploadSize(bytes.length);
+    final recording = await showDialog<WebVideoRecording>(
+      context: context,
+      useRootNavigator: false,
+      barrierDismissible: false,
+      builder: (_) => WebVideoRecorderDialog(recorder: _videoRecorder),
+    );
+    if (!mounted || recording == null) return;
+    final sizeError = _checkUploadSize(recording.bytes.length);
     if (sizeError != null) {
       _showSnack(sizeError);
       return;
     }
-
-    if (!mounted) return;
-    final recordedBytes = bytes;
+    final recordedBytes = recording.bytes;
     setState(() {
-      attachments.add(
-        _Attachment(
-          id: _newAttachmentId(),
-          name: 'video_${DateTime.now().millisecondsSinceEpoch}.webm',
-          kind: 'video',
-          readBytes: () async => recordedBytes,
-          size: recordedBytes.length,
-          mimeType: 'video/webm',
-        ),
-      );
+      attachments.add(_Attachment(
+        id: _newAttachmentId(),
+        name: 'video_${DateTime.now().millisecondsSinceEpoch}.webm',
+        kind: 'video',
+        readBytes: () async => recordedBytes,
+        size: recordedBytes.length,
+        mimeType: recording.mimeType,
+      ));
+    });
+  }
+
+  // Compatibility cleanup for the retired inline web recorder banner. The
+  // dedicated WebVideoRecorderDialog owns all current web close/discard UI.
+  Future<void> _cancelVideoRecordingWithConfirmation() async {
+    if (!_isVideoRecording) return;
+    _videoRecorder.cancel();
+    if (!mounted) return;
+    setState(() {
+      _isVideoRecording = false;
+      _videoPreviewViewType = null;
     });
   }
 
@@ -11093,6 +11064,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const Spacer(),
+                IconButton(
+                  key: const Key('video_recording_close_button'),
+                  tooltip: 'Cancel recording',
+                  onPressed: _cancelVideoRecordingWithConfirmation,
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                ),
                 TextButton.icon(
                   onPressed: _toggleVideoRecording,
                   icon: const Icon(Icons.stop, color: Colors.redAccent),
@@ -11344,7 +11321,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _audioRecorder.stop();
     }
     _audioRecorder.dispose();
-    if (_isVideoRecording) {
+    if (_isVideoRecording || _videoPreviewViewType != null) {
       _videoRecorder.cancel();
     }
     _videoRecorder.dispose();
@@ -15195,6 +15172,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
   }
 
+  bool get _composerIsComposing {
+    final composing = input.value.composing;
+    return composing.isValid && !composing.isCollapsed;
+  }
+
+  Future<void> _submitComposer() async {
+    if (_composerSubmitStarting || sending || _composerIsComposing) return;
+    if (input.text.trim().isEmpty && attachments.isEmpty) return;
+    _composerSubmitStarting = true;
+    try {
+      await _send();
+    } finally {
+      _composerSubmitStarting = false;
+    }
+  }
+
   Widget _buildComposer(bool isMobile) {
     final vr = VaultResponsive.of(context);
 
@@ -15255,8 +15248,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap:
-                sending ? _cancelActiveChatRequest : (canSend ? _send : null),
+            onTap: sending
+                ? _cancelActiveChatRequest
+                : (canSend ? _submitComposer : null),
             child: SizedBox(
               width: size,
               height: size,
@@ -15271,49 +15265,55 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
 
+    final editableTextField = TextField(
+      key: const Key('chat_composer_field'),
+      controller: input,
+      enabled: !sending,
+      decoration: InputDecoration(
+        hintText: isMobile
+            ? 'Ask SVaultAI…'
+            : AppLocalizations.of(context).chatComposerHint,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 4,
+          vertical: isMobile ? 8 : 10,
+        ),
+      ),
+      minLines: vr.composerMinLines,
+      maxLines: vr.composerMaxLines,
+      textInputAction:
+          isMobile ? TextInputAction.send : TextInputAction.newline,
+      keyboardType: TextInputType.multiline,
+      onSubmitted: canSend ? (_) => _submitComposer() : null,
+      onChanged: (_) {
+        setState(() {});
+      },
+    );
+
     final textField = Semantics(
       container: true,
       identifier: 'chat_composer_field',
       textField: true,
-      child: Focus(
-        onKeyEvent: (node, event) {
-          if (!isMobile &&
-              event is KeyDownEvent &&
-              event.logicalKey == LogicalKeyboardKey.enter &&
-              !HardwareKeyboard.instance.isShiftPressed) {
-            if (canSend) _send();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: TextField(
-          key: const Key('chat_composer_field'),
-          controller: input,
-          enabled: !sending,
-          decoration: InputDecoration(
-            hintText: isMobile
-                ? 'Ask SVaultAI…'
-                : AppLocalizations.of(context).chatComposerHint,
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            isDense: true,
-            contentPadding: EdgeInsets.symmetric(
-              horizontal: 4,
-              vertical: isMobile ? 8 : 10,
+      // Desktop/web policy: Enter and Ctrl+Enter send. Shift+Enter and
+      // Alt+Enter stay unbound so EditableText inserts a newline. The
+      // synchronous latch blocks key-repeat duplicates; composing IME text
+      // is never submitted.
+      child: isMobile
+          ? editableTextField
+          : CallbackShortcuts(
+              bindings: <ShortcutActivator, VoidCallback>{
+                const SingleActivator(LogicalKeyboardKey.enter): () =>
+                    unawaited(_submitComposer()),
+                const SingleActivator(
+                  LogicalKeyboardKey.enter,
+                  control: true,
+                ): () => unawaited(_submitComposer()),
+              },
+              child: editableTextField,
             ),
-          ),
-          minLines: vr.composerMinLines,
-          maxLines: vr.composerMaxLines,
-          textInputAction:
-              isMobile ? TextInputAction.send : TextInputAction.newline,
-          keyboardType: TextInputType.multiline,
-          onSubmitted: isMobile && canSend ? (_) => _send() : null,
-          onChanged: (_) {
-            setState(() {});
-          },
-        ),
-      ),
     );
 
     return SafeArea(
@@ -15355,179 +15355,187 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Widget _buildChatView(bool isMobile) {
     final app = context.watch<AppState>();
-    return Column(
-      children: [
-        Expanded(
-          child: ChatMessageList(
-            key: const Key('chat_message_list'),
-            messages: msgs,
-            thinking: thinking,
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            unawaited(_cancelVideoRecordingWithConfirmation()),
+      },
+      child: Column(
+        children: [
+          Expanded(
+            child: ChatMessageList(
+              key: const Key('chat_message_list'),
+              messages: msgs,
+              thinking: thinking,
 
-            streaming:
-                sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
-            isMobile: isMobile,
-            padding: EdgeInsets.symmetric(
-              horizontal: isMobile ? 8 : 16,
-              vertical: isMobile ? 8 : 12,
-            ),
-            scrollController: _scrollController,
-            // Typing indicator identity: the user-chosen vault
-            // name (``AppState._vaultName``), which is the vault's
-            // own identity — the same string the user typed to
-            // sign into the vault and the same string the LLM is
-            // instructed to identify as. It is a per-vault value
-            // (e.g. "Brain", "My Safe", "Family Vault"), NOT a
-            // hardcoded global constant.
-            //
-            // 2026-07-22 fix: the previous binding was
-            // ``vaultName: app.displayName`` — that field is the
-            // human owner's display label (e.g. "Chosen"), not
-            // the vault's identity, and produced the incident
-            // "Chosen is thinking..." for a user named Chosen.
-            // Never re-bind this parameter to app.displayName or
-            // to a hardcoded literal; the vault-name registry
-            // pattern (AppState.setSession populates
-            // ``_vaultName`` from the authenticated backend
-            // vault_name and clears it on sign-out) is the single
-            // source of truth per-session.
-            vaultName: app.vaultName,
-            // Per-file in-flight state, watched from AppState so the
-            // whole chat rebuilds when any file starts / finishes a
-            // view or download. Individual cards render their own
-            // spinner / disabled buttons based on set membership.
-            viewInFlightFileIds: app.viewInFlightFileIds,
-            downloadInFlightFileIds: app.downloadInFlightFileIds,
-            onOpenVaultFile: (msg) => _openVaultFileCard(msg),
-            onDownloadVaultFile: (msg) => _downloadVaultFileCard(msg),
-            onShowMoreFiles: () => _requestMoreFiles(),
-            isShowMoreFilesInFlight: app.showMoreFilesInFlight,
-            onCardAction: _handleChatCardAction,
-            onShowRelated: _showRelatedFilesForFile,
-            onLoadRelated: _fetchRelatedFilesEnvelope,
-            onScanRemaining: _handleScanRemaining,
-            onDeepAnswerPoll: _pollDeepAnswerJob,
-            onDeepAnswerReady: _promoteDeepAnswerResult,
-            isDeepScanActive: ({
-              required String intent,
-              required String normalizedQuery,
-            }) =>
-                isDeepScanActive(
-              intent: intent,
-              normalizedQuery: normalizedQuery,
-            ),
+              streaming:
+                  sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
+              isMobile: isMobile,
+              padding: EdgeInsets.symmetric(
+                horizontal: isMobile ? 8 : 16,
+                vertical: isMobile ? 8 : 12,
+              ),
+              scrollController: _scrollController,
+              // Typing indicator identity: the user-chosen vault
+              // name (``AppState._vaultName``), which is the vault's
+              // own identity — the same string the user typed to
+              // sign into the vault and the same string the LLM is
+              // instructed to identify as. It is a per-vault value
+              // (e.g. "Brain", "My Safe", "Family Vault"), NOT a
+              // hardcoded global constant.
+              //
+              // 2026-07-22 fix: the previous binding was
+              // ``vaultName: app.displayName`` — that field is the
+              // human owner's display label (e.g. "Chosen"), not
+              // the vault's identity, and produced the incident
+              // "Chosen is thinking..." for a user named Chosen.
+              // Never re-bind this parameter to app.displayName or
+              // to a hardcoded literal; the vault-name registry
+              // pattern (AppState.setSession populates
+              // ``_vaultName`` from the authenticated backend
+              // vault_name and clears it on sign-out) is the single
+              // source of truth per-session.
+              vaultName: app.vaultName,
+              // Per-file in-flight state, watched from AppState so the
+              // whole chat rebuilds when any file starts / finishes a
+              // view or download. Individual cards render their own
+              // spinner / disabled buttons based on set membership.
+              viewInFlightFileIds: app.viewInFlightFileIds,
+              downloadInFlightFileIds: app.downloadInFlightFileIds,
+              onOpenVaultFile: (msg) => _openVaultFileCard(msg),
+              onDownloadVaultFile: (msg) => _downloadVaultFileCard(msg),
+              onShowMoreFiles: () => _requestMoreFiles(),
+              isShowMoreFilesInFlight: app.showMoreFilesInFlight,
+              onCardAction: _handleChatCardAction,
+              onShowRelated: _showRelatedFilesForFile,
+              onLoadRelated: _fetchRelatedFilesEnvelope,
+              onScanRemaining: _handleScanRemaining,
+              onDeepAnswerPoll: _pollDeepAnswerJob,
+              onDeepAnswerReady: _promoteDeepAnswerResult,
+              isDeepScanActive: ({
+                required String intent,
+                required String normalizedQuery,
+              }) =>
+                  isDeepScanActive(
+                intent: intent,
+                normalizedQuery: normalizedQuery,
+              ),
 
-            onSecureItemView: (itemId, title, itemType) {
-              final safeTitle = title.trim();
-              _sendQuickPrompt(
-                  safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
-            },
+              onSecureItemView: (itemId, title, itemType) {
+                final safeTitle = title.trim();
+                _sendQuickPrompt(
+                    safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
+              },
 
-            onSecureItemReveal: null,
-            onSecureItemCopyUsername: (username) {
-              Clipboard.setData(ClipboardData(text: username));
-              _showSnack('Username copied');
-            },
-            onSecureItemCopyValue: (value) {
-              Clipboard.setData(ClipboardData(text: value));
-              _showSnack('Value copied');
-            },
-            onSecureItemEdit: (title, itemType) {
-              _openSecureItemEditDialog(title, itemType);
-            },
-            onSecureItemDelete: (title, itemType) {
-              _startSecureItemDeleteConfirmation(title, itemType);
-            },
+              onSecureItemReveal: null,
+              onSecureItemCopyUsername: (username) {
+                Clipboard.setData(ClipboardData(text: username));
+                _showSnack('Username copied');
+              },
+              onSecureItemCopyValue: (value) {
+                Clipboard.setData(ClipboardData(text: value));
+                _showSnack('Value copied');
+              },
+              onSecureItemEdit: (title, itemType) {
+                _openSecureItemEditDialog(title, itemType);
+              },
+              onSecureItemDelete: (title, itemType) {
+                _startSecureItemDeleteConfirmation(title, itemType);
+              },
 
-            onCryptoWalletAction: _handleCryptoWalletChatAction,
+              onCryptoWalletAction: _handleCryptoWalletChatAction,
 
-            onOpenVault: () {
-              if (mounted) {
-                setState(() => selectedSection = _DashboardSection.dashboard);
-              }
-            },
-            onOpenAssetDetail: (asset) {
-              if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.cryptoVault);
-            },
-            onOpenSendFlow: () {
-              if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.cryptoVault);
-            },
-            onOpenSecurityPage: () {
-              if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.settings);
-            },
-            onOpenBillingPage: () {
-              if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.settings);
-            },
-            onOpenStoragePage: () {
-              if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.files);
-            },
-            onOpenVaultItem: (category, id) {
-              if (!mounted) return;
-              switch (category) {
-                case 'login':
-                case 'generated_login':
-                case 'id_document':
-                case 'secure_item':
-                  setState(() => selectedSection = _DashboardSection.logins);
-                  break;
-                case 'crypto':
-                  setState(
-                      () => selectedSection = _DashboardSection.cryptoVault);
-                  break;
-                case 'file':
-                case 'document':
-                  setState(() => selectedSection = _DashboardSection.files);
-                  break;
-                case 'activity':
+              onOpenVault: () {
+                if (mounted) {
                   setState(() => selectedSection = _DashboardSection.dashboard);
-                  break;
-                default:
-                  setState(() => selectedSection = _DashboardSection.dashboard);
-              }
-            },
-            onSearchVault: (query) {
-              _sendQuickPrompt('search my vault for $query');
-            },
+                }
+              },
+              onOpenAssetDetail: (asset) {
+                if (!mounted) return;
+                setState(() => selectedSection = _DashboardSection.cryptoVault);
+              },
+              onOpenSendFlow: () {
+                if (!mounted) return;
+                setState(() => selectedSection = _DashboardSection.cryptoVault);
+              },
+              onOpenSecurityPage: () {
+                if (!mounted) return;
+                setState(() => selectedSection = _DashboardSection.settings);
+              },
+              onOpenBillingPage: () {
+                if (!mounted) return;
+                setState(() => selectedSection = _DashboardSection.settings);
+              },
+              onOpenStoragePage: () {
+                if (!mounted) return;
+                setState(() => selectedSection = _DashboardSection.files);
+              },
+              onOpenVaultItem: (category, id) {
+                if (!mounted) return;
+                switch (category) {
+                  case 'login':
+                  case 'generated_login':
+                  case 'id_document':
+                  case 'secure_item':
+                    setState(() => selectedSection = _DashboardSection.logins);
+                    break;
+                  case 'crypto':
+                    setState(
+                        () => selectedSection = _DashboardSection.cryptoVault);
+                    break;
+                  case 'file':
+                  case 'document':
+                    setState(() => selectedSection = _DashboardSection.files);
+                    break;
+                  case 'activity':
+                    setState(
+                        () => selectedSection = _DashboardSection.dashboard);
+                    break;
+                  default:
+                    setState(
+                        () => selectedSection = _DashboardSection.dashboard);
+                }
+              },
+              onSearchVault: (query) {
+                _sendQuickPrompt('search my vault for $query');
+              },
 
-            onFetchCryptoBalance: ({
-              required String asset,
-              required String address,
-            }) async {
-              return _fetchCryptoBalanceForChatCard(
-                asset: asset,
-                address: address,
-              );
-            },
-            onFetchCryptoActivity: ({
-              required String asset,
-              required String address,
-              int limit = 10,
-            }) async {
-              return _fetchCryptoActivityForChatCard(
-                asset: asset,
-                address: address,
-                limit: limit,
-              );
-            },
+              onFetchCryptoBalance: ({
+                required String asset,
+                required String address,
+              }) async {
+                return _fetchCryptoBalanceForChatCard(
+                  asset: asset,
+                  address: address,
+                );
+              },
+              onFetchCryptoActivity: ({
+                required String asset,
+                required String address,
+                int limit = 10,
+              }) async {
+                return _fetchCryptoActivityForChatCard(
+                  asset: asset,
+                  address: address,
+                  limit: limit,
+                );
+              },
 
-            cryptoCache: CryptoChatLiveCache.instance,
+              cryptoCache: CryptoChatLiveCache.instance,
 
-            cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
-            onOpenCryptoUpgrade: () {
-              if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.settings);
-            },
+              cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
+              onOpenCryptoUpgrade: () {
+                if (!mounted) return;
+                setState(() => selectedSection = _DashboardSection.settings);
+              },
+            ),
           ),
-        ),
-        if (_isVideoRecording) _buildRecordingBanner(),
-        _buildImportPanel(),
-        _buildAttachmentPanel(isMobile),
-        _buildComposer(isMobile),
-      ],
+          if (_isVideoRecording) _buildRecordingBanner(),
+          _buildImportPanel(),
+          _buildAttachmentPanel(isMobile),
+          _buildComposer(isMobile),
+        ],
+      ),
     );
   }
 

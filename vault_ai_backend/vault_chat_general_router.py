@@ -51,6 +51,16 @@ class CompoundMessage:
     clauses: tuple[str, ...]
     general_clauses: tuple[str, ...]
     vault_clauses: tuple[str, ...]
+    clause_objects: tuple["CompoundClause", ...] = ()
+
+
+@dataclass(frozen=True)
+class CompoundClause:
+    clause_id: str
+    text: str
+    intent: str
+    requested_language: Optional[str]
+    tool_eligible: bool
 
 
 _LANGUAGES = {
@@ -218,17 +228,60 @@ def analyze_compound_message(message: str) -> CompoundMessage:
     clauses = split_compound_message(message)
     general: list[str] = []
     vault: list[str] = []
-    for clause in clauses:
+    objects: list[CompoundClause] = []
+    for index, clause in enumerate(clauses, start=1):
         tokens = set(_tokens(clause))
-        if _has_explicit_vault_intent(tokens):
+        is_vault = _has_explicit_vault_intent(tokens)
+        language = requested_response_language(clause)
+        if is_vault:
             vault.append(clause)
+            intent = _vault_clause_intent(tokens)
         elif _semantic_general_intent(clause) != INTENT_UNKNOWN_GENERAL or has_language_directive(clause):
             general.append(clause)
+            intent = classify_general_intent(clause)
         else:
             # Unknown compound prose is non-retrieval by default. It must not
             # become search merely because it is malformed or multi-clause.
             general.append(clause)
-    return CompoundMessage(clauses, tuple(general), tuple(vault))
+            intent = INTENT_UNKNOWN_GENERAL
+        objects.append(CompoundClause(
+            clause_id=f"clause-{index}",
+            text=clause,
+            intent=intent,
+            requested_language=language,
+            tool_eligible=is_vault,
+        ))
+    return CompoundMessage(
+        clauses, tuple(general), tuple(vault), tuple(objects),
+    )
+
+
+def _vault_clause_intent(tokens: set[str]) -> str:
+    if tokens & _WALLET_TERMS:
+        return INTENT_WALLET_ACTION
+    if tokens & _CREDENTIAL_TERMS:
+        if tokens & {"delete"}:
+            return INTENT_CREDENTIAL_DELETE
+        if tokens & {"edit", "update", "rename"}:
+            return INTENT_CREDENTIAL_EDIT
+        if tokens & {"save", "create", "generate"}:
+            return INTENT_CREDENTIAL_CREATE
+        return INTENT_CREDENTIAL_RETRIEVE
+    if tokens & _MEMORY_TERMS:
+        if tokens & {"delete", "forget"}:
+            return INTENT_MEMORY_DELETE
+        if tokens & {"edit", "update", "rename"}:
+            return INTENT_MEMORY_EDIT
+        if tokens & {"save", "remember", "create"}:
+            return INTENT_MEMORY_SAVE
+        return INTENT_MEMORY_RECALL
+    if tokens & _INHERITANCE_TERMS:
+        return INTENT_INHERITANCE_ACTION
+    if tokens & {"upload"}:
+        return INTENT_FILE_UPLOAD
+    if tokens & _MUTATION_VERBS:
+        return INTENT_FILE_ACTION
+    return INTENT_FILE_SEARCH
 
 
 def _semantic_general_intent(message: str) -> str:
@@ -307,6 +360,6 @@ def route_general_chat(message: str, default_language: str = "en") -> Optional[G
 
 __all__ = [name for name in globals() if name.startswith("INTENT_")] + [
     "GeneralChatRoute", "requested_response_language", "has_language_directive",
-    "CompoundMessage", "split_compound_message", "analyze_compound_message",
+    "CompoundMessage", "CompoundClause", "split_compound_message", "analyze_compound_message",
     "classify_general_intent", "route_general_chat",
 ]
