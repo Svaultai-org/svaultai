@@ -2228,7 +2228,13 @@ def _resolve_network_for_route(
     raw_network: str,
 ) -> tuple[Optional[str], Optional[dict[str, Any]]]:
 
-
+    raw_nid = str(raw_network or "").strip().lower().replace("-", "_")
+    if raw_nid in {
+        NETWORK_SOLANA_MAINNET,
+        NETWORK_TRON_MAINNET,
+        NETWORK_MONERO_MAINNET,
+    }:
+        return raw_nid, None
     from evm_networks import normalize_network_config, normalize_network_id
     nid = normalize_network_id(raw_network)
     if nid == NETWORK_SOLANA_MAINNET:

@@ -808,13 +808,6 @@ def classify_and_build_vault_intent(
             INTENT_REFUSAL_EXPORT_ALL,
             _build_refusal(REFUSAL_REASON_EXPORT_ALL),
         )
-    if _detect_secret_material(text):
-        return _wrap_intent(
-            INTENT_REFUSAL_SECRET_MATERIAL,
-            _build_refusal(REFUSAL_REASON_SECRET_MATERIAL),
-        )
-
-
     try:
         from vault_faq_router import (
             build_faq_envelope as _faq_build_envelope,
@@ -836,6 +829,15 @@ def classify_and_build_vault_intent(
                 _card[k] = v
             _card["message"] = str(_faq_env.get("message") or "")
             return _wrap_intent(INTENT_FAQ, _card)
+
+    # Educational questions about seed phrases, local signing, and wallet
+    # recovery are safe FAQ requests. Only unmatched requests to reveal or
+    # handle secret material reach the refusal below.
+    if _detect_secret_material(text):
+        return _wrap_intent(
+            INTENT_REFUSAL_SECRET_MATERIAL,
+            _build_refusal(REFUSAL_REASON_SECRET_MATERIAL),
+        )
 
 
     if _looks_like_crypto_message(text):
@@ -914,14 +916,19 @@ def classify_and_build_vault_intent(
 
 
     if _matches_any(text, _GENERATED_LOGIN_CREATE_PATTERNS):
-        # Generated-login CREATE-DRAFT needs side effects: preserve
-        # explicit fields, generate only missing values, persist a
-        # pending draft, and return card.data for the renderer. This
-        # legacy side-effect-free router can only emit a shell card, so
-        # decline and let vault_chat_deterministic_router own the path.
+        # This router declares the structured intent and frontend card
+        # contract only.  The intent is deliberately excluded from the
+        # fast-path allowlist, so main.py still falls through to the
+        # authoritative deterministic router that generates and persists
+        # the pending draft before returning populated card.data.
         return _wrap_intent(
-            INTENT_UNRECOGNIZED,
-            _build_card(CARD_UNRECOGNIZED),
+            INTENT_GENERATED_LOGIN_CREATE_DRAFT,
+            _build_card(
+                CARD_GENERATED_LOGIN,
+                liveFetchRequired=False,
+                maskedByDefault=False,
+                view="create_draft",
+            ),
         )
     if _matches_any(text, _GENERATED_LOGIN_LIST_PATTERNS):
         return _wrap_intent(

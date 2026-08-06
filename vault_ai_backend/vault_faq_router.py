@@ -37,6 +37,8 @@ _PATTERNS_BY_ID = {
     "wallet-non-custodial": _patterns(r"\bis\s+(?:the\s+)?s?vault\s*ai\s+wallet\s+(?:custodial|non[- ]custodial)\b", r"\bcustodial\s+or\s+non[- ]custodial\b"),
     "wallet-transaction-approval": _patterns(r"\bcan\s+s?vault\s*ai\s+(?:send|move|broadcast)\s+(?:my\s+)?crypto\b", r"\bdoes\s+(?:a\s+)?transaction\s+require\s+(?:my\s+)?approval\b"),
     "wallet-recovery": _patterns(r"\bcan\s+s?vault\s*ai\s+recover\s+(?:my\s+)?wallet\b"),
+    "how-local-signing-works": _patterns(r"\bhow\s+does\s+local\s+signing\s+work\b"),
+    "never-share-seed": _patterns(r"\bwhy\s+should(?:n'?t|\s+i\s+not)\s+share\s+(?:my\s+)?seed\s+phrase\b"),
     "inheritance": _patterns(r"\b(?:what\s+is|how\s+does)\s+(?:the\s+)?inheritance(?:\s+feature)?\s*(?:work)?\b", r"\bcan\s+(?:my\s+)?beneficiary\s+access\b"),
     "inactive-unsubscribed-vault": _patterns(r"\bwhat\s+happens\s+after\s+six\s+months\b", r"\b(?:inactive|unsubscribed|unpaid)\s+vaults?\s+(?:deleted|deletion)\b", r"\bhow\s+do\s+i\s+reset\s+(?:the\s+)?inactivity\b"),
     "subscription-expired": _patterns(r"\bwhat\s+happens\s+(?:when|if)\s+(?:my\s+)?subscription\s+expires?\b"),
@@ -67,6 +69,70 @@ def looks_like_faq_message(message: str) -> bool:
 def _semantic_faq_id(message: str) -> Optional[str]:
     """Match FAQ concepts compositionally, without sentence conditions."""
     tokens = set(re.findall(r"[a-z0-9]+", message.lower()))
+    question_like = bool(re.match(
+        r"\s*(?:what|why|how|can|does|is|are|which|explain)\b",
+        message,
+        re.IGNORECASE,
+    ))
+    if not question_like:
+        return None
+    if tokens & {"bug", "report", "support"}:
+        return "contact-support"
+    if "pin" in tokens and tokens & {"forgot", "forget", "lost", "reset"}:
+        return "forgot-pin"
+    if "signing" in tokens and "local" in tokens:
+        return "how-local-signing-works"
+    if tokens & {"seed", "phrase"} and tokens & {"share", "not", "never"}:
+        return "never-share-seed"
+    if tokens & {"seed", "phrase", "signing", "gas", "tron", "assets"}:
+        if tokens & {"share", "seed", "phrase"}:
+            return "wallet-recovery"
+        if tokens & {"approval", "pin", "gas", "signing"}:
+            return "wallet-transaction-approval"
+        return "wallet-non-custodial"
+    if "monero" in tokens and tokens & {"different", "disabled", "desktop", "required"}:
+        return "wallet-non-custodial"
+    if tokens & {"inheritance", "beneficiary"}:
+        return "inheritance"
+    if tokens & {"subscription", "checkout", "upgrade", "exceed"}:
+        return "subscription-expired"
+    if "storage" in tokens and tokens & {"calculated", "calculate"}:
+        return "subscription-expired"
+    if tokens & {"password", "passwords", "login", "logins", "credential", "credentials", "masked"}:
+        return "credentials-private"
+    if "secure" in tokens and "item" in tokens:
+        return "credentials-private"
+    if (
+        tokens & {"types", "passport", "license", "documents", "document", "expiration", "id"}
+        and tokens & {"protect", "supported", "support", "accept", "types", "expiration", "save", "hidden"}
+    ):
+        return "what-can-i-protect"
+    if "upload" in tokens and "files" in tokens:
+        return "what-can-i-protect"
+    if "delete" in tokens and "file" in tokens:
+        return "delete-file"
+    if tokens & {"search", "searching", "find", "showing", "summarize", "pdf", "provider", "refresh"}:
+        return "private-ai"
+    if "vault" in tokens and tokens & {"create", "unlock"}:
+        return "what-is-svaultai"
+    if tokens & {"encrypted", "encryption"}:
+        return "files-encrypted"
+    if (
+        "vault" in tokens
+        and (
+            tokens & {"staff", "read"}
+            or {"someone", "else"}.issubset(tokens)
+        )
+    ):
+        return "can-staff-open-vault"
+    if tokens & {"svaultai", "vaultai"} and "read" in tokens and tokens & {"secret", "secrets", "saved"}:
+        return "file-and-credential-privacy"
+    if tokens & {"buy", "sell", "swap", "trade"} and tokens & {"crypto", "vaultai"}:
+        return "wallet-non-custodial"
+    if "pin" in tokens and tokens & {"sending", "send"}:
+        return "wallet-transaction-approval"
+    if tokens & {"files", "items"} and tokens & {"difference", "secure"}:
+        return "what-can-i-protect"
     if (
         tokens & {"private", "privacy", "trust"}
         and tokens & {"information", "data", "vault", "svaultai"}
@@ -82,13 +148,10 @@ def _semantic_faq_id(message: str) -> Optional[str]:
 
 
 def _match_faq_id(message: str) -> Optional[str]:
-    semantic_id = _semantic_faq_id(message)
-    if semantic_id is not None:
-        return semantic_id
     for faq_id, patterns in _PATTERNS_BY_ID.items():
         if any(pattern.search(message) for pattern in patterns):
             return faq_id
-    return None
+    return _semantic_faq_id(message)
 
 
 def _build_faq_card(faq_id: str) -> dict[str, Any]:

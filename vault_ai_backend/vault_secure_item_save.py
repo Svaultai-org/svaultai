@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any, Optional
 
@@ -1187,6 +1188,22 @@ def route_secure_item_message(
             )
         if is_cancel_delete_phrase(user_message):
             return _cancel_pending_delete(vault_id=vault_id)
+
+    # Contextual bare confirmations: destructive intent has first refusal,
+    # and a real secure-item draft must exist. This preserves wallet/login
+    # draft UX without reintroducing the global bare-"yes" hijack.
+    if (
+        pending_delete is None
+        and get_latest_secure_item_draft(vault_id=vault_id) is not None
+        and re.fullmatch(
+            r"\s*(?:yes|go\s+ahead|confirm)\s*[.!?]*\s*",
+            user_message,
+            re.IGNORECASE,
+        )
+    ):
+        return confirm_pending_secure_item_save(
+            vault_id=vault_id, key=key, db_executor=db_executor,
+        )
                                                             
                                                            
     intent = classify_secure_item_intent(user_message)

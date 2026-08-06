@@ -98,8 +98,8 @@ _CONVERSATION_CUES = frozenset({
 })
 _SMALL_TALK_CUES = frozenset({"how", "doing", "going", "today", "working"})
 
-_RETRIEVAL_VERBS = frozenset({"find", "search", "show", "open", "list", "retrieve", "inspect", "recall"})
-_MUTATION_VERBS = frozenset({"upload", "save", "rename", "delete", "move", "edit", "forget", "generate", "send", "update"})
+_RETRIEVAL_VERBS = frozenset({"find", "search", "show", "open", "list", "retrieve", "inspect", "recall", "download"})
+_MUTATION_VERBS = frozenset({"upload", "save", "create", "rename", "delete", "move", "edit", "forget", "generate", "send", "update"})
 _FILE_TERMS = frozenset({"vault", "file", "files", "document", "documents", "passport", "receipt", "contract", "contracts", "video", "videos", "uploaded"})
 _MEMORY_TERMS = frozenset({"memory", "remember", "name", "birthday", "trip", "favorite", "city"})
 _CREDENTIAL_TERMS = frozenset({"login", "logins", "credential", "credentials", "password", "username"})

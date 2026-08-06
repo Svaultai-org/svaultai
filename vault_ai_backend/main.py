@@ -14289,7 +14289,13 @@ async def chat_endpoint(
             "VAULTAI_DETERMINISTIC_ROUTER_ENABLED", "true",
         ).strip().lower() in ("1", "true", "yes", "on")
 
-        if _det_router_enabled and not _det_has_pending_draft:
+        # Explicit deterministic commands must still win when an older
+        # generated-login draft exists. The router returns None for bare
+        # confirmation/cancellation turns, so the pending-draft state machine
+        # below retains ownership of "save it" and "cancel" without letting
+        # stale draft state force unrelated create/open/download requests into
+        # the AI planner.
+        if _det_router_enabled:
             try:
                 from vault_chat_deterministic_router import (
                     try_route_deterministically as _det_route,

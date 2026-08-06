@@ -127,7 +127,7 @@ _LATIN_KEYWORDS_BY_LANG: dict[str, tuple[str, ...]] = {
 
 
 
-    "en":  (" the ", " and ", " with ", " your ", " what ",
+    "en":  (" the ", " and ", " with ", " your ", " my ", " name ", " is ", " what ",
             " how ", " you ", " are ", " is a ", " is my ",
             " please ", " thank ", " thanks ",
             " hello ", " hi ", " hey ",
