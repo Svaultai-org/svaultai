@@ -9,7 +9,7 @@ class AppLocalizationsKo extends AppLocalizations {
   AppLocalizationsKo([String locale = 'ko']) : super(locale);
 
   @override
-  String get appTitle => 'Svaultai';
+  String get appTitle => 'SVaultAI';
 
   @override
   String get commonRetry => '다시 시도';
@@ -42,7 +42,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get commonDownload => '다운로드';
 
   @override
-  String get commonAskVaultAI => 'Svaultai 에게 묻기';
+  String get commonAskVaultAI => 'SVaultAI 에게 묻기';
 
   @override
   String get commonClose => '닫기';
@@ -159,7 +159,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get chatComposerHint => '보관소에 대해 묻거나 파일을 업로드하세요...';
 
   @override
-  String get chatThinking => 'Svaultai 가 생각 중입니다...';
+  String get chatThinking => 'SVaultAI 가 생각 중입니다...';
 
   @override
   String chatThinkingWithName(String name) {
@@ -178,7 +178,7 @@ class AppLocalizationsKo extends AppLocalizations {
   }
 
   @override
-  String get chatErrorGeneric => 'Svaultai 가 지금 답할 수 없습니다. 다시 시도하세요.';
+  String get chatErrorGeneric => 'SVaultAI 가 지금 답할 수 없습니다. 다시 시도하세요.';
 
   @override
   String get chatRetryButton => '다시 시도';
@@ -226,7 +226,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get conciergeTitle => '컨시어지';
 
   @override
-  String get conciergeSubtitle => 'Svaultai 가 우선 살펴보길 권하는 항목';
+  String get conciergeSubtitle => 'SVaultAI 가 우선 살펴보길 권하는 항목';
 
   @override
   String get conciergeLoading => '정보를 모으는 중...';
@@ -272,7 +272,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get conciergeAllClearSub =>
-      '오늘 급한 일은 없습니다. Svaultai 가 문서를 지켜보며 새로운 사항이 생기면 여기 표시합니다.';
+      '오늘 급한 일은 없습니다. SVaultAI 가 문서를 지켜보며 새로운 사항이 생기면 여기 표시합니다.';
 
   @override
   String get conciergePostureSecurity => '보안';
@@ -363,7 +363,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get expiryEmptySub =>
-      '여권, 비자, 보험 증서, 계약서를 업로드하면 Svaultai 가 자동으로 만료일을 추적합니다.';
+      '여권, 비자, 보험 증서, 계약서를 업로드하면 SVaultAI 가 자동으로 만료일을 추적합니다.';
 
   @override
   String get expiryNoneInWindow => '이 기간에는 아무것도 없습니다.';
@@ -445,7 +445,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get memoryTitle => '메모리';
 
   @override
-  String get memorySubtitle => 'Svaultai 가 당신에 대해 기억하는 것의 타임라인';
+  String get memorySubtitle => 'SVaultAI 가 당신에 대해 기억하는 것의 타임라인';
 
   @override
   String get memoryLoading => '기억을 불러오는 중...';
@@ -458,7 +458,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get memoryEmptySub =>
-      'Svaultai 에게 기억할 것을 알려주세요: \'엄마 생일이 2월 14일임을 기억해\'. 종류와 날짜로 그룹화되어 여기에 표시됩니다.';
+      'SVaultAI 에게 기억할 것을 알려주세요: \'엄마 생일이 2월 14일임을 기억해\'. 종류와 날짜로 그룹화되어 여기에 표시됩니다.';
 
   @override
   String get memoryNoMatchTitle => '일치하는 항목이 없습니다.';
@@ -527,7 +527,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get settingsLanguageHint =>
-      'Svaultai 가 사용할 언어를 선택하세요. 앱 레이블과 AI 채팅 응답에 영향을 줍니다.';
+      'SVaultAI 가 사용할 언어를 선택하세요. 앱 레이블과 AI 채팅 응답에 영향을 줍니다.';
 
   @override
   String get settingsLanguageAuto => '자동(시스템)';
@@ -567,7 +567,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String settingsLanguagePartialNotice(String name) {
-    return 'Svaultai Chat 은 $name 로 응답합니다. 번역이 완료될 때까지 앱 인터페이스는 영어로 표시됩니다.';
+    return 'SVaultAI Chat 은 $name 로 응답합니다. 번역이 완료될 때까지 앱 인터페이스는 영어로 표시됩니다.';
   }
 
   @override
@@ -640,7 +640,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get helpCenterSubtitle =>
-      'Svaultai 에 관한 자주 묻는 질문에 대한 답변입니다. 아래에서 검색하거나 카테고리별로 살펴보세요 — AI 어시스턴트도 동일한 주제에서 답합니다.';
+      'SVaultAI 에 관한 자주 묻는 질문에 대한 답변입니다. 아래에서 검색하거나 카테고리별로 살펴보세요 — AI 어시스턴트도 동일한 주제에서 답합니다.';
 
   @override
   String get helpCenterEmpty => '일치하는 도움말이 없습니다';
@@ -650,17 +650,17 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get helpCenterSupportNote =>
-      '실시간 고객 지원은 아직 제공되지 않습니다. 이 도움말 센터를 사용하거나 Svaultai Chat 에 질문하세요.';
+      '실시간 고객 지원은 아직 제공되지 않습니다. 이 도움말 센터를 사용하거나 SVaultAI Chat 에 질문하세요.';
 
   @override
   String get helpContactSupportTitle => '지원팀에 문의';
 
   @override
-  String get helpContactSupportBody => 'Svaultai 에 도움이 필요하신가요? 지원팀에 문의하세요.';
+  String get helpContactSupportBody => 'SVaultAI 에 도움이 필요하신가요? 지원팀에 문의하세요.';
 
   @override
   String helpContactSupportEmailA11yLabel(String email) {
-    return '$email 로 Svaultai 지원팀에 이메일 보내기';
+    return '$email 로 SVaultAI 지원팀에 이메일 보내기';
   }
 
   @override
@@ -673,7 +673,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String helpContactSupportCopyEmailA11yLabel(String email) {
-    return 'Svaultai 지원 이메일 $email 을(를) 클립보드에 복사';
+    return 'SVaultAI 지원 이메일 $email 을(를) 클립보드에 복사';
   }
 
   @override
@@ -681,7 +681,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get helpCenterPublicHint =>
-      '공개 도움말 센터를 보고 있습니다. Svaultai 에 질문하고 계정 세부 정보를 보려면 로그인하세요.';
+      '공개 도움말 센터를 보고 있습니다. SVaultAI 에 질문하고 계정 세부 정보를 보려면 로그인하세요.';
 
   @override
   String get helpCenterSearchHint => '도움말 검색 (예: \"monero\", \"PIN\")';
@@ -690,7 +690,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get helpCenterClearSearch => '검색 지우기';
 
   @override
-  String get helpCenterSignInToAsk => '로그인하여 Svaultai 에게 질문';
+  String get helpCenterSignInToAsk => '로그인하여 SVaultAI 에게 질문';
 
   @override
   String get helpCategoryGettingStarted => '시작하기';
@@ -721,11 +721,11 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get deleteVaultBody =>
-      '보관소를 삭제하면 파일, 보안 항목, 로그인, 신분증, Crypto Vault 암호화된 지갑 기록, 관련 메타데이터를 포함한 Svaultai 데이터가 영구적으로 삭제됩니다.';
+      '보관소를 삭제하면 파일, 보안 항목, 로그인, 신분증, Crypto Vault 암호화된 지갑 기록, 관련 메타데이터를 포함한 SVaultAI 데이터가 영구적으로 삭제됩니다.';
 
   @override
   String get deleteVaultCryptoWarning =>
-      '보관소를 삭제해도 블록체인상의 암호 자산은 이동하거나 삭제되지 않습니다. Svaultai 외부에 지갑을 백업하지 않았다면, 암호화된 지갑 기록의 삭제로 해당 자금에 대한 접근을 잃을 수 있습니다.';
+      '보관소를 삭제해도 블록체인상의 암호 자산은 이동하거나 삭제되지 않습니다. SVaultAI 외부에 지갑을 백업하지 않았다면, 암호화된 지갑 기록의 삭제로 해당 자금에 대한 접근을 잃을 수 있습니다.';
 
   @override
   String get deleteVaultPhraseInstruction =>

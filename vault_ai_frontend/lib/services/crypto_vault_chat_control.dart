@@ -249,12 +249,12 @@ List<dynamic> _stripForbiddenCryptoKeysList(List<dynamic> raw) {
 
 
 const String kCvcRefusalCopySecretMaterial =
-    'Svaultai never surfaces your seed, mnemonic, private spend key, '
+    'SVaultAI never surfaces your seed, mnemonic, private spend key, '
     'private view key, or encrypted wallet secret through chat. If '
     'you need to back up, use the Security page in the Crypto Vault.';
 
 const String kCvcRefusalCopyExchangeAction =
-    'Svaultai is a non-custodial wallet. It does not buy, sell, swap, '
+    'SVaultAI is a non-custodial wallet. It does not buy, sell, swap, '
     'trade, stake, bridge, or exchange assets. You can receive, '
     'hold, and send from your own device.';
 

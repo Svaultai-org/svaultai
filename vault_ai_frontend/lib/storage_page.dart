@@ -1631,7 +1631,7 @@ class _UpgradeProgressDialog extends StatelessWidget {
           SizedBox(width: VaultSpacing.md),
           Expanded(
             child: Text(
-              "We're updating your Svaultai storage plan. This usually "
+              "We're updating your SVaultAI storage plan. This usually "
               'takes a few seconds.',
               style: VaultText.body,
             ),

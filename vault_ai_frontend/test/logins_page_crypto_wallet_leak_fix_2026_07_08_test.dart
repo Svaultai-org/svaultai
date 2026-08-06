@@ -11,7 +11,7 @@ Future<void> _pump(
   WidgetTester tester, {
   required List<VaultLoginItem> items,
   Size size = const Size(1400, 1200),
-  String vaultLabel = 'Svaultai',
+  String vaultLabel = 'SVaultAI',
 }) async {
   await tester.binding.setSurfaceSize(size);
   addTearDown(() async {
@@ -274,9 +274,9 @@ void main() {
   });
 
 
-  group('Ask Svaultai button', () {
+  group('Ask SVaultAI button', () {
     testWidgets(
-      'Ask Svaultai never appears attached to a hidden system record',
+      'Ask SVaultAI never appears attached to a hidden system record',
       (tester) async {
         await _pump(tester, items: [
           _sys('ETH:ethereum_mainnet'),
@@ -284,19 +284,19 @@ void main() {
         ]);
 
         expect(find.text(kLoginsEmptyTitle), findsOneWidget);
-        expect(find.textContaining('Ask Svaultai'), findsNothing);
+        expect(find.textContaining('Ask SVaultAI'), findsNothing);
       },
     );
 
     testWidgets(
-      'Ask Svaultai still appears for real user items even when a '
+      'Ask SVaultAI still appears for real user items even when a '
       'system row is present',
       (tester) async {
         await _pump(tester, items: [
           _user('login', 'Netflix'),
           _sys('ETH:ethereum_mainnet'),
         ]);
-        expect(find.textContaining('Ask Svaultai'), findsOneWidget);
+        expect(find.textContaining('Ask SVaultAI'), findsOneWidget);
       },
     );
   });

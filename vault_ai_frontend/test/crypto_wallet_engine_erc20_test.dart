@@ -194,7 +194,7 @@ void main() {
         'asset':           'USDT_ERC20',
         'underlyingAsset': 'ETH',
         'network':         'Ethereum Sepolia',
-        'walletLabel':     'Svaultai ETH wallet',
+        'walletLabel':     'SVaultAI ETH wallet',
         'publicAddress':   _kFromAddress,
         'unit':            'USDT',
         'warning': 'Only send USDT on Ethereum Sepolia to this address. ...',

@@ -27,7 +27,7 @@ import '../services/app_release_controller_scope.dart';
 const String kAppReleaseUpdateBannerKey =
     'vaultai_app_release_update_banner';
 const String kAppReleaseUpdateBannerCopy =
-    'Svaultai was updated.';
+    'SVaultAI was updated.';
 const String kAppReleaseUpdateBannerActionLabel = 'Update now';
 
 

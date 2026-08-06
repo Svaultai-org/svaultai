@@ -34,7 +34,7 @@ const String kSolanaSendPausedMessage =
 const String kSolanaSendPinDialogTitle =
     'Enter your PIN to sign locally';
 const String kSolanaSendPinDialogBody =
-    'Your Solana secret is decrypted on this device only. Svaultai '
+    'Your Solana secret is decrypted on this device only. SVaultAI '
     'never sees the plaintext key.';
 const String kSolanaSendSubmittedHeading = 'Broadcast submitted';
 const String kSolanaSendSubmittedBody =
@@ -76,7 +76,7 @@ const String kSolanaSendResultHeadingExpired =
     'Draft expired before broadcast';
 const String kSolanaSendResultBodyUncertain =
     'The Solana RPC did not confirm inclusion in the visibility '
-    'window. Svaultai will keep checking. Do not re-sign with a new '
+    'window. SVaultAI will keep checking. Do not re-sign with a new '
     'blockhash until the status resolves.';
 const String kSolanaSendResultBodyRejected =
     'The Solana RPC explicitly rejected this transaction. The '
@@ -92,7 +92,7 @@ const String kSolanaSendAvailableBalancePrefix = 'Available:';
 // yet, we fail closed with a clear next-step message rather than
 // invent a client-side fee estimate.
 const String kSolanaSendUpdatePendingError =
-    'Svaultai was updated. Refresh before starting a new send.';
+    'SVaultAI was updated. Refresh before starting a new send.';
 // 2026-07-14 (Round 10 — Max UX): SOL Max no longer requires a
 // persisted draft. It calls the fee-estimate endpoint with the
 // destination the user has entered.

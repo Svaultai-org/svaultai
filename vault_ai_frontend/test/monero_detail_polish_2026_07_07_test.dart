@@ -209,7 +209,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         find.text(
-          'Svaultai does not send your seed, spend key, or view key '
+          'SVaultAI does not send your seed, spend key, or view key '
           'to a scanner.',
         ),
         findsOneWidget,
@@ -363,7 +363,7 @@ void main() {
         'spend/view keys', () {
       expect(
         kMoneroScannerDaemonPrivacyNote,
-        'Svaultai does not send your seed, spend key, or view key '
+        'SVaultAI does not send your seed, spend key, or view key '
         'to a scanner.',
       );
     });

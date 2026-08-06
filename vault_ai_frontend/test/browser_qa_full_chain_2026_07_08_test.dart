@@ -618,7 +618,7 @@ void main() {
         card: {
           'cardType': 'vault_refusal_card',
           'refusalReason': 'secret_material_request',
-          'message': 'Svaultai never surfaces your seed.',
+          'message': 'SVaultAI never surfaces your seed.',
         },
       ));
     });
@@ -629,7 +629,7 @@ void main() {
         card: {
           'cardType': 'vault_refusal_card',
           'refusalReason': 'bypass_pin_request',
-          'message': 'Svaultai does not bypass PIN unlock.',
+          'message': 'SVaultAI does not bypass PIN unlock.',
         },
       ));
     });
@@ -640,7 +640,7 @@ void main() {
         card: {
           'cardType': 'vault_refusal_card',
           'refusalReason': 'auto_send_without_confirmation',
-          'message': 'Svaultai cannot auto-send crypto.',
+          'message': 'SVaultAI cannot auto-send crypto.',
         },
       ));
     });
@@ -651,7 +651,7 @@ void main() {
         card: {
           'cardType': 'vault_refusal_card',
           'refusalReason': 'exchange_action_request',
-          'message': 'Svaultai is non-custodial. No swap/trade/etc.',
+          'message': 'SVaultAI is non-custodial. No swap/trade/etc.',
         },
       ));
     });

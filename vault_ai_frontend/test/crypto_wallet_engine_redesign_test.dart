@@ -29,7 +29,7 @@ void main() {
       expect(
         find.text(kCryptoWalletEnginePortfolioHonestSubcopy),
         findsNothing,
-        reason: 'the "Svaultai only shows real on-chain balances" line '
+        reason: 'the "SVaultAI only shows real on-chain balances" line '
             'was removed — the polished portfolio no longer trails a '
             'disclaimer paragraph.',
       );
@@ -432,7 +432,7 @@ void main() {
     });
 
     testWidgets(
-        'R14: Ask Svaultai section renders the closed-set suggested prompts',
+        'R14: Ask SVaultAI section renders the closed-set suggested prompts',
         (tester) async {
       tester.view.physicalSize = const Size(1200, 4000);
       tester.view.devicePixelRatio = 1.0;
@@ -450,7 +450,7 @@ void main() {
         expect(
           find.text(prompt),
           findsOneWidget,
-          reason: 'Ask Svaultai prompt missing: $prompt',
+          reason: 'Ask SVaultAI prompt missing: $prompt',
         );
       }
     });
@@ -584,7 +584,7 @@ void main() {
       tester.takeException();
     });
 
-    testWidgets('R19: tapping an Ask Svaultai prompt forwards through callback',
+    testWidgets('R19: tapping an Ask SVaultAI prompt forwards through callback',
         (tester) async {
       tester.view.physicalSize = const Size(1200, 4000);
       tester.view.devicePixelRatio = 1.0;

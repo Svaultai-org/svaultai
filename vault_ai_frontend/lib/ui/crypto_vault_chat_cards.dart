@@ -409,7 +409,7 @@ class _BalanceCardState extends State<_BalanceCard> {
             _balanceGatedRow(
               effectiveReason,
               'Monero scanning requires the desktop app. On web '
-              'Svaultai cannot show the balance.',
+              'SVaultAI cannot show the balance.',
             )
           else if (effectiveStatus == 'pending_live_fetch')
             const Text(
@@ -435,7 +435,7 @@ class _BalanceCardState extends State<_BalanceCard> {
           ]
           else
             const Text(
-              'Svaultai will read your on-chain balance when you '
+              'SVaultAI will read your on-chain balance when you '
               'open this asset.',
               style: kWalletBodyStyle,
             ),
@@ -758,7 +758,7 @@ String _scannerHeadline(String reason, String scannerStatus) {
 String _scannerFallbackCopy(String reason, String scannerStatus) {
   if (reason == 'scanner_requires_desktop') {
     return 'Monero scanning requires the desktop app. On web, '
-        'Svaultai cannot show your balance or activity.';
+        'SVaultAI cannot show your balance or activity.';
   }
   if (scannerStatus == 'ready') {
     return 'Balance and activity are available.';
@@ -1004,7 +1004,7 @@ class _ActivityCardState extends State<_ActivityCard> {
           else
             const Text(
               'Open Crypto Vault to see real transaction history. '
-              'Svaultai never invents activity.',
+              'SVaultAI never invents activity.',
               style: kWalletBodyStyle,
             ),
         ],
@@ -1121,7 +1121,7 @@ class _SendDraftCard extends StatelessWidget {
           if (xmrDisabled) ...[
             const SizedBox(height: 6),
             const Text(
-              'Monero send is disabled in Svaultai. This draft '
+              'Monero send is disabled in SVaultAI. This draft '
               'cannot be sent.',
               key: Key('crypto_vault_chat_send_xmr_disabled'),
               style: TextStyle(

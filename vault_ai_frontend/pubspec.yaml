@@ -1,5 +1,5 @@
 name: vault_ai_frontend
-description: Svaultai — private encrypted digital vault (mobile + web client).
+description: SVaultAI — private encrypted digital vault (mobile + web client).
 publish_to: 'none'
 # Store-facing marketing version + build number. Bump the +N build
 # number for EVERY submission (App Store Connect + Play Console

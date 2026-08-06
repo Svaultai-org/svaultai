@@ -1,5 +1,5 @@
 // Origin: 2026-07-21 production layout regression — the notification
-// bell overlapped / was embedded in the "Svaultai" wordmark on iPhone-
+// bell overlapped / was embedded in the "SVaultAI" wordmark on iPhone-
 // width viewports.
 //
 // UPDATED 2026-07-21 (c2f917e follow-up): the original fix wrapped
@@ -7,13 +7,13 @@
 // the title Row would yield space to the actions region. In
 // production that produced "V..." at 320-412px, which reads as
 // broken. The new fix HIDES the wordmark entirely on
-// screenWidth < 600 and keeps the full "Svaultai" text on tablet+
+// screenWidth < 600 and keeps the full "SVaultAI" text on tablet+
 // (>= 600).
 //
 // This test file was rewritten to reflect the new invariant:
 //
 //   * On phones (all DeviceProfiles.allPhones widths): the wordmark
-//     Text('Svaultai') is NOT in the tree at all — proved by
+//     Text('SVaultAI') is NOT in the tree at all — proved by
 //     the sibling suite in top_nav_bar_mobile_shield_only_2026_07_21_test.dart.
 //     Nothing here re-asserts that; this file's mobile group is
 //     removed.
@@ -81,7 +81,7 @@ Rect _rectOf(WidgetTester tester, Finder finder) {
 
 Finder _wordmarkTextFinder() {
   return find.byWidgetPredicate(
-    (w) => w is Text && w.data == 'Svaultai',
+    (w) => w is Text && w.data == 'SVaultAI',
   );
 }
 
@@ -136,7 +136,7 @@ void main() {
           final wordmark = _wordmarkTextFinder();
           final chip = _accountChipContainerFinder('Alexa');
           expect(wordmark, findsOneWidget,
-              reason: 'tablet+ must render the Svaultai wordmark');
+              reason: 'tablet+ must render the SVaultAI wordmark');
           expect(chip, findsWidgets);
 
           final wordmarkRect = _rectOf(tester, wordmark);
@@ -179,11 +179,11 @@ void main() {
 
   group('TopNavBar structure — wordmark, when rendered, is Flexible+ellipsis',
         () {
-    test('title Row wraps the Svaultai Text in Flexible when shown', () {
+    test('title Row wraps the SVaultAI Text in Flexible when shown', () {
       final title = _topNavBarTitleBlock();
-      final vaultaiIdx = title.indexOf("'Svaultai'");
+      final vaultaiIdx = title.indexOf("'SVaultAI'");
       expect(vaultaiIdx, greaterThan(-1),
-          reason: 'Svaultai wordmark literal must exist in title');
+          reason: 'SVaultAI wordmark literal must exist in title');
       final start = (vaultaiIdx - 600).clamp(0, title.length);
       final context = title.substring(start, vaultaiIdx);
       final hasWrapper = context.contains('Flexible(')
@@ -196,7 +196,7 @@ void main() {
 
     test('wordmark Text has maxLines:1 + TextOverflow.ellipsis', () {
       final title = _topNavBarTitleBlock();
-      final vaultaiIdx = title.indexOf("'Svaultai'");
+      final vaultaiIdx = title.indexOf("'SVaultAI'");
       final windowEnd = (vaultaiIdx + 400).clamp(0, title.length);
       final window = title.substring(vaultaiIdx, windowEnd);
       expect(
@@ -214,7 +214,7 @@ void main() {
       // Positive assertion that the wordmark is now behind a
       // tablet-width gate — this is what prevents "V..." on phones.
       final title = _topNavBarTitleBlock();
-      final vaultaiIdx = title.indexOf("'Svaultai'");
+      final vaultaiIdx = title.indexOf("'SVaultAI'");
       final start = (vaultaiIdx - 200).clamp(0, title.length);
       final context = title.substring(start, vaultaiIdx);
       expect(

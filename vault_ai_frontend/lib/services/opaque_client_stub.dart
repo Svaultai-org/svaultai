@@ -62,7 +62,7 @@ class ClientLoginFinish {
 class OpaqueClient {
   static Future<void> ready() {
     throw UnsupportedError(
-      'OPAQUE client not available on this platform. Svaultai\'s ZK auth '
+      'OPAQUE client not available on this platform. SVaultAI\'s ZK auth '
       'ships on Flutter Web only for now; mobile/desktop release is '
       'gated on a Flutter-native OPAQUE plugin.',
     );

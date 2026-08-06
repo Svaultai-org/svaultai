@@ -138,7 +138,7 @@ void main() {
     test('faqEntryById round-trips', () {
       final ent = faqEntryById('what-is-vaultai');
       expect(ent, isNotNull);
-      expect(ent!.question, 'What is Svaultai?');
+      expect(ent!.question, 'What is SVaultAI?');
     });
 
     test('faqEntriesMatchingQuery filters case-insensitively', () {
@@ -220,9 +220,9 @@ void main() {
           faqId:         'what-is-vaultai',
           category:      'getting_started',
           categoryLabel: 'Getting started',
-          question:      'What is Svaultai?',
+          question:      'What is SVaultAI?',
           answer:
-              'Svaultai is your private digital vault. Think of a '
+              'SVaultAI is your private digital vault. Think of a '
               'bank vault or a safe at home.',
         ),
       );
@@ -235,7 +235,7 @@ void main() {
         find.byKey(const Key('vault_faq_card_question')),
         findsOneWidget,
       );
-      expect(find.text('What is Svaultai?'), findsOneWidget);
+      expect(find.text('What is SVaultAI?'), findsOneWidget);
       expect(
         find.textContaining('private digital vault',
             findRichText: true),
@@ -252,7 +252,7 @@ void main() {
           category:      'security',
           categoryLabel: 'Security',
           question:      'Is my vault encrypted?',
-          answer:        'Yes. Svaultai stores sensitive vault data '
+          answer:        'Yes. SVaultAI stores sensitive vault data '
               'encrypted.',
         ),
       );
@@ -378,8 +378,8 @@ void main() {
           faqId:         'what-is-vaultai',
           category:      'getting_started',
           categoryLabel: 'Getting started',
-          question:      'What is Svaultai?',
-          answer:        'Svaultai is a secure digital vault.',
+          question:      'What is SVaultAI?',
+          answer:        'SVaultAI is a secure digital vault.',
         ),
         onOpenHelpCenter: () => openedHelp = true,
       );
@@ -425,7 +425,7 @@ void main() {
           categoryLabel: 'Crypto Vault',
           question:      'Why does USDT have ERC20 and TRC20?',
           answer:
-              'USDT exists on multiple networks. Svaultai supports '
+              'USDT exists on multiple networks. SVaultAI supports '
               'USDT ERC20 on Ethereum and USDT TRC20 on TRON. You '
               'must pick the correct network — addresses, fees, and '
               'transfers are network-specific.',
@@ -558,7 +558,7 @@ void main() {
         expect(finder, findsOneWidget);
         await tester.tap(finder);
         await tester.pumpAndSettle();
-        expect(asked, 'What is Svaultai?');
+        expect(asked, 'What is SVaultAI?');
       },
     );
 

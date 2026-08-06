@@ -73,7 +73,7 @@ class CryptoWalletActionRequest {
 
 // 2026-07-13 dark-mode refresh: the old CryptoWalletActionCard hardcoded
 // Colors.white + light-blue/orange chips + a bright ElevatedButton, which
-// looked pasted-in when it rendered inside Svaultai's forced-dark chat
+// looked pasted-in when it rendered inside SVaultAI's forced-dark chat
 // UI. It now uses the same wallet design tokens (walletDarkCard,
 // walletGhostButtonStyle, kWalletTextPrimary/Muted, kWalletAccent*) as
 // its sibling crypto chat cards in lib/ui/crypto_vault_chat_cards.dart,

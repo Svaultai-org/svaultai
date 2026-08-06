@@ -3,7 +3,7 @@
 // Root cause of the reported production issue: this widget hardcoded
 // Colors.white / Colors.black87 / #EEF2FB (light blue) / #FFF3E0
 // (peach) / #1F3D7A (bright blue button), which rendered as bright
-// white cards inside Svaultai's forced-dark chat surface. The other
+// white cards inside SVaultAI's forced-dark chat surface. The other
 // crypto chat cards in lib/ui/crypto_vault_chat_cards.dart already
 // used walletDarkCard() + kWalletTextPrimary + walletGhostButtonStyle
 // — this file now uses the same tokens so Balance / Receive / Send /

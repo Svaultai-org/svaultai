@@ -121,8 +121,8 @@ void main() {
     );
 
     testWidgets(
-      'FAQ entries render but "Ask Svaultai" is REPLACED with '
-      '"Sign in to ask Svaultai"',
+      'FAQ entries render but "Ask SVaultAI" is REPLACED with '
+      '"Sign in to ask SVaultAI"',
       (tester) async {
         var signInPressed = false;
         await _pump(
@@ -289,7 +289,7 @@ void main() {
     );
 
     testWidgets(
-      'shows "Ask Svaultai" button and fires callback with question',
+      'shows "Ask SVaultAI" button and fires callback with question',
       (tester) async {
         String? asked;
         await _pump(
@@ -312,7 +312,7 @@ void main() {
               'help_entry_ask_what-is-vaultai')),
         );
         await tester.pumpAndSettle();
-        expect(asked, 'What is Svaultai?');
+        expect(asked, 'What is SVaultAI?');
       },
     );
   });

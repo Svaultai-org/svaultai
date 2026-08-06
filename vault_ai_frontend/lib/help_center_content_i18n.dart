@@ -11,14 +11,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: 'What is Svaultai?',
+      question: 'What is SVaultAI?',
       answer:
-          'Svaultai is your private digital vault. Think of a bank vault or a safe at home: people use those to protect important papers, drives, cash, gold, IDs, and private records. Svaultai gives you that idea in digital form. You can keep files, documents, photos, videos, audio, passwords, secure notes, ID documents, and Crypto Vault assets in one protected place. Instead of saving passwords or private records in emails, notes, screenshots, or random folders, Svaultai helps you keep them organized and protected inside your vault. Svaultai Chat helps you search, understand, and manage what is inside your vault without treating everything as just a file.',
+          'SVaultAI is your private digital vault. Think of a bank vault or a safe at home: people use those to protect important papers, drives, cash, gold, IDs, and private records. SVaultAI gives you that idea in digital form. You can keep files, documents, photos, videos, audio, passwords, secure notes, ID documents, and Crypto Vault assets in one protected place. Instead of saving passwords or private records in emails, notes, screenshots, or random folders, SVaultAI helps you keep them organized and protected inside your vault. SVaultAI Chat helps you search, understand, and manage what is inside your vault without treating everything as just a file.',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: 'What can I save in Svaultai?',
+      question: 'What can I save in SVaultAI?',
       answer:
           'You can save files, documents, photos, videos, audio, passwords, generated logins, secure notes, codes, device details, ID documents, and Crypto Vault assets. Internal wallet records are managed by Crypto Vault and are not shown as normal secure items.',
     ),
@@ -27,14 +27,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: 'How do I create my vault?',
       answer:
-          'Open the Svaultai sign-in flow, pick or confirm your vault name, and set your PIN when prompted. Your PIN helps protect your vault unlock process — keep it safe. If recovery is not available for your account, losing your PIN may mean you cannot recover access.',
+          'Open the SVaultAI sign-in flow, pick or confirm your vault name, and set your PIN when prompted. Your PIN helps protect your vault unlock process — keep it safe. If recovery is not available for your account, losing your PIN may mean you cannot recover access.',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: 'How do I unlock my vault?',
       answer:
-          'Open Svaultai on a trusted device and enter your PIN. Your PIN unlocks the vault locally — the server never sees your PIN in plaintext. Some sensitive actions may ask for confirmation again.',
+          'Open SVaultAI on a trusted device and enter your PIN. Your PIN unlocks the vault locally — the server never sees your PIN in plaintext. Some sensitive actions may ask for confirmation again.',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -55,14 +55,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'Is my vault encrypted?',
       answer:
-          'Yes. Svaultai stores sensitive vault data encrypted with a key derived from your PIN. Sensitive values are masked by default and protected by trusted-device, unlock/PIN, and confirmation gates where required.',
+          'Yes. SVaultAI stores sensitive vault data encrypted with a key derived from your PIN. Sensitive values are masked by default and protected by trusted-device, unlock/PIN, and confirmation gates where required.',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: 'Can Svaultai read my saved secrets?',
+      question: 'Can SVaultAI read my saved secrets?',
       answer:
-          'Svaultai does not display or ask for your seed phrase, private key, mnemonic, spend key, view key, encrypted wallet secret, auth token, or API key in chat. The AI only works with masked, safe projections of your vault.',
+          'SVaultAI does not display or ask for your seed phrase, private key, mnemonic, spend key, view key, encrypted wallet secret, auth token, or API key in chat. The AI only works with masked, safe projections of your vault.',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -97,28 +97,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'Why should I not share my seed phrase or private key?',
       answer:
-          'Anyone with your seed phrase, private key, mnemonic, spend key, or view key can access or spend your crypto. Svaultai will never ask for these values, and no support person should either.',
+          'Anyone with your seed phrase, private key, mnemonic, spend key, or view key can access or spend your crypto. SVaultAI will never ask for these values, and no support person should either.',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: 'How do I delete my vault?',
       answer:
-          'Open Settings and choose Delete vault. Svaultai shows a warning, then asks you to type the exact phrase DELETE MY VAULT, enter your PIN, and confirm from a trusted device. This is intentionally not a one-click action. Deletion is permanent. Svaultai cannot delete your vault from chat, and the flow cannot bypass PIN, trusted-device, or phrase confirmation.',
+          'Open Settings and choose Delete vault. SVaultAI shows a warning, then asks you to type the exact phrase DELETE MY VAULT, enter your PIN, and confirm from a trusted device. This is intentionally not a one-click action. Deletion is permanent. SVaultAI cannot delete your vault from chat, and the flow cannot bypass PIN, trusted-device, or phrase confirmation.',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: 'What happens when I delete my vault?',
       answer:
-          'Deleting your vault permanently deletes your Svaultai vault data, including files, secure items, logins, ID documents, Crypto Vault encrypted wallet records, and related vault metadata. Any active storage subscription is closed. Deletion does not move or delete crypto assets on the blockchain — those remain wherever the corresponding wallets exist. If you have not backed up your wallet outside Svaultai, deleting your encrypted wallet records may cause loss of access to those funds.',
+          'Deleting your vault permanently deletes your SVaultAI vault data, including files, secure items, logins, ID documents, Crypto Vault encrypted wallet records, and related vault metadata. Any active storage subscription is closed. Deletion does not move or delete crypto assets on the blockchain — those remain wherever the corresponding wallets exist. If you have not backed up your wallet outside SVaultAI, deleting your encrypted wallet records may cause loss of access to those funds.',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: 'Can I recover a deleted vault?',
       answer:
-          'No. Once you confirm deletion, Svaultai removes vault data permanently and cannot restore it. There is no hidden shadow copy and no recovery flow. If you also lose the wallet backup you kept outside Svaultai, on-chain crypto in that wallet may become unrecoverable too.',
+          'No. Once you confirm deletion, SVaultAI removes vault data permanently and cannot restore it. There is no hidden shadow copy and no recovery flow. If you also lose the wallet backup you kept outside SVaultAI, on-chain crypto in that wallet may become unrecoverable too.',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -132,26 +132,26 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'What file types can I store?',
       answer:
-          'Svaultai accepts common document, image, audio, and video file types. Any file that fits within your storage quota can be uploaded.',
+          'SVaultAI accepts common document, image, audio, and video file types. Any file that fits within your storage quota can be uploaded.',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: 'Can I search inside documents?',
       answer:
-          'Yes. Svaultai extracts text from supported documents and lets you search across their contents from chat or the file list.',
+          'Yes. SVaultAI extracts text from supported documents and lets you search across their contents from chat or the file list.',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: 'Can Svaultai summarize my PDF?',
+      question: 'Can SVaultAI summarize my PDF?',
       answer:
           'Yes. Ask the assistant to summarize a specific PDF or document. The summary uses the extracted text; it does not modify the original file.',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: 'Why can\'t Svaultai find my file?',
+      question: 'Why can\'t SVaultAI find my file?',
       answer:
           'Check the file name spelling, the vault you are in, and whether the upload completed. Files that are still analyzing may not appear in searches yet.',
     ),
@@ -160,14 +160,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'How do I delete a file?',
       answer:
-          'Open the file\'s row in the Files list and choose Delete. Deletion is permanent — Svaultai does not keep a shadow copy.',
+          'Open the file\'s row in the Files list and choose Delete. Deletion is permanent — SVaultAI does not keep a shadow copy.',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: 'How do I save a password?',
       answer:
-          'Open the Logins & Secure Items page and choose Save, or ask the assistant to save a login. Svaultai encrypts the entry before storing it.',
+          'Open the Logins & Secure Items page and choose Save, or ask the assistant to save a login. SVaultAI encrypts the entry before storing it.',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -200,9 +200,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: 'Can Svaultai find duplicate logins?',
+      question: 'Can SVaultAI find duplicate logins?',
       answer:
-          'Yes. Ask the assistant to show duplicate or reused passwords. Svaultai compares saved logins locally after unlock and flags matches.',
+          'Yes. Ask the assistant to show duplicate or reused passwords. SVaultAI compares saved logins locally after unlock and flags matches.',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -221,9 +221,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'id-expiry-reminders': FaqEntry(
       id: 'id-expiry-reminders',
       category: 'ids',
-      question: 'Can Svaultai remind me about expiration dates?',
+      question: 'Can SVaultAI remind me about expiration dates?',
       answer:
-          'Ask the assistant when your passport or license expires. Svaultai reads the extracted expiry date from your ID documents.',
+          'Ask the assistant when your passport or license expires. SVaultAI reads the extracted expiry date from your ID documents.',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -237,7 +237,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'What is Crypto Vault?',
       answer:
-          'Crypto Vault is the non-custodial wallet feature of Svaultai. It stores your public receive addresses, shows live balances from public providers, and lets you prepare sends that you sign locally.',
+          'Crypto Vault is the non-custodial wallet feature of SVaultAI. It stores your public receive addresses, shows live balances from public providers, and lets you prepare sends that you sign locally.',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -251,28 +251,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Is Crypto Vault custodial?',
       answer:
-          'No. Crypto Vault is non-custodial. Your keys are on your device; Svaultai cannot move your crypto without your local signature.',
+          'No. Crypto Vault is non-custodial. Your keys are on your device; SVaultAI cannot move your crypto without your local signature.',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: 'Can Svaultai move my crypto?',
+      question: 'Can SVaultAI move my crypto?',
       answer:
-          'No. Svaultai cannot broadcast a transaction without your PIN unlock, trusted device, local signing, and explicit confirmation. It never auto-sends.',
+          'No. SVaultAI cannot broadcast a transaction without your PIN unlock, trusted device, local signing, and explicit confirmation. It never auto-sends.',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: 'Why do I need a PIN before sending?',
       answer:
-          'The PIN unlocks the local signing key. Without it your device cannot sign a transaction, and Svaultai will not accept an unsigned send request.',
+          'The PIN unlocks the local signing key. Without it your device cannot sign a transaction, and SVaultAI will not accept an unsigned send request.',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: 'Why does USDT have ERC20 and TRC20?',
       answer:
-          'USDT exists on multiple networks. Svaultai supports USDT ERC20 on Ethereum and USDT TRC20 on TRON. You must pick the correct network — addresses, fees, and transfers are network-specific and not interchangeable.',
+          'USDT exists on multiple networks. SVaultAI supports USDT ERC20 on Ethereum and USDT TRC20 on TRON. You must pick the correct network — addresses, fees, and transfers are network-specific and not interchangeable.',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -300,7 +300,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Why can\'t I see my Monero balance in the browser?',
       answer:
-          'Real Monero scanning cannot run safely inside the web app. In web, Svaultai can show your Monero receive address, but balance and activity require the desktop or native local scanner.',
+          'Real Monero scanning cannot run safely inside the web app. In web, SVaultAI can show your Monero receive address, but balance and activity require the desktop or native local scanner.',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -312,7 +312,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'buy-sell-swap': FaqEntry(
       id: 'buy-sell-swap',
       category: 'crypto',
-      question: 'Can I buy, sell, swap, or trade crypto in Svaultai?',
+      question: 'Can I buy, sell, swap, or trade crypto in SVaultAI?',
       answer:
           'No. Crypto Vault is for storing, receiving, and sending supported assets where enabled. It is not an exchange and does not support buy, sell, swap, trade, stake, bridge, or exchange features.',
     ),
@@ -321,14 +321,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'What happens if a provider is unavailable?',
       answer:
-          'Svaultai shows a clear unavailable reason instead of inventing a balance. A 0 balance is shown only when the provider actually returns zero.',
+          'SVaultAI shows a clear unavailable reason instead of inventing a balance. A 0 balance is shown only when the provider actually returns zero.',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: 'Why does my balance say 0?',
       answer:
-          'A displayed 0 balance means the provider returned a real zero. If the provider was unavailable, Svaultai shows an unavailable reason instead of a fake zero.',
+          'A displayed 0 balance means the provider returned a real zero. If the provider was unavailable, SVaultAI shows an unavailable reason instead of a fake zero.',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -342,21 +342,21 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'What happens to my crypto if I delete my vault?',
       answer:
-          'Deleting your vault does not move or delete your crypto on the blockchain. Svaultai stores encrypted wallet records locally and on the server — but the coins themselves live on-chain. Deleting your Svaultai vault removes the encrypted wallet records. If you have not backed up your wallet outside Svaultai, losing the encrypted wallet records may mean losing access to those funds. Svaultai never broadcasts crypto transactions during deletion.',
+          'Deleting your vault does not move or delete your crypto on the blockchain. SVaultAI stores encrypted wallet records locally and on the server — but the coins themselves live on-chain. Deleting your SVaultAI vault removes the encrypted wallet records. If you have not backed up your wallet outside SVaultAI, losing the encrypted wallet records may mean losing access to those funds. SVaultAI never broadcasts crypto transactions during deletion.',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: 'What plan am I on?',
       answer:
-          'Ask the assistant "what plan am I on" or open the Billing page. Svaultai shows your active plan and the storage quota it grants.',
+          'Ask the assistant "what plan am I on" or open the Billing page. SVaultAI shows your active plan and the storage quota it grants.',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: 'How much storage do I have?',
       answer:
-          'Ask the assistant "how much storage am I using" or open the Storage page. Svaultai shows used bytes, quota bytes, and percent used.',
+          'Ask the assistant "how much storage am I using" or open the Storage page. SVaultAI shows used bytes, quota bytes, and percent used.',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -370,7 +370,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'How do I upgrade storage?',
       answer:
-          'Open the Billing page and choose an upgrade tier. Checkout runs through a payment provider; Svaultai does not store your payment details.',
+          'Open the Billing page and choose an upgrade tier. Checkout runs through a payment provider; SVaultAI does not store your payment details.',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -384,7 +384,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'Why does checkout open?',
       answer:
-          'Payments run through a payment provider so Svaultai does not handle payment details directly. Checkout opens in the provider\'s UI.',
+          'Payments run through a payment provider so SVaultAI does not handle payment details directly. Checkout opens in the provider\'s UI.',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -398,7 +398,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'Why are unpaid inactive vaults deleted?',
       answer:
-          'Unpaid vaults that are not used for at least 6 months may be permanently deleted. This keeps Svaultai storage focused on people who are actively using their vault. To keep your vault active, sign in and use your vault before the 6-month inactivity cutoff, or subscribe if you want continued storage protection. If you subscribe or become active before the cutoff, the vault is not deleted.',
+          'Unpaid vaults that are not used for at least 6 months may be permanently deleted. This keeps SVaultAI storage focused on people who are actively using their vault. To keep your vault active, sign in and use your vault before the 6-month inactivity cutoff, or subscribe if you want continued storage protection. If you subscribe or become active before the cutoff, the vault is not deleted.',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -412,7 +412,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'Why is my balance unavailable?',
       answer:
-          'The provider for that asset did not return a value in time. Svaultai shows an honest "unavailable" state instead of a fake zero. Retry usually recovers it.',
+          'The provider for that asset did not return a value in time. SVaultAI shows an honest "unavailable" state instead of a fake zero. Retry usually recovers it.',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -441,14 +441,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'Why does TRON say provider unavailable?',
       answer:
-          'The TRON balance provider did not respond in time. Svaultai shows unavailable instead of a fake zero. Retry usually recovers, and receive addresses remain valid regardless.',
+          'The TRON balance provider did not respond in time. SVaultAI shows unavailable instead of a fake zero. Retry usually recovers, and receive addresses remain valid regardless.',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: 'Why is subscription status checking?',
       answer:
-          'Svaultai is fetching your latest plan state from the billing provider. It usually clears within a few seconds; if it persists, try Refresh from the Billing page.',
+          'SVaultAI is fetching your latest plan state from the billing provider. It usually clears within a few seconds; if it persists, try Refresh from the Billing page.',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',
@@ -476,14 +476,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: 'ما هو Svaultai؟',
+      question: 'ما هو SVaultAI؟',
       answer:
-          'Svaultai هو خزينتك الرقمية الخاصة. تخيّل خزينة بنك أو خزنة في المنزل — يستخدمها الناس لحماية أوراق مهمة، أقراص تخزين، نقود، ذهب، هويات، وسجلات خاصة. Svaultai يقدّم الفكرة نفسها بشكل رقمي. يمكنك حفظ الملفات، المستندات، الصور، الفيديوهات، الصوت، كلمات المرور، الملاحظات الآمنة، مستندات الهوية، وأصول Crypto Vault في مكان محمي واحد. بدل حفظها في البريد أو الملاحظات أو لقطات الشاشة أو مجلدات عشوائية، يساعدك Svaultai على تنظيمها وحمايتها داخل خزينتك. Svaultai Chat يساعدك على البحث والفهم وإدارة ما بداخل الخزينة دون معاملة كل شيء كملف عادي.',
+          'SVaultAI هو خزينتك الرقمية الخاصة. تخيّل خزينة بنك أو خزنة في المنزل — يستخدمها الناس لحماية أوراق مهمة، أقراص تخزين، نقود، ذهب، هويات، وسجلات خاصة. SVaultAI يقدّم الفكرة نفسها بشكل رقمي. يمكنك حفظ الملفات، المستندات، الصور، الفيديوهات، الصوت، كلمات المرور، الملاحظات الآمنة، مستندات الهوية، وأصول Crypto Vault في مكان محمي واحد. بدل حفظها في البريد أو الملاحظات أو لقطات الشاشة أو مجلدات عشوائية، يساعدك SVaultAI على تنظيمها وحمايتها داخل خزينتك. SVaultAI Chat يساعدك على البحث والفهم وإدارة ما بداخل الخزينة دون معاملة كل شيء كملف عادي.',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: 'ما الذي يمكنني حفظه في Svaultai؟',
+      question: 'ما الذي يمكنني حفظه في SVaultAI؟',
       answer:
           'يمكنك حفظ الملفات، المستندات، الصور، الفيديوهات، الصوت، كلمات المرور، تسجيلات الدخول المولّدة، الملاحظات الآمنة، الأكواد، تفاصيل الأجهزة، مستندات الهوية، وأصول Crypto Vault. تُدار سجلات المحفظة الداخلية بواسطة Crypto Vault ولا تُعرض كعناصر آمنة عادية.',
     ),
@@ -492,14 +492,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: 'كيف أُنشئ خزينتي؟',
       answer:
-          'افتح مسار تسجيل الدخول إلى Svaultai، اختر أو أكّد اسم الخزينة، وأدخل رمز PIN عند الطلب. يساعد PIN في حماية فتح خزينتك — احتفظ به بأمان. إذا لم يكن الاسترداد متاحًا لحسابك، فقد يعني فقدان PIN عدم القدرة على استرداد الوصول.',
+          'افتح مسار تسجيل الدخول إلى SVaultAI، اختر أو أكّد اسم الخزينة، وأدخل رمز PIN عند الطلب. يساعد PIN في حماية فتح خزينتك — احتفظ به بأمان. إذا لم يكن الاسترداد متاحًا لحسابك، فقد يعني فقدان PIN عدم القدرة على استرداد الوصول.',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: 'كيف أفتح خزينتي؟',
       answer:
-          'افتح Svaultai من جهاز موثوق وأدخل رمز PIN. يفتح PIN الخزينة محليًا — لا يرى الخادم PIN بشكل صريح مطلقًا. قد تطلب بعض الإجراءات الحساسة تأكيدًا إضافيًا.',
+          'افتح SVaultAI من جهاز موثوق وأدخل رمز PIN. يفتح PIN الخزينة محليًا — لا يرى الخادم PIN بشكل صريح مطلقًا. قد تطلب بعض الإجراءات الحساسة تأكيدًا إضافيًا.',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -520,14 +520,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'هل خزينتي مشفّرة؟',
       answer:
-          'نعم. يخزّن Svaultai بيانات الخزينة الحساسة مشفّرة بمفتاح مشتق من رمز PIN. تُخفى القيم الحساسة افتراضيًا وتُحمى بواسطة الجهاز الموثوق، فتح PIN، وبوابات التأكيد حيثما لزم.',
+          'نعم. يخزّن SVaultAI بيانات الخزينة الحساسة مشفّرة بمفتاح مشتق من رمز PIN. تُخفى القيم الحساسة افتراضيًا وتُحمى بواسطة الجهاز الموثوق، فتح PIN، وبوابات التأكيد حيثما لزم.',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: 'هل يمكن لـ Svaultai قراءة أسراري المحفوظة؟',
+      question: 'هل يمكن لـ SVaultAI قراءة أسراري المحفوظة؟',
       answer:
-          'لا يعرض Svaultai عبارة البذرة، المفتاح الخاص، الكلمات المفتاحية، spend key أو view key، أسرار المحفظة المشفّرة، رمز التوثيق، أو مفاتيح API في المحادثة ولا يطلبها. يعمل الذكاء الاصطناعي فقط مع تمثيلات آمنة ومقنّعة للخزينة.',
+          'لا يعرض SVaultAI عبارة البذرة، المفتاح الخاص، الكلمات المفتاحية، spend key أو view key، أسرار المحفظة المشفّرة، رمز التوثيق، أو مفاتيح API في المحادثة ولا يطلبها. يعمل الذكاء الاصطناعي فقط مع تمثيلات آمنة ومقنّعة للخزينة.',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -562,28 +562,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'لماذا لا يجب مشاركة عبارة البذرة أو المفتاح الخاص؟',
       answer:
-          'أي شخص يمتلك عبارة البذرة أو المفتاح الخاص أو الكلمات المفتاحية أو spend key أو view key يمكنه الوصول إلى عملاتك أو إنفاقها. لن يطلب Svaultai هذه القيم أبدًا، ولا يجب أن يطلبها أي شخص دعم حقيقي.',
+          'أي شخص يمتلك عبارة البذرة أو المفتاح الخاص أو الكلمات المفتاحية أو spend key أو view key يمكنه الوصول إلى عملاتك أو إنفاقها. لن يطلب SVaultAI هذه القيم أبدًا، ولا يجب أن يطلبها أي شخص دعم حقيقي.',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: 'كيف أحذف خزينتي؟',
       answer:
-          'افتح الإعدادات واختر حذف الخزينة. يعرض Svaultai تحذيرًا ثم يطلب منك كتابة عبارة DELETE MY VAULT بالضبط، وإدخال PIN، والتأكيد من جهاز موثوق. عدم كون هذا بضغطة واحدة أمر مقصود. الحذف نهائي. لا يمكن لـ Svaultai حذف خزينتك من المحادثة، ولا يمكن لهذا المسار تجاوز PIN أو الجهاز الموثوق أو تأكيد العبارة.',
+          'افتح الإعدادات واختر حذف الخزينة. يعرض SVaultAI تحذيرًا ثم يطلب منك كتابة عبارة DELETE MY VAULT بالضبط، وإدخال PIN، والتأكيد من جهاز موثوق. عدم كون هذا بضغطة واحدة أمر مقصود. الحذف نهائي. لا يمكن لـ SVaultAI حذف خزينتك من المحادثة، ولا يمكن لهذا المسار تجاوز PIN أو الجهاز الموثوق أو تأكيد العبارة.',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: 'ماذا يحدث عند حذف الخزينة؟',
       answer:
-          'حذف الخزينة يحذف نهائيًا بيانات خزينتك في Svaultai بما فيها الملفات، العناصر الآمنة، تسجيلات الدخول، مستندات الهوية، سجلات محفظة Crypto Vault المشفّرة، والبيانات الوصفية المرتبطة. يُغلق أي اشتراك تخزين نشط. الحذف لا يُحرّك ولا يحذف الأصول المشفّرة على البلوكشين — تبقى العملات حيث توجد المحافظ المقابلة. إذا لم تحتفظ بنسخة احتياطية من محفظتك خارج Svaultai، فقد يؤدي حذف سجلات المحفظة المشفّرة إلى فقدان الوصول إلى تلك الأموال.',
+          'حذف الخزينة يحذف نهائيًا بيانات خزينتك في SVaultAI بما فيها الملفات، العناصر الآمنة، تسجيلات الدخول، مستندات الهوية، سجلات محفظة Crypto Vault المشفّرة، والبيانات الوصفية المرتبطة. يُغلق أي اشتراك تخزين نشط. الحذف لا يُحرّك ولا يحذف الأصول المشفّرة على البلوكشين — تبقى العملات حيث توجد المحافظ المقابلة. إذا لم تحتفظ بنسخة احتياطية من محفظتك خارج SVaultAI، فقد يؤدي حذف سجلات المحفظة المشفّرة إلى فقدان الوصول إلى تلك الأموال.',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: 'هل يمكنني استرداد خزينة محذوفة؟',
       answer:
-          'لا. بمجرد تأكيد الحذف، يزيل Svaultai بيانات الخزينة نهائيًا ولا يمكنه استعادتها. لا توجد نسخة خفية ولا مسار استرداد. إذا فقدت أيضًا نسخة المحفظة الاحتياطية التي تحتفظ بها خارج Svaultai، فقد تصبح العملات على السلسلة في تلك المحفظة غير قابلة للاسترداد كذلك.',
+          'لا. بمجرد تأكيد الحذف، يزيل SVaultAI بيانات الخزينة نهائيًا ولا يمكنه استعادتها. لا توجد نسخة خفية ولا مسار استرداد. إذا فقدت أيضًا نسخة المحفظة الاحتياطية التي تحتفظ بها خارج SVaultAI، فقد تصبح العملات على السلسلة في تلك المحفظة غير قابلة للاسترداد كذلك.',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -597,26 +597,26 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'ما أنواع الملفات التي يمكنني تخزينها؟',
       answer:
-          'يقبل Svaultai أنواع المستندات والصور والصوت والفيديو الشائعة. أي ملف يناسب حصة التخزين لديك يمكن رفعه.',
+          'يقبل SVaultAI أنواع المستندات والصور والصوت والفيديو الشائعة. أي ملف يناسب حصة التخزين لديك يمكن رفعه.',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: 'هل يمكنني البحث داخل المستندات؟',
       answer:
-          'نعم. يستخرج Svaultai النص من المستندات المدعومة ويتيح البحث في محتواها من المحادثة أو قائمة الملفات.',
+          'نعم. يستخرج SVaultAI النص من المستندات المدعومة ويتيح البحث في محتواها من المحادثة أو قائمة الملفات.',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: 'هل يمكن لـ Svaultai تلخيص PDF؟',
+      question: 'هل يمكن لـ SVaultAI تلخيص PDF؟',
       answer:
           'نعم. اطلب من المساعد تلخيص ملف PDF أو مستند محدّد. يستخدم التلخيص النص المستخرَج ولا يعدّل الملف الأصلي.',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: 'لماذا لا يجد Svaultai ملفي؟',
+      question: 'لماذا لا يجد SVaultAI ملفي؟',
       answer:
           'تحقّق من تهجئة اسم الملف، الخزينة التي أنت فيها، ومن اكتمال الرفع. قد لا تظهر الملفات التي ما زالت قيد التحليل في البحث حتى الآن.',
     ),
@@ -625,14 +625,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'كيف أحذف ملفًا؟',
       answer:
-          'افتح صف الملف في قائمة الملفات واختر حذف. الحذف نهائي — لا يحتفظ Svaultai بنسخة خفية.',
+          'افتح صف الملف في قائمة الملفات واختر حذف. الحذف نهائي — لا يحتفظ SVaultAI بنسخة خفية.',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: 'كيف أحفظ كلمة مرور؟',
       answer:
-          'افتح صفحة تسجيلات الدخول والعناصر الآمنة واختر حفظ، أو اطلب من المساعد حفظ تسجيل دخول. يشفّر Svaultai الإدخال قبل تخزينه.',
+          'افتح صفحة تسجيلات الدخول والعناصر الآمنة واختر حفظ، أو اطلب من المساعد حفظ تسجيل دخول. يشفّر SVaultAI الإدخال قبل تخزينه.',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -665,9 +665,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: 'هل يستطيع Svaultai العثور على تسجيلات دخول مكرّرة؟',
+      question: 'هل يستطيع SVaultAI العثور على تسجيلات دخول مكرّرة؟',
       answer:
-          'نعم. اطلب من المساعد عرض كلمات المرور المكرّرة أو المُعاد استخدامها. يقارن Svaultai بين تسجيلات الدخول المحفوظة محليًا بعد الفتح ويشير إلى المتطابقات.',
+          'نعم. اطلب من المساعد عرض كلمات المرور المكرّرة أو المُعاد استخدامها. يقارن SVaultAI بين تسجيلات الدخول المحفوظة محليًا بعد الفتح ويشير إلى المتطابقات.',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -686,9 +686,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'id-expiry-reminders': FaqEntry(
       id: 'id-expiry-reminders',
       category: 'ids',
-      question: 'هل يمكن لـ Svaultai تذكيري بتواريخ الانتهاء؟',
+      question: 'هل يمكن لـ SVaultAI تذكيري بتواريخ الانتهاء؟',
       answer:
-          'اسأل المساعد عن موعد انتهاء جواز سفرك أو رخصتك. يقرأ Svaultai تاريخ الانتهاء المستخرَج من مستندات الهوية.',
+          'اسأل المساعد عن موعد انتهاء جواز سفرك أو رخصتك. يقرأ SVaultAI تاريخ الانتهاء المستخرَج من مستندات الهوية.',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -702,7 +702,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'ما هو Crypto Vault؟',
       answer:
-          'Crypto Vault هو ميزة المحفظة غير الحضورية في Svaultai. يخزّن عناوين الاستقبال العامة، ويعرض الأرصدة الحية من مزوّدين عامّين، ويتيح لك تحضير عمليات الإرسال التي توقّعها محليًا.',
+          'Crypto Vault هو ميزة المحفظة غير الحضورية في SVaultAI. يخزّن عناوين الاستقبال العامة، ويعرض الأرصدة الحية من مزوّدين عامّين، ويتيح لك تحضير عمليات الإرسال التي توقّعها محليًا.',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -716,28 +716,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'هل Crypto Vault حاضن للأصول؟',
       answer:
-          'لا. Crypto Vault غير حاضن. مفاتيحك على جهازك؛ لا يستطيع Svaultai تحريك عملاتك دون توقيعك المحلي.',
+          'لا. Crypto Vault غير حاضن. مفاتيحك على جهازك؛ لا يستطيع SVaultAI تحريك عملاتك دون توقيعك المحلي.',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: 'هل يستطيع Svaultai تحريك عملاتي المشفّرة؟',
+      question: 'هل يستطيع SVaultAI تحريك عملاتي المشفّرة؟',
       answer:
-          'لا. لا يستطيع Svaultai بث معاملة دون فتح PIN، جهاز موثوق، توقيع محلي، وتأكيد صريح منك. لا يُرسل تلقائيًا أبدًا.',
+          'لا. لا يستطيع SVaultAI بث معاملة دون فتح PIN، جهاز موثوق، توقيع محلي، وتأكيد صريح منك. لا يُرسل تلقائيًا أبدًا.',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: 'لماذا أحتاج PIN قبل الإرسال؟',
       answer:
-          'يفتح PIN مفتاح التوقيع المحلي. بدونه لا يستطيع جهازك توقيع المعاملة، ولن يقبل Svaultai طلب إرسال غير موقّع.',
+          'يفتح PIN مفتاح التوقيع المحلي. بدونه لا يستطيع جهازك توقيع المعاملة، ولن يقبل SVaultAI طلب إرسال غير موقّع.',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: 'لماذا لـ USDT نسختان: ERC20 و TRC20؟',
       answer:
-          'USDT موجود على شبكات متعدّدة. يدعم Svaultai USDT ERC20 على إثيريوم و USDT TRC20 على TRON. يجب اختيار الشبكة الصحيحة — العناوين والرسوم والتحويلات خاصة بكل شبكة وغير قابلة للتبادل.',
+          'USDT موجود على شبكات متعدّدة. يدعم SVaultAI USDT ERC20 على إثيريوم و USDT TRC20 على TRON. يجب اختيار الشبكة الصحيحة — العناوين والرسوم والتحويلات خاصة بكل شبكة وغير قابلة للتبادل.',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -765,7 +765,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'لماذا لا أرى رصيد مونيرو في المتصفح؟',
       answer:
-          'لا يمكن تشغيل فحص مونيرو الحقيقي بأمان داخل تطبيق الويب. على الويب، يمكن لـ Svaultai عرض عنوان استقبال مونيرو، لكن الرصيد والنشاط يتطلبان الماسح الأصلي على سطح المكتب.',
+          'لا يمكن تشغيل فحص مونيرو الحقيقي بأمان داخل تطبيق الويب. على الويب، يمكن لـ SVaultAI عرض عنوان استقبال مونيرو، لكن الرصيد والنشاط يتطلبان الماسح الأصلي على سطح المكتب.',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -778,7 +778,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'buy-sell-swap',
       category: 'crypto',
       question:
-          'هل يمكنني شراء أو بيع أو مبادلة أو تداول العملات المشفّرة في Svaultai؟',
+          'هل يمكنني شراء أو بيع أو مبادلة أو تداول العملات المشفّرة في SVaultAI؟',
       answer:
           'لا. Crypto Vault مخصّص لتخزين واستقبال الأصول المدعومة وإرسالها حيث كان ذلك مفعّلًا. ليس منصة تبادل ولا يدعم الشراء أو البيع أو المبادلة أو التداول أو الرهن أو الجسر أو الصرف.',
     ),
@@ -787,14 +787,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'ماذا يحدث إذا كان المزوّد غير متاح؟',
       answer:
-          'يعرض Svaultai سبب عدم الإتاحة بوضوح بدل اختراع رصيد. لا يُعرض رصيد 0 إلا إذا أعاد المزوّد صفرًا حقيقيًا.',
+          'يعرض SVaultAI سبب عدم الإتاحة بوضوح بدل اختراع رصيد. لا يُعرض رصيد 0 إلا إذا أعاد المزوّد صفرًا حقيقيًا.',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: 'لماذا يظهر رصيدي 0؟',
       answer:
-          'الرصيد المعروض 0 يعني أن المزوّد أعاد صفرًا حقيقيًا. إذا كان المزوّد غير متاح، يعرض Svaultai سبب عدم الإتاحة بدل صفر مزيّف.',
+          'الرصيد المعروض 0 يعني أن المزوّد أعاد صفرًا حقيقيًا. إذا كان المزوّد غير متاح، يعرض SVaultAI سبب عدم الإتاحة بدل صفر مزيّف.',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -808,21 +808,21 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'ماذا يحدث لعملاتي المشفّرة إذا حذفت الخزينة؟',
       answer:
-          'حذف الخزينة لا يُحرّك ولا يحذف العملات المشفّرة على البلوكشين. يخزّن Svaultai سجلات المحفظة المشفّرة محليًا وعلى الخادم — لكن العملات نفسها موجودة على السلسلة. حذف الخزينة يزيل سجلات المحفظة المشفّرة. إذا لم تحتفظ بنسخة احتياطية للمحفظة خارج Svaultai، فقد يعني فقدان تلك السجلات فقدان الوصول إلى الأموال. لا يبث Svaultai معاملات عملات مشفّرة أثناء الحذف.',
+          'حذف الخزينة لا يُحرّك ولا يحذف العملات المشفّرة على البلوكشين. يخزّن SVaultAI سجلات المحفظة المشفّرة محليًا وعلى الخادم — لكن العملات نفسها موجودة على السلسلة. حذف الخزينة يزيل سجلات المحفظة المشفّرة. إذا لم تحتفظ بنسخة احتياطية للمحفظة خارج SVaultAI، فقد يعني فقدان تلك السجلات فقدان الوصول إلى الأموال. لا يبث SVaultAI معاملات عملات مشفّرة أثناء الحذف.',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: 'على أي خطة أنا؟',
       answer:
-          'اسأل المساعد "ما خطتي؟" أو افتح صفحة الفوترة. يعرض Svaultai خطتك النشطة وحصة التخزين التي تمنحها.',
+          'اسأل المساعد "ما خطتي؟" أو افتح صفحة الفوترة. يعرض SVaultAI خطتك النشطة وحصة التخزين التي تمنحها.',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: 'كم تخزينًا لديّ؟',
       answer:
-          'اسأل المساعد "كم استخدمت من التخزين؟" أو افتح صفحة التخزين. يعرض Svaultai البايتات المستخدمة، الحصة، ونسبة الاستخدام.',
+          'اسأل المساعد "كم استخدمت من التخزين؟" أو افتح صفحة التخزين. يعرض SVaultAI البايتات المستخدمة، الحصة، ونسبة الاستخدام.',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -836,7 +836,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'كيف أُرقّي التخزين؟',
       answer:
-          'افتح صفحة الفوترة واختر مستوى الترقية. تجري الدفعة عبر مزوّد دفع؛ لا يخزّن Svaultai تفاصيل دفعك.',
+          'افتح صفحة الفوترة واختر مستوى الترقية. تجري الدفعة عبر مزوّد دفع؛ لا يخزّن SVaultAI تفاصيل دفعك.',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -850,7 +850,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'لماذا يُفتح الدفع؟',
       answer:
-          'تُعالج المدفوعات عبر مزوّد دفع كي لا يتعامل Svaultai مع تفاصيل الدفع مباشرة. يُفتح الدفع في واجهة المزوّد.',
+          'تُعالج المدفوعات عبر مزوّد دفع كي لا يتعامل SVaultAI مع تفاصيل الدفع مباشرة. يُفتح الدفع في واجهة المزوّد.',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -864,7 +864,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'لماذا تُحذف الخزائن غير المدفوعة وغير النشطة؟',
       answer:
-          'قد تُحذف نهائيًا الخزائن غير المدفوعة التي لم تُستخدم لمدة 6 أشهر على الأقل. هذا يبقي تخزين Svaultai مركّزًا على من يستخدمون خزائنهم فعليًا. للحفاظ على نشاط خزينتك، سجّل الدخول واستخدمها قبل حد الـ 6 أشهر من عدم النشاط، أو اشترك إذا رغبت في استمرار حماية التخزين. إذا اشتركت أو أصبحت نشطًا قبل الحد، فلن تُحذف الخزينة.',
+          'قد تُحذف نهائيًا الخزائن غير المدفوعة التي لم تُستخدم لمدة 6 أشهر على الأقل. هذا يبقي تخزين SVaultAI مركّزًا على من يستخدمون خزائنهم فعليًا. للحفاظ على نشاط خزينتك، سجّل الدخول واستخدمها قبل حد الـ 6 أشهر من عدم النشاط، أو اشترك إذا رغبت في استمرار حماية التخزين. إذا اشتركت أو أصبحت نشطًا قبل الحد، فلن تُحذف الخزينة.',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -878,7 +878,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'لماذا رصيدي غير متاح؟',
       answer:
-          'لم يُعِد مزوّد ذلك الأصل قيمة في الوقت المناسب. يعرض Svaultai حالة "غير متاح" بصدق بدل صفر مزيّف. تُحلّ غالبًا بإعادة المحاولة.',
+          'لم يُعِد مزوّد ذلك الأصل قيمة في الوقت المناسب. يعرض SVaultAI حالة "غير متاح" بصدق بدل صفر مزيّف. تُحلّ غالبًا بإعادة المحاولة.',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -906,14 +906,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'لماذا يقول TRON إن المزوّد غير متاح؟',
       answer:
-          'لم يستجب مزوّد أرصدة TRON في الوقت المناسب. يعرض Svaultai عدم الإتاحة بدل صفر مزيّف. تُحلّ غالبًا بإعادة المحاولة، وتبقى عناوين الاستقبال صالحة.',
+          'لم يستجب مزوّد أرصدة TRON في الوقت المناسب. يعرض SVaultAI عدم الإتاحة بدل صفر مزيّف. تُحلّ غالبًا بإعادة المحاولة، وتبقى عناوين الاستقبال صالحة.',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: 'لماذا حالة الاشتراك قيد التحقّق؟',
       answer:
-          'يقوم Svaultai بجلب أحدث حالة خطتك من مزوّد الفوترة. تُحلّ عادة خلال ثوانٍ؛ إن استمرت، جرّب التحديث من صفحة الفوترة.',
+          'يقوم SVaultAI بجلب أحدث حالة خطتك من مزوّد الفوترة. تُحلّ عادة خلال ثوانٍ؛ إن استمرت، جرّب التحديث من صفحة الفوترة.',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',
@@ -941,14 +941,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: 'Qu\'est-ce que Svaultai ?',
+      question: 'Qu\'est-ce que SVaultAI ?',
       answer:
-          'Svaultai est votre coffre numérique privé. Pensez à un coffre de banque ou à un coffre-fort à la maison : les gens s\'en servent pour protéger des papiers importants, des disques, de l\'argent, de l\'or, des pièces d\'identité et des dossiers privés. Svaultai reprend cette idée sous forme numérique. Vous pouvez conserver au même endroit sécurisé fichiers, documents, photos, vidéos, audio, mots de passe, notes sécurisées, pièces d\'identité et actifs Crypto Vault. Plutôt que d\'éparpiller vos mots de passe et vos données privées dans des e-mails, des notes, des captures d\'écran ou des dossiers au hasard, Svaultai vous aide à les garder organisés et protégés dans votre coffre. Svaultai Chat vous aide à rechercher, comprendre et gérer le contenu du coffre sans traiter chaque chose comme un simple fichier.',
+          'SVaultAI est votre coffre numérique privé. Pensez à un coffre de banque ou à un coffre-fort à la maison : les gens s\'en servent pour protéger des papiers importants, des disques, de l\'argent, de l\'or, des pièces d\'identité et des dossiers privés. SVaultAI reprend cette idée sous forme numérique. Vous pouvez conserver au même endroit sécurisé fichiers, documents, photos, vidéos, audio, mots de passe, notes sécurisées, pièces d\'identité et actifs Crypto Vault. Plutôt que d\'éparpiller vos mots de passe et vos données privées dans des e-mails, des notes, des captures d\'écran ou des dossiers au hasard, SVaultAI vous aide à les garder organisés et protégés dans votre coffre. SVaultAI Chat vous aide à rechercher, comprendre et gérer le contenu du coffre sans traiter chaque chose comme un simple fichier.',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: 'Que puis-je enregistrer dans Svaultai ?',
+      question: 'Que puis-je enregistrer dans SVaultAI ?',
       answer:
           'Vous pouvez enregistrer des fichiers, documents, photos, vidéos, audio, mots de passe, identifiants générés, notes sécurisées, codes, détails d\'appareils, pièces d\'identité et actifs Crypto Vault. Les enregistrements internes de portefeuille sont gérés par Crypto Vault et ne sont pas affichés comme éléments sécurisés ordinaires.',
     ),
@@ -957,14 +957,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: 'Comment créer mon coffre ?',
       answer:
-          'Ouvrez le flux de connexion Svaultai, choisissez ou confirmez le nom de votre coffre, et définissez votre PIN lorsqu\'il est demandé. Le PIN protège le déverrouillage de votre coffre — gardez-le en sécurité. Si la récupération n\'est pas disponible pour votre compte, perdre votre PIN peut rendre l\'accès irrécupérable.',
+          'Ouvrez le flux de connexion SVaultAI, choisissez ou confirmez le nom de votre coffre, et définissez votre PIN lorsqu\'il est demandé. Le PIN protège le déverrouillage de votre coffre — gardez-le en sécurité. Si la récupération n\'est pas disponible pour votre compte, perdre votre PIN peut rendre l\'accès irrécupérable.',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: 'Comment déverrouiller mon coffre ?',
       answer:
-          'Ouvrez Svaultai sur un appareil approuvé et saisissez votre PIN. Votre PIN déverrouille le coffre localement — le serveur ne voit jamais votre PIN en clair. Certaines actions sensibles peuvent redemander une confirmation.',
+          'Ouvrez SVaultAI sur un appareil approuvé et saisissez votre PIN. Votre PIN déverrouille le coffre localement — le serveur ne voit jamais votre PIN en clair. Certaines actions sensibles peuvent redemander une confirmation.',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -985,14 +985,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'Mon coffre est-il chiffré ?',
       answer:
-          'Oui. Svaultai stocke les données sensibles chiffrées avec une clé dérivée de votre PIN. Les valeurs sensibles sont masquées par défaut et protégées par appareil approuvé, déverrouillage PIN et confirmations quand c\'est requis.',
+          'Oui. SVaultAI stocke les données sensibles chiffrées avec une clé dérivée de votre PIN. Les valeurs sensibles sont masquées par défaut et protégées par appareil approuvé, déverrouillage PIN et confirmations quand c\'est requis.',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: 'Svaultai peut-il lire mes secrets ?',
+      question: 'SVaultAI peut-il lire mes secrets ?',
       answer:
-          'Svaultai n\'affiche ni ne demande votre phrase de récupération, clé privée, mnémonique, spend key, view key, secret de portefeuille chiffré, jeton d\'authentification ou clé API dans le chat. L\'IA ne manipule que des projections masquées et sûres du coffre.',
+          'SVaultAI n\'affiche ni ne demande votre phrase de récupération, clé privée, mnémonique, spend key, view key, secret de portefeuille chiffré, jeton d\'authentification ou clé API dans le chat. L\'IA ne manipule que des projections masquées et sûres du coffre.',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -1028,28 +1028,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       question:
           'Pourquoi ne pas partager la phrase de récupération ou la clé privée ?',
       answer:
-          'Quiconque possède votre phrase de récupération, clé privée, mnémonique, spend key ou view key peut accéder à votre crypto ou la dépenser. Svaultai ne demandera jamais ces valeurs, et aucune personne du support légitime ne devrait le faire.',
+          'Quiconque possède votre phrase de récupération, clé privée, mnémonique, spend key ou view key peut accéder à votre crypto ou la dépenser. SVaultAI ne demandera jamais ces valeurs, et aucune personne du support légitime ne devrait le faire.',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: 'Comment supprimer mon coffre ?',
       answer:
-          'Ouvrez les Paramètres et choisissez Supprimer le coffre. Svaultai affiche un avertissement, puis vous demande d\'écrire exactement la phrase DELETE MY VAULT, de saisir votre PIN et de confirmer depuis un appareil approuvé. Ce n\'est intentionnellement pas une action en un clic. La suppression est permanente. Svaultai ne peut pas supprimer votre coffre depuis le chat, et le flux ne peut pas contourner PIN, appareil approuvé, ni confirmation par phrase.',
+          'Ouvrez les Paramètres et choisissez Supprimer le coffre. SVaultAI affiche un avertissement, puis vous demande d\'écrire exactement la phrase DELETE MY VAULT, de saisir votre PIN et de confirmer depuis un appareil approuvé. Ce n\'est intentionnellement pas une action en un clic. La suppression est permanente. SVaultAI ne peut pas supprimer votre coffre depuis le chat, et le flux ne peut pas contourner PIN, appareil approuvé, ni confirmation par phrase.',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: 'Que se passe-t-il quand je supprime mon coffre ?',
       answer:
-          'Supprimer votre coffre efface définitivement vos données Svaultai, dont fichiers, éléments sécurisés, identifiants, pièces d\'identité, enregistrements chiffrés Crypto Vault et métadonnées associées. Tout abonnement de stockage actif est clôturé. La suppression ne déplace ni n\'efface les actifs crypto sur la blockchain — les coins restent là où existent les portefeuilles correspondants. Si vous n\'avez pas sauvegardé votre portefeuille en dehors de Svaultai, supprimer les enregistrements chiffrés peut entraîner la perte d\'accès à ces fonds.',
+          'Supprimer votre coffre efface définitivement vos données SVaultAI, dont fichiers, éléments sécurisés, identifiants, pièces d\'identité, enregistrements chiffrés Crypto Vault et métadonnées associées. Tout abonnement de stockage actif est clôturé. La suppression ne déplace ni n\'efface les actifs crypto sur la blockchain — les coins restent là où existent les portefeuilles correspondants. Si vous n\'avez pas sauvegardé votre portefeuille en dehors de SVaultAI, supprimer les enregistrements chiffrés peut entraîner la perte d\'accès à ces fonds.',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: 'Puis-je récupérer un coffre supprimé ?',
       answer:
-          'Non. Une fois la suppression confirmée, Svaultai retire définitivement les données et ne peut pas les restaurer. Il n\'y a pas de copie cachée ni de flux de récupération. Si vous perdez également la sauvegarde du portefeuille conservée hors Svaultai, la crypto on-chain de ce portefeuille peut aussi devenir irrécupérable.',
+          'Non. Une fois la suppression confirmée, SVaultAI retire définitivement les données et ne peut pas les restaurer. Il n\'y a pas de copie cachée ni de flux de récupération. Si vous perdez également la sauvegarde du portefeuille conservée hors SVaultAI, la crypto on-chain de ce portefeuille peut aussi devenir irrécupérable.',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -1063,26 +1063,26 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'Quels types de fichiers puis-je stocker ?',
       answer:
-          'Svaultai accepte les formats courants de documents, images, audio et vidéo. Tout fichier respectant votre quota de stockage peut être téléversé.',
+          'SVaultAI accepte les formats courants de documents, images, audio et vidéo. Tout fichier respectant votre quota de stockage peut être téléversé.',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: 'Puis-je chercher dans les documents ?',
       answer:
-          'Oui. Svaultai extrait le texte des documents supportés et permet la recherche dans leur contenu depuis le chat ou la liste des fichiers.',
+          'Oui. SVaultAI extrait le texte des documents supportés et permet la recherche dans leur contenu depuis le chat ou la liste des fichiers.',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: 'Svaultai peut-il résumer mon PDF ?',
+      question: 'SVaultAI peut-il résumer mon PDF ?',
       answer:
           'Oui. Demandez à l\'assistant de résumer un PDF ou un document précis. Le résumé s\'appuie sur le texte extrait ; il ne modifie pas le fichier original.',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: 'Pourquoi Svaultai ne trouve-t-il pas mon fichier ?',
+      question: 'Pourquoi SVaultAI ne trouve-t-il pas mon fichier ?',
       answer:
           'Vérifiez l\'orthographe du nom, le coffre actuel et si le téléversement s\'est terminé. Les fichiers en cours d\'analyse peuvent ne pas encore apparaître dans les recherches.',
     ),
@@ -1091,14 +1091,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'Comment supprimer un fichier ?',
       answer:
-          'Ouvrez la ligne du fichier dans la liste et choisissez Supprimer. La suppression est permanente — Svaultai ne conserve pas de copie cachée.',
+          'Ouvrez la ligne du fichier dans la liste et choisissez Supprimer. La suppression est permanente — SVaultAI ne conserve pas de copie cachée.',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: 'Comment enregistrer un mot de passe ?',
       answer:
-          'Ouvrez la page Identifiants et éléments sécurisés et choisissez Enregistrer, ou demandez à l\'assistant d\'enregistrer un identifiant. Svaultai chiffre l\'entrée avant de la stocker.',
+          'Ouvrez la page Identifiants et éléments sécurisés et choisissez Enregistrer, ou demandez à l\'assistant d\'enregistrer un identifiant. SVaultAI chiffre l\'entrée avant de la stocker.',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -1131,9 +1131,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: 'Svaultai peut-il trouver des identifiants en double ?',
+      question: 'SVaultAI peut-il trouver des identifiants en double ?',
       answer:
-          'Oui. Demandez à l\'assistant de montrer les mots de passe en double ou réutilisés. Svaultai compare localement les identifiants enregistrés après déverrouillage et signale les correspondances.',
+          'Oui. Demandez à l\'assistant de montrer les mots de passe en double ou réutilisés. SVaultAI compare localement les identifiants enregistrés après déverrouillage et signale les correspondances.',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -1152,9 +1152,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'id-expiry-reminders': FaqEntry(
       id: 'id-expiry-reminders',
       category: 'ids',
-      question: 'Svaultai peut-il me rappeler les dates d\'expiration ?',
+      question: 'SVaultAI peut-il me rappeler les dates d\'expiration ?',
       answer:
-          'Demandez à l\'assistant quand votre passeport ou permis expire. Svaultai lit la date d\'expiration extraite de vos pièces d\'identité.',
+          'Demandez à l\'assistant quand votre passeport ou permis expire. SVaultAI lit la date d\'expiration extraite de vos pièces d\'identité.',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -1168,7 +1168,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Qu\'est-ce que Crypto Vault ?',
       answer:
-          'Crypto Vault est la fonctionnalité de portefeuille non custodial de Svaultai. Elle stocke vos adresses publiques de réception, affiche des soldes live via des fournisseurs publics et vous permet de préparer des envois que vous signez localement.',
+          'Crypto Vault est la fonctionnalité de portefeuille non custodial de SVaultAI. Elle stocke vos adresses publiques de réception, affiche des soldes live via des fournisseurs publics et vous permet de préparer des envois que vous signez localement.',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -1182,28 +1182,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Crypto Vault est-il custodial ?',
       answer:
-          'Non. Crypto Vault est non custodial. Vos clés sont sur votre appareil ; Svaultai ne peut pas déplacer votre crypto sans votre signature locale.',
+          'Non. Crypto Vault est non custodial. Vos clés sont sur votre appareil ; SVaultAI ne peut pas déplacer votre crypto sans votre signature locale.',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: 'Svaultai peut-il déplacer ma crypto ?',
+      question: 'SVaultAI peut-il déplacer ma crypto ?',
       answer:
-          'Non. Svaultai ne peut pas diffuser une transaction sans votre déverrouillage PIN, votre appareil approuvé, une signature locale et une confirmation explicite. Il n\'envoie jamais automatiquement.',
+          'Non. SVaultAI ne peut pas diffuser une transaction sans votre déverrouillage PIN, votre appareil approuvé, une signature locale et une confirmation explicite. Il n\'envoie jamais automatiquement.',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: 'Pourquoi ai-je besoin d\'un PIN avant d\'envoyer ?',
       answer:
-          'Le PIN déverrouille la clé de signature locale. Sans lui, votre appareil ne peut pas signer une transaction, et Svaultai n\'accepte pas une demande d\'envoi non signée.',
+          'Le PIN déverrouille la clé de signature locale. Sans lui, votre appareil ne peut pas signer une transaction, et SVaultAI n\'accepte pas une demande d\'envoi non signée.',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: 'Pourquoi USDT a-t-il ERC20 et TRC20 ?',
       answer:
-          'USDT existe sur plusieurs réseaux. Svaultai supporte USDT ERC20 sur Ethereum et USDT TRC20 sur TRON. Il faut choisir le bon réseau — adresses, frais et transferts sont propres à chaque réseau et non interchangeables.',
+          'USDT existe sur plusieurs réseaux. SVaultAI supporte USDT ERC20 sur Ethereum et USDT TRC20 sur TRON. Il faut choisir le bon réseau — adresses, frais et transferts sont propres à chaque réseau et non interchangeables.',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -1233,7 +1233,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       question:
           'Pourquoi ne puis-je pas voir mon solde Monero dans le navigateur ?',
       answer:
-          'Le vrai scan Monero ne peut pas tourner en toute sécurité dans l\'application web. Sur le web, Svaultai peut montrer l\'adresse de réception Monero, mais le solde et l\'activité exigent le scanner local desktop ou natif.',
+          'Le vrai scan Monero ne peut pas tourner en toute sécurité dans l\'application web. Sur le web, SVaultAI peut montrer l\'adresse de réception Monero, mais le solde et l\'activité exigent le scanner local desktop ou natif.',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -1246,7 +1246,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'buy-sell-swap',
       category: 'crypto',
       question:
-          'Puis-je acheter, vendre, échanger ou trader de la crypto dans Svaultai ?',
+          'Puis-je acheter, vendre, échanger ou trader de la crypto dans SVaultAI ?',
       answer:
           'Non. Crypto Vault sert à stocker, recevoir et — lorsque c\'est activé — envoyer des actifs supportés. Ce n\'est pas un exchange et il ne supporte pas achat, vente, swap, trade, stake, bridge ou change.',
     ),
@@ -1255,14 +1255,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Que se passe-t-il si un fournisseur est indisponible ?',
       answer:
-          'Svaultai affiche une raison d\'indisponibilité claire plutôt qu\'un solde inventé. Un solde 0 n\'est affiché que lorsque le fournisseur retourne réellement zéro.',
+          'SVaultAI affiche une raison d\'indisponibilité claire plutôt qu\'un solde inventé. Un solde 0 n\'est affiché que lorsque le fournisseur retourne réellement zéro.',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: 'Pourquoi mon solde affiche-t-il 0 ?',
       answer:
-          'Un solde 0 affiché signifie que le fournisseur a renvoyé un vrai zéro. Si le fournisseur était indisponible, Svaultai affiche une raison d\'indisponibilité au lieu d\'un faux zéro.',
+          'Un solde 0 affiché signifie que le fournisseur a renvoyé un vrai zéro. Si le fournisseur était indisponible, SVaultAI affiche une raison d\'indisponibilité au lieu d\'un faux zéro.',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -1276,21 +1276,21 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Qu\'arrive-t-il à ma crypto si je supprime mon coffre ?',
       answer:
-          'Supprimer le coffre ne déplace ni ne supprime votre crypto sur la blockchain. Svaultai stocke des enregistrements chiffrés de portefeuille localement et sur le serveur — mais les coins vivent on-chain. La suppression retire ces enregistrements chiffrés. Si vous n\'avez pas sauvegardé le portefeuille en dehors de Svaultai, les perdre peut signifier perdre l\'accès aux fonds. Svaultai ne diffuse jamais de transaction crypto pendant la suppression.',
+          'Supprimer le coffre ne déplace ni ne supprime votre crypto sur la blockchain. SVaultAI stocke des enregistrements chiffrés de portefeuille localement et sur le serveur — mais les coins vivent on-chain. La suppression retire ces enregistrements chiffrés. Si vous n\'avez pas sauvegardé le portefeuille en dehors de SVaultAI, les perdre peut signifier perdre l\'accès aux fonds. SVaultAI ne diffuse jamais de transaction crypto pendant la suppression.',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: 'Sur quel plan suis-je ?',
       answer:
-          'Demandez à l\'assistant « sur quel plan suis-je » ou ouvrez la page Facturation. Svaultai affiche votre plan actif et le quota de stockage qu\'il accorde.',
+          'Demandez à l\'assistant « sur quel plan suis-je » ou ouvrez la page Facturation. SVaultAI affiche votre plan actif et le quota de stockage qu\'il accorde.',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: 'Combien de stockage ai-je ?',
       answer:
-          'Demandez à l\'assistant « combien de stockage j\'utilise » ou ouvrez la page Stockage. Svaultai affiche octets utilisés, quota et pourcentage utilisé.',
+          'Demandez à l\'assistant « combien de stockage j\'utilise » ou ouvrez la page Stockage. SVaultAI affiche octets utilisés, quota et pourcentage utilisé.',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -1304,7 +1304,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'Comment mettre à niveau le stockage ?',
       answer:
-          'Ouvrez la page Facturation et choisissez un niveau de mise à niveau. Le paiement passe par un fournisseur ; Svaultai ne stocke pas vos informations de paiement.',
+          'Ouvrez la page Facturation et choisissez un niveau de mise à niveau. Le paiement passe par un fournisseur ; SVaultAI ne stocke pas vos informations de paiement.',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -1318,7 +1318,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'Pourquoi le checkout s\'ouvre-t-il ?',
       answer:
-          'Les paiements passent par un fournisseur pour que Svaultai ne manipule pas les données de paiement directement. Le checkout s\'ouvre dans l\'interface du fournisseur.',
+          'Les paiements passent par un fournisseur pour que SVaultAI ne manipule pas les données de paiement directement. Le checkout s\'ouvre dans l\'interface du fournisseur.',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -1333,7 +1333,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       question:
           'Pourquoi les coffres non payés et inactifs sont-ils supprimés ?',
       answer:
-          'Les coffres non payés inutilisés pendant au moins 6 mois peuvent être supprimés définitivement. Cela concentre le stockage Svaultai sur les personnes qui utilisent activement leur coffre. Pour garder votre coffre actif, connectez-vous et utilisez-le avant le seuil de 6 mois d\'inactivité, ou abonnez-vous pour une protection continue. Si vous vous abonnez ou redevenez actif avant le seuil, le coffre n\'est pas supprimé.',
+          'Les coffres non payés inutilisés pendant au moins 6 mois peuvent être supprimés définitivement. Cela concentre le stockage SVaultAI sur les personnes qui utilisent activement leur coffre. Pour garder votre coffre actif, connectez-vous et utilisez-le avant le seuil de 6 mois d\'inactivité, ou abonnez-vous pour une protection continue. Si vous vous abonnez ou redevenez actif avant le seuil, le coffre n\'est pas supprimé.',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -1347,7 +1347,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'Pourquoi mon solde est-il indisponible ?',
       answer:
-          'Le fournisseur de cet actif n\'a pas renvoyé de valeur à temps. Svaultai affiche honnêtement « indisponible » plutôt qu\'un faux zéro. Une nouvelle tentative résout généralement le problème.',
+          'Le fournisseur de cet actif n\'a pas renvoyé de valeur à temps. SVaultAI affiche honnêtement « indisponible » plutôt qu\'un faux zéro. Une nouvelle tentative résout généralement le problème.',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -1376,14 +1376,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'Pourquoi TRON indique-t-il fournisseur indisponible ?',
       answer:
-          'Le fournisseur de soldes TRON n\'a pas répondu à temps. Svaultai affiche indisponible au lieu d\'un faux zéro. Une nouvelle tentative résout souvent, et les adresses de réception restent valides.',
+          'Le fournisseur de soldes TRON n\'a pas répondu à temps. SVaultAI affiche indisponible au lieu d\'un faux zéro. Une nouvelle tentative résout souvent, et les adresses de réception restent valides.',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: 'Pourquoi le statut d\'abonnement est-il en vérification ?',
       answer:
-          'Svaultai récupère votre dernier état de plan auprès du fournisseur de facturation. Cela se résout généralement en quelques secondes ; si cela persiste, essayez Actualiser depuis la page Facturation.',
+          'SVaultAI récupère votre dernier état de plan auprès du fournisseur de facturation. Cela se résout généralement en quelques secondes ; si cela persiste, essayez Actualiser depuis la page Facturation.',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',
@@ -1411,14 +1411,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: '¿Qué es Svaultai?',
+      question: '¿Qué es SVaultAI?',
       answer:
-          'Svaultai es tu bóveda digital privada. Piensa en una caja fuerte de banco o en la de tu casa: la gente las usa para proteger papeles importantes, unidades de almacenamiento, dinero, oro, documentos de identidad y registros privados. Svaultai ofrece esa idea en forma digital. Puedes guardar archivos, documentos, fotos, vídeos, audio, contraseñas, notas seguras, documentos de identidad y activos de Crypto Vault en un mismo lugar protegido. En lugar de guardar contraseñas o registros privados en correos, notas, capturas o carpetas dispersas, Svaultai te ayuda a mantenerlos organizados y protegidos dentro de tu bóveda. Svaultai Chat te ayuda a buscar, entender y gestionar lo que hay dentro sin tratar todo como un simple archivo.',
+          'SVaultAI es tu bóveda digital privada. Piensa en una caja fuerte de banco o en la de tu casa: la gente las usa para proteger papeles importantes, unidades de almacenamiento, dinero, oro, documentos de identidad y registros privados. SVaultAI ofrece esa idea en forma digital. Puedes guardar archivos, documentos, fotos, vídeos, audio, contraseñas, notas seguras, documentos de identidad y activos de Crypto Vault en un mismo lugar protegido. En lugar de guardar contraseñas o registros privados en correos, notas, capturas o carpetas dispersas, SVaultAI te ayuda a mantenerlos organizados y protegidos dentro de tu bóveda. SVaultAI Chat te ayuda a buscar, entender y gestionar lo que hay dentro sin tratar todo como un simple archivo.',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: '¿Qué puedo guardar en Svaultai?',
+      question: '¿Qué puedo guardar en SVaultAI?',
       answer:
           'Puedes guardar archivos, documentos, fotos, vídeos, audio, contraseñas, accesos generados, notas seguras, códigos, detalles de dispositivos, documentos de identidad y activos de Crypto Vault. Los registros de billetera interna los gestiona Crypto Vault y no se muestran como elementos seguros normales.',
     ),
@@ -1427,14 +1427,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: '¿Cómo creo mi bóveda?',
       answer:
-          'Abre el flujo de inicio de sesión de Svaultai, elige o confirma el nombre de tu bóveda y define tu PIN cuando se te indique. El PIN protege el desbloqueo de tu bóveda — mantenlo a salvo. Si tu cuenta no tiene recuperación, perder el PIN puede impedir recuperar el acceso.',
+          'Abre el flujo de inicio de sesión de SVaultAI, elige o confirma el nombre de tu bóveda y define tu PIN cuando se te indique. El PIN protege el desbloqueo de tu bóveda — mantenlo a salvo. Si tu cuenta no tiene recuperación, perder el PIN puede impedir recuperar el acceso.',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: '¿Cómo desbloqueo mi bóveda?',
       answer:
-          'Abre Svaultai en un dispositivo de confianza e ingresa tu PIN. El PIN desbloquea la bóveda localmente — el servidor nunca ve tu PIN en texto plano. Algunas acciones sensibles pueden pedir confirmación adicional.',
+          'Abre SVaultAI en un dispositivo de confianza e ingresa tu PIN. El PIN desbloquea la bóveda localmente — el servidor nunca ve tu PIN en texto plano. Algunas acciones sensibles pueden pedir confirmación adicional.',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -1455,14 +1455,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '¿Mi bóveda está cifrada?',
       answer:
-          'Sí. Svaultai almacena los datos sensibles de la bóveda cifrados con una clave derivada de tu PIN. Los valores sensibles se enmascaran por defecto y se protegen con dispositivo de confianza, desbloqueo/PIN y confirmaciones donde sea necesario.',
+          'Sí. SVaultAI almacena los datos sensibles de la bóveda cifrados con una clave derivada de tu PIN. Los valores sensibles se enmascaran por defecto y se protegen con dispositivo de confianza, desbloqueo/PIN y confirmaciones donde sea necesario.',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: '¿Puede Svaultai leer mis secretos guardados?',
+      question: '¿Puede SVaultAI leer mis secretos guardados?',
       answer:
-          'Svaultai no muestra ni pide en el chat tu frase semilla, clave privada, mnemónica, spend key, view key, secreto de billetera cifrado, token de autenticación o clave API. La IA solo trabaja con proyecciones seguras y enmascaradas de la bóveda.',
+          'SVaultAI no muestra ni pide en el chat tu frase semilla, clave privada, mnemónica, spend key, view key, secreto de billetera cifrado, token de autenticación o clave API. La IA solo trabaja con proyecciones seguras y enmascaradas de la bóveda.',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -1497,28 +1497,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '¿Por qué no debo compartir mi frase semilla o clave privada?',
       answer:
-          'Cualquiera con tu frase semilla, clave privada, mnemónica, spend key o view key puede acceder a tu crypto o gastarla. Svaultai nunca pedirá esos valores y ninguna persona de soporte legítima debería hacerlo.',
+          'Cualquiera con tu frase semilla, clave privada, mnemónica, spend key o view key puede acceder a tu crypto o gastarla. SVaultAI nunca pedirá esos valores y ninguna persona de soporte legítima debería hacerlo.',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: '¿Cómo elimino mi bóveda?',
       answer:
-          'Abre Ajustes y elige Eliminar bóveda. Svaultai muestra una advertencia y luego te pide escribir exactamente la frase DELETE MY VAULT, ingresar tu PIN y confirmar desde un dispositivo de confianza. No es de un clic a propósito. La eliminación es permanente. Svaultai no puede eliminar tu bóveda desde el chat y el flujo no puede saltarse el PIN, el dispositivo de confianza ni la confirmación por frase.',
+          'Abre Ajustes y elige Eliminar bóveda. SVaultAI muestra una advertencia y luego te pide escribir exactamente la frase DELETE MY VAULT, ingresar tu PIN y confirmar desde un dispositivo de confianza. No es de un clic a propósito. La eliminación es permanente. SVaultAI no puede eliminar tu bóveda desde el chat y el flujo no puede saltarse el PIN, el dispositivo de confianza ni la confirmación por frase.',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: '¿Qué pasa cuando elimino mi bóveda?',
       answer:
-          'Eliminar tu bóveda borra permanentemente tus datos de Svaultai, incluidos archivos, elementos seguros, accesos, documentos de identidad, registros cifrados de Crypto Vault y metadatos asociados. Cualquier suscripción de almacenamiento activa se cierra. La eliminación no mueve ni borra activos crypto en la blockchain — los coins siguen donde existan las billeteras correspondientes. Si no hiciste copia de seguridad de tu billetera fuera de Svaultai, eliminar los registros cifrados puede causar pérdida de acceso a esos fondos.',
+          'Eliminar tu bóveda borra permanentemente tus datos de SVaultAI, incluidos archivos, elementos seguros, accesos, documentos de identidad, registros cifrados de Crypto Vault y metadatos asociados. Cualquier suscripción de almacenamiento activa se cierra. La eliminación no mueve ni borra activos crypto en la blockchain — los coins siguen donde existan las billeteras correspondientes. Si no hiciste copia de seguridad de tu billetera fuera de SVaultAI, eliminar los registros cifrados puede causar pérdida de acceso a esos fondos.',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: '¿Puedo recuperar una bóveda eliminada?',
       answer:
-          'No. Una vez que confirmas la eliminación, Svaultai borra los datos permanentemente y no puede restaurarlos. No hay copia oculta ni flujo de recuperación. Si también pierdes la copia de la billetera guardada fuera de Svaultai, la crypto on-chain de esa billetera puede quedar también sin recuperar.',
+          'No. Una vez que confirmas la eliminación, SVaultAI borra los datos permanentemente y no puede restaurarlos. No hay copia oculta ni flujo de recuperación. Si también pierdes la copia de la billetera guardada fuera de SVaultAI, la crypto on-chain de esa billetera puede quedar también sin recuperar.',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -1532,26 +1532,26 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: '¿Qué tipos de archivo puedo guardar?',
       answer:
-          'Svaultai acepta tipos comunes de documento, imagen, audio y vídeo. Cualquier archivo que quepa en tu cuota puede subirse.',
+          'SVaultAI acepta tipos comunes de documento, imagen, audio y vídeo. Cualquier archivo que quepa en tu cuota puede subirse.',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: '¿Puedo buscar dentro de los documentos?',
       answer:
-          'Sí. Svaultai extrae texto de los documentos compatibles y permite buscar en su contenido desde el chat o la lista de archivos.',
+          'Sí. SVaultAI extrae texto de los documentos compatibles y permite buscar en su contenido desde el chat o la lista de archivos.',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: '¿Puede Svaultai resumir mi PDF?',
+      question: '¿Puede SVaultAI resumir mi PDF?',
       answer:
           'Sí. Pide al asistente que resuma un PDF o documento específico. El resumen usa el texto extraído y no modifica el archivo original.',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: '¿Por qué Svaultai no encuentra mi archivo?',
+      question: '¿Por qué SVaultAI no encuentra mi archivo?',
       answer:
           'Revisa la ortografía del nombre, la bóveda en la que estás y si la subida terminó. Los archivos que aún se analizan pueden no aparecer todavía en las búsquedas.',
     ),
@@ -1560,14 +1560,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: '¿Cómo elimino un archivo?',
       answer:
-          'Abre la fila del archivo en la lista y elige Eliminar. La eliminación es permanente — Svaultai no guarda copia oculta.',
+          'Abre la fila del archivo en la lista y elige Eliminar. La eliminación es permanente — SVaultAI no guarda copia oculta.',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: '¿Cómo guardo una contraseña?',
       answer:
-          'Abre la página Accesos y elementos seguros y elige Guardar, o pide al asistente que guarde un acceso. Svaultai cifra la entrada antes de almacenarla.',
+          'Abre la página Accesos y elementos seguros y elige Guardar, o pide al asistente que guarde un acceso. SVaultAI cifra la entrada antes de almacenarla.',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -1600,9 +1600,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: '¿Puede Svaultai encontrar accesos duplicados?',
+      question: '¿Puede SVaultAI encontrar accesos duplicados?',
       answer:
-          'Sí. Pide al asistente que muestre contraseñas duplicadas o reutilizadas. Svaultai compara los accesos guardados localmente tras desbloquear y marca las coincidencias.',
+          'Sí. Pide al asistente que muestre contraseñas duplicadas o reutilizadas. SVaultAI compara los accesos guardados localmente tras desbloquear y marca las coincidencias.',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -1621,9 +1621,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'id-expiry-reminders': FaqEntry(
       id: 'id-expiry-reminders',
       category: 'ids',
-      question: '¿Puede Svaultai recordarme fechas de vencimiento?',
+      question: '¿Puede SVaultAI recordarme fechas de vencimiento?',
       answer:
-          'Pide al asistente cuándo vence tu pasaporte o licencia. Svaultai lee la fecha de vencimiento extraída de tus documentos de identidad.',
+          'Pide al asistente cuándo vence tu pasaporte o licencia. SVaultAI lee la fecha de vencimiento extraída de tus documentos de identidad.',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -1637,7 +1637,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '¿Qué es Crypto Vault?',
       answer:
-          'Crypto Vault es la función de billetera no custodial de Svaultai. Guarda tus direcciones públicas de recepción, muestra saldos en vivo desde proveedores públicos y te permite preparar envíos que firmas localmente.',
+          'Crypto Vault es la función de billetera no custodial de SVaultAI. Guarda tus direcciones públicas de recepción, muestra saldos en vivo desde proveedores públicos y te permite preparar envíos que firmas localmente.',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -1651,28 +1651,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '¿Crypto Vault es custodial?',
       answer:
-          'No. Crypto Vault es no custodial. Tus claves están en tu dispositivo; Svaultai no puede mover tu crypto sin tu firma local.',
+          'No. Crypto Vault es no custodial. Tus claves están en tu dispositivo; SVaultAI no puede mover tu crypto sin tu firma local.',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: '¿Puede Svaultai mover mi crypto?',
+      question: '¿Puede SVaultAI mover mi crypto?',
       answer:
-          'No. Svaultai no puede difundir una transacción sin tu desbloqueo PIN, dispositivo de confianza, firma local y confirmación explícita. Nunca envía automáticamente.',
+          'No. SVaultAI no puede difundir una transacción sin tu desbloqueo PIN, dispositivo de confianza, firma local y confirmación explícita. Nunca envía automáticamente.',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: '¿Por qué necesito PIN antes de enviar?',
       answer:
-          'El PIN desbloquea la clave de firma local. Sin él, tu dispositivo no puede firmar una transacción, y Svaultai no acepta una solicitud de envío sin firmar.',
+          'El PIN desbloquea la clave de firma local. Sin él, tu dispositivo no puede firmar una transacción, y SVaultAI no acepta una solicitud de envío sin firmar.',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: '¿Por qué USDT tiene ERC20 y TRC20?',
       answer:
-          'USDT existe en varias redes. Svaultai admite USDT ERC20 en Ethereum y USDT TRC20 en TRON. Debes elegir la red correcta — direcciones, comisiones y transferencias son específicas de cada red y no intercambiables.',
+          'USDT existe en varias redes. SVaultAI admite USDT ERC20 en Ethereum y USDT TRC20 en TRON. Debes elegir la red correcta — direcciones, comisiones y transferencias son específicas de cada red y no intercambiables.',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -1700,7 +1700,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '¿Por qué no veo mi saldo Monero en el navegador?',
       answer:
-          'El escaneo real de Monero no puede ejecutarse con seguridad dentro de la app web. En web, Svaultai puede mostrar la dirección de recepción Monero, pero el saldo y la actividad requieren el escáner local de escritorio o nativo.',
+          'El escaneo real de Monero no puede ejecutarse con seguridad dentro de la app web. En web, SVaultAI puede mostrar la dirección de recepción Monero, pero el saldo y la actividad requieren el escáner local de escritorio o nativo.',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -1713,7 +1713,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'buy-sell-swap',
       category: 'crypto',
       question:
-          '¿Puedo comprar, vender, intercambiar o operar crypto en Svaultai?',
+          '¿Puedo comprar, vender, intercambiar o operar crypto en SVaultAI?',
       answer:
           'No. Crypto Vault sirve para almacenar, recibir y — donde esté habilitado — enviar activos compatibles. No es un exchange y no admite comprar, vender, intercambiar, operar, hacer staking, bridge ni cambio.',
     ),
@@ -1722,14 +1722,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '¿Qué pasa si un proveedor no está disponible?',
       answer:
-          'Svaultai muestra una razón clara de no disponibilidad en lugar de inventar un saldo. Un saldo 0 solo se muestra cuando el proveedor devuelve cero de verdad.',
+          'SVaultAI muestra una razón clara de no disponibilidad en lugar de inventar un saldo. Un saldo 0 solo se muestra cuando el proveedor devuelve cero de verdad.',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: '¿Por qué mi saldo dice 0?',
       answer:
-          'Un saldo 0 mostrado significa que el proveedor devolvió un cero real. Si el proveedor no estaba disponible, Svaultai muestra una razón de no disponibilidad en lugar de un cero falso.',
+          'Un saldo 0 mostrado significa que el proveedor devolvió un cero real. Si el proveedor no estaba disponible, SVaultAI muestra una razón de no disponibilidad en lugar de un cero falso.',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -1743,21 +1743,21 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '¿Qué pasa con mi crypto si elimino mi bóveda?',
       answer:
-          'Eliminar tu bóveda no mueve ni borra tu crypto en la blockchain. Svaultai almacena registros cifrados de billetera localmente y en el servidor — pero los coins viven on-chain. Eliminar la bóveda quita esos registros. Si no hiciste copia de seguridad de la billetera fuera de Svaultai, perder esos registros puede significar perder el acceso a los fondos. Svaultai nunca difunde transacciones crypto durante la eliminación.',
+          'Eliminar tu bóveda no mueve ni borra tu crypto en la blockchain. SVaultAI almacena registros cifrados de billetera localmente y en el servidor — pero los coins viven on-chain. Eliminar la bóveda quita esos registros. Si no hiciste copia de seguridad de la billetera fuera de SVaultAI, perder esos registros puede significar perder el acceso a los fondos. SVaultAI nunca difunde transacciones crypto durante la eliminación.',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: '¿En qué plan estoy?',
       answer:
-          'Pregunta al asistente «¿en qué plan estoy?» o abre la página de Facturación. Svaultai muestra tu plan activo y la cuota de almacenamiento que otorga.',
+          'Pregunta al asistente «¿en qué plan estoy?» o abre la página de Facturación. SVaultAI muestra tu plan activo y la cuota de almacenamiento que otorga.',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: '¿Cuánto almacenamiento tengo?',
       answer:
-          'Pregunta al asistente «¿cuánto almacenamiento uso?» o abre la página Almacenamiento. Svaultai muestra bytes usados, cuota y porcentaje de uso.',
+          'Pregunta al asistente «¿cuánto almacenamiento uso?» o abre la página Almacenamiento. SVaultAI muestra bytes usados, cuota y porcentaje de uso.',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -1771,7 +1771,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '¿Cómo mejoro el almacenamiento?',
       answer:
-          'Abre la página de Facturación y elige un nivel de mejora. El checkout pasa por un proveedor de pago; Svaultai no almacena tus datos de pago.',
+          'Abre la página de Facturación y elige un nivel de mejora. El checkout pasa por un proveedor de pago; SVaultAI no almacena tus datos de pago.',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -1785,7 +1785,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '¿Por qué se abre el checkout?',
       answer:
-          'Los pagos pasan por un proveedor para que Svaultai no gestione los datos de pago directamente. El checkout se abre en la interfaz del proveedor.',
+          'Los pagos pasan por un proveedor para que SVaultAI no gestione los datos de pago directamente. El checkout se abre en la interfaz del proveedor.',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -1799,7 +1799,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '¿Por qué se eliminan las bóvedas no pagadas e inactivas?',
       answer:
-          'Las bóvedas no pagadas que no se usan durante al menos 6 meses pueden eliminarse permanentemente. Esto concentra el almacenamiento de Svaultai en personas que usan activamente su bóveda. Para mantener tu bóveda activa, inicia sesión y úsala antes del corte de 6 meses de inactividad, o suscríbete si quieres protección continua. Si te suscribes o vuelves a estar activo antes del corte, la bóveda no se elimina.',
+          'Las bóvedas no pagadas que no se usan durante al menos 6 meses pueden eliminarse permanentemente. Esto concentra el almacenamiento de SVaultAI en personas que usan activamente su bóveda. Para mantener tu bóveda activa, inicia sesión y úsala antes del corte de 6 meses de inactividad, o suscríbete si quieres protección continua. Si te suscribes o vuelves a estar activo antes del corte, la bóveda no se elimina.',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -1813,7 +1813,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: '¿Por qué mi saldo aparece como no disponible?',
       answer:
-          'El proveedor de ese activo no devolvió un valor a tiempo. Svaultai muestra un estado honesto de «no disponible» en vez de un cero falso. Reintentar suele resolverlo.',
+          'El proveedor de ese activo no devolvió un valor a tiempo. SVaultAI muestra un estado honesto de «no disponible» en vez de un cero falso. Reintentar suele resolverlo.',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -1841,14 +1841,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: '¿Por qué TRON dice que el proveedor no está disponible?',
       answer:
-          'El proveedor de saldos de TRON no respondió a tiempo. Svaultai muestra no disponible en vez de un cero falso. Reintentar suele resolverlo, y las direcciones de recepción siguen siendo válidas.',
+          'El proveedor de saldos de TRON no respondió a tiempo. SVaultAI muestra no disponible en vez de un cero falso. Reintentar suele resolverlo, y las direcciones de recepción siguen siendo válidas.',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: '¿Por qué el estado de suscripción dice comprobando?',
       answer:
-          'Svaultai está obteniendo tu último estado de plan del proveedor de facturación. Suele resolverse en unos segundos; si persiste, prueba Actualizar desde la página de Facturación.',
+          'SVaultAI está obteniendo tu último estado de plan del proveedor de facturación. Suele resolverse en unos segundos; si persiste, prueba Actualizar desde la página de Facturación.',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',
@@ -1876,14 +1876,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: 'Svaultai とは?',
+      question: 'SVaultAI とは?',
       answer:
-          'Svaultai はあなたのプライベートなデジタル保管庫です。銀行の金庫や家庭用金庫を思い浮かべてください — 人々はそうしたもので大切な書類、ドライブ、現金、金、身分証、私的な記録を守っています。Svaultai はその考えをデジタル形式で提供します。ファイル、書類、写真、動画、音声、パスワード、セキュアメモ、身分証、Crypto Vault 資産を一つの守られた場所に保管できます。パスワードや私的な記録をメール、メモ、スクリーンショット、あちこちのフォルダに散らかす代わりに、Svaultai が保管庫の中で整理し保護するのを手伝います。Svaultai Chat は保管庫内の内容を単なるファイルとして扱わず、検索・理解・管理を助けます。',
+          'SVaultAI はあなたのプライベートなデジタル保管庫です。銀行の金庫や家庭用金庫を思い浮かべてください — 人々はそうしたもので大切な書類、ドライブ、現金、金、身分証、私的な記録を守っています。SVaultAI はその考えをデジタル形式で提供します。ファイル、書類、写真、動画、音声、パスワード、セキュアメモ、身分証、Crypto Vault 資産を一つの守られた場所に保管できます。パスワードや私的な記録をメール、メモ、スクリーンショット、あちこちのフォルダに散らかす代わりに、SVaultAI が保管庫の中で整理し保護するのを手伝います。SVaultAI Chat は保管庫内の内容を単なるファイルとして扱わず、検索・理解・管理を助けます。',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: 'Svaultai に何を保存できますか?',
+      question: 'SVaultAI に何を保存できますか?',
       answer:
           'ファイル、書類、写真、動画、音声、パスワード、生成ログイン、セキュアメモ、コード、デバイス情報、身分証、Crypto Vault 資産を保存できます。内部ウォレット記録は Crypto Vault が管理し、通常のセキュアアイテムとしては表示されません。',
     ),
@@ -1892,14 +1892,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: '保管庫はどうやって作りますか?',
       answer:
-          'Svaultai のサインイン画面を開き、保管庫名を選択または確認し、案内に従って PIN を設定します。PIN は保管庫の解除に使うので大切に保管してください。アカウントにリカバリー機能がない場合、PIN を失うとアクセスを回復できない可能性があります。',
+          'SVaultAI のサインイン画面を開き、保管庫名を選択または確認し、案内に従って PIN を設定します。PIN は保管庫の解除に使うので大切に保管してください。アカウントにリカバリー機能がない場合、PIN を失うとアクセスを回復できない可能性があります。',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: '保管庫はどうやってアンロックしますか?',
       answer:
-          '信頼されたデバイスで Svaultai を開き、PIN を入力します。PIN はローカルで保管庫を解除します — サーバーは平文の PIN を決して受け取りません。一部の重要操作では追加の確認を求められる場合があります。',
+          '信頼されたデバイスで SVaultAI を開き、PIN を入力します。PIN はローカルで保管庫を解除します — サーバーは平文の PIN を決して受け取りません。一部の重要操作では追加の確認を求められる場合があります。',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -1920,14 +1920,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '私の保管庫は暗号化されていますか?',
       answer:
-          'はい。Svaultai は保管庫の機密データを、PIN から派生した鍵で暗号化して保存します。機密値は既定で伏字になり、必要に応じて信頼されたデバイス・PIN 解除・確認関門で保護されます。',
+          'はい。SVaultAI は保管庫の機密データを、PIN から派生した鍵で暗号化して保存します。機密値は既定で伏字になり、必要に応じて信頼されたデバイス・PIN 解除・確認関門で保護されます。',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: 'Svaultai は保存した秘密を読めますか?',
+      question: 'SVaultAI は保存した秘密を読めますか?',
       answer:
-          'Svaultai はチャットでシードフレーズ、秘密鍵、ニーモニック、spend key、view key、暗号化ウォレットのシークレット、認証トークン、API キーを表示・要求しません。AI は保管庫のマスクされた安全な投影のみ扱います。',
+          'SVaultAI はチャットでシードフレーズ、秘密鍵、ニーモニック、spend key、view key、暗号化ウォレットのシークレット、認証トークン、API キーを表示・要求しません。AI は保管庫のマスクされた安全な投影のみ扱います。',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -1962,28 +1962,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'シードフレーズや秘密鍵をなぜ共有してはいけないのですか?',
       answer:
-          'シードフレーズ、秘密鍵、ニーモニック、spend key、view key を持つ人は誰でもあなたの暗号資産にアクセスして送金できます。Svaultai がこれらを尋ねることはなく、正当なサポート担当も同じです。',
+          'シードフレーズ、秘密鍵、ニーモニック、spend key、view key を持つ人は誰でもあなたの暗号資産にアクセスして送金できます。SVaultAI がこれらを尋ねることはなく、正当なサポート担当も同じです。',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: '保管庫はどうやって削除しますか?',
       answer:
-          '設定を開き「保管庫を削除」を選択します。Svaultai は警告を表示し、正確に DELETE MY VAULT というフレーズの入力、PIN の入力、信頼されたデバイスからの確認を求めます。ワンクリックにしていないのは意図的です。削除は永久です。Svaultai はチャットから保管庫を削除できず、この手順は PIN・信頼されたデバイス・フレーズ確認を回避できません。',
+          '設定を開き「保管庫を削除」を選択します。SVaultAI は警告を表示し、正確に DELETE MY VAULT というフレーズの入力、PIN の入力、信頼されたデバイスからの確認を求めます。ワンクリックにしていないのは意図的です。削除は永久です。SVaultAI はチャットから保管庫を削除できず、この手順は PIN・信頼されたデバイス・フレーズ確認を回避できません。',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: '保管庫を削除するとどうなりますか?',
       answer:
-          '保管庫を削除すると、Svaultai の保管庫データ(ファイル、セキュアアイテム、ログイン、身分証、Crypto Vault の暗号化されたウォレット記録、関連メタデータ)が完全に削除されます。有効なストレージのサブスクリプションは終了します。削除はブロックチェーン上の暗号資産を移動・削除しません — コインは対応するウォレットが存在する場所に残ります。Svaultai 外にウォレットのバックアップがない場合、暗号化された記録の削除により資金へのアクセスを失う可能性があります。',
+          '保管庫を削除すると、SVaultAI の保管庫データ(ファイル、セキュアアイテム、ログイン、身分証、Crypto Vault の暗号化されたウォレット記録、関連メタデータ)が完全に削除されます。有効なストレージのサブスクリプションは終了します。削除はブロックチェーン上の暗号資産を移動・削除しません — コインは対応するウォレットが存在する場所に残ります。SVaultAI 外にウォレットのバックアップがない場合、暗号化された記録の削除により資金へのアクセスを失う可能性があります。',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: '削除した保管庫を復元できますか?',
       answer:
-          'できません。削除を確定すると、Svaultai は保管庫データを永久に削除し復元できません。隠しコピーも復元フローもありません。Svaultai 外のウォレットバックアップも失った場合、そのウォレット上のオンチェーン資産も回復できなくなる可能性があります。',
+          'できません。削除を確定すると、SVaultAI は保管庫データを永久に削除し復元できません。隠しコピーも復元フローもありません。SVaultAI 外のウォレットバックアップも失った場合、そのウォレット上のオンチェーン資産も回復できなくなる可能性があります。',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -1997,25 +1997,25 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: 'どのファイル形式を保存できますか?',
       answer:
-          'Svaultai は一般的な書類、画像、音声、動画の形式を受け付けます。ストレージ枠に収まるファイルであればアップロードできます。',
+          'SVaultAI は一般的な書類、画像、音声、動画の形式を受け付けます。ストレージ枠に収まるファイルであればアップロードできます。',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: '書類の中を検索できますか?',
-      answer: 'はい。Svaultai はサポート対象の書類からテキストを抽出し、チャットやファイル一覧から内容を検索できます。',
+      answer: 'はい。SVaultAI はサポート対象の書類からテキストを抽出し、チャットやファイル一覧から内容を検索できます。',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: 'Svaultai に PDF を要約させられますか?',
+      question: 'SVaultAI に PDF を要約させられますか?',
       answer:
           'はい。特定の PDF や書類を要約するようアシスタントに依頼してください。要約は抽出テキストを使用し、元ファイルは変更しません。',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: 'Svaultai がファイルを見つけられないのはなぜ?',
+      question: 'SVaultAI がファイルを見つけられないのはなぜ?',
       answer:
           'ファイル名の綴り、現在の保管庫、アップロードが完了しているかを確認してください。まだ解析中のファイルは検索に出ないことがあります。',
     ),
@@ -2023,14 +2023,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'how-do-i-delete-a-file',
       category: 'files',
       question: 'ファイルはどう削除しますか?',
-      answer: 'ファイル一覧で該当行を開き「削除」を選びます。削除は永久 — Svaultai は隠しコピーを保持しません。',
+      answer: 'ファイル一覧で該当行を開き「削除」を選びます。削除は永久 — SVaultAI は隠しコピーを保持しません。',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: 'パスワードはどう保存しますか?',
       answer:
-          'ログインとセキュアアイテムのページを開き「保存」を選ぶか、アシスタントにログインの保存を依頼してください。Svaultai は保存前にエントリを暗号化します。',
+          'ログインとセキュアアイテムのページを開き「保存」を選ぶか、アシスタントにログインの保存を依頼してください。SVaultAI は保存前にエントリを暗号化します。',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -2061,9 +2061,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: 'Svaultai は重複ログインを見つけられますか?',
+      question: 'SVaultAI は重複ログインを見つけられますか?',
       answer:
-          'はい。重複または再利用されたパスワードの表示をアシスタントに依頼してください。Svaultai は解除後に保存済みログインをローカルで比較し一致を示します。',
+          'はい。重複または再利用されたパスワードの表示をアシスタントに依頼してください。SVaultAI は解除後に保存済みログインをローカルで比較し一致を示します。',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -2081,9 +2081,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'id-expiry-reminders': FaqEntry(
       id: 'id-expiry-reminders',
       category: 'ids',
-      question: 'Svaultai に有効期限を教えてもらえますか?',
+      question: 'SVaultAI に有効期限を教えてもらえますか?',
       answer:
-          'パスポートや運転免許証の有効期限をアシスタントに聞いてください。Svaultai は身分証から抽出された有効期限を読み取ります。',
+          'パスポートや運転免許証の有効期限をアシスタントに聞いてください。SVaultAI は身分証から抽出された有効期限を読み取ります。',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -2097,7 +2097,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Crypto Vault とは?',
       answer:
-          'Crypto Vault は Svaultai のノンカストディアルなウォレット機能です。公開の受取アドレスを保存し、公開プロバイダーからライブ残高を表示し、ローカルで署名する送金を準備できます。',
+          'Crypto Vault は SVaultAI のノンカストディアルなウォレット機能です。公開の受取アドレスを保存し、公開プロバイダーからライブ残高を表示し、ローカルで署名する送金を準備できます。',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -2111,28 +2111,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Crypto Vault はカストディアルですか?',
       answer:
-          'いいえ。Crypto Vault はノンカストディアルです。鍵はあなたのデバイス上にあり、Svaultai はあなたのローカル署名なしに暗号資産を移動できません。',
+          'いいえ。Crypto Vault はノンカストディアルです。鍵はあなたのデバイス上にあり、SVaultAI はあなたのローカル署名なしに暗号資産を移動できません。',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: 'Svaultai は私の暗号資産を動かせますか?',
+      question: 'SVaultAI は私の暗号資産を動かせますか?',
       answer:
-          'いいえ。Svaultai は PIN 解除、信頼されたデバイス、ローカル署名、明示的な確認なしに取引をブロードキャストできません。自動送信は一切しません。',
+          'いいえ。SVaultAI は PIN 解除、信頼されたデバイス、ローカル署名、明示的な確認なしに取引をブロードキャストできません。自動送信は一切しません。',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: 'なぜ送金前に PIN が必要ですか?',
       answer:
-          'PIN はローカル署名鍵をアンロックします。PIN なしではデバイスが取引に署名できず、Svaultai は未署名の送金リクエストを受け付けません。',
+          'PIN はローカル署名鍵をアンロックします。PIN なしではデバイスが取引に署名できず、SVaultAI は未署名の送金リクエストを受け付けません。',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: 'なぜ USDT には ERC20 と TRC20 があるのですか?',
       answer:
-          'USDT は複数のネットワークに存在します。Svaultai はイーサリアムの USDT ERC20 と TRON の USDT TRC20 に対応します。正しいネットワークを選ぶ必要があり — アドレス、手数料、送金はネットワーク固有で相互互換性はありません。',
+          'USDT は複数のネットワークに存在します。SVaultAI はイーサリアムの USDT ERC20 と TRON の USDT TRC20 に対応します。正しいネットワークを選ぶ必要があり — アドレス、手数料、送金はネットワーク固有で相互互換性はありません。',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -2160,7 +2160,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'ブラウザで Monero 残高が見えないのはなぜ?',
       answer:
-          '本物の Monero スキャンは Web アプリ内で安全に実行できません。Web では Svaultai は Monero 受取アドレスを表示できますが、残高と履歴はデスクトップまたはネイティブのローカルスキャナが必要です。',
+          '本物の Monero スキャンは Web アプリ内で安全に実行できません。Web では SVaultAI は Monero 受取アドレスを表示できますが、残高と履歴はデスクトップまたはネイティブのローカルスキャナが必要です。',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -2172,7 +2172,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'buy-sell-swap': FaqEntry(
       id: 'buy-sell-swap',
       category: 'crypto',
-      question: 'Svaultai で暗号資産の売買・交換・取引はできますか?',
+      question: 'SVaultAI で暗号資産の売買・交換・取引はできますか?',
       answer:
           'できません。Crypto Vault はサポートされた資産の保管・受信、および有効化された場合の送信のためのものです。取引所ではなく、購入・売却・スワップ・取引・ステーキング・ブリッジ・両替をサポートしません。',
     ),
@@ -2181,14 +2181,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'プロバイダーが利用できない場合はどうなりますか?',
       answer:
-          'Svaultai は残高を捏造せず、利用不可の明確な理由を表示します。0 残高は、プロバイダーが実際に 0 を返した場合にのみ表示されます。',
+          'SVaultAI は残高を捏造せず、利用不可の明確な理由を表示します。0 残高は、プロバイダーが実際に 0 を返した場合にのみ表示されます。',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: '残高が 0 と表示されるのはなぜ?',
       answer:
-          '表示された 0 残高は、プロバイダーが本物の 0 を返したことを意味します。プロバイダーが利用不可の場合、Svaultai は偽の 0 ではなく利用不可の理由を表示します。',
+          '表示された 0 残高は、プロバイダーが本物の 0 を返したことを意味します。プロバイダーが利用不可の場合、SVaultAI は偽の 0 ではなく利用不可の理由を表示します。',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -2202,21 +2202,21 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '保管庫を削除すると私の暗号資産はどうなりますか?',
       answer:
-          '保管庫を削除しても、ブロックチェーン上の暗号資産は移動・削除されません。Svaultai は暗号化されたウォレット記録をローカルとサーバーに保存しますが — コイン自体はオンチェーンにあります。保管庫の削除はこの暗号化された記録を除去します。Svaultai 外にウォレットのバックアップがない場合、これらの記録の消失は資金へのアクセス喪失を意味する可能性があります。Svaultai は削除中に暗号資産取引をブロードキャストしません。',
+          '保管庫を削除しても、ブロックチェーン上の暗号資産は移動・削除されません。SVaultAI は暗号化されたウォレット記録をローカルとサーバーに保存しますが — コイン自体はオンチェーンにあります。保管庫の削除はこの暗号化された記録を除去します。SVaultAI 外にウォレットのバックアップがない場合、これらの記録の消失は資金へのアクセス喪失を意味する可能性があります。SVaultAI は削除中に暗号資産取引をブロードキャストしません。',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: '私はどのプランを利用中ですか?',
       answer:
-          'アシスタントに「今のプランは?」と聞くか、請求ページを開いてください。Svaultai は有効なプランとそれに付与されるストレージ枠を表示します。',
+          'アシスタントに「今のプランは?」と聞くか、請求ページを開いてください。SVaultAI は有効なプランとそれに付与されるストレージ枠を表示します。',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: 'ストレージはどのくらいありますか?',
       answer:
-          'アシスタントに「どのくらいストレージを使っている?」と聞くか、ストレージページを開いてください。Svaultai は使用バイト、上限バイト、使用率を表示します。',
+          'アシスタントに「どのくらいストレージを使っている?」と聞くか、ストレージページを開いてください。SVaultAI は使用バイト、上限バイト、使用率を表示します。',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -2229,7 +2229,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'ストレージはどうやってアップグレードしますか?',
       answer:
-          '請求ページを開きアップグレードプランを選択します。決済は決済プロバイダー経由で処理され、Svaultai は決済情報を保存しません。',
+          '請求ページを開きアップグレードプランを選択します。決済は決済プロバイダー経由で処理され、SVaultAI は決済情報を保存しません。',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -2242,7 +2242,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: 'なぜチェックアウトが開くのですか?',
       answer:
-          '決済は決済プロバイダー経由で処理され、Svaultai が決済情報を直接扱わないようにしています。チェックアウトはプロバイダーの UI で開きます。',
+          '決済は決済プロバイダー経由で処理され、SVaultAI が決済情報を直接扱わないようにしています。チェックアウトはプロバイダーの UI で開きます。',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -2256,7 +2256,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '未払いで非アクティブな保管庫が削除されるのはなぜ?',
       answer:
-          '6 か月以上使用されていない未払いの保管庫は永久に削除される場合があります。これは Svaultai のストレージを、実際に保管庫を使っている人に集中させるためです。保管庫を有効に保つには 6 か月の非アクティブ期限前にサインインして使用するか、継続的なストレージ保護を望むなら購読してください。期限前に購読またはアクティブになれば保管庫は削除されません。',
+          '6 か月以上使用されていない未払いの保管庫は永久に削除される場合があります。これは SVaultAI のストレージを、実際に保管庫を使っている人に集中させるためです。保管庫を有効に保つには 6 か月の非アクティブ期限前にサインインして使用するか、継続的なストレージ保護を望むなら購読してください。期限前に購読またはアクティブになれば保管庫は削除されません。',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -2270,7 +2270,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: '残高が「利用不可」と表示されるのはなぜ?',
       answer:
-          'その資産のプロバイダーが時間内に値を返さなかったからです。Svaultai は偽の 0 ではなく正直な「利用不可」状態を表示します。再試行で通常は回復します。',
+          'その資産のプロバイダーが時間内に値を返さなかったからです。SVaultAI は偽の 0 ではなく正直な「利用不可」状態を表示します。再試行で通常は回復します。',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -2298,14 +2298,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'TRON が「プロバイダー利用不可」と言うのはなぜ?',
       answer:
-          'TRON の残高プロバイダーが時間内に応答しませんでした。Svaultai は偽の 0 ではなく利用不可を表示します。再試行で回復することが多く、受取アドレスは常に有効です。',
+          'TRON の残高プロバイダーが時間内に応答しませんでした。SVaultAI は偽の 0 ではなく利用不可を表示します。再試行で回復することが多く、受取アドレスは常に有効です。',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: 'なぜサブスクリプション状態が「確認中」なのですか?',
       answer:
-          'Svaultai が請求プロバイダーから最新のプラン状態を取得しています。通常は数秒で解消しますが、続く場合は請求ページから更新を試してください。',
+          'SVaultAI が請求プロバイダーから最新のプラン状態を取得しています。通常は数秒で解消しますが、続く場合は請求ページから更新を試してください。',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',
@@ -2333,14 +2333,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: 'Svaultai가 뭐야?',
+      question: 'SVaultAI가 뭐야?',
       answer:
-          'Svaultai 는 당신의 개인 디지털 금고입니다. 은행 금고나 가정용 금고를 떠올려 보세요 — 사람들이 중요한 서류, 저장 매체, 현금, 금, 신분증, 개인 기록을 보호하기 위해 사용하는 그것입니다. Svaultai 는 그 개념을 디지털로 제공합니다. 파일, 문서, 사진, 동영상, 오디오, 비밀번호, 보안 노트, 신분증, Crypto Vault 자산을 한 곳에 보호해 저장할 수 있습니다. 이메일, 메모, 스크린샷, 여기저기 흩어진 폴더에 저장하는 대신, Svaultai 가 정돈하고 안전하게 보관하도록 돕습니다. Svaultai Chat 은 파일 취급이 아니라 내용을 이해하며 보관소 안을 검색하고 관리하도록 돕습니다.',
+          'SVaultAI 는 당신의 개인 디지털 금고입니다. 은행 금고나 가정용 금고를 떠올려 보세요 — 사람들이 중요한 서류, 저장 매체, 현금, 금, 신분증, 개인 기록을 보호하기 위해 사용하는 그것입니다. SVaultAI 는 그 개념을 디지털로 제공합니다. 파일, 문서, 사진, 동영상, 오디오, 비밀번호, 보안 노트, 신분증, Crypto Vault 자산을 한 곳에 보호해 저장할 수 있습니다. 이메일, 메모, 스크린샷, 여기저기 흩어진 폴더에 저장하는 대신, SVaultAI 가 정돈하고 안전하게 보관하도록 돕습니다. SVaultAI Chat 은 파일 취급이 아니라 내용을 이해하며 보관소 안을 검색하고 관리하도록 돕습니다.',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: 'Svaultai 에 무엇을 저장할 수 있나요?',
+      question: 'SVaultAI 에 무엇을 저장할 수 있나요?',
       answer:
           '파일, 문서, 사진, 동영상, 오디오, 비밀번호, 생성된 로그인, 보안 노트, 코드, 기기 정보, 신분증 문서, Crypto Vault 자산을 저장할 수 있습니다. 내부 지갑 기록은 Crypto Vault 가 관리하며 일반 보안 항목으로 표시되지 않습니다.',
     ),
@@ -2349,14 +2349,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: '보관소를 어떻게 만들어?',
       answer:
-          'Svaultai 로그인 화면을 열어 보관소 이름을 선택하거나 확인하고, 안내에 따라 PIN 을 설정합니다. PIN 은 보관소를 잠금 해제하는 데 사용되므로 안전하게 보관하세요. 계정에 복구 기능이 없다면 PIN 을 잃으면 접근을 복구할 수 없을 수 있습니다.',
+          'SVaultAI 로그인 화면을 열어 보관소 이름을 선택하거나 확인하고, 안내에 따라 PIN 을 설정합니다. PIN 은 보관소를 잠금 해제하는 데 사용되므로 안전하게 보관하세요. 계정에 복구 기능이 없다면 PIN 을 잃으면 접근을 복구할 수 없을 수 있습니다.',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: '보관소를 어떻게 잠금 해제해?',
       answer:
-          '신뢰된 기기에서 Svaultai 를 열고 PIN 을 입력하세요. PIN 은 로컬에서 보관소를 잠금 해제하며 — 서버는 PIN 을 평문으로 절대 보지 못합니다. 일부 민감한 작업은 다시 한 번 확인을 요청할 수 있습니다.',
+          '신뢰된 기기에서 SVaultAI 를 열고 PIN 을 입력하세요. PIN 은 로컬에서 보관소를 잠금 해제하며 — 서버는 PIN 을 평문으로 절대 보지 못합니다. 일부 민감한 작업은 다시 한 번 확인을 요청할 수 있습니다.',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -2377,14 +2377,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '내 보관소는 암호화돼 있어?',
       answer:
-          '예. Svaultai 는 민감한 보관소 데이터를 PIN 에서 파생된 키로 암호화해 저장합니다. 민감한 값은 기본으로 가려져 있으며, 필요에 따라 신뢰된 기기 / PIN 잠금 해제 / 확인 절차로 보호됩니다.',
+          '예. SVaultAI 는 민감한 보관소 데이터를 PIN 에서 파생된 키로 암호화해 저장합니다. 민감한 값은 기본으로 가려져 있으며, 필요에 따라 신뢰된 기기 / PIN 잠금 해제 / 확인 절차로 보호됩니다.',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: 'Svaultai 가 저장된 비밀을 읽을 수 있어?',
+      question: 'SVaultAI 가 저장된 비밀을 읽을 수 있어?',
       answer:
-          'Svaultai 는 채팅에서 시드 문구, 개인 키, 니모닉, spend key, view key, 암호화된 지갑 비밀, 인증 토큰, API 키 를 표시하거나 요구하지 않습니다. AI 는 보관소의 가려진 안전한 표현만 다룹니다.',
+          'SVaultAI 는 채팅에서 시드 문구, 개인 키, 니모닉, spend key, view key, 암호화된 지갑 비밀, 인증 토큰, API 키 를 표시하거나 요구하지 않습니다. AI 는 보관소의 가려진 안전한 표현만 다룹니다.',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -2419,28 +2419,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '시드 문구나 개인 키를 왜 공유하면 안 돼?',
       answer:
-          '시드 문구, 개인 키, 니모닉, spend key, view key 를 가진 사람은 누구든 당신의 암호화폐를 사용하거나 이동할 수 있습니다. Svaultai 는 이러한 값을 절대 요구하지 않으며, 진짜 지원 담당자도 그러지 않아야 합니다.',
+          '시드 문구, 개인 키, 니모닉, spend key, view key 를 가진 사람은 누구든 당신의 암호화폐를 사용하거나 이동할 수 있습니다. SVaultAI 는 이러한 값을 절대 요구하지 않으며, 진짜 지원 담당자도 그러지 않아야 합니다.',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: '보관소를 어떻게 삭제해?',
       answer:
-          '설정을 열고 보관소 삭제를 선택하세요. Svaultai 는 경고를 표시한 뒤 정확히 DELETE MY VAULT 문구를 입력하고, PIN 을 입력하고, 신뢰된 기기에서 확인하도록 요구합니다. 원클릭이 아닌 것은 의도적입니다. 삭제는 영구적입니다. Svaultai 는 채팅에서 보관소를 삭제할 수 없으며, 이 흐름은 PIN·신뢰된 기기·문구 확인을 우회할 수 없습니다.',
+          '설정을 열고 보관소 삭제를 선택하세요. SVaultAI 는 경고를 표시한 뒤 정확히 DELETE MY VAULT 문구를 입력하고, PIN 을 입력하고, 신뢰된 기기에서 확인하도록 요구합니다. 원클릭이 아닌 것은 의도적입니다. 삭제는 영구적입니다. SVaultAI 는 채팅에서 보관소를 삭제할 수 없으며, 이 흐름은 PIN·신뢰된 기기·문구 확인을 우회할 수 없습니다.',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: '보관소를 삭제하면 어떻게 돼?',
       answer:
-          '보관소를 삭제하면 Svaultai 의 보관소 데이터가 영구 삭제됩니다: 파일, 보안 항목, 로그인, 신분증, Crypto Vault 암호화된 지갑 기록, 관련 메타데이터. 활성 저장소 구독은 종료됩니다. 삭제는 블록체인의 암호 자산을 이동하거나 삭제하지 않습니다 — 코인은 해당 지갑이 존재하는 곳에 그대로 남습니다. Svaultai 외부에 지갑을 백업하지 않았다면 암호화된 기록의 삭제로 그 자금에 대한 접근을 잃을 수 있습니다.',
+          '보관소를 삭제하면 SVaultAI 의 보관소 데이터가 영구 삭제됩니다: 파일, 보안 항목, 로그인, 신분증, Crypto Vault 암호화된 지갑 기록, 관련 메타데이터. 활성 저장소 구독은 종료됩니다. 삭제는 블록체인의 암호 자산을 이동하거나 삭제하지 않습니다 — 코인은 해당 지갑이 존재하는 곳에 그대로 남습니다. SVaultAI 외부에 지갑을 백업하지 않았다면 암호화된 기록의 삭제로 그 자금에 대한 접근을 잃을 수 있습니다.',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: '삭제된 보관소를 복구할 수 있어?',
       answer:
-          '아니오. 삭제를 확인하면 Svaultai 는 보관소 데이터를 영구 삭제하며 복원할 수 없습니다. 숨겨진 사본도, 복구 흐름도 없습니다. Svaultai 외부의 지갑 백업까지 잃는다면 해당 지갑의 온체인 자산도 복구가 불가능할 수 있습니다.',
+          '아니오. 삭제를 확인하면 SVaultAI 는 보관소 데이터를 영구 삭제하며 복원할 수 없습니다. 숨겨진 사본도, 복구 흐름도 없습니다. SVaultAI 외부의 지갑 백업까지 잃는다면 해당 지갑의 온체인 자산도 복구가 불가능할 수 있습니다.',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -2454,26 +2454,26 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: '어떤 파일 형식을 저장할 수 있어?',
       answer:
-          'Svaultai 는 일반적인 문서, 이미지, 오디오, 동영상 파일 형식을 받습니다. 저장 용량 안에 들어오는 파일이면 업로드할 수 있습니다.',
+          'SVaultAI 는 일반적인 문서, 이미지, 오디오, 동영상 파일 형식을 받습니다. 저장 용량 안에 들어오는 파일이면 업로드할 수 있습니다.',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: '문서 안을 검색할 수 있어?',
       answer:
-          '예. Svaultai 는 지원되는 문서에서 텍스트를 추출하고 채팅이나 파일 목록에서 내용을 검색할 수 있게 합니다.',
+          '예. SVaultAI 는 지원되는 문서에서 텍스트를 추출하고 채팅이나 파일 목록에서 내용을 검색할 수 있게 합니다.',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: 'Svaultai 가 내 PDF 를 요약할 수 있어?',
+      question: 'SVaultAI 가 내 PDF 를 요약할 수 있어?',
       answer:
           '예. 어시스턴트에게 특정 PDF 나 문서를 요약해 달라고 요청하세요. 요약은 추출된 텍스트를 사용하며 원본 파일은 수정하지 않습니다.',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: 'Svaultai 가 왜 내 파일을 못 찾아?',
+      question: 'SVaultAI 가 왜 내 파일을 못 찾아?',
       answer:
           '파일 이름의 철자, 현재 보관소, 업로드가 완료되었는지 확인하세요. 아직 분석 중인 파일은 검색에 나타나지 않을 수 있습니다.',
     ),
@@ -2482,14 +2482,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'files',
       question: '파일은 어떻게 삭제해?',
       answer:
-          '파일 목록에서 해당 행을 열고 삭제를 선택하세요. 삭제는 영구적이며 — Svaultai 는 숨겨진 사본을 보관하지 않습니다.',
+          '파일 목록에서 해당 행을 열고 삭제를 선택하세요. 삭제는 영구적이며 — SVaultAI 는 숨겨진 사본을 보관하지 않습니다.',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: '비밀번호는 어떻게 저장해?',
       answer:
-          '로그인 및 보안 항목 페이지를 열어 저장을 선택하거나 어시스턴트에게 로그인 저장을 요청하세요. Svaultai 는 저장 전에 항목을 암호화합니다.',
+          '로그인 및 보안 항목 페이지를 열어 저장을 선택하거나 어시스턴트에게 로그인 저장을 요청하세요. SVaultAI 는 저장 전에 항목을 암호화합니다.',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -2521,9 +2521,9 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: 'Svaultai 가 중복 로그인을 찾을 수 있어?',
+      question: 'SVaultAI 가 중복 로그인을 찾을 수 있어?',
       answer:
-          '예. 어시스턴트에게 중복 또는 재사용된 비밀번호를 보여달라고 요청하세요. Svaultai 는 잠금 해제 후 저장된 로그인을 로컬에서 비교해 일치 항목을 표시합니다.',
+          '예. 어시스턴트에게 중복 또는 재사용된 비밀번호를 보여달라고 요청하세요. SVaultAI 는 잠금 해제 후 저장된 로그인을 로컬에서 비교해 일치 항목을 표시합니다.',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -2544,7 +2544,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'ids',
       question: '만료일을 알려줄 수 있어?',
       answer:
-          '어시스턴트에게 여권이나 운전면허증의 만료일을 물어보세요. Svaultai 가 신분증 문서에서 추출된 만료일을 읽어 알려줍니다.',
+          '어시스턴트에게 여권이나 운전면허증의 만료일을 물어보세요. SVaultAI 가 신분증 문서에서 추출된 만료일을 읽어 알려줍니다.',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -2558,7 +2558,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Crypto Vault 가 뭐야?',
       answer:
-          'Crypto Vault 는 Svaultai 의 비수탁형 지갑 기능입니다. 공개 수신 주소를 저장하고, 공개 제공자로부터 실시간 잔액을 표시하며, 당신이 로컬에서 서명하는 송금을 준비할 수 있게 합니다.',
+          'Crypto Vault 는 SVaultAI 의 비수탁형 지갑 기능입니다. 공개 수신 주소를 저장하고, 공개 제공자로부터 실시간 잔액을 표시하며, 당신이 로컬에서 서명하는 송금을 준비할 수 있게 합니다.',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -2572,28 +2572,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Crypto Vault 는 수탁형이야?',
       answer:
-          '아니오. Crypto Vault 는 비수탁형입니다. 키는 당신의 기기에 있으며, Svaultai 는 당신의 로컬 서명 없이는 암호화폐를 이동할 수 없습니다.',
+          '아니오. Crypto Vault 는 비수탁형입니다. 키는 당신의 기기에 있으며, SVaultAI 는 당신의 로컬 서명 없이는 암호화폐를 이동할 수 없습니다.',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: 'Svaultai 가 내 암호화폐를 이동할 수 있어?',
+      question: 'SVaultAI 가 내 암호화폐를 이동할 수 있어?',
       answer:
-          '아니오. Svaultai 는 당신의 PIN 잠금 해제, 신뢰된 기기, 로컬 서명, 명시적 확인 없이는 거래를 브로드캐스트할 수 없습니다. 자동 전송은 절대 하지 않습니다.',
+          '아니오. SVaultAI 는 당신의 PIN 잠금 해제, 신뢰된 기기, 로컬 서명, 명시적 확인 없이는 거래를 브로드캐스트할 수 없습니다. 자동 전송은 절대 하지 않습니다.',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: '송금 전에 왜 PIN 이 필요해?',
       answer:
-          'PIN 은 로컬 서명 키의 잠금을 해제합니다. PIN 없이 기기는 거래에 서명할 수 없으며, Svaultai 는 서명되지 않은 송금 요청을 받지 않습니다.',
+          'PIN 은 로컬 서명 키의 잠금을 해제합니다. PIN 없이 기기는 거래에 서명할 수 없으며, SVaultAI 는 서명되지 않은 송금 요청을 받지 않습니다.',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: 'USDT 는 왜 ERC20 과 TRC20 이 있어?',
       answer:
-          'USDT 는 여러 네트워크에 존재합니다. Svaultai 는 이더리움의 USDT ERC20 과 TRON 의 USDT TRC20 을 지원합니다. 올바른 네트워크를 선택해야 하며 — 주소, 수수료, 전송은 네트워크별로 다르고 서로 교환되지 않습니다.',
+          'USDT 는 여러 네트워크에 존재합니다. SVaultAI 는 이더리움의 USDT ERC20 과 TRON 의 USDT TRC20 을 지원합니다. 올바른 네트워크를 선택해야 하며 — 주소, 수수료, 전송은 네트워크별로 다르고 서로 교환되지 않습니다.',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -2621,7 +2621,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '브라우저에서 Monero 잔액이 왜 안 보여?',
       answer:
-          '실제 Monero 스캔은 웹 앱 안에서 안전하게 실행될 수 없습니다. 웹에서 Svaultai 는 Monero 수신 주소를 표시할 수 있지만, 잔액과 활동은 데스크톱 또는 네이티브 로컬 스캐너가 필요합니다.',
+          '실제 Monero 스캔은 웹 앱 안에서 안전하게 실행될 수 없습니다. 웹에서 SVaultAI 는 Monero 수신 주소를 표시할 수 있지만, 잔액과 활동은 데스크톱 또는 네이티브 로컬 스캐너가 필요합니다.',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -2633,7 +2633,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'buy-sell-swap': FaqEntry(
       id: 'buy-sell-swap',
       category: 'crypto',
-      question: 'Svaultai 에서 암호화폐를 사거나 팔거나 교환할 수 있어?',
+      question: 'SVaultAI 에서 암호화폐를 사거나 팔거나 교환할 수 있어?',
       answer:
           '아니오. Crypto Vault 는 지원되는 자산의 저장, 수신, 그리고 활성화된 곳에서의 송신용입니다. 거래소가 아니며 매수, 매도, 스왑, 트레이드, 스테이킹, 브리징, 환전을 지원하지 않습니다.',
     ),
@@ -2642,14 +2642,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '제공자를 사용할 수 없으면 어떻게 돼?',
       answer:
-          'Svaultai 는 잔액을 지어내지 않고 사용 불가라는 명확한 이유를 표시합니다. 0 잔액은 제공자가 실제로 0 을 반환할 때만 표시됩니다.',
+          'SVaultAI 는 잔액을 지어내지 않고 사용 불가라는 명확한 이유를 표시합니다. 0 잔액은 제공자가 실제로 0 을 반환할 때만 표시됩니다.',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: '잔액이 왜 0 이라고 표시돼?',
       answer:
-          '표시된 0 잔액은 제공자가 실제 0 을 반환했음을 의미합니다. 제공자를 사용할 수 없었다면 Svaultai 는 가짜 0 대신 사용 불가 이유를 표시합니다.',
+          '표시된 0 잔액은 제공자가 실제 0 을 반환했음을 의미합니다. 제공자를 사용할 수 없었다면 SVaultAI 는 가짜 0 대신 사용 불가 이유를 표시합니다.',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -2663,21 +2663,21 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '보관소를 삭제하면 암호화폐는 어떻게 돼?',
       answer:
-          '보관소를 삭제해도 블록체인의 암호 자산은 이동되거나 삭제되지 않습니다. Svaultai 는 암호화된 지갑 기록을 로컬과 서버에 저장하지만 — 코인 자체는 온체인에 존재합니다. 보관소 삭제는 이 암호화된 기록을 제거합니다. Svaultai 외부에 지갑을 백업하지 않았다면 암호화된 기록의 손실은 자금 접근의 손실을 의미할 수 있습니다. Svaultai 는 삭제 중 암호화폐 거래를 브로드캐스트하지 않습니다.',
+          '보관소를 삭제해도 블록체인의 암호 자산은 이동되거나 삭제되지 않습니다. SVaultAI 는 암호화된 지갑 기록을 로컬과 서버에 저장하지만 — 코인 자체는 온체인에 존재합니다. 보관소 삭제는 이 암호화된 기록을 제거합니다. SVaultAI 외부에 지갑을 백업하지 않았다면 암호화된 기록의 손실은 자금 접근의 손실을 의미할 수 있습니다. SVaultAI 는 삭제 중 암호화폐 거래를 브로드캐스트하지 않습니다.',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: '지금 어떤 플랜을 쓰고 있어?',
       answer:
-          '어시스턴트에게 "내 플랜이 뭐야" 라고 물어보거나 결제 페이지를 여세요. Svaultai 는 활성 플랜과 그것이 부여하는 저장 용량을 표시합니다.',
+          '어시스턴트에게 "내 플랜이 뭐야" 라고 물어보거나 결제 페이지를 여세요. SVaultAI 는 활성 플랜과 그것이 부여하는 저장 용량을 표시합니다.',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: '저장 용량은 얼마나 있어?',
       answer:
-          '어시스턴트에게 "저장 용량 얼마나 썼어" 라고 물어보거나 저장 페이지를 여세요. Svaultai 는 사용 바이트, 한도 바이트, 사용률을 표시합니다.',
+          '어시스턴트에게 "저장 용량 얼마나 썼어" 라고 물어보거나 저장 페이지를 여세요. SVaultAI 는 사용 바이트, 한도 바이트, 사용률을 표시합니다.',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -2690,7 +2690,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '저장 용량은 어떻게 업그레이드해?',
       answer:
-          '결제 페이지를 열고 업그레이드 등급을 선택하세요. 결제 제공자를 통한 결제가 진행됩니다 — Svaultai 는 결제 정보를 저장하지 않습니다.',
+          '결제 페이지를 열고 업그레이드 등급을 선택하세요. 결제 제공자를 통한 결제가 진행됩니다 — SVaultAI 는 결제 정보를 저장하지 않습니다.',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -2703,7 +2703,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '결제 창이 왜 열려?',
       answer:
-          '결제는 결제 제공자를 통해 처리되어 Svaultai 가 결제 정보를 직접 다루지 않도록 합니다. 결제 창은 제공자의 UI 에서 열립니다.',
+          '결제는 결제 제공자를 통해 처리되어 SVaultAI 가 결제 정보를 직접 다루지 않도록 합니다. 결제 창은 제공자의 UI 에서 열립니다.',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -2717,7 +2717,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '왜 미결제 비활성 보관소가 삭제돼?',
       answer:
-          '6 개월 이상 사용되지 않는 미결제 보관소는 영구 삭제될 수 있습니다. 이는 Svaultai 저장소를 실제로 보관소를 사용하는 사람들에게 집중시키기 위함입니다. 보관소를 유지하려면 6 개월 비활성 기한 전에 로그인해 사용하거나, 저장 보호를 계속하려면 구독하세요. 기한 전에 구독하거나 활성 상태가 되면 보관소는 삭제되지 않습니다.',
+          '6 개월 이상 사용되지 않는 미결제 보관소는 영구 삭제될 수 있습니다. 이는 SVaultAI 저장소를 실제로 보관소를 사용하는 사람들에게 집중시키기 위함입니다. 보관소를 유지하려면 6 개월 비활성 기한 전에 로그인해 사용하거나, 저장 보호를 계속하려면 구독하세요. 기한 전에 구독하거나 활성 상태가 되면 보관소는 삭제되지 않습니다.',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -2731,7 +2731,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: '왜 잔액이 사용 불가로 표시돼?',
       answer:
-          '해당 자산의 제공자가 제때 값을 반환하지 않았습니다. Svaultai 는 가짜 0 대신 정직하게 "사용 불가" 상태를 표시합니다. 재시도하면 대개 복구됩니다.',
+          '해당 자산의 제공자가 제때 값을 반환하지 않았습니다. SVaultAI 는 가짜 0 대신 정직하게 "사용 불가" 상태를 표시합니다. 재시도하면 대개 복구됩니다.',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -2759,14 +2759,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'troubleshooting',
       question: 'TRON 이 왜 제공자 사용 불가라고 해?',
       answer:
-          'TRON 잔액 제공자가 제때 응답하지 않았습니다. Svaultai 는 가짜 0 대신 사용 불가를 표시합니다. 재시도하면 대개 복구되며, 수신 주소는 관계없이 유효합니다.',
+          'TRON 잔액 제공자가 제때 응답하지 않았습니다. SVaultAI 는 가짜 0 대신 사용 불가를 표시합니다. 재시도하면 대개 복구되며, 수신 주소는 관계없이 유효합니다.',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: '구독 상태가 왜 확인 중이야?',
       answer:
-          'Svaultai 가 결제 제공자로부터 최신 플랜 상태를 가져오는 중입니다. 보통 몇 초 안에 해결됩니다. 계속 지속되면 결제 페이지에서 새로 고침해 보세요.',
+          'SVaultAI 가 결제 제공자로부터 최신 플랜 상태를 가져오는 중입니다. 보통 몇 초 안에 해결됩니다. 계속 지속되면 결제 페이지에서 새로 고침해 보세요.',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',
@@ -2794,14 +2794,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'what-is-vaultai': FaqEntry(
       id: 'what-is-vaultai',
       category: 'getting_started',
-      question: 'Svaultai 是什么?',
+      question: 'SVaultAI 是什么?',
       answer:
-          'Svaultai 是你的私人数字保险库。想象银行金库或家用保险箱 — 人们用它们保护重要文件、存储介质、现金、黄金、身份证件和私密记录。Svaultai 以数字形式提供同样的理念。你可以在一个受保护的地方存放文件、文档、照片、视频、音频、密码、安全笔记、身份证件和 Crypto Vault 资产。Svaultai 帮你整理并保护它们,而不是散落在邮件、笔记、截图或随手的文件夹中。Svaultai Chat 帮你搜索、理解并管理保险库中的内容,而不是把所有东西都当成普通文件。',
+          'SVaultAI 是你的私人数字保险库。想象银行金库或家用保险箱 — 人们用它们保护重要文件、存储介质、现金、黄金、身份证件和私密记录。SVaultAI 以数字形式提供同样的理念。你可以在一个受保护的地方存放文件、文档、照片、视频、音频、密码、安全笔记、身份证件和 Crypto Vault 资产。SVaultAI 帮你整理并保护它们,而不是散落在邮件、笔记、截图或随手的文件夹中。SVaultAI Chat 帮你搜索、理解并管理保险库中的内容,而不是把所有东西都当成普通文件。',
     ),
     'what-can-i-save': FaqEntry(
       id: 'what-can-i-save',
       category: 'getting_started',
-      question: 'Svaultai 里能保存什么?',
+      question: 'SVaultAI 里能保存什么?',
       answer:
           '你可以保存文件、文档、照片、视频、音频、密码、生成的登录信息、安全笔记、代码、设备详情、身份证件和 Crypto Vault 资产。内部钱包记录由 Crypto Vault 管理,不作为普通安全项目显示。',
     ),
@@ -2810,14 +2810,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: '如何创建我的保险库?',
       answer:
-          '打开 Svaultai 登录流程,选择或确认保险库名称,并按提示设置 PIN。PIN 用于解锁保险库,请妥善保管。如果账户没有找回功能,丢失 PIN 可能意味着无法恢复访问。',
+          '打开 SVaultAI 登录流程,选择或确认保险库名称,并按提示设置 PIN。PIN 用于解锁保险库,请妥善保管。如果账户没有找回功能,丢失 PIN 可能意味着无法恢复访问。',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
       category: 'getting_started',
       question: '如何解锁我的保险库?',
       answer:
-          '在受信任的设备上打开 Svaultai 并输入 PIN。PIN 在本地解锁保险库 — 服务器绝不会看到明文 PIN。某些敏感操作可能会要求再次确认。',
+          '在受信任的设备上打开 SVaultAI 并输入 PIN。PIN 在本地解锁保险库 — 服务器绝不会看到明文 PIN。某些敏感操作可能会要求再次确认。',
     ),
     'trusted-device': FaqEntry(
       id: 'trusted-device',
@@ -2837,14 +2837,14 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '我的保险库是加密的吗?',
       answer:
-          '是的。Svaultai 使用从你的 PIN 派生的密钥加密存储敏感的保险库数据。敏感值默认被遮罩,并根据需要通过受信任设备、解锁/PIN 和确认关卡进行保护。',
+          '是的。SVaultAI 使用从你的 PIN 派生的密钥加密存储敏感的保险库数据。敏感值默认被遮罩,并根据需要通过受信任设备、解锁/PIN 和确认关卡进行保护。',
     ),
     'can-vaultai-read-secrets': FaqEntry(
       id: 'can-vaultai-read-secrets',
       category: 'security',
-      question: 'Svaultai 能读取我保存的秘密吗?',
+      question: 'SVaultAI 能读取我保存的秘密吗?',
       answer:
-          'Svaultai 在聊天中不会显示或索要你的助记词、私钥、种子短语、spend key、view key、加密的钱包秘密、认证令牌或 API 密钥。AI 只处理保险库经过遮罩、安全的投影。',
+          'SVaultAI 在聊天中不会显示或索要你的助记词、私钥、种子短语、spend key、view key、加密的钱包秘密、认证令牌或 API 密钥。AI 只处理保险库经过遮罩、安全的投影。',
     ),
     'if-i-forget-my-pin': FaqEntry(
       id: 'if-i-forget-my-pin',
@@ -2877,28 +2877,28 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: '为什么不该分享我的助记词或私钥?',
       answer:
-          '任何持有你的助记词、私钥、种子短语、spend key、view key 的人都可以使用或转移你的加密货币。Svaultai 绝不会索要这些值,任何真正的支持人员也不应该。',
+          '任何持有你的助记词、私钥、种子短语、spend key、view key 的人都可以使用或转移你的加密货币。SVaultAI 绝不会索要这些值,任何真正的支持人员也不应该。',
     ),
     'delete-my-vault': FaqEntry(
       id: 'delete-my-vault',
       category: 'security',
       question: '如何删除我的保险库?',
       answer:
-          '打开设置并选择删除保险库。Svaultai 会显示警告,然后要求你完全一致地输入 DELETE MY VAULT 这一短语,输入 PIN,并从受信任设备确认。故意不做成一键操作。删除是永久的。Svaultai 不能从聊天中删除保险库,此流程无法绕过 PIN、受信任设备或短语确认。',
+          '打开设置并选择删除保险库。SVaultAI 会显示警告,然后要求你完全一致地输入 DELETE MY VAULT 这一短语,输入 PIN,并从受信任设备确认。故意不做成一键操作。删除是永久的。SVaultAI 不能从聊天中删除保险库,此流程无法绕过 PIN、受信任设备或短语确认。',
     ),
     'what-happens-when-i-delete-my-vault': FaqEntry(
       id: 'what-happens-when-i-delete-my-vault',
       category: 'security',
       question: '删除我的保险库会发生什么?',
       answer:
-          '删除保险库将永久删除你的 Svaultai 保险库数据,包括文件、安全项目、登录、身份证件、Crypto Vault 加密钱包记录以及相关的元数据。任何有效的存储订阅将被关闭。删除不会移动或删除区块链上的加密资产 — 那些币仍留在对应钱包所在之处。如果你未在 Svaultai 之外备份钱包,删除加密的钱包记录可能导致对这些资金失去访问。',
+          '删除保险库将永久删除你的 SVaultAI 保险库数据,包括文件、安全项目、登录、身份证件、Crypto Vault 加密钱包记录以及相关的元数据。任何有效的存储订阅将被关闭。删除不会移动或删除区块链上的加密资产 — 那些币仍留在对应钱包所在之处。如果你未在 SVaultAI 之外备份钱包,删除加密的钱包记录可能导致对这些资金失去访问。',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',
       category: 'security',
       question: '能恢复已删除的保险库吗?',
       answer:
-          '不能。一旦你确认删除,Svaultai 会永久移除保险库数据,并无法还原。没有隐藏副本也没有恢复流程。如果你也丢失了在 Svaultai 之外保存的钱包备份,该钱包中的链上加密资产也可能无法恢复。',
+          '不能。一旦你确认删除,SVaultAI 会永久移除保险库数据,并无法还原。没有隐藏副本也没有恢复流程。如果你也丢失了在 SVaultAI 之外保存的钱包备份,该钱包中的链上加密资产也可能无法恢复。',
     ),
     'how-do-i-upload-files': FaqEntry(
       id: 'how-do-i-upload-files',
@@ -2910,37 +2910,37 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'what-file-types',
       category: 'files',
       question: '可以存哪些文件类型?',
-      answer: 'Svaultai 接受常见的文档、图片、音频和视频文件类型。任何在你存储配额范围内的文件都可以上传。',
+      answer: 'SVaultAI 接受常见的文档、图片、音频和视频文件类型。任何在你存储配额范围内的文件都可以上传。',
     ),
     'search-inside-documents': FaqEntry(
       id: 'search-inside-documents',
       category: 'files',
       question: '能搜索文档内容吗?',
-      answer: '可以。Svaultai 从受支持的文档提取文本,让你在聊天或文件列表中搜索它们的内容。',
+      answer: '可以。SVaultAI 从受支持的文档提取文本,让你在聊天或文件列表中搜索它们的内容。',
     ),
     'summarize-pdf': FaqEntry(
       id: 'summarize-pdf',
       category: 'files',
-      question: 'Svaultai 能总结我的 PDF 吗?',
+      question: 'SVaultAI 能总结我的 PDF 吗?',
       answer: '可以。让助手总结特定的 PDF 或文档。总结基于提取的文本;不会修改原始文件。',
     ),
     'why-cant-find-file': FaqEntry(
       id: 'why-cant-find-file',
       category: 'files',
-      question: 'Svaultai 为什么找不到我的文件?',
+      question: 'SVaultAI 为什么找不到我的文件?',
       answer: '请检查文件名的拼写、当前所在的保险库以及上传是否完成。仍在分析中的文件可能暂时不会出现在搜索中。',
     ),
     'how-do-i-delete-a-file': FaqEntry(
       id: 'how-do-i-delete-a-file',
       category: 'files',
       question: '如何删除文件?',
-      answer: '在文件列表中打开该文件行并选择删除。删除是永久的 —Svaultai 不保留隐藏副本。',
+      answer: '在文件列表中打开该文件行并选择删除。删除是永久的 —SVaultAI 不保留隐藏副本。',
     ),
     'how-do-i-save-a-password': FaqEntry(
       id: 'how-do-i-save-a-password',
       category: 'secure_items',
       question: '如何保存密码?',
-      answer: '打开登录和安全项目页面并选择保存,或让助手保存登录。Svaultai 会先加密再存储。',
+      answer: '打开登录和安全项目页面并选择保存,或让助手保存登录。SVaultAI 会先加密再存储。',
     ),
     'how-do-i-view-a-password': FaqEntry(
       id: 'how-do-i-view-a-password',
@@ -2969,8 +2969,8 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'duplicate-logins': FaqEntry(
       id: 'duplicate-logins',
       category: 'secure_items',
-      question: 'Svaultai 能找出重复的登录吗?',
-      answer: '可以。让助手显示重复或重用的密码。Svaultai 在解锁后本地对比保存的登录,并标记匹配项。',
+      question: 'SVaultAI 能找出重复的登录吗?',
+      answer: '可以。让助手显示重复或重用的密码。SVaultAI 在解锁后本地对比保存的登录,并标记匹配项。',
     ),
     'save-passport-license': FaqEntry(
       id: 'save-passport-license',
@@ -2987,8 +2987,8 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'id-expiry-reminders': FaqEntry(
       id: 'id-expiry-reminders',
       category: 'ids',
-      question: 'Svaultai 能提醒我到期日吗?',
-      answer: '让助手查询你的护照或驾照到期日。Svaultai 会读取身份证件中提取的到期日。',
+      question: 'SVaultAI 能提醒我到期日吗?',
+      answer: '让助手查询你的护照或驾照到期日。SVaultAI 会读取身份证件中提取的到期日。',
     ),
     'how-do-i-search-ids': FaqEntry(
       id: 'how-do-i-search-ids',
@@ -3001,7 +3001,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: 'Crypto Vault 是什么?',
       answer:
-          'Crypto Vault 是 Svaultai 的非托管钱包功能。它存储你的公开接收地址,通过公共提供者显示实时余额,并让你准备在本地签名的发送。',
+          'Crypto Vault 是 SVaultAI 的非托管钱包功能。它存储你的公开接收地址,通过公共提供者显示实时余额,并让你准备在本地签名的发送。',
     ),
     'supported-assets': FaqEntry(
       id: 'supported-assets',
@@ -3014,26 +3014,26 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'is-crypto-custodial',
       category: 'crypto',
       question: 'Crypto Vault 是托管的吗?',
-      answer: '不是。Crypto Vault 是非托管的。密钥在你的设备上;没有你的本地签名,Svaultai 无法移动你的加密货币。',
+      answer: '不是。Crypto Vault 是非托管的。密钥在你的设备上;没有你的本地签名,SVaultAI 无法移动你的加密货币。',
     ),
     'can-vaultai-move-crypto': FaqEntry(
       id: 'can-vaultai-move-crypto',
       category: 'crypto',
-      question: 'Svaultai 能移动我的加密货币吗?',
-      answer: '不能。没有你的 PIN 解锁、受信任设备、本地签名和明确确认,Svaultai 无法广播交易。绝不自动发送。',
+      question: 'SVaultAI 能移动我的加密货币吗?',
+      answer: '不能。没有你的 PIN 解锁、受信任设备、本地签名和明确确认,SVaultAI 无法广播交易。绝不自动发送。',
     ),
     'pin-before-sending': FaqEntry(
       id: 'pin-before-sending',
       category: 'crypto',
       question: '为什么发送前需要 PIN?',
-      answer: 'PIN 解锁本地签名密钥。没有 PIN,你的设备无法为交易签名,Svaultai 也不会接受未签名的发送请求。',
+      answer: 'PIN 解锁本地签名密钥。没有 PIN,你的设备无法为交易签名,SVaultAI 也不会接受未签名的发送请求。',
     ),
     'usdt-erc20-vs-trc20': FaqEntry(
       id: 'usdt-erc20-vs-trc20',
       category: 'crypto',
       question: '为什么 USDT 有 ERC20 和 TRC20?',
       answer:
-          'USDT 存在于多个网络上。Svaultai 支持以太坊的 USDT ERC20和 TRON 的 USDT TRC20。你必须选择正确的网络 — 地址、手续费和转账都是网络专有的,彼此不可互换。',
+          'USDT 存在于多个网络上。SVaultAI 支持以太坊的 USDT ERC20和 TRON 的 USDT TRC20。你必须选择正确的网络 — 地址、手续费和转账都是网络专有的,彼此不可互换。',
     ),
     'usdc-uses-eth-address': FaqEntry(
       id: 'usdc-uses-eth-address',
@@ -3061,7 +3061,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '为什么浏览器里看不到 Monero 余额?',
       answer:
-          '真正的 Monero 扫描无法在网页应用中安全运行。在网页中,Svaultai 可以显示 Monero 接收地址,但余额和活动需要桌面或原生本地扫描器。',
+          '真正的 Monero 扫描无法在网页应用中安全运行。在网页中,SVaultAI 可以显示 Monero 接收地址,但余额和活动需要桌面或原生本地扫描器。',
     ),
     'monero-send-disabled': FaqEntry(
       id: 'monero-send-disabled',
@@ -3072,7 +3072,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
     'buy-sell-swap': FaqEntry(
       id: 'buy-sell-swap',
       category: 'crypto',
-      question: '能在 Svaultai 中购买、出售、兑换或交易加密货币吗?',
+      question: '能在 SVaultAI 中购买、出售、兑换或交易加密货币吗?',
       answer:
           '不能。Crypto Vault 用于在支持的资产上进行存储、接收和(在启用之处的)发送。它不是交易所,不支持购买、出售、兑换、交易、质押、桥接或换汇。',
     ),
@@ -3080,13 +3080,13 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'provider-unavailable',
       category: 'crypto',
       question: '提供者不可用会怎样?',
-      answer: 'Svaultai 会显示明确的不可用原因,而不是编造余额。只有当提供者实际返回零时,才会显示 0 余额。',
+      answer: 'SVaultAI 会显示明确的不可用原因,而不是编造余额。只有当提供者实际返回零时,才会显示 0 余额。',
     ),
     'why-balance-zero': FaqEntry(
       id: 'why-balance-zero',
       category: 'crypto',
       question: '余额为什么显示 0?',
-      answer: '显示 0 余额意味着提供者返回了真实的零。如果提供者不可用,Svaultai 会显示不可用原因,而不是虚假的零。',
+      answer: '显示 0 余额意味着提供者返回了真实的零。如果提供者不可用,SVaultAI 会显示不可用原因,而不是虚假的零。',
     ),
     'receive-when-balance-zero': FaqEntry(
       id: 'receive-when-balance-zero',
@@ -3099,19 +3099,19 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'crypto',
       question: '删除保险库后我的加密货币会怎样?',
       answer:
-          '删除保险库不会移动或删除区块链上的加密货币。Svaultai 在本地和服务器存储加密的钱包记录 — 但币本身在链上。删除保险库会移除加密的钱包记录。如果你未在 Svaultai 之外备份钱包,丢失加密的钱包记录可能导致失去对这些资金的访问。Svaultai 在删除期间不会广播加密货币交易。',
+          '删除保险库不会移动或删除区块链上的加密货币。SVaultAI 在本地和服务器存储加密的钱包记录 — 但币本身在链上。删除保险库会移除加密的钱包记录。如果你未在 SVaultAI 之外备份钱包,丢失加密的钱包记录可能导致失去对这些资金的访问。SVaultAI 在删除期间不会广播加密货币交易。',
     ),
     'what-plan-am-i-on': FaqEntry(
       id: 'what-plan-am-i-on',
       category: 'billing',
       question: '我在使用什么套餐?',
-      answer: '让助手回答"我在什么套餐上",或打开计费页。Svaultai 会显示活动套餐及其提供的存储配额。',
+      answer: '让助手回答"我在什么套餐上",或打开计费页。SVaultAI 会显示活动套餐及其提供的存储配额。',
     ),
     'storage-limits': FaqEntry(
       id: 'storage-limits',
       category: 'billing',
       question: '我有多少存储空间?',
-      answer: '让助手回答"我用了多少存储",或打开存储页。Svaultai 会显示已用字节、配额字节和使用百分比。',
+      answer: '让助手回答"我用了多少存储",或打开存储页。SVaultAI 会显示已用字节、配额字节和使用百分比。',
     ),
     'storage-exceeded': FaqEntry(
       id: 'storage-exceeded',
@@ -3123,7 +3123,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'how-do-i-upgrade',
       category: 'billing',
       question: '如何升级存储?',
-      answer: '打开计费页并选择升级等级。结账通过支付提供者进行;Svaultai 不存储你的支付信息。',
+      answer: '打开计费页并选择升级等级。结账通过支付提供者进行;SVaultAI 不存储你的支付信息。',
     ),
     'how-do-i-cancel': FaqEntry(
       id: 'how-do-i-cancel',
@@ -3135,7 +3135,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'why-checkout-opens',
       category: 'billing',
       question: '为什么会打开结账?',
-      answer: '支付通过支付提供者处理,以便 Svaultai 不直接处理支付信息。结账在提供者的界面中打开。',
+      answer: '支付通过支付提供者处理,以便 SVaultAI 不直接处理支付信息。结账在提供者的界面中打开。',
     ),
     'how-storage-calculated': FaqEntry(
       id: 'how-storage-calculated',
@@ -3148,7 +3148,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'billing',
       question: '为什么未付费且不活跃的保险库会被删除?',
       answer:
-          '未付费且连续 6 个月未使用的保险库可能会被永久删除。这样可以让 Svaultai 存储集中于真正在使用保险库的人。要保持保险库有效,请在 6 个月不活跃截止前登录并使用;或订阅以获得持续的存储保护。如果在截止前订阅或活跃,该保险库不会被删除。',
+          '未付费且连续 6 个月未使用的保险库可能会被永久删除。这样可以让 SVaultAI 存储集中于真正在使用保险库的人。要保持保险库有效,请在 6 个月不活跃截止前登录并使用;或订阅以获得持续的存储保护。如果在截止前订阅或活跃,该保险库不会被删除。',
     ),
     'how-to-prevent-auto-deletion': FaqEntry(
       id: 'how-to-prevent-auto-deletion',
@@ -3161,7 +3161,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'why-balance-unavailable',
       category: 'troubleshooting',
       question: '为什么余额显示不可用?',
-      answer: '该资产的提供者未按时返回值。Svaultai 显示诚实的"不可用"状态,而不是虚假的零。重试通常可以恢复。',
+      answer: '该资产的提供者未按时返回值。SVaultAI 显示诚实的"不可用"状态,而不是虚假的零。重试通常可以恢复。',
     ),
     'why-file-not-showing': FaqEntry(
       id: 'why-file-not-showing',
@@ -3186,13 +3186,13 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       id: 'tron-provider-unavailable',
       category: 'troubleshooting',
       question: 'TRON 为什么说提供者不可用?',
-      answer: 'TRON 余额提供者未按时响应。Svaultai 显示不可用而不是虚假的零。重试通常可恢复,接收地址无论如何都保持有效。',
+      answer: 'TRON 余额提供者未按时响应。SVaultAI 显示不可用而不是虚假的零。重试通常可恢复,接收地址无论如何都保持有效。',
     ),
     'why-subscription-checking': FaqEntry(
       id: 'why-subscription-checking',
       category: 'troubleshooting',
       question: '订阅状态为什么显示检查中?',
-      answer: 'Svaultai 正从计费提供者获取你的最新套餐状态。通常几秒内会清除;若持续存在,请在计费页刷新。',
+      answer: 'SVaultAI 正从计费提供者获取你的最新套餐状态。通常几秒内会清除;若持续存在,请在计费页刷新。',
     ),
     'how-do-i-refresh': FaqEntry(
       id: 'how-do-i-refresh',

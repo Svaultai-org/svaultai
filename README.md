@@ -1,8 +1,8 @@
-# Svaultai
+# SVaultAI
 
 **Your private digital vault with an assistant that speaks your language.**
 
-Svaultai is an end-to-end-encrypted personal vault for the things that
+SVaultAI is an end-to-end-encrypted personal vault for the things that
 usually live scattered across your inbox, notes app, camera roll, and
 password manager: passports and IDs, logins, secure notes, files and
 photos, and crypto wallet records. A vault-native chat assistant sits
@@ -11,7 +11,7 @@ language.
 
 The vault is opened by a **PIN you never send to the backend in
 plaintext**. The vault contents are decrypted **on-device**, with a
-key that only exists in memory while you are unlocked. Svaultai Chat
+key that only exists in memory while you are unlocked. SVaultAI Chat
 runs against **masked, safe projections** of your vault — the AI
 never sees your raw records.
 
@@ -20,7 +20,7 @@ never sees your raw records.
 ## Contents
 
 - [What you can put in it](#what-you-can-put-in-it)
-- [Svaultai Chat](#svaultai-chat)
+- [SVaultAI Chat](#svaultai-chat)
 - [Crypto Vault](#crypto-vault) — non-custodial, receive-first
 - [Trust model](#trust-model) — what we guarantee, what we don't
 - [Cryptography summary](#cryptography-summary)
@@ -31,7 +31,7 @@ never sees your raw records.
 - [Getting started (development)](#getting-started-development)
 - [Testing](#testing)
 - [Production deployment](#production-deployment)
-- [What Svaultai is not](#what-svaultai-is-not)
+- [What SVaultAI is not](#what-svaultai-is-not)
 - [Status](#status)
 
 ---
@@ -53,9 +53,9 @@ never the plaintext.
 
 ---
 
-## Svaultai Chat
+## SVaultAI Chat
 
-Svaultai Chat is the in-app assistant. It's built around one rule:
+SVaultAI Chat is the in-app assistant. It's built around one rule:
 **deterministic routing wins, AI is a fallback.**
 
 - **Deterministic router first.** Common intents ("show my saved
@@ -124,7 +124,7 @@ anything.**
 - **Encryption is on your device.** Vault items are decrypted after
   you unlock, using a key derived from your PIN + a per-vault salt.
   The backend stores only ciphertext + routing metadata.
-- **The assistant runs against masked data.** Svaultai Chat sees
+- **The assistant runs against masked data.** SVaultAI Chat sees
   file names, categories, sizes, and structured "safe projections" —
   never the encrypted content.
 - **Sessions are short and revocable.** Every session is signed with
@@ -137,14 +137,14 @@ anything.**
   chat, upload burst, delete burst, and export all have quotas —
   in-memory in dev, Redis-clustered in production.
 
-**What Svaultai does not promise:**
+**What SVaultAI does not promise:**
 
 - Perfect security. No software can promise that. If your device is
   compromised, your unlocked vault is compromised.
 - Recovery of a lost PIN. Losing the PIN means losing the vault.
   There is no server-side backdoor; there is no reset link.
-- Custody of your crypto. Svaultai does not hold your funds. If your
-  private key is compromised, Svaultai cannot stop the loss.
+- Custody of your crypto. SVaultAI does not hold your funds. If your
+  private key is compromised, SVaultAI cannot stop the loss.
 
 More detail:
 [docs/security_threat_model.md](docs/security_threat_model.md),
@@ -175,7 +175,7 @@ account.
 
 ## Inheritance
 
-Svaultai supports **beneficiary pairing** so a vault can be passed
+SVaultAI supports **beneficiary pairing** so a vault can be passed
 to a named person on a defined schedule.
 
 1. The vault owner shares a **pairing code** with a beneficiary.
@@ -228,7 +228,7 @@ billing and activity. Paid subscribers are never auto-deleted.
 
 ## Languages
 
-Svaultai ships **seven fully-localised languages** across the app
+SVaultAI ships **seven fully-localised languages** across the app
 shell, help/FAQ content, and chat replies:
 
 - English
@@ -274,7 +274,7 @@ Castilian/Spanish, and Brazilian Portuguese/Portuguese are normalized.
 │                            │        │                            │
 │  • PIN entry               │        │  • Session HMAC            │
 │  • On-device AES-GCM       │        │  • Trusted-device gate     │
-│  • Svaultai Chat UI        │        │  • Rate limiting           │
+│  • SVaultAI Chat UI        │        │  • Rate limiting           │
 │  • Crypto Vault UI         │        │  • Security headers        │
 │  • Multi-locale shell      │        │  • Vault deletion service  │
 │                            │        │  • Chat orchestrator       │
@@ -446,12 +446,12 @@ Related runbooks:
 
 ---
 
-## What Svaultai is not
+## What SVaultAI is not
 
 - **Not an exchange or brokerage.** No buy, sell, trade, swap,
   bridge, staking, or fiat on-ramp. The Crypto Vault is a
   receive-first, storage-and-context product.
-- **Not a custodian.** Svaultai does not hold your funds. It stores
+- **Not a custodian.** SVaultAI does not hold your funds. It stores
   encrypted labels and receive-side addresses next to your other
   vault data.
 - **Not a password sync service.** Logins live in your vault. They

@@ -24,18 +24,21 @@ void main() {
       html = await f.readAsString();
     });
 
-    test('title is Svaultai', () {
-
-      expect(html, contains('<title>Svaultai</title>'));
+    test('title uses canonical SVaultAI branding', () {
+      expect(
+        html,
+        contains('<title>SVaultAI — Private AI-Powered Digital Vault</title>'),
+      );
     });
 
-    test('meta description is the Svaultai copy', () {
+    test('meta description carries the complete positioning', () {
       expect(
         html,
         contains(
-          'Svaultai is a private digital vault for securely storing '
-          'and managing passwords, documents, IDs, files, secure '
-          'notes, and crypto wallet records.',
+          'SVaultAI is a private, AI-powered digital vault for securely '
+          'protecting and managing your digital life, including documents, '
+          'identity records, credentials, memories, and non-custodial '
+          'digital assets.',
         ),
       );
     });
@@ -43,11 +46,11 @@ void main() {
     test('canonical URL points at svaultai.com', () {
       expect(
         html,
-        contains('<link rel="canonical" href="https://svaultai.com">'),
+        contains('<link rel="canonical" href="https://svaultai.com/">'),
       );
     });
 
-    test('theme-color is the Svaultai brand accent #10A37F', () {
+    test('theme-color is the SVaultAI brand accent #10A37F', () {
       expect(
         html,
         contains('<meta name="theme-color" content="#10A37F">'),
@@ -55,8 +58,8 @@ void main() {
     });
 
     group('Open Graph tags', () {
-      test('og:title = Svaultai', () {
-        expect(html, contains('property="og:title" content="Svaultai"'));
+      test('og:title uses canonical branding', () {
+        expect(html, contains('property="og:title" content="SVaultAI — Private AI-Powered Digital Vault"'));
       });
 
       test('og:description = tagline', () {
@@ -64,7 +67,7 @@ void main() {
           html,
           contains(
             'property="og:description" '
-            'content="Your private AI-powered digital vault."',
+            'content="SVaultAI is a private, AI-powered digital vault',
           ),
         );
       });
@@ -76,7 +79,7 @@ void main() {
       test('og:url = https://svaultai.com', () {
         expect(
           html,
-          contains('property="og:url" content="https://svaultai.com"'),
+          contains('property="og:url" content="https://svaultai.com/"'),
         );
       });
 
@@ -95,8 +98,8 @@ void main() {
         expect(html, contains('property="og:image:height" content="630"'));
       });
 
-      test('og:site_name = Svaultai', () {
-        expect(html, contains('property="og:site_name" content="Svaultai"'));
+      test('og:site_name = SVaultAI', () {
+        expect(html, contains('property="og:site_name" content="SVaultAI"'));
       });
     });
 
@@ -108,8 +111,8 @@ void main() {
         );
       });
 
-      test('twitter:title = Svaultai', () {
-        expect(html, contains('name="twitter:title" content="Svaultai"'));
+      test('twitter:title uses canonical branding', () {
+        expect(html, contains('name="twitter:title" content="SVaultAI — Private AI-Powered Digital Vault"'));
       });
 
       test('twitter:description = tagline', () {
@@ -117,7 +120,7 @@ void main() {
           html,
           contains(
             'name="twitter:description" '
-            'content="Your private AI-powered digital vault."',
+            'content="SVaultAI is a private, AI-powered digital vault',
           ),
         );
       });
@@ -134,19 +137,19 @@ void main() {
     });
 
     group('Apple / PWA tags', () {
-      test('apple-mobile-web-app-title = Svaultai', () {
+      test('apple-mobile-web-app-title = SVaultAI', () {
         expect(
           html,
           contains(
-            'name="apple-mobile-web-app-title" content="Svaultai"',
+            'name="apple-mobile-web-app-title" content="SVaultAI"',
           ),
         );
       });
 
-      test('application-name = Svaultai', () {
+      test('application-name = SVaultAI', () {
         expect(
           html,
-          contains('name="application-name" content="Svaultai"'),
+          contains('name="application-name" content="SVaultAI"'),
         );
       });
 
@@ -159,13 +162,27 @@ void main() {
         );
       });
 
-      test('favicon.png is referenced (Svaultai-branded)', () {
+      test('favicon.png is referenced (SVaultAI-branded)', () {
         expect(html, contains('rel="icon" type="image/png" href="favicon.png"'));
       });
 
       test('manifest.json is linked', () {
         expect(html, contains('rel="manifest" href="manifest.json"'));
       });
+    });
+
+    test('JSON-LD defines WebSite, Organization and SoftwareApplication', () {
+      expect(html, contains('type="application/ld+json"'));
+      expect(html, contains('"@type": "WebSite"'));
+      expect(html, contains('"@type": "Organization"'));
+      expect(html, contains('"@type": "SoftwareApplication"'));
+      expect(html, contains('"name": "SVaultAI"'));
+    });
+
+    test('crawlable pre-boot content carries the product positioning', () {
+      expect(html, contains('<h1>SVaultAI — Private AI-Powered Digital Vault</h1>'));
+      expect(html, contains('AI-powered conversational access'));
+      expect(html, contains('non-custodial digital assets'));
     });
 
     test('no vault_ai_frontend or default Flutter branding in public HTML', () {
@@ -192,16 +209,17 @@ void main() {
       manifest = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
     });
 
-    test('name = Svaultai', () {
-      expect(manifest['name'], 'Svaultai');
+    test('name uses full SVaultAI title', () {
+      expect(manifest['name'], 'SVaultAI — Private AI-Powered Digital Vault');
     });
 
-    test('short_name = Svaultai', () {
-      expect(manifest['short_name'], 'Svaultai');
+    test('short_name = SVaultAI', () {
+      expect(manifest['short_name'], 'SVaultAI');
     });
 
-    test('description is the Svaultai copy', () {
-      expect(manifest['description'], 'Svaultai private digital vault');
+    test('description carries the broad vault positioning', () {
+      expect(manifest['description'], contains('private, AI-powered digital vault'));
+      expect(manifest['description'], contains('non-custodial digital assets'));
     });
 
     test('start_url = /', () {
@@ -236,6 +254,22 @@ void main() {
     });
   });
 
+  group('crawler control files', () {
+    test('robots allows public crawling and points to canonical sitemap', () async {
+      final robots = await _webFile('robots.txt').readAsString();
+      expect(robots, contains('User-agent: *'));
+      expect(robots, contains('Allow: /'));
+      expect(robots, contains('Sitemap: https://svaultai.com/sitemap.xml'));
+    });
+
+    test('sitemap contains only canonical public URLs', () async {
+      final sitemap = await _webFile('sitemap.xml').readAsString();
+      expect(sitemap, contains('<loc>https://svaultai.com/</loc>'));
+      expect(sitemap, contains('<loc>https://svaultai.com/privacy/</loc>'));
+      expect(sitemap, isNot(contains('app.svaultai.com')));
+    });
+  });
+
   group('web asset files exist with the correct dimensions', () {
     test('web/favicon.png exists and is non-empty', () async {
       final f = _webFile('favicon.png');
@@ -251,7 +285,7 @@ void main() {
       final f = _webFile('og-image.png');
       expect(await f.exists(), isTrue,
           reason:
-              'og-image.png must exist so link unfurls show the Svaultai card '
+              'og-image.png must exist so link unfurls show the SVaultAI card '
               'on iMessage, WhatsApp, Slack, Discord, Facebook, LinkedIn, X.');
       final bytes = await f.readAsBytes();
       expect(bytes.length, greaterThan(2000),
@@ -287,7 +321,7 @@ void main() {
 
       final icon512 = await _webFile('icons/Icon-512.png').readAsBytes();
       expect(icon512.length, greaterThan(2000),
-          reason: 'Icon-512.png should be a proper Svaultai mark, not a stub');
+          reason: 'Icon-512.png should be a proper SVaultAI mark, not a stub');
     });
   });
 }

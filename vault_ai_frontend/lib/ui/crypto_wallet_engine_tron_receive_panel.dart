@@ -18,7 +18,7 @@ const String kTronReceiveCreateButtonLabel = 'Create my TRON wallet';
 const String kTronReceiveCopyButtonLabel = 'Copy address';
 const String kTronReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kTronReceiveNonCustodialAttestation =
-    'Non-custodial: Svaultai never sees your TRON secret key. Your '
+    'Non-custodial: SVaultAI never sees your TRON secret key. Your '
     'wallet is encrypted with your PIN and stored as ciphertext only.';
 const String kTronReceiveAssetWarning =
     'Only send USDT TRC20 on TRON to this address.';
@@ -63,7 +63,7 @@ class CryptoWalletEngineTronReceivePanel extends StatefulWidget {
     required this.encryptForVault,
     required this.isVaultKeyAvailable,
     this.features,
-    this.walletLabel = 'Svaultai TRON wallet',
+    this.walletLabel = 'SVaultAI TRON wallet',
   });
 
   @override

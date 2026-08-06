@@ -537,7 +537,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key(kVcrCardKeyRefusal)), findsOneWidget);
-      expect(find.textContaining('Svaultai never surfaces'), findsOneWidget);
+      expect(find.textContaining('SVaultAI never surfaces'), findsOneWidget);
     });
 
     testWidgets(

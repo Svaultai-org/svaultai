@@ -13,7 +13,7 @@ import 'package:vault_ai_frontend/logins_page.dart';
 Future<void> _pump(
   WidgetTester tester, {
   required List<VaultLoginItem> items,
-  String vaultLabel = 'Svaultai',
+  String vaultLabel = 'SVaultAI',
   bool isLoading = false,
 }) async {
   

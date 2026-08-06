@@ -146,9 +146,9 @@ const Set<String> kAssetsWithLiveSend = {
   'USDC_ERC20',
 };
 
-const String kCryptoWalletEngineHeading = 'Svaultai Crypto Wallet';
+const String kCryptoWalletEngineHeading = 'SVaultAI Crypto Wallet';
 const String kCryptoWalletEngineSubheading =
-    'Your keys. Your crypto. Svaultai cannot move funds without your '
+    'Your keys. Your crypto. SVaultAI cannot move funds without your '
     'approval.';
 
 const String kCryptoWalletEnginePortfolioLiveBalancesNoteMainnet =
@@ -158,12 +158,12 @@ const String kCryptoWalletEnginePortfolioLiveBalancesNoteSepolia =
 const String kCryptoWalletEnginePortfolioNoWalletsBody =
     'Create wallets to view your Vault balance.';
 const String kCryptoWalletEnginePortfolioHonestSubcopy =
-    'Svaultai only shows real on-chain balances. No synthetic totals '
+    'SVaultAI only shows real on-chain balances. No synthetic totals '
     'are displayed.';
 const String kCryptoWalletEnginePortfolioBalancesUnavailable =
     'Live balances temporarily unavailable.';
 const String kCryptoWalletEnginePortfolioActivityNote =
-    'Transaction history is real when indexer is connected. Svaultai '
+    'Transaction history is real when indexer is connected. SVaultAI '
     'never invents activity.';
 
 const String kCryptoWalletEngineFutureStateBody =
@@ -194,7 +194,7 @@ const String kCryptoWalletEngineSavedRecordsHint =
     'to the Saved records tab below.';
 
 const String kCryptoWalletEngineNonCustodialAttestation =
-    'Non-custodial: your keys, your coins. Svaultai cannot move your '
+    'Non-custodial: your keys, your coins. SVaultAI cannot move your '
     'funds.';
 
 const String kCryptoWalletEnginePortfolioHeading = 'Vault balance';
@@ -208,7 +208,7 @@ const String kCryptoWalletEngineActivityEmptySubcopy =
     'Real transactions will appear here when activity history is '
     'connected.';
 const String kCryptoWalletEngineActivityHonestSubcopy =
-    'Svaultai never invents transaction history.';
+    'SVaultAI never invents transaction history.';
 
 const String kCryptoWalletEngineActivityHonestEmpty =
     kCryptoWalletEngineActivityEmptyPrimary;
@@ -233,7 +233,7 @@ const String kCryptoWalletEngineAssetCardActivityUnavailableCompact =
 const String kCryptoWalletEngineBackupHeading = 'Security & Backup';
 const String kCryptoWalletEngineBackupBody =
     'Your encrypted wallet backup lives in your vault. Backups stay '
-    'ciphertext-only — Svaultai cannot decrypt them. Reveal flows ask '
+    'ciphertext-only — SVaultAI cannot decrypt them. Reveal flows ask '
     'for your PIN every time.';
 const String kCryptoWalletEngineBackupOpenLabel = 'Open backup tools';
 
@@ -244,9 +244,9 @@ const String kCryptoWalletEngineNotesBody =
     'addresses you watch or counterparty contacts.';
 const String kCryptoWalletEngineNotesOpenLabel = 'Open wallet notes';
 
-const String kCryptoWalletEngineAskAiHeading = 'Ask Svaultai';
+const String kCryptoWalletEngineAskAiHeading = 'Ask SVaultAI';
 const String kCryptoWalletEngineAskAiSubheading =
-    'Ask Svaultai to drive the wallet for you. Sensitive actions '
+    'Ask SVaultAI to drive the wallet for you. Sensitive actions '
     'still require your PIN and your on-screen confirmation.';
 
 const List<String> kCryptoWalletEngineAskAiSuggestedPrompts = [
@@ -265,7 +265,7 @@ const String kCryptoWalletEnginePrimarySecurityLabel = 'Security';
 
 const String kCryptoWalletEngineSecurityHeading = 'Security';
 const String kCryptoWalletEngineSecurityBody =
-    'Wallet backups are encrypted. Svaultai cannot decrypt or move '
+    'Wallet backups are encrypted. SVaultAI cannot decrypt or move '
     'your funds.';
 const String kCryptoWalletEngineSecurityOpenLabel = 'Open security';
 

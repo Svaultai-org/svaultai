@@ -19,7 +19,7 @@
 //      panel sets the disabled error message immediately and does
 //      NOT call the backend draft endpoint (defense-in-depth — the
 //      backend is still authoritative if the frontend is bypassed).
-//   4. The disabled-state banner uses the dark Svaultai wallet
+//   4. The disabled-state banner uses the dark SVaultAI wallet
 //      palette — no bright red / #8B1A1A / #FDECEC color blocks in
 //      the rendered widget, which was the "bright red block
 //      dominating the screen" the user complained about.
@@ -158,7 +158,7 @@ void main() {
         );
         // Bright-red-block regression: the disabled banner must NOT
         // render the old Material yellow/red block colors — it must
-        // use the dark Svaultai wallet palette. Scan every Container /
+        // use the dark SVaultAI wallet palette. Scan every Container /
         // BoxDecoration for the banned pre-refresh hexes.
         final bannedColors = <Color>[
           const Color(0xFFFDECEC),

@@ -34,12 +34,12 @@ const String kCryptoVaultOpenCryptoVaultLabel  = 'Open Crypto Vault';
 
 const String kCryptoVaultLearnMoreBody =
     "Crypto Vault is a real, non-custodial wallet built into "
-    "Svaultai. Upgrade your account to unlock it, then open "
+    "SVaultAI. Upgrade your account to unlock it, then open "
     "Crypto Vault to pick a supported asset, use Receive for "
     "the wallet address and QR code, use Send to enter a "
     "recipient and amount, and view balance and transaction "
     "history where supported. Every send requires PIN unlock "
-    "and local signing on your device — Svaultai never moves "
+    "and local signing on your device — SVaultAI never moves "
     "funds on its own.";
 
 

@@ -34,7 +34,7 @@ void main() {
           manifest, contains('android:fullBackupContent="@xml/backup_rules"'));
     });
 
-    test('network security config is HTTPS-only for Svaultai domains', () {
+    test('network security config is HTTPS-only for SVaultAI domains', () {
       final config =
           _read('android/app/src/main/res/xml/network_security_config.xml');
 

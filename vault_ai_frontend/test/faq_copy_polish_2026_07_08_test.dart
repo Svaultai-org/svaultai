@@ -46,7 +46,7 @@ String _requireAnswer(String id) {
 void main() {
 
 
-  group('Part A — What is Svaultai?', () {
+  group('Part A — What is SVaultAI?', () {
     test('uses the physical vault / safe analogy', () {
       final lower = _requireAnswer('what-is-vaultai').toLowerCase();
       expect(
@@ -227,7 +227,7 @@ void main() {
 
   group('Help Center renders the improved copy', () {
     testWidgets(
-      'signed-in Help Center renders new What-is-Svaultai copy',
+      'signed-in Help Center renders new What-is-SVaultAI copy',
       (tester) async {
         await _pumpHelpCenter(tester);
         expect(

@@ -88,7 +88,7 @@ void main() {
       await _pumpDeleteFlow(tester);
       expect(
         find.textContaining(
-          'permanently deletes your Svaultai vault data',
+          'permanently deletes your SVaultAI vault data',
         ),
         findsOneWidget,
       );

@@ -9,7 +9,7 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
-  String get appTitle => 'Svaultai';
+  String get appTitle => 'SVaultAI';
 
   @override
   String get commonRetry => '重试';
@@ -42,7 +42,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get commonDownload => '下载';
 
   @override
-  String get commonAskVaultAI => '询问 Svaultai';
+  String get commonAskVaultAI => '询问 SVaultAI';
 
   @override
   String get commonClose => '关闭';
@@ -159,7 +159,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatComposerHint => '询问你的保险库或上传文件...';
 
   @override
-  String get chatThinking => 'Svaultai 正在思考...';
+  String get chatThinking => 'SVaultAI 正在思考...';
 
   @override
   String chatThinkingWithName(String name) {
@@ -178,7 +178,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get chatErrorGeneric => 'Svaultai 暂时无法回答。请重试。';
+  String get chatErrorGeneric => 'SVaultAI 暂时无法回答。请重试。';
 
   @override
   String get chatRetryButton => '重试';
@@ -226,7 +226,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get conciergeTitle => '智能助理';
 
   @override
-  String get conciergeSubtitle => 'Svaultai 建议你先关注的内容';
+  String get conciergeSubtitle => 'SVaultAI 建议你先关注的内容';
 
   @override
   String get conciergeLoading => '正在收集信息...';
@@ -271,7 +271,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get conciergeAllClear => '一切顺利。';
 
   @override
-  String get conciergeAllClearSub => '今天没有紧急事项。Svaultai 会关注你的文件,有任何新情况会在此显示。';
+  String get conciergeAllClearSub => '今天没有紧急事项。SVaultAI 会关注你的文件,有任何新情况会在此显示。';
 
   @override
   String get conciergePostureSecurity => '安全';
@@ -361,7 +361,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get expiryEmptyTitle => '你领先于每一次续签。';
 
   @override
-  String get expiryEmptySub => '上传护照、签证、保单或合同,Svaultai 会自动追踪到期日。';
+  String get expiryEmptySub => '上传护照、签证、保单或合同,SVaultAI 会自动追踪到期日。';
 
   @override
   String get expiryNoneInWindow => '此期间内没有内容。';
@@ -443,7 +443,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get memoryTitle => '记忆';
 
   @override
-  String get memorySubtitle => 'Svaultai 关于你生活所记得的时间线';
+  String get memorySubtitle => 'SVaultAI 关于你生活所记得的时间线';
 
   @override
   String get memoryLoading => '正在加载你的记忆...';
@@ -456,7 +456,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get memoryEmptySub =>
-      '告诉 Svaultai 要记住的事:\"记住妈妈生日是2月14日\"。它们会按类型和日期分组显示在这里。';
+      '告诉 SVaultAI 要记住的事:\"记住妈妈生日是2月14日\"。它们会按类型和日期分组显示在这里。';
 
   @override
   String get memoryNoMatchTitle => '没有匹配。';
@@ -524,7 +524,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsLanguage => '语言';
 
   @override
-  String get settingsLanguageHint => '选择 Svaultai 使用的语言。影响应用标签和 AI 聊天回复。';
+  String get settingsLanguageHint => '选择 SVaultAI 使用的语言。影响应用标签和 AI 聊天回复。';
 
   @override
   String get settingsLanguageAuto => '自动(系统)';
@@ -563,7 +563,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String settingsLanguagePartialNotice(String name) {
-    return 'Svaultai Chat 将以 $name 回复。在翻译完成之前,应用界面仍显示为英文。';
+    return 'SVaultAI Chat 将以 $name 回复。在翻译完成之前,应用界面仍显示为英文。';
   }
 
   @override
@@ -635,7 +635,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get helpCenterSubtitle =>
-      '关于 Svaultai 常见问题的答案。在下方搜索或按类别浏览 — AI 助手回答自相同的主题集。';
+      '关于 SVaultAI 常见问题的答案。在下方搜索或按类别浏览 — AI 助手回答自相同的主题集。';
 
   @override
   String get helpCenterEmpty => '没有匹配的帮助主题';
@@ -644,17 +644,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get helpCenterEmptyBody => '换一个搜索词,或选择一个类别。';
 
   @override
-  String get helpCenterSupportNote => '尚未提供实时客户支持。请使用此帮助中心或询问 Svaultai Chat。';
+  String get helpCenterSupportNote => '尚未提供实时客户支持。请使用此帮助中心或询问 SVaultAI Chat。';
 
   @override
   String get helpContactSupportTitle => '联系支持';
 
   @override
-  String get helpContactSupportBody => '在 Svaultai 中需要帮助?请联系我们的支持团队。';
+  String get helpContactSupportBody => '在 SVaultAI 中需要帮助?请联系我们的支持团队。';
 
   @override
   String helpContactSupportEmailA11yLabel(String email) {
-    return '向 $email 发送 Svaultai 支持邮件';
+    return '向 $email 发送 SVaultAI 支持邮件';
   }
 
   @override
@@ -667,14 +667,14 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String helpContactSupportCopyEmailA11yLabel(String email) {
-    return '将 Svaultai 支持邮箱 $email 复制到剪贴板';
+    return '将 SVaultAI 支持邮箱 $email 复制到剪贴板';
   }
 
   @override
   String get helpContactSupportEmailCopied => '邮箱地址已复制到剪贴板';
 
   @override
-  String get helpCenterPublicHint => '你正在查看公开帮助中心。登录以询问 Svaultai 并查看账户详情。';
+  String get helpCenterPublicHint => '你正在查看公开帮助中心。登录以询问 SVaultAI 并查看账户详情。';
 
   @override
   String get helpCenterSearchHint => '搜索帮助主题(例如「monero」「PIN」)';
@@ -683,7 +683,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get helpCenterClearSearch => '清除搜索';
 
   @override
-  String get helpCenterSignInToAsk => '登录以询问 Svaultai';
+  String get helpCenterSignInToAsk => '登录以询问 SVaultAI';
 
   @override
   String get helpCategoryGettingStarted => '入门';
@@ -714,11 +714,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get deleteVaultBody =>
-      '删除保险库将永久删除你的 Svaultai 数据,包括文件、安全项目、登录、身份证件、Crypto Vault 加密钱包记录和相关的元数据。';
+      '删除保险库将永久删除你的 SVaultAI 数据,包括文件、安全项目、登录、身份证件、Crypto Vault 加密钱包记录和相关的元数据。';
 
   @override
   String get deleteVaultCryptoWarning =>
-      '删除你的保险库不会移动或删除区块链上的加密资产。如果你未在 Svaultai 之外备份钱包,删除加密的钱包记录可能导致对这些资金失去访问。';
+      '删除你的保险库不会移动或删除区块链上的加密资产。如果你未在 SVaultAI 之外备份钱包,删除加密的钱包记录可能导致对这些资金失去访问。';
 
   @override
   String get deleteVaultPhraseInstruction => '输入 DELETE MY VAULT 这一确切短语以确认:';

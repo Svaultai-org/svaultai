@@ -162,7 +162,7 @@ void main() {
         'wallet_engine': 'receive_ready',
         'asset': 'ETH',
         'network': 'Ethereum Sepolia',
-        'walletLabel': 'Svaultai ETH wallet',
+        'walletLabel': 'SVaultAI ETH wallet',
         'publicAddress': '0x0000000000000000000000000000000000000001',
         'warning': 'asset warning',
       });
@@ -225,7 +225,7 @@ void main() {
           'wallet_engine': 'receive_ready',
           'asset': 'ETH',
           'network': 'Ethereum Sepolia',
-          'walletLabel': 'Svaultai ETH wallet',
+          'walletLabel': 'SVaultAI ETH wallet',
           'publicAddress': '0x1234567890aBCdef1234567890aBcDEF12345678',
           'warning': fakeWarning,
         },

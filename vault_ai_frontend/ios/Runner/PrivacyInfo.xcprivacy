@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-	Privacy Manifest for Svaultai. Required by Apple since May 2024.
+	Privacy Manifest for SVaultAI. Required by Apple since May 2024.
 	Uploads without this file are rejected with ITMS-91053 /
 	ITMS-91056 for touching "required-reason APIs" (UserDefaults,
 	file timestamp, disk space, boot time).
 
 	Declarations must match reality:
-	  * NSPrivacyTracking = false — Svaultai does NOT track users
+	  * NSPrivacyTracking = false — SVaultAI does NOT track users
 	    across other apps or websites. No ad SDKs are linked.
 	  * NSPrivacyTrackingDomains empty for the same reason.
 	  * NSPrivacyCollectedDataTypes lists what the backend receives.
@@ -27,7 +27,7 @@
 	<array/>
 
 	<!--
-		Data Svaultai's backend receives directly from the app.
+		Data SVaultAI's backend receives directly from the app.
 		Encrypted vault payloads are NOT included here because the
 		server sees only ciphertext + non-identifying metadata.
 	-->

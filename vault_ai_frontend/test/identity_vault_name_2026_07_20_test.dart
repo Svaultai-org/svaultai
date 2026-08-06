@@ -118,7 +118,7 @@ void main() {
       expect(re.allMatches(src).length, greaterThanOrEqualTo(2),
           reason: 'both PopupMenu header and account chip must read '
               'displayName with the neutral "Account" fallback');
-      expect(src.contains("'Svaultai User'"), isFalse);
+      expect(src.contains("'SVaultAI User'"), isFalse);
     });
   });
 
@@ -146,7 +146,7 @@ void main() {
     });
 
     testWidgets(
-        'TypingPulse renders "Svaultai is thinking..." when '
+        'TypingPulse renders "SVaultAI is thinking..." when '
         'vaultName is null', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -165,7 +165,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Svaultai is thinking...'), findsOneWidget);
+      expect(find.text('SVaultAI is thinking...'), findsOneWidget);
     });
 
     testWidgets(

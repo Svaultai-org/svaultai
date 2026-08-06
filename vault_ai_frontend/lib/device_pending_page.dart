@@ -538,10 +538,10 @@ class _DevicePendingPageState extends State<DevicePendingPage> {
       case 'pending':
       default:
         return const Text(
-          'For security, Svaultai asks you to approve each new device from '
+          'For security, SVaultAI asks you to approve each new device from '
           'a device you already trust.\n\n'
           'To approve this device:\n'
-          '  1. Open Svaultai on a device you already trust.\n'
+          '  1. Open SVaultAI on a device you already trust.\n'
           '  2. Go to Settings -> Devices.\n'
           '  3. Click "Approve" next to this device.\n\n'
           'This page checks automatically every few seconds; you can also '

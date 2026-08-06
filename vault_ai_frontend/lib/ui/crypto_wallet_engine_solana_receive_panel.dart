@@ -19,7 +19,7 @@ const String kSolanaReceiveCreateButtonLabel = 'Create my Solana wallet';
 const String kSolanaReceiveCopyButtonLabel = 'Copy address';
 const String kSolanaReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kSolanaReceiveNonCustodialAttestation =
-    'Non-custodial: Svaultai never sees your Solana secret key. Your '
+    'Non-custodial: SVaultAI never sees your Solana secret key. Your '
     'wallet is encrypted with your PIN and stored as ciphertext only.';
 const String kSolanaReceiveAssetWarning =
     'Only send SOL on Solana to this address.';
@@ -60,7 +60,7 @@ class CryptoWalletEngineSolanaReceivePanel extends StatefulWidget {
     required this.encryptForVault,
     required this.isVaultKeyAvailable,
     this.features,
-    this.walletLabel = 'Svaultai SOL wallet',
+    this.walletLabel = 'SVaultAI SOL wallet',
   });
 
   @override

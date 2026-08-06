@@ -1,7 +1,7 @@
 {
-    "name": "Svaultai",
-    "short_name": "Svaultai",
-    "description": "Svaultai private digital vault",
+    "name": "SVaultAI — Private AI-Powered Digital Vault",
+    "short_name": "SVaultAI",
+    "description": "SVaultAI is a private, AI-powered digital vault for documents, identity records, credentials, memories, inheritance, and non-custodial digital assets.",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0F1115",
