@@ -26,6 +26,36 @@ class ProviderConfigurationError(RuntimeError):
     pass
 
 
+def completion_token_limit_kwargs(model: str, limit: int) -> dict[str, int]:
+    """Return the token-limit parameter accepted by the model family."""
+    normalized = str(model or "").strip().lower()
+    key = (
+        "max_completion_tokens"
+        if normalized.startswith(("gpt-5", "o1", "o3", "o4"))
+        else "max_tokens"
+    )
+    return {key: int(limit)}
+
+
+def safe_provider_error_category(exc: BaseException) -> str:
+    """Classify provider failures without serializing prompts or secrets."""
+    name = type(exc).__name__.lower()
+    status = getattr(exc, "status_code", None)
+    if status == 401 or "authentication" in name:
+        return "provider_authentication"
+    if status == 429 or "ratelimit" in name:
+        return "provider_rate_limit"
+    if "timeout" in name:
+        return "provider_timeout"
+    if status == 404 or "notfound" in name:
+        return "provider_model_not_found"
+    if status == 400 or "badrequest" in name:
+        return "provider_bad_request"
+    if isinstance(exc, ProviderConfigurationError):
+        return "provider_configuration"
+    return "provider_internal_error"
+
+
 def is_valid_provider(name: Any) -> bool:
     return isinstance(name, str) and name in PROVIDERS
 
@@ -152,7 +182,7 @@ async def _do_chat_complete(
         "temperature": temperature,
     }
     if max_tokens is not None:
-        kwargs["max_tokens"] = int(max_tokens)
+        kwargs.update(completion_token_limit_kwargs(model, max_tokens))
     if response_format is not None:
         kwargs["response_format"] = response_format
     response = await client.chat.completions.create(**kwargs)
@@ -196,6 +226,8 @@ __all__ = [
     "DEFAULT_MAX_RETRIES",
              
     "ProviderConfigurationError",
+    "completion_token_limit_kwargs",
+    "safe_provider_error_category",
                  
     "is_valid_provider",
     "active_provider_name",

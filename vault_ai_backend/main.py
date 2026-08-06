@@ -8159,9 +8159,11 @@ async def ai_stream(
     token_id: str = "",
     force_no_tools: bool = False,
     tool_routing_message: str = "",
+    correlation_id: str = "",
 ):
     tool_name: Optional[str] = None
     _search_attempted = False
+    _chat_model_for_log = "unknown"
     try:
                                                              
                                                                 
@@ -8394,11 +8396,16 @@ async def ai_stream(
             )
 
                                                                 
+        _chat_model = _ai_cfg().chat_model
+        _chat_model_for_log = str(_chat_model)
+        from vault_ai_provider import completion_token_limit_kwargs
         _create_kwargs: dict = dict(
-            model=_ai_cfg().chat_model,
+            model=_chat_model,
             messages=_stream_messages,
             stream=True,
-            max_tokens=_output_cap,
+        )
+        _create_kwargs.update(
+            completion_token_limit_kwargs(_chat_model, _output_cap),
         )
         if not _skip_tools and allowed_tools:
             _create_kwargs["tools"] = allowed_tools
@@ -8863,8 +8870,24 @@ async def ai_stream(
 
         yield _corrected_reply.encode("utf-8")
 
-    except Exception:
-        logger.exception("OpenAI stream error")
+    except Exception as exc:
+        from vault_ai_provider import safe_provider_error_category
+        _provider_category = safe_provider_error_category(exc)
+        _provider_status = getattr(exc, "status_code", None)
+        _provider_request_id = str(
+            getattr(exc, "request_id", "") or ""
+        )[:64]
+        logger.error(
+            "[CHAT-PROVIDER] generation_failed category=%s status=%s "
+            "correlation_id=%s provider_request_id=%s model=%s "
+            "search_attempted=%s",
+            _provider_category,
+            _provider_status if _provider_status is not None else "none",
+            str(correlation_id or "-")[:64],
+            _provider_request_id or "none",
+            _chat_model_for_log,
+            str(_search_attempted).lower(),
+        )
         from vault_chat_safety_sanitizer import (
             SENTENCE_GENERAL_RESPONSE_FAILED,
             SENTENCE_GENERIC_TOOL_FAILED,
@@ -13068,58 +13091,48 @@ async def chat_endpoint(
                 pass
             return encrypted_reply(_personal_memory_reply)
 
-        try:
-            _capability_q = bool(
-                re.match(
-                    r"^\s*(?:what\s+can\s+you\s+do|what\s+do\s+you\s+do|"
-                    r"how\s+can\s+you\s+help|what\s+are\s+you\s+able\s+to\s+do)"
-                    r"\s*[?.!]*\s*$",
-                    decrypted_message or "",
-                    re.IGNORECASE,
-                )
-            )
-        except Exception:
-            _capability_q = False
-        if _capability_q:
-            try:
-                request.state.chat_path = "capability_question"
-            except Exception:
-                pass
-            return encrypted_reply(
-                "I can help with your vault in a few practical ways: "
-                "save and retrieve files by name, organize files and "
-                "folders, store and recall personal memories, generate "
-                "and save login drafts, retrieve, edit, and delete saved "
-                "credentials, manage supported inheritance flows, and "
-                "help with supported wallet screens. I cannot move funds "
-                "or reveal protected data without your local approval."
-            )
-
                                                                
         _direct_ai_tools_enabled = os.getenv(
             "VAULTAI_DIRECT_AI_TOOLS_ENABLED", "true",
         ).strip().lower() in ("1", "true", "yes", "on")
 
                                                                    
-        def _route_to_ai_planner_stream(*, force_no_tools: bool = False):
+        def _route_to_ai_planner_stream(
+            *, force_no_tools: bool = False,
+            response_language: str = "",
+        ):
             safe_message = redact_message(decrypted_message)
             _tool_routing_message = ""
             _compound_instruction = ""
+            _language_instruction = (
+                "Reply in the language identified by BCP-47/ISO language "
+                f"code/name '{response_language or _reply_language or 'en'}'. "
+                "This resolved response "
+                "language overrides browser locale and English defaults. "
+                "Preserve Unicode and right-to-left script."
+            )
             try:
                 from vault_chat_general_router import analyze_compound_message
                 _compound = analyze_compound_message(decrypted_message or "")
                 if len(_compound.clauses) > 1:
+                    _language_instruction = (
+                        "Answer each clause in its own explicitly requested "
+                        "language, preserving clause order. If a clause has "
+                        "no explicit language, use the resolved conversation "
+                        f"language '{_reply_language or 'en'}'. Preserve "
+                        "Unicode and right-to-left script."
+                    )
                     if _compound.vault_clauses:
                         _tool_routing_message = "\n".join(
                             _compound.vault_clauses
                         )
-                    elif force_no_tools:
-                        _compound_instruction = (
-                            "The user supplied multiple general-chat clauses. "
-                            "Answer every clause separately, in order, using "
-                            "the language requested by that clause. Number the "
-                            "answers. Do not search or claim to inspect vault data."
-                        )
+                    _compound_instruction = (
+                        "The user supplied multiple clauses. Answer every "
+                        "clause separately and in order. Use vault tools only "
+                        "for clauses that explicitly request a vault action; "
+                        "ordinary conversation uses no tools. Number the "
+                        "answers and never turn the whole message into search."
+                    )
             except Exception:
                 logger.exception("[CHAT-TRACE] compound_analysis_failed")
             prompt_context = _build_chat_prompt_context(
@@ -13166,6 +13179,9 @@ async def chat_endpoint(
                 messages.append({
                     "role": "system", "content": _compound_instruction,
                 })
+            messages.append({
+                "role": "system", "content": _language_instruction,
+            })
             try:
                 from vault_history_compressor import compress_messages
                 _compressed = compress_messages(messages)
@@ -13187,6 +13203,7 @@ async def chat_endpoint(
                         token_id=str(principal.get("token_id") or ""),
                         force_no_tools=force_no_tools,
                         tool_routing_message=_tool_routing_message,
+                        correlation_id=str(_chat_request_id or ""),
                     ):
                         chunk_str = chunk.decode("utf-8")
                         encrypted_chunk = encrypt_message(chunk_str, key)
@@ -14054,7 +14071,10 @@ async def chat_endpoint(
                     str(_general_route.requested_language).lower(),
                 )
             if _general_route.model_response_required:
-                return _route_to_ai_planner_stream(force_no_tools=True)
+                return _route_to_ai_planner_stream(
+                    force_no_tools=True,
+                    response_language=_general_route.language,
+                )
             return encrypted_reply(_general_route.response)
 
         if _cfp is not None:

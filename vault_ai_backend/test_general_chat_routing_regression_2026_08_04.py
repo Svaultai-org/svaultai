@@ -44,11 +44,8 @@ def test_screenshot_cases_are_retrieval_free(message, intent, language):
     assert route is not None
     assert route.intent == intent
     assert route.language == language
-    if intent == INTENT_LANGUAGE_RESPONSE_REQUEST:
-        assert route.model_response_required
-        assert route.response == ""
-    else:
-        assert route.response
+    assert route.model_response_required
+    assert route.response == ""
     assert "part of the search" not in route.response.lower()
     assert "didn't find" not in route.response.lower()
 
@@ -121,7 +118,8 @@ def test_open_language_requests_use_model_only_general_route(message):
 
 def test_endpoint_language_model_route_forces_empty_tool_set():
     source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
-    assert "_route_to_ai_planner_stream(force_no_tools=True)" in source
+    assert "force_no_tools=True," in source
+    assert "response_language=_general_route.language" in source
     assert "if force_no_tools:" in source
 
 
