@@ -663,6 +663,7 @@ CORS_ALLOWED_HEADERS = [
     # See test_cors_preflight_login_2026_07_09.py for the
     # regression tests.
     "X-App-Release",
+    "X-Chat-Request-Id",
     # 2026-07-22 (4) Safari-specific CORS regression follow-up.
     # After the (3) fix landed, the Safari production frontend still
     # failed OPTIONS /vault-meta with 400 because its preflight also
@@ -702,6 +703,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=CORS_ALLOWED_METHODS,
     allow_headers=CORS_ALLOWED_HEADERS,
+    expose_headers=["X-Chat-Request-Id"],
     max_age=600,
 )
 
@@ -8915,10 +8917,17 @@ async def ai_stream(
             try:
                 from vault_multilingual import (
                     detect_language, detect_requested_language,
+                    has_requested_language_directive,
                 )
                 _failure_language = (
                     detect_requested_language(last_user_message or "")
-                    or detect_language(last_user_message or "")
+                    or (
+                        "unknown"
+                        if has_requested_language_directive(
+                            last_user_message or ""
+                        )
+                        else detect_language(last_user_message or "")
+                    )
                     or ""
                 )
             except Exception:
@@ -13257,6 +13266,7 @@ async def chat_endpoint(
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "X-Accel-Buffering": "no",
+                    "X-Chat-Request-Id": str(_chat_request_id or "-")[:64],
                 },
             )
 

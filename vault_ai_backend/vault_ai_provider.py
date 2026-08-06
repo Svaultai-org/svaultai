@@ -45,6 +45,10 @@ def safe_provider_error_category(exc: BaseException) -> str:
     error_code = _safe_provider_error_code(exc)
     if error_code in {"billing_not_active", "billing_hard_limit_reached"}:
         return "provider_billing_inactive"
+    if error_code in {
+        "insufficient_quota", "quota_exceeded", "credits_exhausted",
+    }:
+        return "provider_quota_exhausted"
     if status == 401 or "authentication" in name:
         return "provider_authentication"
     if status == 429 or "ratelimit" in name:

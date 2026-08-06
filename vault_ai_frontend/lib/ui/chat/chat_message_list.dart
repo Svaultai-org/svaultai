@@ -275,14 +275,14 @@ class _ChatMessageListState extends State<ChatMessageList> {
         final messageIdentifier =
             msg.isUser ? 'chat_user_message' : 'chat_assistant_message';
         return RepaintBoundary(
-          key: ValueKey('${messageIdentifier}_$index'),
+          key: ValueKey(msg.messageId),
           child: FadeSlideIn(
             animate: firstSeen,
             duration: VaultMotion.emphasized,
             offset: 10,
             child: Semantics(
               container: true,
-              identifier: messageIdentifier,
+              identifier: '${messageIdentifier}_${msg.messageId}',
               child: bubble,
             ),
           ),

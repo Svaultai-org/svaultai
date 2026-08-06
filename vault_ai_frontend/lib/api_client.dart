@@ -1562,6 +1562,7 @@ class VaultAIClient {
     required String vaultName,
     required String pin,
     required String authToken,
+    String? requestId,
     List<String>? uploadedFileIds,
     String? appLocale,
     Map<String, String>? selectionHint,
@@ -1597,6 +1598,13 @@ class VaultAIClient {
     }
 
     request.headers.addAll(headers);
+    final safeRequestId = (requestId ?? '').replaceAll(
+      RegExp(r'[^a-zA-Z0-9_.:-]'),
+      '',
+    );
+    if (safeRequestId.isNotEmpty && safeRequestId.length <= 64) {
+      request.headers['X-Chat-Request-Id'] = safeRequestId;
+    }
     _vlogRequest('chat.stream', uri, headers);
     _vlog('chat.body', {
       'vault_name': vaultName,

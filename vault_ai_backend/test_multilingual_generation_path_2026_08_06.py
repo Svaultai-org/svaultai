@@ -92,9 +92,9 @@ def test_provider_errors_are_safely_categorized(status, name, expected):
 
 
 @pytest.mark.parametrize("language,needle", (
-    ("tl", "Pakisubukan"), ("fr", "réessayer"), ("ar", "المحاولة"),
-    ("so", "isku day"), ("es", "Inténtalo"), ("ja", "お試し"),
-    ("hi", "प्रयास"), ("sw", "jaribu"), ("fa", "تلاش"),
+    ("tl", "Tagalog"), ("fr", "français"), ("ar", "العربية"),
+    ("so", "Af-Soomaali"), ("es", "español"), ("ja", "日本語"),
+    ("hi", "हिंदी"), ("sw", "Kiswahili"), ("fa", "فارسی"),
 ))
 def test_generation_failure_is_neutral_and_localized(language, needle):
     result = localized_general_response_failed(language)

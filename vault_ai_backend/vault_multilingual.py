@@ -85,6 +85,18 @@ def detect_requested_language(text: str) -> Optional[str]:
     return None
 
 
+def has_requested_language_directive(text: str) -> bool:
+    """Return whether the user explicitly requested any reply language.
+
+    Unknown language names intentionally count.  Provider-failure handling can
+    then use its safe unknown-language fallback instead of mistaking the
+    surrounding English instruction for an English response request.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return False
+    return _DIRECTIVE_PREFIX.search(text.strip()) is not None
+
+
 
 
 _UNICODE_BLOCK_LANG: tuple[tuple[str, tuple[tuple[int, int], ...]], ...] = (

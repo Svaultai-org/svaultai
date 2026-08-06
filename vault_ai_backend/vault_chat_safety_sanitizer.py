@@ -34,7 +34,8 @@ SENTENCE_GENERIC_TOOL_FAILED = (
 )
 
 SENTENCE_GENERAL_RESPONSE_FAILED = (
-    "I couldn't complete that response. Please try again."
+    "I'm sorry, I can't reply in the requested language right now. "
+    "We can continue in English, you can try again in a moment, or cancel."
 )
 
 _GENERAL_RESPONSE_FAILED_BY_LANGUAGE = {
@@ -50,11 +51,24 @@ _GENERAL_RESPONSE_FAILED_BY_LANGUAGE = {
 }
 
 
+_FRIENDLY_PROVIDER_FAILURE_BY_LANGUAGE = {
+    "es": "Lo siento, no puedo responder en español en este momento. Podemos continuar en inglés, intentarlo de nuevo en unos minutos o cancelar.",
+    "fr": "Je suis désolé, je ne peux pas répondre en français pour le moment. Nous pouvons continuer en anglais, réessayer dans quelques minutes ou annuler.",
+    "tl": "Paumanhin, hindi ako makasagot sa Tagalog sa ngayon. Maaari tayong magpatuloy sa Ingles, subukan muli pagkalipas ng ilang minuto, o kanselahin.",
+    "ar": "عذرًا، لا يمكنني الرد بالعربية الآن. يمكننا المتابعة بالإنجليزية، أو المحاولة مرة أخرى بعد بضع دقائق، أو الإلغاء.",
+    "so": "Waan ka xumahay, hadda kuma jawaabi karo Af-Soomaali. Waxaan ku sii wadi karnaa Ingiriisi, mar kale isku day dhowr daqiiqo kadib, ama jooji.",
+    "ja": "申し訳ありませんが、現在は日本語で返信できません。英語で続けるか、数分後にもう一度試すか、キャンセルできます。",
+    "hi": "मुझे खेद है, मैं अभी हिंदी में उत्तर नहीं दे सकता। हम अंग्रेज़ी में जारी रख सकते हैं, कुछ मिनट बाद फिर कोशिश कर सकते हैं, या रद्द कर सकते हैं।",
+    "sw": "Samahani, siwezi kujibu kwa Kiswahili kwa sasa. Tunaweza kuendelea kwa Kiingereza, kujaribu tena baada ya dakika chache, au kughairi.",
+    "fa": "متأسفم، در حال حاضر نمی‌توانم به فارسی پاسخ بدهم. می‌توانیم به انگلیسی ادامه دهیم، چند دقیقه دیگر دوباره تلاش کنیم، یا لغو کنیم.",
+}
+
+
 def localized_general_response_failed(language: str) -> str:
     """Return a neutral generation failure in the resolved reply language."""
     normalized = str(language or "").strip().lower().replace("_", "-")
     code = normalized.split("-", 1)[0]
-    return _GENERAL_RESPONSE_FAILED_BY_LANGUAGE.get(
+    return _FRIENDLY_PROVIDER_FAILURE_BY_LANGUAGE.get(
         code, SENTENCE_GENERAL_RESPONSE_FAILED,
     )
 

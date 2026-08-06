@@ -78,6 +78,8 @@ import 'ui/responsive.dart';
 import 'ui/chat/ask_brain_handoff.dart';
 import 'ui/chat/chat_message_list.dart';
 import 'ui/chat/chat_models.dart';
+import 'ui/chat/chat_failure_localization.dart';
+import 'ui/chat/chat_request_lifecycle.dart';
 import 'ui/secure_item_detail.dart';
 import 'ui/chat/vault_file_view_messages.dart';
 
@@ -7003,7 +7005,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         kdfSaltUsed: ctxSnapshot.saltBase64,
         kdfIterationsUsed: ctxSnapshot.iterations,
       );
-
       try {
         await for (final encryptedChunk in stream) {
           try {
@@ -7173,6 +7174,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   bool sending = false;
   bool thinking = false;
+  final ChatRequestCoordinator _chatRequests = ChatRequestCoordinator();
+  StreamIterator<String>? _activeChatIterator;
+  String? _activeChatRequestId;
+  final Set<String> _cancelledChatRequestIds = <String>{};
+
+  Future<void> _cancelActiveChatRequest() async {
+    final requestId = _activeChatRequestId;
+    if (requestId == null) return;
+    _chatRequests.cancel(requestId);
+    _cancelledChatRequestIds.add(requestId);
+    final iterator = _activeChatIterator;
+    _activeChatIterator = null;
+    _activeChatRequestId = null;
+    await iterator?.cancel();
+    if (!mounted) return;
+    setState(() {
+      final assistantIndex = msgs.indexWhere(
+        (message) => message.requestId == requestId && message.isAssistant,
+      );
+      if (assistantIndex >= 0) {
+        msgs[assistantIndex] = _Msg('assistant', 'Cancelled.')
+            .withCorrelationFrom(msgs[assistantIndex]);
+      }
+      thinking = false;
+      sending = false;
+    });
+  }
+
   bool loadingFiles = false;
   bool loadingLogins = false;
 
@@ -11300,6 +11329,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   @override
   void dispose() {
     _chatMainnetSendApprovalSession.clear();
+    final activeRequestId = _activeChatRequestId;
+    if (activeRequestId != null) {
+      _chatRequests.cancel(activeRequestId);
+      _cancelledChatRequestIds.add(activeRequestId);
+    }
+    unawaited(_activeChatIterator?.cancel());
+    _activeChatIterator = null;
+    _activeChatRequestId = null;
     if (_speech.isListening) {
       _speech.cancel();
     }
@@ -14662,12 +14699,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               size: a.size,
             ))
         .toList(growable: false);
+    final chatTicket = _chatRequests.begin();
+    final chatRequestId = chatTicket.requestId;
+    final userMessageId = chatTicket.userMessageId;
+    final assistantMessageId = chatTicket.assistantMessageId;
 
     setState(() {
       sending = true;
       msgs.add(_Msg(
         'user',
         text,
+        messageId: userMessageId,
+        requestId: chatRequestId,
         attachments: attachmentSummaries.isEmpty ? null : attachmentSummaries,
       ));
       input.clear();
@@ -14701,6 +14744,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (text.isEmpty && uploadedFileIds.isNotEmpty) {
         if (!mounted) return;
+        _chatRequests.complete(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -14709,6 +14753,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (hadAttachments && attachmentTitle != null) {
         if (!mounted) return;
+        _chatRequests.complete(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -14717,6 +14762,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (uploadOutcome.autoNamedAny) {
         if (!mounted) return;
+        _chatRequests.complete(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -14725,9 +14771,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       setState(() {
         thinking = true;
+        msgs.add(_Msg(
+          'assistant',
+          '',
+          messageId: assistantMessageId,
+          requestId: chatRequestId,
+          replyToMessageId: userMessageId,
+        ));
       });
       _scrollToBottom();
-      int? assistantIndex;
+      final int assistantIndex = msgs.indexWhere(
+        (message) => message.messageId == assistantMessageId,
+      );
+      if (assistantIndex < 0) {
+        throw StateError('correlated assistant placeholder missing');
+      }
       String buffer = '';
       // Per-send ZK memory-proposal state. The backend emits the
       // sentinel exactly once per turn, but SSE decoding may deliver
@@ -14765,9 +14823,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() {
           sending = false;
           thinking = false;
-          if (msgs.isNotEmpty && msgs.last.role == 'user') {
-            msgs.removeLast();
-          }
+          msgs.removeWhere((message) => message.requestId == chatRequestId);
           input.text = text;
           input.selection = TextSelection.collapsed(offset: text.length);
         });
@@ -14782,8 +14838,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         return;
       }
-      final chatRequestId =
-          '${DateTime.now().microsecondsSinceEpoch}_${ctxSnapshot.generation}';
       final keyFp = await cryptoFingerprintForKey(ctxSnapshot.key);
       final saltFp = cryptoFingerprintForSaltBase64(ctxSnapshot.saltBase64);
       final encryptedMessage = await encryptWithContext(
@@ -14812,18 +14866,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultName: vaultName,
         pin: pin,
         authToken: authToken,
+        requestId: chatRequestId,
         uploadedFileIds: uploadedFileIds,
         appLocale: replyLanguageCode,
         selectionHint: hintForThisSend,
         kdfSaltUsed: ctxSnapshot.saltBase64,
         kdfIterationsUsed: ctxSnapshot.iterations,
       );
+      final streamIterator = StreamIterator<String>(stream);
+      _activeChatIterator = streamIterator;
+      _activeChatRequestId = chatRequestId;
 
       try {
-        await for (final encryptedChunk in stream) {
+        while (await streamIterator.moveNext()) {
+          if (!_chatRequests.acceptsEvents(chatRequestId)) break;
+          final encryptedChunk = streamIterator.current;
           try {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
-            if (!mounted) return;
+            if (!mounted || !_chatRequests.acceptsEvents(chatRequestId)) {
+              break;
+            }
             buffer += decryptedChunk;
 
             // ZK memory-proposal sentinel: the backend emits
@@ -14851,16 +14913,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
             // dart format off
             final structuredNow = _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
+            final _Msg replacement =
+                (structuredNow ?? _Msg('assistant', buffer))
+                    .withCorrelationFrom(msgs[assistantIndex]);
             // dart format on
             setState(() {
-              if (assistantIndex == null) {
-                msgs.add(replacement);
-                assistantIndex = msgs.length - 1;
-                thinking = false;
-              } else {
-                msgs[assistantIndex!] = replacement;
-              }
+              msgs[assistantIndex] = replacement;
+              thinking = false;
             });
             _scrollToBottom();
           } catch (e) {
@@ -14868,12 +14927,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!mounted) return;
             setState(() {
               thinking = false;
-              if (assistantIndex == null) {
-                msgs.add(_Msg('assistant', 'Decrypt error: $e'));
-                assistantIndex = msgs.length - 1;
-              } else {
-                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e');
-              }
+              msgs[assistantIndex] = _Msg(
+                'assistant',
+                friendlyChatGenerationFailure(text),
+              ).withCorrelationFrom(msgs[assistantIndex]);
             });
           }
         }
@@ -14892,9 +14949,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             thinking = false;
             sending = false;
-            if (msgs.isNotEmpty && msgs.last.role == 'user') {
-              msgs.removeLast();
-            }
+            msgs.removeWhere((message) => message.requestId == chatRequestId);
             input.text = text;
             input.selection = TextSelection.collapsed(offset: text.length);
           });
@@ -14932,9 +14987,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             sending = false;
             // Drop the just-added user message (send failed) so the
             // chat log doesn't imply the message was received.
-            if (msgs.isNotEmpty && msgs.last.role == 'user') {
-              msgs.removeLast();
-            }
+            msgs.removeWhere((message) => message.requestId == chatRequestId);
             // Put the text back in the input so the user can just
             // tap send again — no retyping.
             input.text = text;
@@ -14981,20 +15034,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         if (!mounted) return;
         setState(() {
           thinking = false;
-          if (assistantIndex == null) {
-            msgs.add(_Msg('assistant', 'Error: $err'));
-            assistantIndex = msgs.length - 1;
-          } else {
-            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
-          }
+          msgs[assistantIndex] = _Msg(
+            'assistant',
+            friendlyChatGenerationFailure(text),
+          ).withCorrelationFrom(msgs[assistantIndex]);
         });
+      } finally {
+        await streamIterator.cancel();
+        if (_activeChatRequestId == chatRequestId) {
+          _activeChatIterator = null;
+          _activeChatRequestId = null;
+        }
       }
 
-      if (assistantIndex != null && buffer.isNotEmpty) {
+      if (_cancelledChatRequestIds.remove(chatRequestId)) return;
+      _chatRequests.complete(chatRequestId);
+
+      if (buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
         if (structured != null && mounted) {
           setState(() {
-            msgs[assistantIndex!] = structured;
+            msgs[assistantIndex] =
+                structured.withCorrelationFrom(msgs[assistantIndex]);
           });
           // "download it" / "open it" / "view it" pronoun follow-ups
           // arrive as a vault_file card with pending_action set. Fire
@@ -15022,21 +15083,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!mounted) return;
 
       if (e is UploadCancelledException) {
+        _chatRequests.cancel(chatRequestId);
         setState(() {
           thinking = false;
           sending = false;
         });
         return;
       }
+      _chatRequests.complete(chatRequestId);
       setState(() {
         thinking = false;
-        msgs.add(_Msg(
+        final failure = _Msg(
           'assistant',
           uploadCommitted && hadAttachments
               ? 'Your file was saved. I could not complete the optional '
                   'follow-up.'
-              : 'I could not complete that request. Try again.',
-        ));
+              : friendlyChatGenerationFailure(text),
+          messageId: assistantMessageId,
+          requestId: chatRequestId,
+          replyToMessageId: userMessageId,
+        );
+        final existing = msgs.indexWhere(
+          (message) => message.messageId == assistantMessageId,
+        );
+        if (existing >= 0) {
+          msgs[existing] = failure;
+        } else {
+          msgs.add(failure);
+        }
         sending = false;
       });
       _scrollToBottom();
@@ -15173,7 +15247,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         button: true,
         identifier: 'composer_send_button',
         label: sending
-            ? AppLocalizations.of(context).chatSending
+            ? 'Cancel response'
             : AppLocalizations.of(context).chatSendButton,
         child: Material(
           key: const Key('composer_send_button'),
@@ -15181,12 +15255,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap: canSend ? _send : null,
+            onTap:
+                sending ? _cancelActiveChatRequest : (canSend ? _send : null),
             child: SizedBox(
               width: size,
               height: size,
               child: Icon(
-                sending ? Icons.hourglass_top : Icons.arrow_upward_rounded,
+                sending ? Icons.close_rounded : Icons.arrow_upward_rounded,
                 size: vr.isMobile ? 18 : 20,
                 color: iconColor,
               ),
