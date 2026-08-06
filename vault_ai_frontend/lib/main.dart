@@ -7181,6 +7181,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
+  bool _speechInitialized = false;
   bool _isListening = false;
   String _preMicText = '';
 
@@ -10594,7 +10595,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _folderPicker = createFolderPickerService();
     _nativeMediaCapture = createNativeMediaCaptureService();
     _recordingStorage = createRecordingStorage();
-    _initSpeech();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final app = context.read<AppState>();
 
@@ -10640,7 +10640,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
-  Future<void> _initSpeech() async {
+  Future<bool> _initSpeech() async {
     try {
       final ok = await _speech.initialize(
         onError: (_) {
@@ -10652,14 +10652,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         },
       );
-      if (mounted) setState(() => _speechAvailable = ok);
+      if (mounted) {
+        setState(() {
+          _speechInitialized = true;
+          _speechAvailable = ok;
+        });
+      }
+      return ok;
     } catch (_) {
-      if (mounted) setState(() => _speechAvailable = false);
+      if (mounted) {
+        setState(() {
+          _speechInitialized = true;
+          _speechAvailable = false;
+        });
+      }
+      return false;
     }
   }
 
   Future<void> _toggleListening() async {
     if (sending) return;
+    if (!_speechInitialized) {
+      final allowed = await _ensureMicrophonePermission(
+        'Microphone permission is needed for voice input.',
+      );
+      if (!allowed) return;
+      await _initSpeech();
+    }
     if (!_speechAvailable) {
       _showSnack(
         'Voice input is unavailable or microphone permission was denied.',

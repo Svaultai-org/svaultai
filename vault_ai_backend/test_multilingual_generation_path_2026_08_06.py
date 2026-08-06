@@ -17,6 +17,7 @@ from vault_ai_provider import (
     safe_provider_error_category,
 )
 from vault_chat_general_router import route_general_chat
+from vault_chat_safety_sanitizer import localized_general_response_failed
 from vault_multilingual import detect_language, detect_requested_language
 
 
@@ -80,7 +81,7 @@ def test_provider_uses_model_compatible_token_limit(model, key):
 @pytest.mark.parametrize("status,name,expected", (
     (401, "SyntheticError", "provider_authentication"),
     (429, "SyntheticError", "provider_rate_limit"),
-    (404, "SyntheticError", "provider_model_not_found"),
+    (404, "SyntheticError", "provider_unsupported_model"),
     (400, "SyntheticError", "provider_bad_request"),
 ))
 def test_provider_errors_are_safely_categorized(status, name, expected):
@@ -88,6 +89,17 @@ def test_provider_errors_are_safely_categorized(status, name, expected):
     exc = error_type("details must not be logged")
     exc.status_code = status
     assert safe_provider_error_category(exc) == expected
+
+
+@pytest.mark.parametrize("language,needle", (
+    ("tl", "Pakisubukan"), ("fr", "réessayer"), ("ar", "المحاولة"),
+    ("so", "isku day"), ("es", "Inténtalo"), ("ja", "お試し"),
+    ("hi", "प्रयास"), ("sw", "jaribu"), ("fa", "تلاش"),
+))
+def test_generation_failure_is_neutral_and_localized(language, needle):
+    result = localized_general_response_failed(language)
+    assert needle in result
+    assert "search" not in result.lower()
 
 
 @pytest.mark.asyncio

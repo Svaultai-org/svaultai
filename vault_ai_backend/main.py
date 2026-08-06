@@ -8755,12 +8755,28 @@ async def ai_stream(
             from vault_chat_safety_sanitizer import (
                 SENTENCE_GENERAL_RESPONSE_FAILED,
                 SENTENCE_GENERIC_TOOL_FAILED,
+                localized_general_response_failed,
                 _SEARCH_TOOL_NAMES,
             )
+            _empty_failure_language = ""
+            if tool_name not in _SEARCH_TOOL_NAMES:
+                try:
+                    from vault_multilingual import (
+                        detect_language, detect_requested_language,
+                    )
+                    _empty_failure_language = (
+                        detect_requested_language(last_user_message or "")
+                        or detect_language(last_user_message or "")
+                        or ""
+                    )
+                except Exception:
+                    _empty_failure_language = ""
             _reply_buf.append(
                 SENTENCE_GENERIC_TOOL_FAILED
                 if tool_name in _SEARCH_TOOL_NAMES
-                else SENTENCE_GENERAL_RESPONSE_FAILED
+                else localized_general_response_failed(
+                    _empty_failure_language,
+                )
             )
 
                                                                     
@@ -8891,12 +8907,26 @@ async def ai_stream(
         from vault_chat_safety_sanitizer import (
             SENTENCE_GENERAL_RESPONSE_FAILED,
             SENTENCE_GENERIC_TOOL_FAILED,
+            localized_general_response_failed,
             _SEARCH_TOOL_NAMES,
         )
+        _failure_language = ""
+        if not _search_attempted:
+            try:
+                from vault_multilingual import (
+                    detect_language, detect_requested_language,
+                )
+                _failure_language = (
+                    detect_requested_language(last_user_message or "")
+                    or detect_language(last_user_message or "")
+                    or ""
+                )
+            except Exception:
+                _failure_language = ""
         yield (
             SENTENCE_GENERIC_TOOL_FAILED
             if _search_attempted
-            else SENTENCE_GENERAL_RESPONSE_FAILED
+            else localized_general_response_failed(_failure_language)
         ).encode("utf-8")
 
 

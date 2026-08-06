@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -41,19 +42,124 @@ def safe_provider_error_category(exc: BaseException) -> str:
     """Classify provider failures without serializing prompts or secrets."""
     name = type(exc).__name__.lower()
     status = getattr(exc, "status_code", None)
+    error_code = _safe_provider_error_code(exc)
+    if error_code in {"billing_not_active", "billing_hard_limit_reached"}:
+        return "provider_billing_inactive"
     if status == 401 or "authentication" in name:
         return "provider_authentication"
     if status == 429 or "ratelimit" in name:
         return "provider_rate_limit"
     if "timeout" in name:
         return "provider_timeout"
-    if status == 404 or "notfound" in name:
-        return "provider_model_not_found"
+    if status == 404 or "notfound" in name or error_code in {
+        "model_not_found", "unsupported_model",
+    }:
+        return "provider_unsupported_model"
     if status == 400 or "badrequest" in name:
         return "provider_bad_request"
     if isinstance(exc, ProviderConfigurationError):
         return "provider_configuration"
-    return "provider_internal_error"
+    if status is not None and int(status) >= 500:
+        return "provider_unavailable"
+    if any(token in name for token in ("connection", "apierror")):
+        return "provider_unavailable"
+    return "provider_unavailable"
+
+
+def _safe_provider_error_code(exc: BaseException) -> str:
+    """Extract only a provider's closed-set error code, never its message."""
+    candidates = [getattr(exc, "code", None), getattr(exc, "type", None)]
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict):
+            candidates.extend((error.get("code"), error.get("type")))
+    for candidate in candidates:
+        value = str(candidate or "").strip().lower()
+        if value:
+            return value[:64]
+    return ""
+
+
+def safe_provider_request_id(exc: BaseException) -> str:
+    """Return a bounded request identifier without inspecting response text."""
+    value = getattr(exc, "request_id", None)
+    if not value:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", {}) or {}
+        value = headers.get("x-request-id") or headers.get("request-id")
+    return str(value or "").strip()[:128]
+
+
+@dataclass(frozen=True)
+class ProviderReadinessResult:
+    provider_configured: bool
+    model_configured: str
+    credential_present: bool
+    provider_reachable: bool
+    provider_authentication_status: str
+    billing_rate_limit_category: str
+    request_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider_configured": self.provider_configured,
+            "model_configured": self.model_configured,
+            "credential_present": self.credential_present,
+            "provider_reachable": self.provider_reachable,
+            "provider_authentication_status": self.provider_authentication_status,
+            "billing_rate_limit_category": self.billing_rate_limit_category,
+            "request_id": self.request_id,
+        }
+
+
+async def check_provider_readiness(
+    *, model: Optional[str] = None, timeout: float = 10.0,
+    generation_probe: bool = True,
+) -> ProviderReadinessResult:
+    """Probe readiness without sending user content or logging probe content."""
+    resolved_model = str(model or _resolve_model_name("chat") or "").strip()
+    credential_present = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+    if not credential_present:
+        return ProviderReadinessResult(
+            True, resolved_model, False, False, "not_configured",
+            "provider_configuration",
+        )
+    try:
+        client = get_chat_client(timeout=timeout, max_retries=0)
+        await client.models.retrieve(resolved_model)
+        if generation_probe:
+            kwargs: dict[str, Any] = {
+                "model": resolved_model,
+                "messages": [{"role": "user", "content": "OK"}],
+                "temperature": 0,
+            }
+            kwargs.update(completion_token_limit_kwargs(resolved_model, 1))
+            await client.chat.completions.create(**kwargs)
+        return ProviderReadinessResult(
+            True, resolved_model, True, True, "authenticated", "ready",
+        )
+    except Exception as exc:
+        category = safe_provider_error_category(exc)
+        reachable = category not in {"provider_timeout", "provider_unavailable"}
+        auth = (
+            "invalid" if category == "provider_authentication"
+            else "authenticated" if reachable else "unknown"
+        )
+        logger.warning(
+            "[PROVIDER-READINESS] category=%s reachable=%s auth=%s "
+            "request_id=%s model=%s",
+            category, str(reachable).lower(), auth,
+            safe_provider_request_id(exc) or "none", resolved_model,
+        )
+        return ProviderReadinessResult(
+            True, resolved_model, True, reachable, auth, category,
+            safe_provider_request_id(exc),
+        )
+
+
+async def _provider_readiness_cli() -> None:
+    print(json.dumps((await check_provider_readiness()).to_dict(), sort_keys=True))
 
 
 def is_valid_provider(name: Any) -> bool:
@@ -228,6 +334,9 @@ __all__ = [
     "ProviderConfigurationError",
     "completion_token_limit_kwargs",
     "safe_provider_error_category",
+    "safe_provider_request_id",
+    "ProviderReadinessResult",
+    "check_provider_readiness",
                  
     "is_valid_provider",
     "active_provider_name",
@@ -239,3 +348,8 @@ __all__ = [
     "ChatCompletionResult",
     "chat_complete_with_fallback",
 ]
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(_provider_readiness_cli())

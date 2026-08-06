@@ -37,6 +37,27 @@ SENTENCE_GENERAL_RESPONSE_FAILED = (
     "I couldn't complete that response. Please try again."
 )
 
+_GENERAL_RESPONSE_FAILED_BY_LANGUAGE = {
+    "tl": "Hindi ko makumpleto ang tugon. Pakisubukan muli.",
+    "fr": "Je n’ai pas pu terminer cette réponse. Veuillez réessayer.",
+    "ar": "تعذّر عليّ إكمال الرد. يُرجى المحاولة مرة أخرى.",
+    "so": "Ma dhammaystiri karin jawaabta. Fadlan mar kale isku day.",
+    "es": "No pude completar la respuesta. Inténtalo de nuevo.",
+    "ja": "応答を完了できませんでした。もう一度お試しください。",
+    "hi": "मैं उत्तर पूरा नहीं कर सका। कृपया फिर से प्रयास करें।",
+    "sw": "Sikuweza kukamilisha jibu. Tafadhali jaribu tena.",
+    "fa": "نتوانستم پاسخ را کامل کنم. لطفاً دوباره تلاش کنید.",
+}
+
+
+def localized_general_response_failed(language: str) -> str:
+    """Return a neutral generation failure in the resolved reply language."""
+    normalized = str(language or "").strip().lower().replace("_", "-")
+    code = normalized.split("-", 1)[0]
+    return _GENERAL_RESPONSE_FAILED_BY_LANGUAGE.get(
+        code, SENTENCE_GENERAL_RESPONSE_FAILED,
+    )
+
 _SEARCH_TOOL_NAMES = frozenset({
     "find_in_vault", "search_extracted_text", "search_vault_content",
     "list_vault_files", "list_files_by_category", "read_file_text",
@@ -208,6 +229,7 @@ __all__ = [
     "SENTENCE_EMPTY_RESULT",
     "SENTENCE_GENERIC_TOOL_FAILED",
     "SENTENCE_GENERAL_RESPONSE_FAILED",
+    "localized_general_response_failed",
     "looks_like_raw_json",
     "sanitize_tool_result",
     "sanitize_user_facing_text",

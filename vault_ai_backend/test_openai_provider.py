@@ -24,6 +24,9 @@ from vault_ai_provider import (
     get_chat_client,
     get_chat_client_sync,
     is_valid_provider,
+    check_provider_readiness,
+    safe_provider_error_category,
+    safe_provider_request_id,
 )
 
 
@@ -149,6 +152,71 @@ class ChatCompleteTests(unittest.TestCase):
         self.assertEqual(result.content, "hi from the vault")
         self.assertEqual(result.finish_reason, "stop")
         self.assertFalse(result.used_fallback)
+
+
+class ProviderReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self._prev_key = os.environ.get("OPENAI_API_KEY")
+
+    def tearDown(self):
+        if self._prev_key is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = self._prev_key
+
+    def test_missing_credential_is_reported_without_a_probe(self):
+        os.environ.pop("OPENAI_API_KEY", None)
+        result = _run(check_provider_readiness(model="gpt-test"))
+        self.assertFalse(result.credential_present)
+        self.assertEqual(result.provider_authentication_status, "not_configured")
+        self.assertNotIn("key", result.to_dict())
+
+    def test_successful_metadata_probe_sends_no_prompt(self):
+        os.environ["OPENAI_API_KEY"] = "sk-test-dummy"
+        client = mock.MagicMock()
+        client.models.retrieve = mock.AsyncMock(return_value=object())
+        client.chat.completions.create = mock.AsyncMock(return_value=object())
+        with mock.patch("vault_ai_provider.get_chat_client", return_value=client):
+            result = _run(check_provider_readiness(model="gpt-test"))
+        client.models.retrieve.assert_awaited_once_with("gpt-test")
+        self.assertEqual(client.chat.completions.create.await_count, 1)
+        self.assertTrue(result.provider_reachable)
+        self.assertEqual(result.billing_rate_limit_category, "ready")
+
+    def test_billing_inactive_is_distinct_and_request_id_is_safe(self):
+        os.environ["OPENAI_API_KEY"] = "sk-test-dummy"
+        exc = RuntimeError("secret provider message")
+        exc.status_code = 429
+        exc.body = {"error": {"code": "billing_not_active"}}
+        exc.request_id = "req_safe_123"
+        client = mock.MagicMock()
+        client.models.retrieve = mock.AsyncMock(return_value=object())
+        client.chat.completions.create = mock.AsyncMock(side_effect=exc)
+        with mock.patch("vault_ai_provider.get_chat_client", return_value=client):
+            result = _run(check_provider_readiness(model="gpt-test"))
+        self.assertEqual(result.billing_rate_limit_category,
+                         "provider_billing_inactive")
+        self.assertEqual(result.request_id, "req_safe_123")
+        self.assertNotIn("secret provider message", str(result.to_dict()))
+
+    def test_closed_error_categories(self):
+        cases = (
+            (401, {}, "provider_authentication"),
+            (429, {}, "provider_rate_limit"),
+            (404, {}, "provider_unsupported_model"),
+            (500, {}, "provider_unavailable"),
+        )
+        for status, body, expected in cases:
+            exc = RuntimeError("must remain private")
+            exc.status_code = status
+            exc.body = body
+            self.assertEqual(safe_provider_error_category(exc), expected)
+
+    def test_timeout_and_header_request_id(self):
+        exc = TimeoutError("private")
+        exc.response = mock.MagicMock(headers={"x-request-id": "req_header"})
+        self.assertEqual(safe_provider_error_category(exc), "provider_timeout")
+        self.assertEqual(safe_provider_request_id(exc), "req_header")
 
 
 class SourceGuardTests(unittest.TestCase):
