@@ -3,8 +3,24 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/logins_page.dart';
+import 'package:vault_ai_frontend/services/credential_v2_migration.dart';
 
 void main() {
+  test('migration operation ID survives logout without persisted secrets', () {
+    const recordA = 'migrated-vault-scoped-record-a';
+    const recordB = 'migrated-vault-scoped-record-b';
+    final first = credentialV2MigrationOperationId(recordA);
+
+    expect(credentialV2MigrationOperationId(recordA), first);
+    expect(credentialV2MigrationOperationId(recordB), isNot(first));
+    expect(
+      first,
+      matches(RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+      )),
+    );
+  });
+
   test('rollback is offered only for migration lifecycle records', () {
     VaultLoginItem item(String state) => VaultLoginItem(
           service: 'QA',
