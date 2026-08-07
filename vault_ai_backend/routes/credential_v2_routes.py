@@ -179,6 +179,7 @@ def finalize_generated_draft_v2(
             SELECT 1 FROM vault_crypto_envelopes
              WHERE vault_id = %s AND record_domain = 'credential'
                AND record_id = %s AND crypto_version = 'client_mvk_v2'
+               AND migration_state <> 'rolled_back'
                AND deleted_at IS NULL
             """,
             (principal["vault_id"], record_id),
@@ -292,6 +293,7 @@ def read_credential_v2(
             SELECT * FROM vault_crypto_envelopes
              WHERE vault_id = %s AND record_domain = 'credential'
                AND record_id = %s AND crypto_version = 'client_mvk_v2'
+               AND migration_state <> 'rolled_back'
                AND deleted_at IS NULL
             """,
             (principal["vault_id"], record_id),
@@ -332,7 +334,8 @@ def list_credentials_v2(
             """
             SELECT * FROM vault_crypto_envelopes
              WHERE vault_id = %s AND record_domain = 'credential'
-               AND crypto_version = 'client_mvk_v2' AND deleted_at IS NULL
+               AND crypto_version = 'client_mvk_v2'
+               AND migration_state <> 'rolled_back' AND deleted_at IS NULL
             """ + where + " ORDER BY created_at, record_id",
             params,
         )
@@ -408,6 +411,12 @@ def rollback_credential_v2(
             """,
             (principal["vault_id"], record_id),
         )
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="rollback requires a retained legacy migration",
+            )
         cur.execute(
             """
             UPDATE vault_crypto_envelopes

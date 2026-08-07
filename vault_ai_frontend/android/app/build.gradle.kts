@@ -32,6 +32,25 @@ val missingReleaseSigningProperties = releaseSigningProperties.filter {
 }
 val hasReleaseSigning = keystorePropertiesFile.exists() &&
     missingReleaseSigningProperties.isEmpty()
+val qaReleaseRequested = providers.gradleProperty("VAULTAI_QA_RELEASE")
+    .orNull == "true"
+val qaKeystorePropertiesFile = rootProject.file(
+    "../.qa/android-qa-key.properties",
+)
+val qaKeystoreProperties = Properties()
+if (qaKeystorePropertiesFile.exists()) {
+    qaKeystoreProperties.load(FileInputStream(qaKeystorePropertiesFile))
+}
+val qaSigningProperties = listOf(
+    "storeFile",
+    "storePassword",
+    "keyAlias",
+    "keyPassword",
+)
+val hasQaSigning = qaKeystorePropertiesFile.exists() &&
+    qaSigningProperties.all {
+        !qaKeystoreProperties.getProperty(it).isNullOrBlank()
+    }
 val releaseSigningFailureMessage =
     "[vaultai-release] Release signing config is missing or incomplete. " +
     "Create android/key.properties with storeFile, storePassword, " +
@@ -55,7 +74,13 @@ gradle.taskGraph.whenReady {
                 name.contains("package") ||
                 name.contains("sign"))
     }
-    if (releaseBuildRequested && !hasReleaseSigning) {
+    if (releaseBuildRequested && qaReleaseRequested && !hasQaSigning) {
+        throw GradleException(
+            "[vaultai-qa] QA release signing config is missing. " +
+                "Create the ignored .qa/android-qa-key.properties file.",
+        )
+    }
+    if (releaseBuildRequested && !qaReleaseRequested && !hasReleaseSigning) {
         throw GradleException(releaseSigningFailureMessage)
     }
 }
@@ -76,10 +101,20 @@ android {
 
     defaultConfig {
         applicationId = "com.svaultai.app"
+        if (qaReleaseRequested) {
+            applicationIdSuffix = ".qa"
+        }
         minSdk = 24
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["vaultaiNetworkSecurityConfig"] = if (
+            qaReleaseRequested
+        ) {
+            "@xml/network_security_config_qa"
+        } else {
+            "@xml/network_security_config"
+        }
 
         // ---------------------------------------------------------------
         // Production API host resolution: the Dart-level default in
@@ -106,11 +141,22 @@ android {
                 storePassword = keystoreProperties.getProperty("storePassword")
             }
         }
+        create("qa") {
+            if (hasQaSigning) {
+                keyAlias = qaKeystoreProperties.getProperty("keyAlias")
+                keyPassword = qaKeystoreProperties.getProperty("keyPassword")
+                storeFile = qaKeystoreProperties
+                    .getProperty("storeFile")?.let { file(it) }
+                storePassword = qaKeystoreProperties.getProperty("storePassword")
+            }
+        }
     }
 
     buildTypes {
         release {
-            if (hasReleaseSigning) {
+            if (qaReleaseRequested && hasQaSigning) {
+                signingConfig = signingConfigs.getByName("qa")
+            } else if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
             // R8 code shrink + resource stripping. Play install size

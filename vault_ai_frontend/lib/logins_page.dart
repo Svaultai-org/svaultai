@@ -279,6 +279,8 @@ class LoginsPage extends StatefulWidget {
   final void Function(VaultLoginItem item)? onViewItem;
   final void Function(VaultLoginItem item)? onEditItem;
   final void Function(VaultLoginItem item)? onDeleteItem;
+  final void Function(VaultLoginItem item)? onMigrateItem;
+  final void Function(VaultLoginItem item)? onRollbackItem;
   final String vaultLabel;
 
   const LoginsPage({
@@ -296,6 +298,8 @@ class LoginsPage extends StatefulWidget {
     this.onViewItem,
     this.onEditItem,
     this.onDeleteItem,
+    this.onMigrateItem,
+    this.onRollbackItem,
   });
 
   @override
@@ -468,6 +472,15 @@ class _LoginsPageState extends State<LoginsPage> {
                     onDelete: widget.onDeleteItem == null
                         ? widget.onDelete
                         : (_, __) => widget.onDeleteItem!(login),
+                    onMigrate: widget.onMigrateItem == null ||
+                            login.cryptoVersion != 'legacy_v1' ||
+                            !isLoginLikeType(login.itemType)
+                        ? null
+                        : () => widget.onMigrateItem!(login),
+                    onRollback: widget.onRollbackItem == null ||
+                            login.cryptoVersion != 'client_mvk_v2'
+                        ? null
+                        : () => widget.onRollbackItem!(login),
                   );
                 }),
             ],
@@ -498,6 +511,8 @@ class _SecureItemCard extends StatelessWidget {
   final void Function(String service, String itemType)? onView;
   final void Function(String service, String itemType)? onEdit;
   final void Function(String service, String itemType)? onDelete;
+  final VoidCallback? onMigrate;
+  final VoidCallback? onRollback;
 
   const _SecureItemCard({
     super.key,
@@ -511,6 +526,8 @@ class _SecureItemCard extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onDelete,
+    required this.onMigrate,
+    required this.onRollback,
   });
 
   @override
@@ -538,6 +555,20 @@ class _SecureItemCard extends StatelessWidget {
         icon: const Icon(Icons.smart_toy_outlined, size: 18),
         label: Text('Ask $vaultLabel'),
       ),
+      if (onMigrate != null)
+        OutlinedButton.icon(
+          key: Key('credential_v2_migrate_$itemType-$rawService'),
+          onPressed: onMigrate,
+          icon: const Icon(Icons.upgrade_outlined, size: 18),
+          label: const Text('Migrate to v2 (QA)'),
+        ),
+      if (onRollback != null)
+        OutlinedButton.icon(
+          key: Key('credential_v2_rollback_$itemType-$rawService'),
+          onPressed: onRollback,
+          icon: const Icon(Icons.undo_outlined, size: 18),
+          label: const Text('Rollback v2 (QA)'),
+        ),
     ];
 
     final headerRow = Row(
@@ -620,7 +651,9 @@ class _SecureItemCard extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final stackVertically = constraints.maxWidth < 640;
+          final stackVertically = constraints.maxWidth < 640 ||
+              onMigrate != null ||
+              onRollback != null;
           if (stackVertically) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,

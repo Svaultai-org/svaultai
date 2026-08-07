@@ -44,6 +44,7 @@ import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/credential_v2.dart';
 import 'services/credential_v2_api.dart';
+import 'services/credential_v2_migration.dart';
 import 'services/credential_v2_repository.dart';
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
@@ -672,8 +673,13 @@ String _safeVlogValue(String tag, String key, Object? value) {
   return text;
 }
 
+const bool kQaAuthDiagnosticsEnabled = bool.fromEnvironment(
+  'VAULTAI_QA_AUTH_DIAGNOSTICS',
+  defaultValue: false,
+);
+
 void releaseWebDiagnosticPrint(String message) {
-  if (kReleaseMode && !kIsWeb) return;
+  if (kReleaseMode && !kIsWeb && !kQaAuthDiagnosticsEnabled) return;
   // ignore: avoid_print
   print(message);
 }
@@ -6590,6 +6596,7 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
 
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final http.Client _credentialV2HttpClient = http.Client();
+  final Map<String, String> _credentialV2MigrationOperationIds = {};
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
 
@@ -6632,6 +6639,152 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         .encode(List<int>.generate(12, (_) => random.nextInt(256)))
         .replaceAll('=', '');
     return 'cred-${DateTime.now().microsecondsSinceEpoch}-$suffix';
+  }
+
+  String _newCredentialV2OperationId() {
+    final bytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes.map((value) => value.toRadixString(16).padLeft(2, '0'));
+    final value = hex.join();
+    return '${value.substring(0, 8)}-${value.substring(8, 12)}-'
+        '${value.substring(12, 16)}-${value.substring(16, 20)}-'
+        '${value.substring(20)}';
+  }
+
+  String _credentialV2MigrationKey(VaultLoginItem item) =>
+      '${item.itemType}\u0000${item.service.trim().toLowerCase()}';
+
+  String _credentialV2MigrationRecordId(AppState app, VaultLoginItem item) {
+    final material = '${app.vaultId}|${item.itemType}|'
+        '${item.service.trim().toLowerCase()}';
+    return 'migrated-${sha256.convert(utf8.encode(material))}';
+  }
+
+  Future<void> _migrateCredentialV2(VaultLoginItem item) async {
+    if (!zkV2CredentialMigrationEnabled ||
+        item.cryptoVersion != 'legacy_v1' ||
+        !isLoginLikeType(item.itemType)) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Migrate this login to credential v2?'),
+        content: Text(
+          'QA only: migrate exactly ${item.service}. The legacy record is '
+          'retained for rollback. This does not run during login.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('credential_v2_migrate_confirm'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Migrate this item'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final app = context.read<AppState>();
+    final repository = _credentialV2Repository(app);
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (repository == null || token == null || vaultName == null) {
+      _showSnack('Unlock this QA vault again before migration.');
+      return;
+    }
+    final key = _credentialV2MigrationKey(item);
+    final operationId = _credentialV2MigrationOperationIds.putIfAbsent(
+      key,
+      _newCredentialV2OperationId,
+    );
+    final recordId = _credentialV2MigrationRecordId(app, item);
+    final migrator = CredentialV2Migrator(
+      crypto: repository.crypto,
+      api: repository.api,
+    );
+    try {
+      await migrator.migrateOne(
+        recordId: recordId,
+        operationId: operationId,
+        serviceForLookup: item.service,
+        decryptLegacyLocally: () async {
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          final response =
+              await VaultAIClient(baseUrl: backendBaseUrl).getVaultSecureItem(
+            vaultName: vaultName,
+            service: item.service,
+            itemType: item.itemType,
+            pin: pin,
+            authToken: token,
+          );
+          final rawFields = response['fields'];
+          final fields = rawFields is Map
+              ? Map<String, dynamic>.from(rawFields)
+              : <String, dynamic>{};
+          return CredentialV2Plaintext(
+            service: response['service']?.toString() ?? item.service,
+            username: fields['username']?.toString() ?? '',
+            password: fields['password']?.toString() ?? '',
+            url: fields['url']?.toString(),
+            notes: response['notes']?.toString() ?? fields['note']?.toString(),
+          );
+        },
+      );
+      _credentialV2MigrationOperationIds.remove(key);
+      _showSnack('Credential v2 migration verified; legacy retained.');
+      await _loadVaultLogins();
+    } catch (_) {
+      _showSnack('Migration paused safely. Retry reuses the same operation.');
+    }
+  }
+
+  Future<void> _rollbackCredentialV2(VaultLoginItem item) async {
+    if (!zkV2CredentialMigrationEnabled ||
+        item.cryptoVersion != credentialV2CryptoVersion ||
+        item.recordId == null) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rollback this v2 migration?'),
+        content: Text(
+          'QA only: hide the v2 envelope for ${item.service} and return to '
+          'the retained legacy record.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('credential_v2_rollback_confirm'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Rollback this item'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final repository = _credentialV2Repository(context.read<AppState>());
+    if (repository == null) return;
+    try {
+      await CredentialV2Migrator(
+        crypto: repository.crypto,
+        api: repository.api,
+      ).rollbackOne(item.recordId!);
+      _showSnack('Credential v2 rolled back; retained legacy is active.');
+      await _loadVaultLogins();
+    } catch (_) {
+      _showSnack('Rollback was not available for this item.');
+    }
   }
 
   Future<void> _openCredentialV2Editor(
@@ -16575,6 +16728,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               _startSecureItemDeleteConfirmation(item.service, item.itemType);
             }
           },
+          onMigrateItem: zkV2CredentialMigrationEnabled
+              ? (item) {
+                  if (item.cryptoVersion == 'legacy_v1' &&
+                      isLoginLikeType(item.itemType)) {
+                    unawaited(_migrateCredentialV2(item));
+                  }
+                }
+              : null,
+          onRollbackItem: zkV2CredentialMigrationEnabled
+              ? (item) {
+                  if (item.cryptoVersion == credentialV2CryptoVersion) {
+                    unawaited(_rollbackCredentialV2(item));
+                  }
+                }
+              : null,
         );
 
       case _DashboardSection.cryptoVault:
