@@ -35,12 +35,13 @@ class VaultKeyHierarchy {
 
   Future<SecretKey> metadataKey() => _sub('vaultai.metadata.v1');
   Future<SecretKey> memoryKey() => _sub('vaultai.memory.v1');
+  Future<SecretKey> credentialKey() => _sub('vaultai.credential.encryption.v2');
+  Future<SecretKey> credentialLookupKey() =>
+      _sub('vaultai.credential.lookup.v2');
   Future<SecretKey> walletWrapKey() => _sub('vaultai.wallet.v1');
   Future<SecretKey> displayNameKey() => _sub('vaultai.display.v1');
-  Future<SecretKey> semanticLookupKey() =>
-      _sub('vaultai.lookup.semantic.v1');
-  Future<SecretKey> memoryLookupKey() =>
-      _sub('vaultai.lookup.memory.v1');
+  Future<SecretKey> semanticLookupKey() => _sub('vaultai.lookup.semantic.v1');
+  Future<SecretKey> memoryLookupKey() => _sub('vaultai.lookup.memory.v1');
   Future<SecretKey> walletLockLookupKey() =>
       _sub('vaultai.lookup.wallet.lock.v1');
 }
