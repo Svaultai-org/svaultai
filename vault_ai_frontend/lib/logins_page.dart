@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'l10n/app_localizations.dart';
 import 'ui/responsive.dart';
 
+const bool qaCredentialV2TargetingEnabled = bool.fromEnvironment(
+  'QA_CREDENTIAL_V2_TARGETING',
+  defaultValue: false,
+);
+
 class VaultLoginItem {
   final String service;
   final String itemType;
@@ -470,7 +475,12 @@ class _LoginsPageState extends State<LoginsPage> {
                   final icon = kSecureItemTypeIcons[itemType] ??
                       Icons.inventory_2_outlined;
                   return _SecureItemCard(
-                    key: Key('secure_item_card_$itemType-$cleanService'),
+                    key: Key(qaCredentialV2TargetingEnabled &&
+                            login.recordId?.isNotEmpty == true
+                        ? 'credential-card-${login.recordId}'
+                        : 'secure_item_card_$itemType-$cleanService'),
+                    qaRecordId:
+                        qaCredentialV2TargetingEnabled ? login.recordId : null,
                     cleanService: cleanService,
                     rawService: service,
                     label: label,
@@ -515,6 +525,7 @@ class _LoginsPageState extends State<LoginsPage> {
 }
 
 class _SecureItemCard extends StatelessWidget {
+  final String? qaRecordId;
   final String cleanService;
   final String rawService;
   final String label;
@@ -531,6 +542,7 @@ class _SecureItemCard extends StatelessWidget {
 
   const _SecureItemCard({
     super.key,
+    required this.qaRecordId,
     required this.cleanService,
     required this.rawService,
     required this.label,
@@ -548,23 +560,42 @@ class _SecureItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final blurb = previewBlurbForType(itemType);
+    Widget targeted(String action, Widget child) {
+      final recordId = qaRecordId;
+      if (recordId == null || recordId.isEmpty) return child;
+      return Semantics(
+        container: true,
+        identifier: 'credential-$action-$recordId',
+        label: 'credential-$action-$recordId',
+        child: child,
+      );
+    }
+
     final buttons = <Widget>[
-      OutlinedButton.icon(
-        onPressed: onView == null ? null : () => onView!(rawService, itemType),
-        icon: const Icon(Icons.visibility_outlined, size: 18),
-        label: const Text('View'),
-      ),
-      OutlinedButton.icon(
-        onPressed: onEdit == null ? null : () => onEdit!(rawService, itemType),
-        icon: const Icon(Icons.edit_outlined, size: 18),
-        label: const Text('Edit'),
-      ),
-      OutlinedButton.icon(
-        onPressed:
-            onDelete == null ? null : () => onDelete!(rawService, itemType),
-        icon: const Icon(Icons.delete_outline, size: 18),
-        label: Text(AppLocalizations.of(context).commonDelete),
-      ),
+      targeted(
+          'reveal',
+          OutlinedButton.icon(
+            onPressed:
+                onView == null ? null : () => onView!(rawService, itemType),
+            icon: const Icon(Icons.visibility_outlined, size: 18),
+            label: const Text('View'),
+          )),
+      targeted(
+          'edit',
+          OutlinedButton.icon(
+            onPressed:
+                onEdit == null ? null : () => onEdit!(rawService, itemType),
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            label: const Text('Edit'),
+          )),
+      targeted(
+          'delete',
+          OutlinedButton.icon(
+            onPressed:
+                onDelete == null ? null : () => onDelete!(rawService, itemType),
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: Text(AppLocalizations.of(context).commonDelete),
+          )),
       OutlinedButton.icon(
         onPressed: onAskVault == null ? null : () => onAskVault!(rawService),
         icon: const Icon(Icons.smart_toy_outlined, size: 18),
@@ -656,7 +687,7 @@ class _SecureItemCard extends StatelessWidget {
       ],
     );
 
-    return Container(
+    final card = Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -696,6 +727,14 @@ class _SecureItemCard extends StatelessWidget {
           );
         },
       ),
+    );
+    final recordId = qaRecordId;
+    if (recordId == null || recordId.isEmpty) return card;
+    return Semantics(
+      container: true,
+      identifier: 'credential-card-$recordId',
+      label: 'credential-card-$recordId',
+      child: card,
     );
   }
 }

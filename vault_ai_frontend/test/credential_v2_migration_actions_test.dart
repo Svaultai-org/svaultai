@@ -42,6 +42,7 @@ void main() {
             VaultLoginItem(
               service: 'V2 login',
               itemType: 'login',
+              recordId: 'opaque-record-qa-1',
               cryptoVersion: 'client_mvk_v2',
               migrationState: 'v2_verified',
             ),
@@ -64,6 +65,20 @@ void main() {
 
     expect(find.text('Migrate to v2 (QA)'), findsOneWidget);
     expect(find.text('Rollback v2 (QA)'), findsOneWidget);
+    final identifiers = tester
+        .widgetList<Semantics>(find.byType(Semantics))
+        .map((widget) => widget.properties.identifier)
+        .whereType<String>()
+        .toSet();
+    if (qaCredentialV2TargetingEnabled) {
+      expect(identifiers, contains('credential-card-opaque-record-qa-1'));
+      expect(identifiers, contains('credential-reveal-opaque-record-qa-1'));
+      expect(identifiers, contains('credential-edit-opaque-record-qa-1'));
+      expect(identifiers, contains('credential-delete-opaque-record-qa-1'));
+    } else {
+      expect(
+          identifiers, isNot(contains('credential-card-opaque-record-qa-1')));
+    }
     expect(
       find.byKey(const Key('credential_v2_migrate_login-Legacy login')),
       findsOneWidget,
