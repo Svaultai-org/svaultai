@@ -1,6 +1,12 @@
 import 'credential_v2.dart';
 import 'credential_v2_api.dart';
 
+class DecryptedCredentialV2Record {
+  final String recordId;
+  final CredentialV2Plaintext plaintext;
+  const DecryptedCredentialV2Record(this.recordId, this.plaintext);
+}
+
 class CredentialV2Repository {
   final CredentialV2Crypto crypto;
   final CredentialV2Api api;
@@ -44,6 +50,18 @@ class CredentialV2Repository {
       ))
           .map((envelope) => envelope.recordId)
           .toList(growable: false);
+
+  Future<List<DecryptedCredentialV2Record>> listDecrypted() async {
+    final envelopes = await api.list();
+    final records = <DecryptedCredentialV2Record>[];
+    for (final envelope in envelopes) {
+      records.add(DecryptedCredentialV2Record(
+        envelope.recordId,
+        await crypto.decrypt(envelope),
+      ));
+    }
+    return records;
+  }
 
   Future<List<CredentialV2Plaintext>> exactLookup({
     required String field,

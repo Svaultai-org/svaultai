@@ -1,19 +1,20 @@
-
-
 import 'package:flutter/material.dart';
 import 'l10n/app_localizations.dart';
 import 'ui/responsive.dart';
-
 
 class VaultLoginItem {
   final String service;
   final String itemType;
   final DateTime? createdAt;
+  final String? recordId;
+  final String cryptoVersion;
 
   const VaultLoginItem({
     required this.service,
     this.itemType = 'login',
     this.createdAt,
+    this.recordId,
+    this.cryptoVersion = 'legacy_v1',
   });
 
   factory VaultLoginItem.fromJson(Map<String, dynamic> json) {
@@ -23,75 +24,72 @@ class VaultLoginItem {
       created = DateTime.tryParse(rawCreated);
     }
     return VaultLoginItem(
-      service:   (json['service']   ?? '').toString(),
-      itemType:  (json['item_type'] ?? 'login').toString(),
+      service: (json['service'] ?? '').toString(),
+      itemType: (json['item_type'] ?? 'login').toString(),
       createdAt: created,
+      recordId: json['record_id']?.toString(),
+      cryptoVersion: json['crypto_version']?.toString() ?? 'legacy_v1',
     );
   }
 }
 
-
 const Map<String, String> kSecureItemTypeLabels = <String, String>{
-  'login':                       'Login',
-  'credential':                  'Credential',
-  'device':                      'Device',
-  'device_info':                 'Device',
-  'imei':                        'Phone IMEI',
-  'serial_number':               'Serial number',
-  'document_note':               'Note',
-  'recovery_code':               'Recovery code',
-  'backup_code':                 'Backup code',
-  'private_note':                'Private note',
-  'account_note':                'Account note',
-  'bank':                        'Bank record',
-  'card':                        'Card record',
-  'other':                       'Saved item',
-  'other_secret':                'Saved secret',
-  
-  'crypto_wallet_address':       'Crypto wallet',
-  'crypto_seed_phrase':          'Seed phrase',
-  'crypto_private_key':          'Private key',
-  'crypto_recovery_phrase':      'Recovery phrase',
-  'crypto_note':                 'Crypto note',
-  'crypto_transaction_note':     'Transaction note',
-  'crypto_exchange_note':        'Exchange note',
+  'login': 'Login',
+  'credential': 'Credential',
+  'device': 'Device',
+  'device_info': 'Device',
+  'imei': 'Phone IMEI',
+  'serial_number': 'Serial number',
+  'document_note': 'Note',
+  'recovery_code': 'Recovery code',
+  'backup_code': 'Backup code',
+  'private_note': 'Private note',
+  'account_note': 'Account note',
+  'bank': 'Bank record',
+  'card': 'Card record',
+  'other': 'Saved item',
+  'other_secret': 'Saved secret',
+  'crypto_wallet_address': 'Crypto wallet',
+  'crypto_seed_phrase': 'Seed phrase',
+  'crypto_private_key': 'Private key',
+  'crypto_recovery_phrase': 'Recovery phrase',
+  'crypto_note': 'Crypto note',
+  'crypto_transaction_note': 'Transaction note',
+  'crypto_exchange_note': 'Exchange note',
   'crypto_hardware_wallet_note': 'Hardware wallet note',
 };
 
-
 const Map<String, IconData> kSecureItemTypeIcons = <String, IconData>{
-  'login':                       Icons.lock_outline,
-  'credential':                  Icons.vpn_key_outlined,
-  'device':                      Icons.devices_other_outlined,
-  'device_info':                 Icons.devices_other_outlined,
-  'imei':                        Icons.smartphone_outlined,
-  'serial_number':               Icons.numbers_outlined,
-  'document_note':               Icons.sticky_note_2_outlined,
-  'recovery_code':               Icons.shield_outlined,
-  'backup_code':                 Icons.backup_outlined,
-  'private_note':                Icons.notes_outlined,
-  'account_note':                Icons.note_outlined,
-  'bank':                        Icons.account_balance_outlined,
-  'card':                        Icons.credit_card_outlined,
-  'other':                       Icons.inventory_2_outlined,
-  'other_secret':                Icons.policy_outlined,
-  'crypto_wallet_address':       Icons.account_balance_wallet_outlined,
-  'crypto_seed_phrase':          Icons.password_outlined,
-  'crypto_private_key':          Icons.key_outlined,
-  'crypto_recovery_phrase':      Icons.shield_outlined,
-  'crypto_note':                 Icons.notes_outlined,
-  'crypto_transaction_note':     Icons.receipt_long_outlined,
-  'crypto_exchange_note':        Icons.swap_horiz_outlined,
+  'login': Icons.lock_outline,
+  'credential': Icons.vpn_key_outlined,
+  'device': Icons.devices_other_outlined,
+  'device_info': Icons.devices_other_outlined,
+  'imei': Icons.smartphone_outlined,
+  'serial_number': Icons.numbers_outlined,
+  'document_note': Icons.sticky_note_2_outlined,
+  'recovery_code': Icons.shield_outlined,
+  'backup_code': Icons.backup_outlined,
+  'private_note': Icons.notes_outlined,
+  'account_note': Icons.note_outlined,
+  'bank': Icons.account_balance_outlined,
+  'card': Icons.credit_card_outlined,
+  'other': Icons.inventory_2_outlined,
+  'other_secret': Icons.policy_outlined,
+  'crypto_wallet_address': Icons.account_balance_wallet_outlined,
+  'crypto_seed_phrase': Icons.password_outlined,
+  'crypto_private_key': Icons.key_outlined,
+  'crypto_recovery_phrase': Icons.shield_outlined,
+  'crypto_note': Icons.notes_outlined,
+  'crypto_transaction_note': Icons.receipt_long_outlined,
+  'crypto_exchange_note': Icons.swap_horiz_outlined,
   'crypto_hardware_wallet_note': Icons.usb_outlined,
 };
 
-
 class SecureItemCategoryChip {
-  
   final String id;
-  
+
   final String label;
-  
+
   final IconData icon;
 
   const SecureItemCategoryChip({
@@ -101,49 +99,41 @@ class SecureItemCategoryChip {
   });
 }
 
-
 const SecureItemCategoryChip kCategoryChipAll = SecureItemCategoryChip(
-  id:    'all',
+  id: 'all',
   label: 'All',
-  icon:  Icons.inventory_2_outlined,
+  icon: Icons.inventory_2_outlined,
 );
-const SecureItemCategoryChip kCategoryChipLogins =
-    SecureItemCategoryChip(
-  id:    'logins',
+const SecureItemCategoryChip kCategoryChipLogins = SecureItemCategoryChip(
+  id: 'logins',
   label: 'Logins',
-  icon:  Icons.lock_outline,
+  icon: Icons.lock_outline,
 );
-const SecureItemCategoryChip kCategoryChipNotes =
-    SecureItemCategoryChip(
-  id:    'notes',
+const SecureItemCategoryChip kCategoryChipNotes = SecureItemCategoryChip(
+  id: 'notes',
   label: 'Notes',
-  icon:  Icons.notes_outlined,
+  icon: Icons.notes_outlined,
 );
-const SecureItemCategoryChip kCategoryChipCodes =
-    SecureItemCategoryChip(
-  id:    'codes',
+const SecureItemCategoryChip kCategoryChipCodes = SecureItemCategoryChip(
+  id: 'codes',
   label: 'Codes',
-  icon:  Icons.shield_outlined,
+  icon: Icons.shield_outlined,
 );
-const SecureItemCategoryChip kCategoryChipDevice =
-    SecureItemCategoryChip(
-  id:    'device',
+const SecureItemCategoryChip kCategoryChipDevice = SecureItemCategoryChip(
+  id: 'device',
   label: 'Device details',
-  icon:  Icons.smartphone_outlined,
+  icon: Icons.smartphone_outlined,
 );
-const SecureItemCategoryChip kCategoryChipCrypto =
-    SecureItemCategoryChip(
-  id:    'crypto',
+const SecureItemCategoryChip kCategoryChipCrypto = SecureItemCategoryChip(
+  id: 'crypto',
   label: 'Crypto',
-  icon:  Icons.account_balance_wallet_outlined,
+  icon: Icons.account_balance_wallet_outlined,
 );
-const SecureItemCategoryChip kCategoryChipOther =
-    SecureItemCategoryChip(
-  id:    'other',
+const SecureItemCategoryChip kCategoryChipOther = SecureItemCategoryChip(
+  id: 'other',
   label: 'Other',
-  icon:  Icons.policy_outlined,
+  icon: Icons.policy_outlined,
 );
-
 
 const List<SecureItemCategoryChip> kSecureItemCategoryChips =
     <SecureItemCategoryChip>[
@@ -155,7 +145,6 @@ const List<SecureItemCategoryChip> kSecureItemCategoryChips =
   kCategoryChipCrypto,
   kCategoryChipOther,
 ];
-
 
 String secureItemChipIdFor(String itemType) {
   switch (itemType) {
@@ -197,7 +186,6 @@ String secureItemChipIdFor(String itemType) {
   }
 }
 
-
 bool secureItemMatchesChip(
   VaultLoginItem item,
   SecureItemCategoryChip chip,
@@ -206,15 +194,13 @@ bool secureItemMatchesChip(
   return secureItemChipIdFor(item.itemType) == chip.id;
 }
 
-
 bool secureItemMatchesQuery(VaultLoginItem item, String query) {
   final q = query.trim().toLowerCase();
   if (q.isEmpty) return true;
-  final svc   = item.service.toLowerCase();
+  final svc = item.service.toLowerCase();
   final label = (kSecureItemTypeLabels[item.itemType] ?? '').toLowerCase();
   return svc.contains(q) || label.contains(q);
 }
-
 
 bool isLoginLikeType(String itemType) {
   switch (itemType) {
@@ -226,79 +212,73 @@ bool isLoginLikeType(String itemType) {
   }
 }
 
-
 const Set<String> kSystemHiddenItemTypes = <String>{
   'crypto_wallet_account',
 };
 
-
 bool isSystemHiddenItemType(String itemType) {
   return kSystemHiddenItemTypes.contains(itemType);
 }
-
 
 String previewBlurbForType(String itemType) {
   if (isLoginLikeType(itemType)) {
     return 'Username & password stored. Use View, Edit, '
         'Delete, or ask your vault.';
   }
-  if (itemType == 'crypto_seed_phrase'
-      || itemType == 'crypto_private_key'
-      || itemType == 'crypto_recovery_phrase') {
+  if (itemType == 'crypto_seed_phrase' ||
+      itemType == 'crypto_private_key' ||
+      itemType == 'crypto_recovery_phrase') {
     return 'Anyone with this value controls the wallet — open '
         'only when you mean to read it.';
   }
   if (itemType == 'crypto_wallet_address') {
     return 'Tap View to see the full wallet address.';
   }
-  if (itemType == 'imei'
-      || itemType == 'serial_number'
-      || itemType == 'backup_code'
-      || itemType == 'recovery_code') {
+  if (itemType == 'imei' ||
+      itemType == 'serial_number' ||
+      itemType == 'backup_code' ||
+      itemType == 'recovery_code') {
     return 'Tap View, Edit, Delete, or ask your vault.';
   }
   return 'Stored securely. Tap View to read.';
 }
 
-
-const String kLoginsPageHeading  = 'Logins & Secure Items';
+const String kLoginsPageHeading = 'Logins & Secure Items';
 const String kLoginsPageSubtitle =
     'Your saved passwords, credentials, private notes, codes, '
     'device details, and other encrypted text records.';
 
-
 const String kLoginsEmptyTitle = 'No secure items yet';
-const String kLoginsEmptyBody  =
+const String kLoginsEmptyBody =
     'Anything you type and save as private text (logins, IMEIs, '
     'backup codes, private notes, crypto wallet addresses, …) '
     'appears here. Anything you upload as a file goes to Files.';
 
-
 const String kLoginsLoadingTitle = 'Loading saved items…';
-const String kLoginsLoadingBody  =
+const String kLoginsLoadingBody =
     'Reading your encrypted vault. This usually finishes in a '
     'moment.';
 
-
 const String kLoginsErrorTitle = "Couldn't load saved items";
-const String kLoginsErrorBody  =
+const String kLoginsErrorBody =
     'Your vault is unlocked, but reading the saved items list '
     'didn\'t come back. Tap Retry to try again.';
 
 class LoginsPage extends StatefulWidget {
   final bool isLoading;
-  
-  
-  final bool   hasLoaded;
+
+  final bool hasLoaded;
   final String? error;
   final List<VaultLoginItem> logins;
   final Future<void> Function() onRefresh;
   final void Function(String service)? onAskVault;
-  
-  
+
   final void Function(String service, String itemType)? onView;
   final void Function(String service, String itemType)? onEdit;
   final void Function(String service, String itemType)? onDelete;
+  final void Function(VaultLoginItem item)? onViewItem;
+  final void Function(VaultLoginItem item)? onEditItem;
+  final void Function(VaultLoginItem item)? onDeleteItem;
   final String vaultLabel;
 
   const LoginsPage({
@@ -313,16 +293,16 @@ class LoginsPage extends StatefulWidget {
     this.onView,
     this.onEdit,
     this.onDelete,
+    this.onViewItem,
+    this.onEditItem,
+    this.onDeleteItem,
   });
 
   @override
   State<LoginsPage> createState() => _LoginsPageState();
 }
 
-
 class _LoginsPageState extends State<LoginsPage> {
-  
-  
   String _query = '';
   SecureItemCategoryChip _activeChip = kCategoryChipAll;
   late final TextEditingController _searchCtrl;
@@ -354,16 +334,14 @@ class _LoginsPageState extends State<LoginsPage> {
   List<VaultLoginItem> get _visibleLogins {
     return widget.logins
         .where((item) =>
-            !isSystemHiddenItemType(item.itemType)
-            && secureItemMatchesChip(item, _activeChip)
-            && secureItemMatchesQuery(item, _query))
+            !isSystemHiddenItemType(item.itemType) &&
+            secureItemMatchesChip(item, _activeChip) &&
+            secureItemMatchesQuery(item, _query))
         .toList(growable: false);
   }
 
   @override
   Widget build(BuildContext context) {
-    
-    
     if (widget.error != null) {
       return _Shell(
         child: _LoadingErrorEmptyState(
@@ -413,7 +391,8 @@ class _LoginsPageState extends State<LoginsPage> {
               kLoginsEmptyTitle,
               key: Key('logins_page_empty_title'),
               style: TextStyle(
-                fontSize: 18, fontWeight: FontWeight.w700,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 6),
@@ -422,7 +401,8 @@ class _LoginsPageState extends State<LoginsPage> {
               key: Key('logins_page_empty_body'),
               style: TextStyle(
                 color: Color(0xFFB4B4B4),
-                fontSize: 14, height: 1.5,
+                fontSize: 14,
+                height: 1.5,
               ),
             ),
           ],
@@ -452,37 +432,42 @@ class _LoginsPageState extends State<LoginsPage> {
               ),
               const SizedBox(height: 12),
               _CategoryChipStrip(
-                active:   _activeChip,
+                active: _activeChip,
                 onSelect: _setChip,
               ),
               const SizedBox(height: 12),
               if (filtered.isEmpty)
                 _FilterEmptyState(
                   query: _query,
-                  chip:  _activeChip,
+                  chip: _activeChip,
                 )
               else
                 ...filtered.map((login) {
                   final service = login.service.trim();
-                  final cleanService = service.isEmpty
-                      ? 'Unnamed item' : _titleize(service);
+                  final cleanService =
+                      service.isEmpty ? 'Unnamed item' : _titleize(service);
                   final itemType = login.itemType;
-                  final label = kSecureItemTypeLabels[itemType]
-                      ?? 'Saved item';
-                  final icon  = kSecureItemTypeIcons[itemType]
-                      ?? Icons.inventory_2_outlined;
+                  final label = kSecureItemTypeLabels[itemType] ?? 'Saved item';
+                  final icon = kSecureItemTypeIcons[itemType] ??
+                      Icons.inventory_2_outlined;
                   return _SecureItemCard(
                     key: Key('secure_item_card_$itemType-$cleanService'),
                     cleanService: cleanService,
-                    rawService:   service,
-                    label:        label,
-                    icon:         icon,
-                    itemType:     itemType,
-                    vaultLabel:   widget.vaultLabel,
-                    onAskVault:   widget.onAskVault,
-                    onView:       widget.onView,
-                    onEdit:       widget.onEdit,
-                    onDelete:     widget.onDelete,
+                    rawService: service,
+                    label: label,
+                    icon: icon,
+                    itemType: itemType,
+                    vaultLabel: widget.vaultLabel,
+                    onAskVault: widget.onAskVault,
+                    onView: widget.onViewItem == null
+                        ? widget.onView
+                        : (_, __) => widget.onViewItem!(login),
+                    onEdit: widget.onEditItem == null
+                        ? widget.onEdit
+                        : (_, __) => widget.onEditItem!(login),
+                    onDelete: widget.onDeleteItem == null
+                        ? widget.onDelete
+                        : (_, __) => widget.onDeleteItem!(login),
                   );
                 }),
             ],
@@ -509,8 +494,7 @@ class _SecureItemCard extends StatelessWidget {
   final String itemType;
   final String vaultLabel;
   final void Function(String service)? onAskVault;
-  
-  
+
   final void Function(String service, String itemType)? onView;
   final void Function(String service, String itemType)? onEdit;
   final void Function(String service, String itemType)? onDelete;
@@ -534,26 +518,23 @@ class _SecureItemCard extends StatelessWidget {
     final blurb = previewBlurbForType(itemType);
     final buttons = <Widget>[
       OutlinedButton.icon(
-        onPressed: onView == null
-            ? null : () => onView!(rawService, itemType),
+        onPressed: onView == null ? null : () => onView!(rawService, itemType),
         icon: const Icon(Icons.visibility_outlined, size: 18),
         label: const Text('View'),
       ),
       OutlinedButton.icon(
-        onPressed: onEdit == null
-            ? null : () => onEdit!(rawService, itemType),
+        onPressed: onEdit == null ? null : () => onEdit!(rawService, itemType),
         icon: const Icon(Icons.edit_outlined, size: 18),
         label: const Text('Edit'),
       ),
       OutlinedButton.icon(
-        onPressed: onDelete == null
-            ? null : () => onDelete!(rawService, itemType),
+        onPressed:
+            onDelete == null ? null : () => onDelete!(rawService, itemType),
         icon: const Icon(Icons.delete_outline, size: 18),
         label: Text(AppLocalizations.of(context).commonDelete),
       ),
       OutlinedButton.icon(
-        onPressed: onAskVault == null
-            ? null : () => onAskVault!(rawService),
+        onPressed: onAskVault == null ? null : () => onAskVault!(rawService),
         icon: const Icon(Icons.smart_toy_outlined, size: 18),
         label: Text('Ask $vaultLabel'),
       ),
@@ -580,29 +561,32 @@ class _SecureItemCard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
                   color: Colors.white,
                 ),
               ),
               const SizedBox(height: 6),
               Wrap(
-                spacing: 8, runSpacing: 4,
+                spacing: 8,
+                runSpacing: 4,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 2,
+                      horizontal: 8,
+                      vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF10A37F)
-                          .withValues(alpha: 0.18),
+                      color: const Color(0xFF10A37F).withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       label,
                       style: const TextStyle(
                         color: Color(0xFF10A37F),
-                        fontSize: 11, fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
@@ -613,7 +597,8 @@ class _SecureItemCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: Color(0xFF8E8E8E), fontSize: 12,
+                        color: Color(0xFF8E8E8E),
+                        fontSize: 12,
                       ),
                     ),
                   ),
@@ -643,7 +628,8 @@ class _SecureItemCard extends StatelessWidget {
                 headerRow,
                 const SizedBox(height: 12),
                 Wrap(
-                  spacing: 8, runSpacing: 8,
+                  spacing: 8,
+                  runSpacing: 8,
                   children: buttons,
                 ),
               ],
@@ -654,7 +640,8 @@ class _SecureItemCard extends StatelessWidget {
               Expanded(child: headerRow),
               const SizedBox(width: 12),
               Wrap(
-                spacing: 8, runSpacing: 8,
+                spacing: 8,
+                runSpacing: 8,
                 children: buttons,
               ),
             ],
@@ -665,10 +652,8 @@ class _SecureItemCard extends StatelessWidget {
   }
 }
 
-
 const String kLoginsSearchHint =
     'Search by title or type (e.g. "Revolut", "IMEI")';
-
 
 class _SearchBar extends StatelessWidget {
   final TextEditingController controller;
@@ -740,7 +725,6 @@ class _SearchBar extends StatelessWidget {
   }
 }
 
-
 class _CategoryChipStrip extends StatelessWidget {
   final SecureItemCategoryChip active;
   final ValueChanged<SecureItemCategoryChip> onSelect;
@@ -764,15 +748,11 @@ class _CategoryChipStrip extends StatelessWidget {
           avatar: Icon(
             c.icon,
             size: 16,
-            color: selected
-                ? const Color(0xFF10A37F)
-                : const Color(0xFFB4B4B4),
+            color: selected ? const Color(0xFF10A37F) : const Color(0xFFB4B4B4),
           ),
           label: Text(c.label),
           labelStyle: TextStyle(
-            color: selected
-                ? const Color(0xFF10A37F)
-                : const Color(0xFFB4B4B4),
+            color: selected ? const Color(0xFF10A37F) : const Color(0xFFB4B4B4),
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
@@ -793,7 +773,6 @@ class _CategoryChipStrip extends StatelessWidget {
   }
 }
 
-
 class _FilterEmptyState extends StatelessWidget {
   final String query;
   final SecureItemCategoryChip chip;
@@ -813,9 +792,7 @@ class _FilterEmptyState extends StatelessWidget {
     if (!isAll) {
       pieces.add(chip.label);
     }
-    final scope = pieces.isEmpty
-        ? 'in this view'
-        : pieces.join(' • ');
+    final scope = pieces.isEmpty ? 'in this view' : pieces.join(' • ');
     return Container(
       key: const Key('logins_page_filter_empty_state'),
       width: double.infinity,
@@ -832,7 +809,8 @@ class _FilterEmptyState extends StatelessWidget {
           const Text(
             'No matching saved items',
             style: TextStyle(
-              fontSize: 16, fontWeight: FontWeight.w700,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
               color: Colors.white,
             ),
           ),
@@ -842,7 +820,8 @@ class _FilterEmptyState extends StatelessWidget {
             'different category chip.',
             style: const TextStyle(
               color: Color(0xFFB4B4B4),
-              fontSize: 13, height: 1.5,
+              fontSize: 13,
+              height: 1.5,
             ),
           ),
         ],
@@ -850,7 +829,6 @@ class _FilterEmptyState extends StatelessWidget {
     );
   }
 }
-
 
 class _Header extends StatelessWidget {
   final String vaultLabel;
@@ -887,7 +865,8 @@ class _Header extends StatelessWidget {
                   kLoginsPageSubtitle,
                   key: Key('logins_page_subtitle'),
                   style: TextStyle(
-                    color: Color(0xFFB4B4B4), fontSize: 15,
+                    color: Color(0xFFB4B4B4),
+                    fontSize: 15,
                   ),
                 ),
               ],
@@ -903,7 +882,6 @@ class _Header extends StatelessWidget {
     );
   }
 }
-
 
 class _LoadingState extends StatelessWidget {
   const _LoadingState({super.key});
@@ -935,7 +913,8 @@ class _LoadingState extends StatelessWidget {
         const Row(
           children: [
             SizedBox(
-              width: 22, height: 22,
+              width: 22,
+              height: 22,
               child: CircularProgressIndicator(strokeWidth: 2.4),
             ),
             SizedBox(width: 14),
@@ -947,7 +926,8 @@ class _LoadingState extends StatelessWidget {
                     kLoginsLoadingTitle,
                     key: Key('logins_page_loading_title'),
                     style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w700,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   SizedBox(height: 6),
@@ -956,7 +936,8 @@ class _LoadingState extends StatelessWidget {
                     key: Key('logins_page_loading_body'),
                     style: TextStyle(
                       color: Color(0xFFB4B4B4),
-                      fontSize: 14, height: 1.5,
+                      fontSize: 14,
+                      height: 1.5,
                     ),
                   ),
                 ],
@@ -968,7 +949,6 @@ class _LoadingState extends StatelessWidget {
     );
   }
 }
-
 
 class _LoadingErrorEmptyState extends StatelessWidget {
   final String title;
@@ -1010,7 +990,8 @@ class _LoadingErrorEmptyState extends StatelessWidget {
           title,
           key: const Key('logins_page_error_title'),
           style: const TextStyle(
-            fontSize: 18, fontWeight: FontWeight.w700,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 6),
@@ -1019,7 +1000,8 @@ class _LoadingErrorEmptyState extends StatelessWidget {
           key: const Key('logins_page_error_body'),
           style: const TextStyle(
             color: Color(0xFFB4B4B4),
-            fontSize: 14, height: 1.5,
+            fontSize: 14,
+            height: 1.5,
           ),
         ),
         const SizedBox(height: 16),
@@ -1033,7 +1015,6 @@ class _LoadingErrorEmptyState extends StatelessWidget {
     );
   }
 }
-
 
 class _Shell extends StatelessWidget {
   final Widget child;

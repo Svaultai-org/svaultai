@@ -42,6 +42,9 @@ import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/credential_v2.dart';
+import 'services/credential_v2_api.dart';
+import 'services/credential_v2_repository.dart';
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
@@ -6586,6 +6589,7 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
 }
 
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
+  final http.Client _credentialV2HttpClient = http.Client();
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
 
@@ -6598,6 +6602,179 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _sendQuickPrompt('show me');
     } else {
       _sendQuickPrompt('show me $safeTitle');
+    }
+  }
+
+  CredentialV2Repository? _credentialV2Repository(AppState app) {
+    if (!zkV2CredentialReadEnabled) return null;
+    final token = app.sessionToken;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final vaultId = app.vaultId;
+    if (token == null ||
+        mvk == null ||
+        vaultId == null ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId) {
+      return null;
+    }
+    return CredentialV2Repository(
+      crypto: CredentialV2Crypto(vk_hier.VaultKeyHierarchy(mvk)),
+      api: CredentialV2Api(
+        baseUrl: backendBaseUrl,
+        sessionToken: token,
+        client: _credentialV2HttpClient,
+      ),
+    );
+  }
+
+  String _newCredentialV2RecordId() {
+    final random = Random.secure();
+    final suffix = base64Url
+        .encode(List<int>.generate(12, (_) => random.nextInt(256)))
+        .replaceAll('=', '');
+    return 'cred-${DateTime.now().microsecondsSinceEpoch}-$suffix';
+  }
+
+  Future<void> _openCredentialV2Editor(
+    VaultLoginItem? item, {
+    bool createMode = false,
+  }) async {
+    final app = context.read<AppState>();
+    if (!zkV2CredentialWriteEnabled) {
+      _showSnack('Credential v2 writing is disabled.');
+      return;
+    }
+    final repository = _credentialV2Repository(app);
+    if (repository == null) {
+      _showSnack('Unlock this QA vault again to use credential v2.');
+      return;
+    }
+    CredentialV2Plaintext? existing;
+    if (item != null) {
+      final recordId = item.recordId;
+      if (recordId == null) return;
+      try {
+        existing = await repository.reveal(recordId);
+      } catch (_) {
+        _showSnack(
+            'Could not decrypt this credential. No legacy fallback was used.');
+        return;
+      }
+    }
+    if (!mounted) return;
+    final initial = existing == null
+        ? <String, String>{}
+        : <String, String>{
+            'username': existing.username,
+            'password': existing.password,
+            if (existing.url != null) 'url': existing.url!,
+            if (existing.notes != null) 'note': existing.notes!,
+          };
+    await showSecureItemEditDialog(
+      context,
+      title: existing?.service ?? '',
+      itemType: 'login',
+      dialogTitle: createMode ? 'New login' : null,
+      initialFields: initial,
+      onSave: ({
+        required String oldTitle,
+        required String itemType,
+        required String newTitle,
+        required Map<String, String> fields,
+      }) async {
+        try {
+          final recordId = item?.recordId ?? _newCredentialV2RecordId();
+          final credential = CredentialV2Plaintext(
+            service: newTitle,
+            username: fields['username'] ?? '',
+            password: fields['password'] ?? '',
+            url: fields['url'],
+            notes: fields['note'],
+            totpSecret: existing?.totpSecret,
+            customFields: existing?.customFields ?? const {},
+          );
+          if (item == null) {
+            await repository.create(
+              recordId: recordId,
+              credential: credential,
+              serviceForLookup: newTitle,
+            );
+          } else {
+            await repository.edit(
+              recordId: recordId,
+              credential: credential,
+              serviceForLookup: newTitle,
+            );
+          }
+          _showSnack(item == null ? 'Login saved' : 'Updated login');
+          unawaited(_loadVaultLogins());
+          if (mounted && item == null) {
+            setState(() => selectedSection = _DashboardSection.logins);
+          }
+          return true;
+        } catch (_) {
+          _showSnack('Could not save this credential.');
+          return false;
+        }
+      },
+    );
+  }
+
+  Future<void> _revealCredentialV2(VaultLoginItem item) async {
+    final repository = _credentialV2Repository(context.read<AppState>());
+    if (repository == null || item.recordId == null) return;
+    try {
+      final value = await repository.reveal(item.recordId!);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(value.service),
+          content: SelectableText([
+            'Username: ${value.username}',
+            'Password: ${value.password}',
+            if (value.url?.isNotEmpty == true) 'URL: ${value.url}',
+            if (value.notes?.isNotEmpty == true) 'Note: ${value.notes}',
+            ...value.customFields.entries.map((e) => '${e.key}: ${e.value}'),
+          ].join('\n')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } catch (_) {
+      _showSnack(
+          'Could not decrypt this credential. No legacy fallback was used.');
+    }
+  }
+
+  Future<void> _deleteCredentialV2(VaultLoginItem item) async {
+    final repository = _credentialV2Repository(context.read<AppState>());
+    if (repository == null || item.recordId == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete login?'),
+        content: Text('Delete ${item.service}?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await repository.delete(item.recordId!);
+      unawaited(_loadVaultLogins());
+      _showSnack('Login deleted');
+    } catch (_) {
+      _showSnack('Could not delete this credential.');
     }
   }
 
@@ -6702,6 +6879,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _openSecureItemEditDialog(String service, String itemType,
       {Map<String, String>? initialFields, bool createMode = false}) async {
     final app = context.read<AppState>();
+
+    if (createMode &&
+        isSecureItemLoginLike(itemType) &&
+        zkV2CredentialWriteEnabled) {
+      await _openCredentialV2Editor(null, createMode: true);
+      return;
+    }
 
     Map<String, String> resolved = initialFields ?? const {};
     if (resolved.isEmpty) {
@@ -11305,6 +11489,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   @override
   void dispose() {
+    _credentialV2HttpClient.close();
     _chatMainnetSendApprovalSession.clear();
     final activeRequestId = _activeChatRequestId;
     if (activeRequestId != null) {
@@ -11621,6 +11806,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 .add(VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
           }
         }
+      }
+
+      final v2Repository = _credentialV2Repository(app);
+      if (v2Repository != null) {
+        final v2Records = await v2Repository.listDecrypted();
+        parsed.addAll(v2Records.map((record) => VaultLoginItem(
+              service: record.plaintext.service,
+              itemType: 'login',
+              recordId: record.recordId,
+              cryptoVersion: credentialV2CryptoVersion,
+            )));
       }
 
       if (!mounted) return;
@@ -16231,6 +16427,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           },
           onDelete: (service, itemType) {
             _startSecureItemDeleteConfirmation(service, itemType);
+          },
+          onViewItem: (item) {
+            if (item.cryptoVersion == credentialV2CryptoVersion) {
+              unawaited(_revealCredentialV2(item));
+            } else {
+              _openSecureItemView(item.service, item.itemType);
+            }
+          },
+          onEditItem: (item) {
+            if (item.cryptoVersion == credentialV2CryptoVersion) {
+              unawaited(_openCredentialV2Editor(item));
+            } else {
+              unawaited(_openSecureItemEditDialog(item.service, item.itemType));
+            }
+          },
+          onDeleteItem: (item) {
+            if (item.cryptoVersion == credentialV2CryptoVersion) {
+              unawaited(_deleteCredentialV2(item));
+            } else {
+              _startSecureItemDeleteConfirmation(item.service, item.itemType);
+            }
           },
         );
 

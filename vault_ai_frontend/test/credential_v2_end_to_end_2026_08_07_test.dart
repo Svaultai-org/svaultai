@@ -12,6 +12,7 @@ import 'package:vault_ai_frontend/services/credential_v2_repository.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 
 CredentialV2Plaintext fixture() => const CredentialV2Plaintext(
+      service: 'Example',
       username: 'qa@example.test',
       password: 'synthetic-password',
       url: 'https://example.test/login',
@@ -224,6 +225,7 @@ void main() {
     expect(
         (await repository.reveal('credential-1')).password, fixture().password);
     final edited = CredentialV2Plaintext(
+      service: 'Example',
       username: fixture().username,
       password: 'edited',
       customFields: const {'x': 'y'},

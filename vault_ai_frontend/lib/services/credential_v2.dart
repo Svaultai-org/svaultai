@@ -17,6 +17,7 @@ final Hkdf _recordHkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
 final AesGcm _aesGcm = AesGcm.with256bits();
 
 class CredentialV2Plaintext {
+  final String service;
   final String username;
   final String password;
   final String? url;
@@ -25,6 +26,7 @@ class CredentialV2Plaintext {
   final Map<String, String> customFields;
 
   const CredentialV2Plaintext({
+    required this.service,
     required this.username,
     required this.password,
     this.url,
@@ -34,6 +36,7 @@ class CredentialV2Plaintext {
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
+        'service': service,
         'username': username,
         'password': password,
         if (url != null) 'url': url,
@@ -46,6 +49,7 @@ class CredentialV2Plaintext {
     final fields = json['custom_fields'];
     if (fields is! Map) throw const FormatException('invalid custom fields');
     return CredentialV2Plaintext(
+      service: json['service'] as String,
       username: json['username'] as String,
       password: json['password'] as String,
       url: json['url'] as String?,
