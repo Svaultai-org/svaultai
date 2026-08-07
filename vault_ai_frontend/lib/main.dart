@@ -43,6 +43,7 @@ import 'services/opaque_client.dart'
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/credential_v2.dart';
+import 'services/credential_v2_qa_diagnostics.dart';
 import 'services/credential_v2_api.dart';
 import 'services/credential_v2_migration.dart';
 import 'services/credential_v2_repository.dart';
@@ -1666,6 +1667,7 @@ class AppState extends ChangeNotifier {
     try {
       zk_mvk_store.ZkActiveMvk.clear();
       zk_sk_store.ZkActiveSkVault.clear();
+      CredentialV2QaDiagnostics.clear();
     } catch (_) {}
     // Wipe the _VaultCrypto key cache slot for the vault we are
     // leaving. This drops both the derived key and the cached PIN
@@ -6802,11 +6804,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     CredentialV2Plaintext? existing;
+    bool? qaEditPrefillEquality;
     if (item != null) {
       final recordId = item.recordId;
       if (recordId == null) return;
       try {
         existing = await repository.reveal(recordId);
+        qaEditPrefillEquality = CredentialV2QaDiagnostics.matches(
+          recordId,
+          existing,
+        );
       } catch (_) {
         _showSnack(
             'Could not decrypt this credential. No legacy fallback was used.');
@@ -6826,7 +6833,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       context,
       title: existing?.service ?? '',
       itemType: 'login',
-      dialogTitle: createMode ? 'New login' : null,
+      dialogTitle: createMode
+          ? 'New login'
+          : credentialV2QaDiagnosticsEnabled && qaEditPrefillEquality != null
+              ? qaEditPrefillEquality
+                  ? 'QA edit prefill equality: PASS'
+                  : 'QA edit prefill equality: FAIL'
+              : null,
       initialFields: initial,
       onSave: ({
         required String oldTitle,
@@ -6858,6 +6871,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               serviceForLookup: newTitle,
             );
           }
+          CredentialV2QaDiagnostics.remember(recordId, credential);
           _showSnack(item == null ? 'Login saved' : 'Updated login');
           unawaited(_loadVaultLogins());
           if (mounted && item == null) {
@@ -6877,28 +6891,43 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (repository == null || item.recordId == null) return;
     try {
       final value = await repository.reveal(item.recordId!);
-      await _showCredentialV2Plaintext(value);
+      final equality = CredentialV2QaDiagnostics.matches(
+        item.recordId!,
+        value,
+      );
+      await _showCredentialV2Plaintext(value, qaEquality: equality);
     } catch (_) {
       _showSnack(
           'Could not decrypt this credential. No legacy fallback was used.');
     }
   }
 
-  Future<void> _showCredentialV2Plaintext(
-    CredentialV2Plaintext value,
-  ) async {
+  Future<void> _showCredentialV2Plaintext(CredentialV2Plaintext value,
+      {bool? qaEquality}) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(value.service),
-        content: SelectableText([
-          'Username: ${value.username}',
-          'Password: ${value.password}',
-          if (value.url?.isNotEmpty == true) 'URL: ${value.url}',
-          if (value.notes?.isNotEmpty == true) 'Note: ${value.notes}',
-          ...value.customFields.entries.map((e) => '${e.key}: ${e.value}'),
-        ].join('\n')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText([
+              'Username: ${value.username}',
+              'Password: ${value.password}',
+              if (value.url?.isNotEmpty == true) 'URL: ${value.url}',
+              if (value.notes?.isNotEmpty == true) 'Note: ${value.notes}',
+              ...value.customFields.entries.map((e) => '${e.key}: ${e.value}'),
+            ].join('\n')),
+            if (credentialV2QaDiagnosticsEnabled && qaEquality != null)
+              Text(
+                qaEquality
+                    ? 'QA credential plaintext equality: PASS'
+                    : 'QA credential plaintext equality: FAIL',
+              ),
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -6936,7 +6965,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return true;
       }
       if (matches.length == 1) {
-        await _showCredentialV2Plaintext(matches.single.plaintext);
+        final match = matches.single;
+        await _showCredentialV2Plaintext(
+          match.plaintext,
+          qaEquality: CredentialV2QaDiagnostics.matches(
+            match.recordId,
+            match.plaintext,
+          ),
+        );
         return true;
       }
       if (!mounted) return true;
@@ -6953,7 +6989,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       onTap: () {
                         Navigator.pop(ctx);
                         unawaited(
-                          _showCredentialV2Plaintext(record.plaintext),
+                          _showCredentialV2Plaintext(
+                            record.plaintext,
+                            qaEquality: CredentialV2QaDiagnostics.matches(
+                              record.recordId,
+                              record.plaintext,
+                            ),
+                          ),
                         );
                       },
                     ))
@@ -6990,6 +7032,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (confirmed != true) return;
     try {
       await repository.delete(item.recordId!);
+      CredentialV2QaDiagnostics.forget(item.recordId!);
       unawaited(_loadVaultLogins());
       _showSnack('Login deleted');
     } catch (_) {
@@ -14628,6 +14671,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (!readBack.semanticallyEquals(credential)) {
             throw StateError('generated credential verification failed');
           }
+          CredentialV2QaDiagnostics.remember(recordId, credential);
           await repository.api.finalizeGeneratedDraft(
             recordId: recordId,
             draftId: draftId,
