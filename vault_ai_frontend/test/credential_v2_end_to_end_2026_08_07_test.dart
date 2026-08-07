@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -57,6 +58,59 @@ String flip(String encoded) {
 }
 
 void main() {
+  test('forgotten PIN attacker bundle cannot decrypt client_mvk_v2', () async {
+    final legitimateCrypto = crypto(42, 11);
+    final envelope = await legitimateCrypto.encrypt(
+      recordId: 'credential-no-recovery-1',
+      plaintext: fixture(),
+      serviceForLookup: fixture().service,
+    );
+    final attackerBundle = <String, Object>{
+      'complete_database_row': responseFor(envelope),
+      'backend_source_available': true,
+      'backend_environment_available': true,
+      'session_signing_keys_available': true,
+      'administrator_database_access': true,
+      'trusted_device_database_control': true,
+      'billing_controls': true,
+      'account_controls': true,
+    };
+    expect(attackerBundle, isNot(contains('pin')));
+    expect(attackerBundle, isNot(contains('opaque_export_secret')));
+    expect(attackerBundle, isNot(contains('unwrapped_mvk')));
+
+    for (var attackerOffset = 70; attackerOffset < 76; attackerOffset++) {
+      await expectLater(
+        crypto(99, attackerOffset).decrypt(envelope),
+        throwsA(anything),
+      );
+    }
+  });
+
+  test(
+      'support/admin account reset cannot restore access to a client_mvk_v2 vault when the original unlock secret is lost',
+      () async {
+    final envelope = await crypto(42, 21).encrypt(
+      recordId: 'credential-support-reset-1',
+      plaintext: fixture(),
+    );
+    for (final administrativeChange in <String>[
+      'reset account authentication record',
+      'forge session',
+      'mark attacker device trusted',
+      'change subscription',
+      'change username',
+      'change email',
+    ]) {
+      final substituteKeyOffset =
+          sha256.convert(utf8.encode(administrativeChange)).bytes.first + 1;
+      await expectLater(
+        crypto(77, substituteKeyOffset).decrypt(envelope),
+        throwsA(anything),
+      );
+    }
+  });
+
   test('credential lookup intent is deterministic and service-only', () {
     final exact = parseCredentialV2LookupIntent('find my Example login');
     expect(exact, isNotNull);

@@ -98,7 +98,7 @@ FAQ_ENTRIES: tuple[dict[str, Any], ...] = (
            "SVaultAI processes limited operational metadata needed to run and secure the service, such as account status, subscription state, storage amount, trusted devices, security events, and deletion eligibility. It does not let staff open protected vault contents."),
     _entry("forgot-pin", FAQ_CATEGORY_SECURITY,
            "What happens if I forget my PIN?",
-           "SVaultAI cannot reset your PIN or use a universal key to unlock your vault. Recovery may not be possible; depending on the recovery features and key material you configured, losing the PIN may make protected data permanently inaccessible."),
+           "SVaultAI cannot reset or recover a forgotten PIN or use a universal key to unlock the existing vault. Losing the PIN makes its protected data permanently inaccessible; account, device, billing, email, or support changes cannot restore its decryption key."),
     _entry("trusted-devices", FAQ_CATEGORY_SECURITY,
            "What is a trusted device?",
            "A trusted device is one you have authorized for your account. Review trusted devices regularly and remove any device you no longer control. A new or reinstalled device must complete the current authorization flow before it can access protected content."),

@@ -351,19 +351,19 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
       category: 'security',
       question: 'What happens if I forget my PIN?',
       answer:
-          'SVaultAI has no universal key that can unlock every vault. If you lose the PIN and required local key material, and you did not configure a working recovery path, your protected data may become permanently inaccessible.'),
+          'SVaultAI cannot recover a forgotten PIN or unlock the existing vault. Losing the PIN makes its protected data permanently inaccessible. Account, email, device, billing, or support changes cannot recreate the vault decryption key.'),
   FaqEntry(
       id: 'reset-pin',
       category: 'security',
       question: 'Can SVaultAI reset my PIN?',
       answer:
-          'Support cannot simply reset the PIN and decrypt your vault. Any available PIN-change or recovery flow must be authorized by existing device or recovery key material; availability depends on what you configured.'),
+          'No. Support and administrators cannot reset a forgotten PIN and restore the existing encrypted vault. A user who knows the current PIN may use an authorized PIN-change flow, but account recovery is not vault-key recovery.'),
   FaqEntry(
       id: 'why-no-support-recovery',
       category: 'security',
       question: 'Why can’t support recover my vault for me?',
       answer:
-          'Giving support a universal recovery ability would create a backdoor into every vault. The encryption design instead relies on your PIN, authorized device, and configured key material.'),
+          'Giving support a universal recovery ability would create a backdoor into every vault. The encryption design intentionally gives no creator, operator, administrator, or support agent a secret that can replace your PIN.'),
   FaqEntry(
       id: 'key-storage',
       category: 'security',

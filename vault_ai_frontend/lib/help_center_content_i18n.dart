@@ -27,7 +27,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'getting_started',
       question: 'How do I create my vault?',
       answer:
-          'Open the SVaultAI sign-in flow, pick or confirm your vault name, and set your PIN when prompted. Your PIN helps protect your vault unlock process — keep it safe. If recovery is not available for your account, losing your PIN may mean you cannot recover access.',
+          'Open the SVaultAI sign-in flow, pick or confirm your vault name, and set your PIN when prompted. Your PIN protects your vault unlock process, so keep it safe. If you forget it, SVaultAI, support, administrators, account recovery, and billing changes cannot recover the existing encrypted vault.',
     ),
     'how-do-i-unlock-my-vault': FaqEntry(
       id: 'how-do-i-unlock-my-vault',
@@ -69,7 +69,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'What happens if I forget my PIN?',
       answer:
-          'The PIN is required to derive your encryption key. If you forget it, recovery may not be possible — keep your PIN safe and consider recording it in a physical location only you can access.',
+          'The PIN is required to unlock your encryption key. If you forget it, SVaultAI, support, administrators, account recovery, and billing changes cannot reset the PIN or recover the existing encrypted vault. Keep your PIN safe in a physical location only you can access.',
     ),
     'can-someone-else-access': FaqEntry(
       id: 'can-someone-else-access',

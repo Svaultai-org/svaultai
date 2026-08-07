@@ -372,7 +372,8 @@ class TestFaqAnswersHonorContentRules(unittest.TestCase):
         from vault_faq_content import FAQ_BY_ID
         answer = FAQ_BY_ID["forgot-pin"]["answer"].lower()
 
-        self.assertIn("recovery may not be possible", answer)
+        self.assertIn("cannot reset or recover a forgotten pin", answer)
+        self.assertIn("support", answer)
 
     def test_no_reveal_instruction_leaks(self):
         from vault_faq_content import FAQ_ENTRIES

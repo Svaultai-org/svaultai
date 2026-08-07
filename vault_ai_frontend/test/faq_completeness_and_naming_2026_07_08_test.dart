@@ -337,13 +337,13 @@ void main() {
 
 
   group('Forgot-PIN answer is honest', () {
-    test('forgot-PIN answer mentions "recovery may not be possible"',
+    test('forgot-PIN answer states that a forgotten PIN cannot be recovered',
         () {
-      final e = faqEntryById('if-i-forget-my-pin');
+      final e = faqEntryById('forgot-pin');
       expect(e, isNotNull);
       expect(
         e!.answer.toLowerCase(),
-        contains('recovery may not be possible'),
+        contains('cannot recover a forgotten pin'),
         reason:
             'forgot-PIN answer must be honest — not promise '
             'recovery if not implemented',
