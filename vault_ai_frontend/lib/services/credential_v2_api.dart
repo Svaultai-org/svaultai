@@ -72,11 +72,17 @@ class CredentialV2Api {
     if (decoded is! List) {
       throw const FormatException('invalid v2 credential list');
     }
-    return decoded
-        .map((value) => CredentialV2Envelope.fromResponse(
-              Map<String, dynamic>.from(value as Map),
-            ))
-        .toList(growable: false);
+    final envelopes = <CredentialV2Envelope>[];
+    for (final value in decoded) {
+      try {
+        envelopes.add(CredentialV2Envelope.fromResponse(
+          Map<String, dynamic>.from(value as Map),
+        ));
+      } on Object {
+        // Quarantine a malformed sibling instead of blanking the whole list.
+      }
+    }
+    return envelopes;
   }
 
   Future<void> verify(String recordId, String operationId) async {

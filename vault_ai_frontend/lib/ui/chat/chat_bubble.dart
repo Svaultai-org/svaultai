@@ -631,13 +631,13 @@ class _CardBubble extends StatelessWidget {
       // controller turns into a "save it" / "cancel" chat message,
       // which the backend state machine consumes to persist or
       // discard the draft.
-      onGeneratedLoginSave: (draftId, service) {
+      onGeneratedLoginSave: (draftId, service) async {
         if (onCardAction != null) {
           final draftData = cardMap['data'];
           final localDraft = draftData is Map
               ? Map<String, dynamic>.from(draftData)
               : const <String, dynamic>{};
-          onCardAction!(msg, 'generated_login_save', {
+          await onCardAction!(msg, 'generated_login_save', {
             'draft_id': draftId,
             'service': service,
             'username': localDraft['username'],
@@ -647,9 +647,9 @@ class _CardBubble extends StatelessWidget {
           });
         }
       },
-      onGeneratedLoginCancel: (draftId, service) {
+      onGeneratedLoginCancel: (draftId, service) async {
         if (onCardAction != null) {
-          onCardAction!(msg, 'generated_login_cancel', {
+          await onCardAction!(msg, 'generated_login_cancel', {
             'draft_id': draftId,
             'service': service,
           });

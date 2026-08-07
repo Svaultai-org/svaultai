@@ -71,6 +71,8 @@ class CredentialV2Envelope {
   final String ciphertext;
   final String authenticationTag;
   final Map<String, String> blindIndexes;
+  final String migrationState;
+  final String verificationState;
 
   const CredentialV2Envelope({
     required this.recordId,
@@ -78,6 +80,8 @@ class CredentialV2Envelope {
     required this.ciphertext,
     required this.authenticationTag,
     required this.blindIndexes,
+    this.migrationState = 'v2_written',
+    this.verificationState = 'not_verified',
   });
 
   Map<String, dynamic> toRequestBody({String? migrationOperationId}) => {
@@ -111,6 +115,9 @@ class CredentialV2Envelope {
       blindIndexes: (json['blind_indexes'] as Map).map(
         (key, value) => MapEntry(key.toString(), value as String),
       ),
+      migrationState: json['migration_state']?.toString() ?? 'v2_written',
+      verificationState:
+          json['verification_state']?.toString() ?? 'not_verified',
     );
   }
 }

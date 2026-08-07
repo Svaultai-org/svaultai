@@ -12078,6 +12078,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               itemType: 'login',
               recordId: record.recordId,
               cryptoVersion: credentialV2CryptoVersion,
+              migrationState: record.migrationState,
+              verificationState: record.verificationState,
             )));
       }
 
@@ -14681,6 +14683,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         } catch (_) {
           _showSnack(
               'Could not securely save this generated login. Retry is safe.');
+          rethrow;
         }
         return;
       }
@@ -14708,6 +14711,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           _appendAssistantMessage('Generated login cancelled.');
         } catch (_) {
           _showSnack('Could not cancel this generated login.');
+          rethrow;
         }
         return;
       }
@@ -16782,7 +16786,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               : null,
           onRollbackItem: zkV2CredentialMigrationEnabled
               ? (item) {
-                  if (item.cryptoVersion == credentialV2CryptoVersion) {
+                  if (isCredentialV2RollbackEligible(item)) {
                     unawaited(_rollbackCredentialV2(item));
                   }
                 }

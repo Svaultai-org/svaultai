@@ -329,6 +329,65 @@ void main() {
     expect(deleted, isTrue);
   });
 
+  test('list preserves migration state and isolates malformed v2 siblings',
+      () async {
+    final service = crypto();
+    final valid = await service.encrypt(
+      recordId: 'valid-migrated',
+      plaintext: fixture(),
+    );
+    final client = MockClient((request) async => http.Response(
+          jsonEncode([
+            {
+              ...responseFor(valid),
+              'migration_state': 'v2_verified',
+              'verification_state': 'client_verified',
+            },
+            {'crypto_version': 'client_mvk_v2', 'record_id': 'malformed'},
+            {
+              ...responseFor(valid),
+              'record_id': 'tampered-sibling',
+            },
+          ]),
+          200,
+        ));
+    final records = await CredentialV2Repository(
+      crypto: service,
+      api: CredentialV2Api(
+        baseUrl: 'https://unit.test',
+        sessionToken: 'session',
+        client: client,
+      ),
+    ).listDecrypted();
+    expect(records, hasLength(1));
+    expect(records.single.recordId, 'valid-migrated');
+    expect(records.single.migrationState, 'v2_verified');
+    expect(records.single.verificationState, 'client_verified');
+  });
+
+  test('all accepted migration lifecycle states parse without hiding records',
+      () async {
+    const states = [
+      'migration_pending',
+      'v2_written',
+      'v2_verified',
+      'migrated',
+      'rollback_pending',
+      'rolled_back',
+    ];
+    final envelope = await crypto().encrypt(
+      recordId: 'state-record',
+      plaintext: fixture(),
+    );
+    for (final state in states) {
+      final parsed = CredentialV2Envelope.fromResponse({
+        ...responseFor(envelope),
+        'migration_state': state,
+      });
+      expect(parsed.migrationState, state);
+    }
+  });
+
   test(
       'synthetic migration verifies round trip and wrong legacy PIN stops before API',
       () async {

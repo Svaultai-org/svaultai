@@ -5,6 +5,19 @@ import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/logins_page.dart';
 
 void main() {
+  test('rollback is offered only for migration lifecycle records', () {
+    VaultLoginItem item(String state) => VaultLoginItem(
+          service: 'QA',
+          cryptoVersion: 'client_mvk_v2',
+          migrationState: state,
+        );
+    expect(isCredentialV2RollbackEligible(item('migration_pending')), isTrue);
+    expect(isCredentialV2RollbackEligible(item('v2_verified')), isTrue);
+    expect(isCredentialV2RollbackEligible(item('migrated')), isTrue);
+    expect(isCredentialV2RollbackEligible(item('rollback_pending')), isTrue);
+    expect(isCredentialV2RollbackEligible(item('v2_written')), isFalse);
+    expect(isCredentialV2RollbackEligible(item('rolled_back')), isFalse);
+  });
   testWidgets('QA migration actions are scoped by crypto version and type',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(2400, 1200));
@@ -30,6 +43,7 @@ void main() {
               service: 'V2 login',
               itemType: 'login',
               cryptoVersion: 'client_mvk_v2',
+              migrationState: 'v2_verified',
             ),
             VaultLoginItem(
               service: 'Legacy note',

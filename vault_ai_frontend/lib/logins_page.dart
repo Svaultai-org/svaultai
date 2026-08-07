@@ -8,6 +8,8 @@ class VaultLoginItem {
   final DateTime? createdAt;
   final String? recordId;
   final String cryptoVersion;
+  final String? migrationState;
+  final String? verificationState;
 
   const VaultLoginItem({
     required this.service,
@@ -15,6 +17,8 @@ class VaultLoginItem {
     this.createdAt,
     this.recordId,
     this.cryptoVersion = 'legacy_v1',
+    this.migrationState,
+    this.verificationState,
   });
 
   factory VaultLoginItem.fromJson(Map<String, dynamic> json) {
@@ -29,9 +33,20 @@ class VaultLoginItem {
       createdAt: created,
       recordId: json['record_id']?.toString(),
       cryptoVersion: json['crypto_version']?.toString() ?? 'legacy_v1',
+      migrationState: json['migration_state']?.toString(),
+      verificationState: json['verification_state']?.toString(),
     );
   }
 }
+
+bool isCredentialV2RollbackEligible(VaultLoginItem item) =>
+    item.cryptoVersion == 'client_mvk_v2' &&
+    const {
+      'migration_pending',
+      'v2_verified',
+      'migrated',
+      'rollback_pending',
+    }.contains(item.migrationState);
 
 const Map<String, String> kSecureItemTypeLabels = <String, String>{
   'login': 'Login',
@@ -478,7 +493,7 @@ class _LoginsPageState extends State<LoginsPage> {
                         ? null
                         : () => widget.onMigrateItem!(login),
                     onRollback: widget.onRollbackItem == null ||
-                            login.cryptoVersion != 'client_mvk_v2'
+                            !isCredentialV2RollbackEligible(login)
                         ? null
                         : () => widget.onRollbackItem!(login),
                   );

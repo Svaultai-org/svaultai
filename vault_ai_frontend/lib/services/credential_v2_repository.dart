@@ -27,7 +27,14 @@ CredentialV2LookupIntent? parseCredentialV2LookupIntent(String text) {
 class DecryptedCredentialV2Record {
   final String recordId;
   final CredentialV2Plaintext plaintext;
-  const DecryptedCredentialV2Record(this.recordId, this.plaintext);
+  final String migrationState;
+  final String verificationState;
+  const DecryptedCredentialV2Record(
+    this.recordId,
+    this.plaintext, {
+    this.migrationState = 'v2_written',
+    this.verificationState = 'not_verified',
+  });
 }
 
 class CredentialV2Repository {
@@ -78,10 +85,16 @@ class CredentialV2Repository {
     final envelopes = await api.list();
     final records = <DecryptedCredentialV2Record>[];
     for (final envelope in envelopes) {
-      records.add(DecryptedCredentialV2Record(
-        envelope.recordId,
-        await crypto.decrypt(envelope),
-      ));
+      try {
+        records.add(DecryptedCredentialV2Record(
+          envelope.recordId,
+          await crypto.decrypt(envelope),
+          migrationState: envelope.migrationState,
+          verificationState: envelope.verificationState,
+        ));
+      } on Object {
+        // Authentication/format failure is isolated to this envelope.
+      }
     }
     return records;
   }
