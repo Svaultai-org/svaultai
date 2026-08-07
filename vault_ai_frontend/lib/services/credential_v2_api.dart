@@ -85,13 +85,17 @@ class CredentialV2Api {
     return envelopes;
   }
 
-  Future<void> verify(String recordId, String operationId) async {
+  Future<void> verify(
+    String recordId,
+    String operationId, {
+    bool semanticEqualityVerified = true,
+  }) async {
     final response = await client.post(
       Uri.parse('$baseUrl/vault/v2/credentials/$recordId/verify'),
       headers: _headers,
       body: jsonEncode(<String, dynamic>{
         'operation_id': operationId,
-        'semantic_equality_verified': true,
+        'semantic_equality_verified': semanticEqualityVerified,
       }),
     );
     if (response.statusCode != 200) {

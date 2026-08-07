@@ -1719,6 +1719,15 @@ class _GeneratedLoginCard extends StatefulWidget {
 class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   final Set<String> _passwordRevealedDrafts = <String>{};
   final Map<String, _GeneratedDraftActionState> _draftStates = {};
+  final Map<String, Timer> _expiryTimers = {};
+
+  @override
+  void dispose() {
+    for (final timer in _expiryTimers.values) {
+      timer.cancel();
+    }
+    super.dispose();
+  }
 
   Map<String, dynamic> get _data =>
       widget.card.data ?? const <String, dynamic>{};
@@ -1780,9 +1789,47 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     });
   }
 
-  Future<void> _handleSave(String draftId, String service) async {
+  DateTime? _expiryFrom(Map<String, dynamic> data) {
+    final raw = data['expires_at'];
+    final seconds = raw is num ? raw.toDouble() : double.tryParse('$raw');
+    if (seconds == null || !seconds.isFinite || seconds <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch((seconds * 1000).round());
+  }
+
+  bool _isExpired(Map<String, dynamic> data) {
+    final expiry = _expiryFrom(data);
+    return expiry != null && !DateTime.now().isBefore(expiry);
+  }
+
+  void _scheduleExpiry(
+    Map<String, dynamic> data,
+    String draftId,
+    String service,
+  ) {
+    final key = _dispatchKey(draftId, service);
+    if (_expiryTimers.containsKey(key) || _draftStates[key] != null) return;
+    final expiry = _expiryFrom(data);
+    if (expiry == null) return;
+    final remaining = expiry.difference(DateTime.now());
+    if (remaining <= Duration.zero) return;
+    _expiryTimers[key] = Timer(remaining, () {
+      _expiryTimers.remove(key);
+      if (!mounted || _draftStates[key] != null) return;
+      setState(() => _draftStates[key] = _GeneratedDraftActionState.expired);
+    });
+  }
+
+  Future<void> _handleSave(
+    String draftId,
+    String service,
+    Map<String, dynamic> data,
+  ) async {
     final key = _dispatchKey(draftId, service);
     if (_draftStates[key] != null) return;
+    if (_isExpired(data)) {
+      setState(() => _draftStates[key] = _GeneratedDraftActionState.expired);
+      return;
+    }
     setState(() => _draftStates[key] = _GeneratedDraftActionState.saving);
     try {
       await widget.onSave?.call(draftId, service);
@@ -1889,6 +1936,9 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     final actions = _actionsFrom(data);
     final dispatched = _isDispatched(draftId, service);
     final actionState = _draftStates[_dispatchKey(draftId, service)];
+    final expired =
+        actionState == _GeneratedDraftActionState.expired || _isExpired(data);
+    _scheduleExpiry(data, draftId, service);
     final passwordRevealed = _isPasswordRevealed(draftId, service);
     String keyed(String base) => suffix.isEmpty ? base : '${base}_$suffix';
 
@@ -1909,7 +1959,9 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
               ? 'Saved securely.'
               : actionState == _GeneratedDraftActionState.cancelled
                   ? 'Cancelled.'
-                  : 'Draft — review the values, then Save or Cancel.',
+                  : expired
+                      ? 'Expired.'
+                      : 'Draft — review the values, then Save or Cancel.',
           style: TextStyle(
             color: kWalletTextMuted,
             fontSize: 12,
@@ -2002,7 +2054,8 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
         // Cancel is a low-emphasis button so accidental taps are
         // rarer than intentional saves.
         if (actionState != _GeneratedDraftActionState.saved &&
-            actionState != _GeneratedDraftActionState.cancelled)
+            actionState != _GeneratedDraftActionState.cancelled &&
+            !expired)
           Row(
             children: [
               if (actions.contains('save'))
@@ -2017,7 +2070,7 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
                       ),
                       onPressed: dispatched
                           ? null
-                          : () => _handleSave(draftId, service),
+                          : () => _handleSave(draftId, service, data),
                       icon: const Icon(Icons.check_rounded, size: 18),
                       label: Text(
                           actionState == _GeneratedDraftActionState.saving
@@ -2101,7 +2154,13 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   }
 }
 
-enum _GeneratedDraftActionState { saving, saved, cancelling, cancelled }
+enum _GeneratedDraftActionState {
+  saving,
+  saved,
+  cancelling,
+  cancelled,
+  expired,
+}
 
 /// Row widget for the generated-login card. Displays a label, a
 /// value (masked or plaintext), an optional reveal-eye toggle for

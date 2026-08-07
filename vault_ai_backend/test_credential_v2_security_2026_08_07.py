@@ -198,12 +198,12 @@ def test_response_is_exact_opaque_envelope_without_legacy_transform() -> None:
     assert not hasattr(response, "legacy_value")
 
 
-def test_client_verification_attestation_cannot_be_false() -> None:
-    with pytest.raises(ValidationError):
-        route.ClientVerificationRequest.model_validate({
-            "operation_id": str(uuid4()),
-            "semantic_equality_verified": False,
-        })
+def test_client_verification_attestation_accepts_explicit_failure() -> None:
+    request = route.ClientVerificationRequest.model_validate({
+        "operation_id": str(uuid4()),
+        "semantic_equality_verified": False,
+    })
+    assert request.semantic_equality_verified is False
 
 
 def test_route_is_mounted_without_changing_legacy_route_source() -> None:

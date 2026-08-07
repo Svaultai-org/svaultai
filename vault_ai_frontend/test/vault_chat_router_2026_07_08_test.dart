@@ -781,6 +781,33 @@ void main() {
       expect(find.text('Cancelled.'), findsOneWidget);
     });
 
+    testWidgets('expired generated login is terminal without save dispatch',
+        (tester) async {
+      var saves = 0;
+      await tester.pumpWidget(_wrap(VaultChatCardView(
+        response: _parse(intent: 'vault_generated_login_create_draft', card: {
+          'cardType': 'vault_generated_login_card',
+          'view': 'create_draft',
+          'data': {
+            'service': 'Expired',
+            'username': 'user',
+            'password': 'secret',
+            'draft_id': 'draft-expired',
+            'expires_at': 1,
+            'actions': ['save', 'cancel'],
+          },
+        }),
+        onGeneratedLoginSave: (_, __) async => saves++,
+      )));
+
+      expect(find.text('Expired.'), findsOneWidget);
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save')),
+        findsNothing,
+      );
+      expect(saves, 0);
+    });
+
     testWidgets('billing card renders with route-to-checkout wording',
         (tester) async {
       var opened = false;

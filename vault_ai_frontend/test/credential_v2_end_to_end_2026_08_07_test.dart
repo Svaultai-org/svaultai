@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -263,6 +264,59 @@ void main() {
     }
   });
 
+  test('generated transport failure retries without duplicate envelope',
+      () async {
+    final stored = <String, CredentialV2Envelope>{};
+    final requests = <http.Request>[];
+    var putAttempts = 0;
+    final client = MockClient((request) async {
+      requests.add(request);
+      if (request.method == 'PUT') {
+        putAttempts++;
+        if (putAttempts == 1) {
+          throw const SocketException('QA injected transport failure');
+        }
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final envelope = CredentialV2Envelope.fromResponse({
+          ...body,
+          'migration_state': 'v2_written',
+          'verification_state': 'not_verified',
+        });
+        stored[envelope.recordId] = envelope;
+        return http.Response(jsonEncode(responseFor(envelope)), 200);
+      }
+      if (request.method == 'POST') return http.Response('{}', 200);
+      throw StateError('unexpected request');
+    });
+    final repository = CredentialV2Repository(
+      crypto: crypto(),
+      api: CredentialV2Api(
+        baseUrl: 'https://qa-unreachable.invalid',
+        sessionToken: 'session-only',
+        client: client,
+      ),
+    );
+    const recordId = 'generated-retry-opaque';
+    await expectLater(
+      repository.create(recordId: recordId, credential: fixture()),
+      throwsA(isA<SocketException>()),
+    );
+    expect(stored, isEmpty);
+
+    await repository.create(recordId: recordId, credential: fixture());
+    await repository.api.finalizeGeneratedDraft(
+      recordId: recordId,
+      draftId: 'draft-retry',
+    );
+
+    expect(putAttempts, 2);
+    expect(stored.keys, [recordId]);
+    final finalize =
+        requests.singleWhere((request) => request.method == 'POST');
+    expect(finalize.body, isEmpty);
+    expect(finalize.url.query, isEmpty);
+  });
+
   test('create list reveal edit lookup and delete preserve service parity',
       () async {
     final stored = <String, CredentialV2Envelope>{};
@@ -394,6 +448,7 @@ void main() {
     final stored = <String, dynamic>{};
     var requestCount = 0;
     var verified = false;
+    final stages = <String>[];
     final client = MockClient((request) async {
       requestCount++;
       if (request.method == 'PUT') {
@@ -433,9 +488,18 @@ void main() {
       recordId: 'credential-1',
       operationId: '11111111-1111-4111-8111-111111111111',
       decryptLegacyLocally: () async => fixture(),
+      onStage: stages.add,
     );
     expect(result.plaintext.semanticallyEquals(fixture()), isTrue);
     expect(verified, isTrue);
+    expect(stages, [
+      'legacy_decrypted',
+      'encrypted',
+      'put_complete',
+      'readback_complete',
+      'local_verified',
+      'verify_complete',
+    ]);
     final before = requestCount;
     await expectLater(
       migrator.migrateOne(

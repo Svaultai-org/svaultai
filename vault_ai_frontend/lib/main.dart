@@ -6710,11 +6710,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       crypto: repository.crypto,
       api: repository.api,
     );
+    var qaMigrationStage = 'started';
     try {
       await migrator.migrateOne(
         recordId: recordId,
         operationId: operationId,
         serviceForLookup: item.service,
+        onStage: credentialV2QaDiagnosticsEnabled
+            ? (stage) => qaMigrationStage = stage
+            : null,
         decryptLegacyLocally: () async {
           final pin = await _VaultCrypto.currentPinOrThrow();
           final response =
@@ -6741,8 +6745,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _credentialV2MigrationOperationIds.remove(key);
       _showSnack('Credential v2 migration verified; legacy retained.');
       await _loadVaultLogins();
-    } catch (_) {
-      _showSnack('Migration paused safely. Retry reuses the same operation.');
+    } catch (error) {
+      final qaStatus =
+          RegExp(r'\(([0-9]{3})\)').firstMatch(error.toString())?.group(1) ??
+              'local';
+      final qaErrorType = error.runtimeType.toString();
+      _showSnack(credentialV2QaDiagnosticsEnabled
+          ? 'Migration paused safely at $qaMigrationStage (status $qaStatus, type $qaErrorType). Retry reuses the same operation.'
+          : 'Migration paused safely. Retry reuses the same operation.');
     }
   }
 

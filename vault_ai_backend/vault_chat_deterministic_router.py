@@ -647,6 +647,7 @@ def _build_credential_draft_envelope(draft_payload: dict, service: str) -> str:
         "username":        username,
         "password":        password,
         "draft_id":        draft_id,
+        "expires_at":      draft_payload.get("expires_at"),
         "explicit_fields": explicit_fields,
         # Closed-set enum the frontend switches on to render the
         # button row. Order matters: Save first, Cancel second.
@@ -706,6 +707,7 @@ def _draft_payload_to_card_data(draft_payload: dict, service: str) -> dict:
         "username": str(draft_payload.get("username") or ""),
         "password": str(draft_payload.get("password") or ""),
         "draft_id": str(draft_payload.get("draft_id") or ""),
+        "expires_at": draft_payload.get("expires_at"),
         "explicit_fields": list(draft_payload.get("explicit_fields") or []),
         "actions": ["save", "cancel"],
         "schema": "vault_generated_login_draft_v1",

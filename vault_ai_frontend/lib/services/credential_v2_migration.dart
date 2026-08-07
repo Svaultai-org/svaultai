@@ -2,6 +2,7 @@ import 'credential_v2.dart';
 import 'credential_v2_api.dart';
 
 typedef LocalLegacyCredentialDecrypt = Future<CredentialV2Plaintext> Function();
+typedef CredentialV2MigrationStageCallback = void Function(String stage);
 
 class CredentialV2MigrationResult {
   final CredentialV2Plaintext plaintext;
@@ -22,20 +23,32 @@ class CredentialV2Migrator {
     required String operationId,
     required LocalLegacyCredentialDecrypt decryptLegacyLocally,
     String? serviceForLookup,
+    CredentialV2MigrationStageCallback? onStage,
   }) async {
     final legacy = await decryptLegacyLocally();
+    onStage?.call('legacy_decrypted');
     final encrypted = await crypto.encrypt(
       recordId: recordId,
       plaintext: legacy,
       serviceForLookup: serviceForLookup,
     );
+    onStage?.call('encrypted');
     await api.write(encrypted, migrationOperationId: operationId);
+    onStage?.call('put_complete');
     final roundTripEnvelope = await api.read(recordId);
+    onStage?.call('readback_complete');
     final roundTrip = await crypto.decrypt(roundTripEnvelope);
     if (!legacy.semanticallyEquals(roundTrip)) {
+      await api.verify(
+        recordId,
+        operationId,
+        semanticEqualityVerified: false,
+      );
       throw StateError('credential v2 semantic verification failed');
     }
+    onStage?.call('local_verified');
     await api.verify(recordId, operationId);
+    onStage?.call('verify_complete');
     return CredentialV2MigrationResult(roundTrip, roundTripEnvelope);
   }
 

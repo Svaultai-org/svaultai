@@ -347,7 +347,7 @@ def list_credentials_v2(
 class ClientVerificationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operation_id: UUID
-    semantic_equality_verified: Literal[True]
+    semantic_equality_verified: bool
 
 
 @router.post("/{record_id}/verify", response_model=dict)
@@ -360,6 +360,38 @@ def verify_credential_v2(
     conn = get_db()
     try:
         cur = conn.cursor()
+        if not payload.semantic_equality_verified:
+            cur.execute(
+                """
+                UPDATE vault_crypto_migration_journal
+                   SET migration_state = 'verification_failed',
+                       verification_state = 'verification_failed',
+                       error_category = 'client_semantic_mismatch',
+                       updated_at = NOW()
+                 WHERE operation_id = %s AND vault_id = %s
+                   AND record_domain = 'credential' AND record_id = %s
+                   AND migration_state IN ('v2_written', 'verification_failed')
+                """,
+                (payload.operation_id, principal["vault_id"], record_id),
+            )
+            if cur.rowcount != 1:
+                conn.rollback()
+                raise HTTPException(
+                    status_code=409, detail="migration is not verifiable"
+                )
+            cur.execute(
+                """
+                UPDATE vault_crypto_envelopes
+                   SET migration_state = 'verification_failed',
+                       verification_state = 'verification_failed',
+                       updated_at = NOW()
+                 WHERE vault_id = %s AND record_domain = 'credential'
+                   AND record_id = %s AND crypto_version = 'client_mvk_v2'
+                """,
+                (principal["vault_id"], record_id),
+            )
+            conn.commit()
+            return {"status": "verification_failed", "record_id": record_id}
         cur.execute(
             """
             UPDATE vault_crypto_migration_journal

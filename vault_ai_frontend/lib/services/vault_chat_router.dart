@@ -449,6 +449,7 @@ const Set<String> _kGeneratedLoginDraftKeys = <String>{
   'username',
   'password',
   'draft_id',
+  'expires_at',
   'explicit_fields',
   'actions',
   'email',

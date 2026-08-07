@@ -1097,6 +1097,8 @@ class Bug4EndpointTest(_EndpointTestBase):
                            ev.summary())
         self.assertTrue(len(data.get("draft_id") or "") > 0,
                         ev.summary())
+        self.assertIsInstance(data.get("expires_at"), (int, float),
+                              ev.summary())
         self.assertEqual(data.get("actions"), ["save", "cancel"],
                          ev.summary())
 
