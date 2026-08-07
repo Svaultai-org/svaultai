@@ -50,6 +50,7 @@ class CryptoVersion(str, Enum):
 
 class CipherSuite(str, Enum):
     LEGACY_SERVER_V1 = "legacy_server_v1"
+    AES_256_GCM_V1 = "aes_256_gcm_v1"
     XCHACHA20_POLY1305_IETF_V1 = "xchacha20_poly1305_ietf_v1"
 
 
@@ -112,7 +113,10 @@ class OpaqueRecordEnvelope:
     def __post_init__(self) -> None:
         if self.crypto_version is not CryptoVersion.CLIENT_MVK_V2:
             raise InvalidOpaqueEnvelope("opaque envelopes require client_mvk_v2")
-        if self.cipher_suite is not CipherSuite.XCHACHA20_POLY1305_IETF_V1:
+        if self.cipher_suite not in {
+            CipherSuite.AES_256_GCM_V1,
+            CipherSuite.XCHACHA20_POLY1305_IETF_V1,
+        }:
             raise InvalidOpaqueEnvelope("cipher suite is not valid for client_mvk_v2")
         for name in _B64_FIELDS:
             _require_canonical_b64(name, getattr(self, name))

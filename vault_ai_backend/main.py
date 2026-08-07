@@ -45,6 +45,7 @@ from routes.vault_metadata_migration_routes import (
 from routes.vault_ciphertext_write_routes import (
     router as vault_ciphertext_write_router,
 )
+from routes.credential_v2_routes import router as credential_v2_router
 from vault_chat_memory import (
     get_memory,
     remember_service,
@@ -445,6 +446,7 @@ app.include_router(auth_router)
 app.include_router(auth_zk_router)
 app.include_router(vault_metadata_migration_router)
 app.include_router(vault_ciphertext_write_router)
+app.include_router(credential_v2_router)
 app.include_router(login_router)
 app.include_router(vault_manage_router, prefix="/manage")
 
