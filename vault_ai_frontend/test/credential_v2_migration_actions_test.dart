@@ -70,14 +70,24 @@ void main() {
         .map((widget) => widget.properties.identifier)
         .whereType<String>()
         .toSet();
+    final labels = tester
+        .widgetList<Semantics>(find.byType(Semantics))
+        .map((widget) => widget.properties.label)
+        .whereType<String>()
+        .toSet();
     if (qaCredentialV2TargetingEnabled) {
       expect(identifiers, contains('credential-card-opaque-record-qa-1'));
       expect(identifiers, contains('credential-reveal-opaque-record-qa-1'));
       expect(identifiers, contains('credential-edit-opaque-record-qa-1'));
       expect(identifiers, contains('credential-delete-opaque-record-qa-1'));
+      expect(labels, contains('credential-card-opaque-record-qa-1'));
+      expect(labels, contains('credential-reveal-opaque-record-qa-1'));
+      expect(labels, contains('credential-edit-opaque-record-qa-1'));
+      expect(labels, contains('credential-delete-opaque-record-qa-1'));
     } else {
       expect(
           identifiers, isNot(contains('credential-card-opaque-record-qa-1')));
+      expect(labels, isNot(contains('credential-card-opaque-record-qa-1')));
     }
     expect(
       find.byKey(const Key('credential_v2_migrate_login-Legacy login')),
