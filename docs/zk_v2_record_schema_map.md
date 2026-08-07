@@ -23,3 +23,20 @@ PINs, MVKs, derived keys, wallet private keys, and seed phrases are prohibited.
 
 Legacy rows remain authoritative until a client has written and verified a v2
 envelope. Initial migration work never deletes legacy representations.
+
+## Dispatch and feature gates
+
+- `legacy_v1` dispatches only to the existing legacy adapter.
+- `client_mvk_v2` dispatches only to the opaque client-decrypt envelope path.
+- Unknown versions fail closed with `unsupported_crypto_version`.
+- V2 never silently falls back to legacy, and an existing v2 envelope cannot
+  be overwritten through a v1 write.
+- `ZK_V2_READ_ENABLED`, `ZK_V2_WRITE_ENABLED`, and
+  `ZK_V2_MIGRATION_ENABLED` are explicit and default to `false`, including in
+  the production example. Migration requires both read and write to be on.
+
+The stale `APP_RELEASE` value in the ignored production client configuration is
+operationally significant: it is sent as `X-App-Release` and participates in
+web service-worker release/cache convergence. It is not a secret, but a stale
+value can misidentify the running client and interfere with release refresh
+behavior. The ignored local configuration was not changed.
