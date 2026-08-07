@@ -21,6 +21,7 @@ from psycopg2.extras import Json, RealDictCursor
 from auth_local import SessionPrincipal, verify_session_token
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
+from vault_credential_draft import consume_draft, get_draft
 
 
 router = APIRouter(prefix="/vault/v2/credentials", tags=["credential-v2"])
@@ -117,6 +118,24 @@ class CredentialV2EnvelopeResponse(BaseModel):
     verification_state: str
 
 
+class GeneratedDraftFinalizeResponse(BaseModel):
+    status: Literal["finalized", "already_finalized"]
+    record_id: str
+    draft_id: str
+
+
+@router.post("/generated-drafts/{draft_id}/cancel", response_model=dict)
+def cancel_generated_draft_v2(
+    draft_id: str,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict:
+    _require("write")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", draft_id):
+        raise HTTPException(status_code=400, detail="draft_id has invalid format")
+    consume_draft(vault_id=str(principal["vault_id"]), draft_id=draft_id)
+    return {"status": "cancelled", "draft_id": draft_id}
+
+
 def _response(row: dict) -> CredentialV2EnvelopeResponse:
     return CredentialV2EnvelopeResponse(
         record_id=row["record_id"],
@@ -129,6 +148,63 @@ def _response(row: dict) -> CredentialV2EnvelopeResponse:
         blind_indexes=dict(row.get("blind_indexes") or {}),
         migration_state=row["migration_state"],
         verification_state=row["verification_state"],
+    )
+
+
+@router.post(
+    "/{record_id}/generated-drafts/{draft_id}/finalize",
+    response_model=GeneratedDraftFinalizeResponse,
+)
+def finalize_generated_draft_v2(
+    record_id: str,
+    draft_id: str,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> GeneratedDraftFinalizeResponse:
+    """Clear a transient draft only after its opaque v2 record exists.
+
+    No generated values are accepted by this endpoint. Repeating the request
+    after a successful finalize is safe and cannot create a second record.
+    """
+    _require("write")
+    if not _RECORD_ID.fullmatch(record_id):
+        raise HTTPException(status_code=400, detail="record_id has invalid format")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", draft_id):
+        raise HTTPException(status_code=400, detail="draft_id has invalid format")
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT 1 FROM vault_crypto_envelopes
+             WHERE vault_id = %s AND record_domain = 'credential'
+               AND record_id = %s AND crypto_version = 'client_mvk_v2'
+               AND deleted_at IS NULL
+            """,
+            (principal["vault_id"], record_id),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(
+                status_code=409,
+                detail="opaque v2 credential must exist before draft finalize",
+            )
+    finally:
+        conn.close()
+
+    current = get_draft(vault_id=str(principal["vault_id"]), draft_id=draft_id)
+    if current is None:
+        return GeneratedDraftFinalizeResponse(
+            status="already_finalized", record_id=record_id, draft_id=draft_id,
+        )
+    consumed = consume_draft(
+        vault_id=str(principal["vault_id"]), draft_id=draft_id,
+    )
+    if consumed is None:
+        return GeneratedDraftFinalizeResponse(
+            status="already_finalized", record_id=record_id, draft_id=draft_id,
+        )
+    return GeneratedDraftFinalizeResponse(
+        status="finalized", record_id=record_id, draft_id=draft_id,
     )
 
 

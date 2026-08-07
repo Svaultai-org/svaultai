@@ -1,6 +1,29 @@
 import 'credential_v2.dart';
 import 'credential_v2_api.dart';
 
+class CredentialV2LookupIntent {
+  final bool listAll;
+  final String? service;
+  const CredentialV2LookupIntent._({required this.listAll, this.service});
+}
+
+CredentialV2LookupIntent? parseCredentialV2LookupIntent(String text) {
+  final normalized = text.trim();
+  if (RegExp(
+    r'^(?:show|list|open)\s+(?:me\s+)?(?:my\s+)?saved\s+logins?\??$',
+    caseSensitive: false,
+  ).hasMatch(normalized)) {
+    return const CredentialV2LookupIntent._(listAll: true);
+  }
+  final match = RegExp(
+    r'^(?:show|find|open|get)\s+(?:me\s+)?(?:my\s+)?(.+?)\s+(?:saved\s+)?login\??$',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  final service = match?.group(1)?.trim();
+  if (service == null || service.isEmpty) return null;
+  return CredentialV2LookupIntent._(listAll: false, service: service);
+}
+
 class DecryptedCredentialV2Record {
   final String recordId;
   final CredentialV2Plaintext plaintext;
@@ -63,7 +86,7 @@ class CredentialV2Repository {
     return records;
   }
 
-  Future<List<CredentialV2Plaintext>> exactLookup({
+  Future<List<DecryptedCredentialV2Record>> exactLookup({
     required String field,
     required String value,
   }) async {
@@ -72,9 +95,12 @@ class CredentialV2Repository {
       blindIndexName: field,
       blindIndexToken: token,
     );
-    final clear = <CredentialV2Plaintext>[];
+    final clear = <DecryptedCredentialV2Record>[];
     for (final candidate in candidates) {
-      clear.add(await crypto.decrypt(candidate));
+      clear.add(DecryptedCredentialV2Record(
+        candidate.recordId,
+        await crypto.decrypt(candidate),
+      ));
     }
     return clear;
   }

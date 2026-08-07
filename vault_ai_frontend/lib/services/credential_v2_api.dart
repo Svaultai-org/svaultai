@@ -113,6 +113,34 @@ class CredentialV2Api {
     }
   }
 
+  Future<void> finalizeGeneratedDraft({
+    required String recordId,
+    required String draftId,
+  }) async {
+    final response = await client.post(
+      Uri.parse(
+        '$baseUrl/vault/v2/credentials/$recordId/'
+        'generated-drafts/$draftId/finalize',
+      ),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw _failure(response);
+    }
+  }
+
+  Future<void> cancelGeneratedDraft(String draftId) async {
+    final response = await client.post(
+      Uri.parse(
+        '$baseUrl/vault/v2/credentials/generated-drafts/$draftId/cancel',
+      ),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw _failure(response);
+    }
+  }
+
   CredentialV2Envelope _envelopeResponse(http.Response response) {
     if (response.statusCode != 200) {
       throw _failure(response);

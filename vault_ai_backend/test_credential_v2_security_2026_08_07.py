@@ -94,6 +94,8 @@ def test_pin_boundary_has_no_backend_argument_or_pin_verification_call() -> None
         route.verify_credential_v2,
         route.rollback_credential_v2,
         route.delete_credential_v2,
+        route.finalize_generated_draft_v2,
+        route.cancel_generated_draft_v2,
     )
     for function in functions:
         assert "pin" not in inspect.signature(function).parameters
@@ -117,6 +119,66 @@ def test_backend_compromise_bundle_has_no_v2_decryption_capability() -> None:
     assert "AESGCM" not in source
     assert "AesGcm" not in source
     assert "SecretKey" not in source
+
+
+class _DraftFinalizeCursor:
+    def __init__(self, envelope_exists: bool) -> None:
+        self.envelope_exists = envelope_exists
+
+    def execute(self, sql: str, params=()) -> None:
+        assert "SELECT 1 FROM vault_crypto_envelopes" in sql
+        assert len(params) == 2
+
+    def fetchone(self):
+        return (1,) if self.envelope_exists else None
+
+
+class _DraftFinalizeConnection:
+    def __init__(self, envelope_exists: bool) -> None:
+        self.envelope_exists = envelope_exists
+
+    def cursor(self):
+        return _DraftFinalizeCursor(self.envelope_exists)
+
+    def close(self) -> None:
+        pass
+
+
+def test_generated_draft_finalize_requires_opaque_record_before_clear(monkeypatch) -> None:
+    monkeypatch.setenv("ZK_V2_READ_ENABLED", "true")
+    monkeypatch.setenv("ZK_V2_WRITE_ENABLED", "true")
+    monkeypatch.setattr(route, "get_db", lambda: _DraftFinalizeConnection(False))
+    consumed: list[str] = []
+    monkeypatch.setattr(route, "consume_draft", lambda **kw: consumed.append(kw["draft_id"]))
+    with pytest.raises(HTTPException) as exc:
+        route.finalize_generated_draft_v2(
+            "generated-opaque-1", "draft-1", {"vault_id": "vault-1"}
+        )
+    assert exc.value.status_code == 409
+    assert consumed == []
+
+
+def test_generated_draft_finalize_is_exact_and_retry_safe(monkeypatch) -> None:
+    monkeypatch.setenv("ZK_V2_READ_ENABLED", "true")
+    monkeypatch.setenv("ZK_V2_WRITE_ENABLED", "true")
+    monkeypatch.setattr(route, "get_db", lambda: _DraftFinalizeConnection(True))
+    state = {"present": True}
+    draft = object()
+    monkeypatch.setattr(
+        route, "get_draft", lambda **_kw: draft if state["present"] else None
+    )
+    def _consume(**_kw):
+        state["present"] = False
+        return draft
+    monkeypatch.setattr(route, "consume_draft", _consume)
+    first = route.finalize_generated_draft_v2(
+        "generated-opaque-1", "draft-1", {"vault_id": "vault-1"}
+    )
+    second = route.finalize_generated_draft_v2(
+        "generated-opaque-1", "draft-1", {"vault_id": "vault-1"}
+    )
+    assert first.status == "finalized"
+    assert second.status == "already_finalized"
 
 
 def test_response_is_exact_opaque_envelope_without_legacy_transform() -> None:

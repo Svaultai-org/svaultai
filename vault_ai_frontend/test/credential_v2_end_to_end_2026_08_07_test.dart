@@ -57,6 +57,16 @@ String flip(String encoded) {
 }
 
 void main() {
+  test('credential lookup intent is deterministic and service-only', () {
+    final exact = parseCredentialV2LookupIntent('find my Example login');
+    expect(exact, isNotNull);
+    expect(exact!.listAll, isFalse);
+    expect(exact.service, 'Example');
+    expect(
+        parseCredentialV2LookupIntent('show my saved logins')!.listAll, isTrue);
+    expect(parseCredentialV2LookupIntent('tell me about Example'), isNull);
+  });
+
   test('full credential payload encrypts and decrypts locally', () async {
     final service = crypto();
     final envelope = await service.encrypt(
@@ -174,6 +184,31 @@ void main() {
         isNot(contains(fixture().password.toLowerCase())));
   });
 
+  test('generated draft finalize and cancel send identifiers only', () async {
+    final captured = <http.Request>[];
+    final api = CredentialV2Api(
+      baseUrl: 'https://unit.test',
+      sessionToken: 'session-only',
+      client: MockClient((request) async {
+        captured.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    await api.finalizeGeneratedDraft(
+      recordId: 'generated-opaque-1',
+      draftId: 'draft-1',
+    );
+    await api.cancelGeneratedDraft('draft-1');
+    expect(captured, hasLength(2));
+    for (final request in captured) {
+      expect(request.method, 'POST');
+      expect(request.body, isEmpty);
+      expect(request.url.query, isEmpty);
+      expect(request.headers.keys.map((key) => key.toLowerCase()),
+          isNot(contains('pin')));
+    }
+  });
+
   test('create list reveal edit lookup and delete preserve service parity',
       () async {
     final stored = <String, CredentialV2Envelope>{};
@@ -232,10 +267,10 @@ void main() {
     );
     await repository.edit(recordId: 'credential-1', credential: edited);
     expect((await repository.reveal('credential-1')).password, 'edited');
-    expect(
-        await repository.exactLookup(
-            field: 'username', value: fixture().username),
-        hasLength(1));
+    final lookup = await repository.exactLookup(
+        field: 'username', value: fixture().username);
+    expect(lookup, hasLength(1));
+    expect(lookup.single.plaintext.password, 'edited');
     await repository.delete('credential-1');
     expect(deleted, isTrue);
   });

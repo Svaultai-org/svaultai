@@ -6724,30 +6724,96 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (repository == null || item.recordId == null) return;
     try {
       final value = await repository.reveal(item.recordId!);
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(value.service),
-          content: SelectableText([
-            'Username: ${value.username}',
-            'Password: ${value.password}',
-            if (value.url?.isNotEmpty == true) 'URL: ${value.url}',
-            if (value.notes?.isNotEmpty == true) 'Note: ${value.notes}',
-            ...value.customFields.entries.map((e) => '${e.key}: ${e.value}'),
-          ].join('\n')),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      );
+      await _showCredentialV2Plaintext(value);
     } catch (_) {
       _showSnack(
           'Could not decrypt this credential. No legacy fallback was used.');
     }
+  }
+
+  Future<void> _showCredentialV2Plaintext(
+    CredentialV2Plaintext value,
+  ) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(value.service),
+        content: SelectableText([
+          'Username: ${value.username}',
+          'Password: ${value.password}',
+          if (value.url?.isNotEmpty == true) 'URL: ${value.url}',
+          if (value.notes?.isNotEmpty == true) 'Note: ${value.notes}',
+          ...value.customFields.entries.map((e) => '${e.key}: ${e.value}'),
+        ].join('\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _tryLocalCredentialV2LookupReply(
+    String text,
+    AppState app,
+  ) async {
+    if (!zkV2CredentialReadEnabled || attachments.isNotEmpty) return false;
+    final intent = parseCredentialV2LookupIntent(text);
+    if (intent == null) return false;
+    if (intent.listAll) {
+      input.clear();
+      setState(() => selectedSection = _DashboardSection.logins);
+      unawaited(_loadVaultLogins());
+      return true;
+    }
+    final service = intent.service!;
+    final repository = _credentialV2Repository(app);
+    if (repository == null) return false;
+    input.clear();
+    try {
+      final matches = await repository.exactLookup(
+        field: 'service',
+        value: service,
+      );
+      if (matches.isEmpty) {
+        _appendAssistantMessage('No matching saved login was found.');
+        return true;
+      }
+      if (matches.length == 1) {
+        await _showCredentialV2Plaintext(matches.single.plaintext);
+        return true;
+      }
+      if (!mounted) return true;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Choose a login'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: matches
+                .map((record) => ListTile(
+                      title: Text(record.plaintext.service),
+                      subtitle: Text(record.plaintext.username),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        unawaited(
+                          _showCredentialV2Plaintext(record.plaintext),
+                        );
+                      },
+                    ))
+                .toList(growable: false),
+          ),
+        ),
+      );
+    } catch (_) {
+      _appendAssistantMessage(
+        'Could not open that saved login. No legacy fallback was used.',
+      );
+    }
+    return true;
   }
 
   Future<void> _deleteCredentialV2(VaultLoginItem item) async {
@@ -14379,6 +14445,48 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (action == 'generated_login_save') {
       final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
       final service = (data?['service'] as String?)?.trim() ?? '';
+      if (zkV2CredentialWriteEnabled && draftId.isNotEmpty) {
+        final repository = _credentialV2Repository(context.read<AppState>());
+        final username = data?['username']?.toString() ?? '';
+        final password = data?['password']?.toString() ?? '';
+        if (repository == null ||
+            service.isEmpty ||
+            username.isEmpty ||
+            password.isEmpty) {
+          _showSnack('This generated login cannot be saved securely yet.');
+          return;
+        }
+        final recordDigest = sha256.convert(utf8.encode(draftId)).toString();
+        final recordId = 'generated-${recordDigest.substring(0, 32)}';
+        final credential = CredentialV2Plaintext(
+          service: service,
+          username: username,
+          password: password,
+          url: data?['url']?.toString(),
+          notes: data?['notes']?.toString(),
+        );
+        try {
+          await repository.create(
+            recordId: recordId,
+            credential: credential,
+            serviceForLookup: service,
+          );
+          final readBack = await repository.reveal(recordId);
+          if (!readBack.semanticallyEquals(credential)) {
+            throw StateError('generated credential verification failed');
+          }
+          await repository.api.finalizeGeneratedDraft(
+            recordId: recordId,
+            draftId: draftId,
+          );
+          _appendAssistantMessage('Saved your ${service.trim()} login.');
+          unawaited(_loadVaultLogins());
+        } catch (_) {
+          _showSnack(
+              'Could not securely save this generated login. Retry is safe.');
+        }
+        return;
+      }
       if (draftId.isNotEmpty) {
         _nextSelectionHint = {
           'kind': 'generated_login_draft',
@@ -14392,6 +14500,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (action == 'generated_login_cancel') {
       final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
       final service = (data?['service'] as String?)?.trim() ?? '';
+      if (zkV2CredentialWriteEnabled && draftId.isNotEmpty) {
+        final repository = _credentialV2Repository(context.read<AppState>());
+        if (repository == null) {
+          _showSnack('Could not cancel this generated login.');
+          return;
+        }
+        try {
+          await repository.api.cancelGeneratedDraft(draftId);
+          _appendAssistantMessage('Generated login cancelled.');
+        } catch (_) {
+          _showSnack('Could not cancel this generated login.');
+        }
+        return;
+      }
       if (draftId.isNotEmpty) {
         _nextSelectionHint = {
           'kind': 'generated_login_draft',
@@ -14806,6 +14928,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // persistent AI keeper's name and role.
     if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
       input.clear();
+      return;
+    }
+
+    if (await _tryLocalCredentialV2LookupReply(text, app)) {
       return;
     }
 
