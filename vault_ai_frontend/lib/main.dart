@@ -6903,7 +6903,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _showCredentialV2Plaintext(CredentialV2Plaintext value,
-      {bool? qaEquality}) async {
+      {bool? qaEquality, CredentialV2QaComparison? qaComparison}) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -6926,6 +6926,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ? 'QA credential plaintext equality: PASS'
                     : 'QA credential plaintext equality: FAIL',
               ),
+            if (credentialV2QaDiagnosticsEnabled && qaComparison != null) ...[
+              Text('USERNAME_MATCH=${qaComparison.username ? 'PASS' : 'FAIL'}'),
+              Text('PASSWORD_MATCH=${qaComparison.password ? 'PASS' : 'FAIL'}'),
+              Text('URL_MATCH=${qaComparison.url ? 'PASS' : 'FAIL'}'),
+              Text('NOTES_MATCH=${qaComparison.notes ? 'PASS' : 'FAIL'}'),
+              Text('TOTP_MATCH=${qaComparison.totp ? 'PASS' : 'FAIL'}'),
+              Text(
+                'CUSTOM_FIELDS_MATCH=${qaComparison.customFields ? 'PASS' : 'FAIL'}',
+              ),
+              Text('SERVICE_MATCH=${qaComparison.service ? 'PASS' : 'FAIL'}'),
+            ],
           ],
         ),
         actions: [
@@ -6966,12 +6977,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       if (matches.length == 1) {
         final match = matches.single;
+        final comparison = CredentialV2QaDiagnostics.compare(
+          match.recordId,
+          match.plaintext,
+        );
         await _showCredentialV2Plaintext(
           match.plaintext,
-          qaEquality: CredentialV2QaDiagnostics.matches(
-            match.recordId,
-            match.plaintext,
-          ),
+          qaEquality: comparison?.all,
+          qaComparison: comparison,
         );
         return true;
       }
@@ -6988,13 +7001,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       subtitle: Text(record.plaintext.username),
                       onTap: () {
                         Navigator.pop(ctx);
+                        final comparison = CredentialV2QaDiagnostics.compare(
+                          record.recordId,
+                          record.plaintext,
+                        );
                         unawaited(
                           _showCredentialV2Plaintext(
                             record.plaintext,
-                            qaEquality: CredentialV2QaDiagnostics.matches(
-                              record.recordId,
-                              record.plaintext,
-                            ),
+                            qaEquality: comparison?.all,
+                            qaComparison: comparison,
                           ),
                         );
                       },

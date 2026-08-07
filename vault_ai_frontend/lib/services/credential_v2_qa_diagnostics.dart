@@ -34,6 +34,24 @@ class CredentialV2QaDiagnostics {
     return expected.semanticallyEquals(decrypted);
   }
 
+  static CredentialV2QaComparison? compare(
+    String recordId,
+    CredentialV2Plaintext decrypted,
+  ) {
+    if (!credentialV2QaDiagnosticsEnabled) return null;
+    final expected = _expected[recordId];
+    if (expected == null) return null;
+    return CredentialV2QaComparison(
+      username: expected.username == decrypted.username,
+      password: expected.password == decrypted.password,
+      url: expected.url == decrypted.url,
+      notes: expected.notes == decrypted.notes,
+      totp: expected.totpSecret == decrypted.totpSecret,
+      customFields: _mapEquals(expected.customFields, decrypted.customFields),
+      service: expected.service == decrypted.service,
+    );
+  }
+
   static void forget(String recordId) {
     if (!credentialV2QaDiagnosticsEnabled) return;
     _expected.remove(recordId);
@@ -42,4 +60,37 @@ class CredentialV2QaDiagnostics {
   static void clear() {
     _expected.clear();
   }
+}
+
+class CredentialV2QaComparison {
+  final bool username;
+  final bool password;
+  final bool url;
+  final bool notes;
+  final bool totp;
+  final bool customFields;
+  final bool service;
+
+  const CredentialV2QaComparison({
+    required this.username,
+    required this.password,
+    required this.url,
+    required this.notes,
+    required this.totp,
+    required this.customFields,
+    required this.service,
+  });
+
+  bool get all =>
+      username && password && url && notes && totp && customFields && service;
+}
+
+bool _mapEquals(Map<String, String> left, Map<String, String> right) {
+  if (left.length != right.length) return false;
+  for (final entry in left.entries) {
+    if (right[entry.key] != entry.value || !right.containsKey(entry.key)) {
+      return false;
+    }
+  }
+  return true;
 }
