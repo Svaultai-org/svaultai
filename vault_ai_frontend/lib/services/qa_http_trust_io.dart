@@ -17,8 +17,7 @@ Future<void> configureQaHttpTrust() async {
   print('[qa-tls] security_context_created=true with_trusted_roots=true');
   context.setTrustedCertificatesBytes(bytes);
   print('[qa-tls] set_trusted_certificates_succeeded=true');
-  final client = HttpClient(context: context);
-  HttpOverrides.global = _QaOverrides(client);
+  HttpOverrides.global = _QaOverrides(context);
   try {
     final response = await http.get(Uri.parse('https://10.0.2.2:8444/health'));
     print('[qa-tls] custom_health_status=${response.statusCode}');
@@ -29,9 +28,19 @@ Future<void> configureQaHttpTrust() async {
 }
 
 class _QaOverrides extends HttpOverrides {
-  final HttpClient client;
-  _QaOverrides(this.client);
+  final SecurityContext context;
+  _QaOverrides(this.context);
 
   @override
-  HttpClient createHttpClient(SecurityContext? _) => client;
+  HttpClient createHttpClient(SecurityContext? _) {
+    // HttpClient construction consults HttpOverrides.global. Temporarily
+    // clear it to avoid recursive construction, then restore this override.
+    final previous = HttpOverrides.current;
+    HttpOverrides.global = null;
+    try {
+      return HttpClient(context: context);
+    } finally {
+      HttpOverrides.global = previous;
+    }
+  }
 }
