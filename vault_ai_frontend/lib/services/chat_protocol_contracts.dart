@@ -6,6 +6,45 @@ sealed class ChatProtocolEvent {
   const ChatProtocolEvent();
 }
 
+enum ChatProtocolFailureCategory {
+  cryptoContextUnavailable,
+  cryptoContextMismatch,
+  encryptionFailed,
+  transportFailed,
+  streamFailed,
+  decryptFailed,
+  protocolMalformed,
+}
+
+/// Safe, non-UI classification for failures at the shared protocol boundary.
+/// It intentionally carries no exception text, credentials, or key material.
+class ChatProtocolFailureInfo {
+  final ChatProtocolFailureCategory category;
+  final int? httpStatus;
+  final String? backendCode;
+  final String? requestId;
+
+  const ChatProtocolFailureInfo({
+    required this.category,
+    this.httpStatus,
+    this.backendCode,
+    this.requestId,
+  });
+}
+
+ChatProtocolFailureInfo classifyProtocolFailure(
+  ChatProtocolFailureCategory category, {
+  int? httpStatus,
+  String? backendCode,
+  String? requestId,
+}) =>
+    ChatProtocolFailureInfo(
+      category: category,
+      httpStatus: httpStatus,
+      backendCode: backendCode,
+      requestId: requestId,
+    );
+
 class ChatDecryptedChunk extends ChatProtocolEvent {
   final String text;
   const ChatDecryptedChunk(this.text);
@@ -26,7 +65,8 @@ class ChatProtocolCancelled extends ChatProtocolEvent {
 
 class ChatProtocolFailure extends ChatProtocolEvent {
   final Object error;
-  const ChatProtocolFailure(this.error);
+  final ChatProtocolFailureInfo? info;
+  const ChatProtocolFailure(this.error, {this.info});
 }
 
 abstract interface class ChatRequestCancellation {
@@ -67,9 +107,8 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
   final jsonStart = openIdx + kMemoryProposalOpen.length;
   final jsonPayload = buffer.substring(jsonStart, closeIdx);
   final afterClose = closeIdx + kMemoryProposalClose.length;
-  final tail = buffer
-      .substring(afterClose)
-      .replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
+  final tail =
+      buffer.substring(afterClose).replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
   return MemoryProposalStripResult(
     strippedBuffer: buffer.substring(0, openIdx) + tail,
     jsonPayload: alreadyFinalized ? null : jsonPayload,
