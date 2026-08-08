@@ -474,10 +474,14 @@ class _LoginsPageState extends State<LoginsPage> {
                   final label = kSecureItemTypeLabels[itemType] ?? 'Saved item';
                   final icon = kSecureItemTypeIcons[itemType] ??
                       Icons.inventory_2_outlined;
+                  final safeIdentity = login.recordId?.trim();
                   return _SecureItemCard(
-                    key: Key(qaCredentialV2TargetingEnabled &&
-                            login.recordId?.isNotEmpty == true
-                        ? 'credential-card-${login.recordId}'
+                    // Record IDs are opaque, stable, and unique across
+                    // duplicate services. Service names remain only the
+                    // compatibility fallback for legacy items without an
+                    // identity field.
+                    key: Key(safeIdentity != null && safeIdentity.isNotEmpty
+                        ? 'secure_item_card_$itemType-$safeIdentity'
                         : 'secure_item_card_$itemType-$cleanService'),
                     qaRecordId:
                         qaCredentialV2TargetingEnabled ? login.recordId : null,
