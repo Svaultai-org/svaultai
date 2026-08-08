@@ -1525,6 +1525,19 @@ def _extract_credential_services_from_message(message: str) -> list[str]:
     )
     for m in matches:
         append_candidate(str(m.group("service") or ""))
+
+    # Also accept the documented ``create/generate ... login for <service>``
+    # form.  The action prefix has already been stripped into ``tail`` above,
+    # so lookup phrasing ("show my login for ...") never reaches this parser.
+    after_login = re.search(
+        r"(?:logins?|accounts?|credentials?|passwords?|sign[\s-]?ins?)"
+        r"\s+for\s+(?P<service>[A-Za-z0-9][A-Za-z0-9\.\-&\s]{0,80}?)"
+        r"\s*[.!?]*$",
+        tail,
+        re.IGNORECASE,
+    )
+    if after_login:
+        append_candidate(str(after_login.group("service") or ""))
     return services
 
 

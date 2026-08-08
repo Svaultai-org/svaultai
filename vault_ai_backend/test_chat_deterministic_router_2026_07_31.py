@@ -674,6 +674,39 @@ class ExtractServiceFromMessageTest(unittest.TestCase):
             det._extract_service_from_message("create me a new login"),
         )
 
+    def test_login_for_service_forms(self):
+        self.assertEqual(
+            det._extract_credential_services_from_message(
+                "create me a login for QA Example Service",
+            ),
+            ["QA Example Service"],
+        )
+        self.assertEqual(
+            det._extract_credential_services_from_message(
+                "generate me a login for GitHub",
+            ),
+            ["GitHub"],
+        )
+        self.assertEqual(
+            det._extract_credential_services_from_message(
+                "create a login for Example",
+            ),
+            ["Example"],
+        )
+
+    def test_login_for_service_forms_do_not_enable_lookup(self):
+        for message in (
+            "show me my Facebook login",
+            "find my GitHub password",
+            "show my login for Facebook",
+            "what is my Facebook login",
+            "I forgot my Facebook login",
+        ):
+            self.assertEqual(
+                det._extract_credential_services_from_message(message),
+                [],
+            )
+
 
     def test_multi_login_services_are_distinct(self):
         services = det._extract_credential_services_from_message(
