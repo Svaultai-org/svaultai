@@ -60,6 +60,7 @@ import 'services/vault_local_file_lookup.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
+import 'services/chat_protocol_contracts.dart';
 import 'ui/chat/duplicate_dialog.dart';
 import 'ui/chat/storage_limit_dialog.dart';
 import 'services/folder_picker.dart';
@@ -6538,18 +6539,6 @@ class _CreateChoiceTile extends StatelessWidget {
   }
 }
 
-class MemoryProposalStripResult {
-  final String strippedBuffer;
-  final String? jsonPayload;
-  const MemoryProposalStripResult({
-    required this.strippedBuffer,
-    required this.jsonPayload,
-  });
-}
-
-const String kMemoryProposalOpen = '<<VAULTAI_MEMORY_PROPOSAL>>';
-const String kMemoryProposalClose = '<<END>>';
-
 /// Scan `buffer` for the `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>`
 /// sentinel. If a full sentinel is found, returns the JSON payload
 /// and a buffer with the sentinel + one trailing blank line
@@ -6563,39 +6552,6 @@ const String kMemoryProposalClose = '<<END>>';
 ///
 /// File-scope function (not a method) so the sentinel-strip logic
 /// can be tested in isolation without a widget harness.
-MemoryProposalStripResult extractAndStripMemoryProposal({
-  required String buffer,
-  required bool alreadyFinalized,
-}) {
-  final openIdx = buffer.indexOf(kMemoryProposalOpen);
-  if (openIdx < 0) {
-    return MemoryProposalStripResult(
-      strippedBuffer: buffer,
-      jsonPayload: null,
-    );
-  }
-  final closeIdx = buffer.indexOf(
-    kMemoryProposalClose,
-    openIdx + kMemoryProposalOpen.length,
-  );
-  if (closeIdx < 0) {
-    return MemoryProposalStripResult(
-      strippedBuffer: buffer.substring(0, openIdx),
-      jsonPayload: null,
-    );
-  }
-  final jsonStart = openIdx + kMemoryProposalOpen.length;
-  final jsonPayload = buffer.substring(jsonStart, closeIdx);
-  final afterClose = closeIdx + kMemoryProposalClose.length;
-  final tail =
-      buffer.substring(afterClose).replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
-  final strippedBuffer = buffer.substring(0, openIdx) + tail;
-  return MemoryProposalStripResult(
-    strippedBuffer: strippedBuffer,
-    jsonPayload: alreadyFinalized ? null : jsonPayload,
-  );
-}
-
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final http.Client _credentialV2HttpClient = http.Client();
   final Map<String, String> _credentialV2MigrationOperationIds = {};
