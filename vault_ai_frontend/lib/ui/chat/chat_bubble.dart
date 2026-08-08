@@ -633,25 +633,28 @@ class _CardBubble extends StatelessWidget {
       // discard the draft.
       onGeneratedLoginSave: (draftId, service) async {
         if (onCardAction != null) {
-          final draftData = cardMap['data'];
-          final localDraft = draftData is Map
-              ? Map<String, dynamic>.from(draftData)
-              : const <String, dynamic>{};
+          // Use the already-sanitized parsed card as the single source of
+          // lifecycle identity.  The raw envelope can differ in shape from
+          // the card model (and previously dropped draft_id at this
+          // boundary), causing an opaque v2 card to fall back to legacy.
+          final parsed = vcr.GeneratedLoginPayload.tryParse(response.card);
+          final localDraft = response.card.data ?? const <String, dynamic>{};
           await onCardAction!(msg, 'generated_login_save', {
-            'draft_id': draftId,
-            'service': service,
-            'username': localDraft['username'],
-            'password': localDraft['password'],
-            'url': localDraft['url'],
+            'draft_id': parsed?.draftId ?? draftId,
+            'service': parsed?.service ?? service,
+            'username': parsed?.username ?? localDraft['username'],
+            'password': parsed?.password ?? localDraft['password'],
+            'url': parsed?.url ?? localDraft['url'],
             'notes': localDraft['notes'],
           });
         }
       },
       onGeneratedLoginCancel: (draftId, service) async {
         if (onCardAction != null) {
+          final parsed = vcr.GeneratedLoginPayload.tryParse(response.card);
           await onCardAction!(msg, 'generated_login_cancel', {
-            'draft_id': draftId,
-            'service': service,
+            'draft_id': parsed?.draftId ?? draftId,
+            'service': parsed?.service ?? service,
           });
         }
       },
