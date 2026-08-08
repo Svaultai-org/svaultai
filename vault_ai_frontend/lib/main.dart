@@ -14619,6 +14619,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
         final recordDigest = sha256.convert(utf8.encode(draftId)).toString();
         final recordId = 'generated-${recordDigest.substring(0, 32)}';
+        // Generated credentials use the same stable, vault-scoped operation
+        // ID convention as ordinary v2 migration.  This makes retries
+        // idempotent and lets verification complete before draft finalization.
+        final operationId = credentialV2MigrationOperationId(recordId);
         final credential = CredentialV2Plaintext(
           service: service,
           username: username,
@@ -14637,6 +14641,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             throw StateError('generated credential verification failed');
           }
           CredentialV2QaDiagnostics.remember(recordId, credential);
+          // The server must not consider the envelope available until the
+          // client has proved local readback equality through the existing
+          // v2 verification protocol.
+          await repository.api.verify(recordId, operationId);
           await repository.api.finalizeGeneratedDraft(
             recordId: recordId,
             draftId: draftId,
