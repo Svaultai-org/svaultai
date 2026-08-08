@@ -40,6 +40,8 @@ import 'services/native_secure_store.dart';
 import 'services/session_termination.dart' as st;
 import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
+import 'services/qa_http_trust_stub.dart'
+    if (dart.library.io) 'services/qa_http_trust_io.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/credential_v2.dart';
@@ -753,6 +755,7 @@ Future<void> main() async {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      await configureQaHttpTrust();
 
       String? webOrigin;
       try {
