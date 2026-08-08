@@ -22,4 +22,19 @@ void main() {
     expect(verify, greaterThan(readback));
     expect(finalize, greaterThan(verify));
   });
+
+  test('generated v2 preflight failure is retryable, not successful', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf("if (action == 'generated_login_save')");
+    final end = source.indexOf(
+      "if (action == 'generated_login_cancel')",
+      start,
+    );
+    final save = source.substring(start, end);
+    final guard = save.indexOf('repository == null ||');
+    expect(guard, greaterThanOrEqualTo(0));
+    final guardEnd = save.indexOf('}', guard);
+    final preflight = save.substring(guard, guardEnd + 1);
+    expect(preflight, contains('generated_v2_preflight_failed'));
+  });
 }

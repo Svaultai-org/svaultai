@@ -14615,7 +14615,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             username.isEmpty ||
             password.isEmpty) {
           _showSnack('This generated login cannot be saved securely yet.');
-          return;
+          // Signal a retryable preflight failure to the card.  Returning
+          // normally would make the card mark itself Saved even though no
+          // v2 lifecycle request was attempted.
+          throw StateError('generated_v2_preflight_failed');
         }
         final recordDigest = sha256.convert(utf8.encode(draftId)).toString();
         final recordId = 'generated-${recordDigest.substring(0, 32)}';
