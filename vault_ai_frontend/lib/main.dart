@@ -7592,7 +7592,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   bool sending = false;
   bool thinking = false;
-  final ChatRequestCoordinator _chatRequests = ChatRequestCoordinator();
+  final ChatRequestRuntime _chatRequests = ChatRequestRuntime();
   StreamIterator<String>? _activeChatIterator;
   String? _activeChatRequestId;
   final Set<String> _cancelledChatRequestIds = <String>{};
@@ -7605,6 +7605,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final iterator = _activeChatIterator;
     _activeChatIterator = null;
     _activeChatRequestId = null;
+    _chatRequests.clearIterator();
     await iterator?.cancel();
     if (!mounted) return;
     setState(() {
@@ -11731,6 +11732,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     unawaited(_activeChatIterator?.cancel());
     _activeChatIterator = null;
     _activeChatRequestId = null;
+    _chatRequests.clearIterator();
     if (_speech.isListening) {
       _speech.cancel();
     }
@@ -15345,6 +15347,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       final streamIterator = StreamIterator<String>(stream);
       _activeChatIterator = streamIterator;
+      _chatRequests.assignIterator(chatRequestId, streamIterator);
       _activeChatRequestId = chatRequestId;
 
       try {
@@ -15514,6 +15517,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         if (_activeChatRequestId == chatRequestId) {
           _activeChatIterator = null;
           _activeChatRequestId = null;
+          _chatRequests.clearIterator();
         }
       }
 
