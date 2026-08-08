@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../services/chat_protocol_contracts.dart';
 
 enum ChatRequestState { pending, completed, cancelled }
@@ -77,6 +79,7 @@ class ChatRequestRuntime implements ChatRequestCancellation {
 
   bool get hasActiveIterator => _activeIterator != null;
   String? get activeRequestId => _activeRequestId;
+  Object? get activeIterator => _activeIterator;
   void assignIterator(String requestId, Object iterator) {
     _activeRequestId = requestId;
     _activeIterator = iterator;
@@ -92,5 +95,11 @@ class ChatRequestRuntime implements ChatRequestCancellation {
   void clearIterator() {
     _activeIterator = null;
     _activeRequestId = null;
+  }
+
+  Future<void> cancelActiveIterator() async {
+    final value = _activeIterator;
+    clearIterator();
+    if (value is StreamIterator<String>) await value.cancel();
   }
 }

@@ -7593,20 +7593,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool sending = false;
   bool thinking = false;
   final ChatRequestRuntime _chatRequests = ChatRequestRuntime();
-  StreamIterator<String>? _activeChatIterator;
-  String? _activeChatRequestId;
   final Set<String> _cancelledChatRequestIds = <String>{};
 
   Future<void> _cancelActiveChatRequest() async {
-    final requestId = _activeChatRequestId;
+    final requestId = _chatRequests.activeRequestId;
     if (requestId == null) return;
     _chatRequests.cancel(requestId);
     _cancelledChatRequestIds.add(requestId);
-    final iterator = _activeChatIterator;
-    _activeChatIterator = null;
-    _activeChatRequestId = null;
-    _chatRequests.clearIterator();
-    await iterator?.cancel();
+    await _chatRequests.cancelActiveIterator();
     if (!mounted) return;
     setState(() {
       final assistantIndex = msgs.indexWhere(
@@ -11724,15 +11718,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   void dispose() {
     _credentialV2HttpClient.close();
     _chatMainnetSendApprovalSession.clear();
-    final activeRequestId = _activeChatRequestId;
+    final activeRequestId = _chatRequests.activeRequestId;
     if (activeRequestId != null) {
       _chatRequests.cancel(activeRequestId);
       _cancelledChatRequestIds.add(activeRequestId);
     }
-    unawaited(_activeChatIterator?.cancel());
-    _activeChatIterator = null;
-    _activeChatRequestId = null;
-    _chatRequests.clearIterator();
+    unawaited(_chatRequests.cancelActiveIterator());
     if (_speech.isListening) {
       _speech.cancel();
     }
@@ -15346,9 +15337,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         kdfIterationsUsed: ctxSnapshot.iterations,
       );
       final streamIterator = StreamIterator<String>(stream);
-      _activeChatIterator = streamIterator;
       _chatRequests.assignIterator(chatRequestId, streamIterator);
-      _activeChatRequestId = chatRequestId;
 
       try {
         while (await streamIterator.moveNext()) {
@@ -15514,9 +15503,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         });
       } finally {
         await streamIterator.cancel();
-        if (_activeChatRequestId == chatRequestId) {
-          _activeChatIterator = null;
-          _activeChatRequestId = null;
+        if (_chatRequests.activeRequestId == chatRequestId) {
           _chatRequests.clearIterator();
         }
       }
