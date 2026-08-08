@@ -1926,10 +1926,11 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     Map<String, dynamic> data, {
     String suffix = '',
   }) {
-    final service = _readStringFrom(data, 'service', 'service_name');
-    final username = _readStringFrom(data, 'username');
-    final password = _readStringFrom(data, 'password');
-    final draftId = _readStringFrom(data, 'draft_id');
+    final parsed = GeneratedLoginPayload.tryParse(widget.card);
+    final service = parsed?.service ?? _readStringFrom(data, 'service', 'service_name');
+    final username = parsed?.username ?? _readStringFrom(data, 'username');
+    final password = parsed?.password ?? _readStringFrom(data, 'password');
+    final draftId = parsed?.draftId ?? _readStringFrom(data, 'draft_id');
     final email = _readStringFrom(data, 'email');
     final url = _readStringFrom(data, 'url');
     final title = _readStringFrom(data, 'title');
