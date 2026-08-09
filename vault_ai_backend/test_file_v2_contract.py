@@ -16,5 +16,15 @@ class FileV2ContractTests(unittest.TestCase):
                 self.assertIn(field, FORBIDDEN)
 
 
+def _make_rejection_test(field):
+    def test(self):
+        self.assertIn(field, FORBIDDEN)
+    return test
+
+
+for _field in FORBIDDEN:
+    setattr(FileV2ContractTests, 'test_reject_' + _field.lower(), _make_rejection_test(_field))
+
+
 if __name__ == '__main__':
     unittest.main()
