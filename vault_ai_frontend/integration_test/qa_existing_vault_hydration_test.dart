@@ -45,6 +45,25 @@ void main() {
     // Only safe diagnostic text is emitted; it contains booleans and categories.
     // ignore: avoid_print
     print('QA_HYDRATION_DIAGNOSTIC=${semantics.label}');
+    final reveal = find.bySemanticsIdentifier(
+      'credential-reveal-generated-1d1c9d799b70b2c919d2cb558bec682f',
+    );
+    await tester.ensureVisible(reveal);
+    await tester.tap(reveal);
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+    await tester.tap(find.byKey(const ValueKey(
+      'qa_v2_credential_edit_generated-1d1c9d799b70b2c919d2cb558bec682f',
+    )));
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+    await tester.tap(find.byKey(const ValueKey('secure_item_edit_save')));
+    await tester.pumpAndSettle(const Duration(seconds: 8));
+    // Reopen the list to confirm the exact record remains present after the
+    // legitimate client-side readback/verify/save path.
+    expect(
+        find.bySemanticsIdentifier(
+          'credential-card-generated-1d1c9d799b70b2c919d2cb558bec682f',
+        ),
+        findsOneWidget);
     FlutterError.onError = previousError;
   });
 }
