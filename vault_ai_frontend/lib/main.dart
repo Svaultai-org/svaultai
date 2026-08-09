@@ -4965,6 +4965,13 @@ class SignupPage extends StatefulWidget {
 }
 
 class _SignupPageState extends State<SignupPage> {
+  static const bool _qaAuthDiagnostics =
+      bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+
+  void _qaStage(String stage) {
+    if (_qaAuthDiagnostics) print('[qa-auth-stage] $stage');
+  }
+
   final vaultNameCtrl = TextEditingController();
   final displayNameCtrl = TextEditingController();
   final pinCtrl = TextEditingController();
@@ -4978,6 +4985,7 @@ class _SignupPageState extends State<SignupPage> {
   static const int _maxPinLength = 64;
 
   Future<void> _submit() async {
+    _qaStage('create_handler_entered');
     final vaultName = vaultNameCtrl.text.trim();
     final displayName = displayNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
@@ -4988,32 +4996,42 @@ class _SignupPageState extends State<SignupPage> {
       vaultNameErr = null;
     });
 
+    _qaStage('form_validation_started');
+
     if (vaultName.isEmpty) {
+      _qaStage('validation_failed_vault_name');
       setState(() => vaultNameErr = 'Pick a vault name.');
       return;
     }
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
+      _qaStage('validation_failed_pin_digits');
       setState(() => err = 'PIN can only contain digits.');
       return;
     }
     if (pin.length < _minPinLength) {
+      _qaStage('validation_failed_pin_length');
       setState(() => err = 'PIN must be at least 6 digits.');
       return;
     }
     if (pin.length > _maxPinLength) {
+      _qaStage('validation_failed_pin_max_length');
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
     }
     if (pin != confirm) {
+      _qaStage('validation_failed_confirm_pin');
       setState(() => err = 'PINs do not match.');
       return;
     }
     if (!acknowledged) {
+      _qaStage('validation_failed_consent');
       setState(() => err =
           'Please confirm you understand SVaultAI cannot recover your vault.');
       return;
     }
+
+    _qaStage('form_validation_passed');
 
     setState(() => loading = true);
     final app = context.read<AppState>();
@@ -5023,7 +5041,10 @@ class _SignupPageState extends State<SignupPage> {
     // display_username (or vault_name) is encrypted client-side and
     // never sent to the server as plaintext.
     try {
+      _qaStage('zk_registration_call_entered');
+      _qaStage('opaque_client_start_entered');
       await OpaqueClient.ready();
+      _qaStage('http_transport_entered');
 
       // Identity contract (2026-07-20 corrected):
       //   vaultName    = user-chosen identity used both for signing
@@ -5050,6 +5071,7 @@ class _SignupPageState extends State<SignupPage> {
         displayName: displayNameForEncrypt,
         pin: pin,
       );
+      _qaStage('registration_init_and_finalize_completed');
 
       await app.setSession(
         token: result.sessionToken,
@@ -5062,6 +5084,7 @@ class _SignupPageState extends State<SignupPage> {
         // explicitly.
         displayNameValue: displayName.isEmpty ? null : displayName,
       );
+      _qaStage('registration_completed');
       await _registerDeviceBestEffort(result.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
         result.sessionToken,
@@ -9327,6 +9350,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         rawPackage: pkg,
       );
     } catch (e, st) {
+      _qaStage('unexpected_exception');
       // Anything that isn't already staged (should be nothing) gets
       // wrapped as UNSTAGED_UNKNOWN. If we ever see this stage in
       // production logs it means the wrapper has a hole to fix.
