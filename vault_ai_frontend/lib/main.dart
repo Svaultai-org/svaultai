@@ -9387,7 +9387,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         rawPackage: pkg,
       );
     } catch (e, st) {
-      _qaStage('unexpected_exception');
       // Anything that isn't already staged (should be nothing) gets
       // wrapped as UNSTAGED_UNKNOWN. If we ever see this stage in
       // production logs it means the wrapper has a hole to fix.
