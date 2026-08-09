@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from device_gate import verify_trusted_device
 from taxonomy import ALLOWED_MEMORY_TYPES
 from vault_core import verify_vault_pin
+from zk_migration_flags import ZkMigrationFlags
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,12 @@ def _is_enabled() -> bool:
     return os.getenv(
         "VAULTAI_MEMORY_DASHBOARD_ENABLED", "true",
     ).lower() == "true"
+
+
+def _legacy_memory_allowed() -> bool:
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    return not flags.memory_write_enabled
 
 
 def _rate_limit(vault_id: str) -> None:
@@ -192,6 +199,8 @@ async def memory_list_endpoint(
     payload: MemoryListRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     if not _is_enabled():
@@ -225,6 +234,8 @@ async def memory_create_endpoint(
     payload: MemoryCreateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     if not _is_enabled():
@@ -264,6 +275,8 @@ async def memory_update_endpoint(
     payload: MemoryUpdateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     try:
@@ -301,6 +314,8 @@ async def memory_delete_endpoint(
     payload: MemoryDeleteRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     try:

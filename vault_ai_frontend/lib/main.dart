@@ -15196,6 +15196,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vaultName = app.vaultName;
     final activeVaultId = app.vaultId;
 
+    // Optional privacy boundary for sensitive vault questions.  When enabled,
+    // commands that could expose secret material are stopped before the remote
+    // chat/provider path. Domain-specific local handlers (credential-v2 and
+    // file lookup) run below; unsupported sensitive domains fail closed.
+    const privateLocalRouting = bool.fromEnvironment(
+      'PRIVATE_VAULT_LOCAL_ROUTING_ENABLED',
+      defaultValue: false,
+    );
+    if (privateLocalRouting &&
+        attachments.isEmpty &&
+        _looksLikePrivateVaultCommand(text)) {
+      setState(() {
+        msgs.add(_Msg('user', text));
+        msgs.add(_Msg(
+          'assistant',
+          'This private vault request must be handled locally and was not sent to the AI service.',
+        ));
+      });
+      _scrollToBottom();
+      input.clear();
+      return;
+    }
+
     vlog('chat.preSend', {
       'vault_id': activeVaultId,
       'vaultName': vaultName,
@@ -15726,6 +15749,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _scrollToBottom();
     }
   }
+
+  static final RegExp _privateVaultCommandRe = RegExp(
+    r'\b(password|passcode|totp|seed\s*phrase|private\s*key|wallet\s*key|mvk|encryption\s*key|secure\s*note|passport|identity\s+document|inheritance\s+key)\b',
+    caseSensitive: false,
+  );
+
+  bool _looksLikePrivateVaultCommand(String text) =>
+      _privateVaultCommandRe.hasMatch(text);
 
   Widget _buildAttachmentPanel(bool isMobile) {
     if (attachments.isEmpty) return const SizedBox.shrink();

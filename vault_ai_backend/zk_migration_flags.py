@@ -25,6 +25,13 @@ class ZkMigrationFlags:
     read_enabled: bool = False
     write_enabled: bool = False
     migration_enabled: bool = False
+    file_read_enabled: bool = False
+    file_write_enabled: bool = False
+    file_migration_enabled: bool = False
+    memory_read_enabled: bool = False
+    memory_write_enabled: bool = False
+    memory_migration_enabled: bool = False
+    private_local_routing_enabled: bool = False
 
     @classmethod
     def from_environment(cls, source: Mapping[str, str] | None = None) -> "ZkMigrationFlags":
@@ -33,6 +40,13 @@ class ZkMigrationFlags:
             read_enabled=_flag(env, "ZK_V2_READ_ENABLED"),
             write_enabled=_flag(env, "ZK_V2_WRITE_ENABLED"),
             migration_enabled=_flag(env, "ZK_V2_MIGRATION_ENABLED"),
+            file_read_enabled=_flag(env, "FILE_V2_READ_ENABLED"),
+            file_write_enabled=_flag(env, "FILE_V2_WRITE_ENABLED"),
+            file_migration_enabled=_flag(env, "FILE_V2_MIGRATION_ENABLED"),
+            memory_read_enabled=_flag(env, "MEMORY_V2_READ_ENABLED"),
+            memory_write_enabled=_flag(env, "MEMORY_V2_WRITE_ENABLED"),
+            memory_migration_enabled=_flag(env, "MEMORY_V2_MIGRATION_ENABLED"),
+            private_local_routing_enabled=_flag(env, "PRIVATE_VAULT_LOCAL_ROUTING_ENABLED"),
         )
 
     def validate_dependencies(self) -> None:
@@ -40,3 +54,11 @@ class ZkMigrationFlags:
             raise ValueError("migration requires both v2 read and v2 write flags")
         if self.write_enabled and not self.read_enabled:
             raise ValueError("v2 write requires v2 read")
+        if self.file_migration_enabled and not (self.file_read_enabled and self.file_write_enabled):
+            raise ValueError("file migration requires file read and file write flags")
+        if self.file_write_enabled and not self.file_read_enabled:
+            raise ValueError("file v2 write requires file v2 read")
+        if self.memory_migration_enabled and not (self.memory_read_enabled and self.memory_write_enabled):
+            raise ValueError("memory migration requires memory read and memory write flags")
+        if self.memory_write_enabled and not self.memory_read_enabled:
+            raise ValueError("memory v2 write requires memory v2 read")
