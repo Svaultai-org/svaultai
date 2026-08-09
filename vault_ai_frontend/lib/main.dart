@@ -4947,8 +4947,10 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                       ? null
                       : () =>
                           Navigator.pushReplacementNamed(context, '/signup'),
-                  child: Text(
-                    AppLocalizations.of(context).authDontHaveVault,
+                  child: Semantics(
+                    identifier: 'qa_create_vault_link',
+                    button: true,
+                    child: Text(AppLocalizations.of(context).authDontHaveVault),
                   ),
                 ),
                 TextButton.icon(
@@ -5294,14 +5296,18 @@ class _SignupPageState extends State<SignupPage> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  TextField(
-                    controller: vaultNameCtrl,
-                    autocorrect: false,
-                    enabled: !loading,
-                    decoration: InputDecoration(
-                      labelText: 'Vault name',
-                      hintText: 'e.g. Alexa, Atlas, Mira',
-                      errorText: vaultNameErr,
+                  Semantics(
+                    identifier: 'qa_create_vault_name_field',
+                    textField: true,
+                    child: TextField(
+                      controller: vaultNameCtrl,
+                      autocorrect: false,
+                      enabled: !loading,
+                      decoration: InputDecoration(
+                        labelText: 'Vault name',
+                        hintText: 'e.g. Alexa, Atlas, Mira',
+                        errorText: vaultNameErr,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -5314,38 +5320,49 @@ class _SignupPageState extends State<SignupPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  TextField(
-                    controller: pinCtrl,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: _maxPinLength,
-                    enabled: !loading,
-                    decoration: const InputDecoration(
-                      counterText: '',
-                      labelText: 'PIN (6–64 digits)',
-                      helperText: 'Create a 6–64 digit PIN.',
+                  Semantics(
+                    identifier: 'qa_create_vault_pin_field',
+                    textField: true,
+                    child: TextField(
+                      controller: pinCtrl,
+                      keyboardType: TextInputType.number,
+                      obscureText: true,
+                      maxLength: _maxPinLength,
+                      enabled: !loading,
+                      decoration: const InputDecoration(
+                        counterText: '',
+                        labelText: 'PIN (6–64 digits)',
+                        helperText: 'Create a 6–64 digit PIN.',
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
-                  TextField(
-                    controller: confirmPinCtrl,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: _maxPinLength,
-                    enabled: !loading,
-                    decoration: const InputDecoration(
-                      counterText: '',
-                      labelText: 'Confirm PIN',
+                  Semantics(
+                    identifier: 'qa_create_vault_confirm_pin_field',
+                    textField: true,
+                    child: TextField(
+                      controller: confirmPinCtrl,
+                      keyboardType: TextInputType.number,
+                      obscureText: true,
+                      maxLength: _maxPinLength,
+                      enabled: !loading,
+                      decoration: const InputDecoration(
+                        counterText: '',
+                        labelText: 'Confirm PIN',
+                      ),
+                      onSubmitted: loading ? null : (_) => _submit(),
                     ),
-                    onSubmitted: loading ? null : (_) => _submit(),
                   ),
                   const SizedBox(height: 10),
-                  InkWell(
-                    onTap: loading
-                        ? null
-                        : () => setState(() => acknowledged = !acknowledged),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Padding(
+                  Semantics(
+                    identifier: 'qa_create_vault_consent',
+                    button: true,
+                    child: InkWell(
+                      onTap: loading
+                          ? null
+                          : () => setState(() => acknowledged = !acknowledged),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5371,14 +5388,19 @@ class _SignupPageState extends State<SignupPage> {
                           ),
                         ],
                       ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
-                    child: FilledButton(
-                      onPressed: loading ? null : _submit,
-                      child: Text(loading ? 'Creating…' : 'Create vault'),
+                    child: Semantics(
+                      identifier: 'qa_create_vault_submit',
+                      button: true,
+                      child: FilledButton(
+                        onPressed: loading ? null : _submit,
+                        child: Text(loading ? 'Creating…' : 'Create vault'),
+                      ),
                     ),
                   ),
                   TextButton(
