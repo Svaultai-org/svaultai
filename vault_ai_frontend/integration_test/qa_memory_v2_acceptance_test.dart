@@ -60,6 +60,55 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 4));
     expect(find.text('Memory saved'), findsOneWidget);
     stage('STAGE_SERVER_STATE');
+
+    // Logout/relogin through the real account menu; only safe lifecycle
+    // checkpoints are emitted.
+    expect(find.byTooltip('Account'), findsOneWidget);
+    await tester.tap(find.byTooltip('Account'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sign out'), findsOneWidget);
+    await tester.tap(find.text('Sign out'));
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+    stage('STAGE_LOGOUT');
+
+    final reloginPin = find.bySemanticsIdentifier('auth_unlock_pin_field');
+    expect(reloginPin, findsOneWidget);
+    await tester.tap(reloginPin);
+    await tester.enterText(reloginPin, pin);
+    await tester.tap(find.bySemanticsIdentifier('auth_unlock_button'));
+    await tester.pumpAndSettle(const Duration(seconds: 12));
+    expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
+    stage('STAGE_RELOGIN');
+
+    await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Memory').last);
+    await tester.pumpAndSettle(const Duration(seconds: 4));
+    final search = find.byType(TextField).first;
+    await tester.tap(search);
+    await tester.enterText(search, 'QA Memory');
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+    stage('STAGE_EXACT_RECALL');
+    expect(find.text('QA Memory'), findsWidgets);
+
+    // The row action is the real MemoryV2 reveal/delete UI.  Keep the
+    // assertions semantic and avoid exposing the memory value.
+    final reveal = find.text('Reveal').first;
+    expect(reveal, findsOneWidget);
+    await tester.tap(reveal);
+    await tester.pumpAndSettle();
+    stage('STAGE_COMPROMISE_CHECK');
+
+    final delete = find.byIcon(Icons.delete_outline).first;
+    expect(delete, findsOneWidget);
+    await tester.ensureVisible(delete);
+    await tester.pumpAndSettle();
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    expect(find.text('Delete'), findsWidgets);
+    await tester.tap(find.text('Delete').last);
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+    stage('STAGE_DELETE');
     FlutterError.onError = previousError;
   });
 }
