@@ -100,6 +100,7 @@ import 'ui/dashboards/memory_page.dart';
 import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
 import 'services/file_v2_repository.dart';
+import 'services/qa_file_picker_override.dart';
 import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
@@ -12543,12 +12544,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: false,
-      withReadStream: true,
-      allowMultiple: true,
-      type: FileType.any,
-    );
+    final result = await pickFilesForUpload(allowMultiple: true);
 
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'file');
