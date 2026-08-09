@@ -63,6 +63,22 @@ Future<Uint8List> aesGcmWrap(SecretKey key, List<int> plaintext) async {
   return out.toBytes();
 }
 
+Future<Uint8List> aesGcmWrapWithAad(
+  SecretKey key,
+  List<int> plaintext, {
+  required List<int> aad,
+}) async {
+  final nonce = _randomBytes(_aesGcmNonceBytes);
+  final box =
+      await _aesGcm.encrypt(plaintext, secretKey: key, nonce: nonce, aad: aad);
+  final out = BytesBuilder()
+    ..addByte(0x01)
+    ..add(nonce)
+    ..add(box.cipherText)
+    ..add(box.mac.bytes);
+  return out.toBytes();
+}
+
 Future<Uint8List> aesGcmUnwrap(SecretKey key, Uint8List envelope) async {
   if (envelope.isEmpty || envelope[0] != 0x01) {
     throw StateError('unknown ciphertext envelope version byte');
@@ -75,6 +91,27 @@ Future<Uint8List> aesGcmUnwrap(SecretKey key, Uint8List envelope) async {
   return Uint8List.fromList(
     await _aesGcm.decrypt(box, secretKey: key),
   );
+}
+
+Future<Uint8List> aesGcmUnwrapWithAad(
+  SecretKey key,
+  Uint8List envelope, {
+  required List<int> aad,
+}) async {
+  if (envelope.isEmpty ||
+      envelope[0] != 0x01 ||
+      envelope.length < 1 + _aesGcmNonceBytes + 16) {
+    throw StateError('unknown ciphertext envelope version byte');
+  }
+  final nonce = envelope.sublist(1, 1 + _aesGcmNonceBytes);
+  final tagStart = envelope.length - 16;
+  final box = SecretBox(
+    envelope.sublist(1 + _aesGcmNonceBytes, tagStart),
+    nonce: nonce,
+    mac: Mac(envelope.sublist(tagStart)),
+  );
+  return Uint8List.fromList(
+      await _aesGcm.decrypt(box, secretKey: key, aad: aad));
 }
 
 /// Vault-scoped HMAC-SHA-256 used for keyed lookup hashes.

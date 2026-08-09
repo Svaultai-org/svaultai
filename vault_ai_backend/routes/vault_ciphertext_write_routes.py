@@ -366,6 +366,7 @@ def notification_ciphertext_create(
 
 
 class AiMemoryCiphertextRequest(BaseModel):
+    memory_id: str = Field(..., min_length=1, max_length=128)
     memory_type: str = Field(..., min_length=1, max_length=64)
     memory_lookup_hash: str = Field(
         ..., min_length=1,
@@ -380,12 +381,12 @@ class AiMemoryCiphertextRequest(BaseModel):
 
 
 class AiMemoryCiphertextResponse(BaseModel):
-    memory_id: int
+    memory_id: str
     superseded_id: Optional[int] = None
 
 
 class AiMemoryCiphertextReadResponse(BaseModel):
-    memory_id: int
+    memory_id: str
     memory_type: str
     payload_ciphertext: str
     memory_lookup_hash: str
@@ -399,6 +400,10 @@ def ai_memory_ciphertext_upsert(
     payload: AiMemoryCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> AiMemoryCiphertextResponse:
+    memory_flags = ZkMigrationFlags.from_environment(os.environ)
+    memory_flags.validate_dependencies()
+    if not memory_flags.memory_write_enabled:
+        raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
     _reject_plaintext_leak(payload, (
         "memory_key", "memory_value", "memory_normalized_key",
     ))
@@ -436,14 +441,14 @@ def ai_memory_ciphertext_upsert(
         cur.execute(
             """
             INSERT INTO vault_ai_memory (
-                vault_id, memory_type, memory_key, memory_value,
-                payload_ciphertext, memory_lookup_hash
+                vault_id, memory_record_id, memory_type, memory_key,
+                memory_value, payload_ciphertext, memory_lookup_hash
             )
-            VALUES (%s, %s, NULL, NULL, %s, %s)
+            VALUES (%s, %s, %s, NULL, NULL, %s, %s)
             RETURNING id
             """,
             (
-                principal["vault_id"], payload.memory_type,
+                principal["vault_id"], payload.memory_id, payload.memory_type,
                 payload_ct, lookup_hash,
             ),
         )
@@ -495,7 +500,7 @@ def ai_memory_ciphertext_list(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT id, memory_type, payload_ciphertext, memory_lookup_hash
+            SELECT memory_record_id, memory_type, payload_ciphertext, memory_lookup_hash
               FROM vault_ai_memory
              WHERE vault_id = %s AND superseded_at IS NULL
                AND payload_ciphertext IS NOT NULL
@@ -509,7 +514,7 @@ def ai_memory_ciphertext_list(
         conn.close()
     return [
         AiMemoryCiphertextReadResponse(
-            memory_id=int(row["id"]),
+            memory_id=str(row["memory_record_id"]),
             memory_type=str(row["memory_type"]),
             payload_ciphertext=base64.urlsafe_b64encode(
                 bytes(row["payload_ciphertext"])
@@ -520,6 +525,30 @@ def ai_memory_ciphertext_list(
         )
         for row in rows
     ]
+
+
+@router.delete("/vault/ciphertext/vault-ai-memory/{memory_id}", response_model=dict)
+def ai_memory_ciphertext_delete(
+    memory_id: str,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict:
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    if not flags.memory_write_enabled:
+        raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM vault_ai_memory WHERE vault_id = %s AND memory_record_id = %s",
+            (principal["vault_id"], memory_id),
+        )
+        conn.commit()
+        if cur.rowcount != 1:
+            raise HTTPException(status_code=404, detail="memory_not_found")
+    finally:
+        conn.close()
+    return {"status": "deleted", "memory_id": memory_id}
 
 
 class BeneficiaryLabelCiphertextRequest(BaseModel):

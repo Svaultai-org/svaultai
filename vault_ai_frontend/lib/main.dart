@@ -98,6 +98,7 @@ import 'ui/dashboards/expiry_page.dart';
 import 'ui/dashboards/memory_page.dart';
 
 import 'services/crypto_chat_live_cache.dart';
+import 'services/memory_v2_repository.dart';
 import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
@@ -12670,14 +12671,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (mt is! String || mt.isEmpty) return;
       if (mk is! String || mk.isEmpty) return;
       if (mv is! String || mv.isEmpty) return;
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
-      await client.tryZkFinalizeMemoryProposal(
+      const memoryV2Enabled = bool.fromEnvironment(
+        'MEMORY_V2_WRITE_ENABLED',
+        defaultValue: false,
+      );
+      if (!memoryV2Enabled) {
+        final legacyClient = VaultAIClient(baseUrl: backendBaseUrl);
+        await legacyClient.tryZkFinalizeMemoryProposal(
+          baseUrl: backendBaseUrl,
+          authToken: authToken,
+          memoryType: mt,
+          memoryKey: mk,
+          memoryValue: mv,
+          memoryEventDate: md is String && md.isNotEmpty ? md : null,
+        );
+        return;
+      }
+      final repository = MemoryV2Repository(
         baseUrl: backendBaseUrl,
         authToken: authToken,
+      );
+      await repository.create(
+        memoryId: 'memory-${DateTime.now().microsecondsSinceEpoch}',
         memoryType: mt,
-        memoryKey: mk,
-        memoryValue: mv,
-        memoryEventDate: md is String && md.isNotEmpty ? md : null,
+        plaintext: MemoryV2Plaintext(
+          value: mv,
+          normalized: mk,
+          summary: md is String && md.isNotEmpty ? md : null,
+        ),
       );
     } catch (_) {
       // Fail privacy-safe: never surface the parsed plaintext memory

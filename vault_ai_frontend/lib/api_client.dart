@@ -4272,6 +4272,42 @@ class VaultAIClient {
         .toList(growable: false);
   }
 
+  Future<void> writeZkMemoryEnvelope({
+    required String baseUrl,
+    required String authToken,
+    required String memoryId,
+    required String memoryType,
+    required String payloadCiphertext,
+    required String lookupHash,
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory'),
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken'
+      },
+      body: jsonEncode(<String, dynamic>{
+        'memory_type': memoryType,
+        'memory_lookup_hash': lookupHash,
+        'payload_ciphertext': payloadCiphertext,
+        'memory_id': memoryId,
+      }),
+    );
+    if (resp.statusCode != 200) throw Exception('memory_v2_write_failed');
+  }
+
+  Future<void> deleteZkMemoryEnvelope({
+    required String baseUrl,
+    required String authToken,
+    required String memoryId,
+  }) async {
+    final resp = await http.delete(
+      Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/$memoryId'),
+      headers: <String, String>{'Authorization': 'Bearer $authToken'},
+    );
+    if (resp.statusCode != 200) throw Exception('memory_v2_delete_failed');
+  }
+
   /// ZK ciphertext-first uploaded_files metadata write. Called right
   /// after an upload path returns a file_id; encrypts every readable
   /// metadata field under the vault's metadata subkey and POSTs the
