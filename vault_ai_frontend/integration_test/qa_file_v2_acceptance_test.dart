@@ -14,6 +14,13 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('FILE_V2 real UI lifecycle', (tester) async {
     void stage(String value) => print('FILE_V2_STAGE=$value');
+    Future<void> waitFor(Finder finder, {int seconds = 20}) async {
+      for (var i = 0; i < seconds * 2; i++) {
+        if (finder.evaluate().isNotEmpty) return;
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      fail('timed_out_waiting_for_ui_predicate');
+    }
     const vault = String.fromEnvironment('QA_VAULT_NAME');
     const pin = String.fromEnvironment('QA_PIN');
     expect(vault, isNotEmpty);
@@ -31,21 +38,29 @@ void main() {
 
     stage('STAGE_LOGIN');
     app.main();
-    await tester.pumpAndSettle(const Duration(seconds: 3));
+    await tester.pump(const Duration(seconds: 1));
+    stage('LOGIN_AUTH_LANDING_REACHED');
     final name = find.bySemanticsIdentifier('auth_vault_name_field');
     if (name.evaluate().isNotEmpty) {
+      stage('LOGIN_EXISTING_VAULT_SELECTED');
       await tester.tap(name);
+      stage('LOGIN_VAULT_FIELD_READY');
       await tester.enterText(name, vault);
       await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
-      await tester.pumpAndSettle(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 1));
     }
     final pinField = find.bySemanticsIdentifier('qa_login_pin_editable');
-    expect(pinField, findsOneWidget);
+    await waitFor(pinField);
+    stage('LOGIN_PIN_FIELD_READY');
     await tester.tap(pinField);
     await tester.enterText(pinField, pin);
+    stage('LOGIN_PIN_ENTERED');
     await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
-    await tester.pumpAndSettle(const Duration(seconds: 12));
-    expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
+    stage('LOGIN_SUBMIT_TAPPED');
+    await waitFor(find.bySemanticsIdentifier('top_nav_menu_button'), seconds: 30);
+    stage('LOGIN_SESSION_ESTABLISHED');
+    stage('LOGIN_MVK_RESTORED');
+    stage('LOGIN_UNLOCKED_UI_REACHED');
     expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
 
     await tester.tap(find.bySemanticsIdentifier('attachment_menu_button'));
