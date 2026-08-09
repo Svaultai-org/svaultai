@@ -6622,6 +6622,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
 
+  void _qaV2CreateTrace(String stage) {
+    const enabled =
+        bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+    if (enabled) print('[qa-v2-create] $stage');
+  }
+
   void _openSecureItemView(String service, String itemType) {
     final safeTitle = service.trim();
     setState(() {
@@ -14730,19 +14736,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             credential: credential,
             serviceForLookup: service,
           );
+          _qaV2CreateTrace('readback_entered');
           final readBack = await repository.reveal(recordId);
+          _qaV2CreateTrace('readback_succeeded');
           if (!readBack.semanticallyEquals(credential)) {
             throw StateError('generated credential verification failed');
           }
+          _qaV2CreateTrace('readback_equality_ok');
           CredentialV2QaDiagnostics.remember(recordId, credential);
           // The server must not consider the envelope available until the
           // client has proved local readback equality through the existing
           // v2 verification protocol.
+          _qaV2CreateTrace('verify_entered');
           await repository.api.verify(recordId, operationId);
+          _qaV2CreateTrace('verify_succeeded');
+          _qaV2CreateTrace('finalize_entered');
           await repository.api.finalizeGeneratedDraft(
             recordId: recordId,
             draftId: draftId,
           );
+          _qaV2CreateTrace('finalize_succeeded');
           _appendAssistantMessage('Saved your ${service.trim()} login.');
           unawaited(_loadVaultLogins());
         } catch (_) {
