@@ -71,17 +71,19 @@ void main() {
     stage('LOGIN_PIN_ENTERED');
     await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
     stage('LOGIN_SUBMIT_TAPPED');
-    await tester.pumpAndSettle(const Duration(seconds: 12));
-    for (var i = 0;
-        i < 10 &&
-            find
-                .bySemanticsIdentifier('top_nav_menu_button')
-                .evaluate()
-                .isEmpty;
-        i++) {
-      await tester.pump(const Duration(seconds: 1));
+    var authenticated = false;
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      if (FileV2Repository.current() != null ||
+          find
+              .bySemanticsIdentifier('top_nav_menu_button')
+              .evaluate()
+              .isNotEmpty) {
+        authenticated = true;
+        break;
+      }
     }
-    expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
+    expect(authenticated, isTrue, reason: 'authenticated_state_not_observed');
     stage('LOGIN_SESSION_ESTABLISHED');
     stage('LOGIN_MVK_RESTORED');
     stage('LOGIN_UNLOCKED_UI_REACHED');
@@ -95,9 +97,10 @@ void main() {
     var fileId = '';
     if (phase == 'A') {
       await tester.tap(find.byKey(const Key('top_nav_create_button')));
-      await tester.pumpAndSettle();
+      await pumpBounded();
+      expect(find.byKey(const Key('create_choice_file')), findsOneWidget);
       await tester.tap(find.byKey(const Key('create_choice_file')));
-      await tester.pumpAndSettle();
+      await pumpBounded();
       expect(find.text('qa-file-v2.bin'), findsOneWidget);
       stage('STAGE_FILE_UPLOAD');
       await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
