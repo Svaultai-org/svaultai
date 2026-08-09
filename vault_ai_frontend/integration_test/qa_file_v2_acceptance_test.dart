@@ -16,8 +16,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('FILE_V2 real UI lifecycle', (tester) async {
     const phase = String.fromEnvironment('FILE_V2_PHASE', defaultValue: 'A');
-    final checkpointFile = File(
-        '${Platform.environment['HOME']}/Library/Application Support/SVaultAI-QA/runtime/file_v2_checkpoint.json');
+    final checkpointFile =
+        File('${Directory.systemTemp.path}/svaultai_file_v2_checkpoint.json');
     final previousError = FlutterError.onError;
     FlutterError.onError = (details) {
       if (!details.exceptionAsString().contains('RenderFlex overflowed')) {
