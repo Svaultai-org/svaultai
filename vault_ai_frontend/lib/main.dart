@@ -4411,7 +4411,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       return;
     }
     final digitsOnly = RegExp(r'^\d+$');
-    if (_qaAuthDiagnostics) print('[qa-auth-pin] login_pin_digits_valid=${digitsOnly.hasMatch(pin)}');
+    if (_qaAuthDiagnostics)
+      print('[qa-auth-pin] login_pin_digits_valid=${digitsOnly.hasMatch(pin)}');
     if (!digitsOnly.hasMatch(pin)) {
       setState(() => err = 'PIN can only contain digits.');
       return;
@@ -5363,31 +5364,31 @@ class _SignupPageState extends State<SignupPage> {
                           : () => setState(() => acknowledged = !acknowledged),
                       borderRadius: BorderRadius.circular(8),
                       child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Checkbox(
-                            value: acknowledged,
-                            onChanged: loading
-                                ? null
-                                : (v) =>
-                                    setState(() => acknowledged = v ?? false),
-                          ),
-                          const Expanded(
-                            child: Padding(
-                              padding: EdgeInsets.only(top: 12),
-                              child: Text(
-                                'I understand and accept this risk.',
-                                style: TextStyle(
-                                  color: Color(0xFFE0E0E0),
-                                  fontSize: 13,
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Checkbox(
+                              value: acknowledged,
+                              onChanged: loading
+                                  ? null
+                                  : (v) =>
+                                      setState(() => acknowledged = v ?? false),
+                            ),
+                            const Expanded(
+                              child: Padding(
+                                padding: EdgeInsets.only(top: 12),
+                                child: Text(
+                                  'I understand and accept this risk.',
+                                  style: TextStyle(
+                                    color: Color(0xFFE0E0E0),
+                                    fontSize: 13,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -6634,14 +6635,41 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   CredentialV2Repository? _credentialV2Repository(AppState app) {
-    if (!zkV2CredentialReadEnabled) return null;
+    const qaDiagnostics =
+        bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+    if (!zkV2CredentialReadEnabled) {
+      if (qaDiagnostics)
+        print(
+            '[qa-v2-repo] session_token_present=false app_vault_id_present=false active_mvk_present=false active_mvk_vault_id_present=false vault_identity_match=false read_enabled=false write_enabled=$zkV2CredentialWriteEnabled factory_entered=true factory_succeeded=false app_vault_id_type=unknown active_mvk_vault_id_type=unknown');
+      return null;
+    }
     final token = app.sessionToken;
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     final vaultId = app.vaultId;
-    if (token == null ||
-        mvk == null ||
-        vaultId == null ||
-        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId) {
+    final activeMvkVaultId = zk_mvk_store.ZkActiveMvk.currentVaultId();
+    String identityType(String? value) {
+      if (value == null || value.isEmpty) return 'unknown';
+      if (value.startsWith('VLT-')) return 'canonical_vault_handle';
+      if (RegExp(r'^[0-9a-fA-F-]{16,}$').hasMatch(value))
+        return 'internal_vault_id';
+      return 'vault_name';
+    }
+
+    final tokenPresent = token != null && token.isNotEmpty;
+    final appVaultIdPresent = vaultId != null && vaultId.isNotEmpty;
+    final activeMvkPresent = mvk != null;
+    final activeMvkVaultIdPresent =
+        activeMvkVaultId != null && activeMvkVaultId.isNotEmpty;
+    final identityMatch = appVaultIdPresent &&
+        activeMvkVaultIdPresent &&
+        vaultId == activeMvkVaultId;
+    if (qaDiagnostics)
+      print(
+          '[qa-v2-repo] session_token_present=$tokenPresent app_vault_id_present=$appVaultIdPresent active_mvk_present=$activeMvkPresent active_mvk_vault_id_present=$activeMvkVaultIdPresent vault_identity_match=$identityMatch read_enabled=true write_enabled=$zkV2CredentialWriteEnabled factory_entered=true factory_succeeded=${tokenPresent && appVaultIdPresent && activeMvkPresent && identityMatch} app_vault_id_type=${identityType(vaultId)} active_mvk_vault_id_type=${identityType(activeMvkVaultId)}');
+    if (!tokenPresent ||
+        !activeMvkPresent ||
+        !appVaultIdPresent ||
+        !identityMatch) {
       return null;
     }
     return CredentialV2Repository(
