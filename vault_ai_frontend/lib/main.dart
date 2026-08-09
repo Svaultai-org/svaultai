@@ -101,6 +101,7 @@ import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
 import 'services/file_v2_repository.dart';
 import 'services/qa_file_picker_override.dart';
+import 'services/qa_runtime_access.dart';
 import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
@@ -1676,6 +1677,7 @@ class AppState extends ChangeNotifier {
     // == null and fall through to legacy plaintext-refuse behavior.
     try {
       zk_mvk_store.ZkActiveMvk.clear();
+      QaRuntimeAccess.clear();
       zk_sk_store.ZkActiveSkVault.clear();
       CredentialV2QaDiagnostics.clear();
     } catch (_) {}
@@ -12270,6 +12272,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final fileRepo = FileV2Repository.current();
+      if (fileRepo != null) {
+        QaRuntimeAccess.install(
+          list: () => client.listFileV2(authToken: token),
+          download: (fileId) async {
+            final manifest = await client.getFileV2Manifest(authToken: token, fileId: fileId);
+            final meta = await fileRepo.decryptMetadata(fileId,
+                vk_hier.b64urlDecode(manifest['manifest_ciphertext'] as String));
+            final out = BytesBuilder(copy: false);
+            final count = (manifest['chunk_count'] as num).toInt();
+            for (var i = 0; i < count; i++) {
+              final frame = await client.getFileV2Chunk(authToken: token, fileId: fileId, chunkIndex: i);
+              out.add(await fileRepo.decryptChunk(fileId, i, frame));
+            }
+            return {'file_id': fileId, 'filename': meta.filename,
+              'content_type': meta.contentType, 'bytes': out.takeBytes()};
+          },
+          delete: (fileId) async {
+            await client.deleteFileV2(authToken: token, fileId: fileId);
+            return true;
+          },
+        );
+      }
       final result = await client.listVaultFiles(
         vaultName: app.vaultName!,
         pin: pin,

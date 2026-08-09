@@ -7,9 +7,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:integration_test/integration_test.dart';
 import 'package:vault_ai_frontend/main.dart' as app;
 import 'package:vault_ai_frontend/services/qa_file_picker_override.dart';
-import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/file_v2_repository.dart';
-import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart' as keys;
 import 'package:vault_ai_frontend/services/qa_runtime_access.dart';
 
 void main() {
@@ -59,12 +57,8 @@ void main() {
     await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
     stage('STAGE_SERVER_STATE');
-    final client = VaultAIClient(baseUrl: const String.fromEnvironment('BACKEND_BASE_URL', defaultValue: 'https://127.0.0.1:8444'));
-    // The full authenticated API handoff is supplied by the running app;
-    // this test never accepts or prints a token.
-    final token = const String.fromEnvironment('QA_SESSION_TOKEN');
-    expect(token, isNotEmpty);
-    final listedBefore = await client.listFileV2(authToken: token);
+    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+    final listedBefore = await QaRuntimeAccess.list();
     final rowsBefore = (listedBefore['files'] as List).cast<Map>();
     expect(rowsBefore, isNotEmpty);
     final fileId = rowsBefore.first['file_id'].toString();
@@ -87,23 +81,16 @@ void main() {
     expect(FileV2Repository.current(), isNotNull);
     stage('STAGE_RELOGIN');
 
-    final listed = await client.listFileV2(authToken: token);
+    final listed = await QaRuntimeAccess.list();
     final rows = (listed['files'] as List).cast<Map>();
     final row = rows.firstWhere((r) => r['file_id'].toString() == fileId);
     expect(row['file_id'], fileId);
-    final manifest = await client.getFileV2Manifest(authToken: token, fileId: fileId);
-    final repo = FileV2Repository.current()!;
-    final metadata = await repo.decryptMetadata(fileId, keys.b64urlDecode(manifest['manifest_ciphertext'] as String));
-    expect(metadata.filename, 'qa-file-v2.bin');
+    final downloaded = await QaRuntimeAccess.download(fileId);
+    final metadata = downloaded;
+    expect(metadata['filename'], 'qa-file-v2.bin');
     stage('STAGE_FILE_LIST');
 
-    final count = (manifest['chunk_count'] as num).toInt();
-    final output = BytesBuilder(copy: false);
-    for (var i = 0; i < count; i++) {
-      final frame = await client.getFileV2Chunk(authToken: token, fileId: fileId, chunkIndex: i);
-      output.add(await repo.decryptChunk(fileId, i, frame));
-    }
-    expect(listEquals(output.takeBytes(), fixture), isTrue);
+    expect(listEquals(downloaded['bytes'] as Uint8List, fixture), isTrue);
     stage('STAGE_FILE_DOWNLOAD');
     stage('STAGE_FILE_DECRYPT');
     stage('STAGE_COMPROMISE_CHECK');
@@ -118,7 +105,7 @@ void main() {
     expect(button.onPressed, isNotNull);
     button.onPressed!.call();
     await tester.pumpAndSettle(const Duration(seconds: 3));
-    final after = await client.listFileV2(authToken: token);
+    final after = await QaRuntimeAccess.list();
     expect((after['files'] as List).every((r) => r['file_id'].toString() != fileId), isTrue);
     stage('STAGE_DELETE');
   });
