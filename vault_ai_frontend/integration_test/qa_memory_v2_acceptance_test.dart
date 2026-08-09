@@ -47,7 +47,7 @@ void main() {
     stage('STAGE_MEMORY_PAGE');
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Memory').last);
+    await tester.tap(find.bySemanticsIdentifier('sidebar_section_memory'));
     await tester.pumpAndSettle(const Duration(seconds: 4));
     await tester.tap(find.text('New memory'));
     await tester.pumpAndSettle();
@@ -82,9 +82,11 @@ void main() {
 
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Memory').last);
+    await tester.tap(find.bySemanticsIdentifier('sidebar_section_memory'));
     await tester.pumpAndSettle(const Duration(seconds: 4));
-    final search = find.byType(TextField).first;
+    final search = find.byWidgetPredicate((w) =>
+        w is TextField && w.decoration?.hintText == 'Search memories...');
+    expect(search, findsOneWidget);
     await tester.tap(search);
     await tester.enterText(search, 'QA Memory');
     await tester.pumpAndSettle(const Duration(seconds: 3));
