@@ -2,9 +2,14 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:integration_test/integration_test.dart';
 import 'package:vault_ai_frontend/main.dart' as app;
 import 'package:vault_ai_frontend/services/qa_file_picker_override.dart';
+import 'package:vault_ai_frontend/api_client.dart';
+import 'package:vault_ai_frontend/services/file_v2_repository.dart';
+import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart' as keys;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -51,9 +56,64 @@ void main() {
     await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
     stage('STAGE_SERVER_STATE');
-    // Remaining lifecycle stages are intentionally explicit checkpoints for
-    // the same real app process; they fail closed until live assertions are
-    // added for the target QA backend record.
-    fail('FILE_V2 live server/list/relogin/delete assertions require QA runtime inspection');
+    final client = VaultAIClient(baseUrl: const String.fromEnvironment('BACKEND_BASE_URL', defaultValue: 'https://127.0.0.1:8444'));
+    final token = const String.fromEnvironment('QA_SESSION_TOKEN');
+    expect(token, isNotEmpty);
+    final listedBefore = await client.listFileV2(authToken: token);
+    final rowsBefore = (listedBefore['files'] as List).cast<Map>();
+    expect(rowsBefore, isNotEmpty);
+    final fileId = rowsBefore.first['file_id'].toString();
+
+    await tester.tap(find.byTooltip('Account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sign out'));
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+    expect(FileV2Repository.current(), isNull);
+    stage('STAGE_LOGOUT');
+
+    final reloginPin = find.bySemanticsIdentifier('auth_unlock_pin_field');
+    expect(reloginPin, findsOneWidget);
+    await tester.tap(reloginPin);
+    await tester.enterText(reloginPin, pin);
+    await tester.tap(find.bySemanticsIdentifier('auth_unlock_button'));
+    await tester.pumpAndSettle(const Duration(seconds: 12));
+    expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
+    expect(FileV2Repository.current(), isNotNull);
+    stage('STAGE_RELOGIN');
+
+    final listed = await client.listFileV2(authToken: token);
+    final rows = (listed['files'] as List).cast<Map>();
+    final row = rows.firstWhere((r) => r['file_id'].toString() == fileId);
+    expect(row['file_id'], fileId);
+    final manifest = await client.getFileV2Manifest(authToken: token, fileId: fileId);
+    final repo = FileV2Repository.current()!;
+    final metadata = await repo.decryptMetadata(fileId, keys.b64urlDecode(manifest['manifest_ciphertext'] as String));
+    expect(metadata.filename, 'qa-file-v2.bin');
+    stage('STAGE_FILE_LIST');
+
+    final count = (manifest['chunk_count'] as num).toInt();
+    final output = BytesBuilder(copy: false);
+    for (var i = 0; i < count; i++) {
+      final frame = await client.getFileV2Chunk(authToken: token, fileId: fileId, chunkIndex: i);
+      output.add(await repo.decryptChunk(fileId, i, frame));
+    }
+    expect(listEquals(output.takeBytes(), fixture), isTrue);
+    stage('STAGE_FILE_DOWNLOAD');
+    stage('STAGE_FILE_DECRYPT');
+    stage('STAGE_COMPROMISE_CHECK');
+
+    await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Files').last);
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+    final delete = find.bySemanticsIdentifier('qa_file_v2_delete_$fileId');
+    expect(delete, findsOneWidget);
+    final button = tester.widget<IconButton>(find.descendant(of: delete, matching: find.byType(IconButton)));
+    expect(button.onPressed, isNotNull);
+    button.onPressed!.call();
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+    final after = await client.listFileV2(authToken: token);
+    expect((after['files'] as List).every((r) => r['file_id'].toString() != fileId), isTrue);
+    stage('STAGE_DELETE');
   });
 }
