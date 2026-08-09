@@ -12286,6 +12286,31 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
 
+      const fileV2Read = bool.fromEnvironment('FILE_V2_READ_ENABLED', defaultValue: false);
+      if (fileV2Read) {
+        final repo = FileV2Repository.current();
+        if (repo != null) {
+          final v2 = await client.listFileV2(authToken: token);
+          final v2Rows = v2['files'];
+          if (v2Rows is List) {
+            for (final raw in v2Rows) {
+              if (raw is! Map) continue;
+              final id = raw['file_id']?.toString();
+              if (id == null || id.isEmpty) continue;
+              final manifest = await client.getFileV2Manifest(authToken: token, fileId: id);
+              final ct = vk_hier.b64urlDecode(manifest['manifest_ciphertext'] as String);
+              final meta = await repo.decryptMetadata(id, ct);
+              parsed.add(_VaultStoredFile.fromJson({
+                'id': id, 'file_name': meta.filename,
+                'content_type': meta.contentType, 'file_size': raw['total_bytes'],
+                'storage_mode': 'file_v2', 'crypto_version': 'client_mvk_v2',
+                'needs_naming': false,
+              }));
+            }
+          }
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         vaultFiles = parsed;
@@ -13657,7 +13682,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final looksLikeMissingRoute =
           raw.contains('404') || raw.contains('not found');
       if (!looksLikeMissingRoute) rethrow;
-      manifest = null;
+      try {
+        final v2 = await client.getFileV2Manifest(authToken: authToken, fileId: fileId);
+        manifest = {...v2, 'storage_mode': 'file_v2', 'file_size': v2['total_bytes']};
+      } catch (_) {
+        manifest = null;
+      }
     }
 
     if (manifest == null) {
@@ -13676,6 +13706,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final mode = manifest['storage_mode']?.toString() ?? 'inline';
+    if (mode == 'file_v2') {
+      final repo = FileV2Repository.current();
+      if (repo == null) throw StateError('file_v2_requires_active_mvk');
+      final opaque = await client.getFileV2Manifest(authToken: authToken, fileId: fileId);
+      final metaCt = vk_hier.b64urlDecode(opaque['manifest_ciphertext'] as String);
+      final meta = await repo.decryptMetadata(fileId, metaCt);
+      final count = (opaque['chunk_count'] as num).toInt();
+      final out = BytesBuilder(copy: false);
+      for (var i = 0; i < count; i++) {
+        final frame = await client.getFileV2Chunk(authToken: authToken, fileId: fileId, chunkIndex: i);
+        out.add(await repo.decryptChunk(fileId, i, frame));
+      }
+      return (bytes: out.takeBytes(), contentType: meta.contentType, fileName: meta.filename);
+    }
     final fileName = manifest['file_name']?.toString() ?? fallbackFileName;
     final mime = manifest['content_type']?.toString() ?? fallbackMime;
 
