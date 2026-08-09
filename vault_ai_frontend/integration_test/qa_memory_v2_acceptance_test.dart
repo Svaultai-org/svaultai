@@ -34,6 +34,15 @@ void main() {
     await tester.enterText(pinField, pin);
     await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
+    for (var i = 0;
+        i < 10 &&
+            find
+                .bySemanticsIdentifier('top_nav_menu_button')
+                .evaluate()
+                .isEmpty;
+        i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
     expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
     stage('STAGE_MEMORY_PAGE');
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
