@@ -4292,6 +4292,10 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   static const bool _qaAuthDiagnostics =
       bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
 
+  void _qaPostUnwrapStage(String stage) {
+    if (_qaAuthDiagnostics) print('[qa-post-unwrap] $stage');
+  }
+
   void _qaPinDiag() {
     if (!_qaAuthDiagnostics) return;
     final value = pinCtrl.text;
@@ -4559,6 +4563,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // VLT handle.
         final resolvedVaultName = loginResult.vaultName ??
             (entryIsHandle ? loginResult.displayName : vaultName);
+        _qaPostUnwrapStage('login_result_ready');
+        _qaPostUnwrapStage('set_session_entered');
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -4566,12 +4572,19 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
         );
+        _qaPostUnwrapStage('set_session_completed');
         pageTiming('secure_store_complete');
+        _qaPostUnwrapStage('secure_store_complete');
+        _qaPostUnwrapStage('register_device_entered');
         await _registerDeviceBestEffort(loginResult.sessionToken);
+        _qaPostUnwrapStage('register_device_completed');
+        _qaPostUnwrapStage('inheritance_consume_entered');
         await _autoConsumeInheritanceTokenIfPresent(
           loginResult.sessionToken,
           app,
         );
+        _qaPostUnwrapStage('inheritance_consume_completed');
+        _qaPostUnwrapStage('legacy_key_cache_entered');
         // 2026-07-22 crypto-context refactor. The MVK unwrapped by
         // OPAQUE is preserved in the legacy _keyCache slot for the
         // ZK metadata surface (ZkActiveMvk publish below reads it).
@@ -4604,6 +4617,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultId: loginResult.vaultId,
           vaultHandle: loginResult.vaultHandle,
         );
+        _qaPostUnwrapStage('active_mvk_set');
         try {
           final _zkLoginMeta = await _API.getVaultMeta(
             vaultName: resolvedVaultName,
@@ -4641,6 +4655,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
             'vaultName': resolvedVaultName,
           });
         }
+        _qaPostUnwrapStage('pbkdf2_context_completed');
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
         // Cleared on logout / vault switch.
@@ -4648,6 +4663,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           skVault: loginResult.skVaultPrivate,
           vaultId: loginResult.vaultId,
         );
+        _qaPostUnwrapStage('active_sk_set');
         inheritanceRevealDiag('normal_login_zk_success', {
           'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
           'has_vault_handle': loginResult.vaultHandle.isNotEmpty,
@@ -4657,7 +4673,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   loginResult.vaultId,
         });
         app.markUnlocked();
+        _qaPostUnwrapStage('app_mark_unlocked');
         _refreshSessionListsBestEffort(app);
+        _qaPostUnwrapStage('session_lists_refresh_started');
         pageTiming('session_hydrated');
         // Both post-login side-effects below can throw independently
         // of the authenticated session. If either raises, the user
@@ -4678,6 +4696,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           );
         } catch (_) {}
         if (!mounted) return;
+        _qaPostUnwrapStage('authenticated_route_visible');
         pageTiming('authenticated_route_visible');
         Navigator.pushReplacementNamed(context, '/chat');
         return;
