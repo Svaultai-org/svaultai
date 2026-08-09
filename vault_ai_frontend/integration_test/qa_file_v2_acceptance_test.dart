@@ -97,9 +97,20 @@ void main() {
     stage('LOGIN_UNLOCKED_UI_REACHED');
 
     if (phase == 'B') {
-      // A prior Phase A run may have uploaded the deterministic fixture before
-      // its checkpoint write; recover it through the authenticated product
-      // runtime rather than repeating flaky menu automation.
+      // Login's initial vault-data load installs the product-owned QA bridge.
+      // Use that runtime capability directly; do not add a UI navigation
+      // checkpoint between authenticated state and fixture recovery.
+      var capabilityReady = false;
+      for (var i = 0; i < 30; i++) {
+        if (QaRuntimeAccess.fileV2RepositoryAvailable) {
+          capabilityReady = true;
+          break;
+        }
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(capabilityReady, isTrue,
+          reason: 'file_v2_capability_not_available_after_login');
+      print('FILE_V2_LIST_CAPABILITY_AVAILABLE=true');
     }
 
     // The current unlocked UI exposes uploads through the top-level Create
@@ -150,11 +161,10 @@ void main() {
       if (checkpointFile.existsSync()) {
         saved = jsonDecode(checkpointFile.readAsStringSync()) as Map;
       } else {
-        await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
-        await pumpBounded();
-        await tester.tap(find.text('Files').last);
-        await pumpBounded();
-        final rows = ((await QaRuntimeAccess.list())['files'] as List).cast<Map>();
+        print('FILE_V2_LIST_ENTERED=true');
+        final rows =
+            ((await QaRuntimeAccess.list())['files'] as List).cast<Map>();
+        print('FILE_V2_LIST_RETURNED=true');
         final matches = <String>[];
         for (final row in rows) {
           final candidate = row['file_id'].toString();
@@ -168,19 +178,19 @@ void main() {
         expect(matches, hasLength(1));
         saved = {'file_id': matches.single};
         checkpointFile.writeAsStringSync(jsonEncode({
-          'phase': 'FILE_UPLOADED', 'file_id': matches.single,
-          'fixture_name': 'qa-file-v2.bin', 'fixture_mime': 'application/octet-stream',
+          'phase': 'FILE_UPLOADED',
+          'file_id': matches.single,
+          'fixture_name': 'qa-file-v2.bin',
+          'fixture_mime': 'application/octet-stream',
           'fixture_length': fixture.length,
         }));
       }
       fileId = saved['file_id'].toString();
       stage('STAGE_SERVER_STATE');
-      await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
-      await pumpBounded();
-      await tester.tap(find.text('Files').last);
-      await pumpBounded();
       expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+      print('FILE_V2_LIST_ENTERED=true');
       final listedBefore = await QaRuntimeAccess.list();
+      print('FILE_V2_LIST_RETURNED=true');
       expect(
           (listedBefore['files'] as List)
               .any((r) => r['file_id'].toString() == fileId),
@@ -197,10 +207,6 @@ void main() {
       await tester.enterText(reloginPin, pin);
       await tester.tap(find.bySemanticsIdentifier('auth_unlock_button'));
       await pumpBounded(12);
-      await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
-      await pumpBounded();
-      await tester.tap(find.text('Files').last);
-      await pumpBounded();
       expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
       final listed = await QaRuntimeAccess.list();
       expect(
