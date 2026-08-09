@@ -1,33 +1,12 @@
-import 'package:flutter/foundation.dart';
-
 import 'credential_v2.dart';
 import 'credential_v2_api.dart';
+import 'credential_v2_qa_diagnostics.dart';
 
 const bool _qaV2Diagnostics =
     bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
-const String _qaTargetRecordId = 'generated-1d1c9d799b70b2c919d2cb558bec682f';
-
-final ValueNotifier<String> qaV2HydrationDiagnostic = ValueNotifier<String>('');
-final Map<String, String> _qaHydrationState = <String, String>{};
-
 void _qaV2Trace(String stage, {String? error}) {
   if (!_qaV2Diagnostics) return;
-  if (stage.startsWith('target_')) {
-    _qaHydrationState[stage] = 'true';
-    if (error != null) _qaHydrationState['target_safe_error_category'] = error;
-    for (final failed in const [
-      'target_parse_exception',
-      'target_decrypt_exception'
-    ]) {
-      if (_qaHydrationState.containsKey(failed)) {
-        _qaHydrationState['first_failed_target_stage'] = failed;
-        break;
-      }
-    }
-    qaV2HydrationDiagnostic.value = _qaHydrationState.entries
-        .map((entry) => '${entry.key}=${entry.value}')
-        .join(';');
-  }
+  qaV2HydrationTrace(stage, error: error);
   final safeError = error == null ? '' : ' error=$error';
   print('[qa-v2-create] $stage$safeError');
 }
@@ -141,7 +120,7 @@ class CredentialV2Repository {
     final envelopes = await api.list();
     final records = <DecryptedCredentialV2Record>[];
     for (final envelope in envelopes) {
-      final isTarget = envelope.recordId == _qaTargetRecordId;
+      final isTarget = envelope.recordId == qaV2TargetRecordId;
       if (_qaV2Diagnostics && isTarget) {
         _qaV2Trace('target_decrypt_entered');
         _qaV2Trace('target_record_key_derivation_entered');

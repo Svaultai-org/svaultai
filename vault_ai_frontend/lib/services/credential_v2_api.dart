@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'credential_v2.dart';
+import 'credential_v2_qa_diagnostics.dart';
 
 const bool _qaPutDiagnostics =
     bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
-const String _qaTargetRecordId = 'generated-1d1c9d799b70b2c919d2cb558bec682f';
 
 void _qaPutTrace(String stage, {String? error}) {
   if (!_qaPutDiagnostics) return;
@@ -117,20 +117,21 @@ class CredentialV2Api {
     for (final value in decoded) {
       final map = value is Map ? Map<String, dynamic>.from(value) : null;
       final id = map?['record_id']?.toString();
-      if (_qaPutDiagnostics && id == _qaTargetRecordId) {
-        _qaPutTrace('target_present_in_http_json');
-        _qaPutTrace('target_parse_entered');
+      if (_qaPutDiagnostics && id == qaV2TargetRecordId) {
+        qaV2HydrationTrace('target_present_in_http_json');
+        qaV2HydrationTrace('target_parse_entered');
       }
       try {
         final envelope = CredentialV2Envelope.fromResponse(map!);
         envelopes.add(envelope);
-        if (_qaPutDiagnostics && id == _qaTargetRecordId) {
-          _qaPutTrace('target_parse_succeeded');
-          _qaPutTrace('target_envelope_model_created');
+        if (_qaPutDiagnostics && id == qaV2TargetRecordId) {
+          qaV2HydrationTrace('target_parse_succeeded');
+          qaV2HydrationTrace('target_envelope_model_created');
         }
       } on Object catch (_) {
-        if (_qaPutDiagnostics && id == _qaTargetRecordId) {
-          _qaPutTrace('target_parse_exception', error: 'api_item_parse_failed');
+        if (_qaPutDiagnostics && id == qaV2TargetRecordId) {
+          qaV2HydrationTrace('target_parse_exception',
+              error: 'api_item_parse_failed');
         }
         // Quarantine a malformed sibling instead of blanking the whole list.
       }
