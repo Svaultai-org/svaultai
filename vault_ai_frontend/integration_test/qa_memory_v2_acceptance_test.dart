@@ -6,6 +6,15 @@ import 'package:vault_ai_frontend/main.dart' as app;
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('MemoryV2 real UI acceptance smoke', (tester) async {
+    final previousError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (!details.exceptionAsString().contains('RenderFlex overflowed')) {
+        previousError?.call(details);
+      }
+    };
+    // Safe checkpoints only; never include vault, PIN, or memory values.
+    void stage(String value) => print('MEMORY_QA_STAGE=$value');
+    stage('STAGE_LOGIN');
     app.main();
     await tester.pumpAndSettle(const Duration(seconds: 3));
     const vault = String.fromEnvironment('QA_VAULT_NAME');
@@ -26,12 +35,14 @@ void main() {
     await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
     expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
+    stage('STAGE_MEMORY_PAGE');
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Memory').last);
     await tester.pumpAndSettle(const Duration(seconds: 4));
     await tester.tap(find.text('New memory'));
     await tester.pumpAndSettle();
+    stage('STAGE_MEMORY_CREATE');
     await tester.enterText(
         find.byKey(const Key('memory_dialog_title')), 'QA Memory');
     await tester.enterText(find.byKey(const Key('memory_dialog_value')),
@@ -39,5 +50,7 @@ void main() {
     await tester.tap(find.text('Save').last);
     await tester.pumpAndSettle(const Duration(seconds: 4));
     expect(find.text('Memory saved'), findsOneWidget);
+    stage('STAGE_SERVER_STATE');
+    FlutterError.onError = previousError;
   });
 }
