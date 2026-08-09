@@ -45,6 +45,7 @@ from routes.vault_metadata_migration_routes import (
 from routes.vault_ciphertext_write_routes import (
     router as vault_ciphertext_write_router,
 )
+from routes.file_v2_routes import router as file_v2_router
 from routes.credential_v2_routes import router as credential_v2_router
 from vault_chat_memory import (
     get_memory,
@@ -488,6 +489,7 @@ app.include_router(inheritance_release_router)
                                                                       
 from routes.billing_routes import router as billing_router
 app.include_router(billing_router)
+app.include_router(file_v2_router)
 
                                                                       
 from routes.stripe_routes import router as stripe_router

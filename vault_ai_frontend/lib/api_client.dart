@@ -5512,4 +5512,50 @@ class VaultAIClient {
     }
     return decoded;
   }
+
+  Future<void> createFileV2Manifest({required String authToken, required String fileId,
+      required Uint8List manifestCiphertext, required int totalBytes,
+      required int chunkSize, required int chunkCount}) async {
+    final r = await http.post(Uri.parse('$baseUrl/vault/file-v2/manifest'),
+      headers: _defaultHeaders(authToken: authToken, json: true), body: jsonEncode({
+        'file_id': fileId, 'crypto_version': 'client_mvk_v2',
+        'manifest_ciphertext': vault_key_hierarchy.b64urlEncode(manifestCiphertext),
+        'total_bytes': totalBytes, 'chunk_size': chunkSize, 'chunk_count': chunkCount,
+      }));
+    if (r.statusCode != 200) throw Exception('file_v2_manifest_failed');
+  }
+
+  Future<void> putFileV2Chunk({required String authToken, required String fileId,
+      required int chunkIndex, required Uint8List ciphertext}) async {
+    final r = await http.put(Uri.parse('$baseUrl/vault/file-v2/chunk'),
+      headers: _defaultHeaders(authToken: authToken, json: true), body: jsonEncode({
+        'file_id': fileId, 'chunk_index': chunkIndex,
+        'ciphertext': vault_key_hierarchy.b64urlEncode(ciphertext),
+      }));
+    if (r.statusCode != 200) throw Exception('file_v2_chunk_failed');
+  }
+
+  Future<Map<String, dynamic>> listFileV2({required String authToken}) async {
+    final r = await http.get(Uri.parse('$baseUrl/vault/file-v2'), headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('file_v2_list_failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> getFileV2Manifest({required String authToken, required String fileId}) async {
+    final r = await http.get(Uri.parse('$baseUrl/vault/file-v2/$fileId/manifest'), headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('file_v2_manifest_read_failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<Uint8List> getFileV2Chunk({required String authToken, required String fileId, required int chunkIndex}) async {
+    final r = await http.get(Uri.parse('$baseUrl/vault/file-v2/$fileId/chunk/$chunkIndex'), headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('file_v2_chunk_read_failed');
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    return vault_key_hierarchy.b64urlDecode(m['ciphertext'] as String);
+  }
+
+  Future<void> deleteFileV2({required String authToken, required String fileId}) async {
+    final r = await http.delete(Uri.parse('$baseUrl/vault/file-v2/$fileId'), headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('file_v2_delete_failed');
+  }
 }

@@ -99,6 +99,7 @@ import 'ui/dashboards/memory_page.dart';
 
 import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
+import 'services/file_v2_repository.dart';
 import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
@@ -11991,6 +11992,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final duplicateAction =
         job.duplicateAction ?? (ctx.isBatchUpload ? 'skip' : 'prompt');
+
+    const fileV2Write = bool.fromEnvironment('FILE_V2_WRITE_ENABLED', defaultValue: false);
+    if (fileV2Write) {
+      final repo = FileV2Repository.current();
+      if (repo == null) throw StateError('file_v2_requires_active_mvk');
+      final fileId = '${DateTime.now().microsecondsSinceEpoch}-${math.Random.secure().nextInt(1 << 32)}';
+      const chunkSize = 4 * 1024 * 1024;
+      final chunks = (bytes.length / chunkSize).ceil();
+      final manifest = await repo.encryptMetadata(fileId: fileId, filename: job.name,
+        contentType: job.mimeType, relativePath: job.relativePath);
+      await ctx.client.createFileV2Manifest(authToken: ctx.authToken, fileId: fileId,
+        manifestCiphertext: manifest, totalBytes: bytes.length,
+        chunkSize: chunkSize, chunkCount: chunks);
+      for (var i = 0; i < chunks; i++) {
+        final start = i * chunkSize;
+        final end = min(bytes.length, start + chunkSize);
+        final encrypted = await repo.encryptChunk(fileId, i, bytes.sublist(start, end));
+        await ctx.client.putFileV2Chunk(authToken: ctx.authToken, fileId: fileId,
+          chunkIndex: i, ciphertext: encrypted);
+        reportProgress((i + 1) / chunks);
+      }
+      return UploadResult(fileId: fileId, message: 'Uploaded ${job.name}.');
+    }
 
     Map<String, dynamic> result;
     try {
