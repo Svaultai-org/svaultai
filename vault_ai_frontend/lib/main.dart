@@ -606,6 +606,7 @@ class _VaultStoredFile {
   final String? assetType;
   final int fileSize;
   final bool needsNaming;
+  final bool isFileV2;
 
   final String? relativePath;
 
@@ -617,6 +618,7 @@ class _VaultStoredFile {
     this.contentType,
     this.assetType,
     this.needsNaming = false,
+    this.isFileV2 = false,
     this.relativePath,
   });
 
@@ -629,6 +631,7 @@ class _VaultStoredFile {
       assetType: json['asset_type']?.toString(),
       fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
       needsNaming: json['needs_naming'] == true,
+      isFileV2: json['crypto_version'] == 'client_mvk_v2' || json['storage_mode'] == 'file_v2',
       relativePath: json['relative_path']?.toString(),
     );
   }
@@ -16560,10 +16563,37 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 ),
               ),
             ),
+            if (file.isFileV2)
+              Semantics(
+                container: true,
+                identifier: 'qa_file_v2_delete_${file.id}',
+                button: true,
+                child: IconButton(
+                  key: ValueKey('qa_file_v2_delete_${file.id}'),
+                  tooltip: 'Delete file',
+                  onPressed: () => _deleteFileV2(file.id),
+                  icon: const Icon(Icons.delete_outline),
+                  color: const Color(0xFFE57373),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _deleteFileV2(String fileId) async {
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
+    try {
+      await VaultAIClient(baseUrl: backendBaseUrl).deleteFileV2(
+        authToken: token, fileId: fileId,
+      );
+      if (!mounted) return;
+      setState(() => vaultFiles.removeWhere((f) => f.id == fileId));
+    } catch (e) {
+      _showSnack('Could not delete file.');
+    }
   }
 
   Widget _buildDashboardHome(bool isMobile) {
