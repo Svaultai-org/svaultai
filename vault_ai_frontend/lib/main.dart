@@ -4281,6 +4281,17 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> with RouteAware {
+  static const bool _qaAuthDiagnostics =
+      bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+
+  void _qaPinDiag() {
+    if (!_qaAuthDiagnostics) return;
+    final value = pinCtrl.text;
+    print('[qa-auth-pin] length=${value.length} '
+        'digits_only=${RegExp(r'^\d*$').hasMatch(value)} '
+        'controller_updated=true');
+  }
+
   final vaultNameCtrl = TextEditingController();
   final pinCtrl = TextEditingController();
   bool loading = false;
@@ -4392,6 +4403,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   }
 
   Future<void> _submit() async {
+    if (_qaAuthDiagnostics) print('[qa-auth-pin] login_submit_entered');
     final vaultName = vaultNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
     if (vaultName.isEmpty) {
@@ -4399,6 +4411,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       return;
     }
     final digitsOnly = RegExp(r'^\d+$');
+    if (_qaAuthDiagnostics) print('[qa-auth-pin] login_pin_digits_valid=${digitsOnly.hasMatch(pin)}');
     if (!digitsOnly.hasMatch(pin)) {
       setState(() => err = 'PIN can only contain digits.');
       return;
@@ -4407,6 +4420,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       setState(() => err = 'PIN must be at least 6 digits.');
       return;
     }
+    if (_qaAuthDiagnostics) print('[qa-auth-pin] login_pin_length_valid=true');
     if (pin.length > 64) {
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
@@ -4900,6 +4914,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   child: TextField(
                     key: const Key('auth_pin_field'),
                     controller: pinCtrl,
+                    onChanged: (_) => _qaPinDiag(),
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: 64,
