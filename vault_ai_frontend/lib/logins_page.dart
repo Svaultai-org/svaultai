@@ -6,6 +6,7 @@ const bool qaCredentialV2TargetingEnabled = bool.fromEnvironment(
   'QA_CREDENTIAL_V2_TARGETING',
   defaultValue: false,
 );
+const String _credentialV2CryptoVersion = 'client_mvk_v2';
 
 class VaultLoginItem {
   final String service;
@@ -471,7 +472,11 @@ class _LoginsPageState extends State<LoginsPage> {
                   final cleanService =
                       service.isEmpty ? 'Unnamed item' : _titleize(service);
                   final itemType = login.itemType;
-                  final label = kSecureItemTypeLabels[itemType] ?? 'Saved item';
+                  final label =
+                      login.cryptoVersion == _credentialV2CryptoVersion &&
+                              login.verificationState != 'client_verified'
+                          ? 'Credential (verification pending)'
+                          : kSecureItemTypeLabels[itemType] ?? 'Saved item';
                   final icon = kSecureItemTypeIcons[itemType] ??
                       Icons.inventory_2_outlined;
                   final safeIdentity = login.recordId?.trim();

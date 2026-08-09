@@ -12135,23 +12135,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
-      final result = await client.listVaultSecureItems(
-        vaultName: app.vaultName!,
-        pin: pin,
-        authToken: token,
-      );
-      final rawItems = result['items'];
       final parsed = <VaultLoginItem>[];
 
-      if (rawItems is List) {
-        for (final item in rawItems) {
-          if (item is Map<String, dynamic>) {
-            parsed.add(VaultLoginItem.fromJson(item));
-          } else if (item is Map) {
-            parsed
-                .add(VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
+      // Legacy and v2 are independent sources. A v2-only vault must remain
+      // listable even when the legacy endpoint has no corresponding row.
+      try {
+        final result = await client.listVaultSecureItems(
+          vaultName: app.vaultName!,
+          pin: pin,
+          authToken: token,
+        );
+        final rawItems = result['items'];
+        if (rawItems is List) {
+          for (final item in rawItems) {
+            if (item is Map<String, dynamic>) {
+              parsed.add(VaultLoginItem.fromJson(item));
+            } else if (item is Map) {
+              parsed.add(
+                  VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
+            }
           }
         }
+      } catch (_) {
+        // Preserve v2 discovery below; legacy absence is not a fatal error.
       }
 
       final v2Repository = _credentialV2Repository(app);
