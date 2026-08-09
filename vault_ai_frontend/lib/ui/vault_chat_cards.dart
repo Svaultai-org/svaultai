@@ -974,11 +974,14 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
     final notes = (widget.login['notes'] ?? '').toString();
     final detailFields = _loginDetailFields(widget.login);
     final hasOrderedFields = detailFields.isNotEmpty;
+    final recordId = (widget.login['record_id'] ?? '').toString().trim();
+    final safeRecordId =
+        recordId.replaceAll(RegExp(r'[^A-Za-z0-9_.:-]'), '_');
 
     final vr = VaultResponsive.of(context);
     final narrow = vr.width < 380;
 
-    return _shell(
+    final detailCard = _shell(
       testKey: 'vault_chat_card_login_detail',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1146,6 +1149,13 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
           ),
         ],
       ),
+    );
+    if (safeRecordId.isEmpty) return detailCard;
+    return Semantics(
+      container: true,
+      identifier: 'qa_v2_credential_record_$safeRecordId',
+      label: 'qa_v2_credential_record_$safeRecordId',
+      child: detailCard,
     );
   }
 }
