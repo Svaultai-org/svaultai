@@ -76,9 +76,11 @@ void main() {
     stage('LOGIN_MVK_RESTORED');
     stage('LOGIN_UNLOCKED_UI_REACHED');
 
-    await tester.tap(find.bySemanticsIdentifier('attachment_menu_button'));
+    // The current unlocked UI exposes uploads through the top-level Create
+    // menu; the composer attachment menu is not present on this surface.
+    await tester.tap(find.byKey(const Key('top_nav_create_button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('attachment_menu_upload_file')));
+    await tester.tap(find.byKey(const Key('create_choice_file')));
     await tester.pumpAndSettle();
     expect(find.text('qa-file-v2.bin'), findsOneWidget);
     stage('STAGE_FILE_UPLOAD');
