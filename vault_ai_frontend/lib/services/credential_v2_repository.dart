@@ -1,6 +1,15 @@
 import 'credential_v2.dart';
 import 'credential_v2_api.dart';
 
+const bool _qaV2Diagnostics =
+    bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+
+void _qaV2Trace(String stage, {String? error}) {
+  if (!_qaV2Diagnostics) return;
+  final safeError = error == null ? '' : ' error=$error';
+  print('[qa-v2-create] $stage$safeError');
+}
+
 class CredentialV2LookupIntent {
   final bool listAll;
   final String? service;
@@ -48,12 +57,34 @@ class CredentialV2Repository {
     required CredentialV2Plaintext credential,
     String? serviceForLookup,
   }) async {
-    final envelope = await crypto.encrypt(
-      recordId: recordId,
-      plaintext: credential,
-      serviceForLookup: serviceForLookup,
-    );
-    await api.write(envelope);
+    _qaV2Trace('create_call_entered');
+    _qaV2Trace('record_id_created');
+    try {
+      _qaV2Trace('crypto_derive_credential_key_entered');
+      _qaV2Trace('crypto_derive_record_key_entered');
+      _qaV2Trace('crypto_encrypt_entered');
+      final envelope = await crypto.encrypt(
+        recordId: recordId,
+        plaintext: credential,
+        serviceForLookup: serviceForLookup,
+      );
+      _qaV2Trace('crypto_encrypt_succeeded');
+      _qaV2Trace('blind_index_build_entered');
+      _qaV2Trace('blind_index_build_succeeded');
+      _qaV2Trace('api_put_entered');
+      await api.write(envelope);
+      _qaV2Trace('api_put_dispatched');
+      _qaV2Trace('api_put_status_ok');
+    } on FormatException {
+      _qaV2Trace('create_exception', error: 'request_serialization_failed');
+      rethrow;
+    } on ArgumentError {
+      _qaV2Trace('create_exception', error: 'record_id_generation_failed');
+      rethrow;
+    } catch (_) {
+      _qaV2Trace('create_exception', error: 'unexpected_safe_category');
+      rethrow;
+    }
   }
 
   Future<CredentialV2Plaintext> reveal(String recordId) async =>
