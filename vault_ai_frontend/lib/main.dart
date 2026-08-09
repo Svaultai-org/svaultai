@@ -6617,7 +6617,6 @@ class _CreateChoiceTile extends StatelessWidget {
 /// File-scope function (not a method) so the sentinel-strip logic
 /// can be tested in isolation without a widget harness.
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
-  final http.Client _credentialV2HttpClient = http.Client();
   final Map<String, String> _credentialV2MigrationOperationIds = {};
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
@@ -6683,7 +6682,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       api: CredentialV2Api(
         baseUrl: backendBaseUrl,
         sessionToken: token,
-        client: _credentialV2HttpClient,
+        // Credential-v2 calls must not reuse a client across sign-out/login
+        // dashboard lifecycles; a prior dashboard can have disposed it.
+        client: http.Client(),
       ),
     );
   }
@@ -11813,7 +11814,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   @override
   void dispose() {
-    _credentialV2HttpClient.close();
     _chatMainnetSendApprovalSession.clear();
     final activeRequestId = _chatRequests.activeRequestId;
     if (activeRequestId != null) {
