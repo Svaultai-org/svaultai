@@ -47,7 +47,7 @@ import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 
 from auth_local import (
@@ -366,6 +366,7 @@ def notification_ciphertext_create(
 
 
 class AiMemoryCiphertextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     memory_id: str = Field(..., min_length=1, max_length=128)
     memory_type: str = Field(..., min_length=1, max_length=64)
     memory_lookup_hash: str = Field(

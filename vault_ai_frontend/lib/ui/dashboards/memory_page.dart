@@ -1207,10 +1207,15 @@ class _MemoryRowCard extends StatelessWidget {
                     ),
                   ],
                   if (onDelete != null)
-                    IconButton(
-                      tooltip: 'Delete',
-                      onPressed: onDelete,
-                      icon: const Icon(Icons.delete_outline, size: 18),
+                    Semantics(
+                      identifier:
+                          'qa_memory_v2_delete_${_memoryRowRevealId(row)}',
+                      button: true,
+                      child: IconButton(
+                        tooltip: 'Delete',
+                        onPressed: onDelete,
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                      ),
                     ),
                 ],
               ),

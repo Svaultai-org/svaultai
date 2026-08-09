@@ -101,6 +101,11 @@ void main() {
 
     final delete = find.byIcon(Icons.delete_outline).first;
     expect(delete, findsOneWidget);
+    final scrollables = find.byType(Scrollable);
+    if (scrollables.evaluate().isNotEmpty) {
+      await tester.drag(scrollables.last, const Offset(0, -500));
+      await tester.pumpAndSettle();
+    }
     await tester.ensureVisible(delete);
     await tester.pumpAndSettle();
     await tester.tap(delete);
