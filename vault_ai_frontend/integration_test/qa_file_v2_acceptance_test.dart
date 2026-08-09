@@ -87,6 +87,12 @@ void main() {
     await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
     stage('STAGE_SERVER_STATE');
+    // The QA runtime bridge is installed when the product loads the Files
+    // surface. Navigate there through the real menu before querying it.
+    await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Files').last);
+    await tester.pumpAndSettle(const Duration(seconds: 3));
     expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
     final listedBefore = await QaRuntimeAccess.list();
     final rowsBefore = (listedBefore['files'] as List).cast<Map>();
