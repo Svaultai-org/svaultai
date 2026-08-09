@@ -3,6 +3,7 @@ import 'credential_v2_api.dart';
 
 const bool _qaV2Diagnostics =
     bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+const String _qaTargetRecordId = 'generated-1d1c9d799b70b2c919d2cb558bec682f';
 
 void _qaV2Trace(String stage, {String? error}) {
   if (!_qaV2Diagnostics) return;
@@ -119,14 +120,38 @@ class CredentialV2Repository {
     final envelopes = await api.list();
     final records = <DecryptedCredentialV2Record>[];
     for (final envelope in envelopes) {
+      final isTarget = envelope.recordId == _qaTargetRecordId;
+      if (_qaV2Diagnostics && isTarget) {
+        _qaV2Trace('target_decrypt_entered');
+        _qaV2Trace('target_record_key_derivation_entered');
+      }
       try {
+        final plaintext = await crypto.decrypt(envelope);
+        if (_qaV2Diagnostics && isTarget) {
+          _qaV2Trace('target_decrypt_succeeded');
+          _qaV2Trace('target_plaintext_parse_entered');
+          _qaV2Trace('target_plaintext_parse_succeeded');
+        }
         records.add(DecryptedCredentialV2Record(
           envelope.recordId,
-          await crypto.decrypt(envelope),
+          plaintext,
           migrationState: envelope.migrationState,
           verificationState: envelope.verificationState,
         ));
+        if (_qaV2Diagnostics && isTarget) {
+          _qaV2Trace('target_hydrated_record_created');
+          _qaV2Trace('target_added_to_result_list');
+        }
+      } on FormatException {
+        if (_qaV2Diagnostics && isTarget) {
+          _qaV2Trace('target_decrypt_exception',
+              error: 'aes_gcm_decrypt_failed');
+        }
       } on Object {
+        if (_qaV2Diagnostics && isTarget) {
+          _qaV2Trace('target_decrypt_exception',
+              error: 'unexpected_safe_category');
+        }
         // Authentication/format failure is isolated to this envelope.
       }
     }
