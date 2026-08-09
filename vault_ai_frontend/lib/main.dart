@@ -7216,6 +7216,33 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final data = await showMemoryEditorDialog(context);
     if (data == null) return;
     try {
+      const memoryV2Enabled = bool.fromEnvironment(
+        'MEMORY_V2_WRITE_ENABLED',
+        defaultValue: false,
+      );
+      if (memoryV2Enabled) {
+        final memoryId = 'memory-${DateTime.now().microsecondsSinceEpoch}';
+        final repository = MemoryV2Repository(
+          baseUrl: backendBaseUrl,
+          authToken: token,
+        );
+        await repository.create(
+          memoryId: memoryId,
+          memoryType: (data['memory_type'] ?? 'note').toString(),
+          plaintext: MemoryV2Plaintext(
+            value: (data['value'] ?? data['body'] ?? '').toString(),
+            normalized: (data['title'] ?? '').toString(),
+            tags: (data['tags'] as List? ?? const [])
+                .whereType<String>()
+                .toList(),
+          ),
+        );
+        if (!mounted) return;
+        _showSnack('Memory saved');
+        setState(() => selectedSection = _DashboardSection.memory);
+        unawaited(app.refreshVaultStats());
+        return;
+      }
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.createMemory(
