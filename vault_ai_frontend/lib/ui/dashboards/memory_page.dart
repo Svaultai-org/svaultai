@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../api_client.dart';
+import '../../services/memory_v2_repository.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
 import '../primitives.dart';
@@ -473,6 +474,8 @@ class MemoryPage extends StatefulWidget {
 }
 
 class _MemoryPageState extends State<MemoryPage> {
+  static const _memoryV2Enabled =
+      bool.fromEnvironment('MEMORY_V2_READ_ENABLED', defaultValue: false);
   List<Map<String, dynamic>>? _items;
   Map<String, dynamic> _counts = const {};
   bool _loading = true;
@@ -513,6 +516,18 @@ class _MemoryPageState extends State<MemoryPage> {
       _revealedMemoryIds.clear();
     });
     try {
+      if (_memoryV2Enabled) {
+        final rows = await MemoryV2Repository(
+                baseUrl: widget.client.baseUrl, authToken: widget.authToken)
+            .listDecrypted();
+        if (!mounted) return;
+        setState(() {
+          _items = rows;
+          _counts = {'total': rows.length};
+          _loading = false;
+        });
+        return;
+      }
       final pinProvider = widget.pinProvider;
       final res = pinProvider == null
           ? await widget.client.getMemoryTimeline(
@@ -683,6 +698,25 @@ class _MemoryPageState extends State<MemoryPage> {
       return;
     }
     try {
+      if (_memoryV2Enabled) {
+        final id = row?['memory_record_id']?.toString() ??
+            'memory-${DateTime.now().microsecondsSinceEpoch}';
+        final repository = MemoryV2Repository(
+            baseUrl: widget.client.baseUrl, authToken: widget.authToken);
+        await repository.create(
+            memoryId: id,
+            memoryType: (data['memory_type'] ?? 'note').toString(),
+            plaintext: MemoryV2Plaintext(
+                value: (data['value'] ?? data['body'] ?? '').toString(),
+                normalized: (data['title'] ?? '').toString(),
+                tags: (data['tags'] as List? ?? const [])
+                    .whereType<String>()
+                    .toList()));
+        if (!mounted) return;
+        _showSnack(row == null ? 'Memory saved' : 'Memory updated');
+        await _load();
+        return;
+      }
       final pin = await pinProvider();
       if (row == null) {
         await widget.client.createMemory(
@@ -738,6 +772,17 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (confirmed != true) return;
     try {
+      if (_memoryV2Enabled) {
+        final id = row['memory_record_id']?.toString() ?? row['id']?.toString();
+        if (id == null || id.isEmpty) throw Exception('Missing memory id');
+        await MemoryV2Repository(
+                baseUrl: widget.client.baseUrl, authToken: widget.authToken)
+            .delete(id);
+        if (!mounted) return;
+        _showSnack('Memory deleted');
+        await _load();
+        return;
+      }
       final id = int.tryParse('${row['id']}');
       if (id == null) throw Exception('Missing memory id');
       final pin = await pinProvider();

@@ -104,6 +104,32 @@ class MemoryV2Repository {
     return out;
   }
 
+  Future<List<Map<String, dynamic>>> listDecrypted() async {
+    final rows = await client.listZkMemoryEnvelopes(
+        baseUrl: baseUrl, authToken: authToken);
+    final out = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      final id = row['memory_id'].toString();
+      final clear = await keys.aesGcmUnwrapWithAad(
+        await _recordKey(id),
+        Uint8List.fromList(
+            keys.b64urlDecode(row['payload_ciphertext'] as String)),
+        aad: _aad(id),
+      );
+      final payload = MemoryV2Plaintext.fromJson(
+          jsonDecode(utf8.decode(clear)) as Map<String, dynamic>);
+      out.add({
+        'id': id,
+        'memory_record_id': id,
+        'memory_type': row['memory_type'],
+        'title': payload.normalized ?? '',
+        'value': payload.value,
+        'tags': payload.tags
+      });
+    }
+    return out;
+  }
+
   Future<void> delete(String memoryId) => client.deleteZkMemoryEnvelope(
       baseUrl: baseUrl, authToken: authToken, memoryId: memoryId);
 }
