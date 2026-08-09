@@ -6,7 +6,9 @@ import 'package:vault_ai_frontend/main.dart' as app;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  print('ENSURE_INITIALIZED_COMPLETED');
   testWidgets('MemoryV2 real UI acceptance smoke', (tester) async {
+    print('FIRST_TEST_BODY_ENTERED');
     final previousError = FlutterError.onError;
     FlutterError.onError = (details) {
       if (!details.exceptionAsString().contains('RenderFlex overflowed')) {
@@ -16,7 +18,9 @@ void main() {
     // Safe checkpoints only; never include vault, PIN, or memory values.
     void stage(String value) => print('MEMORY_QA_STAGE=$value');
     stage('STAGE_LOGIN');
+    print('APP_MAIN_CALLED');
     app.main();
+    print('FIRST_PUMP_ENTERED');
     await tester.pumpAndSettle(const Duration(seconds: 3));
     const vault = String.fromEnvironment('QA_VAULT_NAME');
     const pin = String.fromEnvironment('QA_PIN');
@@ -30,6 +34,7 @@ void main() {
       await tester.pumpAndSettle(const Duration(seconds: 2));
     }
     final pinField = find.bySemanticsIdentifier('qa_login_pin_editable');
+    print('AUTH_WIDGET_WAIT_ENTERED');
     expect(pinField, findsOneWidget);
     await tester.tap(pinField);
     await tester.enterText(pinField, pin);
