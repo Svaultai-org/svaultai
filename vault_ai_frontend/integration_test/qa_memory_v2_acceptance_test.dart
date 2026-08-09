@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:vault_ai_frontend/main.dart' as app;
 
@@ -104,13 +105,21 @@ void main() {
     await tester.pumpAndSettle();
     stage('STAGE_COMPROMISE_CHECK');
 
-    final delete = find.byIcon(Icons.delete_outline).first;
-    expect(delete, findsOneWidget);
-    final scrollables = find.byType(Scrollable);
-    if (scrollables.evaluate().isNotEmpty) {
-      await tester.drag(scrollables.last, const Offset(0, -500));
-      await tester.pumpAndSettle();
+    String? deleteIdentifier;
+    final root = tester.binding.pipelineOwner.semanticsOwner?.rootSemanticsNode;
+    bool scan(SemanticsNode node) {
+      final id = node.identifier;
+      if (deleteIdentifier == null && id.startsWith('qa_memory_v2_delete_')) {
+        deleteIdentifier = id;
+      }
+      node.visitChildren(scan);
+      return true;
     }
+
+    if (root != null) scan(root);
+    expect(deleteIdentifier, isNotNull);
+    final delete = find.bySemanticsIdentifier(deleteIdentifier!);
+    expect(delete, findsOneWidget);
     await tester.ensureVisible(delete);
     await tester.pumpAndSettle();
     await tester.tap(delete);
