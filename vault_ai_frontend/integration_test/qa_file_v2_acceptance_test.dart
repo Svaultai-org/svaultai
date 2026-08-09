@@ -10,6 +10,7 @@ import 'package:vault_ai_frontend/services/qa_file_picker_override.dart';
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/services/file_v2_repository.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart' as keys;
+import 'package:vault_ai_frontend/services/qa_runtime_access.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +24,7 @@ void main() {
     final fixture = Uint8List.fromList(
       List<int>.generate(257, (i) => (i * 31 + 7) & 0xff),
     );
+    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isFalse);
     qaFilePickerOverride = ({required bool allowMultiple}) async =>
         FilePickerResult([PlatformFile(
           name: 'qa-file-v2.bin', size: fixture.length, bytes: fixture,
@@ -46,6 +48,7 @@ void main() {
     await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
     expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
+    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
 
     await tester.tap(find.bySemanticsIdentifier('attachment_menu_button'));
     await tester.pumpAndSettle();
@@ -57,6 +60,8 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 12));
     stage('STAGE_SERVER_STATE');
     final client = VaultAIClient(baseUrl: const String.fromEnvironment('BACKEND_BASE_URL', defaultValue: 'https://127.0.0.1:8444'));
+    // The full authenticated API handoff is supplied by the running app;
+    // this test never accepts or prints a token.
     final token = const String.fromEnvironment('QA_SESSION_TOKEN');
     expect(token, isNotEmpty);
     final listedBefore = await client.listFileV2(authToken: token);
@@ -69,6 +74,7 @@ void main() {
     await tester.tap(find.text('Sign out'));
     await tester.pumpAndSettle(const Duration(seconds: 3));
     expect(FileV2Repository.current(), isNull);
+    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isFalse);
     stage('STAGE_LOGOUT');
 
     final reloginPin = find.bySemanticsIdentifier('auth_unlock_pin_field');
