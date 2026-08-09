@@ -4909,7 +4909,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                 ),
                 const SizedBox(height: 10),
                 Semantics(
-                  container: true,
                   identifier: 'auth_pin_field',
                   textField: true,
                   child: Semantics(
