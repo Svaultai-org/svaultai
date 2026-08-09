@@ -118,11 +118,16 @@ void main() {
 
     if (root != null) scan(root);
     expect(deleteIdentifier, isNotNull);
-    final delete = find.bySemanticsIdentifier(deleteIdentifier!);
-    expect(delete, findsOneWidget);
-    await tester.ensureVisible(delete);
-    await tester.pumpAndSettle();
-    await tester.tap(delete);
+    final deleteSemantics = find.bySemanticsIdentifier(deleteIdentifier!);
+    expect(deleteSemantics, findsOneWidget);
+    final deleteButtons = find.descendant(
+      of: deleteSemantics,
+      matching: find.byType(IconButton),
+    );
+    expect(deleteButtons, findsOneWidget);
+    final deleteButton = tester.widget<IconButton>(deleteButtons);
+    expect(deleteButton.onPressed, isNotNull);
+    deleteButton.onPressed!.call();
     await tester.pumpAndSettle();
     expect(find.text('Delete'), findsWidgets);
     await tester.tap(find.text('Delete').last);
