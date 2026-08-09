@@ -95,11 +95,13 @@ class CredentialV2Repository {
     required String recordId,
     required CredentialV2Plaintext credential,
     String? serviceForLookup,
+    String? migrationOperationId,
   }) =>
       create(
         recordId: recordId,
         credential: credential,
         serviceForLookup: serviceForLookup,
+        migrationOperationId: migrationOperationId,
       );
 
   Future<List<String>> listRecordIds({

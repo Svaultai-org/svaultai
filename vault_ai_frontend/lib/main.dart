@@ -6918,11 +6918,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               serviceForLookup: newTitle,
             );
           } else {
+            final operationId = credentialV2MigrationOperationId(recordId);
             await repository.edit(
               recordId: recordId,
               credential: credential,
               serviceForLookup: newTitle,
+              migrationOperationId: operationId,
             );
+            final readBack = await repository.reveal(recordId);
+            if (!readBack.semanticallyEquals(credential)) {
+              throw StateError('credential v2 edit verification failed');
+            }
+            await repository.api.verify(recordId, operationId);
           }
           CredentialV2QaDiagnostics.remember(recordId, credential);
           _showSnack(item == null ? 'Login saved' : 'Updated login');
@@ -6948,7 +6955,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         item.recordId!,
         value,
       );
-      await _showCredentialV2Plaintext(value, qaEquality: equality);
+      await _showCredentialV2Plaintext(value,
+          recordId: item.recordId, qaEquality: equality);
     } catch (_) {
       _showSnack(
           'Could not decrypt this credential. No legacy fallback was used.');
@@ -6956,7 +6964,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _showCredentialV2Plaintext(CredentialV2Plaintext value,
-      {bool? qaEquality, CredentialV2QaComparison? qaComparison}) async {
+      {String? recordId,
+      bool? qaEquality,
+      CredentialV2QaComparison? qaComparison}) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -6993,6 +7003,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           ],
         ),
         actions: [
+          if (recordId != null && recordId.isNotEmpty)
+            TextButton(
+              key: Key('qa_v2_credential_edit_$recordId'),
+              onPressed: () {
+                Navigator.pop(ctx);
+                unawaited(_openCredentialV2Editor(VaultLoginItem(
+                  service: value.service,
+                  recordId: recordId,
+                  cryptoVersion: credentialV2CryptoVersion,
+                )));
+              },
+              child: const Text('Edit'),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Close'),
@@ -7036,6 +7059,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         await _showCredentialV2Plaintext(
           match.plaintext,
+          recordId: match.recordId,
           qaEquality: comparison?.all,
           qaComparison: comparison,
         );
