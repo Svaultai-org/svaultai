@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -13,6 +15,9 @@ import 'package:vault_ai_frontend/services/qa_runtime_access.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('FILE_V2 real UI lifecycle', (tester) async {
+    const phase = String.fromEnvironment('FILE_V2_PHASE', defaultValue: 'A');
+    final checkpointFile = File(
+        '${Platform.environment['HOME']}/Library/Application Support/SVaultAI-QA/runtime/file_v2_checkpoint.json');
     final previousError = FlutterError.onError;
     FlutterError.onError = (details) {
       if (!details.exceptionAsString().contains('RenderFlex overflowed')) {
@@ -81,31 +86,100 @@ void main() {
     stage('LOGIN_MVK_RESTORED');
     stage('LOGIN_UNLOCKED_UI_REACHED');
 
+    if (phase == 'B') {
+      expect(checkpointFile.existsSync(), isTrue);
+    }
+
     // The current unlocked UI exposes uploads through the top-level Create
     // menu; the composer attachment menu is not present on this surface.
-    await tester.tap(find.byKey(const Key('top_nav_create_button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('create_choice_file')));
-    await tester.pumpAndSettle();
-    expect(find.text('qa-file-v2.bin'), findsOneWidget);
-    stage('STAGE_FILE_UPLOAD');
-    await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
-    await tester.pumpAndSettle(const Duration(seconds: 12));
-    stage('STAGE_SERVER_STATE');
-    print('POST_SERVER_STATE_COMPLETED');
-    // The QA runtime bridge is installed when the product loads the Files
-    // surface. Navigate there through the real menu before querying it.
-    await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
-    await pumpBounded();
-    await tester.tap(find.text('Files').last);
-    print('FILES_SURFACE_ACTIVE');
-    await pumpBounded();
-    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
-    print('FILE_V2_BRIDGE_AVAILABLE');
-    final listedBefore = await QaRuntimeAccess.list();
-    final rowsBefore = (listedBefore['files'] as List).cast<Map>();
-    expect(rowsBefore, isNotEmpty);
-    final fileId = rowsBefore.first['file_id'].toString();
+    var fileId = '';
+    if (phase == 'A') {
+      await tester.tap(find.byKey(const Key('top_nav_create_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('create_choice_file')));
+      await tester.pumpAndSettle();
+      expect(find.text('qa-file-v2.bin'), findsOneWidget);
+      stage('STAGE_FILE_UPLOAD');
+      await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
+      await tester.pumpAndSettle(const Duration(seconds: 12));
+      stage('STAGE_SERVER_STATE');
+      print('POST_SERVER_STATE_COMPLETED');
+      // The QA runtime bridge is installed when the product loads the Files
+      // surface. Navigate there through the real menu before querying it.
+      await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+      await pumpBounded();
+      await tester.tap(find.text('Files').last);
+      print('FILES_SURFACE_ACTIVE');
+      await pumpBounded();
+      expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+      print('FILE_V2_BRIDGE_AVAILABLE');
+      final listedBefore = await QaRuntimeAccess.list();
+      final rowsBefore = (listedBefore['files'] as List).cast<Map>();
+      expect(rowsBefore, isNotEmpty);
+      fileId = rowsBefore.first['file_id'].toString();
+      checkpointFile.writeAsStringSync(jsonEncode({
+        'phase': 'FILE_UPLOADED',
+        'file_id': fileId,
+        'fixture_name': 'qa-file-v2.bin',
+        'fixture_mime': 'application/octet-stream',
+        'fixture_length': fixture.length,
+      }));
+      print('FILE_ID_CHECKPOINTED=true');
+      if (phase == 'A') return;
+    } else {
+      final saved = jsonDecode(checkpointFile.readAsStringSync()) as Map;
+      fileId = saved['file_id'].toString();
+      stage('STAGE_SERVER_STATE');
+      await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+      await pumpBounded();
+      await tester.tap(find.text('Files').last);
+      await pumpBounded();
+      expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+      final listedBefore = await QaRuntimeAccess.list();
+      expect(
+          (listedBefore['files'] as List)
+              .any((r) => r['file_id'].toString() == fileId),
+          isTrue);
+      stage('STAGE_LOGOUT');
+      await tester.tap(find.byTooltip('Account'));
+      await pumpBounded();
+      await tester.tap(find.text('Sign out'));
+      await pumpBounded();
+      expect(FileV2Repository.current(), isNull);
+      stage('STAGE_RELOGIN');
+      final reloginPin = find.bySemanticsIdentifier('auth_unlock_pin_field');
+      await tester.tap(reloginPin);
+      await tester.enterText(reloginPin, pin);
+      await tester.tap(find.bySemanticsIdentifier('auth_unlock_button'));
+      await pumpBounded(12);
+      await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+      await pumpBounded();
+      await tester.tap(find.text('Files').last);
+      await pumpBounded();
+      expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+      final listed = await QaRuntimeAccess.list();
+      expect(
+          (listed['files'] as List)
+              .any((r) => r['file_id'].toString() == fileId),
+          isTrue);
+      stage('STAGE_FILE_LIST');
+      final downloaded = await QaRuntimeAccess.download(fileId);
+      expect(downloaded['filename'], 'qa-file-v2.bin');
+      stage('STAGE_FILE_DOWNLOAD');
+      expect(listEquals(downloaded['bytes'] as Uint8List, fixture), isTrue);
+      stage('STAGE_FILE_DECRYPT');
+      stage('STAGE_COMPROMISE_CHECK');
+      final deleted = await QaRuntimeAccess.delete(fileId);
+      expect(deleted, isTrue);
+      final after = await QaRuntimeAccess.list();
+      expect(
+          (after['files'] as List)
+              .every((r) => r['file_id'].toString() != fileId),
+          isTrue);
+      stage('STAGE_DELETE');
+      checkpointFile.deleteSync();
+      return;
+    }
 
     print('LOGOUT_NAVIGATION_STARTED');
     await tester.tap(find.byTooltip('Account'));
