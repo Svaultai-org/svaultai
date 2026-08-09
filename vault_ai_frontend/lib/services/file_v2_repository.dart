@@ -69,4 +69,13 @@ class FileV2Repository {
 
   Future<Uint8List> decryptChunk(String fileId, int index, Uint8List envelope) async =>
       aesGcmUnwrapWithAad(await _fileKey(fileId), envelope, aad: _aad(fileId, index));
+
+  Future<({String filename, String? contentType, String? relativePath, String? label})>
+      decryptMetadata(String fileId, Uint8List envelope) async {
+    final raw = await aesGcmUnwrapWithAad(await _fileKey(fileId), envelope, aad: _aad(fileId));
+    final map = jsonDecode(utf8.decode(raw)) as Map<String, dynamic>;
+    return (filename: map['filename'] as String,
+      contentType: map['content_type'] as String?,
+      relativePath: map['relative_path'] as String?, label: map['label'] as String?);
+  }
 }
