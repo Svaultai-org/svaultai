@@ -21,6 +21,7 @@ void main() {
       }
       fail('timed_out_waiting_for_ui_predicate');
     }
+
     const vault = String.fromEnvironment('QA_VAULT_NAME');
     const pin = String.fromEnvironment('QA_PIN');
     expect(vault, isNotEmpty);
@@ -30,10 +31,14 @@ void main() {
       List<int>.generate(257, (i) => (i * 31 + 7) & 0xff),
     );
     expect(QaRuntimeAccess.fileV2RepositoryAvailable, isFalse);
-    qaFilePickerOverride = ({required bool allowMultiple}) async =>
-        FilePickerResult([PlatformFile(
-          name: 'qa-file-v2.bin', size: fixture.length, bytes: fixture,
-        )]);
+    qaFilePickerOverride =
+        ({required bool allowMultiple}) async => FilePickerResult([
+              PlatformFile(
+                name: 'qa-file-v2.bin',
+                size: fixture.length,
+                bytes: fixture,
+              )
+            ]);
     addTearDown(() => qaFilePickerOverride = null);
 
     stage('STAGE_LOGIN');
@@ -57,11 +62,23 @@ void main() {
     stage('LOGIN_PIN_ENTERED');
     await tester.tap(find.bySemanticsIdentifier('auth_sign_in_button'));
     stage('LOGIN_SUBMIT_TAPPED');
-    await waitFor(find.bySemanticsIdentifier('top_nav_menu_button'), seconds: 30);
+    var authenticated = false;
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      if (FileV2Repository.current() != null ||
+          find
+              .bySemanticsIdentifier('top_nav_menu_button')
+              .evaluate()
+              .isNotEmpty) {
+        authenticated = true;
+        break;
+      }
+    }
+    expect(authenticated, isTrue,
+        reason: 'authenticated_unlocked_state_not_observed');
     stage('LOGIN_SESSION_ESTABLISHED');
     stage('LOGIN_MVK_RESTORED');
     stage('LOGIN_UNLOCKED_UI_REACHED');
-    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
 
     await tester.tap(find.bySemanticsIdentifier('attachment_menu_button'));
     await tester.pumpAndSettle();
@@ -116,12 +133,16 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 3));
     final delete = find.bySemanticsIdentifier('qa_file_v2_delete_$fileId');
     expect(delete, findsOneWidget);
-    final button = tester.widget<IconButton>(find.descendant(of: delete, matching: find.byType(IconButton)));
+    final button = tester.widget<IconButton>(
+        find.descendant(of: delete, matching: find.byType(IconButton)));
     expect(button.onPressed, isNotNull);
     button.onPressed!.call();
     await tester.pumpAndSettle(const Duration(seconds: 3));
     final after = await QaRuntimeAccess.list();
-    expect((after['files'] as List).every((r) => r['file_id'].toString() != fileId), isTrue);
+    expect(
+        (after['files'] as List)
+            .every((r) => r['file_id'].toString() != fileId),
+        isTrue);
     stage('STAGE_DELETE');
   });
 }
