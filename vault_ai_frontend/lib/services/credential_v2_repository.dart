@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'credential_v2.dart';
 import 'credential_v2_api.dart';
 
@@ -5,8 +7,27 @@ const bool _qaV2Diagnostics =
     bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
 const String _qaTargetRecordId = 'generated-1d1c9d799b70b2c919d2cb558bec682f';
 
+final ValueNotifier<String> qaV2HydrationDiagnostic = ValueNotifier<String>('');
+final Map<String, String> _qaHydrationState = <String, String>{};
+
 void _qaV2Trace(String stage, {String? error}) {
   if (!_qaV2Diagnostics) return;
+  if (stage.startsWith('target_')) {
+    _qaHydrationState[stage] = 'true';
+    if (error != null) _qaHydrationState['target_safe_error_category'] = error;
+    for (final failed in const [
+      'target_parse_exception',
+      'target_decrypt_exception'
+    ]) {
+      if (_qaHydrationState.containsKey(failed)) {
+        _qaHydrationState['first_failed_target_stage'] = failed;
+        break;
+      }
+    }
+    qaV2HydrationDiagnostic.value = _qaHydrationState.entries
+        .map((entry) => '${entry.key}=${entry.value}')
+        .join(';');
+  }
   final safeError = error == null ? '' : ' error=$error';
   print('[qa-v2-create] $stage$safeError');
 }

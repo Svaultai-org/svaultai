@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'l10n/app_localizations.dart';
+import 'services/credential_v2_repository.dart';
 import 'ui/responsive.dart';
 
 const bool qaCredentialV2TargetingEnabled = bool.fromEnvironment(
@@ -446,6 +447,18 @@ class _LoginsPageState extends State<LoginsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              ValueListenableBuilder<String>(
+                valueListenable: qaV2HydrationDiagnostic,
+                builder: (context, value, _) => value.isEmpty
+                    ? const SizedBox.shrink()
+                    : Semantics(
+                        container: true,
+                        identifier:
+                            'qa_v2_hydration_diag_generated-1d1c9d799b70b2c919d2cb558bec682f',
+                        label: value,
+                        child: const SizedBox.shrink(),
+                      ),
+              ),
               _Header(
                 vaultLabel: widget.vaultLabel,
                 onRefresh: widget.onRefresh,
