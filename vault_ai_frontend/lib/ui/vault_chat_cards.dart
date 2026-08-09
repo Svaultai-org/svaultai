@@ -1364,8 +1364,11 @@ class _LoginRow extends StatelessWidget {
 
     final tapTitle = title.trim();
     final rowId = (row['id'] ?? '').toString().trim();
+    final safeRowId = rowId.replaceAll(RegExp(r'[^A-Za-z0-9_.:-]'), '_');
     return Semantics(
       button: true,
+      identifier:
+          rowId.isNotEmpty ? 'qa_v2_credential_record_$safeRowId' : null,
       label: tapTitle.isNotEmpty ? 'Open login $tapTitle' : 'Open login',
       child: Material(
         color: Colors.transparent,
@@ -1927,7 +1930,8 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     String suffix = '',
   }) {
     final parsed = GeneratedLoginPayload.tryParse(widget.card);
-    final service = parsed?.service ?? _readStringFrom(data, 'service', 'service_name');
+    final service =
+        parsed?.service ?? _readStringFrom(data, 'service', 'service_name');
     final username = parsed?.username ?? _readStringFrom(data, 'username');
     final password = parsed?.password ?? _readStringFrom(data, 'password');
     final draftId = parsed?.draftId ?? _readStringFrom(data, 'draft_id');
