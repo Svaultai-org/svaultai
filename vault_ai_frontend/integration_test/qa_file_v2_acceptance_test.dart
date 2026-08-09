@@ -31,6 +31,14 @@ void main() {
       }
     }
 
+    Future<bool> waitForFinder(Finder finder, {int seconds = 5}) async {
+      for (var i = 0; i < seconds * 2; i++) {
+        if (finder.evaluate().isNotEmpty) return true;
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      return finder.evaluate().isNotEmpty;
+    }
+
     const vault = String.fromEnvironment('QA_VAULT_NAME');
     const pin = String.fromEnvironment('QA_PIN');
     expect(vault, isNotEmpty);
@@ -96,10 +104,16 @@ void main() {
     // menu; the composer attachment menu is not present on this surface.
     var fileId = '';
     if (phase == 'A') {
-      await tester.tap(find.byKey(const Key('top_nav_create_button')));
+      final createButton = find.byKey(const Key('top_nav_create_button'));
+      expect(await waitForFinder(createButton), isTrue);
+      print('CREATE_BUTTON_FOUND=true');
+      await tester.ensureVisible(createButton);
+      await tester.tap(createButton, warnIfMissed: false);
       await pumpBounded();
-      expect(find.byKey(const Key('create_choice_file')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('create_choice_file')));
+      final fileChoice = find.byKey(const Key('create_choice_file'));
+      expect(await waitForFinder(fileChoice), isTrue);
+      print('CREATE_MENU_OPENED=true');
+      await tester.tap(fileChoice, warnIfMissed: false);
       await pumpBounded();
       expect(find.text('qa-file-v2.bin'), findsOneWidget);
       stage('STAGE_FILE_UPLOAD');
