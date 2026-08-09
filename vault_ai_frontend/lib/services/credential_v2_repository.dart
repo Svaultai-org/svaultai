@@ -56,6 +56,7 @@ class CredentialV2Repository {
     required String recordId,
     required CredentialV2Plaintext credential,
     String? serviceForLookup,
+    String? migrationOperationId,
   }) async {
     _qaV2Trace('create_call_entered');
     _qaV2Trace('record_id_created');
@@ -72,7 +73,7 @@ class CredentialV2Repository {
       _qaV2Trace('blind_index_build_entered');
       _qaV2Trace('blind_index_build_succeeded');
       _qaV2Trace('api_put_entered');
-      await api.write(envelope);
+      await api.write(envelope, migrationOperationId: migrationOperationId);
       _qaV2Trace('api_put_dispatched');
       _qaV2Trace('api_put_status_ok');
     } on FormatException {

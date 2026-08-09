@@ -399,7 +399,7 @@ def verify_credential_v2(
                    verification_state = 'client_verified', updated_at = NOW()
              WHERE operation_id = %s AND vault_id = %s
                AND record_domain = 'credential' AND record_id = %s
-               AND migration_state IN ('v2_written', 'v2_verified')
+               AND migration_state IN ('migration_pending', 'v2_written', 'v2_verified')
             """,
             (payload.operation_id, principal["vault_id"], record_id),
         )
