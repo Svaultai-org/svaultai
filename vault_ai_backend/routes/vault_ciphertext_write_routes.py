@@ -471,7 +471,7 @@ def ai_memory_ciphertext_upsert(
         conn.close()
 
     return AiMemoryCiphertextResponse(
-        memory_id=new_id, superseded_id=superseded_id,
+        memory_id=str(new_id), superseded_id=superseded_id,
     )
 
 
