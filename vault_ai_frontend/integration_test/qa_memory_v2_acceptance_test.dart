@@ -82,8 +82,11 @@ void main() {
 
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
     await tester.pumpAndSettle();
+    expect(
+        find.bySemanticsIdentifier('sidebar_section_memory'), findsOneWidget);
     await tester.tap(find.bySemanticsIdentifier('sidebar_section_memory'));
     await tester.pumpAndSettle(const Duration(seconds: 4));
+    expect(find.text('New memory'), findsOneWidget);
     final search = find.byWidgetPredicate((w) =>
         w is TextField && w.decoration?.hintText == 'Search memories...');
     expect(search, findsOneWidget);
