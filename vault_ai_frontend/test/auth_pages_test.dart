@@ -1,9 +1,6 @@
-
-
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-
 
 String _readLib(String relative) {
   final file = File('lib/$relative');
@@ -12,25 +9,21 @@ String _readLib(String relative) {
   return file.readAsStringSync();
 }
 
-
 String _windowAfter(String src, String marker, {int length = 6000}) {
   final idx = src.indexOf(marker);
-  expect(idx, greaterThan(-1),
-      reason: 'expected to find marker: $marker');
+  expect(idx, greaterThan(-1), reason: 'expected to find marker: $marker');
   return src.substring(idx, (idx + length).clamp(0, src.length));
 }
 
-
 void main() {
-  
-  
   group('SignupPage', () {
     test('exists as a StatefulWidget', () {
       final src = _readLib('main.dart');
       expect(src, contains('class SignupPage extends StatefulWidget'));
     });
 
-    test('declares the four required form controllers and the '
+    test(
+        'declares the four required form controllers and the '
         'acknowledgement flag', () {
       // ZK signup contract: SignupPage must collect vault_name +
       // PIN + confirm PIN and gate submission on an acknowledgement
@@ -55,38 +48,37 @@ void main() {
         ackFlagPattern.hasMatch(window),
         isTrue,
         reason: 'SignupPage must declare a boolean acknowledgement '
-                'flag (matches `bool acknowledged = false` or '
-                '`bool acknowledge = false`).',
+            'flag (matches `bool acknowledged = false` or '
+            '`bool acknowledge = false`).',
       );
       expect(
         window,
         contains('Checkbox('),
         reason: 'The acknowledgement must be wired to a Checkbox in '
-                'the SignupPage form.',
+            'the SignupPage form.',
       );
       expect(
         window,
         contains('cannot recover your vault'),
         reason: 'Submitting without acknowledgement must surface the '
-                '"SVaultAI cannot recover your vault" enforcement copy.',
+            '"SVaultAI cannot recover your vault" enforcement copy.',
       );
     });
 
     test('shows the irrecoverability warning copy', () {
-      
       final src = _readLib('main.dart');
       final window = _windowAfter(src, 'class SignupPage', length: 9000);
-      
-      
+
       expect(
         window,
         contains('cannot recover'),
         reason: 'Signup must surface the "cannot recover your vault" '
-                'warning before the acknowledgement checkbox',
+            'warning before the acknowledgement checkbox',
       );
     });
 
-    test('calls ZkAuthService.registerVault on submit '
+    test(
+        'calls ZkAuthService.registerVault on submit '
         '(ZK-first registration; no plaintext authSignup)', () {
       final src = _readLib('main.dart');
       final window = _windowAfter(src, 'class SignupPage', length: 20000);
@@ -100,27 +92,26 @@ void main() {
         window,
         contains('ZkAuthService('),
         reason: 'SignupPage must construct a ZkAuthService for '
-                'OPAQUE-backed ZK registration.',
+            'OPAQUE-backed ZK registration.',
       );
       expect(
         window,
         contains('.registerVault('),
         reason: 'SignupPage must invoke ZkAuthService.registerVault '
-                'on submit (the ZK registration entry point).',
+            'on submit (the ZK registration entry point).',
       );
       expect(
         window,
         isNot(contains('client.authSignup(')),
         reason: 'SignupPage must NOT call the plaintext '
-                'client.authSignup path — it leaks the vault_name to '
-                'the backend and violates the ZK boundary.',
+            'client.authSignup path — it leaks the vault_name to '
+            'the backend and violates the ZK boundary.',
       );
     });
 
-    test('catches RateLimitedException so the 429 message reaches the '
+    test(
+        'catches RateLimitedException so the 429 message reaches the '
         'UI without the raw status code', () {
-      
-      
       final src = _readLib('main.dart');
       final window = _windowAfter(src, 'class SignupPage', length: 20000);
       expect(
@@ -131,8 +122,14 @@ void main() {
     });
   });
 
-  
   group('LoginPage', () {
+    test('exposes a stable identifier on the editable PIN field', () {
+      final src = File('lib/main.dart').readAsStringSync();
+      final login = _windowAfter(src, 'class LoginPage', length: 26000);
+      expect(login, contains("identifier: 'auth_pin_field'"));
+      expect(login, contains("identifier: 'qa_login_pin_editable'"));
+      expect(login, contains("key: const Key('auth_pin_field')"));
+    });
     test('exists as a StatefulWidget', () {
       final src = _readLib('main.dart');
       expect(src, contains('class LoginPage extends StatefulWidget'));
@@ -151,8 +148,6 @@ void main() {
     });
 
     test('catches InvalidCredentialsException → generic 401 error', () {
-      
-      
       final src = _readLib('main.dart');
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
@@ -164,13 +159,11 @@ void main() {
         window,
         contains('InvalidCredentialsException'),
         reason: 'LoginPage must catch InvalidCredentialsException so '
-                'the generic 401 message reaches the UI',
+            'the generic 401 message reaches the UI',
       );
     });
 
     test('does NOT surface a "vault not found" branch', () {
-      
-      
       final src = _readLib('main.dart');
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
@@ -182,27 +175,25 @@ void main() {
         window,
         isNot(contains('Vault not found')),
         reason: 'LoginPage must never say "Vault not found" — that '
-                'reveals which vault names exist',
+            'reveals which vault names exist',
       );
     });
 
-    test('api_client.InvalidCredentialsException default message is the '
+    test(
+        'api_client.InvalidCredentialsException default message is the '
         'generic phrase', () {
-      
-      
       final src = _readLib('api_client.dart');
       expect(
         src,
         contains("'Vault name or PIN is incorrect'"),
         reason: 'InvalidCredentialsException default message must be '
-                'the generic phrase',
+            'the generic phrase',
       );
     });
 
-    test('catches RateLimitedException so the 429 message reaches the '
+    test(
+        'catches RateLimitedException so the 429 message reaches the '
         'UI without the raw status code', () {
-      
-      
       final src = _readLib('main.dart');
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
@@ -217,10 +208,9 @@ void main() {
       );
     });
 
-    test('surfaces a "New device trusted." snackbar when the backend '
+    test(
+        'surfaces a "New device trusted." snackbar when the backend '
         'response sets new_device_trusted=true', () {
-      
-      
       final src = _readLib('main.dart');
       // 15k is enough to cover the LoginPage class + its state class
       // + the submit body. The pre-2026-07-20 build fit in 9k; the
@@ -232,7 +222,7 @@ void main() {
         window,
         contains('new_device_trusted'),
         reason: 'LoginPage must read new_device_trusted from the auth '
-                'response',
+            'response',
       );
       expect(
         window,
@@ -242,33 +232,31 @@ void main() {
     });
   });
 
-  
   group('UnlockPage', () {
     test('exists as a StatefulWidget', () {
       final src = _readLib('main.dart');
       expect(src, contains('class UnlockPage extends StatefulWidget'));
     });
 
-    test('reads vault name from AppState.lastVaultName (not a form '
+    test(
+        'reads vault name from AppState.lastVaultName (not a form '
         'field)', () {
       final src = _readLib('main.dart');
       // Covers the UnlockPage class + submit body + build body after
       // diagnostic and timing instrumentation.
       final window = _windowAfter(src, 'class UnlockPage', length: 25000);
-      
-      
+
       expect(
         window,
         contains('lastVaultName'),
         reason: 'UnlockPage must read the vault name from '
-                'AppState.lastVaultName',
+            'AppState.lastVaultName',
       );
     });
 
-    test('shows the generic "Welcome back" header (never leaks '
+    test(
+        'shows the generic "Welcome back" header (never leaks '
         'vault_name)', () {
-      
-      
       final src = _readLib('main.dart');
       // Covers the UnlockPage class + submit body + build body after
       // diagnostic and timing instrumentation.
@@ -278,8 +266,8 @@ void main() {
         window,
         isNot(contains("'Welcome back to ")),
         reason: 'UnlockPage must not interpolate vault_name into its '
-                'header — that surface is pre-auth and must stay '
-                'vault-name-free.',
+            'header — that surface is pre-auth and must stay '
+            'vault-name-free.',
       );
       expect(
         window,
@@ -288,7 +276,8 @@ void main() {
       );
     });
 
-    test('offers a "Use another vault" link that clears the remembered '
+    test(
+        'offers a "Use another vault" link that clears the remembered '
         'name and routes to /login', () {
       final src = _readLib('main.dart');
       // Bumped 15k → 20k for the 2026-07-22 crypto-context refactor
@@ -299,17 +288,15 @@ void main() {
         window.contains('Use another vault') ||
             window.contains('authUseAnotherVault'),
         isTrue,
-        reason:
-            'UnlockPage must offer a path off the remembered vault '
+        reason: 'UnlockPage must offer a path off the remembered vault '
             '(either literal "Use another vault" or via '
             'AppLocalizations.authUseAnotherVault)',
       );
     });
 
-    test('catches RateLimitedException and surfaces "New device '
+    test(
+        'catches RateLimitedException and surfaces "New device '
         'trusted." snackbar on success', () {
-      
-      
       final src = _readLib('main.dart');
       // 15k covers the UnlockPage class + submit body + build body
       // after the 2026-07-21 diagnostic instrumentation.
@@ -319,17 +306,16 @@ void main() {
       expect(window, contains('_notifyNewDeviceTrustedIfNeeded'));
     });
 
-    test('build() body never interpolates a vault-name variable into '
+    test(
+        'build() body never interpolates a vault-name variable into '
         'a Text widget', () {
-      
-      
       final src = _readLib('main.dart');
       final classIdx = src.indexOf('class _UnlockPageState');
       expect(classIdx, greaterThan(-1));
-      final buildIdx = src.indexOf('Widget build(BuildContext context)', classIdx);
+      final buildIdx =
+          src.indexOf('Widget build(BuildContext context)', classIdx);
       expect(buildIdx, greaterThan(-1));
-      
-      
+
       final lfEnd = src.indexOf('\n}\n', buildIdx);
       final crlfEnd = src.indexOf('\r\n}\r\n', buildIdx);
       int endIdx;
@@ -342,7 +328,6 @@ void main() {
       }
       final body = src.substring(buildIdx, endIdx == -1 ? src.length : endIdx);
 
-      
       expect(
         body,
         isNot(contains(r'$name')),
@@ -357,13 +342,13 @@ void main() {
         body,
         isNot(contains(r'${app.vaultName}')),
         reason: r'no ${app.vaultName} interpolation in UnlockPage '
-                'build body',
+            'build body',
       );
       expect(
         body,
         isNot(contains(r'${app.lastVaultName}')),
         reason: r'no ${app.lastVaultName} interpolation in '
-                'UnlockPage build body',
+            'UnlockPage build body',
       );
       expect(
         body,
@@ -373,9 +358,9 @@ void main() {
     });
   });
 
-  
   group('Post-auth account labels use displayName only', () {
-    test('TopNavBar account labels use displayName ?? "Account", '
+    test(
+        'TopNavBar account labels use displayName ?? "Account", '
         'never vaultName or any handle', () {
       // 2026-07-20 (corrected): the top-right profile menu is the
       // HUMAN PROFILE surface. It reads displayName only. The
@@ -396,7 +381,7 @@ void main() {
         window,
         contains("app.displayName ?? 'Account'"),
         reason: 'TopNavBar must read displayName with a '
-                'neutral "Account" fallback',
+            'neutral "Account" fallback',
       );
       expect(
         window,
@@ -406,27 +391,26 @@ void main() {
         window,
         isNot(contains('app.vaultName ?? ')),
         reason: 'the profile menu must never render vault_name — '
-                'vault_name is the vault identity (typing indicator '
-                '+ prompt), not the human profile',
+            'vault_name is the vault identity (typing indicator '
+            '+ prompt), not the human profile',
       );
       expect(
         window,
         isNot(contains('app.canonicalUsername')),
         reason: 'the profile menu is the human display surface — '
-                'canonicalUsername is a login identifier and does '
-                'not belong here',
+            'canonicalUsername is a login identifier and does '
+            'not belong here',
       );
       expect(
         window,
         isNot(contains('app.vaultAiName')),
         reason: 'the profile menu is the human display surface — '
-                'vaultAiName is the AI identity and belongs in '
-                'the chat surface only',
+            'vaultAiName is the AI identity and belongs in '
+            'the chat surface only',
       );
     });
   });
 
-  
   group('_notifyNewDeviceTrustedIfNeeded helper', () {
     test('is a top-level void function defined in main.dart', () {
       final src = _readLib('main.dart');
@@ -466,7 +450,8 @@ void main() {
       );
     });
 
-    test('routes through rootScaffoldMessengerKey so the snackbar '
+    test(
+        'routes through rootScaffoldMessengerKey so the snackbar '
         'outlives the pushReplacementNamed to /chat', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('void _notifyNewDeviceTrustedIfNeeded');
@@ -478,14 +463,14 @@ void main() {
         window,
         contains('rootScaffoldMessengerKey'),
         reason: 'must use the root messenger — the auth page is about '
-                'to be popped',
+            'to be popped',
       );
     });
   });
 
-  
   group('AppState auth fields', () {
-    test('declares sessionToken, vaultId, vaultName, lastVaultName, '
+    test(
+        'declares sessionToken, vaultId, vaultName, lastVaultName, '
         'displayName', () {
       final src = _readLib('main.dart');
       expect(src, contains('String? sessionToken'));
@@ -496,8 +481,7 @@ void main() {
 
     test('does NOT carry a top-level email field', () {
       final src = _readLib('main.dart');
-      
-      
+
       final stateIdx = src.indexOf('class AppState extends ChangeNotifier');
       expect(stateIdx, greaterThan(-1));
       final stateEnd = src.indexOf('\n}', stateIdx);
@@ -513,17 +497,15 @@ void main() {
     test('signOut() exists and calls authLogout', () {
       final src = _readLib('main.dart');
       expect(src, contains('Future<void> signOut'));
-      
+
       final idx = src.indexOf('Future<void> signOut');
       final window = src.substring(idx, (idx + 2000).clamp(0, src.length));
       expect(window, contains('authLogout'));
     });
   });
 
-  
   group('api_client.dart 429 → RateLimitedException', () {
-    test('RateLimitedException is defined with the canonical message',
-        () {
+    test('RateLimitedException is defined with the canonical message', () {
       final src = _readLib('api_client.dart');
       expect(
         src,
@@ -536,7 +518,7 @@ void main() {
           "'Too many attempts. Please wait a few minutes and try again.'",
         ),
         reason: 'default message must be the canonical generic phrase '
-                '— never the backend literal',
+            '— never the backend literal',
       );
     });
 
@@ -544,8 +526,7 @@ void main() {
       final src = _readLib('api_client.dart');
       final idx = src.indexOf('Future<Map<String, dynamic>> authSignup');
       expect(idx, greaterThan(-1));
-      
-      
+
       final body = src.substring(idx, (idx + 5000).clamp(0, src.length));
       expect(
         body,
@@ -556,7 +537,7 @@ void main() {
         body,
         contains('_rateLimitedFromBody'),
         reason: 'authSignup must throw via the shared helper so the '
-                'reset_in_seconds field is parsed',
+            'reset_in_seconds field is parsed',
       );
     });
 
@@ -569,10 +550,9 @@ void main() {
       expect(body, contains('_rateLimitedFromBody'));
     });
 
-    test('_rateLimitedFromBody never surfaces the backend literal '
+    test(
+        '_rateLimitedFromBody never surfaces the backend literal '
         'message', () {
-      
-      
       final src = _readLib('api_client.dart');
       final idx = src.indexOf('_rateLimitedFromBody(String body)');
       expect(idx, greaterThan(-1));
@@ -581,14 +561,14 @@ void main() {
         body,
         contains('return RateLimitedException(resetInSeconds: resetIn);'),
         reason: 'helper must rely on RateLimitedException default '
-                'message — never pass message: detail["message"]',
+            'message — never pass message: detail["message"]',
       );
     });
   });
 
-  
   group('display_username plumbing', () {
-    test('LoginPage reads display_username from the auth response and '
+    test(
+        'LoginPage reads display_username from the auth response and '
         'forwards it through setSession', () {
       final src = _readLib('main.dart');
       // 15k is enough to cover the LoginPage class + its state class
@@ -601,14 +581,14 @@ void main() {
         window,
         contains("result['display_username']"),
         reason: 'LoginPage must read display_username off the '
-                'legacy auth response — the backend still returns '
-                'this response-key for legacy vaults',
+            'legacy auth response — the backend still returns '
+            'this response-key for legacy vaults',
       );
       expect(
         window,
         contains('displayNameValue:'),
         reason: 'LoginPage must forward it through setSession via '
-                'the displayNameValue param',
+            'the displayNameValue param',
       );
     });
 
