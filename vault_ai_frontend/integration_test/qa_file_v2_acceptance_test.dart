@@ -20,6 +20,11 @@ void main() {
       }
     };
     void stage(String value) => print('FILE_V2_STAGE=$value');
+    Future<void> pumpBounded([int seconds = 3]) async {
+      for (var i = 0; i < seconds * 2; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+    }
 
     const vault = String.fromEnvironment('QA_VAULT_NAME');
     const pin = String.fromEnvironment('QA_PIN');
@@ -87,22 +92,28 @@ void main() {
     await tester.tap(find.bySemanticsIdentifier('composer_send_button'));
     await tester.pumpAndSettle(const Duration(seconds: 12));
     stage('STAGE_SERVER_STATE');
+    print('POST_SERVER_STATE_COMPLETED');
     // The QA runtime bridge is installed when the product loads the Files
     // surface. Navigate there through the real menu before querying it.
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
-    await tester.pumpAndSettle();
+    await pumpBounded();
     await tester.tap(find.text('Files').last);
-    await tester.pumpAndSettle(const Duration(seconds: 3));
+    print('FILES_SURFACE_ACTIVE');
+    await pumpBounded();
     expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+    print('FILE_V2_BRIDGE_AVAILABLE');
     final listedBefore = await QaRuntimeAccess.list();
     final rowsBefore = (listedBefore['files'] as List).cast<Map>();
     expect(rowsBefore, isNotEmpty);
     final fileId = rowsBefore.first['file_id'].toString();
 
+    print('LOGOUT_NAVIGATION_STARTED');
     await tester.tap(find.byTooltip('Account'));
-    await tester.pumpAndSettle();
+    await pumpBounded();
+    print('LOGOUT_ACTION_FOUND');
     await tester.tap(find.text('Sign out'));
-    await tester.pumpAndSettle(const Duration(seconds: 3));
+    print('LOGOUT_ACTION_INVOKED');
+    await pumpBounded();
     expect(FileV2Repository.current(), isNull);
     expect(QaRuntimeAccess.fileV2RepositoryAvailable, isFalse);
     stage('STAGE_LOGOUT');
@@ -112,11 +123,21 @@ void main() {
     await tester.tap(reloginPin);
     await tester.enterText(reloginPin, pin);
     await tester.tap(find.bySemanticsIdentifier('auth_unlock_button'));
-    await tester.pumpAndSettle(const Duration(seconds: 12));
+    print('RELOGIN_STARTED');
+    await pumpBounded(12);
     expect(find.bySemanticsIdentifier('top_nav_menu_button'), findsOneWidget);
     expect(FileV2Repository.current(), isNotNull);
     stage('STAGE_RELOGIN');
+    print('RELOGIN_COMPLETED');
 
+    print('FILE_LIST_STARTED');
+    await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
+    await pumpBounded();
+    await tester.tap(find.text('Files').last);
+    await pumpBounded();
+    print('FILES_SURFACE_ACTIVE');
+    expect(QaRuntimeAccess.fileV2RepositoryAvailable, isTrue);
+    print('FILE_V2_BRIDGE_AVAILABLE');
     final listed = await QaRuntimeAccess.list();
     final rows = (listed['files'] as List).cast<Map>();
     final row = rows.firstWhere((r) => r['file_id'].toString() == fileId);
@@ -125,28 +146,36 @@ void main() {
     final metadata = downloaded;
     expect(metadata['filename'], 'qa-file-v2.bin');
     stage('STAGE_FILE_LIST');
+    print('FILE_LIST_COMPLETED');
 
+    print('FILE_DOWNLOAD_STARTED');
     expect(listEquals(downloaded['bytes'] as Uint8List, fixture), isTrue);
     stage('STAGE_FILE_DOWNLOAD');
+    print('FILE_DOWNLOAD_COMPLETED');
     stage('STAGE_FILE_DECRYPT');
+    print('FILE_DECRYPT_COMPLETED');
+    print('COMPROMISE_CHECK_STARTED');
     stage('STAGE_COMPROMISE_CHECK');
+    print('COMPROMISE_CHECK_COMPLETED');
 
     await tester.tap(find.bySemanticsIdentifier('top_nav_menu_button'));
-    await tester.pumpAndSettle();
+    await pumpBounded();
     await tester.tap(find.text('Files').last);
-    await tester.pumpAndSettle(const Duration(seconds: 3));
+    await pumpBounded();
+    print('DELETE_STARTED');
     final delete = find.bySemanticsIdentifier('qa_file_v2_delete_$fileId');
     expect(delete, findsOneWidget);
     final button = tester.widget<IconButton>(
         find.descendant(of: delete, matching: find.byType(IconButton)));
     expect(button.onPressed, isNotNull);
     button.onPressed!.call();
-    await tester.pumpAndSettle(const Duration(seconds: 3));
+    await pumpBounded();
     final after = await QaRuntimeAccess.list();
     expect(
         (after['files'] as List)
             .every((r) => r['file_id'].toString() != fileId),
         isTrue);
     stage('STAGE_DELETE');
+    print('DELETE_COMPLETED');
   });
 }
