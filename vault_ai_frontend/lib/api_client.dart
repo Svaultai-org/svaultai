@@ -4246,6 +4246,32 @@ class VaultAIClient {
     return resp.statusCode == 200;
   }
 
+  /// Reads only opaque MEMORY_V2 envelopes. Plaintext memory columns are
+  /// never requested; callers must decrypt locally with the active MVK.
+  Future<List<Map<String, dynamic>>> listZkMemoryEnvelopes({
+    required String baseUrl,
+    required String authToken,
+    String? lookupHash,
+  }) async {
+    final query = lookupHash == null
+        ? ''
+        : '?memory_lookup_hash=${Uri.encodeQueryComponent(lookupHash)}';
+    final resp = await http.get(
+      Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory$query'),
+      headers: <String, String>{'Authorization': 'Bearer $authToken'},
+    );
+    if (resp.statusCode != 200) {
+      throw Exception('memory_v2_read_failed');
+    }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List)
+      throw const FormatException('memory_v2_invalid_response');
+    return decoded
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
   /// ZK ciphertext-first uploaded_files metadata write. Called right
   /// after an upload path returns a file_id; encrypts every readable
   /// metadata field under the vault's metadata subkey and POSTs the

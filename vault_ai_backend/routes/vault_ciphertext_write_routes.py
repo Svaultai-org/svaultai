@@ -43,6 +43,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -54,6 +55,7 @@ from auth_local import (
     verify_session_token,
 )
 from vault_core import get_db
+from zk_migration_flags import ZkMigrationFlags
 
 
 logger = logging.getLogger(__name__)
@@ -382,6 +384,13 @@ class AiMemoryCiphertextResponse(BaseModel):
     superseded_id: Optional[int] = None
 
 
+class AiMemoryCiphertextReadResponse(BaseModel):
+    memory_id: int
+    memory_type: str
+    payload_ciphertext: str
+    memory_lookup_hash: str
+
+
 @router.post(
     "/vault/ciphertext/vault-ai-memory",
     response_model=AiMemoryCiphertextResponse,
@@ -459,6 +468,58 @@ def ai_memory_ciphertext_upsert(
     return AiMemoryCiphertextResponse(
         memory_id=new_id, superseded_id=superseded_id,
     )
+
+
+@router.get(
+    "/vault/ciphertext/vault-ai-memory",
+    response_model=list[AiMemoryCiphertextReadResponse],
+)
+def ai_memory_ciphertext_list(
+    memory_lookup_hash: Optional[str] = None,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> list[AiMemoryCiphertextReadResponse]:
+    """Return opaque memory envelopes only; never legacy plaintext columns."""
+    memory_flags = ZkMigrationFlags.from_environment(os.environ)
+    memory_flags.validate_dependencies()
+    if not memory_flags.memory_read_enabled:
+        raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
+    lookup_hash = None
+    if memory_lookup_hash is not None:
+        lookup_hash = _b64url_decode(
+            memory_lookup_hash, name="memory_lookup_hash", max_bytes=64,
+        )
+        if len(lookup_hash) != 32:
+            raise HTTPException(status_code=400, detail="memory_lookup_hash must be 32 bytes")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, memory_type, payload_ciphertext, memory_lookup_hash
+              FROM vault_ai_memory
+             WHERE vault_id = %s AND superseded_at IS NULL
+               AND payload_ciphertext IS NOT NULL
+               AND (%s IS NULL OR memory_lookup_hash = %s)
+             ORDER BY id
+            """,
+            (principal["vault_id"], lookup_hash, lookup_hash),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    return [
+        AiMemoryCiphertextReadResponse(
+            memory_id=int(row["id"]),
+            memory_type=str(row["memory_type"]),
+            payload_ciphertext=base64.urlsafe_b64encode(
+                bytes(row["payload_ciphertext"])
+            ).decode().rstrip("="),
+            memory_lookup_hash=base64.urlsafe_b64encode(
+                bytes(row["memory_lookup_hash"])
+            ).decode().rstrip("="),
+        )
+        for row in rows
+    ]
 
 
 class BeneficiaryLabelCiphertextRequest(BaseModel):
