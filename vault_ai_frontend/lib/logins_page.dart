@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'l10n/app_localizations.dart';
 import 'services/credential_v2_repository.dart';
+import 'services/credential_v2_qa_diagnostics.dart';
 import 'ui/responsive.dart';
 
 const bool qaCredentialV2TargetingEnabled = bool.fromEnvironment(
