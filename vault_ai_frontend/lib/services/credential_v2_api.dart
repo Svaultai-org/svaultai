@@ -4,6 +4,14 @@ import 'package:http/http.dart' as http;
 
 import 'credential_v2.dart';
 
+const bool _qaPutDiagnostics =
+    bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
+
+void _qaPutTrace(String stage, {String? error}) {
+  if (!_qaPutDiagnostics) return;
+  print('[qa-v2-put] $stage${error == null ? '' : ' error=$error'}');
+}
+
 const bool zkV2CredentialReadEnabled =
     bool.fromEnvironment('ZK_V2_READ_ENABLED', defaultValue: false);
 const bool zkV2CredentialWriteEnabled =
@@ -31,14 +39,46 @@ class CredentialV2Api {
     CredentialV2Envelope envelope, {
     String? migrationOperationId,
   }) async {
-    final response = await client.put(
-      Uri.parse('$baseUrl/vault/v2/credentials/${envelope.recordId}'),
-      headers: _headers,
-      body: jsonEncode(
+    try {
+      _qaPutTrace('request_model_created');
+      _qaPutTrace('operation_id_present=${migrationOperationId != null}');
+      _qaPutTrace(
+          'operation_id_type_valid=${migrationOperationId == null || migrationOperationId.isNotEmpty}');
+      _qaPutTrace('record_id_present=${envelope.recordId.isNotEmpty}');
+      _qaPutTrace('record_id_type_valid=true');
+      _qaPutTrace('crypto_version_present=true');
+      _qaPutTrace('nonce_present=${envelope.nonce.isNotEmpty}');
+      _qaPutTrace('ciphertext_present=${envelope.ciphertext.isNotEmpty}');
+      _qaPutTrace('tag_present=${envelope.authenticationTag.isNotEmpty}');
+      _qaPutTrace('blind_index_container_created=true');
+      _qaPutTrace('blind_index_container_valid=true');
+      _qaPutTrace('serialization_entered');
+      final body = jsonEncode(
         envelope.toRequestBody(migrationOperationId: migrationOperationId),
-      ),
-    );
-    return _envelopeResponse(response);
+      );
+      _qaPutTrace('serialization_succeeded');
+      final uri =
+          Uri.parse('$baseUrl/vault/v2/credentials/${envelope.recordId}');
+      _qaPutTrace('http_request_object_created');
+      final headers = _headers;
+      _qaPutTrace('http_headers_created');
+      _qaPutTrace(
+          'http_auth_header_present=${headers['Authorization']?.isNotEmpty == true}');
+      _qaPutTrace('http_body_created');
+      _qaPutTrace('http_client_call_entered');
+      final response = await client.put(uri, headers: headers, body: body);
+      _qaPutTrace('http_client_call_returned');
+      return _envelopeResponse(response);
+    } on FormatException {
+      _qaPutTrace('pre_dispatch_exception_caught', error: 'FormatException');
+      rethrow;
+    } on ArgumentError {
+      _qaPutTrace('pre_dispatch_exception_caught', error: 'ArgumentError');
+      rethrow;
+    } catch (_) {
+      _qaPutTrace('pre_dispatch_exception_caught', error: 'Exception');
+      rethrow;
+    }
   }
 
   Future<CredentialV2Envelope> read(String recordId) async {
