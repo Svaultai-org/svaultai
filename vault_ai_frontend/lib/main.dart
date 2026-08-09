@@ -4598,11 +4598,23 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // Fix: install the atomic VaultCryptoContext with the
         // FRESHLY-DERIVED PBKDF2 key from current /vault-meta.
         // /chat now reads exclusively from VaultCryptoRegistry.
-        _VaultCrypto._keyCache[
-                _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
-            loginResult.mvk;
-        _VaultCrypto._pinCache[
-            _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] = pin;
+        zk_mvk_store.ZkActiveMvk.set(
+          mvk: loginResult.mvk,
+          vaultId: loginResult.vaultId,
+          vaultHandle: loginResult.vaultHandle,
+        );
+        _qaPostUnwrapStage('active_mvk_set');
+        try {
+          _VaultCrypto._keyCache[
+                  _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
+              loginResult.mvk;
+          _VaultCrypto._pinCache[
+                  _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
+              pin;
+          _qaPostUnwrapStage('legacy_key_cache_completed');
+        } catch (_) {
+          _qaPostUnwrapStage('legacy_key_cache_failed_best_effort');
+        }
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
@@ -4612,12 +4624,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // _keyCache (overwriting the MVK slot). ZkActiveMvk is the
         // authoritative source for MVK downstream (see
         // _scheduleMetadataMigration).
-        zk_mvk_store.ZkActiveMvk.set(
-          mvk: loginResult.mvk,
-          vaultId: loginResult.vaultId,
-          vaultHandle: loginResult.vaultHandle,
-        );
-        _qaPostUnwrapStage('active_mvk_set');
         try {
           final _zkLoginMeta = await _API.getVaultMeta(
             vaultName: resolvedVaultName,
