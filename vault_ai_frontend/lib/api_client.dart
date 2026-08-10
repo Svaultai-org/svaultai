@@ -4293,6 +4293,9 @@ class VaultAIClient {
         'memory_id': memoryId,
       }),
     );
+    if (bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS', defaultValue: false)) {
+      print('QA_MEMORY_API_WRITE_STATUS=${resp.statusCode}');
+    }
     if (resp.statusCode != 200) throw Exception('memory_v2_write_failed');
   }
 
