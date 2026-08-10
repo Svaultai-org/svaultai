@@ -63,12 +63,32 @@ class MemoryV2Repository {
       utf8.encode('svaultai|client_mvk_v2|memory|$memoryId');
 
   Future<String> _lookup(String query) async {
-    final active = mvk_store.ZkActiveMvk.current();
-    if (active == null) throw StateError('memory_v2_mvk_unavailable');
-    final key = await keys.VaultKeyHierarchy(active).memoryLookupKey();
-    final token = await keys.keyedLookupHash(
-        key, utf8.encode(query.trim().toLowerCase()));
-    return keys.b64urlEncode(token);
+    try {
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=normalization_entered');
+      final normalized = query.trim().toLowerCase();
+      if (_qaDiagnostics)
+        print('QA_MEMORY_LOOKUP_STAGE=normalization_succeeded');
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=mvk_fetch_entered');
+      final active = mvk_store.ZkActiveMvk.current();
+      if (active == null) throw StateError('memory_v2_mvk_unavailable');
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=mvk_fetch_succeeded');
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=hkdf_entered');
+      final key = await keys.VaultKeyHierarchy(active).memoryLookupKey();
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=hkdf_succeeded');
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=hmac_entered');
+      final token = await keys.keyedLookupHash(key, utf8.encode(normalized));
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=hmac_succeeded');
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=base64_entered');
+      final encoded = keys.b64urlEncode(token);
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=base64_succeeded');
+      if (_qaDiagnostics) print('QA_MEMORY_LOOKUP_STAGE=returned');
+      return encoded;
+    } catch (e) {
+      if (_qaDiagnostics) {
+        print('QA_MEMORY_LOOKUP_EXCEPTION_TYPE=${e.runtimeType}');
+      }
+      rethrow;
+    }
   }
 
   Future<void> create(
