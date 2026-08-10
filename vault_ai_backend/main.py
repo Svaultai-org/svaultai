@@ -28,7 +28,7 @@ from fastapi import (
     BackgroundTasks,
 )
 from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
@@ -1043,6 +1043,9 @@ def get_my_vault(
 
 
 class ChatRequest(BaseModel):
+    # Chat is ciphertext-first. Reject any accidental attempt to smuggle
+    # decrypted private-domain fields into the remote chat contract.
+    model_config = ConfigDict(extra='forbid')
     encrypted_message: str
     vault_name: str
     pin: str

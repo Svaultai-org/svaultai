@@ -15345,6 +15345,39 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  Future<bool> _tryLocalMemoryV2LookupReply(String text, AppState app) async {
+    if (attachments.isNotEmpty) return false;
+    final match = RegExp(
+      r'^\s*(?:show|find)\s+me\s+my\s+(?:saved\s+)?memory\s+(.+?)\s*[.?!]?\s*$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (match == null) return false;
+    const enabled =
+        bool.fromEnvironment('MEMORY_V2_READ_ENABLED', defaultValue: false);
+    if (!enabled || app.sessionToken == null) return true;
+    try {
+      final repo = MemoryV2Repository(
+        baseUrl: backendBaseUrl,
+        authToken: app.sessionToken!,
+      );
+      final rows = await repo.exactRecall(match.group(1)!.trim());
+      if (!mounted) return true;
+      setState(() {
+        msgs.add(_Msg('user', text));
+        msgs.add(_Msg(
+            'assistant',
+            rows.isEmpty
+                ? 'No matching saved memory was found.'
+                : rows.map((row) => row.value).join('\n')));
+      });
+      _scrollToBottom();
+    } catch (_) {
+      _appendAssistantMessage('Could not open that saved memory locally.');
+    }
+    input.clear();
+    return true;
+  }
+
   Future<void> _send() async {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
@@ -15369,21 +15402,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       'PRIVATE_VAULT_LOCAL_ROUTING_ENABLED',
       defaultValue: false,
     );
-    if (privateLocalRouting &&
-        attachments.isEmpty &&
-        _looksLikePrivateVaultCommand(text)) {
-      setState(() {
-        msgs.add(_Msg('user', text));
-        msgs.add(_Msg(
-          'assistant',
-          'This private vault request must be handled locally and was not sent to the AI service.',
-        ));
-      });
-      _scrollToBottom();
-      input.clear();
-      return;
-    }
-
     vlog('chat.preSend', {
       'vault_id': activeVaultId,
       'vaultName': vaultName,
@@ -15436,7 +15454,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
 
+    if (await _tryLocalMemoryV2LookupReply(text, app)) {
+      return;
+    }
+
     if (await _tryLocalVaultFileLookupReply(text)) {
+      return;
+    }
+
+    if (privateLocalRouting &&
+        attachments.isEmpty &&
+        _looksLikePrivateVaultCommand(text)) {
+      setState(() {
+        msgs.add(_Msg('user', text));
+        msgs.add(_Msg('assistant',
+            'This private vault request must be handled locally and was not sent to the AI service.'));
+      });
+      _scrollToBottom();
+      input.clear();
       return;
     }
 
