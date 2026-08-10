@@ -63,8 +63,19 @@ void main() {
     await tester.enterText(find.byKey(const Key('memory_dialog_value')),
         'QA-only synthetic memory');
     await tester.tap(find.text('Save').last);
-    await tester.pumpAndSettle(const Duration(seconds: 4));
-    expect(find.text('Memory saved'), findsOneWidget);
+    // The snackbar is presentation-only and is not a reliable write
+    // checkpoint on Android.  Confirm the product state instead: the exact
+    // synthetic record must be present in the MemoryV2 list after the write.
+    var memoryVisible = false;
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+      if (find.text('QA Memory').evaluate().isNotEmpty) {
+        memoryVisible = true;
+        break;
+      }
+    }
+    expect(memoryVisible, isTrue,
+        reason: 'synthetic_memory_not_present_after_write');
     stage('STAGE_SERVER_STATE');
 
     // Logout/relogin through the real account menu; only safe lifecycle
