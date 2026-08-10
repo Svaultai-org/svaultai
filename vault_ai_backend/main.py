@@ -35,6 +35,23 @@ from openai import AsyncOpenAI
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+
+# QA-only chat privacy counters.  They expose counts only and remain disabled
+# unless explicitly enabled in the disposable QA backend.
+_QA_CHAT_PRIVACY_DIAGNOSTICS = os.getenv(
+    'QA_CHAT_PRIVACY_DIAGNOSTICS', 'false').lower() == 'true'
+_qa_remote_chat_request_count = 0
+_qa_remote_provider_request_count = 0
+
+def _qa_count_chat_request() -> None:
+    global _qa_remote_chat_request_count
+    if _QA_CHAT_PRIVACY_DIAGNOSTICS:
+        _qa_remote_chat_request_count += 1
+
+def _qa_count_provider_request() -> None:
+    global _qa_remote_provider_request_count
+    if _QA_CHAT_PRIVACY_DIAGNOSTICS:
+        _qa_remote_provider_request_count += 1
 from routes.auth_routes import router as auth_router
 from routes.auth_zk_routes import router as auth_zk_router
 from routes.login_routes import router as login_router
@@ -1929,6 +1946,7 @@ Return JSON with this shape:
 
     try:
         from vault_ai_provider import chat_complete_with_fallback
+        _qa_count_provider_request()
         result = await chat_complete_with_fallback(
             messages=[
                 {"role": "system", "content": "Return only valid JSON for VaultAI intent detection."},
@@ -8371,6 +8389,7 @@ async def ai_stream(
         )
         print(_trace_line, flush=True)
         logger.info("%s", _trace_line)
+        _qa_count_provider_request()
         stream_client = get_chat_client()
                                                                
                                                                  
@@ -12585,6 +12604,18 @@ def _build_chat_prompt_context(
     }
 
 
+@app.get("/qa/chat-privacy-counters")
+async def qa_chat_privacy_counters(
+    principal=Depends(verify_trusted_device),
+):
+    if not _QA_CHAT_PRIVACY_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {
+        "remote_chat_request_count": _qa_remote_chat_request_count,
+        "remote_provider_request_count": _qa_remote_provider_request_count,
+    }
+
+
 @app.post("/chat")
 @limiter.limit("5/minute")
 async def chat_endpoint(
@@ -12592,6 +12623,7 @@ async def chat_endpoint(
     req: ChatRequest,
     principal=Depends(verify_trusted_device),
 ):
+    _qa_count_chat_request()
     vault_id = principal["vault_id"]
     # Per-chat-turn session id used by session-scoped chat state
     # readers (upload binding, pending-attachment gate, etc.).
