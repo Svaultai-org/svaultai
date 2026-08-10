@@ -103,12 +103,21 @@ class MemoryV2Repository {
     try {
       final lookupHash = await _lookup(plaintext.normalized ?? plaintext.value);
       if (_qaDiagnostics) print('QA_MEMORY_STAGE=blind_index_created');
+      final requestMemoryId = memoryId;
+      final requestMemoryType = memoryType;
+      if (_qaDiagnostics) print('QA_MEMORY_REQUEST_STAGE=fields_ready');
+      if (_qaDiagnostics)
+        print('QA_MEMORY_REQUEST_STAGE=envelope_encoding_entered');
+      final encodedEnvelope = keys.b64urlEncode(envelope);
+      if (_qaDiagnostics)
+        print('QA_MEMORY_REQUEST_STAGE=envelope_encoding_succeeded');
+      if (_qaDiagnostics) print('QA_MEMORY_REQUEST_STAGE=lookup_hash_ready');
       await client.writeZkMemoryEnvelope(
         baseUrl: baseUrl,
         authToken: authToken,
-        memoryId: memoryId,
-        memoryType: memoryType,
-        payloadCiphertext: keys.b64urlEncode(envelope),
+        memoryId: requestMemoryId,
+        memoryType: requestMemoryType,
+        payloadCiphertext: encodedEnvelope,
         lookupHash: lookupHash,
       );
     } catch (e) {
