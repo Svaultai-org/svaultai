@@ -8,10 +8,10 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # The legacy lookup uniqueness constraint prevents v2 supersession: the
-    # new envelope must be inserted before the prior active row is retired.
-    # Preserve the lookup column and all unrelated constraints/indexes.
-    op.execute("DROP INDEX IF EXISTS vault_ai_memory_lookup_uniq")
+    # Keep the legacy uniqueness guarantee intact while all MemoryV2 feature
+    # flags are off. A future, separately reviewed rollout that needs parallel
+    # active legacy and V2 rows must use an ordering/state transition that does
+    # not weaken legacy integrity during this additive schema deployment.
     op.execute("ALTER TABLE vault_ai_memory ADD COLUMN IF NOT EXISTS memory_record_id TEXT")
     op.execute("CREATE UNIQUE INDEX IF NOT EXISTS vault_ai_memory_v2_record_uq ON vault_ai_memory(vault_id, memory_record_id) WHERE memory_record_id IS NOT NULL")
 
@@ -19,10 +19,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS vault_ai_memory_v2_record_uq")
     op.execute("ALTER TABLE vault_ai_memory DROP COLUMN IF EXISTS memory_record_id")
-    op.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS vault_ai_memory_lookup_uniq
-          ON vault_ai_memory (vault_id, memory_lookup_hash)
-         WHERE superseded_at IS NULL AND memory_lookup_hash IS NOT NULL
-        """
-    )

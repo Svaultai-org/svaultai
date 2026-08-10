@@ -35,6 +35,9 @@ try {
     foreach ($arg in $args) {
         if ($arg -eq '--allow-dev-release') {
             $allowDev = $true
+        } elseif ($arg -match '^--dart-define=(MEMORY_V2_|FILE_V2_|WALLET_BACKUP_V2_|WALLET_V2_|PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=)') {
+            Write-Error '[vault-release] production V2 flags are pinned false by this script.'
+            exit 2
         } else {
             $flutterExtraArgs += $arg
         }
@@ -81,7 +84,20 @@ This guard prevents shipping a production release with APP_RELEASE=dev
     $buildArgs = @(
         'build', 'web', '--release',
         '--pwa-strategy=none',
-        "--dart-define=APP_RELEASE=$shaFull"
+        "--dart-define=APP_RELEASE=$shaFull",
+        '--dart-define=MEMORY_V2_READ_ENABLED=false',
+        '--dart-define=MEMORY_V2_WRITE_ENABLED=false',
+        '--dart-define=MEMORY_V2_MIGRATION_ENABLED=false',
+        '--dart-define=FILE_V2_READ_ENABLED=false',
+        '--dart-define=FILE_V2_WRITE_ENABLED=false',
+        '--dart-define=FILE_V2_MIGRATION_ENABLED=false',
+        '--dart-define=WALLET_BACKUP_V2_READ_ENABLED=false',
+        '--dart-define=WALLET_BACKUP_V2_WRITE_ENABLED=false',
+        '--dart-define=WALLET_BACKUP_V2_MIGRATION_ENABLED=false',
+        '--dart-define=WALLET_V2_READ_ENABLED=false',
+        '--dart-define=WALLET_V2_WRITE_ENABLED=false',
+        '--dart-define=WALLET_V2_MIGRATION_ENABLED=false',
+        '--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=false'
     ) + $flutterExtraArgs
     Write-Host "[vault-release] flutter $($buildArgs -join ' ')" -ForegroundColor Cyan
     flutter @buildArgs
