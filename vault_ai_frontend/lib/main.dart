@@ -101,6 +101,7 @@ import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
 import 'services/file_v2_repository.dart';
 import 'services/wallet_backup_v2_repository.dart';
+import 'services/wallet_v2_repository.dart';
 import 'services/qa_file_picker_override.dart';
 import 'services/qa_runtime_access.dart';
 import 'services/app_release_controller_scope.dart';
@@ -1679,6 +1680,7 @@ class AppState extends ChangeNotifier {
     try {
       zk_mvk_store.ZkActiveMvk.clear();
       WalletBackupV2Repository.clear();
+      WalletV2Repository.clear();
       QaRuntimeAccess.clear();
       zk_sk_store.ZkActiveSkVault.clear();
       CredentialV2QaDiagnostics.clear();

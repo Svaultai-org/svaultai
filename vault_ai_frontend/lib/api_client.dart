@@ -5699,4 +5699,57 @@ class VaultAIClient {
         headers: _defaultHeaders(authToken: authToken));
     if (r.statusCode != 200) throw Exception('wallet_backup_v2_delete_failed');
   }
+
+  Future<void> createWalletV2(
+      {required String authToken,
+      required String walletRecordId,
+      required String chain,
+      required String network,
+      required String asset,
+      required String publicAddress,
+      required String walletLabel,
+      required Uint8List payloadCiphertext,
+      String migrationState = 'v2_verified'}) async {
+    final r = await http.post(Uri.parse('$baseUrl/vault/wallet-v2'),
+        headers: _defaultHeaders(authToken: authToken, json: true),
+        body: jsonEncode({
+          'wallet_record_id': walletRecordId,
+          'chain': chain,
+          'network': network,
+          'asset': asset,
+          'public_address': publicAddress,
+          'wallet_label': walletLabel,
+          'payload_ciphertext':
+              vault_key_hierarchy.b64urlEncode(payloadCiphertext),
+          'envelope_version': 'v2',
+          'migration_state': migrationState
+        }));
+    if (r.statusCode != 200) throw Exception('wallet_v2_create_failed');
+  }
+
+  Future<List<Map<String, dynamic>>> listWalletV2(
+      {required String authToken}) async {
+    final r = await http.get(Uri.parse('$baseUrl/vault/wallet-v2'),
+        headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('wallet_v2_list_failed');
+    return ((jsonDecode(r.body) as Map<String, dynamic>)['wallets'] as List)
+        .cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> readWalletV2(
+      {required String authToken, required String walletRecordId}) async {
+    final r = await http.get(
+        Uri.parse('$baseUrl/vault/wallet-v2/$walletRecordId'),
+        headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('wallet_v2_read_failed');
+    return jsonDecode(r.body) as Map<String, dynamic>;
+  }
+
+  Future<void> deleteWalletV2(
+      {required String authToken, required String walletRecordId}) async {
+    final r = await http.delete(
+        Uri.parse('$baseUrl/vault/wallet-v2/$walletRecordId'),
+        headers: _defaultHeaders(authToken: authToken));
+    if (r.statusCode != 200) throw Exception('wallet_v2_delete_failed');
+  }
 }

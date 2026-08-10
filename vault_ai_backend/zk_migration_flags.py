@@ -35,6 +35,9 @@ class ZkMigrationFlags:
     wallet_backup_read_enabled: bool = False
     wallet_backup_write_enabled: bool = False
     wallet_backup_migration_enabled: bool = False
+    wallet_read_enabled: bool = False
+    wallet_write_enabled: bool = False
+    wallet_migration_enabled: bool = False
 
     @classmethod
     def from_environment(cls, source: Mapping[str, str] | None = None) -> "ZkMigrationFlags":
@@ -53,6 +56,9 @@ class ZkMigrationFlags:
             wallet_backup_read_enabled=_flag(env, "WALLET_BACKUP_V2_READ_ENABLED"),
             wallet_backup_write_enabled=_flag(env, "WALLET_BACKUP_V2_WRITE_ENABLED"),
             wallet_backup_migration_enabled=_flag(env, "WALLET_BACKUP_V2_MIGRATION_ENABLED"),
+            wallet_read_enabled=_flag(env, "WALLET_V2_READ_ENABLED"),
+            wallet_write_enabled=_flag(env, "WALLET_V2_WRITE_ENABLED"),
+            wallet_migration_enabled=_flag(env, "WALLET_V2_MIGRATION_ENABLED"),
         )
 
     def validate_dependencies(self) -> None:
@@ -74,3 +80,9 @@ class ZkMigrationFlags:
             raise ValueError("wallet backup migration requires read and write flags")
         if self.wallet_backup_write_enabled and not self.wallet_backup_read_enabled:
             raise ValueError("wallet backup v2 write requires wallet backup v2 read")
+        if self.wallet_migration_enabled and not (
+            self.wallet_read_enabled and self.wallet_write_enabled
+        ):
+            raise ValueError("wallet v2 migration requires read and write flags")
+        if self.wallet_write_enabled and not self.wallet_read_enabled:
+            raise ValueError("wallet v2 write requires wallet v2 read")

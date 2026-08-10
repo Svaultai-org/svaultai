@@ -15,6 +15,7 @@ import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/evm_networks.dart';
 import '../services/local_outgoing_tx_store.dart';
 import '../services/recipient_qr_parser.dart';
+import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
@@ -2181,47 +2182,70 @@ class _CryptoWalletEngineSendPanelState
       }
     }
 
-    String? encryptedSecret;
-    try {
-      final Map<String, dynamic> body = widget.isMainnet
-          ? await widget.client.getCryptoWalletEncryptedSecretNetwork(
-              network: widget.network,
-              asset: widget.asset,
-              authToken: widget.authToken,
-            )
-          : await widget.client.getCryptoWalletEncryptedSecret(
-              asset: widget.asset,
-              authToken: widget.authToken,
-            );
-      final status = (body['status'] ?? '').toString();
-      if (status != 'encrypted_secret_ready') {
+    String? privateKeyHex;
+    const walletV2Read =
+        bool.fromEnvironment('WALLET_V2_READ_ENABLED', defaultValue: false);
+    if (walletV2Read) {
+      try {
+        final repo = WalletV2Repository.current(
+            api: widget.client, authToken: widget.authToken);
+        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
+        final envelope =
+            await repo.find(chain: 'evm', publicAddress: widget.fromAddress);
+        if (envelope == null) throw StateError('wallet_v2_not_found');
+        final secret = await repo.decrypt(envelope);
+        privateKeyHex = secret['privateKeyHex']?.toString();
+        if (privateKeyHex == null || privateKeyHex.isEmpty)
+          throw StateError('wallet_v2_secret_invalid');
+      } catch (e) {
         _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
-          _error = kEthSendErrorEncryptedSecretMissing;
+          _error = kEthSendErrorSigningKeyUnavailable;
         });
         return;
       }
-      encryptedSecret = body['encryptedWalletSecret'].toString();
-    } catch (e) {
-      _broadcastInFlight = false;
-      setState(() {
-        _stage = _Stage.review;
-        _error = kEthSendErrorSigningKeyUnavailable;
-      });
-      return;
-    }
-
-    String? privateKeyHex;
-    try {
-      privateKeyHex = await widget.decryptForVault(encryptedSecret);
-    } catch (e) {
-      _broadcastInFlight = false;
-      setState(() {
-        _stage = _Stage.review;
-        _error = kEthSendErrorWalletKeyDecryptFailed;
-      });
-      return;
+    } else {
+      String? encryptedSecret;
+      try {
+        final Map<String, dynamic> body = widget.isMainnet
+            ? await widget.client.getCryptoWalletEncryptedSecretNetwork(
+                network: widget.network,
+                asset: widget.asset,
+                authToken: widget.authToken,
+              )
+            : await widget.client.getCryptoWalletEncryptedSecret(
+                asset: widget.asset,
+                authToken: widget.authToken,
+              );
+        final status = (body['status'] ?? '').toString();
+        if (status != 'encrypted_secret_ready') {
+          _broadcastInFlight = false;
+          setState(() {
+            _stage = _Stage.review;
+            _error = kEthSendErrorEncryptedSecretMissing;
+          });
+          return;
+        }
+        encryptedSecret = body['encryptedWalletSecret'].toString();
+      } catch (e) {
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = kEthSendErrorSigningKeyUnavailable;
+        });
+        return;
+      }
+      try {
+        privateKeyHex = await widget.decryptForVault(encryptedSecret);
+      } catch (e) {
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = kEthSendErrorWalletKeyDecryptFailed;
+        });
+        return;
+      }
     }
 
     String? signedTx;
