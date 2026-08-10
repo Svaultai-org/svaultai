@@ -4280,10 +4280,15 @@ class VaultAIClient {
     required String payloadCiphertext,
     required String lookupHash,
   }) async {
+    if (bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS',
+        defaultValue: false)) {
+      print('QA_MEMORY_API_STAGE=method_body_entered');
+    }
     final qa = bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS',
         defaultValue: false);
+    if (qa) print('QA_MEMORY_API_STAGE=base_url_ready');
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-    if (qa) print('QA_MEMORY_WRITE_STAGE=uri_created');
+    if (qa) print('QA_MEMORY_API_STAGE=uri_parse_succeeded');
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $authToken'
@@ -4294,13 +4299,14 @@ class VaultAIClient {
       'payload_ciphertext': payloadCiphertext,
       'memory_id': memoryId,
     });
-    if (qa) print('QA_MEMORY_WRITE_STAGE=body_serialized');
-    if (qa) print('QA_MEMORY_WRITE_STAGE=auth_header_present');
+    if (qa) print('QA_MEMORY_API_STAGE=body_build_succeeded');
+    if (qa) print('QA_MEMORY_API_STAGE=auth_ready');
     try {
-      if (qa) print('QA_MEMORY_WRITE_STAGE=dispatch_entered');
+      if (qa) print('QA_MEMORY_API_STAGE=http_client_ready');
+      if (qa) print('QA_MEMORY_API_STAGE=http_call_entered');
       final resp = await http.post(uri, headers: headers, body: body);
-      if (qa) print('QA_MEMORY_WRITE_STAGE=dispatch_returned');
-      if (qa) print('QA_MEMORY_WRITE_STAGE=response_received');
+      if (qa) print('QA_MEMORY_API_STAGE=http_call_returned');
+      if (qa) print('QA_MEMORY_API_STAGE=response_status_present');
       if (qa) print('QA_MEMORY_API_WRITE_STATUS=${resp.statusCode}');
       if (resp.statusCode != 200) throw Exception('memory_v2_write_failed');
       return;

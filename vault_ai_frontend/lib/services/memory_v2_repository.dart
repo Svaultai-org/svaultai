@@ -123,6 +123,8 @@ class MemoryV2Repository {
     } catch (e) {
       if (_qaDiagnostics) {
         print('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}');
+        final topFrame = StackTrace.current.toString().split('\n').first.trim();
+        print('QA_MEMORY_WRITE_EXCEPTION_TOP_FRAME=$topFrame');
       }
       rethrow;
     }
