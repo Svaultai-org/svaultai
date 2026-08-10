@@ -81,13 +81,15 @@ class MemoryV2Repository {
         aad: _aad(memoryId));
     if (_qaDiagnostics) print('QA_MEMORY_STAGE=encryption_succeeded');
     try {
+      final lookupHash = await _lookup(plaintext.normalized ?? plaintext.value);
+      if (_qaDiagnostics) print('QA_MEMORY_STAGE=blind_index_created');
       await client.writeZkMemoryEnvelope(
         baseUrl: baseUrl,
         authToken: authToken,
         memoryId: memoryId,
         memoryType: memoryType,
         payloadCiphertext: keys.b64urlEncode(envelope),
-        lookupHash: await _lookup(plaintext.normalized ?? plaintext.value),
+        lookupHash: lookupHash,
       );
     } catch (e) {
       if (_qaDiagnostics) {
