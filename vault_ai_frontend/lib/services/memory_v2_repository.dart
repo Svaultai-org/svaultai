@@ -80,14 +80,21 @@ class MemoryV2Repository {
         await _recordKey(memoryId), utf8.encode(jsonEncode(plaintext.toJson())),
         aad: _aad(memoryId));
     if (_qaDiagnostics) print('QA_MEMORY_STAGE=encryption_succeeded');
-    await client.writeZkMemoryEnvelope(
-      baseUrl: baseUrl,
-      authToken: authToken,
-      memoryId: memoryId,
-      memoryType: memoryType,
-      payloadCiphertext: keys.b64urlEncode(envelope),
-      lookupHash: await _lookup(plaintext.normalized ?? plaintext.value),
-    );
+    try {
+      await client.writeZkMemoryEnvelope(
+        baseUrl: baseUrl,
+        authToken: authToken,
+        memoryId: memoryId,
+        memoryType: memoryType,
+        payloadCiphertext: keys.b64urlEncode(envelope),
+        lookupHash: await _lookup(plaintext.normalized ?? plaintext.value),
+      );
+    } catch (e) {
+      if (_qaDiagnostics) {
+        print('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}');
+      }
+      rethrow;
+    }
     if (_qaDiagnostics) print('QA_MEMORY_STAGE=api_write_status_ok');
   }
 
