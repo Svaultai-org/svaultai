@@ -4307,8 +4307,17 @@ class VaultAIClient {
       final resp = await http.post(uri, headers: headers, body: body);
       if (qa) print('QA_MEMORY_API_STAGE=http_call_returned');
       if (qa) print('QA_MEMORY_API_STAGE=response_status_present');
-      if (qa) print('QA_MEMORY_API_WRITE_STATUS=${resp.statusCode}');
-      if (resp.statusCode != 200) throw Exception('memory_v2_write_failed');
+      if (qa) {
+        print('MEMORY_V2_WRITE_HTTP_STATUS=${resp.statusCode}');
+        print(
+            'MEMORY_V2_WRITE_HTTP_2XX=${resp.statusCode >= 200 && resp.statusCode < 300}');
+      }
+      if (resp.statusCode != 200) {
+        if (qa)
+          print(
+              'MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=${resp.statusCode == 401 ? 'unauthorized' : resp.statusCode == 403 ? 'forbidden' : resp.statusCode == 404 ? 'route_or_feature_disabled' : resp.statusCode == 409 ? 'duplicate_or_state_conflict' : resp.statusCode == 422 ? 'request_model_validation' : resp.statusCode >= 500 ? 'backend_server_error' : 'validation_error'}');
+        throw Exception('memory_v2_write_failed');
+      }
       return;
     } catch (e) {
       if (qa) print('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}');

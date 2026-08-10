@@ -401,6 +401,8 @@ def ai_memory_ciphertext_upsert(
     payload: AiMemoryCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> AiMemoryCiphertextResponse:
+    if os.getenv('QA_CHAT_PRIVACY_DIAGNOSTICS', '').lower() == 'true':
+        print('BACKEND_MEMORY_V2_WRITE_REQUEST_OBSERVED=true', flush=True)
     memory_flags = ZkMigrationFlags.from_environment(os.environ)
     memory_flags.validate_dependencies()
     if not memory_flags.memory_write_enabled:
