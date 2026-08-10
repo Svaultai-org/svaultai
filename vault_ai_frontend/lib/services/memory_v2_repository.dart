@@ -38,6 +38,8 @@ class MemoryV2Plaintext {
 }
 
 class MemoryV2Repository {
+  static const _qaDiagnostics =
+      bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS', defaultValue: false);
   final String baseUrl;
   final String authToken;
   final VaultAIClient client;
@@ -73,9 +75,11 @@ class MemoryV2Repository {
       {required String memoryId,
       required String memoryType,
       required MemoryV2Plaintext plaintext}) async {
+    if (_qaDiagnostics) print('QA_MEMORY_STAGE=repository_create_entered');
     final envelope = await keys.aesGcmWrapWithAad(
         await _recordKey(memoryId), utf8.encode(jsonEncode(plaintext.toJson())),
         aad: _aad(memoryId));
+    if (_qaDiagnostics) print('QA_MEMORY_STAGE=encryption_succeeded');
     await client.writeZkMemoryEnvelope(
       baseUrl: baseUrl,
       authToken: authToken,
@@ -84,6 +88,7 @@ class MemoryV2Repository {
       payloadCiphertext: keys.b64urlEncode(envelope),
       lookupHash: await _lookup(plaintext.normalized ?? plaintext.value),
     );
+    if (_qaDiagnostics) print('QA_MEMORY_STAGE=api_write_status_ok');
   }
 
   Future<List<MemoryV2Plaintext>> exactRecall(String query) async {
@@ -105,8 +110,10 @@ class MemoryV2Repository {
   }
 
   Future<List<Map<String, dynamic>>> listDecrypted() async {
+    if (_qaDiagnostics) print('QA_MEMORY_STAGE=list_entered');
     final rows = await client.listZkMemoryEnvelopes(
         baseUrl: baseUrl, authToken: authToken);
+    if (_qaDiagnostics) print('QA_MEMORY_RAW_COUNT=${rows.length}');
     final out = <Map<String, dynamic>>[];
     for (final row in rows) {
       final id = row['memory_id'].toString();
@@ -127,6 +134,7 @@ class MemoryV2Repository {
         'tags': payload.tags
       });
     }
+    if (_qaDiagnostics) print('QA_MEMORY_STAGE=list_decrypt_succeeded');
     return out;
   }
 
