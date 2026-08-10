@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, Optional
 
 from psycopg2.extras import RealDictCursor
@@ -751,6 +752,9 @@ def save_crypto_sensitive_backup(
     payload: SaveCryptoSensitiveBackupRequest,
     principal=Depends(verify_trusted_device),
 ):
+    from zk_migration_flags import ZkMigrationFlags
+    if ZkMigrationFlags.from_environment(os.environ).wallet_backup_write_enabled:
+        raise HTTPException(status_code=410, detail="legacy_sensitive_backup_write_disabled")
 
 
     from vault_secure_item_save import _encrypt_and_write
@@ -854,6 +858,9 @@ def reveal_sensitive_backup(
     payload: RevealSensitiveBackupRequest,
     principal=Depends(verify_trusted_device),
 ):
+    from zk_migration_flags import ZkMigrationFlags
+    if ZkMigrationFlags.from_environment(os.environ).wallet_backup_read_enabled:
+        raise HTTPException(status_code=410, detail="legacy_sensitive_backup_reveal_disabled")
 
 
     from crypto_schemas import (

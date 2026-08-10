@@ -100,6 +100,7 @@ import 'ui/dashboards/memory_page.dart';
 import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
 import 'services/file_v2_repository.dart';
+import 'services/wallet_backup_v2_repository.dart';
 import 'services/qa_file_picker_override.dart';
 import 'services/qa_runtime_access.dart';
 import 'services/app_release_controller_scope.dart';
@@ -1677,6 +1678,7 @@ class AppState extends ChangeNotifier {
     // == null and fall through to legacy plaintext-refuse behavior.
     try {
       zk_mvk_store.ZkActiveMvk.clear();
+      WalletBackupV2Repository.clear();
       QaRuntimeAccess.clear();
       zk_sk_store.ZkActiveSkVault.clear();
       CredentialV2QaDiagnostics.clear();
@@ -2926,6 +2928,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: PopupMenuButton<String>(
+                    key: const Key('account_menu_button'),
                     tooltip: 'Account',
                     itemBuilder: (_) => [
                       PopupMenuItem(
