@@ -401,81 +401,81 @@ def ai_memory_ciphertext_upsert(
     payload: AiMemoryCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> AiMemoryCiphertextResponse:
-    if os.getenv('QA_CHAT_PRIVACY_DIAGNOSTICS', '').lower() == 'true':
-        print('BACKEND_MEMORY_V2_WRITE_REQUEST_OBSERVED=true', flush=True)
-    memory_flags = ZkMigrationFlags.from_environment(os.environ)
-    memory_flags.validate_dependencies()
-    if not memory_flags.memory_write_enabled:
-        raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
-    _reject_plaintext_leak(payload, (
-        "memory_key", "memory_value", "memory_normalized_key",
-    ))
-
-    lookup_hash = _b64url_decode(
-        payload.memory_lookup_hash, name="memory_lookup_hash",
-        max_bytes=64,
-    )
-    if len(lookup_hash) != 32:
-        raise HTTPException(
-            status_code=400,
-            detail="memory_lookup_hash must be 32 bytes",
-        )
-    payload_ct = _b64url_decode(
-        payload.payload_ciphertext, name="payload_ciphertext",
-        max_bytes=MAX_CIPHERTEXT_BYTES,
-    )
-
-    conn = get_db()
+    qa = os.getenv("QA_CHAT_PRIVACY_DIAGNOSTICS", "").lower() == "true"
+    if qa:
+        print("BACKEND_MEMORY_V2_WRITE_REQUEST_OBSERVED=true", flush=True)
+        print("BACKEND_MEMORY_V2_WRITE_HANDLER_ENTERED=true", flush=True)
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            SELECT id FROM vault_ai_memory
-             WHERE vault_id = %s
-               AND memory_lookup_hash = %s
-               AND superseded_at IS NULL
-             LIMIT 1
-            """,
-            (principal["vault_id"], lookup_hash),
+        memory_flags = ZkMigrationFlags.from_environment(os.environ)
+        memory_flags.validate_dependencies()
+        if not memory_flags.memory_write_enabled:
+            if qa:
+                print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=404", flush=True)
+                print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=feature_disabled", flush=True)
+            raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
+        _reject_plaintext_leak(payload, (
+            "memory_key", "memory_value", "memory_normalized_key",
+        ))
+        if qa:
+            print("BACKEND_MEMORY_V2_WRITE_VALIDATION_PASSED=true", flush=True)
+        lookup_hash = _b64url_decode(
+            payload.memory_lookup_hash, name="memory_lookup_hash", max_bytes=64,
         )
-        prev = cur.fetchone()
-        superseded_id: Optional[int] = None
-
-        cur.execute(
-            """
-            INSERT INTO vault_ai_memory (
-                vault_id, memory_record_id, memory_type, memory_key,
-                memory_value, payload_ciphertext, memory_lookup_hash
-            )
-            VALUES (%s, %s, %s, NULL, NULL, %s, %s)
-            RETURNING id
-            """,
-            (
-                principal["vault_id"], payload.memory_id, payload.memory_type,
-                payload_ct, lookup_hash,
-            ),
+        if len(lookup_hash) != 32:
+            raise HTTPException(status_code=400, detail="memory_lookup_hash must be 32 bytes")
+        payload_ct = _b64url_decode(
+            payload.payload_ciphertext, name="payload_ciphertext", max_bytes=MAX_CIPHERTEXT_BYTES,
         )
-        new_id = int(cur.fetchone()["id"])
-
-        if prev is not None:
+        if qa:
+            print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_ENTERED=true", flush=True)
+        conn = get_db()
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(
-                """
-                UPDATE vault_ai_memory
-                   SET superseded_at    = NOW(),
-                       superseded_by_id = %s
-                 WHERE id = %s AND vault_id = %s
-                """,
-                (new_id, prev["id"], principal["vault_id"]),
+                """SELECT id FROM vault_ai_memory
+                   WHERE vault_id = %s AND memory_lookup_hash = %s
+                     AND superseded_at IS NULL LIMIT 1""",
+                (principal["vault_id"], lookup_hash),
             )
-            superseded_id = int(prev["id"])
-
-        conn.commit()
-    finally:
-        conn.close()
-
-    return AiMemoryCiphertextResponse(
-        memory_id=str(new_id), superseded_id=superseded_id,
-    )
+            prev = cur.fetchone()
+            superseded_id: Optional[int] = None
+            cur.execute(
+                """INSERT INTO vault_ai_memory (
+                    vault_id, memory_record_id, memory_type, memory_key,
+                    memory_value, payload_ciphertext, memory_lookup_hash
+                ) VALUES (%s, %s, %s, NULL, NULL, %s, %s) RETURNING id""",
+                (principal["vault_id"], payload.memory_id, payload.memory_type, payload_ct, lookup_hash),
+            )
+            new_id = int(cur.fetchone()["id"])
+            if prev is not None:
+                cur.execute(
+                    """UPDATE vault_ai_memory SET superseded_at = NOW(), superseded_by_id = %s
+                       WHERE id = %s AND vault_id = %s""",
+                    (new_id, prev["id"], principal["vault_id"]),
+                )
+                superseded_id = int(prev["id"])
+            conn.commit()
+        finally:
+            conn.close()
+        if qa:
+            print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_SUCCEEDED=true", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=200", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=none", flush=True)
+        return AiMemoryCiphertextResponse(memory_id=str(new_id), superseded_id=superseded_id)
+    except HTTPException as exc:
+        if qa:
+            print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)
+            print("BACKEND_MEMORY_V2_EXCEPTION_TYPE=HTTPException", flush=True)
+            print(f"BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS={exc.status_code}", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=request_validation", flush=True)
+        raise
+    except Exception as exc:
+        if qa:
+            print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)
+            print(f"BACKEND_MEMORY_V2_EXCEPTION_TYPE={type(exc).__name__}", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=500", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=database_error", flush=True)
+        raise
 
 
 @router.get(
