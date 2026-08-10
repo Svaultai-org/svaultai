@@ -120,10 +120,10 @@ class MemoryV2Repository {
         payloadCiphertext: encodedEnvelope,
         lookupHash: lookupHash,
       );
-    } catch (e) {
+    } catch (e, st) {
       if (_qaDiagnostics) {
         print('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}');
-        final topFrame = StackTrace.current.toString().split('\n').first.trim();
+        final topFrame = st.toString().split('\n').first.trim();
         print('QA_MEMORY_WRITE_EXCEPTION_TOP_FRAME=$topFrame');
       }
       rethrow;
