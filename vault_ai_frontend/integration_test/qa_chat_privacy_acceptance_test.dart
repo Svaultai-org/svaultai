@@ -69,7 +69,13 @@ Future<String> _prepareSyntheticCredentialV2(WidgetTester tester) async {
   print('CREDENTIAL_FIXTURE_READBACK_RETURNED=true');
   if (!readBack.semanticallyEquals(credential))
     throw StateError('credential fixture readback mismatch');
+  print('CREDENTIAL_VERIFY_PRECONDITIONS_ENTERED=true');
+  print('CREDENTIAL_VERIFY_RECORD_ID_PRESENT=${recordId.isNotEmpty}');
+  print('CREDENTIAL_VERIFY_OPERATION_ID_PRESENT=${operationId.isNotEmpty}');
+  print('CREDENTIAL_VERIFY_API_INSTANCE_READY=true');
+  print('CREDENTIAL_VERIFY_CALL_ABOUT_TO_RUN=true');
   await repository.api.verify(recordId, operationId);
+  print('CREDENTIAL_VERIFY_CALL_RETURNED=true');
   print('CREDENTIAL_FIXTURE_VERIFY_RETURNED=true');
   print('CREDENTIAL_FIXTURE_WRITE=PASS');
   print('CREDENTIAL_FIXTURE_READBACK=PASS');
