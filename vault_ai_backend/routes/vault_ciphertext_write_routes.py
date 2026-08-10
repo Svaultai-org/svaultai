@@ -43,7 +43,6 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -391,15 +390,9 @@ def ai_memory_ciphertext_upsert(
     payload: AiMemoryCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> AiMemoryCiphertextResponse:
-    qa_diag = os.getenv("QA_CHAT_PRIVACY_DIAGNOSTICS", "").lower() == "true"
-    if qa_diag:
-        print("BACKEND_MEMORY_V2_WRITE_REQUEST_OBSERVED=true", flush=True)
-        print("BACKEND_MEMORY_V2_WRITE_HANDLER_ENTERED=true", flush=True)
     _reject_plaintext_leak(payload, (
         "memory_key", "memory_value", "memory_normalized_key",
     ))
-    if qa_diag:
-        print("BACKEND_MEMORY_V2_WRITE_VALIDATION_PASSED=true", flush=True)
 
     lookup_hash = _b64url_decode(
         payload.memory_lookup_hash, name="memory_lookup_hash",
@@ -416,8 +409,6 @@ def ai_memory_ciphertext_upsert(
     )
 
     conn = get_db()
-    if qa_diag:
-        print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_ENTERED=true", flush=True)
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
@@ -462,28 +453,9 @@ def ai_memory_ciphertext_upsert(
             superseded_id = int(prev["id"])
 
         conn.commit()
-        if qa_diag:
-            print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_SUCCEEDED=true", flush=True)
-    except HTTPException as exc:
-        if qa_diag:
-            print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)
-            print("BACKEND_MEMORY_V2_EXCEPTION_TYPE=HTTPException", flush=True)
-            print(f"BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS={exc.status_code}", flush=True)
-            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=request_validation", flush=True)
-        raise
-    except Exception as exc:
-        if qa_diag:
-            print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)
-            print(f"BACKEND_MEMORY_V2_EXCEPTION_TYPE={type(exc).__name__}", flush=True)
-            print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=500", flush=True)
-            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=database_error", flush=True)
-        raise
     finally:
         conn.close()
 
-    if qa_diag:
-        print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=200", flush=True)
-        print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=none", flush=True)
     return AiMemoryCiphertextResponse(
         memory_id=new_id, superseded_id=superseded_id,
     )
