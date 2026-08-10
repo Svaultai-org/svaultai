@@ -414,7 +414,7 @@ def verify_credential_v2(
                AND record_domain = 'credential' AND record_id = %s
                AND migration_state IN ('migration_pending', 'v2_written', 'v2_verified')
             """,
-            (payload.operation_id, principal["vault_id"], record_id),
+            (str(payload.operation_id), principal["vault_id"], record_id),
         )
         if cur.rowcount != 1:
             conn.rollback()
