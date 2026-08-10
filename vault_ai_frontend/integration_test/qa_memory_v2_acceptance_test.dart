@@ -67,6 +67,10 @@ void main() {
     // checkpoint on Android.  Confirm the product state instead: the exact
     // synthetic record must be present in the MemoryV2 list after the write.
     var memoryVisible = false;
+    final refresh = find.text('Refresh');
+    if (refresh.evaluate().isNotEmpty) {
+      await tester.tap(refresh.last);
+    }
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 500));
       if (find.text('QA Memory').evaluate().isNotEmpty) {
