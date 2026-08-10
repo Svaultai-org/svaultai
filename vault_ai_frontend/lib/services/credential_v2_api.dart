@@ -69,6 +69,10 @@ class CredentialV2Api {
       _qaPutTrace('http_client_call_entered');
       final response = await client.put(uri, headers: headers, body: body);
       _qaPutTrace('http_client_call_returned');
+      if (_qaPutDiagnostics) {
+        print('CREDENTIAL_V2_CREATE_HTTP_STATUS=${response.statusCode}');
+        print('CREDENTIAL_V2_CREATE_HTTP_2XX=${response.statusCode >= 200 && response.statusCode < 300}');
+      }
       return _envelopeResponse(response);
     } on FormatException {
       _qaPutTrace('pre_dispatch_exception_caught', error: 'FormatException');

@@ -215,13 +215,21 @@ def write_credential_v2(
     payload: CredentialV2WriteRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> CredentialV2EnvelopeResponse:
+    qa = os.getenv('QA_CHAT_PRIVACY_DIAGNOSTICS', '').lower() == 'true'
+    if qa:
+        print('BACKEND_CREDENTIAL_V2_CREATE_REQUEST_OBSERVED=true', flush=True)
+        print('BACKEND_CREDENTIAL_V2_CREATE_HANDLER_ENTERED=true', flush=True)
     _require("write")
     if record_id != payload.record_id:
         raise HTTPException(status_code=400, detail="record_id mismatch")
     if payload.migration_operation_id is not None:
         _require("migration")
+    if qa:
+        print('BACKEND_CREDENTIAL_V2_CREATE_VALIDATION_PASSED=true', flush=True)
 
     conn = get_db()
+    if qa:
+        print('BACKEND_CREDENTIAL_V2_CREATE_DB_OPERATION_ENTERED=true', flush=True)
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         state = "migration_pending" if payload.migration_operation_id else "v2_written"
@@ -269,14 +277,19 @@ def write_credential_v2(
                 DO UPDATE SET updated_at = NOW()
                 """,
                 (
-                    payload.migration_operation_id, principal["vault_id"],
+                    str(payload.migration_operation_id), principal["vault_id"],
                     record_id, row["id"],
                 ),
             )
         conn.commit()
-        return _response(row)
+        if qa:
+            print('BACKEND_CREDENTIAL_V2_CREATE_DB_OPERATION_SUCCEEDED=true', flush=True)
     finally:
         conn.close()
+    if qa:
+        print('BACKEND_CREDENTIAL_V2_CREATE_RESPONSE_STATUS=200', flush=True)
+        print('BACKEND_CREDENTIAL_V2_CREATE_SAFE_ERROR_CATEGORY=none', flush=True)
+    return _response(row)
 
 
 @router.get("/{record_id}", response_model=CredentialV2EnvelopeResponse)
