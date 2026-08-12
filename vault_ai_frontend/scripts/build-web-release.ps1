@@ -101,7 +101,7 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         '--dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet'
         '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true'
         '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true'
-        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=false'
+        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true'
     ) + $flutterExtraArgs
     Write-Host "[vault-release] flutter $($buildArgs -join ' ')" -ForegroundColor Cyan
     flutter @buildArgs

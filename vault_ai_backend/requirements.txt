@@ -24,6 +24,7 @@ openpyxl
 alembic
 sqlalchemy
 stripe>=7.0
+httpx==0.28.1
 # Slice 2B — image OCR. Optional at runtime; the OCR module
 # detects pytesseract + Pillow at import and falls back to a
 # clean "OCR engine unavailable" error if either is missing.

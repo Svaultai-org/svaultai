@@ -2051,6 +2051,68 @@ class CheckoutSessionDispatchRouteTests(unittest.TestCase):
         self.assertEqual(body["session_id"], "cs_test_1")
         create_mock.assert_called_once()
 
+    def test_checkout_rejection_keeps_stripe_diagnostics_server_side(self):
+        from fastapi.testclient import TestClient
+        from stripe_service import StripeCheckoutRejectedError
+
+        client = TestClient(self._build_app())
+        raw_message = "Your account cannot currently make live charges."
+        with self._patch_ensure_account(), patch(
+            "stripe_service.get_active_storage_subscription",
+            return_value=None,
+        ), patch(
+            "stripe_service.create_checkout_session",
+            side_effect=StripeCheckoutRejectedError(
+                stripe_type="InvalidRequestError",
+                stripe_code=None,
+                stripe_message=raw_message,
+                param=None,
+            ),
+        ):
+            resp = client.post(
+                "/billing/checkout-session",
+                json={"block_count": 1},
+            )
+
+        self.assertEqual(resp.status_code, 503)
+        detail = resp.json()["detail"]
+        self.assertEqual(
+            detail,
+            {
+                "code": "checkout_temporarily_unavailable",
+                "message": "We couldn't start checkout. Please try again.",
+            },
+        )
+        serialized = resp.text
+        self.assertNotIn(raw_message, serialized)
+        self.assertNotIn("stripe_message", serialized)
+        self.assertNotIn("InvalidRequestError", serialized)
+        self.assertNotIn("See the stripe_message field", serialized)
+
+    def test_unexpected_checkout_failure_does_not_expose_exception_type(self):
+        from fastapi.testclient import TestClient
+
+        client = TestClient(self._build_app())
+        with self._patch_ensure_account(), patch(
+            "stripe_service.get_active_storage_subscription",
+            return_value=None,
+        ), patch(
+            "stripe_service.create_checkout_session",
+            side_effect=RuntimeError("operator-only diagnostic"),
+        ):
+            resp = client.post(
+                "/billing/checkout-session",
+                json={"block_count": 1},
+            )
+
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(
+            resp.json()["detail"]["message"],
+            "We couldn't start checkout. Please try again.",
+        )
+        self.assertNotIn("RuntimeError", resp.text)
+        self.assertNotIn("operator-only diagnostic", resp.text)
+
     def test_branch_b_modifies_existing_when_active_sub_present(self):
                                                                
                                                      

@@ -107,6 +107,24 @@ Future<http.Response> _runWithNetLog(
   }
 }
 
+/// A checkout failure whose string representation is safe to display.
+///
+/// Stripe response details and backend diagnostics must never cross this UI
+/// boundary. [code] is retained only for known product flows such as the
+/// supported lower-plan dialog.
+class BillingCheckoutException implements Exception {
+  final String code;
+  final String message;
+
+  const BillingCheckoutException({
+    required this.code,
+    required this.message,
+  });
+
+  @override
+  String toString() => message;
+}
+
 class OrphanDataException implements Exception {
   final String message;
   final String? vaultName;
@@ -1078,17 +1096,46 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Checkout session failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
+      throw _safeBillingCheckoutError(response.body);
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid checkout-session response format');
     }
     return decoded;
+  }
+
+  BillingCheckoutException _safeBillingCheckoutError(String responseBody) {
+    const fallback = "We couldn't start checkout. Please try again.";
+    var code = 'checkout_failed';
+    var message = fallback;
+
+    try {
+      final decoded = jsonDecode(responseBody);
+      final detail = decoded is Map<String, dynamic>
+          ? decoded['detail']
+          : null;
+      if (detail is Map) {
+        final parsedCode = detail['code']?.toString() ?? '';
+        code = parsedCode.isEmpty ? code : parsedCode;
+
+        // These are product-policy messages authored by SVaultAI. All
+        // Stripe/configuration/internal failures deliberately use fallback.
+        const safeProductCodes = {
+          'no_change',
+          'downgrade_not_supported',
+          'enterprise_required',
+        };
+        if (safeProductCodes.contains(parsedCode)) {
+          final parsedMessage = detail['message']?.toString().trim() ?? '';
+          if (parsedMessage.isNotEmpty) message = parsedMessage;
+        }
+      }
+    } catch (_) {
+      // Malformed and non-JSON responses use the same safe fallback.
+    }
+
+    return BillingCheckoutException(code: code, message: message);
   }
 
   Future<Map<String, dynamic>> createStripePortalSession({

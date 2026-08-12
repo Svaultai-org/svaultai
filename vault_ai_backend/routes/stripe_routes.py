@@ -174,20 +174,20 @@ async def create_checkout_session_endpoint(
             },
         )
     except StripeCheckoutRejectedError as exc:
-                                                                        
-                                                                     
+        # Stripe's exception can contain account state, request parameters,
+        # and other operator-only diagnostics.  stripe_service already logs
+        # those fields server-side; never copy them into the public API.
+        logger.warning(
+            "Stripe checkout rejected type=%s code=%s param=%s",
+            exc.stripe_type,
+            exc.stripe_code,
+            exc.param,
+        )
         raise HTTPException(
-            status_code=400,
+            status_code=503,
             detail={
-                "code": "stripe_checkout_invalid_request",
-                "message": (
-                    "Stripe rejected the checkout request. See the "
-                    "stripe_message field for the specific reason."
-                ),
-                "stripe_type":    exc.stripe_type,
-                "stripe_code":    exc.stripe_code,
-                "stripe_message": exc.stripe_message,
-                "stripe_param":   exc.param,
+                "code": "checkout_temporarily_unavailable",
+                "message": "We couldn't start checkout. Please try again.",
             },
         )
     except Exception as exc:
@@ -198,7 +198,7 @@ async def create_checkout_session_endpoint(
             status_code=500,
             detail={
                 "code": "checkout_session_error",
-                "message": f"Could not start checkout: {type(exc).__name__}",
+                "message": "We couldn't start checkout. Please try again.",
             },
         )
 

@@ -323,8 +323,16 @@ class _StoragePageState extends State<StoragePage> {
 
   
   bool _isDowngradeNotSupportedError(Object error) {
+    if (error is BillingCheckoutException) {
+      return error.code == 'downgrade_not_supported';
+    }
     final s = error.toString();
     return s.contains('downgrade_not_supported');
+  }
+
+  String _friendlyCheckoutErrorMessage(Object error) {
+    if (error is BillingCheckoutException) return error.message;
+    return "We couldn't start checkout. Please try again.";
   }
 
   Future<void> _startCheckout(int blockCount) async {
@@ -418,7 +426,9 @@ class _StoragePageState extends State<StoragePage> {
       } else {
         await showDialog<void>(
           context: context,
-          builder: (_) => _UpgradeErrorDialog(message: e.toString()),
+          builder: (_) => _UpgradeErrorDialog(
+            message: _friendlyCheckoutErrorMessage(e),
+          ),
         );
       }
     } finally {
