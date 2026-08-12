@@ -28,6 +28,27 @@ String? attachmentTitleFromComposerText(
   return normalized.isEmpty ? null : normalized;
 }
 
+/// Preserves the user's exact visible title while retaining a safe original
+/// extension for downloads/playback. The exact title is stored separately as
+/// FileV2 metadata `label`; this filename is the transport/download name.
+String filenameWithChosenTitle({
+  required String originalFilename,
+  String? chosenTitle,
+}) {
+  final title = chosenTitle?.trim();
+  if (title == null || title.isEmpty) return originalFilename;
+  final originalBase = originalFilename.split(RegExp(r'[\\/]')).last;
+  final dot = originalBase.lastIndexOf('.');
+  final extension = dot > 0 && dot < originalBase.length - 1
+      ? originalBase.substring(dot)
+      : '';
+  if (extension.isNotEmpty &&
+      title.toLowerCase().endsWith(extension.toLowerCase())) {
+    return title;
+  }
+  return '$title$extension';
+}
+
 String? _stripExplicitNamingCommand(String text) {
   final patterns = <RegExp>[
     RegExp(

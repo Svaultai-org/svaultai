@@ -623,7 +623,6 @@ class UploadQueueController extends ChangeNotifier {
           if (job.attempts >= maxAttempts) {
             job.status = UploadJobStatus.failed;
             job.errorMessage = e.reason;
-            job.cachedBytes = null;
             notifyListeners();
             return;
           }
@@ -645,7 +644,6 @@ class UploadQueueController extends ChangeNotifier {
         } catch (e) {
           job.status = UploadJobStatus.failed;
           job.errorMessage = '$e';
-          job.cachedBytes = null;
           notifyListeners();
           return;
         }

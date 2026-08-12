@@ -63,6 +63,13 @@ class IntentClassificationTests(unittest.TestCase):
         from vault_chat_router import classify_and_build_vault_intent
         return classify_and_build_vault_intent(m)
 
+    def test_ordinary_work_life_balance_is_not_crypto(self):
+        result = self._f(
+            "I am choosing between a job with higher pay and one with "
+            "better work-life balance. Help me think it through."
+        )
+        self.assertNotEqual(result["intent"], "vault_crypto_delegated")
+
 
     def test_vault_overview_intents(self):
         for m in [
@@ -115,6 +122,16 @@ class IntentClassificationTests(unittest.TestCase):
             ("Do I have duplicate passwords?", "vault_login_duplicates"),
         ]:
             self.assertEqual(self._f(m)["intent"], expected, m)
+
+    def test_semantic_login_lookup_accepts_natural_variations(self):
+        for message, service in (
+            ("What is my Facebook login?", "Facebook"),
+            ("Do I have credentials for Slack?", "Slack"),
+            ("Where are the credentials for GitHub?", "GitHub"),
+        ):
+            result = self._f(message)
+            self.assertEqual(result["intent"], "vault_login_search", message)
+            self.assertEqual(result["card"]["query"], service, message)
 
 
     def test_login_reveal_dispatches_detail_card(self):

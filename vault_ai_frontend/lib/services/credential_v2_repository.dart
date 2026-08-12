@@ -1,6 +1,7 @@
 import 'credential_v2.dart';
 import 'credential_v2_api.dart';
 import 'credential_v2_qa_diagnostics.dart';
+import 'dart:math';
 
 const bool _qaV2Diagnostics =
     bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
@@ -15,6 +16,149 @@ class CredentialV2LookupIntent {
   final bool listAll;
   final String? service;
   const CredentialV2LookupIntent._({required this.listAll, this.service});
+}
+
+class CredentialV2CreateIntent {
+  final String? service;
+  final String? username;
+  final bool explicitlyAnother;
+  const CredentialV2CreateIntent({
+    this.service,
+    this.username,
+    this.explicitlyAnother = false,
+  });
+}
+
+class CredentialV2DeleteIntent {
+  final String service;
+  const CredentialV2DeleteIntent(this.service);
+}
+
+/// Recognizes conversational requests to start a login-creation flow.  This
+/// deliberately extracts arbitrary service labels instead of maintaining a
+/// list of brands. The caller generates and saves the secret locally.
+CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
+  var normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  if (normalized.isEmpty) return null;
+  final usernameMatch = RegExp(
+    r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:the\s+)?(?:username|email)(?:\s+address)?$',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  final suppliedUsername = usernameMatch?.group(1)?.trim();
+  if (usernameMatch != null) {
+    normalized = normalized.substring(0, usernameMatch.start).trim();
+  }
+  final explicitlyAnother =
+      RegExp(r'\b(?:another|second|additional)\b', caseSensitive: false)
+          .hasMatch(normalized);
+  normalized = normalized.replaceAll(
+      RegExp(r'\b(?:another|second|additional)\b', caseSensitive: false),
+      'new');
+  final patterns = <RegExp>[
+    RegExp(
+      r'^(?:i\s+(?:need|want|would\s+like)|could\s+you\s+(?:make|create|generate))(?:\s+me)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(?:login|credentials?|account)\s+(?:for\s+)?(.+)$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|logins|credential|credentials|account)(?:\s+for\s+me)?$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(?:account\s+)?(?:login|logins|credential|credentials|account)\s+(?:for\s+)?(.+)$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(?:login|logins|credential|credentials|account)$',
+      caseSensitive: false,
+    ),
+  ];
+  for (var index = 0; index < patterns.length; index++) {
+    final match = patterns[index].firstMatch(normalized);
+    if (match == null) continue;
+    final service = match.groupCount == 0 ? null : match.group(1)?.trim();
+    return CredentialV2CreateIntent(
+      service: service == null || service.isEmpty ? null : service,
+      username: suppliedUsername == null || suppliedUsername.isEmpty
+          ? null
+          : suppliedUsername,
+      explicitlyAnother: explicitlyAnother,
+    );
+  }
+  return null;
+}
+
+CredentialV2DeleteIntent? parseCredentialV2DeleteIntent(String text) {
+  final normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  final patterns = <RegExp>[
+    RegExp(
+      r'^(?:please\s+)?(?:delete|remove|erase|get\s+rid\s+of)(?:\s+my|\s+the)?\s+(.+?)\s+(?:login|credentials?|account)(?:\s+from\s+(?:my\s+)?vault)?$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'^(?:please\s+)?(?:delete|remove|erase|get\s+rid\s+of)(?:\s+my|\s+the)?\s+(.+?)(?:\s+from\s+(?:my\s+)?vault)$',
+      caseSensitive: false,
+    ),
+  ];
+  for (var index = 0; index < patterns.length; index++) {
+    final service = patterns[index].firstMatch(normalized)?.group(1)?.trim();
+    if (service != null && service.isNotEmpty) {
+      // File/media deletion is arbitrated by the local FileV2 route. Do not
+      // reinterpret an explicit media noun or filename extension as a login
+      // service merely because both actions use "delete/remove" wording.
+      // The second pattern has no explicit credential noun (for example,
+      // "remove X from my vault"), so media/file vocabulary anywhere in X
+      // must be left for FileV2 arbitration. The explicit login pattern can
+      // still delete services whose brand happens to contain such a word.
+      if (index == 1 &&
+          RegExp(
+            r'\b(?:file|document|image|photo|picture|video|audio|recording|voice)\b|\.(?:png|jpe?g|gif|webp|heic|pdf|txt|csv|docx?|xlsx?|pptx?|mp3|m4a|wav|ogg|aac|flac|mp4|mov|m4v|webm|avi|mkv)$',
+            caseSensitive: false,
+          ).hasMatch(service)) {
+        return null;
+      }
+      return CredentialV2DeleteIntent(service);
+    }
+  }
+  return null;
+}
+
+CredentialV2Plaintext generateCredentialV2Plaintext(
+  String service, {
+  Random? random,
+  String? username,
+}) {
+  final rng = random ?? Random.secure();
+  final slug = service
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '')
+      .replaceAll(RegExp(r'^\d+'), '');
+  final stem = slug.isEmpty ? 'account' : slug;
+  final suffix = List<int>.generate(6, (_) => rng.nextInt(10)).join();
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#%*-_+=';
+  const all = '$upper$lower$digits$symbols';
+  final required = <String>[
+    upper[rng.nextInt(upper.length)],
+    lower[rng.nextInt(lower.length)],
+    digits[rng.nextInt(digits.length)],
+    symbols[rng.nextInt(symbols.length)],
+  ];
+  required.addAll(List<String>.generate(
+    16,
+    (_) => all[rng.nextInt(all.length)],
+  ));
+  required.shuffle(rng);
+  return CredentialV2Plaintext(
+    service: service.trim(),
+    username: username?.trim().isNotEmpty == true
+        ? username!.trim()
+        : '${stem}_$suffix',
+    password: required.join(),
+    url: 'https://www.$stem.com',
+    notes: 'Generated locally by SVaultAI.',
+  );
 }
 
 CredentialV2LookupIntent? parseCredentialV2LookupIntent(String text) {
@@ -45,6 +189,71 @@ class DecryptedCredentialV2Record {
     this.migrationState = 'v2_written',
     this.verificationState = 'not_verified',
   });
+}
+
+String _credentialLookupNormalized(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+    .trim()
+    .replaceAll(RegExp(r'\s+'), ' ');
+
+/// Match natural user text against services already decrypted in local
+/// memory. The vault's own data supplies the vocabulary; service names and
+/// sentence templates are deliberately not embedded here.
+List<DecryptedCredentialV2Record> matchCredentialV2RecordsForText(
+  String text,
+  Iterable<DecryptedCredentialV2Record> records,
+) {
+  final query = _credentialLookupNormalized(text);
+  if (query.isEmpty) return const <DecryptedCredentialV2Record>[];
+  final available = records.toList(growable: false);
+  final exact = available.where((record) =>
+      _credentialLookupNormalized(record.plaintext.service) == query);
+  if (exact.isNotEmpty) return exact.toList(growable: false);
+
+  final contained = available.where((record) {
+    final service = _credentialLookupNormalized(record.plaintext.service);
+    return service.length >= 4 && query.contains(service);
+  }).toList(growable: false);
+  if (contained.isNotEmpty) return contained;
+
+  final queryTokens = query.split(' ').where((token) => token.length >= 4);
+  final scored = <({DecryptedCredentialV2Record record, int score})>[];
+  for (final record in available) {
+    final service = _credentialLookupNormalized(record.plaintext.service);
+    if (service.isEmpty) continue;
+    final serviceTokens = service.split(' ');
+    final score = queryTokens
+        .where((queryToken) => serviceTokens.any(
+              (serviceToken) =>
+                  serviceToken.startsWith(queryToken) ||
+                  queryToken.startsWith(serviceToken),
+            ))
+        .length;
+    if (score > 0) scored.add((record: record, score: score));
+  }
+  if (scored.isEmpty) return const <DecryptedCredentialV2Record>[];
+  final best = scored.map((entry) => entry.score).reduce(
+        (left, right) => left > right ? left : right,
+      );
+  return scored
+      .where((entry) => entry.score == best)
+      .map((entry) => entry.record)
+      .toList(growable: false);
+}
+
+bool looksLikePrivateCredentialQuery(String text) {
+  final tokens = _credentialLookupNormalized(text).split(' ').toSet();
+  return tokens.intersection(const {
+    'login',
+    'logins',
+    'password',
+    'passwords',
+    'credential',
+    'credentials',
+    'username',
+    'usernames',
+  }).isNotEmpty;
 }
 
 class CredentialV2Repository {
@@ -174,7 +383,17 @@ class CredentialV2Repository {
         await crypto.decrypt(candidate),
       ));
     }
-    return clear;
+    if (clear.isNotEmpty || field != 'service') return clear;
+
+    // Migrated CredentialV2 rows can be valid encrypted records while lacking
+    // the current service blind index. A blind-index miss is not authoritative:
+    // refresh and compare client-decrypted service metadata before not-found.
+    final normalized = normalizeExactLookup(value);
+    final fresh = await listDecrypted();
+    return fresh
+        .where((record) =>
+            normalizeExactLookup(record.plaintext.service) == normalized)
+        .toList(growable: false);
   }
 
   Future<void> delete(String recordId) => api.delete(recordId);

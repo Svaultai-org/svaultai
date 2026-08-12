@@ -125,7 +125,7 @@ void main() {
   group('LoginPage', () {
     test('exposes a stable identifier on the editable PIN field', () {
       final src = File('lib/main.dart').readAsStringSync();
-      final login = _windowAfter(src, 'class LoginPage', length: 26000);
+      final login = _windowAfter(src, 'class LoginPage', length: 50000);
       expect(login, contains("identifier: 'auth_pin_field'"));
       expect(login, contains("identifier: 'qa_login_pin_editable'"));
       expect(login, contains("key: const Key('auth_pin_field')"));

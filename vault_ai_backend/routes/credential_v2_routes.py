@@ -22,6 +22,7 @@ from auth_local import SessionPrincipal, verify_session_token
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
 from vault_credential_draft import consume_draft, get_draft
+from subscription_entitlement import require_content_write
 
 
 router = APIRouter(prefix="/vault/v2/credentials", tags=["credential-v2"])
@@ -215,6 +216,7 @@ def write_credential_v2(
     payload: CredentialV2WriteRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> CredentialV2EnvelopeResponse:
+    require_content_write(principal)
     qa = os.getenv('QA_CHAT_PRIVACY_DIAGNOSTICS', '').lower() == 'true'
     if qa:
         print('BACKEND_CREDENTIAL_V2_CREATE_REQUEST_OBSERVED=true', flush=True)
@@ -369,6 +371,7 @@ def verify_credential_v2(
     payload: ClientVerificationRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     _require("migration")
     conn = get_db()
     try:
@@ -441,6 +444,7 @@ def rollback_credential_v2(
     record_id: str,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     _require("migration")
     conn = get_db()
     try:

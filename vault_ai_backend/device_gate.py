@@ -98,7 +98,18 @@ def is_dev_auto_trust_enabled() -> bool:
     ).strip().lower()
     if raw != "true":
         return False
-    return _is_dev_environment()
+    # Auto-trust is intentionally harder to enable than an ordinary dev
+    # feature.  The isolated-QA marker and a loopback database are both
+    # required, so copying the flag into production configuration cannot
+    # weaken production device policy.
+    isolated_qa = os.getenv(
+        "VAULTAI_ISOLATED_QA", "false",
+    ).strip().lower() == "true"
+    database_url = os.getenv("DATABASE_URL", "").strip().lower()
+    loopback_database = (
+        "@127.0.0.1:" in database_url or "@localhost:" in database_url
+    )
+    return _is_dev_environment() and isolated_qa and loopback_database
 
 
 def gate_status_for_boot() -> dict:

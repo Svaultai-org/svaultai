@@ -510,20 +510,55 @@ def detect_language(text: str) -> Optional[str]:
 
 
     padded = f" {s.lower()} "
+    # Latin-script language hints are heuristic. A single short article such
+    # as English "a" must never decide the language by itself (for example,
+    # "I am planning a trip to Lagos" used to be labelled Portuguese).
+    # Strong, language-specific terms may decide alone; ambiguous words need
+    # corroboration from at least one additional hint.
+    scores: dict[str, int] = {}
+    strong_hits: dict[str, int] = {}
     for lang, kws in _LATIN_KEYWORDS_BY_LANG.items():
         for kw in kws:
             needle = str(kw or "").lower()
             bare = needle.strip()
-            if (
-                bare
-                and len(bare) <= 3
-                and re.fullmatch(r"[a-z]+", bare)
-            ):
-                if re.search(rf"(?<![a-z]){re.escape(bare)}(?![a-z])", padded):
-                    return lang
+            if not bare:
                 continue
-            if needle in padded:
-                return lang
+            short_alpha = len(bare) <= 3 and re.fullmatch(r"[a-z]+", bare)
+            if short_alpha:
+                matched = bool(re.search(
+                    rf"(?<![a-z]){re.escape(bare)}(?![a-z])", padded,
+                ))
+            else:
+                matched = needle in padded
+            if not matched:
+                continue
+            scores[lang] = scores.get(lang, 0) + 1
+            if not short_alpha:
+                strong_hits[lang] = strong_hits.get(lang, 0) + 1
+
+    candidates = [
+        lang for lang, score in scores.items()
+        if score >= 2 or strong_hits.get(lang, 0) >= 1
+    ]
+    if candidates:
+        return max(
+            candidates,
+            key=lambda lang: (strong_hits.get(lang, 0), scores[lang]),
+        )
+
+    # Ordinary English often contains no language-specific keyword at all.
+    # Recognise a small combination of common function words instead of
+    # returning an "unknown language" result for prompts such as
+    # "how does this work". Requiring two hits avoids labelling a lone name
+    # or an unknown-language token as English.
+    english_function_words = {
+        "i", "am", "is", "are", "was", "were", "do", "does", "did",
+        "how", "what", "when", "where", "why", "this", "that", "my",
+        "you", "your", "can", "could", "would", "should", "the", "a",
+    }
+    latin_words = set(re.findall(r"[a-z]+", s.lower()))
+    if len(latin_words.intersection(english_function_words)) >= 2:
+        return "en"
 
     return None
 

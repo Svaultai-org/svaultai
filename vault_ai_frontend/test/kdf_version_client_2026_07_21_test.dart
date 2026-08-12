@@ -236,7 +236,7 @@ void main() {
       // detailed atomicity assertions.
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      final endIdx = (sendIdx + 20000).clamp(0, src.length);
+      final endIdx = (sendIdx + 60000).clamp(0, src.length);
       final fn = src.substring(sendIdx, endIdx);
       final snapIdx = fn.indexOf('VaultCryptoRegistry.current');
       final streamIdx = fn.indexOf('client.chatStream(');
@@ -253,7 +253,7 @@ void main() {
          'path', () {
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      final endIdx = (sendIdx + 20000).clamp(0, src.length);
+      final endIdx = (sendIdx + 60000).clamp(0, src.length);
       final fn = src.substring(sendIdx, endIdx);
       expect(fn.contains('err is KdfGenerationStaleException'),
           isTrue,
@@ -288,7 +288,7 @@ void main() {
          'force PIN', () {
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      final endIdx = (sendIdx + 20000).clamp(0, src.length);
+      final endIdx = (sendIdx + 60000).clamp(0, src.length);
       final fn = src.substring(sendIdx, endIdx);
       final branch = kdfBranchBody(fn);
       expect(branch.contains('applyFreshKdfMetadata'), isTrue,
@@ -302,7 +302,7 @@ void main() {
     test('on 409 with rederived=true, does NOT navigate to /pin', () {
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      final endIdx = (sendIdx + 20000).clamp(0, src.length);
+      final endIdx = (sendIdx + 60000).clamp(0, src.length);
       final fn = src.substring(sendIdx, endIdx);
       final branch = kdfBranchBody(fn);
       // The rederived==true path must go through
@@ -336,7 +336,7 @@ void main() {
     test('does NOT auto-retry the send in the 409 branch', () {
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      final endIdx = (sendIdx + 20000).clamp(0, src.length);
+      final endIdx = (sendIdx + 60000).clamp(0, src.length);
       final fn = src.substring(sendIdx, endIdx);
       final branch = kdfBranchBody(fn);
       // No recursive _send or chatStream inside the 409 branch.

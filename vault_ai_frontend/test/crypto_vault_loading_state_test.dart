@@ -1,5 +1,3 @@
-
-
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,22 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/ui/crypto_vault_locked_card.dart';
 
-
 String _readLib(String relativePath) {
   return File(
     '${Directory.current.path}/lib/$relativePath',
   ).readAsStringSync().replaceAll('\r\n', '\n');
 }
 
-
 Widget _wrap(Widget child) {
   return MaterialApp(home: Scaffold(body: child));
 }
 
-
 void main() {
-  
-  
   group('Loading-state constants', () {
     test('kTierLoadingLabel resolves to "loading"', () {
       expect(kTierLoadingLabel, 'loading');
@@ -30,37 +23,28 @@ void main() {
 
     test('loading status + body are operator-pinned', () {
       expect(kCryptoVaultLoadingStatus, 'Checking access…');
-      expect(kCryptoVaultLoadingBody,
-          'Loading your Crypto Vault access.');
+      expect(kCryptoVaultLoadingBody, 'Loading your Crypto Vault access.');
     });
   });
 
-  
   group('Loading tier renders neutral card', () {
-    testWidgets('tier=loading shows "Checking access…" status',
-        (tester) async {
+    testWidgets('tier=loading shows "Checking access…" status', (tester) async {
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierLoadingLabel),
       ));
-      
-      
-      expect(find.byKey(const Key('crypto_vault_loading_card')),
-          findsOneWidget);
-      expect(find.byKey(const Key('crypto_vault_locked_card')),
-          findsNothing);
-      expect(find.byKey(const Key('crypto_vault_active_card')),
-          findsNothing);
-      
-      expect(find.byKey(const Key('crypto_vault_loading_icon')),
-          findsOneWidget);
-      expect(find.byKey(const Key('crypto_vault_lock_icon')),
-          findsNothing);
-      expect(find.byKey(const Key('crypto_vault_active_icon')),
-          findsNothing);
-      
+
+      expect(
+          find.byKey(const Key('crypto_vault_loading_card')), findsOneWidget);
+      expect(find.byKey(const Key('crypto_vault_locked_card')), findsNothing);
+      expect(find.byKey(const Key('crypto_vault_active_card')), findsNothing);
+
+      expect(
+          find.byKey(const Key('crypto_vault_loading_icon')), findsOneWidget);
+      expect(find.byKey(const Key('crypto_vault_lock_icon')), findsNothing);
+      expect(find.byKey(const Key('crypto_vault_active_icon')), findsNothing);
+
       expect(find.text('Checking access…'), findsOneWidget);
-      expect(find.text('Loading your Crypto Vault access.'),
-          findsOneWidget);
+      expect(find.text('Loading your Crypto Vault access.'), findsOneWidget);
     });
 
     testWidgets('tier=loading hides the upgrade-required button',
@@ -68,15 +52,14 @@ void main() {
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierLoadingLabel),
       ));
-      
+
       expect(
         find.byKey(const Key('crypto_vault_upgrade_required_button')),
         findsNothing,
       );
       expect(find.text('Upgrade required'), findsNothing);
-      
-      expect(find.byKey(const Key('crypto_vault_open_button')),
-          findsNothing);
+
+      expect(find.byKey(const Key('crypto_vault_open_button')), findsNothing);
       expect(find.text('Open Crypto Vault'), findsNothing);
     });
 
@@ -87,14 +70,15 @@ void main() {
       ));
       final btn = find.byKey(const Key('crypto_vault_loading_button'));
       expect(btn, findsOneWidget);
-      
+
       final widget = tester.widget<ElevatedButton>(btn);
       expect(widget.onPressed, isNull,
           reason: 'loading button must be disabled — no navigation '
               'while billing is still loading.');
     });
 
-    testWidgets('tier=loading carries none of the forbidden upgrade '
+    testWidgets(
+        'tier=loading carries none of the forbidden upgrade '
         'or active wordings', (tester) async {
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierLoadingLabel),
@@ -106,39 +90,33 @@ void main() {
     });
   });
 
-  
   group('Loading → upgraded transition', () {
-    testWidgets(
-        'rebuilding from loading to upgraded skips "Upgrade required"',
+    testWidgets('rebuilding from loading to upgraded skips "Upgrade required"',
         (tester) async {
-      
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierLoadingLabel),
       ));
       expect(find.text('Checking access…'), findsOneWidget);
       expect(find.text('Upgrade required'), findsNothing);
-      
+
       await tester.pumpWidget(_wrap(
         const CryptoVaultLockedCard(tier: kTierUpgradedLabel),
       ));
       expect(find.text('Active'), findsOneWidget);
       expect(find.text('Open Crypto Vault'), findsOneWidget);
-      
+
       expect(find.text('Upgrade required'), findsNothing);
       expect(find.text('Available with upgrade'), findsNothing);
     });
   });
 
-  
   group('main.dart Settings call site loading gate', () {
     test('Settings card site reads !app.isBillingLoaded first', () {
       final src = _readLib('main.dart');
       expect(
-        src,
-        contains(
-          'tier: !app.isBillingLoaded\n'
-          '                    ? kTierLoadingLabel',
-        ),
+        RegExp(r'tier:\s*!app\.isBillingLoaded\s*\?\s*kTierLoadingLabel')
+            .hasMatch(src),
+        isTrue,
         reason: 'Settings call site MUST gate the tier resolution on '
             '!app.isBillingLoaded so an upgraded user never sees the '
             'upgrade flicker.',
@@ -146,14 +124,12 @@ void main() {
     });
   });
 
-  
   group('Crypto Vault PAGE non-blocking access gate', () {
     test(
       '_buildCryptoVaultSection does NOT full-page-block on billing '
       'loading/error — it renders a non-blocking status banner instead',
       () {
         final src = _readLib('main.dart');
-
 
         expect(
           src.contains('if (!app.isBillingLoaded) {'),
@@ -176,7 +152,6 @@ void main() {
           isFalse,
           reason: 'The full-page "error card" gate must be gone.',
         );
-
 
         expect(
           src.contains('_CryptoVaultBillingStatusBanner'),
@@ -204,7 +179,6 @@ void main() {
     );
   });
 
-  
   group('Mobile layout', () {
     testWidgets('loading card renders without overflow at 360 px',
         (tester) async {
@@ -216,25 +190,19 @@ void main() {
         const CryptoVaultLockedCard(tier: kTierLoadingLabel),
       ));
       await tester.pump();
-      
-      
-      expect(find.byKey(const Key('crypto_vault_loading_card')),
-          findsOneWidget);
+
+      expect(
+          find.byKey(const Key('crypto_vault_loading_card')), findsOneWidget);
       expect(find.text('Checking access…'), findsOneWidget);
     });
   });
 
-  
   group('Regression — null tier still defaults to free', () {
     testWidgets('null tier renders the locked card (NOT loading)',
         (tester) async {
-      
-      
       await tester.pumpWidget(_wrap(const CryptoVaultLockedCard()));
-      expect(find.byKey(const Key('crypto_vault_locked_card')),
-          findsOneWidget);
-      expect(find.byKey(const Key('crypto_vault_loading_card')),
-          findsNothing);
+      expect(find.byKey(const Key('crypto_vault_locked_card')), findsOneWidget);
+      expect(find.byKey(const Key('crypto_vault_loading_card')), findsNothing);
       // 2026-07-12: status label + button label both say
       // "Upgrade required" on the default locked card.
       expect(find.text('Upgrade required'), findsNWidgets(2));

@@ -120,6 +120,126 @@ void main() {
     expect(
         parseCredentialV2LookupIntent('show my saved logins')!.listAll, isTrue);
     expect(parseCredentialV2LookupIntent('tell me about Example'), isNull);
+    expect(
+      looksLikePrivateCredentialQuery(
+        'How does inheritance work while my account is active?',
+      ),
+      isFalse,
+    );
+
+    expect(parseCredentialV2CreateIntent('generate me Samsung logins')?.service,
+        'Samsung');
+    expect(
+        parseCredentialV2CreateIntent('create a login for Nebula Orchard')
+            ?.service,
+        'Nebula Orchard');
+    expect(parseCredentialV2CreateIntent('add new login'), isNotNull);
+    expect(
+        parseCredentialV2CreateIntent('make me a Samsung account login')
+            ?.service,
+        'Samsung');
+    expect(parseCredentialV2CreateIntent('set up a login for Samsung')?.service,
+        'Samsung');
+    expect(
+        parseCredentialV2CreateIntent('save me a new login for Samsung')
+            ?.service,
+        'Samsung');
+    expect(parseCredentialV2CreateIntent('show my Samsung login'), isNull);
+    final supplied = parseCredentialV2CreateIntent(
+        'create me a YouTube login with beraves123@aol.com as the username');
+    expect(supplied?.service, 'YouTube');
+    expect(supplied?.username, 'beraves123@aol.com');
+    expect(
+      parseCredentialV2CreateIntent('make me another Facebook login')
+          ?.explicitlyAnother,
+      isTrue,
+    );
+    expect(parseCredentialV2CreateIntent('I need a login for Samsung')?.service,
+        'Samsung');
+
+    expect(parseCredentialV2DeleteIntent('delete my Tinder login')?.service,
+        'Tinder');
+    expect(parseCredentialV2DeleteIntent('get rid of youtube login')?.service,
+        'youtube');
+    expect(
+        parseCredentialV2DeleteIntent('remove Samsung from my vault')?.service,
+        'Samsung');
+    expect(
+        parseCredentialV2DeleteIntent(
+            'delete the video qa-short-8421.mp4 from my vault'),
+        isNull);
+    expect(parseCredentialV2DeleteIntent('remove receipt.pdf from my vault'),
+        isNull);
+    expect(
+      parseCredentialV2DeleteIntent('remove qa field voice 7392 from my vault'),
+      isNull,
+    );
+    expect(
+      parseCredentialV2DeleteIntent('delete youtube video login')?.service,
+      'youtube video',
+    );
+
+    final generated = generateCredentialV2Plaintext(
+      'Nebula Orchard',
+      random: Random(17),
+    );
+    expect(generated.service, 'Nebula Orchard');
+    expect(generated.username, startsWith('nebulaorchard_'));
+    expect(generated.password.length, 20);
+    expect(generated.password, matches(RegExp(r'[A-Z]')));
+    expect(generated.password, matches(RegExp(r'[a-z]')));
+    expect(generated.password, matches(RegExp(r'[0-9]')));
+    expect(generated.password, matches(RegExp(r'[!@#%*\-_+=]')));
+  });
+
+  test('explicit v2 miss retains exact legacy local fallback', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(source, contains('legacyMatches.length == 1'));
+    expect(source, contains('_openLegacySecureItemDirect'));
+    expect(source, contains('item.cryptoVersion == credentialV2CryptoVersion'));
+  });
+
+  test('local credential matching is driven by decrypted vault services', () {
+    final instagram = DecryptedCredentialV2Record(
+      'credential-instagram',
+      const CredentialV2Plaintext(
+        service: 'Instagram',
+        username: 'qa-user',
+        password: 'not-logged',
+      ),
+    );
+    final gmail = DecryptedCredentialV2Record(
+      'credential-gmail',
+      const CredentialV2Plaintext(
+        service: 'Gmail',
+        username: 'qa-user',
+        password: 'not-logged',
+      ),
+    );
+    final records = [instagram, gmail];
+
+    for (final naturalText in [
+      'what is my instagram login',
+      'show my Instagram username',
+      'my instagram',
+      'insta',
+    ]) {
+      expect(
+        matchCredentialV2RecordsForText(naturalText, records)
+            .map((record) => record.recordId),
+        ['credential-instagram'],
+      );
+    }
+    expect(
+        matchCredentialV2RecordsForText('travel document', records), isEmpty);
+  });
+
+  test('explicit lookup service remains distinguishable from fuzzy siblings',
+      () {
+    final intent = parseCredentialV2LookupIntent('show me qa-nova-9315 login');
+    expect(intent?.service, 'qa-nova-9315');
+    expect(normalizeExactLookup(intent!.service!), 'qa-nova-9315');
+    expect(normalizeExactLookup('Nova46880'), isNot('qa-nova-9315'));
   });
 
   test('full credential payload encrypts and decrypts locally', () async {

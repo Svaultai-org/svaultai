@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from device_gate import verify_trusted_device
+from subscription_entitlement import require_content_write
 from taxonomy import ALLOWED_MEMORY_TYPES
 from vault_core import verify_vault_pin
 from zk_migration_flags import ZkMigrationFlags
@@ -234,6 +235,7 @@ async def memory_create_endpoint(
     payload: MemoryCreateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
     if not _legacy_memory_allowed():
         raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
@@ -275,6 +277,7 @@ async def memory_update_endpoint(
     payload: MemoryUpdateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
     if not _legacy_memory_allowed():
         raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)

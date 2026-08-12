@@ -6,6 +6,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal, verify_session_token
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
+from subscription_entitlement import require_content_write, require_file_read
 
 router = APIRouter()
 FORBIDDEN = ('filename','filename_plaintext','file_content','file_content_plaintext',
@@ -43,6 +44,7 @@ def _reject(data: dict):
 
 @router.post('/vault/file-v2/manifest')
 def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_session_token)):
+    require_content_write(principal)
     _enabled(True); _reject(payload.model_dump())
     ct = _decode(payload.manifest_ciphertext)
     conn = get_db(); cur = conn.cursor()
@@ -55,6 +57,7 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
 
 @router.put('/vault/file-v2/chunk')
 def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_session_token)):
+    require_content_write(principal)
     _enabled(True); _reject(payload.model_dump()); ct = _decode(payload.ciphertext)
     conn = get_db(); cur = conn.cursor()
     try:
@@ -69,6 +72,16 @@ def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_sessi
 def list_files(principal: SessionPrincipal = Depends(verify_session_token)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        # A tab/process can disappear without running the client's abort path.
+        # Reap only stale, incomplete manifests; never touch a recent upload or
+        # a record whose declared chunks are all present.
+        cur.execute('''DELETE FROM file_v2_records r
+                       WHERE r.vault_id=%s
+                         AND r.created_at < NOW() - INTERVAL '30 minutes'
+                         AND (SELECT COUNT(*) FROM file_v2_chunks c
+                              WHERE c.file_id=r.file_id) < r.chunk_count''',
+                    (principal['vault_id'],))
+        conn.commit()
         cur.execute('''SELECT file_id,crypto_version,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state,created_at FROM file_v2_records WHERE vault_id=%s ORDER BY created_at DESC''', (principal['vault_id'],)); return {'files':[dict(r) for r in cur.fetchall()]}
     finally: conn.close()
 
@@ -78,6 +91,7 @@ def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_sess
     try:
         cur.execute('''SELECT file_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s''', (file_id, principal['vault_id'])); r=cur.fetchone()
         if not r: raise HTTPException(404, detail='file_v2_not_found')
+        require_file_read(principal, int(r['total_bytes']))
         r['manifest_ciphertext']=base64.urlsafe_b64encode(bytes(r['manifest_ciphertext'])).decode().rstrip('='); return dict(r)
     finally: conn.close()
 
@@ -85,8 +99,9 @@ def get_manifest(file_id: str, principal: SessionPrincipal = Depends(verify_sess
 def get_chunk(file_id: str, chunk_index: int, principal: SessionPrincipal = Depends(verify_session_token)):
     _enabled(False); conn=get_db(); cur=conn.cursor()
     try:
-        cur.execute('''SELECT c.ciphertext FROM file_v2_chunks c JOIN file_v2_records r ON r.file_id=c.file_id WHERE c.file_id=%s AND c.chunk_index=%s AND r.vault_id=%s''',(file_id,chunk_index,principal['vault_id'])); r=cur.fetchone()
+        cur.execute('''SELECT c.ciphertext,r.total_bytes FROM file_v2_chunks c JOIN file_v2_records r ON r.file_id=c.file_id WHERE c.file_id=%s AND c.chunk_index=%s AND r.vault_id=%s''',(file_id,chunk_index,principal['vault_id'])); r=cur.fetchone()
         if not r: raise HTTPException(404, detail='file_v2_chunk_not_found')
+        require_file_read(principal, int(r[1]))
         return {'file_id':file_id,'chunk_index':chunk_index,'ciphertext':base64.urlsafe_b64encode(bytes(r[0])).decode().rstrip('=')}
     finally: conn.close()
 

@@ -37,6 +37,8 @@ def _clear_all_dev_env():
         ENVIRONMENT=None,
         FLASK_ENV=None,
         NODE_ENV=None,
+        VAULTAI_ISOLATED_QA=None,
+        DATABASE_URL=None,
     )
 
 
@@ -65,6 +67,8 @@ class IsDevAutoTrustEnabledTests(unittest.TestCase):
         with _clear_all_dev_env(), env_vars(
             VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST="true",
             VAULTAI_ENV="local",
+            VAULTAI_ISOLATED_QA="true",
+            DATABASE_URL="postgresql://qa@127.0.0.1:55432/qa",
         ):
             self.assertTrue(device_gate.is_dev_auto_trust_enabled())
 
@@ -73,6 +77,8 @@ class IsDevAutoTrustEnabledTests(unittest.TestCase):
         with _clear_all_dev_env(), env_vars(
             VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST="true",
             ENVIRONMENT="development",
+            VAULTAI_ISOLATED_QA="true",
+            DATABASE_URL="postgresql://qa@localhost:55432/qa",
         ):
             self.assertTrue(device_gate.is_dev_auto_trust_enabled())
 
@@ -92,6 +98,8 @@ class IsDevAutoTrustEnabledTests(unittest.TestCase):
             with _clear_all_dev_env(), env_vars(
                 VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST=raw,
                 VAULTAI_ENV="local",
+                VAULTAI_ISOLATED_QA="true",
+                DATABASE_URL="postgresql://qa@127.0.0.1:55432/qa",
             ):
                 with self.subTest(flag_value=raw):
                     self.assertFalse(device_gate.is_dev_auto_trust_enabled())
@@ -101,6 +109,8 @@ class IsDevAutoTrustEnabledTests(unittest.TestCase):
             with _clear_all_dev_env(), env_vars(
                 VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST=raw,
                 VAULTAI_ENV="local",
+                VAULTAI_ISOLATED_QA="true",
+                DATABASE_URL="postgresql://qa@127.0.0.1:55432/qa",
             ):
                 with self.subTest(flag_value=raw):
                     self.assertTrue(device_gate.is_dev_auto_trust_enabled())
@@ -322,6 +332,8 @@ class ResetTrustStateBehaviouralTests(unittest.IsolatedAsyncioTestCase):
         with patcher, env_vars(
             VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST="true",
             VAULTAI_ENV="local",
+            VAULTAI_ISOLATED_QA="true",
+            DATABASE_URL="postgresql://qa@127.0.0.1:55432/qa",
         ):
             result = await device_routes.dev_reset_trust_state(
                 request,
@@ -399,6 +411,8 @@ class ResetTrustStateBehaviouralTests(unittest.IsolatedAsyncioTestCase):
         with env_vars(
             VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST="true",
             VAULTAI_ENV="local",
+            VAULTAI_ISOLATED_QA="true",
+            DATABASE_URL="postgresql://qa@127.0.0.1:55432/qa",
         ):
             with self.assertRaises(HTTPException) as ctx:
                 await device_routes.dev_reset_trust_state(

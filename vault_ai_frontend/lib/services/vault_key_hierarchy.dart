@@ -22,9 +22,11 @@ const int _aesGcmNonceBytes = 12;
 
 class VaultKeyHierarchy {
   final SecretKey mvk;
+  final Map<String, Future<SecretKey>> _subkeyCache =
+      <String, Future<SecretKey>>{};
   VaultKeyHierarchy(this.mvk);
 
-  Future<SecretKey> _sub(String infoLabel) async {
+  Future<SecretKey> _deriveSubkey(String infoLabel) async {
     final mvkBytes = await mvk.extractBytes();
     return _hkdf.deriveKey(
       secretKey: SecretKey(mvkBytes),
@@ -32,6 +34,9 @@ class VaultKeyHierarchy {
       info: utf8.encode(infoLabel),
     );
   }
+
+  Future<SecretKey> _sub(String infoLabel) =>
+      _subkeyCache.putIfAbsent(infoLabel, () => _deriveSubkey(infoLabel));
 
   Future<SecretKey> metadataKey() => _sub('vaultai.metadata.v1');
   Future<SecretKey> memoryKey() => _sub('vaultai.memory.v1');

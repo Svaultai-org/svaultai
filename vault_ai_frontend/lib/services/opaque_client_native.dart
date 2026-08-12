@@ -144,15 +144,15 @@ class _NativeOpaqueBindings {
   static _NativeOpaqueBindings get instance {
     final cached = _instance;
     if (cached != null) return cached;
-    if (!Platform.isAndroid) {
-      throw OpaqueUnavailable(
-        'native OPAQUE client is currently packaged for Android only',
-      );
-    }
     try {
-      final loaded = _NativeOpaqueBindings._(
-        DynamicLibrary.open('libvaultai_opaque_client.so'),
-      );
+      final library = Platform.isAndroid
+          ? DynamicLibrary.open('libvaultai_opaque_client.so')
+          : (Platform.isIOS || Platform.isMacOS)
+              ? DynamicLibrary.process()
+              : throw OpaqueUnavailable(
+                  'native OPAQUE client is not packaged for this platform',
+                );
+      final loaded = _NativeOpaqueBindings._(library);
       _instance = loaded;
       return loaded;
     } on Object {

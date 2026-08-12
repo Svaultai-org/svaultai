@@ -108,6 +108,10 @@ flutter build web --release \
     --dart-define=WALLET_V2_WRITE_ENABLED=false \
     --dart-define=WALLET_V2_MIGRATION_ENABLED=false \
     --dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=false \
+    --dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet \
+    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true \
+    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true \
+    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=false \
     "${flutter_extra_args[@]}"
 
 # 3. Migration SW.

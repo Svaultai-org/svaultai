@@ -7,6 +7,17 @@ from typing import Any, Optional
 import pytest
 
 import durable_personal_memory as dpm
+
+
+def test_general_conversation_context_never_becomes_memory_intent():
+    envelope = (
+        "Continue this ordinary conversation without searching the vault.\n"
+        "Previous user message: I am choosing between two job offers.\n"
+        "Previous assistant response: Save money, but consider balance.\n"
+        "Current user follow-up: Now give me the strongest counterargument."
+    )
+
+    assert dpm.parse_personal_memory_intent(envelope) is None
 from vault_core import derive_key, decrypt_message, KDF_TARGET_ITERATIONS
 
 

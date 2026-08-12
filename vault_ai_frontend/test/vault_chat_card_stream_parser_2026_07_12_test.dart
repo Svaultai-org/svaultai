@@ -642,17 +642,15 @@ void main() {
       );
     });
 
-    test(
-        'both chatStream callsites in main.dart are await-for '
-        '(delete-confirm flow + main _send flow)', () {
+    test('the production chatStream callsite is await-for', () {
       final src = _mainSrc();
       final awaitForCount =
           'await for (final encryptedChunk in stream)'.allMatches(src).length;
       expect(
         awaitForCount,
-        greaterThanOrEqualTo(2),
-        reason: 'BOTH chatStream flows (delete-confirm + _send) must '
-            'use await for; otherwise one of them keeps the race',
+        greaterThanOrEqualTo(1),
+        reason: 'Every remaining chat stream flow must use await-for; '
+            'the former duplicate delete-confirm stream was removed.',
       );
 
       expect(src.contains('.listen(\n      (encryptedChunk) async {'), isFalse);

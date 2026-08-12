@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from psycopg2 import errors as pg_errors
 from psycopg2.extras import RealDictCursor
@@ -693,8 +693,12 @@ def set_vault_name(
     return VaultNameResponse(vault_name=normalized)
 
 
-@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(principal: SessionPrincipal = Depends(verify_session_token)) -> None:
+@router.post(
+    "/auth/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def logout(principal: SessionPrincipal = Depends(verify_session_token)) -> Response:
     revoke_session_token(principal["token_id"])
                                                                       
                                                                      
@@ -722,7 +726,7 @@ def logout(principal: SessionPrincipal = Depends(verify_session_token)) -> None:
     except Exception:
         pass
 
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 __all__ = ["router"]

@@ -1,13 +1,23 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:io';
 import 'package:vault_ai_frontend/services/vault_local_file_lookup.dart';
 
 void main() {
+  test('file inventory failures never expose raw gateway bodies', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(source, isNot(contains("_showSnack('Could not load files: \$e')")));
+    expect(
+      source,
+      contains('Could not load files. Check your connection and try again.'),
+    );
+  });
   test('extracts clear file lookup commands only', () {
     expect(extractLocalFileLookupQuery('show me dodly'), 'dodly');
     expect(extractLocalFileLookupQuery('open my passport'), 'passport');
     expect(extractLocalFileLookupQuery('find road marking'), 'road marking');
     expect(extractLocalFileLookupQuery('when was my trip to USA'), isNull);
-    expect(extractLocalFileLookupQuery('what files do I have'), isNull);
+    expect(extractLocalFileLookupQuery('what files do I have'),
+        localFileListAllQuery);
   });
 
   test('exact decrypted saved name wins over original filename', () {
@@ -84,5 +94,38 @@ void main() {
     );
 
     expect(match, isNull);
+  });
+
+  test('natural workplace document phrasing resolves synthetic file', () {
+    final query = extractLocalFileLookupQuery('show my workplace document');
+    expect(query, isNotNull);
+    final match = resolveLocalVaultFileLookup(
+      query: query!,
+      files: const [
+        VaultLocalFileLookupEntry(
+          id: 'workplace',
+          fileName: 'workplace_qa.txt',
+          savedName: 'workplace_qa.txt',
+          sizeBytes: 32,
+        ),
+      ],
+    );
+    expect(match?.entry.id, 'workplace',
+        reason: 'file_natural_document_phrase_not_resolved_locally');
+  });
+
+  test('natural file wrapper matrix keeps topics and drops scaffolding', () {
+    expect(extractLocalFileLookupQuery('find my workplace file'), 'workplace');
+    expect(extractLocalFileLookupQuery('show me the file about my workplace'),
+        'workplace');
+    expect(
+        extractLocalFileLookupQuery('show me for my workplace'), 'workplace');
+    expect(extractLocalFileLookupQuery('find my travel file'), 'travel');
+    expect(extractLocalFileLookupQuery('show my invoice'), 'invoice');
+    expect(extractLocalFileLookupQuery('show all my documents'),
+        localFileListAllQuery);
+    expect(
+        normalizeLocalFileLookupText('workplace_qa.txt'), 'workplace qa txt');
+    expect(normalizeLocalFileLookupText('workplace_qa'), 'workplace');
   });
 }

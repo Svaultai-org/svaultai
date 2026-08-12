@@ -1,4 +1,8 @@
-fastapi
+# FastAPI 0.141 changed ``app.routes`` to expose private
+# ``_IncludedRouter`` nodes without the public ``path`` contract relied on by
+# route registration checks and operational introspection. Keep the last
+# validated flat-route API until that migration is implemented deliberately.
+fastapi==0.116.1
 uvicorn
 python-dotenv
 openai

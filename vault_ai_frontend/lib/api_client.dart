@@ -4319,15 +4319,14 @@ class VaultAIClient {
     required String payloadCiphertext,
     required String lookupHash,
   }) async {
-    if (bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS',
-        defaultValue: false)) {
-      print('QA_MEMORY_API_STAGE=method_body_entered');
-    }
-    final qa = bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS',
-        defaultValue: false);
-    if (qa) print('QA_MEMORY_API_STAGE=base_url_ready');
+    const qa = bool.fromEnvironment(
+      'QA_CHAT_PRIVACY_DIAGNOSTICS',
+      defaultValue: false,
+    );
+    if (qa) _vlog('QA_MEMORY_API_STAGE=method_body_entered', const {});
+    if (qa) _vlog('QA_MEMORY_API_STAGE=base_url_ready', const {});
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-    if (qa) print('QA_MEMORY_API_STAGE=uri_parse_succeeded');
+    if (qa) _vlog('QA_MEMORY_API_STAGE=uri_parse_succeeded', const {});
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $authToken'
@@ -4338,28 +4337,41 @@ class VaultAIClient {
       'payload_ciphertext': payloadCiphertext,
       'memory_id': memoryId,
     });
-    if (qa) print('QA_MEMORY_API_STAGE=body_build_succeeded');
-    if (qa) print('QA_MEMORY_API_STAGE=auth_ready');
+    if (qa) _vlog('QA_MEMORY_API_STAGE=body_build_succeeded', const {});
+    if (qa) _vlog('QA_MEMORY_API_STAGE=auth_ready', const {});
     try {
-      if (qa) print('QA_MEMORY_API_STAGE=http_client_ready');
-      if (qa) print('QA_MEMORY_API_STAGE=http_call_entered');
+      if (qa) _vlog('QA_MEMORY_API_STAGE=http_client_ready', const {});
+      if (qa) _vlog('QA_MEMORY_API_STAGE=http_call_entered', const {});
       final resp = await http.post(uri, headers: headers, body: body);
-      if (qa) print('QA_MEMORY_API_STAGE=http_call_returned');
-      if (qa) print('QA_MEMORY_API_STAGE=response_status_present');
+      if (qa) _vlog('QA_MEMORY_API_STAGE=http_call_returned', const {});
+      if (qa) _vlog('QA_MEMORY_API_STAGE=response_status_present', const {});
       if (qa) {
-        print('MEMORY_V2_WRITE_HTTP_STATUS=${resp.statusCode}');
-        print(
-            'MEMORY_V2_WRITE_HTTP_2XX=${resp.statusCode >= 200 && resp.statusCode < 300}');
+        _vlog('MEMORY_V2_WRITE_HTTP_STATUS=${resp.statusCode}', const {});
+        _vlog(
+          'MEMORY_V2_WRITE_HTTP_2XX=${resp.statusCode >= 200 && resp.statusCode < 300}',
+          const {},
+        );
       }
       if (resp.statusCode != 200) {
-        if (qa)
-          print(
-              'MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=${resp.statusCode == 401 ? 'unauthorized' : resp.statusCode == 403 ? 'forbidden' : resp.statusCode == 404 ? 'route_or_feature_disabled' : resp.statusCode == 409 ? 'duplicate_or_state_conflict' : resp.statusCode == 422 ? 'request_model_validation' : resp.statusCode >= 500 ? 'backend_server_error' : 'validation_error'}');
-        throw Exception('memory_v2_write_failed');
+        // Status-only diagnostics are safe: never log the encrypted request,
+        // response body, lookup hash, token, or memory identifier.
+        _vlog('memory-v2.write.response', {
+          'status': resp.statusCode,
+          'reason': resp.reasonPhrase ?? '-',
+        });
+        if (qa) {
+          _vlog(
+            'MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=${resp.statusCode == 401 ? 'unauthorized' : resp.statusCode == 403 ? 'forbidden' : resp.statusCode == 404 ? 'route_or_feature_disabled' : resp.statusCode == 409 ? 'duplicate_or_state_conflict' : resp.statusCode == 422 ? 'request_model_validation' : resp.statusCode >= 500 ? 'backend_server_error' : 'validation_error'}',
+            const {},
+          );
+        }
+        throw Exception('memory_v2_write_failed_status_${resp.statusCode}');
       }
       return;
     } catch (e) {
-      if (qa) print('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}');
+      if (qa) {
+        _vlog('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}', const {});
+      }
       rethrow;
     }
   }
@@ -5620,6 +5632,11 @@ class VaultAIClient {
   Future<Map<String, dynamic>> listFileV2({required String authToken}) async {
     final r = await http.get(Uri.parse('$baseUrl/vault/file-v2'),
         headers: _defaultHeaders(authToken: authToken));
+    _vlog('file-v2.list.response', {
+      'status': r.statusCode,
+      'reason': r.reasonPhrase ?? '-',
+      'body_len': r.bodyBytes.length,
+    });
     if (r.statusCode != 200) throw Exception('file_v2_list_failed');
     return jsonDecode(r.body) as Map<String, dynamic>;
   }

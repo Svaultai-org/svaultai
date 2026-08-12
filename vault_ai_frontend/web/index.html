@@ -119,11 +119,28 @@
     </nav>
   </main>
   <style>
-    #seo-content { box-sizing: border-box; max-width: 960px; margin: 0 auto; padding: 48px 24px; color: #f5f7fa; background: #0f1115; font: 16px/1.6 Arial, sans-serif; }
-    #seo-content h1 { font-size: 2rem; line-height: 1.2; }
-    #seo-content a { color: #4de0bb; margin-right: 20px; }
+    /* Crawlable metadata may remain in the DOM, but app visitors must never
+       see it while Flutter starts or updates its service worker. */
+    #seo-content { display: none !important; }
     flt-glass-pane { position: relative; z-index: 1; }
   </style>
+  <script>
+    // The SEO fallback must disappear as soon as Flutter mounts. Leaving it in
+    // normal flow pushes the canvas below the fold and can distort its viewport
+    // after refresh, making an otherwise healthy app look blank or cropped.
+    (function () {
+      function removeSeoFallback() {
+        if (!document.querySelector('flt-glass-pane')) return false;
+        document.getElementById('seo-content')?.remove();
+        return true;
+      }
+      if (!removeSeoFallback()) {
+        new MutationObserver(function (_, observer) {
+          if (removeSeoFallback()) observer.disconnect();
+        }).observe(document.documentElement, { childList: true, subtree: true });
+      }
+    })();
+  </script>
   <!-- 2026-07-14 (Round 12 — explicit SW retirement bootstrap):
        Flutter's `--pwa-strategy=none` build does NOT register a
        service worker. Existing users still controlled by the

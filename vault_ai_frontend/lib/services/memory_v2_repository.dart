@@ -155,25 +155,31 @@ class MemoryV2Repository {
         baseUrl: baseUrl, authToken: authToken);
     if (_qaDiagnostics) print('QA_MEMORY_RAW_COUNT=${rows.length}');
     final out = <Map<String, dynamic>>[];
+    var rejected = 0;
     for (final row in rows) {
-      final id = row['memory_id'].toString();
-      final clear = await keys.aesGcmUnwrapWithAad(
-        await _recordKey(id),
-        Uint8List.fromList(
-            keys.b64urlDecode(row['payload_ciphertext'] as String)),
-        aad: _aad(id),
-      );
-      final payload = MemoryV2Plaintext.fromJson(
-          jsonDecode(utf8.decode(clear)) as Map<String, dynamic>);
-      out.add({
-        'id': id,
-        'memory_record_id': id,
-        'memory_type': row['memory_type'],
-        'title': payload.normalized ?? '',
-        'value': payload.value,
-        'tags': payload.tags
-      });
+      try {
+        final id = row['memory_id'].toString();
+        final clear = await keys.aesGcmUnwrapWithAad(
+          await _recordKey(id),
+          Uint8List.fromList(
+              keys.b64urlDecode(row['payload_ciphertext'] as String)),
+          aad: _aad(id),
+        );
+        final payload = MemoryV2Plaintext.fromJson(
+            jsonDecode(utf8.decode(clear)) as Map<String, dynamic>);
+        out.add({
+          'id': id,
+          'memory_record_id': id,
+          'memory_type': row['memory_type'],
+          'title': payload.normalized ?? '',
+          'value': payload.value,
+          'tags': payload.tags
+        });
+      } catch (_) {
+        rejected++;
+      }
     }
+    if (_qaDiagnostics) print('QA_MEMORY_REJECTED_COUNT=$rejected');
     if (_qaDiagnostics) print('QA_MEMORY_STAGE=list_decrypt_succeeded');
     return out;
   }

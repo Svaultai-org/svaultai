@@ -34,6 +34,11 @@ SENTENCE_GENERIC_TOOL_FAILED = (
 )
 
 SENTENCE_GENERAL_RESPONSE_FAILED = (
+    "I couldn't complete that response right now. "
+    "Please try again in a moment."
+)
+
+SENTENCE_UNKNOWN_LANGUAGE_RESPONSE_FAILED = (
     "I'm sorry, I can't reply in the requested language right now. "
     "We can continue in English, you can try again in a moment, or cancel."
 )
@@ -68,9 +73,9 @@ def localized_general_response_failed(language: str) -> str:
     """Return a neutral generation failure in the resolved reply language."""
     normalized = str(language or "").strip().lower().replace("_", "-")
     code = normalized.split("-", 1)[0]
-    return _FRIENDLY_PROVIDER_FAILURE_BY_LANGUAGE.get(
-        code, SENTENCE_GENERAL_RESPONSE_FAILED,
-    )
+    if code == "unknown":
+        return SENTENCE_UNKNOWN_LANGUAGE_RESPONSE_FAILED
+    return _FRIENDLY_PROVIDER_FAILURE_BY_LANGUAGE.get(code, SENTENCE_GENERAL_RESPONSE_FAILED)
 
 _SEARCH_TOOL_NAMES = frozenset({
     "find_in_vault", "search_extracted_text", "search_vault_content",

@@ -38,7 +38,7 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, Field
 
@@ -314,12 +314,13 @@ def request_delete(
 @router.post(
     "/vault/delete/confirm",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
 )
 def confirm_delete(
     payload: DeleteConfirmRequest,
     request: Request,
     principal: SessionPrincipal = Depends(verify_trusted_device),
-) -> None:
+) -> Response:
 
     vault_id = principal["vault_id"]
 
@@ -418,7 +419,7 @@ def confirm_delete(
     except Exception:
         pass
 
-    return None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 __all__ = ["router"]

@@ -12,6 +12,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal, verify_session_token
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
+from subscription_entitlement import require_content_write, require_crypto_access
 
 router = APIRouter(tags=["wallet-v2"])
 CHAINS = {"evm", "solana", "tron", "monero"}
@@ -51,6 +52,8 @@ class WalletV2CreateRequest(BaseModel):
 @router.post("/vault/wallet-v2")
 def create_wallet_v2(payload: WalletV2CreateRequest,
                      principal: SessionPrincipal = Depends(verify_session_token)):
+    require_content_write(principal)
+    require_crypto_access(principal)
     _enabled(write=True)
     if payload.chain not in CHAINS:
         raise HTTPException(status_code=400, detail="unsupported_chain")
@@ -73,6 +76,7 @@ def create_wallet_v2(payload: WalletV2CreateRequest,
 
 @router.get("/vault/wallet-v2")
 def list_wallet_v2(principal: SessionPrincipal = Depends(verify_session_token)):
+    require_crypto_access(principal)
     _enabled()
     conn = get_db()
     try:
@@ -89,6 +93,7 @@ def list_wallet_v2(principal: SessionPrincipal = Depends(verify_session_token)):
 @router.get("/vault/wallet-v2/{wallet_record_id}")
 def read_wallet_v2(wallet_record_id: str,
                    principal: SessionPrincipal = Depends(verify_session_token)):
+    require_crypto_access(principal)
     _enabled()
     conn = get_db()
     try:

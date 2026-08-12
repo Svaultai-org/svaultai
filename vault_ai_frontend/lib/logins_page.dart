@@ -720,7 +720,10 @@ class _SecureItemCard extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final stackVertically = constraints.maxWidth < 640 ||
+          // The four standard actions need substantially more than 640px.
+          // At tablet/narrow-desktop widths the old horizontal branch left
+          // the title/badge area only a few pixels wide and overflowed.
+          final stackVertically = constraints.maxWidth < 900 ||
               onMigrate != null ||
               onRollback != null;
           if (stackVertically) {

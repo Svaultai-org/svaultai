@@ -44,20 +44,16 @@ import 'package:http/http.dart' as http;
 // Web-only imports. Conditional import so unit tests on VM stay
 // green and non-web builds compile.
 import 'app_release_controller_web_stub.dart'
-    if (dart.library.html) 'app_release_controller_web.dart'
-    as web;
-
+    if (dart.library.html) 'app_release_controller_web.dart' as web;
 
 /// Release ID embedded at build time. `dev` means an unpublished
 /// local build.
 const String kAppReleaseId =
     String.fromEnvironment('APP_RELEASE', defaultValue: 'dev');
 
-
 /// Diagnostic label — surface this in About / Settings so support
 /// can confirm which build a user is actually running.
 const String kAppReleaseDisplayLabel = 'Build: $kAppReleaseId';
-
 
 class AppReleaseController {
   AppReleaseController({
@@ -78,8 +74,8 @@ class AppReleaseController {
         _reloadPage = reloadPage ?? web.reloadPage,
         _readLastAttemptedTarget =
             readLastAttemptedTarget ?? web.readLastAttemptedTargetRelease,
-        _writeLastAttemptedTarget = writeLastAttemptedTarget ??
-            web.writeLastAttemptedTargetRelease;
+        _writeLastAttemptedTarget =
+            writeLastAttemptedTarget ?? web.writeLastAttemptedTargetRelease;
 
   /// Backend base URL that serves `/release.json`. Usually the same
   /// origin the Flutter web app was served from.
@@ -109,8 +105,7 @@ class AppReleaseController {
   /// Consumers listen to this to render "SVaultAI was updated.
   /// Refreshing…" banners and to disable Review/Confirm until the
   /// user chooses to reload.
-  ValueListenable<bool> get updateAvailableNotifier =>
-      _updateNotifier;
+  ValueListenable<bool> get updateAvailableNotifier => _updateNotifier;
 
   /// True iff we have fetched `/release.json` at least once AND
   /// the server release differs from the running release.
@@ -158,7 +153,7 @@ class AppReleaseController {
       final uri = Uri.parse('$baseUrl/release.json?ts=$ts');
       final resp = await _http.get(uri, headers: {
         'Cache-Control': 'no-cache',
-        'Pragma':        'no-cache',
+        'Pragma': 'no-cache',
       });
       if (resp.statusCode != 200) return;
       final decoded = jsonDecode(resp.body);
@@ -169,8 +164,11 @@ class AppReleaseController {
       // Only trigger updateAvailable when the running bundle
       // reports a non-dev release identifier. A dev build never
       // forces a real production release to reload itself.
-      if (runningRelease != 'dev' && commit != runningRelease) {
-        _updateNotifier.value = true;
+      if (runningRelease != 'dev') {
+        // A previously observed mismatch can converge after the new bundle
+        // activates. Assign in both directions so the banner cannot remain
+        // latched after release.json and the running build agree.
+        _updateNotifier.value = commit != runningRelease;
       }
     } catch (_) {
       // Silent — a transient error must not clear a real update
@@ -221,8 +219,7 @@ class AppReleaseController {
   /// reload attempt, if any. Consumers can use this to detect a
   /// loop and surface a "still on old release" diagnostic instead
   /// of triggering another reload.
-  String? get previousReloadTargetRelease =>
-      _readLastAttemptedTarget();
+  String? get previousReloadTargetRelease => _readLastAttemptedTarget();
 
   /// Consumer helper — call before starting a Send flow. Returns
   /// `true` iff Send should be blocked (update available and

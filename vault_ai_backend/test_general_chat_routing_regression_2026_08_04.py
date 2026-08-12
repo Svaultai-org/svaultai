@@ -4,6 +4,14 @@ from pathlib import Path
 
 import pytest
 
+
+def test_tool_free_prompt_requires_substantive_complete_guidance():
+    from pathlib import Path
+
+    source = (Path(__file__).parent / "main.py").read_text()
+    assert "never return only a list of headings" in source
+    assert "semicolon-separated topic names" in source
+
 from vault_chat_general_router import (
     INTENT_ASSISTANT_IDENTITY,
     INTENT_CAPABILITY_QUESTION,
@@ -25,6 +33,7 @@ from vault_chat_router import build_vault_chat_envelope
 
 
 SCREENSHOT_CASES = (
+    ("Am I travel-ready?", INTENT_GENERAL_CHAT, "en"),
     ("hey how are you", INTENT_GENERAL_CHAT, "en"),
     ("tell me about you in spanish", INTENT_LANGUAGE_RESPONSE_REQUEST, "es"),
     ("tell me about you in french", INTENT_LANGUAGE_RESPONSE_REQUEST, "fr"),
@@ -36,6 +45,33 @@ SCREENSHOT_CASES = (
     ("hello", INTENT_GENERAL_CHAT, "en"),
     ("good morning", INTENT_GENERAL_CHAT, "en"),
 )
+
+
+def test_ordinary_english_with_ambiguous_article_stays_english():
+    from vault_multilingual import detect_language, resolve_reply_language
+
+    message = "I am planning a trip to Lagos"
+    detected = detect_language(message)
+    assert detected != "pt"
+    assert resolve_reply_language(
+        detected_from_message=detected,
+        requested_from_message=None,
+        app_locale_hint="en",
+    ) == "en"
+
+
+@pytest.mark.parametrize("message", (
+    "How can I support a grieving friend?",
+    "How should I support my child at school?",
+    "Can you help me support my partner through a hard week?",
+))
+def test_personal_support_questions_are_not_product_support_faq(message):
+    from vault_faq_router import looks_like_faq_message
+
+    assert not looks_like_faq_message(message)
+    route = route_general_chat(message)
+    assert route is not None
+    assert route.model_response_required
 
 
 @pytest.mark.parametrize("message,intent,language", SCREENSHOT_CASES)
@@ -120,6 +156,14 @@ def test_endpoint_language_model_route_forces_empty_tool_set():
     source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
     assert "force_no_tools=True," in source
     assert "response_language=_general_route.language" in source
+
+
+def test_tool_free_prompt_forbids_fake_vault_or_travel_work():
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    assert "This turn is ordinary, tool-free conversation" in source
+    assert "No vault files, memories, credentials, travel data" in source
+    assert "Never say or imply that you" in source
+    assert "Never narrate background work" in source
     assert "if force_no_tools:" in source
 
 
@@ -194,6 +238,13 @@ def test_compound_language_chat_cannot_be_consumed_by_faq(message):
     route = route_general_chat(message)
     assert route is not None
     assert route.model_response_required
+
+
+def test_credential_retrieval_is_not_consumed_by_privacy_faq():
+    from vault_faq_router import build_faq_envelope, looks_like_faq_message
+    message = "what is my facebook login"
+    assert not looks_like_faq_message(message)
+    assert build_faq_envelope(message) is None
 
 
 def test_mixed_clause_languages_and_intents_are_independent():

@@ -598,7 +598,8 @@ class _ChatEndpointHarness:
         _fake_call_index = [0]
 
         def _fake_store_draft(*, vault_id, service_name, username,
-                              password, ttl_seconds=None):
+                              password, ttl_seconds=None,
+                              opaque_server_storage=False):
             _fake_call_index[0] += 1
             now = _time_mod.time()
             draft = CredentialDraft(

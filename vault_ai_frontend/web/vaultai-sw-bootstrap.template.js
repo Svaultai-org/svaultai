@@ -56,6 +56,8 @@
   var SW_URL = '/flutter_service_worker.js?v=' + RELEASE;
   var SW_SCOPE = '/';
   var RELOAD_KEY = 'vaultai_sw_migration_reloaded';
+  var hadControllerAtBootstrap =
+    !!(navigator.serviceWorker && navigator.serviceWorker.controller);
 
   // TEMP diag 2026-07-17
   console.log('[vaultai-sw-bootstrap] loaded; RELEASE=' + RELEASE);
@@ -87,6 +89,13 @@
   var reloaded = false;
 
   function safeReload() {
+    // A first visit was loaded directly from this release. Claiming that
+    // uncontrolled page is safe and does not justify a full Flutter restart.
+    if (!hadControllerAtBootstrap) {
+      writeReloadedTarget(RELEASE);
+      console.log('[vaultai-sw-bootstrap] first controller claim, skip reload');
+      return;
+    }
     if (reloaded) {
       console.log('[vaultai-sw-bootstrap] safeReload: runtime flag set, skip'); // TEMP diag 2026-07-17
       return;

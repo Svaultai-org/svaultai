@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from auth_local import verify_session_token
 from device_gate import verify_trusted_device
+from subscription_entitlement import require_content_write
 from vault_core import (
     get_db,
     encrypt_message,
@@ -195,6 +196,7 @@ async def update_login(
     payload: LoginUpdateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
     vault_id = principal["vault_id"]
 
     old_service = _normalize(payload.old_service)
@@ -392,6 +394,7 @@ async def rename_file(
     payload: FileRenameRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
     vault_id = principal["vault_id"]
     verify_vault_pin(vault_id, payload.pin)
 

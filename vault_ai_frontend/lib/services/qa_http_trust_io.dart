@@ -4,6 +4,10 @@ import 'package:http/http.dart' as http;
 
 const _enabled = bool.fromEnvironment('QA_TRUST_LOCAL_CA', defaultValue: false);
 const _caB64 = String.fromEnvironment('QA_CA_B64', defaultValue: '');
+const _backendBaseUrl = String.fromEnvironment(
+  'BACKEND_BASE_URL',
+  defaultValue: 'https://10.0.2.2:8444',
+);
 
 Future<void> configureQaHttpTrust() async {
   print('[qa-tls] enabled=$_enabled ca_present=${_caB64.isNotEmpty}');
@@ -19,7 +23,10 @@ Future<void> configureQaHttpTrust() async {
   print('[qa-tls] set_trusted_certificates_succeeded=true');
   HttpOverrides.global = _QaOverrides(context);
   try {
-    final response = await http.get(Uri.parse('https://10.0.2.2:8444/health'));
+    // The Android emulator reaches the host at 10.0.2.2, while iOS
+    // simulators use 127.0.0.1. Probe the same configured origin that the app
+    // will use instead of pinning this bootstrap to one device family.
+    final response = await http.get(Uri.parse('$_backendBaseUrl/health'));
     print('[qa-tls] custom_health_status=${response.statusCode}');
   } catch (error) {
     print('[qa-tls] custom_health_error=${error.runtimeType}');

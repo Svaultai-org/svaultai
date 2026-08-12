@@ -154,6 +154,23 @@ def test_ai_memory_ciphertext_rejects_plaintext_fields(field: str) -> None:
         )
 
 
+def test_ai_memory_edit_updates_stable_record_id_before_hash_upsert() -> None:
+    """Changing an encrypted memory title changes its blind lookup hash.
+
+    The stable client record id must therefore be the edit identity; otherwise
+    the insert path collides with the record-id uniqueness constraint.
+    """
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    src = inspect.getsource(mod.ai_memory_ciphertext_upsert)
+    update_pos = src.index("UPDATE vault_ai_memory")
+    insert_pos = src.index("INSERT INTO vault_ai_memory")
+    assert update_pos < insert_pos
+    assert "memory_record_id = %s" in src
+    assert "memory_lookup_hash = %s" in src
+
+
 def test_all_ciphertext_write_endpoints_require_auth() -> None:
     """None of the ciphertext-write endpoints may be reachable
     without a valid session token. Verified by checking each route's

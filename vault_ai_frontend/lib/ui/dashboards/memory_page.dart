@@ -476,6 +476,13 @@ class MemoryPage extends StatefulWidget {
 class _MemoryPageState extends State<MemoryPage> {
   static const _memoryV2Enabled =
       bool.fromEnvironment('MEMORY_V2_READ_ENABLED', defaultValue: false);
+  static const _qaDiagnostics = bool.fromEnvironment(
+      'QA_CHAT_PRIVACY_DIAGNOSTICS',
+      defaultValue: false);
+
+  void _qaMemoryCreateStage(String stage) {
+    if (_qaDiagnostics) print('MEMORY_CREATE_STAGE=$stage');
+  }
   List<Map<String, dynamic>>? _items;
   Map<String, dynamic> _counts = const {};
   bool _loading = true;
@@ -683,8 +690,10 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _showMemoryDialog({Map<String, dynamic>? row}) async {
+    _qaMemoryCreateStage('ui_handler_entered');
     final data = await showMemoryEditorDialog(context, row: row);
     if (data == null) return;
+    _qaMemoryCreateStage('validation_passed');
     await _persistMemoryDialog(row: row, data: data);
   }
 
@@ -699,10 +708,12 @@ class _MemoryPageState extends State<MemoryPage> {
     }
     try {
       if (_memoryV2Enabled) {
+        _qaMemoryCreateStage('repository_available');
         final id = row?['memory_record_id']?.toString() ??
             'memory-${DateTime.now().microsecondsSinceEpoch}';
         final repository = MemoryV2Repository(
             baseUrl: widget.client.baseUrl, authToken: widget.authToken);
+        _qaMemoryCreateStage('repository_create_entered');
         await repository.create(
             memoryId: id,
             memoryType: (data['memory_type'] ?? 'note').toString(),
@@ -740,6 +751,10 @@ class _MemoryPageState extends State<MemoryPage> {
       _showSnack(row == null ? 'Memory saved' : 'Memory updated');
       await _load();
     } catch (e) {
+      if (_qaDiagnostics) {
+        print('MEMORY_CREATE_EXCEPTION_TYPE=${e.runtimeType}');
+        print('MEMORY_CREATE_EXCEPTION_ORIGIN=memory_page_persist');
+      }
       if (!mounted) return;
       _showSnack('Could not save memory');
     }

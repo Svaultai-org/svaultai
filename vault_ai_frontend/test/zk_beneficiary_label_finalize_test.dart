@@ -80,10 +80,12 @@ void main() {
       // Locate the pairing_code assignment that reveals the code to
       // the user. It must come AFTER the ZK finalize call, not
       // before.
-      final pairingIdx = src.indexOf(
-        "pairingCode = result['pairing_code']?.toString();",
-        createIdx,
-      );
+      final relativePairingIdx = RegExp(
+        r"pairingCode\s*=\s*result\['pairing_code'\]\?\.toString\(\);",
+      ).firstMatch(src.substring(createIdx))?.start;
+      final pairingIdx = relativePairingIdx == null
+          ? -1
+          : createIdx + relativePairingIdx;
       expect(pairingIdx, greaterThan(createIdx),
           reason: 'pairing_code must be assigned AFTER '
                   'createBeneficiary returns');

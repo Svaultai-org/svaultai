@@ -12,6 +12,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal, verify_session_token
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
+from subscription_entitlement import require_content_write, require_crypto_access
 
 router = APIRouter(tags=["wallet-backup-v2"])
 SUPPORTED_SECRET_TYPES = {"private_key", "seed_phrase", "recovery_phrase"}
@@ -46,6 +47,8 @@ class WalletBackupV2CreateRequest(BaseModel):
 @router.post("/vault/wallet-backup-v2")
 def create_wallet_backup_v2(payload: WalletBackupV2CreateRequest,
                             principal: SessionPrincipal = Depends(verify_session_token)):
+    require_content_write(principal)
+    require_crypto_access(principal)
     _enabled(write=True)
     if payload.secret_type not in SUPPORTED_SECRET_TYPES:
         raise HTTPException(status_code=400, detail="unsupported_secret_type")
@@ -66,6 +69,7 @@ def create_wallet_backup_v2(payload: WalletBackupV2CreateRequest,
 
 @router.get("/vault/wallet-backup-v2")
 def list_wallet_backup_v2(principal: SessionPrincipal = Depends(verify_session_token)):
+    require_crypto_access(principal)
     _enabled()
     conn = get_db()
     try:
@@ -81,6 +85,7 @@ def list_wallet_backup_v2(principal: SessionPrincipal = Depends(verify_session_t
 @router.get("/vault/wallet-backup-v2/{backup_record_id}")
 def read_wallet_backup_v2(backup_record_id: str,
                           principal: SessionPrincipal = Depends(verify_session_token)):
+    require_crypto_access(principal)
     _enabled()
     conn = get_db()
     try:

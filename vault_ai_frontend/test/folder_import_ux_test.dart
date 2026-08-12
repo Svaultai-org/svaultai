@@ -362,9 +362,9 @@ void main() {
       final dialogIdx = src.indexOf('NotEnoughStorageDialog.show(');
       
       
-      int userBubbleIdx = src.indexOf("msgs.add(_Msg(\n        'user'");
+      int userBubbleIdx = src.indexOf("msgs.add(_Msg(\n          'user'");
       if (userBubbleIdx == -1) {
-        userBubbleIdx = src.indexOf("msgs.add(_Msg(\r\n        'user'");
+        userBubbleIdx = src.indexOf("msgs.add(_Msg(\r\n          'user'");
       }
       expect(dialogIdx, greaterThan(-1),
           reason: 'main.dart must show the storage dialog');

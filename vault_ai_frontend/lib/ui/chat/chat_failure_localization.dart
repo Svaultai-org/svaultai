@@ -27,6 +27,9 @@ const String unknownLanguageFailure =
     "I'm sorry, I can't reply in the requested language right now. "
     'We can continue in English, you can try again in a moment, or cancel.';
 
+const String generalChatFailure =
+    "I couldn't complete that response right now. Please try again in a moment.";
+
 const Map<String, String> _languageAliases = {
   'spanish': 'es',
   'french': 'fr',
@@ -53,10 +56,18 @@ String? requestedFailureLanguageCode(String prompt) {
       return entry.value;
     }
   }
+  if (RegExp(
+    r'\b(?:reply|respond|answer|write|speak|say)\s+in\s+[a-z][a-z -]{1,40}\b',
+  ).hasMatch(normalized)) {
+    return 'unknown';
+  }
   return null;
 }
 
 String friendlyChatGenerationFailure(String prompt) {
   final code = requestedFailureLanguageCode(prompt);
-  return _friendlyFailureByLanguage[code] ?? unknownLanguageFailure;
+  if (code != null) {
+    return _friendlyFailureByLanguage[code] ?? unknownLanguageFailure;
+  }
+  return generalChatFailure;
 }

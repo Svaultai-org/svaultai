@@ -16,4 +16,5 @@ exec "$FLUTTER_BIN" drive \
   --driver=test_driver/integration_test.dart \
   --target="$TARGET" \
   --android-project-arg=VAULTAI_QA_RELEASE=true \
+  --dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=true \
   "$@"

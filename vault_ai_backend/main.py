@@ -10681,6 +10681,8 @@ async def upload_file_endpoint(
     file: UploadFile = File(...),
     principal = Depends(verify_trusted_device),
 ):
+    from subscription_entitlement import require_content_write
+    require_content_write(principal)
 
 
     vault_id = principal["vault_id"]
@@ -10922,7 +10924,7 @@ async def download_file_endpoint(
         cursor.execute(
             """
             SELECT file_name, content_type, encrypted_file_data,
-                   storage_mode, upload_status
+                   storage_mode, upload_status, file_size
             FROM uploaded_files
             WHERE id = %s AND vault_id = %s
             LIMIT 1
@@ -10932,6 +10934,8 @@ async def download_file_endpoint(
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="File not found")
+        from subscription_entitlement import require_file_read
+        require_file_read(principal, int(row.get("file_size") or 0))
 
                                                                            
         if (row.get("upload_status") or "complete") != "complete":
@@ -12620,8 +12624,28 @@ async def qa_chat_privacy_counters(
     }
 
 
+def _chat_turn_rate_limit() -> str:
+    default = "5/minute"
+    try:
+        from device_gate import _is_dev_environment
+        isolated = os.getenv("VAULTAI_ISOLATED_QA", "false").strip().lower() == "true"
+        database_url = os.getenv("DATABASE_URL", "").strip().lower()
+        loopback = "@127.0.0.1:" in database_url or "@localhost:" in database_url
+        if not (_is_dev_environment() and isolated and loopback):
+            return default
+        requested = int(os.getenv("VAULTAI_CHAT_TURN_MAX_PER_MINUTE", "5"))
+        if 5 <= requested <= 10000:
+            return f"{requested}/minute"
+    except (TypeError, ValueError):
+        pass
+    return default
+
+
+_CHAT_TURN_RATE_LIMIT = _chat_turn_rate_limit()
+
+
 @app.post("/chat")
-@limiter.limit("5/minute")
+@limiter.limit(_CHAT_TURN_RATE_LIMIT)
 async def chat_endpoint(
     request: Request,
     req: ChatRequest,
@@ -13260,6 +13284,33 @@ async def chat_endpoint(
             if _compound_instruction:
                 messages.append({
                     "role": "system", "content": _compound_instruction,
+                })
+            if force_no_tools:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "This turn is ordinary, tool-free conversation. "
+                        "No vault files, memories, credentials, travel data, "
+                        "wallet data, or other saved records were retrieved "
+                        "or reviewed. Respond naturally to the user's actual "
+                        "topic. You may give general advice or ask for the "
+                        "details needed to help. Give a substantive answer "
+                        "with complete sentences and actionable explanation; "
+                        "never return only a list of headings, labels, or "
+                        "semicolon-separated topic names. Never say or imply that you "
+                        "will search, check, review, monitor, or have reviewed "
+                        "vault data. Never narrate background work or insert "
+                        "a progress placeholder. If a reliable answer needs "
+                        "private saved data, explain that the user must "
+                        "explicitly ask to search that data. When the user "
+                        "asks whether they are ready, safe, compliant, or "
+                        "otherwise requests an assessment based on unseen "
+                        "facts, say you cannot determine that from the current "
+                        "message, then offer a useful general checklist or "
+                        "ask for relevant non-vault details. Do not say 'I can "
+                        "check' unless the user explicitly asks for a vault "
+                        "search in a separate tool-eligible turn."
+                    ),
                 })
             messages.append({
                 "role": "system", "content": _language_instruction,

@@ -75,6 +75,19 @@ void main() {
       expect(isValidVaultHandleDisplay('not a handle'), isFalse);
     });
 
+    test('login handle detection requires an explicit VLT prefix', () {
+      final display = vaultHandleToDisplay(generateVaultHandle());
+      final compact =
+          display.substring(vaultHandlePrefix.length).replaceAll('-', '');
+      expect(isExplicitVaultHandleDisplay(display), isTrue);
+      expect(isValidVaultHandleDisplay(compact), isTrue,
+          reason: 'the low-level legacy parser remains permissive');
+      expect(isExplicitVaultHandleDisplay(compact), isFalse,
+          reason: 'a valid 24-character vault name must remain a username');
+      expect(isExplicitVaultHandleDisplay('qa-ios-interop-20260811-1158'),
+          isFalse);
+    });
+
     test('confusable chars normalized (I=1, L=1, O=0, U=V)', () {
       final raw = generateVaultHandle();
       final disp = vaultHandleToDisplay(raw);

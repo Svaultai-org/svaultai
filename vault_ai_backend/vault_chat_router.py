@@ -551,7 +551,7 @@ _CROSS_SEARCH_PATTERNS = tuple(
 _CRYPTO_TOKENS = (
     "crypto", "wallet", "eth", "usdt", "usdc", "sol",
     "solana", "monero", "xmr", "ethereum", "tron", "trc20",
-    "erc20", "receive address", "receive qr", "balance", "scanner",
+    "erc20", "receive address", "receive qr", "scanner",
     "prepare a", "prepare 5", "prepare 10", "prepare 0.",
     "send.*(?:eth|usdt|usdc|sol|xmr)",
     "swap", "trade", "stake", "bridge",
@@ -567,6 +567,15 @@ _CRYPTO_INTERNAL_SERVICE_KEY_HINT_RE = re.compile(
     r":"
     r"[a-z][a-z0-9_]{2,25}_"
     r"(?:mainnet|testnet|sepolia|devnet)\b",
+)
+
+_CRYPTO_BALANCE_CONTEXT_RE = re.compile(
+    r"(?:\b(?:crypto|wallet|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|"
+    r"monero|xmr|tron|trx|trc20|erc20)\b.{0,48}\bbalance\b|"
+    r"\bbalance\b.{0,48}\b(?:crypto|wallet|bitcoin|btc|ethereum|eth|usdt|"
+    r"usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20)\b|"
+    r"\bmy\s+balance\b|\bbalance\s+(?:say|says|show|shows|unavailable)\b)",
+    re.IGNORECASE,
 )
 
 
@@ -612,6 +621,8 @@ def _detect_auto_send(text: str) -> bool:
 
 def _looks_like_crypto_message(text: str) -> bool:
     if _CRYPTO_HINT_RE.search(text):
+        return True
+    if _CRYPTO_BALANCE_CONTEXT_RE.search(text):
         return True
     if _CRYPTO_INTERNAL_SERVICE_KEY_HINT_RE.search(text):
         return True
@@ -1003,6 +1014,34 @@ def classify_and_build_vault_intent(
             ),
         )
 
+    # Generalized credential retrieval is a fallback behind the established
+    # explicit actions above (generated items, reveal, copy, duplicates and
+    # list). It recognizes the domain semantically, then extracts the service
+    # without prescribing a user sentence shape.
+    try:
+        from vault_brain_intent import CREDENTIAL_LOOKUP, classify_brain_intent
+        _brain_intent = classify_brain_intent(text)
+    except Exception:
+        _brain_intent = None
+        CREDENTIAL_LOOKUP = "credential_lookup"
+    if (
+        _brain_intent is not None
+        and _brain_intent.intent == CREDENTIAL_LOOKUP
+        and not _matches_any(text, _SECURE_ITEM_SEARCH_PATTERNS)
+    ):
+        _credential_query = _extract_search_query(text)
+        if _credential_query is not None:
+            return _wrap_intent(
+                INTENT_LOGIN_SEARCH,
+                _build_card(
+                    CARD_LOGIN,
+                    liveFetchRequired=True,
+                    maskedByDefault=False,
+                    view="detail",
+                    query=_credential_query,
+                ),
+            )
+
 
     if _matches_any(text, _ID_DOCUMENT_REVEAL_PATTERNS):
         return _wrap_intent(
@@ -1228,7 +1267,11 @@ _LOGIN_SERVICE_EXTRACT_REGEXES: tuple[re.Pattern[str], ...] = (
 
 _LOGIN_QUERY_STOPWORDS: frozenset[str] = frozenset({
     "the", "a", "an", "my", "me", "your", "our", "please", "saved",
-    "credit", "union", "bank", "account",
+    "credit", "union", "bank", "account", "what", "which", "where", "i",
+    "for", "to", "that", "it",
+    "is", "are", "do", "does", "did", "have", "has", "show", "find",
+    "open", "get", "give", "tell", "reveal", "view", "display", "need",
+    "login", "logins", "password", "passwords", "credential", "credentials",
 })
 
 
@@ -1257,7 +1300,15 @@ def _extract_search_query(text: str) -> str | None:
 
     m = _SEARCH_QUERY_EXTRACT_FOR_RE.search(text)
     if not m:
-        return None
+        tokens = re.findall(r"[\w'\-\.]+", text)
+        meaningful = [
+            token for token in tokens
+            if token.lower() not in _LOGIN_QUERY_STOPWORDS
+        ]
+        if not meaningful:
+            return None
+        q = " ".join(meaningful).strip()
+        return q[:80] if len(q) >= 2 else None
     q = m.group("q").strip()
 
     q = re.sub(r"[\.\?!,]+$", "", q).strip()
