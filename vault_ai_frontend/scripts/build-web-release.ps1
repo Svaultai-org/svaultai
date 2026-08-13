@@ -35,8 +35,8 @@ try {
     foreach ($arg in $args) {
         if ($arg -eq '--allow-dev-release') {
             $allowDev = $true
-        } elseif ($arg -match '^--dart-define=(MEMORY_V2_|FILE_V2_|WALLET_BACKUP_V2_|WALLET_V2_|PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=)') {
-            Write-Error '[vault-release] production V2 flags are pinned false by this script.'
+        } elseif ($arg -match '^--dart-define=(ZK_V2_|MEMORY_V2_|FILE_V2_|WALLET_BACKUP_V2_|WALLET_V2_|PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=)') {
+            Write-Error '[vault-release] production privacy flags are pinned by this script.'
             exit 2
         } else {
             $flutterExtraArgs += $arg
@@ -85,11 +85,14 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         'build', 'web', '--release',
         '--pwa-strategy=none',
         "--dart-define=APP_RELEASE=$shaFull",
-        '--dart-define=MEMORY_V2_READ_ENABLED=false',
-        '--dart-define=MEMORY_V2_WRITE_ENABLED=false',
+        '--dart-define=ZK_V2_READ_ENABLED=true',
+        '--dart-define=ZK_V2_WRITE_ENABLED=false',
+        '--dart-define=ZK_V2_MIGRATION_ENABLED=false',
+        '--dart-define=MEMORY_V2_READ_ENABLED=true',
+        '--dart-define=MEMORY_V2_WRITE_ENABLED=true',
         '--dart-define=MEMORY_V2_MIGRATION_ENABLED=false',
-        '--dart-define=FILE_V2_READ_ENABLED=false',
-        '--dart-define=FILE_V2_WRITE_ENABLED=false',
+        '--dart-define=FILE_V2_READ_ENABLED=true',
+        '--dart-define=FILE_V2_WRITE_ENABLED=true',
         '--dart-define=FILE_V2_MIGRATION_ENABLED=false',
         '--dart-define=WALLET_BACKUP_V2_READ_ENABLED=false',
         '--dart-define=WALLET_BACKUP_V2_WRITE_ENABLED=false',
@@ -97,10 +100,10 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         '--dart-define=WALLET_V2_READ_ENABLED=false',
         '--dart-define=WALLET_V2_WRITE_ENABLED=false',
         '--dart-define=WALLET_V2_MIGRATION_ENABLED=false',
-        '--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=false'
-        '--dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet'
-        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true'
-        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true'
+        '--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=false',
+        '--dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet',
+        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true',
+        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true',
         '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true'
     ) + $flutterExtraArgs
     Write-Host "[vault-release] flutter $($buildArgs -join ' ')" -ForegroundColor Cyan

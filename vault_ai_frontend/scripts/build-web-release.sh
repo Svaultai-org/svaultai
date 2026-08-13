@@ -49,8 +49,8 @@ for arg in "$@"; do
         --allow-dev-release)
             allow_dev=1
             ;;
-        --dart-define=MEMORY_V2_*|--dart-define=FILE_V2_*|--dart-define=WALLET_BACKUP_V2_*|--dart-define=WALLET_V2_*|--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=*)
-            echo "[vault-release] ERROR: production V2 flags are pinned false by this script." >&2
+        --dart-define=ZK_V2_*|--dart-define=MEMORY_V2_*|--dart-define=FILE_V2_*|--dart-define=WALLET_BACKUP_V2_*|--dart-define=WALLET_V2_*|--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=*)
+            echo "[vault-release] ERROR: production privacy flags are pinned by this script." >&2
             exit 2
             ;;
         *)
@@ -95,11 +95,14 @@ echo "[vault-release] (display-only short: $sha_short)"
 flutter build web --release \
     --pwa-strategy=none \
     --dart-define=APP_RELEASE="$sha_full" \
-    --dart-define=MEMORY_V2_READ_ENABLED=false \
-    --dart-define=MEMORY_V2_WRITE_ENABLED=false \
+    --dart-define=ZK_V2_READ_ENABLED=true \
+    --dart-define=ZK_V2_WRITE_ENABLED=false \
+    --dart-define=ZK_V2_MIGRATION_ENABLED=false \
+    --dart-define=MEMORY_V2_READ_ENABLED=true \
+    --dart-define=MEMORY_V2_WRITE_ENABLED=true \
     --dart-define=MEMORY_V2_MIGRATION_ENABLED=false \
-    --dart-define=FILE_V2_READ_ENABLED=false \
-    --dart-define=FILE_V2_WRITE_ENABLED=false \
+    --dart-define=FILE_V2_READ_ENABLED=true \
+    --dart-define=FILE_V2_WRITE_ENABLED=true \
     --dart-define=FILE_V2_MIGRATION_ENABLED=false \
     --dart-define=WALLET_BACKUP_V2_READ_ENABLED=false \
     --dart-define=WALLET_BACKUP_V2_WRITE_ENABLED=false \
