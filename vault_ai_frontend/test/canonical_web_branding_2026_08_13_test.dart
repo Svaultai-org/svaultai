@@ -62,5 +62,20 @@ void main() {
     expect(nginx, contains('add_header X-Robots-Tag'));
     expect(nginx,
         contains('default                     "noindex, nofollow, noarchive"'));
+    for (final publicAsset in <String>[
+      '/robots.txt',
+      '/sitemap.xml',
+      '/favicon.ico',
+      '/favicon.png',
+      '/favicon-16x16.png',
+      '/favicon-32x32.png',
+      '/apple-touch-icon.png',
+      '/og-image.png',
+    ]) {
+      expect(
+        nginx,
+        matches(RegExp('${RegExp.escape(publicAsset)}\\s+"";')),
+      );
+    }
   });
 }
