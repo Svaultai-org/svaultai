@@ -1584,6 +1584,13 @@ def generate_credential_draft(
             service_name=svc_display,
             username=username,
             password=password,
+            # Credential-v2 clients receive the generated values in this
+            # response and encrypt them locally. Their server draft is an
+            # opaque lifecycle marker; legacy chat keeps its old contract.
+            opaque_server_storage=(
+                os.getenv("ZK_V2_GENERATED_DRAFT_OPAQUE", "false")
+                .strip().lower() in ("1", "true", "yes", "on")
+            ),
         )
     except Exception:
         logger.exception("[INSPECT] draft store failed")

@@ -226,16 +226,14 @@ void main() {
       // The controlled copy carries the diagnostic tag so operators
       // can see WHICH step threw.
       expect(
-        window.contains("'Login failed. '"),
+        window.contains('kAuthDeviceSafeError'),
         isTrue,
         reason: 'controlled login-failed copy is missing',
       );
       expect(
         window.contains(r'[diagnostic: step=$loginLastStep, type=$typeName]'),
-        isTrue,
-        reason: 'ZK catch must surface the step + exception class '
-            'in the user-visible error so an operator reading '
-            'a screenshot can identify the failing step',
+        isFalse,
+        reason: 'diagnostic details must not be exposed in UI copy',
       );
     });
 
@@ -317,7 +315,7 @@ void main() {
             'the user-visible error message',
       );
       expect(
-        window.contains("'Wrong username or PIN. '"),
+        window.contains('kUnlockDeviceSafeError'),
         isTrue,
         reason: 'controlled unlock-failed copy is missing',
       );
@@ -327,9 +325,8 @@ void main() {
       // screenshot.
       expect(
         window.contains(r'[diagnostic: step=$unlockLastStep, type=$typeName]'),
-        isTrue,
-        reason: 'UnlockPage error must carry the diagnostic step + '
-            'exception class tag',
+        isFalse,
+        reason: 'UnlockPage diagnostic details must stay out of UI copy',
       );
       expect(
         window.contains('[zk-unlock-diag]'),

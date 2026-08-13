@@ -1,0 +1,68 @@
+SVaultAI COMMERCIAL SOURCE TERMS
+Attorney-review draft — 2026-08-13
+
+ATTORNEY_REVIEW_REQUIRED=true
+
+Copyright © 2026 SVaultAI. All rights reserved.
+
+1. Status of this repository
+
+This repository contains proprietary SVaultAI commercial implementation
+material. The source having been visible, or being made available to an
+authorized person, does not dedicate it to the public domain and does not by
+itself grant an open-source license or any other permission.
+
+These terms are not approved by the Open Source Initiative and are not an
+open-source license.
+
+2. No implied commercial grant
+
+Except under a separate written agreement signed by an authorized SVaultAI
+representative, no permission is granted to:
+
+- commercially redistribute the SVaultAI implementation;
+- rebrand, publish, or sell a cloned SVaultAI application;
+- operate a competing hosted copy of the SVaultAI service;
+- distribute derivative commercial versions of SVaultAI;
+- sublicense SVaultAI-owned implementation material; or
+- remove or misrepresent copyright, trademark, attribution, or license
+  notices.
+
+Possession of a copy, prior public availability, repository access, or the
+ability to compile the source does not create any such permission.
+
+3. Authorized access
+
+An employee, contractor, auditor, or other person who has separately received
+written authorization may use the repository only within the scope and term
+of that authorization. Any broader license must be stated in a separate
+written agreement. All rights not expressly granted are reserved.
+
+4. Third-party material
+
+These terms apply only to material owned by SVaultAI. Third-party packages,
+vendored components, and other third-party works remain governed by their own
+licenses and notices. Nothing in these terms restricts rights granted directly
+by a third-party licensor or claims SVaultAI ownership of third-party work.
+
+See THIRD_PARTY_NOTICES.md and the license files shipped with third-party
+components.
+
+5. Trademarks
+
+No trademark or brand license is granted except for nominative use required
+to identify the source of the material.
+
+6. No warranty
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SVaultAI-OWNED MATERIAL IS
+PROVIDED “AS IS,” WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND. Nothing in
+this paragraph limits obligations that cannot lawfully be excluded or an
+express warranty in a separate signed agreement.
+
+7. Separate agreements and legal review
+
+If these terms conflict with a separately signed agreement governing a
+recipient's access, that agreement controls for that recipient. These terms
+are a conservative interim notice and require review by qualified counsel
+before they are treated as a final commercial source license.

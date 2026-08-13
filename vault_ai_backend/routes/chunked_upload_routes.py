@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import uuid
 from typing import Optional
 
@@ -16,6 +17,7 @@ from device_gate import verify_trusted_device
 from chunked_aead import CHUNK_NONCE_BYTES, CHUNK_TAG_BYTES
 from chunked_tokens import issue_chunk_token, load_ttl_seconds, verify_chunk_token
 from vault_core import MAX_VAULT_BYTES, get_db, verify_vault_pin
+from zk_migration_flags import ZkMigrationFlags
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ CHUNK_FRAME_OVERHEAD           = CHUNK_NONCE_BYTES + CHUNK_TAG_BYTES
 class ChunkInitRequest(BaseModel):
     vault_name: str
     pin: str
-    filename: str
+    filename: Optional[str] = None
     content_type: Optional[str] = None
     total_bytes: int
     chunk_size: int
@@ -170,6 +172,18 @@ async def upload_file_init(
     payload: ChunkInitRequest,
     principal=Depends(verify_trusted_device),
 ):
+    # FILE_V2 is fail-closed: callers must use ciphertext metadata and the
+    # client-owned upload path. Legacy plaintext uploads remain available
+    # while the flag is disabled.
+    file_flags = ZkMigrationFlags.from_environment(os.environ)
+    file_flags.validate_dependencies()
+    if file_flags.file_write_enabled and not payload.filename_ciphertext:
+        raise HTTPException(
+            status_code=400,
+            detail="file_v2_requires_ciphertext_metadata",
+        )
+    if not file_flags.file_write_enabled and not payload.filename:
+        raise HTTPException(status_code=400, detail="filename_required")
     vault_id = principal["vault_id"]
 
                                                     
@@ -367,24 +381,25 @@ async def upload_file_init(
             )
 
                                                                             
-        try:
-            from main import client as _openai_client
-            from semantic_embedder import enqueue_uploaded_file_embedding
-            enqueue_uploaded_file_embedding(_openai_client, vault_id, file_id, "file_name", payload.filename)
-            enqueue_uploaded_file_embedding(_openai_client, vault_id, file_id, "asset_type", "file")
-            enqueue_uploaded_file_embedding(_openai_client, vault_id, file_id, "detected_service", "general")
-        except Exception:
-            pass
-                                                                                     
-        try:
-            from asset_tagger import tag_uploaded_file_safe
-            tag_uploaded_file_safe(
-                vault_id, file_id,
-                file_name=payload.filename, asset_type="file",
-                content_type=payload.content_type, detected_service="general",
-            )
-        except Exception:
-            pass
+        if not is_zk_upload:
+            try:
+                from main import client as _openai_client
+                from semantic_embedder import enqueue_uploaded_file_embedding
+                enqueue_uploaded_file_embedding(_openai_client, vault_id, file_id, "file_name", payload.filename)
+                enqueue_uploaded_file_embedding(_openai_client, vault_id, file_id, "asset_type", "file")
+                enqueue_uploaded_file_embedding(_openai_client, vault_id, file_id, "detected_service", "general")
+            except Exception:
+                pass
+        if not is_zk_upload:
+            try:
+                from asset_tagger import tag_uploaded_file_safe
+                tag_uploaded_file_safe(
+                    vault_id, file_id,
+                    file_name=payload.filename, asset_type="file",
+                    content_type=payload.content_type, detected_service="general",
+                )
+            except Exception:
+                pass
 
         cur.execute(
             """

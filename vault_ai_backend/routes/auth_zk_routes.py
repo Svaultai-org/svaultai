@@ -344,7 +344,7 @@ class ZkRegisterFinalizeRequest(BaseModel):
         if not v:
             raise ValueError(
                 "acknowledged_irrecoverable must be true; the vault is "
-                "irrecoverable if the PIN and recovery kit are lost."
+                "irrecoverable if the PIN is lost."
             )
         return v
 

@@ -12,6 +12,7 @@ from auth_local import verify_session_token
 from device_gate import verify_trusted_device
 from chunked_tokens import issue_chunk_token, load_ttl_seconds, verify_chunk_token
 from vault_core import get_db, verify_vault_pin
+from subscription_entitlement import require_file_read
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ async def download_file_manifest(
 
     if not row:
         raise HTTPException(status_code=404, detail="File not found")
+    require_file_read(principal, int(row["file_size"] or 0))
     if (row["upload_status"] or "complete") != "complete":
         raise HTTPException(status_code=409, detail="File upload not finalized yet")
 

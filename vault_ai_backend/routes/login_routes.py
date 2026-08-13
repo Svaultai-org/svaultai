@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, Optional
 
 from psycopg2.extras import RealDictCursor
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from auth_local import verify_session_token
 from device_gate import verify_trusted_device
+from subscription_entitlement import require_content_write, require_crypto_access
 from vault_core import (
     decrypt_message, encrypt_message, get_db,
     normalize_service, verify_vault_pin,
@@ -220,6 +222,7 @@ def update_secure_item(
     payload: UpdateSecureItemRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
     vault_id        = principal["vault_id"]
     old_service_raw = _display_service_name(payload.old_service)
     old_service     = _normalize_service_name(payload.old_service)
@@ -671,6 +674,8 @@ def save_crypto_wallet_profile(
     payload: SaveCryptoWalletProfileRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
+    require_crypto_access(principal)
 
 
     from vault_saved_item_taxonomy import CATEGORY_CRYPTO_WALLET_ADDRESS
@@ -751,6 +756,11 @@ def save_crypto_sensitive_backup(
     payload: SaveCryptoSensitiveBackupRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
+    require_crypto_access(principal)
+    from zk_migration_flags import ZkMigrationFlags
+    if ZkMigrationFlags.from_environment(os.environ).wallet_backup_write_enabled:
+        raise HTTPException(status_code=410, detail="legacy_sensitive_backup_write_disabled")
 
 
     from vault_secure_item_save import _encrypt_and_write
@@ -854,6 +864,9 @@ def reveal_sensitive_backup(
     payload: RevealSensitiveBackupRequest,
     principal=Depends(verify_trusted_device),
 ):
+    from zk_migration_flags import ZkMigrationFlags
+    if ZkMigrationFlags.from_environment(os.environ).wallet_backup_read_enabled:
+        raise HTTPException(status_code=410, detail="legacy_sensitive_backup_reveal_disabled")
 
 
     from crypto_schemas import (
@@ -1044,6 +1057,8 @@ def save_crypto_note(
     payload: SaveCryptoNoteRequest,
     principal=Depends(verify_trusted_device),
 ):
+    require_content_write(principal)
+    require_crypto_access(principal)
 
 
     from vault_secure_item_save import _encrypt_and_write

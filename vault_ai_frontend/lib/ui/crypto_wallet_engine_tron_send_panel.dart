@@ -1,5 +1,3 @@
-
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -11,16 +9,15 @@ import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/zk_active_mvk.dart' as zk_mvk_store;
-import '../services/zk_outgoing_history_helper.dart'
-    as zk_history_helper;
+import '../services/zk_outgoing_history_helper.dart' as zk_history_helper;
 import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/recipient_qr_parser.dart';
 import '../services/tron_transaction.dart';
 import '../services/tron_wallet.dart';
+import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
-
 
 const String kTronSendUpdatePendingError =
     'SVaultAI was updated. Refresh before starting a new send.';
@@ -36,8 +33,7 @@ const String kTronSendNotEnabledMessage =
     'USDT TRC20 sending is not enabled yet.';
 const String kTronSendPausedMessage =
     'USDT TRC20 sending is temporarily paused.';
-const String kTronSendPinDialogTitle =
-    'Enter your PIN to sign locally';
+const String kTronSendPinDialogTitle = 'Enter your PIN to sign locally';
 const String kTronSendPinDialogBody =
     'Your TRON secret is decrypted on this device only. SVaultAI '
     'never sees the plaintext key.';
@@ -49,8 +45,7 @@ const String kTronSendDestinationLabel = 'Destination TRON address';
 const String kTronSendAmountLabel = 'Amount (USDT)';
 const String kTronSendReviewButtonLabel = 'Review';
 const String kTronSendConfirmButtonLabel = 'Confirm and enter PIN';
-const String kTronSendBroadcastFailedCopy =
-    'Could not submit transaction.';
+const String kTronSendBroadcastFailedCopy = 'Could not submit transaction.';
 const String kTronSendInvalidDestinationCopy =
     'Destination must be a valid TRON Base58Check address.';
 const String kTronSendInvalidAmountCopy =
@@ -59,72 +54,55 @@ const String kTronSendSelfSendCopy =
     'Destination address matches the from address. Refusing to '
     'draft a self-send.';
 
-
 const String kTronSendPanelKey = 'tron_send_panel';
-const String kTronSendDestinationInputKey =
-    'tron_send_panel_destination_input';
-const String kTronSendAmountInputKey =
-    'tron_send_panel_amount_input';
-const String kTronSendReviewButtonKey =
-    'tron_send_panel_review_btn';
-const String kTronSendReviewCardKey =
-    'tron_send_panel_review_card';
-const String kTronSendConfirmButtonKey =
-    'tron_send_panel_confirm_btn';
-const String kTronSendSubmittedCardKey =
-    'tron_send_panel_submitted_card';
-const String kTronSendPausedBannerKey =
-    'tron_send_panel_paused_banner';
-const String kTronSendDisabledBannerKey =
-    'tron_send_panel_disabled_banner';
-const String kTronSendWarningKey =
-    'tron_send_panel_warning';
-const String kTronSendFeeWarningKey =
-    'tron_send_panel_fee_warning';
-const String kTronSendLowTrxWarningKey =
-    'tron_send_panel_low_trx_warning';
-const String kTronSendPinInputKey =
-    'tron_send_panel_pin_input';
-const String kTronSendPinConfirmBtnKey =
-    'tron_send_panel_pin_confirm_btn';
-const String kTronSendStatusTextKey =
-    'tron_send_panel_status_text';
-const String kTronSendTxIdTextKey =
-    'tron_send_panel_txid_text';
-const String kTronSendCopyTxIdBtnKey =
-    'tron_send_panel_copy_txid_btn';
+const String kTronSendDestinationInputKey = 'tron_send_panel_destination_input';
+const String kTronSendAmountInputKey = 'tron_send_panel_amount_input';
+const String kTronSendReviewButtonKey = 'tron_send_panel_review_btn';
+const String kTronSendReviewCardKey = 'tron_send_panel_review_card';
+const String kTronSendConfirmButtonKey = 'tron_send_panel_confirm_btn';
+const String kTronSendSubmittedCardKey = 'tron_send_panel_submitted_card';
+const String kTronSendPausedBannerKey = 'tron_send_panel_paused_banner';
+const String kTronSendDisabledBannerKey = 'tron_send_panel_disabled_banner';
+const String kTronSendWarningKey = 'tron_send_panel_warning';
+const String kTronSendFeeWarningKey = 'tron_send_panel_fee_warning';
+const String kTronSendLowTrxWarningKey = 'tron_send_panel_low_trx_warning';
+const String kTronSendPinInputKey = 'tron_send_panel_pin_input';
+const String kTronSendPinConfirmBtnKey = 'tron_send_panel_pin_confirm_btn';
+const String kTronSendStatusTextKey = 'tron_send_panel_status_text';
+const String kTronSendTxIdTextKey = 'tron_send_panel_txid_text';
+const String kTronSendCopyTxIdBtnKey = 'tron_send_panel_copy_txid_btn';
 
-
-const String kTronSendStatusPollingCopy =
-    'Checking TRON status…';
-const String kTronSendStatusPendingCopy =
-    'Status: pending';
-const String kTronSendStatusConfirmedCopy =
-    'Status: confirmed';
-const String kTronSendStatusFailedCopy =
-    'Status: failed';
-const String kTronSendStatusUnavailableCopy =
-    'Status temporarily unavailable';
-
+const String kTronSendStatusPollingCopy = 'Checking TRON status…';
+const String kTronSendStatusPendingCopy = 'Status: pending';
+const String kTronSendStatusConfirmedCopy = 'Status: confirmed';
+const String kTronSendStatusFailedCopy = 'Status: failed';
+const String kTronSendStatusUnavailableCopy = 'Status temporarily unavailable';
 
 String tronSendStatusCopyFor(String? statusCode) {
   switch (statusCode) {
-    case 'confirmed': return kTronSendStatusConfirmedCopy;
-    case 'failed':    return kTronSendStatusFailedCopy;
-    case 'pending':   return kTronSendStatusPendingCopy;
+    case 'confirmed':
+      return kTronSendStatusConfirmedCopy;
+    case 'failed':
+      return kTronSendStatusFailedCopy;
+    case 'pending':
+      return kTronSendStatusPendingCopy;
     case 'unavailable':
       return kTronSendStatusUnavailableCopy;
   }
   return kTronSendStatusPollingCopy;
 }
 
-
 // 2026-07-14 (Round 7 hardening): terminal-result states for the
 // honest post-broadcast result screen.
 enum _TronSendStage {
-  input, review, submitting, submitted, uncertain, rejected, expired,
+  input,
+  review,
+  submitting,
+  submitted,
+  uncertain,
+  rejected,
+  expired,
 }
-
 
 // 2026-07-14 (Round 7 hardening): TRON-specific gate + result copy.
 const String kTronSendExactFeeUnverifiedError =
@@ -139,14 +117,11 @@ const String kTronSendInsufficientTrxError =
 const String kTronSendDraftExpiredError =
     'The TRON draft expired before broadcast. Return to form to '
     'obtain a fresh draft; recipient and amount are preserved.';
-const String kTronSendResultHeadingSubmitted =
-    'Transaction submitted';
+const String kTronSendResultHeadingSubmitted = 'Transaction submitted';
 const String kTronSendResultHeadingUncertain =
     'Transaction status is uncertain';
-const String kTronSendResultHeadingRejected =
-    'Transaction rejected';
-const String kTronSendResultHeadingExpired =
-    'Draft expired before broadcast';
+const String kTronSendResultHeadingRejected = 'Transaction rejected';
+const String kTronSendResultHeadingExpired = 'Draft expired before broadcast';
 const String kTronSendResultBodyUncertain =
     'The TRON provider did not confirm inclusion within the '
     'visibility window. SVaultAI will keep checking. Do not re-sign '
@@ -180,7 +155,6 @@ const String kTronReviewMaxAuthorizedFeeCaution =
 const String kTronReviewExpirationLabel =
     'This draft expires shortly — sign and broadcast promptly, or '
     're-draft.';
-
 
 class CryptoWalletEngineTronSendPanel extends StatefulWidget {
   final String authToken;
@@ -248,13 +222,10 @@ class CryptoWalletEngineTronSendPanel extends StatefulWidget {
       _CryptoWalletEngineTronSendPanelState();
 }
 
-
 class _CryptoWalletEngineTronSendPanelState
     extends State<CryptoWalletEngineTronSendPanel> {
-  final TextEditingController _destinationController =
-      TextEditingController();
-  final TextEditingController _amountController =
-      TextEditingController();
+  final TextEditingController _destinationController = TextEditingController();
+  final TextEditingController _amountController = TextEditingController();
 
   // 2026-07-13 mobile-keyboard fix: shared scroll controller +
   // FocusNodes so tapping / Next-key-hopping to a field slides it
@@ -324,11 +295,9 @@ class _CryptoWalletEngineTronSendPanelState
     });
   }
 
-  bool get _sendEnabled =>
-      widget.features?.tronSendEnabled ?? false;
+  bool get _sendEnabled => widget.features?.tronSendEnabled ?? false;
 
-  bool get _sendPaused =>
-      widget.features?.tronSendPaused ?? false;
+  bool get _sendPaused => widget.features?.tronSendPaused ?? false;
 
   Future<void> _onReview() async {
     // 2026-07-14 (Round 11 — release wiring): block a NEW Send if
@@ -379,8 +348,7 @@ class _CryptoWalletEngineTronSendPanelState
           asset: kTronAssetTicker,
           amountUsdt: _amountController.text.trim(),
         );
-        final draft = await widget.client
-            .createCryptoWalletSendDraftNetwork(
+        final draft = await widget.client.createCryptoWalletSendDraftNetwork(
           network: kTronNetworkId,
           asset: kTronAssetTicker,
           authToken: widget.authToken,
@@ -393,8 +361,8 @@ class _CryptoWalletEngineTronSendPanelState
         final status = (draft['status'] ?? '').toString();
         if (status != 'draft_ready') {
           setState(() {
-            _error = (draft['message'] ??
-                'USDT TRC20 draft not ready.').toString();
+            _error =
+                (draft['message'] ?? 'USDT TRC20 draft not ready.').toString();
           });
           return;
         }
@@ -417,10 +385,10 @@ class _CryptoWalletEngineTronSendPanelState
     // Review/PIN/broadcast taps + browser back+forward must be
     // no-ops.
     if (_broadcastInFlight) return;
-    if (_stage == _TronSendStage.submitted
-        || _stage == _TronSendStage.uncertain
-        || _stage == _TronSendStage.rejected
-        || _stage == _TronSendStage.expired) {
+    if (_stage == _TronSendStage.submitted ||
+        _stage == _TronSendStage.uncertain ||
+        _stage == _TronSendStage.rejected ||
+        _stage == _TronSendStage.expired) {
       return;
     }
     if (!widget.isVaultKeyAvailable()) {
@@ -485,33 +453,35 @@ class _CryptoWalletEngineTronSendPanelState
 
     String? plaintextPrivateKeyHex;
     try {
-      final secretResp = await widget.client
-          .getCryptoWalletEncryptedSecretNetwork(
-        network: kTronNetworkId,
-        asset: kTronAssetTicker,
-        authToken: widget.authToken,
-      );
-      final status = (secretResp['wallet_engine'] ?? '').toString();
-      if (status != 'encrypted_secret_ready') {
-        setState(() {
-          _broadcastInFlight = false;
-          _stage = _TronSendStage.input;
-          _error = 'Wallet secret not available for signing.';
-        });
-        return;
+      Map<String, dynamic> parsed;
+      const walletV2Read =
+          bool.fromEnvironment('WALLET_V2_READ_ENABLED', defaultValue: false);
+      if (walletV2Read) {
+        final repo = WalletV2Repository.current(
+            api: widget.client, authToken: widget.authToken);
+        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
+        final envelope =
+            await repo.find(chain: 'tron', publicAddress: widget.fromAddress);
+        if (envelope == null) throw StateError('wallet_v2_not_found');
+        parsed = await repo.decrypt(envelope);
+      } else {
+        final secretResp = await widget.client
+            .getCryptoWalletEncryptedSecretNetwork(
+                network: kTronNetworkId,
+                asset: kTronAssetTicker,
+                authToken: widget.authToken);
+        if ((secretResp['wallet_engine'] ?? '').toString() !=
+            'encrypted_secret_ready') {
+          throw StateError('legacy_wallet_secret_unavailable');
+        }
+        final ct = (secretResp['encryptedWalletSecret'] ?? '').toString();
+        if (ct.isEmpty) throw StateError('legacy_wallet_ciphertext_missing');
+        final decodedPayload = jsonDecode(await widget.decryptForVault(ct));
+        if (decodedPayload is! Map<String, dynamic>)
+          throw StateError('legacy_wallet_secret_invalid');
+        parsed = decodedPayload;
       }
-      final ct = (secretResp['encryptedWalletSecret'] ?? '').toString();
-      if (ct.isEmpty) {
-        setState(() {
-          _broadcastInFlight = false;
-          _stage = _TronSendStage.input;
-          _error = 'Missing ciphertext.';
-        });
-        return;
-      }
-      final decrypted = await widget.decryptForVault(ct);
-      final parsed = jsonDecode(decrypted);
-      if (parsed is! Map<String, dynamic>) {
+      if (parsed.isEmpty) {
         setState(() {
           _broadcastInFlight = false;
           _stage = _TronSendStage.input;
@@ -519,8 +489,7 @@ class _CryptoWalletEngineTronSendPanelState
         });
         return;
       }
-      plaintextPrivateKeyHex =
-          (parsed['privateKeyHex'] ?? '').toString();
+      plaintextPrivateKeyHex = (parsed['privateKeyHex'] ?? '').toString();
       if (plaintextPrivateKeyHex.isEmpty) {
         setState(() {
           _broadcastInFlight = false;
@@ -571,24 +540,23 @@ class _CryptoWalletEngineTronSendPanelState
       // 2026-07-14 (Round 7 hardening): draftId echoed so the state
       // machine can enforce single-attempt + record outcomes.
       final draftIdEcho = (draft['draftId'] ?? '').toString();
-      final broadcastResp = await widget.client
-          .broadcastCryptoWalletSignedTransactionNetwork(
-        network:           kTronNetworkId,
-        asset:             kTronAssetTicker,
-        authToken:         widget.authToken,
+      final broadcastResp =
+          await widget.client.broadcastCryptoWalletSignedTransactionNetwork(
+        network: kTronNetworkId,
+        asset: kTronAssetTicker,
+        authToken: widget.authToken,
         signedTransaction: signed,
-        idempotencyKey:    _idempotencyKey,
-        draftId:           draftIdEcho.isEmpty ? null : draftIdEcho,
+        idempotencyKey: _idempotencyKey,
+        draftId: draftIdEcho.isEmpty ? null : draftIdEcho,
       );
-      final broadcastStatus =
-          (broadcastResp['status'] ?? '').toString();
+      final broadcastStatus = (broadcastResp['status'] ?? '').toString();
       // Honest outcome classification. Round-6 backend returns:
       //   submitted / already_submitted            → success
       //   submission_uncertain                     → uncertain
       //   broadcast_rejected / broadcast_failed    → rejected
       //   draft_expired                            → expired
-      if (broadcastStatus == 'submitted'
-          || broadcastStatus == 'already_submitted') {
+      if (broadcastStatus == 'submitted' ||
+          broadcastStatus == 'already_submitted') {
         _notifyOptimisticDebit(
           txHash: (broadcastResp['txHash'] ?? '').toString(),
           draft: draft,
@@ -614,8 +582,8 @@ class _CryptoWalletEngineTronSendPanelState
           _stage = _TronSendStage.uncertain;
           _submitted = broadcastResp;
         });
-      } else if (broadcastStatus == 'broadcast_rejected'
-          || broadcastStatus == 'broadcast_failed') {
+      } else if (broadcastStatus == 'broadcast_rejected' ||
+          broadcastStatus == 'broadcast_failed') {
         setState(() {
           _broadcastInFlight = false;
           _stage = _TronSendStage.rejected;
@@ -631,8 +599,8 @@ class _CryptoWalletEngineTronSendPanelState
         setState(() {
           _broadcastInFlight = false;
           _stage = _TronSendStage.review;
-          _error = (broadcastResp['message']
-              ?? kTronSendBroadcastFailedCopy).toString();
+          _error = (broadcastResp['message'] ?? kTronSendBroadcastFailedCopy)
+              .toString();
         });
       }
     } catch (e) {
@@ -674,8 +642,10 @@ class _CryptoWalletEngineTronSendPanelState
     }
     final BigInt? tokenAmount = BigInt.tryParse(rawAmount);
     final BigInt? feeLimitSun = BigInt.tryParse(rawFee);
-    if (tokenAmount == null || feeLimitSun == null
-        || tokenAmount < BigInt.zero || feeLimitSun < BigInt.zero) {
+    if (tokenAmount == null ||
+        feeLimitSun == null ||
+        tokenAmount < BigInt.zero ||
+        feeLimitSun < BigInt.zero) {
       return kTronSendExactFeeUnverifiedError;
     }
     BigInt? tokenAvail;
@@ -785,11 +755,13 @@ class _CryptoWalletEngineTronSendPanelState
     final cb = widget.onSuccessfulBroadcast;
     if (cb == null) return;
     final BigInt tokenAmount = BigInt.tryParse(
-      (draft['amountBaseUnits'] ?? '0').toString(),
-    ) ?? BigInt.zero;
+          (draft['amountBaseUnits'] ?? '0').toString(),
+        ) ??
+        BigInt.zero;
     final BigInt feeLimitSun = BigInt.tryParse(
-      (draft['feeLimitSun'] ?? '0').toString(),
-    ) ?? BigInt.zero;
+          (draft['feeLimitSun'] ?? '0').toString(),
+        ) ??
+        BigInt.zero;
     cb(
       txHash: txHash,
       tokenBaseUnitsDebit: tokenAmount,
@@ -808,11 +780,10 @@ class _CryptoWalletEngineTronSendPanelState
         activeMvk: zk_mvk_store.ZkActiveMvk.current(),
         signature: txHash,
         senderAddress: widget.fromAddress,
-        destinationAddress:
-            (draft['destinationAddress'] ?? '').toString(),
+        destinationAddress: (draft['destinationAddress'] ?? '').toString(),
         asset: kTronAssetTicker,
-        amount: (draft['amountUsdt']
-            ?? draft['amountBaseUnits'] ?? '').toString(),
+        amount:
+            (draft['amountUsdt'] ?? draft['amountBaseUnits'] ?? '').toString(),
         outcome: outcome,
       );
       if (env == null) return;
@@ -856,11 +827,11 @@ class _CryptoWalletEngineTronSendPanelState
       if (!mounted || !_statusPollActive) return;
       _statusPollCount++;
       try {
-        final resp = await widget.client
-            .getCryptoWalletTransactionStatusNetwork(
-          network:   kTronNetworkId,
-          asset:     kTronAssetTicker,
-          txHash:    txid,
+        final resp =
+            await widget.client.getCryptoWalletTransactionStatusNetwork(
+          network: kTronNetworkId,
+          asset: kTronAssetTicker,
+          txHash: txid,
           authToken: widget.authToken,
         );
         if (!mounted) return;
@@ -1061,7 +1032,8 @@ class _CryptoWalletEngineTronSendPanelState
             heading,
             key: const Key('tron_send_panel_result_heading'),
             style: TextStyle(
-              color: headingColor, fontSize: 16,
+              color: headingColor,
+              fontSize: 16,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -1307,7 +1279,9 @@ class _CryptoWalletEngineTronSendPanelState
           value: kTronReviewNetworkValue,
         ),
         WalletSendKvRow(
-          label: 'From', value: widget.fromAddress, mono: true,
+          label: 'From',
+          value: widget.fromAddress,
+          mono: true,
         ),
         WalletSendKvRow(
           label: 'Destination',
@@ -1422,15 +1396,12 @@ class _CryptoWalletEngineTronSendPanelState
   Widget _buildReviewFooter() {
     return ElevatedButton(
       key: const Key(kTronSendConfirmButtonKey),
-      onPressed:
-          _broadcastInFlight ? null : _onConfirmAndSign,
+      onPressed: _broadcastInFlight ? null : _onConfirmAndSign,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
       child: Text(
-        _broadcastInFlight
-            ? 'Submitting…'
-            : kTronSendConfirmButtonLabel,
+        _broadcastInFlight ? 'Submitting…' : kTronSendConfirmButtonLabel,
       ),
     );
   }
@@ -1514,5 +1485,4 @@ class _CryptoWalletEngineTronSendPanelState
       ),
     );
   }
-
 }

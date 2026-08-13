@@ -280,7 +280,8 @@ void main() {
       expect(cancelled, isFalse);
     });
 
-    testWidgets('memory proposal shows progress then saved after backend success',
+    testWidgets(
+        'memory proposal shows progress then saved after backend success',
         (tester) async {
       final completer = Completer<void>();
       var saveCalls = 0;
@@ -322,9 +323,11 @@ void main() {
           findsOneWidget);
       expect(find.text('Memory saved.'), findsOneWidget);
       expect(
-        tester.widget<ElevatedButton>(
-          find.byKey(const Key('vault_chat_card_memory_save')),
-        ).onPressed,
+        tester
+            .widget<ElevatedButton>(
+              find.byKey(const Key('vault_chat_card_memory_save')),
+            )
+            .onPressed,
         isNull,
       );
     });
@@ -372,9 +375,11 @@ void main() {
       expect(find.byKey(const Key('vault_chat_card_memory_error')),
           findsOneWidget);
       expect(
-        tester.widget<ElevatedButton>(
-          find.byKey(const Key('vault_chat_card_memory_save')),
-        ).onPressed,
+        tester
+            .widget<ElevatedButton>(
+              find.byKey(const Key('vault_chat_card_memory_save')),
+            )
+            .onPressed,
         isNotNull,
       );
 
@@ -421,16 +426,19 @@ void main() {
       await tester.pump();
       expect(find.text('Saving...'), findsOneWidget);
 
-      await tester.pump(kMemoryProposalSaveTimeout + const Duration(seconds: 1));
+      await tester
+          .pump(kMemoryProposalSaveTimeout + const Duration(seconds: 1));
       await tester.pumpAndSettle();
 
       expect(saveCalls, 1);
       expect(find.byKey(const Key('vault_chat_card_memory_error')),
           findsOneWidget);
       expect(
-        tester.widget<ElevatedButton>(
-          find.byKey(const Key('vault_chat_card_memory_save')),
-        ).onPressed,
+        tester
+            .widget<ElevatedButton>(
+              find.byKey(const Key('vault_chat_card_memory_save')),
+            )
+            .onPressed,
         isNotNull,
       );
     });
@@ -682,6 +690,122 @@ void main() {
         'draft-facebook:Facebook',
         'draft-instagram:Instagram',
       ]);
+    });
+
+    testWidgets('generated login save clears busy state and is finalize-once',
+        (tester) async {
+      final completion = Completer<void>();
+      var saves = 0;
+      await tester.pumpWidget(_wrap(VaultChatCardView(
+        response: _parse(intent: 'vault_generated_login_create_draft', card: {
+          'cardType': 'vault_generated_login_card',
+          'view': 'create_draft',
+          'data': {
+            'service': 'Example',
+            'username': 'user',
+            'password': 'secret',
+            'draft_id': 'draft-save-once',
+            'actions': ['save', 'cancel'],
+          },
+        }),
+        onGeneratedLoginSave: (_, __) async {
+          saves++;
+          await completion.future;
+        },
+      )));
+
+      final save =
+          find.byKey(const Key('vault_chat_card_generated_login_save'));
+      await tester.tap(save);
+      await tester.tap(save);
+      await tester.pump();
+      expect(saves, 1);
+      expect(find.text('Saving…'), findsOneWidget);
+      completion.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Saved securely.'), findsOneWidget);
+      expect(save, findsNothing);
+    });
+
+    testWidgets('generated login failure retries and cancel is terminal',
+        (tester) async {
+      var saves = 0;
+      var cancels = 0;
+      await tester.pumpWidget(_wrap(VaultChatCardView(
+        response: _parse(intent: 'vault_generated_login_create_draft', card: {
+          'cardType': 'vault_generated_login_card',
+          'view': 'create_draft',
+          'data': {
+            'service': 'Retry',
+            'username': 'user',
+            'password': 'secret',
+            'draft_id': 'draft-retry',
+            'actions': ['save', 'cancel'],
+          },
+        }),
+        onGeneratedLoginSave: (_, __) async {
+          saves++;
+          if (saves == 1) throw StateError('transient');
+        },
+        onGeneratedLoginCancel: (_, __) async => cancels++,
+      )));
+      final save =
+          find.byKey(const Key('vault_chat_card_generated_login_save'));
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(save, findsOneWidget);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(saves, 2);
+      expect(find.text('Saved securely.'), findsOneWidget);
+
+      // A separate card proves cancel clears only its intended draft.
+      await tester.pumpWidget(_wrap(VaultChatCardView(
+        response: _parse(intent: 'vault_generated_login_create_draft', card: {
+          'cardType': 'vault_generated_login_card',
+          'view': 'create_draft',
+          'data': {
+            'service': 'Cancel',
+            'username': 'user',
+            'password': 'secret',
+            'draft_id': 'draft-cancel',
+            'actions': ['save', 'cancel'],
+          },
+        }),
+        onGeneratedLoginCancel: (_, __) async => cancels++,
+      )));
+      await tester
+          .tap(find.byKey(const Key('vault_chat_card_generated_login_cancel')));
+      await tester.pumpAndSettle();
+      expect(cancels, 1);
+      expect(find.text('Cancelled.'), findsOneWidget);
+    });
+
+    testWidgets('expired generated login is terminal without save dispatch',
+        (tester) async {
+      var saves = 0;
+      await tester.pumpWidget(_wrap(VaultChatCardView(
+        response: _parse(intent: 'vault_generated_login_create_draft', card: {
+          'cardType': 'vault_generated_login_card',
+          'view': 'create_draft',
+          'data': {
+            'service': 'Expired',
+            'username': 'user',
+            'password': 'secret',
+            'draft_id': 'draft-expired',
+            'expires_at': 1,
+            'actions': ['save', 'cancel'],
+          },
+        }),
+        onGeneratedLoginSave: (_, __) async => saves++,
+      )));
+
+      expect(find.text('Expired.'), findsOneWidget);
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save')),
+        findsNothing,
+      );
+      expect(saves, 0);
     });
 
     testWidgets('billing card renders with route-to-checkout wording',

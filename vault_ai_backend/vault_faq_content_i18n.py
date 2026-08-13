@@ -41,6 +41,10 @@ def apply_locale_to_faq_envelope(
     card = envelope.get("card")
     if not isinstance(card, dict):
         return envelope
+    if card.pop("preserveDynamicCopy", False) is True:
+        envelope["message"] = str(card.get("answer") or envelope.get("message") or "")
+        envelope["locale"] = "en"
+        return envelope
     localized = get_localized_faq(card.get("faqId", ""), locale)
     if localized is None:
         return envelope

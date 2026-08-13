@@ -31,6 +31,9 @@ _LOOKUP_CONTEXT = "vaultai-personal-memory/v1"
 _CARD_SCHEMA = "vault_chat_response_v1"
 _PROPOSAL_SCHEMA = "vault_memory_proposal_v1"
 _PAYLOAD_SCHEMA = "vault_personal_memory_v1"
+_GENERAL_CONVERSATION_CONTEXT_PREFIX = (
+    "Continue this ordinary conversation without searching the vault.\n"
+)
 _END_PUNCT_RE = r"(?:[.!?]+)?\s*$"
 _SOFT_STOPWORDS = {
     "a", "an", "and", "about", "called", "containing", "did", "do", "for",
@@ -688,6 +691,13 @@ def _parse_fact_statement(
 def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]:
     text = _clean_message(message)
     if not text:
+        return None
+
+    # The web client may include bounded prior turns for a narrow set of
+    # conversational follow-ups.  That envelope is context for a tool-free
+    # answer, never a new memory command.  In particular, facts or words such
+    # as "save" inside the quoted prior turns must not create a proposal.
+    if (message or "").startswith(_GENERAL_CONVERSATION_CONTEXT_PREFIX):
         return None
 
     if _SAVE_PENDING_RE.match(text):

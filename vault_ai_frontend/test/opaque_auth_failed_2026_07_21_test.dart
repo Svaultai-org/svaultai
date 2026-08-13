@@ -41,8 +41,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 String _readLib(String path) => File('lib/$path').readAsStringSync();
 
-String _readSvc(String path) =>
-    File('lib/services/$path').readAsStringSync();
+String _readSvc(String path) => File('lib/services/$path').readAsStringSync();
 
 void main() {
   group('OpaqueAuthenticationFailed is defined and distinct', () {
@@ -52,8 +51,8 @@ void main() {
         src.contains('class OpaqueAuthenticationFailed implements Exception'),
         isTrue,
         reason: 'OpaqueAuthenticationFailed is the typed signal for '
-                'a wrong-PIN OPAQUE failure — LoginPage cannot '
-                'distinguish it from OpaqueUnavailable without it',
+            'a wrong-PIN OPAQUE failure — LoginPage cannot '
+            'distinguish it from OpaqueUnavailable without it',
       );
     });
 
@@ -69,8 +68,8 @@ void main() {
         window.toLowerCase().contains('wrong pin'),
         isTrue,
         reason: 'toString() must mention "wrong PIN" so an operator '
-                'reading the diagnostic knows what the OPAQUE '
-                'protocol failure means in practice',
+            'reading the diagnostic knows what the OPAQUE '
+            'protocol failure means in practice',
       );
     });
   });
@@ -93,8 +92,8 @@ void main() {
           src.contains('external JSObject? $name(JSObject params);'),
           isTrue,
           reason: 'external declaration for $name must return '
-                  'JSObject? — @serenity-kit/opaque returns '
-                  'undefined on OPAQUE-protocol failure',
+              'JSObject? — @serenity-kit/opaque returns '
+              'undefined on OPAQUE-protocol failure',
         );
       }
     });
@@ -108,11 +107,12 @@ void main() {
       final nullGuards = 'if (result == null)'.allMatches(src).length;
       expect(nullGuards, greaterThanOrEqualTo(4),
           reason: 'every JS-interop wrapper must null-check the '
-                  'return before wrapping it in the extension type');
+              'return before wrapping it in the extension type');
     });
 
-    test('finishLogin maps a null return to OpaqueAuthenticationFailed, '
-         'not OpaqueUnavailable', () {
+    test(
+        'finishLogin maps a null return to OpaqueAuthenticationFailed, '
+        'not OpaqueUnavailable', () {
       final src = _svc().readAsStringSync();
       final idx = src.indexOf('static ClientLoginFinish finishLogin(');
       expect(idx, greaterThan(-1));
@@ -132,12 +132,11 @@ void main() {
         throwWindow.contains('throw OpaqueAuthenticationFailed'),
         isTrue,
         reason: 'finishLogin must throw OpaqueAuthenticationFailed '
-                'when the OPAQUE handshake cannot complete',
+            'when the OPAQUE handshake cannot complete',
       );
     });
 
-    test('startLogin / start* / finishRegistration use OpaqueUnavailable',
-        () {
+    test('startLogin / start* / finishRegistration use OpaqueUnavailable', () {
       // These calls should NEVER return undefined for well-formed
       // inputs — if they do, the WASM bundle is broken and the
       // correct signal is "module unavailable", not "wrong PIN".
@@ -151,23 +150,23 @@ void main() {
         expect(idx, greaterThan(-1), reason: 'missing wrapper: $wrapper');
         final window = src.substring(idx, (idx + 2000).clamp(0, src.length));
         final guardIdx = window.indexOf('if (result == null)');
-        expect(guardIdx, greaterThan(-1),
-            reason: '$wrapper has no null guard');
+        expect(guardIdx, greaterThan(-1), reason: '$wrapper has no null guard');
         final throwWindow = window.substring(
             guardIdx, (guardIdx + 400).clamp(0, window.length));
         expect(
           throwWindow.contains('throw OpaqueUnavailable'),
           isTrue,
           reason: '$wrapper must throw OpaqueUnavailable on null '
-                  '— it cannot legitimately fail authentication',
+              '— it cannot legitimately fail authentication',
         );
       }
     });
   });
 
   group('LoginPage + UnlockPage catch the typed auth failure', () {
-    test('LoginPage catches OpaqueAuthenticationFailed and surfaces '
-         '"Wrong username or PIN."', () {
+    test(
+        'LoginPage catches OpaqueAuthenticationFailed and surfaces '
+        '"Wrong username or PIN."', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _LoginPageState');
       final window = src.substring(idx, (idx + 25000).clamp(0, src.length));
@@ -175,9 +174,9 @@ void main() {
         window.contains('on OpaqueAuthenticationFailed catch'),
         isTrue,
         reason: 'LoginPage must have a typed catch for the wrong-'
-                'PIN signal — otherwise it falls into the generic '
-                'catch and the user sees a diagnostic tag instead '
-                'of the friendly "Wrong username or PIN." copy',
+            'PIN signal — otherwise it falls into the generic '
+            'catch and the user sees a diagnostic tag instead '
+            'of the friendly "Wrong username or PIN." copy',
       );
       // Within THAT catch block, verify the visible copy.
       final catchIdx = window.indexOf('on OpaqueAuthenticationFailed catch');
@@ -187,18 +186,23 @@ void main() {
         catchBody.contains("'Wrong username or PIN.'"),
         isTrue,
         reason: 'the OpaqueAuthenticationFailed catch must set the '
-                'friendly error copy',
+            'friendly error copy',
       );
     });
 
-    test('the OpaqueAuthenticationFailed catch does NOT fall through to '
-         'legacy /auth/login', () {
+    test(
+        'the OpaqueAuthenticationFailed catch does NOT fall through to '
+        'legacy /auth/login', () {
       // OPAQUE authentication failure is a definitive wrong-PIN
       // signal. Retrying via the legacy plaintext-verifier path
       // would only expose the same PIN to a timing oracle. The
       // catch must ``return`` immediately.
       final src = _readLib('main.dart');
-      final idx = src.indexOf('on OpaqueAuthenticationFailed catch');
+      final loginPageIdx = src.indexOf('class _LoginPageState');
+      final idx = src.indexOf(
+        'on OpaqueAuthenticationFailed catch',
+        loginPageIdx,
+      );
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 1000).clamp(0, src.length));
       // Look for the return statement inside the block.
@@ -213,7 +217,7 @@ void main() {
       if (legacyIdx > -1) {
         expect(returnIdx, lessThan(legacyIdx),
             reason: 'the catch must return BEFORE reaching the '
-                    'legacy /auth/login fallback');
+                'legacy /auth/login fallback');
       }
     });
 
@@ -225,12 +229,12 @@ void main() {
         window.contains('on OpaqueAuthenticationFailed catch'),
         isTrue,
         reason: 'UnlockPage must have the same typed catch as '
-                'LoginPage — the unlock flow reaches the same '
-                'OPAQUE finishLogin call and can fail the same way',
+            'LoginPage — the unlock flow reaches the same '
+            'OPAQUE finishLogin call and can fail the same way',
       );
       final catchIdx = window.indexOf('on OpaqueAuthenticationFailed catch');
-      final catchBody = window.substring(
-          catchIdx, (catchIdx + 1500).clamp(0, window.length));
+      final catchBody =
+          window.substring(catchIdx, (catchIdx + 1500).clamp(0, window.length));
       expect(catchBody.contains("'Wrong username or PIN.'"), isTrue);
     });
   });

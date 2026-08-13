@@ -28,13 +28,30 @@ from fastapi import (
     BackgroundTasks,
 )
 from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+
+# QA-only chat privacy counters.  They expose counts only and remain disabled
+# unless explicitly enabled in the disposable QA backend.
+_QA_CHAT_PRIVACY_DIAGNOSTICS = os.getenv(
+    'QA_CHAT_PRIVACY_DIAGNOSTICS', 'false').lower() == 'true'
+_qa_remote_chat_request_count = 0
+_qa_remote_provider_request_count = 0
+
+def _qa_count_chat_request() -> None:
+    global _qa_remote_chat_request_count
+    if _QA_CHAT_PRIVACY_DIAGNOSTICS:
+        _qa_remote_chat_request_count += 1
+
+def _qa_count_provider_request() -> None:
+    global _qa_remote_provider_request_count
+    if _QA_CHAT_PRIVACY_DIAGNOSTICS:
+        _qa_remote_provider_request_count += 1
 from routes.auth_routes import router as auth_router
 from routes.auth_zk_routes import router as auth_zk_router
 from routes.login_routes import router as login_router
@@ -45,6 +62,10 @@ from routes.vault_metadata_migration_routes import (
 from routes.vault_ciphertext_write_routes import (
     router as vault_ciphertext_write_router,
 )
+from routes.file_v2_routes import router as file_v2_router
+from routes.credential_v2_routes import router as credential_v2_router
+from routes.wallet_backup_v2_routes import router as wallet_backup_v2_router
+from routes.wallet_v2_routes import router as wallet_v2_router
 from vault_chat_memory import (
     get_memory,
     remember_service,
@@ -445,6 +466,9 @@ app.include_router(auth_router)
 app.include_router(auth_zk_router)
 app.include_router(vault_metadata_migration_router)
 app.include_router(vault_ciphertext_write_router)
+app.include_router(credential_v2_router)
+app.include_router(wallet_backup_v2_router)
+app.include_router(wallet_v2_router)
 app.include_router(login_router)
 app.include_router(vault_manage_router, prefix="/manage")
 
@@ -486,6 +510,7 @@ app.include_router(inheritance_release_router)
                                                                       
 from routes.billing_routes import router as billing_router
 app.include_router(billing_router)
+app.include_router(file_v2_router)
 
                                                                       
 from routes.stripe_routes import router as stripe_router
@@ -1039,6 +1064,9 @@ def get_my_vault(
 
 
 class ChatRequest(BaseModel):
+    # Chat is ciphertext-first. Reject any accidental attempt to smuggle
+    # decrypted private-domain fields into the remote chat contract.
+    model_config = ConfigDict(extra='forbid')
     encrypted_message: str
     vault_name: str
     pin: str
@@ -1922,6 +1950,7 @@ Return JSON with this shape:
 
     try:
         from vault_ai_provider import chat_complete_with_fallback
+        _qa_count_provider_request()
         result = await chat_complete_with_fallback(
             messages=[
                 {"role": "system", "content": "Return only valid JSON for VaultAI intent detection."},
@@ -8364,6 +8393,7 @@ async def ai_stream(
         )
         print(_trace_line, flush=True)
         logger.info("%s", _trace_line)
+        _qa_count_provider_request()
         stream_client = get_chat_client()
                                                                
                                                                  
@@ -10651,6 +10681,8 @@ async def upload_file_endpoint(
     file: UploadFile = File(...),
     principal = Depends(verify_trusted_device),
 ):
+    from subscription_entitlement import require_content_write
+    require_content_write(principal)
 
 
     vault_id = principal["vault_id"]
@@ -10892,7 +10924,7 @@ async def download_file_endpoint(
         cursor.execute(
             """
             SELECT file_name, content_type, encrypted_file_data,
-                   storage_mode, upload_status
+                   storage_mode, upload_status, file_size
             FROM uploaded_files
             WHERE id = %s AND vault_id = %s
             LIMIT 1
@@ -10902,6 +10934,8 @@ async def download_file_endpoint(
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="File not found")
+        from subscription_entitlement import require_file_read
+        require_file_read(principal, int(row.get("file_size") or 0))
 
                                                                            
         if (row.get("upload_status") or "complete") != "complete":
@@ -12578,13 +12612,46 @@ def _build_chat_prompt_context(
     }
 
 
+@app.get("/qa/chat-privacy-counters")
+async def qa_chat_privacy_counters(
+    principal=Depends(verify_trusted_device),
+):
+    if not _QA_CHAT_PRIVACY_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {
+        "remote_chat_request_count": _qa_remote_chat_request_count,
+        "remote_provider_request_count": _qa_remote_provider_request_count,
+    }
+
+
+def _chat_turn_rate_limit() -> str:
+    default = "5/minute"
+    try:
+        from device_gate import _is_dev_environment
+        isolated = os.getenv("VAULTAI_ISOLATED_QA", "false").strip().lower() == "true"
+        database_url = os.getenv("DATABASE_URL", "").strip().lower()
+        loopback = "@127.0.0.1:" in database_url or "@localhost:" in database_url
+        if not (_is_dev_environment() and isolated and loopback):
+            return default
+        requested = int(os.getenv("VAULTAI_CHAT_TURN_MAX_PER_MINUTE", "5"))
+        if 5 <= requested <= 10000:
+            return f"{requested}/minute"
+    except (TypeError, ValueError):
+        pass
+    return default
+
+
+_CHAT_TURN_RATE_LIMIT = _chat_turn_rate_limit()
+
+
 @app.post("/chat")
-@limiter.limit("5/minute")
+@limiter.limit(_CHAT_TURN_RATE_LIMIT)
 async def chat_endpoint(
     request: Request,
     req: ChatRequest,
     principal=Depends(verify_trusted_device),
 ):
+    _qa_count_chat_request()
     vault_id = principal["vault_id"]
     # Per-chat-turn session id used by session-scoped chat state
     # readers (upload binding, pending-attachment gate, etc.).
@@ -13217,6 +13284,33 @@ async def chat_endpoint(
             if _compound_instruction:
                 messages.append({
                     "role": "system", "content": _compound_instruction,
+                })
+            if force_no_tools:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "This turn is ordinary, tool-free conversation. "
+                        "No vault files, memories, credentials, travel data, "
+                        "wallet data, or other saved records were retrieved "
+                        "or reviewed. Respond naturally to the user's actual "
+                        "topic. You may give general advice or ask for the "
+                        "details needed to help. Give a substantive answer "
+                        "with complete sentences and actionable explanation; "
+                        "never return only a list of headings, labels, or "
+                        "semicolon-separated topic names. Never say or imply that you "
+                        "will search, check, review, monitor, or have reviewed "
+                        "vault data. Never narrate background work or insert "
+                        "a progress placeholder. If a reliable answer needs "
+                        "private saved data, explain that the user must "
+                        "explicitly ask to search that data. When the user "
+                        "asks whether they are ready, safe, compliant, or "
+                        "otherwise requests an assessment based on unseen "
+                        "facts, say you cannot determine that from the current "
+                        "message, then offer a useful general checklist or "
+                        "ask for relevant non-vault details. Do not say 'I can "
+                        "check' unless the user explicitly asks for a vault "
+                        "search in a separate tool-eligible turn."
+                    ),
                 })
             messages.append({
                 "role": "system", "content": _language_instruction,

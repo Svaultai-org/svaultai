@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,11 +21,32 @@ import 'package:vault_ai_frontend/ui/responsive.dart';
 
 import '_helpers/responsive_harness.dart';
 
+class _ViewportClient extends VaultAIClient {
+  const _ViewportClient() : super(baseUrl: 'https://viewport.test.invalid');
 
+  @override
+  Future<Map<String, dynamic>> getMemoryTimeline(
+          {required String authToken,
+          required String vaultName,
+          String? memoryType,
+          int limit = 200}) async =>
+      <String, dynamic>{'items': <Object>[], 'counts': <String, int>{}};
 
+  @override
+  Future<Map<String, dynamic>> getActiveExpiryAlerts(
+          {required String authToken,
+          required String vaultName,
+          String? expiryFilter,
+          int limit = 100}) async =>
+      <String, dynamic>{'alerts': <Object>[], 'counts': <String, int>{}};
 
-const _fakeClient = VaultAIClient(baseUrl: 'https://unreachable.test.invalid');
+  @override
+  Future<Map<String, dynamic>> getSecurityCenterSummary(
+          {required String authToken}) async =>
+      <String, dynamic>{};
+}
 
+const _fakeClient = _ViewportClient();
 
 final List<DeviceProfile> kFullViewportMatrix = const [
   DeviceProfiles.iphoneSE,
@@ -37,13 +57,11 @@ final List<DeviceProfile> kFullViewportMatrix = const [
   DeviceProfiles.desktop,
 ];
 
-
 Widget _wrap(Widget child) => Localizations(
       locale: const Locale('en'),
       delegates: AppLocalizations.localizationsDelegates,
       child: child,
     );
-
 
 Future<void> _openDialog(
   WidgetTester tester,
@@ -79,7 +97,6 @@ Future<void> _openDialog(
   await tester.pumpAndSettle();
 }
 
-
 void _forEachViewport(
   String description,
   Future<void> Function(WidgetTester t, DeviceProfile d) body, {
@@ -87,7 +104,8 @@ void _forEachViewport(
 }) {
   final targets = devices ?? kFullViewportMatrix;
   for (final d in targets) {
-    testWidgets('$description @ ${d.name} '
+    testWidgets(
+        '$description @ ${d.name} '
         '(${d.width.toInt()}x${d.height.toInt()})', (tester) async {
       await body(tester, d);
       expectNoOverflow(tester, context: d.name);
@@ -95,14 +113,12 @@ void _forEachViewport(
   }
 }
 
-
 Future<AppState> _hydrated() async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
-  final app = AppState();
-  await app.hydrate().timeout(const Duration(seconds: 5), onTimeout: () {});
-  return app;
+  // These are pure viewport checks. Hydration invokes platform-backed secure
+  // storage and can leave a plugin future pending in the widget-test runner.
+  return AppState();
 }
-
 
 Future<void> _pumpWithProvider(
   WidgetTester t,
@@ -145,13 +161,11 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-
   group('Typography scale — hierarchy invariant across every viewport', () {
     // At every viewport, display must be ≥ headline must be ≥ titleLg,
     // and metric must sit between them.
     for (final d in kFullViewportMatrix) {
-      testWidgets(
-          'display ≥ headline ≥ titleLg + metric ordering @ ${d.name}',
+      testWidgets('display ≥ headline ≥ titleLg + metric ordering @ ${d.name}',
           (tester) async {
         await pumpAtDevice(
           tester,
@@ -176,17 +190,16 @@ void main() {
     }
   });
 
-
-  group('Typography scale — page hero heading (vrHeadline) shrinks on phone', () {
+  group('Typography scale — page hero heading (vrHeadline) shrinks on phone',
+      () {
     testWidgets('SE 320 → headline < desktop 1440', (tester) async {
       double phoneVal = 0, desktopVal = 0;
       await pumpAtDevice(
         tester,
-        Builder(
-            builder: (ctx) {
-              phoneVal = vrHeadline(ctx);
-              return const SizedBox.shrink();
-            }),
+        Builder(builder: (ctx) {
+          phoneVal = vrHeadline(ctx);
+          return const SizedBox.shrink();
+        }),
         device: DeviceProfiles.iphoneSE,
       );
       await pumpAtDevice(
@@ -203,7 +216,6 @@ void main() {
     });
   });
 
-
   group('LoginsPage empty state — full viewport matrix', () {
     _forEachViewport('renders without overflow', (t, d) async {
       await pumpAtDevice(
@@ -219,7 +231,6 @@ void main() {
       );
     });
   });
-
 
   group('LoginsPage error state — full viewport matrix', () {
     _forEachViewport('renders without overflow', (t, d) async {
@@ -239,7 +250,6 @@ void main() {
     });
   });
 
-
   group('LoginsPage loading state — full viewport matrix', () {
     _forEachViewport('renders without overflow', (t, d) async {
       await pumpAtDevice(
@@ -256,7 +266,6 @@ void main() {
       );
     });
   });
-
 
   group('HelpCenterPage — full viewport matrix + landscape', () {
     _forEachViewport('renders (public)', (t, d) async {
@@ -279,7 +288,6 @@ void main() {
     );
   });
 
-
   group('LoginsPage — landscape orientation', () {
     _forEachViewport(
       'renders without overflow',
@@ -292,8 +300,7 @@ void main() {
             logins: const [
               VaultLoginItem(service: 'Netflix', itemType: 'login'),
               VaultLoginItem(
-                  service: 'American First Credit Union',
-                  itemType: 'login'),
+                  service: 'American First Credit Union', itemType: 'login'),
             ],
             vaultLabel: 'MyVault',
             onRefresh: () async {},
@@ -304,7 +311,6 @@ void main() {
       devices: DeviceProfiles.allLandscape,
     );
   });
-
 
   group('Dialogs — full viewport matrix', () {
     _forEachViewport(
@@ -368,7 +374,6 @@ void main() {
     });
   });
 
-
   group('DeleteVaultFlow — landscape orientation', () {
     _forEachViewport(
       'renders + typing keyboard',
@@ -385,7 +390,6 @@ void main() {
       devices: DeviceProfiles.allLandscape,
     );
   });
-
 
   group('Keyboard-open state — form fields do not push out of viewport', () {
     for (final d in DeviceProfiles.allPhones) {
@@ -435,11 +439,9 @@ void main() {
     }
   });
 
-
   group('Safe-area / notch — top and bottom insets consumed correctly', () {
     for (final d in DeviceProfiles.allPhones) {
-      testWidgets('HelpCenterPage respects notch @ ${d.name}',
-          (tester) async {
+      testWidgets('HelpCenterPage respects notch @ ${d.name}', (tester) async {
         await pumpAtDevice(
           tester,
           _wrap(const HelpCenterPage(mode: HelpCenterMode.public)),
@@ -454,35 +456,42 @@ void main() {
     }
   });
 
-
   group('Dashboard pages (loading state) — full viewport matrix', () {
     for (final page in [
-      ('MemoryPage', (bool isMobile) => MemoryPage(
-            client: _fakeClient,
-            authToken: 'tok',
-            vaultName: 'V',
-            isMobile: isMobile,
-          )),
-      ('ExpiryPage', (bool isMobile) => ExpiryPage(
-            client: _fakeClient,
-            authToken: 'tok',
-            vaultName: 'V',
-            isMobile: isMobile,
-          )),
-      ('ConciergePage', (bool isMobile) => ConciergePage(
-            client: _fakeClient,
-            authToken: 'tok',
-            vaultName: 'V',
-            isMobile: isMobile,
-          )),
+      (
+        'MemoryPage',
+        (bool isMobile) => MemoryPage(
+              client: _fakeClient,
+              authToken: 'tok',
+              vaultName: 'V',
+              isMobile: isMobile,
+            )
+      ),
+      (
+        'ExpiryPage',
+        (bool isMobile) => ExpiryPage(
+              client: _fakeClient,
+              authToken: 'tok',
+              vaultName: 'V',
+              isMobile: isMobile,
+            )
+      ),
+      (
+        'ConciergePage',
+        (bool isMobile) => ConciergePage(
+              client: _fakeClient,
+              authToken: 'tok',
+              vaultName: 'V',
+              isMobile: isMobile,
+            )
+      ),
     ]) {
       final label = page.$1;
       final builder = page.$2;
       for (final d in kFullViewportMatrix) {
         testWidgets('$label @ ${d.name}', (tester) async {
           final app = await _hydrated();
-          await _pumpWithProvider(
-              tester, builder(d.width < 600), app, d);
+          await _pumpWithProvider(tester, builder(d.width < 600), app, d);
           expectNoOverflow(tester, context: '$label @ ${d.name}');
         });
       }

@@ -237,7 +237,7 @@ The inheritance flow (`project_vaultai_inheritance.md` memory) allows a designat
 
 No operator can short-circuit the 30-day cooldown.
 
-### 5.4 If the user has forgotten the PIN with no inheritance set up
+### 5.4 If the user has forgotten the PIN
 
 The only recourse is account deletion + restart. State this plainly:
 
@@ -247,6 +247,10 @@ The only recourse is account deletion + restart. State this plainly:
 > anyone — including VaultAI. We can delete the account so you can
 > create a fresh one, but the existing contents will be permanently
 > unreadable."
+
+Inheritance does not reset the owner's PIN or restore the owner's access. It
+uses the separately configured beneficiary cryptographic path to create a
+beneficiary copy under the inheritance policy.
 
 ---
 

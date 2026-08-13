@@ -20,6 +20,7 @@ class ChatAttachmentSummary {
 class ChatMessage {
   static const String kText = 'text';
   static const String kVaultFile = 'vault_file';
+  static const String kInlineCredential = 'inline_credential';
 
   static const String kVaultFileList = 'vault_file_list';
   static const String kMemory = 'memory';
@@ -115,6 +116,7 @@ class ChatMessage {
 
   bool get isCard =>
       kind == kVaultFile ||
+      kind == kInlineCredential ||
       kind == kVaultFileList ||
       kind == kMemory ||
       kind == kRelationship ||

@@ -89,8 +89,11 @@ flutter build web \
   --dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet \
   --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true \
   --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true \
-  --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true
+  --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=false
 ```
+
+Keep broadcast disabled for the release candidate. Enabling mainnet send is a
+separate operator action after an explicitly authorized broadcast smoke test.
 
 Verify inside the built bundle:
 

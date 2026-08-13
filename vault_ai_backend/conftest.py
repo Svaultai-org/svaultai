@@ -8,6 +8,23 @@ import secrets
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _restore_process_environment_between_tests():
+    """Prevent direct ``os.environ`` mutations from leaking by test order.
+
+    A number of legacy unittest-style cases assign production feature flags
+    without using pytest's monkeypatch fixture. Restoring the complete mapping
+    keeps later route, CORS, and privacy tests deterministic while preserving
+    each test's own changes for the duration of that test.
+    """
+    original = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",

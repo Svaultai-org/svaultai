@@ -27,7 +27,6 @@ import 'package:http/testing.dart';
 
 import 'package:vault_ai_frontend/services/app_release_controller.dart';
 
-
 class _ReloadRecorder {
   int unregisterCalls = 0;
   int clearCacheCalls = 0;
@@ -50,7 +49,6 @@ class _ReloadRecorder {
   void write(String v) => _session['target'] = v;
 }
 
-
 AppReleaseController _controllerWith({
   required http.Client mockClient,
   required String runningRelease,
@@ -68,10 +66,8 @@ AppReleaseController _controllerWith({
   );
 }
 
-
 void main() {
-  test('running release == server release → no updateAvailable',
-      () async {
+  test('running release == server release → no updateAvailable', () async {
     final mock = MockClient((req) async {
       expect(req.url.path, '/release.json');
       expect(req.headers['Cache-Control'], 'no-cache');
@@ -93,8 +89,9 @@ void main() {
     expect(rec.reloadCalls, 0);
   });
 
-  test('running release differs → updateAvailable true, send '
-       'blocked', () async {
+  test(
+      'running release differs → updateAvailable true, send '
+      'blocked', () async {
     final mock = MockClient((req) async {
       return http.Response(
         jsonEncode({'commit': 'aaaaaaa', 'builtAt': 'x'}),
@@ -113,8 +110,29 @@ void main() {
     expect(ctl.lastSeenServerRelease, 'aaaaaaa');
   });
 
-  test('dev build never triggers updateAvailable even when server '
-       'reports a real commit', () async {
+  test('a later matching manifest clears a previously detected update',
+      () async {
+    var check = 0;
+    final mock = MockClient((req) async => http.Response(
+          jsonEncode({'commit': check++ == 0 ? 'aaaaaaa' : 'fdc429c'}),
+          200,
+        ));
+    final rec = _ReloadRecorder();
+    final ctl = _controllerWith(
+      mockClient: mock,
+      runningRelease: 'fdc429c',
+      rec: rec,
+    );
+    await ctl.checkForUpdate();
+    expect(ctl.updateAvailable, true);
+    await ctl.checkForUpdate();
+    expect(ctl.updateAvailable, false);
+    expect(ctl.sendShouldBeBlocked(), false);
+  });
+
+  test(
+      'dev build never triggers updateAvailable even when server '
+      'reports a real commit', () async {
     // A locally-run tree with no APP_RELEASE embedded must not
     // command a production release to reload itself.
     final mock = MockClient((req) async {
@@ -133,8 +151,9 @@ void main() {
     expect(ctl.updateAvailable, false);
   });
 
-  test('release.json fetch failure does NOT loop or destroy '
-       'a previously-detected update signal', () async {
+  test(
+      'release.json fetch failure does NOT loop or destroy '
+      'a previously-detected update signal', () async {
     var responseCounter = 0;
     final mock = MockClient((req) async {
       responseCounter++;
@@ -162,8 +181,7 @@ void main() {
     expect(rec.reloadCalls, 0);
   });
 
-  test('malformed release.json → fail safely, no crash, no update',
-      () async {
+  test('malformed release.json → fail safely, no crash, no update', () async {
     final mock = MockClient((req) async {
       return http.Response('not json {', 200);
     });
@@ -178,8 +196,7 @@ void main() {
     expect(rec.reloadCalls, 0);
   });
 
-  test('release.json missing `commit` field → fail safely',
-      () async {
+  test('release.json missing `commit` field → fail safely', () async {
     final mock = MockClient((req) async {
       return http.Response(
         jsonEncode({'builtAt': 'x'}),
@@ -196,8 +213,9 @@ void main() {
     expect(ctl.updateAvailable, false);
   });
 
-  test('applyUpdateAndReload: unregister + clear + reload exactly '
-       'once each; target release recorded', () async {
+  test(
+      'applyUpdateAndReload: unregister + clear + reload exactly '
+      'once each; target release recorded', () async {
     final mock = MockClient((req) async {
       return http.Response(
         jsonEncode({'commit': 'aaaaaaa'}),
@@ -220,8 +238,9 @@ void main() {
     expect(ctl.previousReloadTargetRelease, 'aaaaaaa');
   });
 
-  test('applyUpdateAndReload is idempotent — cannot fire twice '
-       'from the same controller', () async {
+  test(
+      'applyUpdateAndReload is idempotent — cannot fire twice '
+      'from the same controller', () async {
     final mock = MockClient((req) async {
       return http.Response(
         jsonEncode({'commit': 'aaaaaaa'}),
@@ -242,8 +261,9 @@ void main() {
     expect(rec.unregisterCalls, 1);
   });
 
-  test('applyUpdateAndReload defers when reloadAllowed returns '
-       'false (active broadcast)', () async {
+  test(
+      'applyUpdateAndReload defers when reloadAllowed returns '
+      'false (active broadcast)', () async {
     final mock = MockClient((req) async {
       return http.Response(
         jsonEncode({'commit': 'aaaaaaa'}),
@@ -264,10 +284,11 @@ void main() {
     expect(rec.reloadCalls, 1);
   });
 
-  test('cache clear helper only touches Cache Storage — auth/'
-       'wallet state (out of scope for the abstract controller) '
-       'is delegated to a caller-provided callback, so the '
-       'controller cannot inadvertently clear it', () {
+  test(
+      'cache clear helper only touches Cache Storage — auth/'
+      'wallet state (out of scope for the abstract controller) '
+      'is delegated to a caller-provided callback, so the '
+      'controller cannot inadvertently clear it', () {
     // This is a compile-time / API-shape assertion, not a runtime
     // one: the controller only knows about `clearAppCodeCacheEntries`.
     // It has no reference to SharedPreferences, IndexedDB, cookies,
@@ -284,15 +305,15 @@ void main() {
     expect(ctl.runToString, isNull);
   });
 
-  test('kAppReleaseId defaults to "dev" in a non-defined build; '
-       'kAppReleaseDisplayLabel embeds it as a Build: prefix', () {
+  test(
+      'kAppReleaseId defaults to "dev" in a non-defined build; '
+      'kAppReleaseDisplayLabel embeds it as a Build: prefix', () {
     // Test-runner build never passes --dart-define=APP_RELEASE=…
     // so we expect the compile-time default.
     expect(kAppReleaseId, 'dev');
     expect(kAppReleaseDisplayLabel, 'Build: dev');
   });
 }
-
 
 extension _NullExtras on AppReleaseController {
   // Convenience for the compile-time property test above — the

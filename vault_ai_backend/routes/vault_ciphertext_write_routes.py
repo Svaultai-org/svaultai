@@ -43,10 +43,11 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from psycopg2.extras import RealDictCursor
 
 from auth_local import (
@@ -54,6 +55,9 @@ from auth_local import (
     verify_session_token,
 )
 from vault_core import get_db
+from zk_migration_flags import ZkMigrationFlags
+from subscription_entitlement import require_content_write
+from taxonomy import ALLOWED_MEMORY_TYPES
 
 
 logger = logging.getLogger(__name__)
@@ -137,6 +141,7 @@ def vault_item_upsert_ciphertext(
     payload: VaultItemUpsertRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> VaultItemUpsertResponse:
+    require_content_write(principal)
     _reject_plaintext_leak(
         payload, ("item_type", "service", "encrypted_data"),
     )
@@ -233,6 +238,7 @@ def uploaded_file_metadata_ciphertext(
     payload: UploadedFileMetadataRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> UploadedFileMetadataResponse:
+    require_content_write(principal)
     _reject_plaintext_leak(payload, (
         "file_name", "saved_name", "content_type",
         "detected_type", "detected_service", "asset_type",
@@ -324,6 +330,7 @@ def notification_ciphertext_create(
     payload: NotificationCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> NotificationCiphertextResponse:
+    require_content_write(principal)
     _reject_plaintext_leak(payload, ("title", "body", "metadata"))
 
     title_ct = _b64url_decode(
@@ -364,6 +371,8 @@ def notification_ciphertext_create(
 
 
 class AiMemoryCiphertextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    memory_id: str = Field(..., min_length=1, max_length=128)
     memory_type: str = Field(..., min_length=1, max_length=64)
     memory_lookup_hash: str = Field(
         ..., min_length=1,
@@ -376,10 +385,24 @@ class AiMemoryCiphertextRequest(BaseModel):
     memory_value: Optional[str] = None
     memory_normalized_key: Optional[str] = None
 
+    @field_validator("memory_type")
+    @classmethod
+    def validate_memory_type(cls, value: str) -> str:
+        if value not in ALLOWED_MEMORY_TYPES:
+            raise ValueError("unsupported memory_type")
+        return value
+
 
 class AiMemoryCiphertextResponse(BaseModel):
-    memory_id: int
+    memory_id: str
     superseded_id: Optional[int] = None
+
+
+class AiMemoryCiphertextReadResponse(BaseModel):
+    memory_id: str
+    memory_type: str
+    payload_ciphertext: str
+    memory_lookup_hash: str
 
 
 @router.post(
@@ -390,75 +413,198 @@ def ai_memory_ciphertext_upsert(
     payload: AiMemoryCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> AiMemoryCiphertextResponse:
-    _reject_plaintext_leak(payload, (
-        "memory_key", "memory_value", "memory_normalized_key",
-    ))
-
-    lookup_hash = _b64url_decode(
-        payload.memory_lookup_hash, name="memory_lookup_hash",
-        max_bytes=64,
-    )
-    if len(lookup_hash) != 32:
-        raise HTTPException(
-            status_code=400,
-            detail="memory_lookup_hash must be 32 bytes",
+    require_content_write(principal)
+    qa = os.getenv("QA_CHAT_PRIVACY_DIAGNOSTICS", "").lower() == "true"
+    if qa:
+        print("BACKEND_MEMORY_V2_WRITE_REQUEST_OBSERVED=true", flush=True)
+        print("BACKEND_MEMORY_V2_WRITE_HANDLER_ENTERED=true", flush=True)
+    try:
+        memory_flags = ZkMigrationFlags.from_environment(os.environ)
+        memory_flags.validate_dependencies()
+        if not memory_flags.memory_write_enabled:
+            if qa:
+                print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=404", flush=True)
+                print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=feature_disabled", flush=True)
+            raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
+        _reject_plaintext_leak(payload, (
+            "memory_key", "memory_value", "memory_normalized_key",
+        ))
+        if qa:
+            print("BACKEND_MEMORY_V2_WRITE_VALIDATION_PASSED=true", flush=True)
+        lookup_hash = _b64url_decode(
+            payload.memory_lookup_hash, name="memory_lookup_hash", max_bytes=64,
         )
-    payload_ct = _b64url_decode(
-        payload.payload_ciphertext, name="payload_ciphertext",
-        max_bytes=MAX_CIPHERTEXT_BYTES,
-    )
+        if len(lookup_hash) != 32:
+            raise HTTPException(status_code=400, detail="memory_lookup_hash must be 32 bytes")
+        payload_ct = _b64url_decode(
+            payload.payload_ciphertext, name="payload_ciphertext", max_bytes=MAX_CIPHERTEXT_BYTES,
+        )
+        if qa:
+            print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_ENTERED=true", flush=True)
+        conn = get_db()
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                """SELECT id FROM vault_ai_memory
+                   WHERE vault_id = %s AND memory_lookup_hash = %s
+                     AND superseded_at IS NULL LIMIT 1""",
+                (principal["vault_id"], lookup_hash),
+            )
+            prev = cur.fetchone()
+            superseded_id: Optional[int] = None
+            # An editor keeps the stable client memory_record_id but may
+            # change the title/normalized key, which intentionally changes
+            # memory_lookup_hash. Update that stable record first; otherwise
+            # an INSERT collides with the record-id uniqueness constraint and
+            # makes ordinary encrypted memory edits fail.
+            cur.execute(
+                """UPDATE vault_ai_memory
+                   SET memory_type = %s,
+                       memory_key = NULL,
+                       memory_value = NULL,
+                       payload_ciphertext = %s,
+                       memory_lookup_hash = %s,
+                       superseded_at = NULL,
+                       superseded_by_id = NULL
+                   WHERE vault_id = %s AND memory_record_id = %s
+                   RETURNING id""",
+                (
+                    payload.memory_type,
+                    payload_ct,
+                    lookup_hash,
+                    principal["vault_id"],
+                    payload.memory_id,
+                ),
+            )
+            updated = cur.fetchone()
+            if updated is not None:
+                new_id = int(updated["id"])
+            else:
+                cur.execute(
+                    """INSERT INTO vault_ai_memory (
+                    vault_id, memory_record_id, memory_type, memory_key,
+                    memory_value, payload_ciphertext, memory_lookup_hash
+                ) VALUES (%s, %s, %s, NULL, NULL, %s, %s)
+                ON CONFLICT (vault_id, memory_lookup_hash)
+                    WHERE superseded_at IS NULL AND memory_lookup_hash IS NOT NULL
+                DO UPDATE SET
+                    memory_record_id = EXCLUDED.memory_record_id,
+                    memory_type = EXCLUDED.memory_type,
+                    memory_key = NULL,
+                    memory_value = NULL,
+                    payload_ciphertext = EXCLUDED.payload_ciphertext,
+                    superseded_at = NULL,
+                    superseded_by_id = NULL
+                RETURNING id""",
+                    (
+                        principal["vault_id"],
+                        payload.memory_id,
+                        payload.memory_type,
+                        payload_ct,
+                        lookup_hash,
+                    ),
+                )
+                new_id = int(cur.fetchone()["id"])
+            if prev is not None:
+                superseded_id = int(prev["id"])
+            conn.commit()
+        finally:
+            conn.close()
+        if qa:
+            print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_SUCCEEDED=true", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=200", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=none", flush=True)
+        return AiMemoryCiphertextResponse(memory_id=str(new_id), superseded_id=superseded_id)
+    except HTTPException as exc:
+        if qa:
+            print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)
+            print("BACKEND_MEMORY_V2_EXCEPTION_TYPE=HTTPException", flush=True)
+            print(f"BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS={exc.status_code}", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=request_validation", flush=True)
+        raise
+    except Exception as exc:
+        if qa:
+            print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)
+            print(f"BACKEND_MEMORY_V2_EXCEPTION_TYPE={type(exc).__name__}", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=500", flush=True)
+            print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=database_error", flush=True)
+        raise
 
+
+@router.get(
+    "/vault/ciphertext/vault-ai-memory",
+    response_model=list[AiMemoryCiphertextReadResponse],
+)
+def ai_memory_ciphertext_list(
+    memory_lookup_hash: Optional[str] = None,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> list[AiMemoryCiphertextReadResponse]:
+    """Return opaque memory envelopes only; never legacy plaintext columns."""
+    memory_flags = ZkMigrationFlags.from_environment(os.environ)
+    memory_flags.validate_dependencies()
+    if not memory_flags.memory_read_enabled:
+        raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
+    lookup_hash = None
+    if memory_lookup_hash is not None:
+        lookup_hash = _b64url_decode(
+            memory_lookup_hash, name="memory_lookup_hash", max_bytes=64,
+        )
+        if len(lookup_hash) != 32:
+            raise HTTPException(status_code=400, detail="memory_lookup_hash must be 32 bytes")
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT id FROM vault_ai_memory
-             WHERE vault_id = %s
-               AND memory_lookup_hash = %s
-               AND superseded_at IS NULL
-             LIMIT 1
+            SELECT memory_record_id, memory_type, payload_ciphertext, memory_lookup_hash
+              FROM vault_ai_memory
+             WHERE vault_id = %s AND superseded_at IS NULL
+               AND payload_ciphertext IS NOT NULL
+               AND (%s IS NULL OR memory_lookup_hash = %s)
+             ORDER BY id
             """,
-            (principal["vault_id"], lookup_hash),
+            (principal["vault_id"], lookup_hash, lookup_hash),
         )
-        prev = cur.fetchone()
-        superseded_id: Optional[int] = None
-
-        cur.execute(
-            """
-            INSERT INTO vault_ai_memory (
-                vault_id, memory_type, memory_key, memory_value,
-                payload_ciphertext, memory_lookup_hash
-            )
-            VALUES (%s, %s, NULL, NULL, %s, %s)
-            RETURNING id
-            """,
-            (
-                principal["vault_id"], payload.memory_type,
-                payload_ct, lookup_hash,
-            ),
-        )
-        new_id = int(cur.fetchone()["id"])
-
-        if prev is not None:
-            cur.execute(
-                """
-                UPDATE vault_ai_memory
-                   SET superseded_at    = NOW(),
-                       superseded_by_id = %s
-                 WHERE id = %s AND vault_id = %s
-                """,
-                (new_id, prev["id"], principal["vault_id"]),
-            )
-            superseded_id = int(prev["id"])
-
-        conn.commit()
+        rows = cur.fetchall()
     finally:
         conn.close()
+    return [
+        AiMemoryCiphertextReadResponse(
+            memory_id=str(row["memory_record_id"]),
+            memory_type=str(row["memory_type"]),
+            payload_ciphertext=base64.urlsafe_b64encode(
+                bytes(row["payload_ciphertext"])
+            ).decode().rstrip("="),
+            memory_lookup_hash=base64.urlsafe_b64encode(
+                bytes(row["memory_lookup_hash"])
+            ).decode().rstrip("="),
+        )
+        for row in rows
+    ]
 
-    return AiMemoryCiphertextResponse(
-        memory_id=new_id, superseded_id=superseded_id,
-    )
+
+@router.delete("/vault/ciphertext/vault-ai-memory/{memory_id}", response_model=dict)
+def ai_memory_ciphertext_delete(
+    memory_id: str,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict:
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    if not flags.memory_write_enabled:
+        raise HTTPException(status_code=404, detail="memory_v2_path_disabled")
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM vault_ai_memory WHERE vault_id = %s AND memory_record_id = %s",
+            (principal["vault_id"], memory_id),
+        )
+        conn.commit()
+        if cur.rowcount != 1:
+            raise HTTPException(status_code=404, detail="memory_not_found")
+    finally:
+        conn.close()
+    return {"status": "deleted", "memory_id": memory_id}
 
 
 class BeneficiaryLabelCiphertextRequest(BaseModel):
@@ -475,6 +621,7 @@ def beneficiary_label_ciphertext_update(
     payload: BeneficiaryLabelCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     _reject_plaintext_leak(payload, ("passer_label",))
 
     label_ct = _b64url_decode(
@@ -524,6 +671,7 @@ def semantic_index_keyed_hash_upsert(
     payload: SemanticIndexKeyedHashRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     if (payload.uploaded_file_id is None) == (payload.vault_item_id is None):
         raise HTTPException(
             status_code=400,
@@ -607,6 +755,7 @@ def inheritance_rewrap_upload(
     payload: InheritanceRewrapUpload,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     """Passer's client uploads the beneficiary-wrapped MVK envelope
     at pairing time. Server persists the opaque bytes only. Server
     never learns MVK or the passer/beneficiary private keys.
@@ -673,6 +822,7 @@ def crypto_draft_ciphertext_persist(
     payload: CryptoDraftCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     """Called by the ZK client immediately AFTER a draft is created
     via /crypto/{asset}/send/draft. Replaces the persisted
     sender_address / destination_address / value / fee / asset
@@ -790,6 +940,7 @@ def crypto_history_ciphertext_write(
     payload: CryptoHistoryCiphertextRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> dict:
+    require_content_write(principal)
     """ZK client calls this after successful broadcast. The server
     persists ONLY the keyed signature hash (for chain-dedup) and the
     ciphertext outcome payload (holds sender/destination/amount/

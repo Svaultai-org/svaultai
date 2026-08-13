@@ -141,7 +141,7 @@ void main() {
       // returning users have the user-typed name in that slot.
       expect(
         window.contains(
-          'final entryIsVltHandle = vh.isValidVaultHandleDisplay(name);',
+          'final entryIsVltHandle = vh.isExplicitVaultHandleDisplay(name);',
         ),
         isTrue,
       );

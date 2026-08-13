@@ -371,17 +371,10 @@ void main() {
       );
     });
 
-    test('PIN reauth forwards auth/login vault_handle into session state', () {
+    test('PIN reauth forwards the typed OPAQUE vault handle into session state', () {
+      expect(mainSource.contains('loginResult.vaultHandle'), isTrue);
       expect(
-        mainSource.contains("loginResult['vault_handle']?.toString()"),
-        isTrue,
-      );
-      expect(
-        mainSource.contains('var activeVaultHandle = newVaultHandle'),
-        isTrue,
-      );
-      expect(
-        mainSource.contains('vaultHandleValue: activeVaultHandle'),
+        mainSource.contains('vaultHandleValue: loginResult.vaultHandle'),
         isTrue,
       );
     });

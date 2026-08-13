@@ -91,6 +91,7 @@ class CredentialDraft:
     expires_at:   float
     saved:        bool = False
     service_key:  str = ""
+    opaque_server_storage: bool = False
 
     def __repr__(self) -> str:
         return (
@@ -114,6 +115,7 @@ class CredentialDraft:
             "password":     self.password,
             "expires_at":   int(self.expires_at),
             "saved":        bool(self.saved),
+            "opaque_server_storage": bool(self.opaque_server_storage),
         }
 
 
@@ -131,12 +133,14 @@ def _serialize(draft: CredentialDraft) -> bytes:
         "vault_id":     draft.vault_id,
         "service_name": draft.service_name,
         "service_key":  draft.service_key,
-        "username":     draft.username,
-        "password":     draft.password,
         "created_at":   draft.created_at,
         "expires_at":   draft.expires_at,
         "saved":        draft.saved,
+        "opaque_server_storage": draft.opaque_server_storage,
     }
+    if not draft.opaque_server_storage:
+        payload["username"] = draft.username
+        payload["password"] = draft.password
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
@@ -162,6 +166,7 @@ def _deserialize(raw: bytes) -> Optional[CredentialDraft]:
             expires_at=float(d.get("expires_at") or 0.0),
             saved=bool(d.get("saved") or False),
             service_key=str(d.get("service_key") or ""),
+            opaque_server_storage=bool(d.get("opaque_server_storage") or False),
         )
     except Exception as e:
         logger.warning(
@@ -242,6 +247,7 @@ def store_draft(
     username: str,
     password: str,
     ttl_seconds: Optional[int] = None,
+    opaque_server_storage: bool = False,
 ) -> CredentialDraft:
     if not vault_id:
         raise ValueError("vault_id required")
@@ -267,8 +273,26 @@ def store_draft(
         expires_at=now + ttl,
         saved=False,
         service_key=_service_key(service_name),
+        opaque_server_storage=bool(opaque_server_storage),
     )
-    _write(draft, ttl)
+    if opaque_server_storage:
+        # The caller receives the generated values for client-side
+        # encryption, but server-side state contains metadata only.
+        stored = CredentialDraft(
+            draft_id=draft.draft_id,
+            vault_id=draft.vault_id,
+            service_name=draft.service_name,
+            username="",
+            password="",
+            created_at=draft.created_at,
+            expires_at=draft.expires_at,
+            saved=False,
+            service_key=draft.service_key,
+            opaque_server_storage=True,
+        )
+        _write(stored, ttl)
+    else:
+        _write(draft, ttl)
     return draft
 
 

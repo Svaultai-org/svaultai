@@ -263,7 +263,10 @@ class GenerateCredentialDraftHandlerTest(unittest.TestCase):
                 }
             def to_public_dict(self):
                 return dict(self._payload)
-        def stub_store(*, vault_id, service_name, username, password):
+        def stub_store(
+            *, vault_id, service_name, username, password,
+            opaque_server_storage=False,
+        ):
             return _StubDraft(service_name, username, password)
         return mock.patch(
             "vault_credential_draft.store_draft", side_effect=stub_store,

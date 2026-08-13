@@ -590,6 +590,9 @@ def _project_login_row_detail(
     website = _derive_website(fields, service)
     return {
         "id":         str(row.get("id") or ""),
+        # Safe opaque identity used only for QA/UI targeting. This is an
+        # identifier, never credential material.
+        "record_id":  str(row.get("id") or ""),
         "title":      title,
         "service":    service,
         "username":   username,
@@ -604,7 +607,7 @@ def _project_login_row_detail(
 
 
 _ALLOWED_DETAIL_LOGIN_KEYS: frozenset[str] = frozenset({
-    "id", "title", "service", "username", "password",
+    "id", "record_id", "title", "service", "username", "password",
     "domain", "website", "notes", "fields", "updated_at", "generated",
 })
 

@@ -49,6 +49,10 @@ for arg in "$@"; do
         --allow-dev-release)
             allow_dev=1
             ;;
+        --dart-define=ZK_V2_*|--dart-define=MEMORY_V2_*|--dart-define=FILE_V2_*|--dart-define=WALLET_BACKUP_V2_*|--dart-define=WALLET_V2_*|--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=*)
+            echo "[vault-release] ERROR: production privacy flags are pinned by this script." >&2
+            exit 2
+            ;;
         *)
             flutter_extra_args+=("$arg")
             ;;
@@ -91,6 +95,26 @@ echo "[vault-release] (display-only short: $sha_short)"
 flutter build web --release \
     --pwa-strategy=none \
     --dart-define=APP_RELEASE="$sha_full" \
+    --dart-define=ZK_V2_READ_ENABLED=true \
+    --dart-define=ZK_V2_WRITE_ENABLED=false \
+    --dart-define=ZK_V2_MIGRATION_ENABLED=false \
+    --dart-define=MEMORY_V2_READ_ENABLED=true \
+    --dart-define=MEMORY_V2_WRITE_ENABLED=true \
+    --dart-define=MEMORY_V2_MIGRATION_ENABLED=false \
+    --dart-define=FILE_V2_READ_ENABLED=true \
+    --dart-define=FILE_V2_WRITE_ENABLED=true \
+    --dart-define=FILE_V2_MIGRATION_ENABLED=false \
+    --dart-define=WALLET_BACKUP_V2_READ_ENABLED=false \
+    --dart-define=WALLET_BACKUP_V2_WRITE_ENABLED=false \
+    --dart-define=WALLET_BACKUP_V2_MIGRATION_ENABLED=false \
+    --dart-define=WALLET_V2_READ_ENABLED=false \
+    --dart-define=WALLET_V2_WRITE_ENABLED=false \
+    --dart-define=WALLET_V2_MIGRATION_ENABLED=false \
+    --dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=false \
+    --dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet \
+    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true \
+    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true \
+    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true \
     "${flutter_extra_args[@]}"
 
 # 3. Migration SW.

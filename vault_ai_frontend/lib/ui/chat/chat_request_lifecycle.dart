@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import '../../services/chat_protocol_contracts.dart';
+
 enum ChatRequestState { pending, completed, cancelled }
 
 class ChatRequestTicket {
@@ -49,5 +53,53 @@ class ChatRequestCoordinator {
   void cancel(String requestId) {
     final ticket = _tickets[requestId];
     if (ticket != null) ticket.state = ChatRequestState.cancelled;
+  }
+}
+
+/// Testable owner for the request registry and active stream lifecycle.
+/// It deliberately contains no protocol, crypto, or UI behavior.
+class ChatRequestRuntime implements ChatRequestCancellation {
+  final ChatRequestCoordinator coordinator;
+  Object? _activeIterator;
+  String? _activeRequestId;
+
+  ChatRequestRuntime({ChatRequestCoordinator? coordinator})
+      : coordinator = coordinator ?? ChatRequestCoordinator();
+
+  ChatRequestTicket begin({int? nowMicros}) =>
+      coordinator.begin(nowMicros: nowMicros);
+  ChatRequestTicket retry(String id, {int? nowMicros}) =>
+      coordinator.retry(id, nowMicros: nowMicros);
+  bool acceptsEvents(String id) => coordinator.acceptsEvents(id);
+  @override
+  bool accepts(String id) => coordinator.acceptsEvents(id);
+  void complete(String id) => coordinator.complete(id);
+  @override
+  void cancel(String id) => coordinator.cancel(id);
+
+  bool get hasActiveIterator => _activeIterator != null;
+  String? get activeRequestId => _activeRequestId;
+  Object? get activeIterator => _activeIterator;
+  void assignIterator(String requestId, Object iterator) {
+    _activeRequestId = requestId;
+    _activeIterator = iterator;
+  }
+
+  T? takeIterator<T>() {
+    final value = _activeIterator;
+    _activeIterator = null;
+    _activeRequestId = null;
+    return value is T ? value : null;
+  }
+
+  void clearIterator() {
+    _activeIterator = null;
+    _activeRequestId = null;
+  }
+
+  Future<void> cancelActiveIterator() async {
+    final value = _activeIterator;
+    clearIterator();
+    if (value is StreamIterator<String>) await value.cancel();
   }
 }

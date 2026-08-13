@@ -95,8 +95,10 @@ class VaultChatCardView extends StatelessWidget {
   /// display name. The handler in `chat_bubble.dart` turns them
   /// into `onCardAction` calls with `generated_login_save` /
   /// `generated_login_cancel` action names.
-  final void Function(String draftId, String service)? onGeneratedLoginSave;
-  final void Function(String draftId, String service)? onGeneratedLoginCancel;
+  final FutureOr<void> Function(String draftId, String service)?
+      onGeneratedLoginSave;
+  final FutureOr<void> Function(String draftId, String service)?
+      onGeneratedLoginCancel;
   final FutureOr<void> Function(Map<String, dynamic> data)?
       onMemoryProposalSave;
   final VoidCallback? onMemoryProposalCancel;
@@ -972,11 +974,14 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
     final notes = (widget.login['notes'] ?? '').toString();
     final detailFields = _loginDetailFields(widget.login);
     final hasOrderedFields = detailFields.isNotEmpty;
+    final recordId = (widget.login['record_id'] ?? '').toString().trim();
+    final safeRecordId =
+        recordId.replaceAll(RegExp(r'[^A-Za-z0-9_.:-]'), '_');
 
     final vr = VaultResponsive.of(context);
     final narrow = vr.width < 380;
 
-    return _shell(
+    final detailCard = _shell(
       testKey: 'vault_chat_card_login_detail',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1144,6 +1149,13 @@ class _LoginDetailCardState extends State<_LoginDetailCard> {
           ),
         ],
       ),
+    );
+    if (safeRecordId.isEmpty) return detailCard;
+    return Semantics(
+      container: true,
+      identifier: 'qa_v2_credential_record_$safeRecordId',
+      label: 'qa_v2_credential_record_$safeRecordId',
+      child: detailCard,
     );
   }
 }
@@ -1362,8 +1374,11 @@ class _LoginRow extends StatelessWidget {
 
     final tapTitle = title.trim();
     final rowId = (row['id'] ?? '').toString().trim();
+    final safeRowId = rowId.replaceAll(RegExp(r'[^A-Za-z0-9_.:-]'), '_');
     return Semantics(
       button: true,
+      identifier:
+          rowId.isNotEmpty ? 'qa_v2_credential_record_$safeRowId' : null,
       label: tapTitle.isNotEmpty ? 'Open login $tapTitle' : 'Open login',
       child: Material(
         color: Colors.transparent,
@@ -1701,8 +1716,8 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
 /// Generated login draft review card.
 class _GeneratedLoginCard extends StatefulWidget {
   final VaultChatCard card;
-  final void Function(String draftId, String service)? onSave;
-  final void Function(String draftId, String service)? onCancel;
+  final FutureOr<void> Function(String draftId, String service)? onSave;
+  final FutureOr<void> Function(String draftId, String service)? onCancel;
 
   const _GeneratedLoginCard({
     required this.card,
@@ -1716,7 +1731,16 @@ class _GeneratedLoginCard extends StatefulWidget {
 
 class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   final Set<String> _passwordRevealedDrafts = <String>{};
-  final Set<String> _dispatchedDrafts = <String>{};
+  final Map<String, _GeneratedDraftActionState> _draftStates = {};
+  final Map<String, Timer> _expiryTimers = {};
+
+  @override
+  void dispose() {
+    for (final timer in _expiryTimers.values) {
+      timer.cancel();
+    }
+    super.dispose();
+  }
 
   Map<String, dynamic> get _data =>
       widget.card.data ?? const <String, dynamic>{};
@@ -1760,7 +1784,7 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   }
 
   bool _isDispatched(String draftId, String service) {
-    return _dispatchedDrafts.contains(_dispatchKey(draftId, service));
+    return _draftStates[_dispatchKey(draftId, service)] != null;
   }
 
   bool _isPasswordRevealed(String draftId, String service) {
@@ -1778,18 +1802,71 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     });
   }
 
-  void _handleSave(String draftId, String service) {
-    final key = _dispatchKey(draftId, service);
-    if (_dispatchedDrafts.contains(key)) return;
-    setState(() => _dispatchedDrafts.add(key));
-    widget.onSave?.call(draftId, service);
+  DateTime? _expiryFrom(Map<String, dynamic> data) {
+    final raw = data['expires_at'];
+    final seconds = raw is num ? raw.toDouble() : double.tryParse('$raw');
+    if (seconds == null || !seconds.isFinite || seconds <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch((seconds * 1000).round());
   }
 
-  void _handleCancel(String draftId, String service) {
+  bool _isExpired(Map<String, dynamic> data) {
+    final expiry = _expiryFrom(data);
+    return expiry != null && !DateTime.now().isBefore(expiry);
+  }
+
+  void _scheduleExpiry(
+    Map<String, dynamic> data,
+    String draftId,
+    String service,
+  ) {
     final key = _dispatchKey(draftId, service);
-    if (_dispatchedDrafts.contains(key)) return;
-    setState(() => _dispatchedDrafts.add(key));
-    widget.onCancel?.call(draftId, service);
+    if (_expiryTimers.containsKey(key) || _draftStates[key] != null) return;
+    final expiry = _expiryFrom(data);
+    if (expiry == null) return;
+    final remaining = expiry.difference(DateTime.now());
+    if (remaining <= Duration.zero) return;
+    _expiryTimers[key] = Timer(remaining, () {
+      _expiryTimers.remove(key);
+      if (!mounted || _draftStates[key] != null) return;
+      setState(() => _draftStates[key] = _GeneratedDraftActionState.expired);
+    });
+  }
+
+  Future<void> _handleSave(
+    String draftId,
+    String service,
+    Map<String, dynamic> data,
+  ) async {
+    final key = _dispatchKey(draftId, service);
+    if (_draftStates[key] != null) return;
+    if (_isExpired(data)) {
+      setState(() => _draftStates[key] = _GeneratedDraftActionState.expired);
+      return;
+    }
+    setState(() => _draftStates[key] = _GeneratedDraftActionState.saving);
+    try {
+      await widget.onSave?.call(draftId, service);
+      if (mounted) {
+        setState(() => _draftStates[key] = _GeneratedDraftActionState.saved);
+      }
+    } on Object {
+      if (mounted) setState(() => _draftStates.remove(key));
+    }
+  }
+
+  Future<void> _handleCancel(String draftId, String service) async {
+    final key = _dispatchKey(draftId, service);
+    if (_draftStates[key] != null) return;
+    setState(() => _draftStates[key] = _GeneratedDraftActionState.cancelling);
+    try {
+      await widget.onCancel?.call(draftId, service);
+      if (mounted) {
+        setState(
+            () => _draftStates[key] = _GeneratedDraftActionState.cancelled);
+      }
+    } on Object {
+      if (mounted) setState(() => _draftStates.remove(key));
+    }
   }
 
   @override
@@ -1862,15 +1939,21 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     Map<String, dynamic> data, {
     String suffix = '',
   }) {
-    final service = _readStringFrom(data, 'service', 'service_name');
-    final username = _readStringFrom(data, 'username');
-    final password = _readStringFrom(data, 'password');
-    final draftId = _readStringFrom(data, 'draft_id');
+    final parsed = GeneratedLoginPayload.tryParse(widget.card);
+    final service =
+        parsed?.service ?? _readStringFrom(data, 'service', 'service_name');
+    final username = parsed?.username ?? _readStringFrom(data, 'username');
+    final password = parsed?.password ?? _readStringFrom(data, 'password');
+    final draftId = parsed?.draftId ?? _readStringFrom(data, 'draft_id');
     final email = _readStringFrom(data, 'email');
     final url = _readStringFrom(data, 'url');
     final title = _readStringFrom(data, 'title');
     final actions = _actionsFrom(data);
     final dispatched = _isDispatched(draftId, service);
+    final actionState = _draftStates[_dispatchKey(draftId, service)];
+    final expired =
+        actionState == _GeneratedDraftActionState.expired || _isExpired(data);
+    _scheduleExpiry(data, draftId, service);
     final passwordRevealed = _isPasswordRevealed(draftId, service);
     String keyed(String base) => suffix.isEmpty ? base : '${base}_$suffix';
 
@@ -1886,8 +1969,14 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
-          'Draft — review the values, then Save or Cancel.',
+        Text(
+          actionState == _GeneratedDraftActionState.saved
+              ? 'Saved securely.'
+              : actionState == _GeneratedDraftActionState.cancelled
+                  ? 'Cancelled.'
+                  : expired
+                      ? 'Expired.'
+                      : 'Draft — review the values, then Save or Cancel.',
           style: TextStyle(
             color: kWalletTextMuted,
             fontSize: 12,
@@ -1979,75 +2068,82 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
         // Action row: Save + Cancel. Save is primary (accent),
         // Cancel is a low-emphasis button so accidental taps are
         // rarer than intentional saves.
-        Row(
-          children: [
-            if (actions.contains('save'))
-              Expanded(
-                child: Semantics(
-                  container: true,
-                  identifier: keyed('vault_chat_card_generated_login_save'),
-                  button: true,
-                  child: ElevatedButton.icon(
-                    key: Key(
-                      keyed('vault_chat_card_generated_login_save'),
-                    ),
-                    onPressed:
-                        dispatched ? null : () => _handleSave(draftId, service),
-                    icon: const Icon(Icons.check_rounded, size: 18),
-                    label: const Text('Save login'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kWalletAccentPrimary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
+        if (actionState != _GeneratedDraftActionState.saved &&
+            actionState != _GeneratedDraftActionState.cancelled &&
+            !expired)
+          Row(
+            children: [
+              if (actions.contains('save'))
+                Expanded(
+                  child: Semantics(
+                    container: true,
+                    identifier: keyed('vault_chat_card_generated_login_save'),
+                    button: true,
+                    child: ElevatedButton.icon(
+                      key: Key(
+                        keyed('vault_chat_card_generated_login_save'),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            if (actions.contains('save') && actions.contains('cancel'))
-              const SizedBox(width: 10),
-            if (actions.contains('cancel'))
-              Expanded(
-                child: Semantics(
-                  container: true,
-                  identifier: keyed('vault_chat_card_generated_login_cancel'),
-                  button: true,
-                  child: OutlinedButton.icon(
-                    key: Key(
-                      keyed('vault_chat_card_generated_login_cancel'),
-                    ),
-                    onPressed: dispatched
-                        ? null
-                        : () => _handleCancel(draftId, service),
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    label: const Text('Cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kWalletTextPrimary,
-                      side: const BorderSide(color: kWalletBorder),
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                      onPressed: dispatched
+                          ? null
+                          : () => _handleSave(draftId, service, data),
+                      icon: const Icon(Icons.check_rounded, size: 18),
+                      label: Text(
+                          actionState == _GeneratedDraftActionState.saving
+                              ? 'Saving…'
+                              : 'Save login'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kWalletAccentPrimary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
+              if (actions.contains('save') && actions.contains('cancel'))
+                const SizedBox(width: 10),
+              if (actions.contains('cancel'))
+                Expanded(
+                  child: Semantics(
+                    container: true,
+                    identifier: keyed('vault_chat_card_generated_login_cancel'),
+                    button: true,
+                    child: OutlinedButton.icon(
+                      key: Key(
+                        keyed('vault_chat_card_generated_login_cancel'),
+                      ),
+                      onPressed: dispatched
+                          ? null
+                          : () => _handleCancel(draftId, service),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      label: const Text('Cancel'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kWalletTextPrimary,
+                        side: const BorderSide(color: kWalletBorder),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
       ],
     );
   }
@@ -2071,6 +2167,14 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
       ),
     );
   }
+}
+
+enum _GeneratedDraftActionState {
+  saving,
+  saved,
+  cancelling,
+  cancelled,
+  expired,
 }
 
 /// Row widget for the generated-login card. Displays a label, a

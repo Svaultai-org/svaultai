@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -14,11 +13,32 @@ import 'package:vault_ai_frontend/ui/dashboards/memory_page.dart';
 
 import '_helpers/responsive_harness.dart';
 
+class _ViewportClient extends VaultAIClient {
+  const _ViewportClient() : super(baseUrl: 'https://viewport.test.invalid');
 
-const _fakeClient = VaultAIClient(baseUrl: 'https://unreachable.test.invalid');
+  @override
+  Future<Map<String, dynamic>> getMemoryTimeline(
+          {required String authToken,
+          required String vaultName,
+          String? memoryType,
+          int limit = 200}) async =>
+      <String, dynamic>{'items': <Object>[], 'counts': <String, int>{}};
 
+  @override
+  Future<Map<String, dynamic>> getActiveExpiryAlerts(
+          {required String authToken,
+          required String vaultName,
+          String? expiryFilter,
+          int limit = 100}) async =>
+      <String, dynamic>{'alerts': <Object>[], 'counts': <String, int>{}};
 
+  @override
+  Future<Map<String, dynamic>> getSecurityCenterSummary(
+          {required String authToken}) async =>
+      <String, dynamic>{};
+}
 
+const _fakeClient = _ViewportClient();
 
 Future<AppState> _hydratedAppState({
   bool authed = false,
@@ -28,10 +48,6 @@ Future<AppState> _hydratedAppState({
 }) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final app = AppState();
-  await app.hydrate().timeout(
-        const Duration(seconds: 5),
-        onTimeout: () {},
-      );
   if (authed) {
     app.sessionToken = 'sess';
     app.vaultId = 'vault-1';
@@ -42,7 +58,6 @@ Future<AppState> _hydratedAppState({
   }
   return app;
 }
-
 
 Future<void> _pumpWithState(
   WidgetTester tester,
@@ -76,7 +91,6 @@ Future<void> _pumpWithState(
   await tester.pump(const Duration(milliseconds: 200));
 }
 
-
 void _forEachPhone(
   String description,
   Future<void> Function(WidgetTester tester, DeviceProfile device) body,
@@ -89,18 +103,15 @@ void _forEachPhone(
   }
 }
 
-
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-
   // VaultFrozenPage skipped: transitively imports TopNavBar which spawns a
   // notifications polling Timer. Not currently mockable in isolation without
   // extracting the notification badge widget. Covered by inline overflow
   // review — see final report.
-
 
   group('DevicePendingPage (default state)', () {
     _forEachPhone('renders without overflow', (tester, device) async {
@@ -113,7 +124,6 @@ void main() {
       );
     });
   });
-
 
   group('DevicePendingPage (with long message)', () {
     _forEachPhone('renders long message without overflow',
@@ -136,7 +146,6 @@ void main() {
     });
   });
 
-
   group('MemoryPage (loading state)', () {
     _forEachPhone('renders without overflow', (tester, device) async {
       final app = await _hydratedAppState();
@@ -154,7 +163,6 @@ void main() {
     });
   });
 
-
   group('ExpiryPage (loading state)', () {
     _forEachPhone('renders without overflow', (tester, device) async {
       final app = await _hydratedAppState();
@@ -171,7 +179,6 @@ void main() {
       );
     });
   });
-
 
   group('ConciergePage (loading state)', () {
     _forEachPhone('renders without overflow', (tester, device) async {

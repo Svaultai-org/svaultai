@@ -79,7 +79,20 @@ def _semantic_faq_id(message: str) -> Optional[str]:
     ))
     if not question_like:
         return None
-    if tokens & {"bug", "report", "support"}:
+    credential_terms = {
+        "password", "passwords", "login", "logins", "credential",
+        "credentials",
+    }
+    if tokens & credential_terms and tokens & {"save", "create", "generated"}:
+        return "what-can-i-protect"
+    if tokens & credential_terms and tokens & {"view", "reveal", "open"}:
+        return "credentials-private"
+    if tokens & {"bug", "report"}:
+        return "contact-support"
+    if (
+        "support" in tokens
+        and tokens & {"contact", "email", "customer", "technical", "app", "svaultai", "vaultai"}
+    ):
         return "contact-support"
     if "pin" in tokens and tokens & {"forgot", "forget", "lost", "reset"}:
         return "forgot-pin"
@@ -101,7 +114,16 @@ def _semantic_faq_id(message: str) -> Optional[str]:
         return "subscription-expired"
     if "storage" in tokens and tokens & {"calculated", "calculate"}:
         return "subscription-expired"
-    if tokens & {"password", "passwords", "login", "logins", "credential", "credentials", "masked"}:
+    if (
+        tokens & {
+            "password", "passwords", "login", "logins", "credential",
+            "credentials", "masked",
+        }
+        and tokens & {
+            "private", "privacy", "encrypted", "encryption", "safe",
+            "masked", "staff", "support", "see", "access",
+        }
+    ):
         return "credentials-private"
     if "secure" in tokens and "item" in tokens:
         return "credentials-private"
@@ -184,6 +206,23 @@ def build_faq_envelope(message: str) -> Optional[dict[str, Any]]:
     if faq_id is None:
         return None
     card = _build_faq_card(faq_id)
+    tokens = set(re.findall(r"[a-z0-9]+", message.lower()))
+    if (
+        faq_id == "inheritance"
+        and tokens & {"delinquent", "delinquency", "expired", "unpaid"}
+    ):
+        card["question"] = (
+            "What happens to inheritance while an account is delinquent?"
+        )
+        card["answer"] = (
+            "Existing inheritance records remain preserved. While the "
+            "account is delinquent, owner-side creation or modification is "
+            "read-only/blocked; the inheritance authorization and release "
+            "controls are not bypassed. Reactivating the account restores "
+            "permitted owner-side changes without deleting the existing "
+            "inheritance records."
+        )
+        card["preserveDynamicCopy"] = True
     return {"schema": FAQ_SCHEMA_V1, "intent": VAULT_FAQ_INTENT,
             "card": card, "message": card["answer"]}
 

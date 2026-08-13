@@ -99,7 +99,7 @@ backend features endpoint reports.
 --dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet
 --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true
 --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true
---dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true
+--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=false
 ```
 
 ## 2. What each balance reason means

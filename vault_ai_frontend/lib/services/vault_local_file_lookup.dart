@@ -35,26 +35,53 @@ class VaultLocalFileLookupMatch {
   });
 }
 
+const String localFileListAllQuery = '__vaultai_list_all_files__';
+
 String? extractLocalFileLookupQuery(String message) {
   final text = message.trim();
   if (text.isEmpty) return null;
   final lower = text.toLowerCase();
+  if (RegExp(
+    r'^(?:what\s+(?:files|documents|docs)\s+do\s+i\s+have|show\s+(?:me\s+)?all\s+(?:my\s+)?(?:files|documents|docs))\s*[.!?]*$',
+    caseSensitive: false,
+  ).hasMatch(text)) {
+    return localFileListAllQuery;
+  }
   if (lower.startsWith('when ') ||
-      lower.startsWith('what ') ||
       lower.startsWith('who ') ||
       lower.startsWith('why ') ||
       lower.startsWith('how ')) {
     return null;
   }
+  final aboutMatch = RegExp(
+    r'^\s*(?:show(?:\s+me)?|open|view|find|get|download)\s+'
+    r'(?:(?:me\s+)?(?:the|my)\s+)?'
+    r'(?:file|document|doc|attachment|record)\s+about\s+(?:my\s+)?'
+    r'(.+?)\s*[.!?]*\s*$',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (aboutMatch != null) return aboutMatch.group(1)?.trim();
+  final forMatch = RegExp(
+    r'^\s*(?:show|find|get)(?:\s+me)?\s+for\s+(?:my\s+)?(.+?)\s*[.!?]*\s*$',
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (forMatch != null) return forMatch.group(1)?.trim();
   final match = RegExp(
-    r'^\s*(?:show(?:\s+me)?|open|view|find|download)\s+'
+    r'^\s*(?:show(?:\s+me)?|open|view|find|get|download)\s+'
     r'(?:(?:the|my)\s+)?'
     r'(?:(?:file|document|doc|image|photo|picture|video|audio)\s+)?'
     r'(.+?)\s*[.!?]*\s*$',
     caseSensitive: false,
   ).firstMatch(text);
   if (match == null) return null;
-  final query = (match.group(1) ?? '').trim();
+  final query = (match.group(1) ?? '')
+      .replaceFirst(
+        RegExp(
+            r'\s+(?:file|files|document|documents|doc|docs|attachment|record)$',
+            caseSensitive: false),
+        '',
+      )
+      .trim();
   if (query.isEmpty) return null;
   final generic = normalizeLocalFileLookupText(query);
   if (generic.isEmpty ||
@@ -108,7 +135,14 @@ String normalizeLocalFileLookupText(String value) {
   return cleaned
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim()
-      .replaceFirst(RegExp(r'^(?:the|my)\s+'), '');
+      .replaceFirst(RegExp(r'^(?:the|my|about|for)\s+'), '')
+      .replaceFirst(
+        RegExp(
+            r'\s+(?:file|files|document|documents|doc|docs|attachment|record)$'),
+        '',
+      )
+      .replaceFirst(RegExp(r'\s+qa$'), '')
+      .trim();
 }
 
 int _scoreFile({

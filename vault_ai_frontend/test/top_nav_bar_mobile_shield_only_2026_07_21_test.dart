@@ -17,7 +17,6 @@ import 'package:vault_ai_frontend/main.dart' show AppState, TopNavBar;
 
 import '_helpers/responsive_harness.dart';
 
-
 AppState _authedAppState() {
   final app = AppState();
   app.sessionToken = 'sess';
@@ -27,7 +26,6 @@ AppState _authedAppState() {
   app.authed = true;
   return app;
 }
-
 
 Future<void> _pumpHeader(
   WidgetTester tester, {
@@ -53,7 +51,6 @@ Future<void> _pumpHeader(
   );
 }
 
-
 // Wordmark Text finder — 'SVaultAI' (case-preserved wordmark
 // literal). Any variant like 'V...' would not have data=='SVaultAI'
 // but the ellipsis is rendered by TextPainter, not by mutating
@@ -64,7 +61,6 @@ Finder _wordmarkTextFinder() {
     (w) => w is Text && w.data == 'SVaultAI',
   );
 }
-
 
 void main() {
   group('TopNavBar — mobile hides the wordmark entirely', () {
@@ -79,8 +75,8 @@ void main() {
             _wordmarkTextFinder(),
             findsNothing,
             reason: '${device.name}: on phone-width viewports the '
-                    'wordmark must be omitted entirely. Showing '
-                    '"V..." is worse than showing nothing.',
+                'wordmark must be omitted entirely. Showing '
+                '"V..." is worse than showing nothing.',
           );
         },
       );
@@ -94,7 +90,7 @@ void main() {
         final app = _authedAppState();
         await _pumpHeader(
           tester,
-          device: DeviceProfiles.ipad,   // 820x1180
+          device: DeviceProfiles.ipad, // 820x1180
           app: app,
           isMobile: false,
         );
@@ -109,7 +105,7 @@ void main() {
         final app = _authedAppState();
         await _pumpHeader(
           tester,
-          device: DeviceProfiles.desktop,  // 1440x900
+          device: DeviceProfiles.desktop, // 1440x900
           app: app,
           isMobile: false,
         );
@@ -118,22 +114,29 @@ void main() {
     );
   });
 
-  group('TopNavBar — shield is always rendered', () {
+  group('TopNavBar — compact mobile navigation', () {
     testWidgets(
-      'shield icon shows on iPhone SE (mobile fallback)',
+      'canonical image logo replaces the obsolete shield on iPhone SE',
       (tester) async {
         final app = _authedAppState();
-        await _pumpHeader(
-            tester, device: DeviceProfiles.iphoneSE, app: app);
-        // The shield is Icon(Icons.shield_rounded, ...) inside a
-        // fixed 42x42 Container. Presence confirms the brand mark
-        // remains visible even when the wordmark is hidden.
+        await _pumpHeader(tester, device: DeviceProfiles.iphoneSE, app: app);
+        expect(find.byKey(const Key('top_nav_canonical_logo')), findsOneWidget);
+        final image = tester.widget<Image>(find.descendant(
+          of: find.byKey(const Key('top_nav_canonical_logo')),
+          matching: find.byType(Image),
+        ));
+        expect(
+          (image.image as AssetImage).assetName,
+          'assets/branding/vaultai-icon-1024.png',
+        );
+
+        // The canonical image remains visible even when the mobile wordmark
+        // is hidden; the old generic shield must not return.
         final shield = find.byWidgetPredicate(
           (w) => w is Icon && w.icon == Icons.shield_rounded,
         );
-        expect(shield, findsOneWidget,
-            reason: 'shield brand mark must remain visible on '
-                    'phones even after the wordmark is hidden');
+        expect(shield, findsNothing,
+            reason: 'the old header logo must not remain in the widget tree');
       },
     );
   });

@@ -21,6 +21,8 @@
   var SW_SCOPE = '/';
   var RELOAD_KEY = 'vaultai_sw_migration_reloaded';
   var reloaded = false;
+  var hadControllerAtBootstrap =
+    !!(navigator.serviceWorker && navigator.serviceWorker.controller);
 
   if (!('serviceWorker' in navigator)) {
     return;
@@ -41,6 +43,13 @@
   }
 
   function safeReload() {
+    // Claiming an uncontrolled first visit does not require a reload: the
+    // page already fetched this release directly. Reload only when replacing
+    // a controller that could have served stale assets.
+    if (!hadControllerAtBootstrap) {
+      writeReloadedTarget(RELEASE);
+      return;
+    }
     if (reloaded || readReloadedTarget() === RELEASE) {
       return;
     }

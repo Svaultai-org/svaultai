@@ -74,6 +74,24 @@ async def billing_me(principal=Depends(verify_trusted_device)):
 
     payload = asdict(ent)
 
+    from subscription_entitlement import (
+        DELINQUENT_QUOTA_BYTES, LARGE_FILE_THRESHOLD_BYTES,
+    )
+    delinquent = str(ent.status).lower() in {
+        "delinquent", "past_due", "unpaid", "payment_failed", "incomplete_expired",
+    }
+    payload["is_delinquent"] = delinquent
+    payload["writes_allowed"] = not delinquent
+    payload["large_files_allowed"] = not delinquent
+    payload["crypto_allowed"] = not delinquent and bool(
+        ent.block_count > 0 and ent.purchased_bytes > 0
+    )
+    payload["plan_limit_bytes"] = ent.effective_limit_bytes
+    payload["effective_limit_bytes"] = (
+        DELINQUENT_QUOTA_BYTES if delinquent else ent.effective_limit_bytes
+    )
+    payload["large_file_threshold_bytes"] = LARGE_FILE_THRESHOLD_BYTES
+
 
     payload["last_webhook_event"] = _read_last_webhook_event(account_id)
 

@@ -255,6 +255,19 @@ bool isValidVaultHandleDisplay(String text) {
   }
 }
 
+/// True only for the unambiguous user-facing handle form.
+///
+/// [vaultHandleFromDisplay] deliberately accepts compact legacy inputs, but a
+/// 24-character vault *name* can also consist entirely of Crockford characters.
+/// Login routing must therefore require the `VLT-` prefix before interpreting
+/// user input as a handle; otherwise valid names are silently sent down the
+/// wrong lookup path.
+bool isExplicitVaultHandleDisplay(String text) {
+  final trimmed = text.trimLeft();
+  if (!trimmed.toUpperCase().startsWith(vaultHandlePrefix)) return false;
+  return isValidVaultHandleDisplay(text);
+}
+
 /// Base64url-encode without padding (matches Python's b64url helper).
 String vaultHandleB64Url(Uint8List raw) {
   const alphabet =

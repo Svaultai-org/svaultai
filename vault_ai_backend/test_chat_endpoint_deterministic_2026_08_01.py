@@ -598,7 +598,8 @@ class _ChatEndpointHarness:
         _fake_call_index = [0]
 
         def _fake_store_draft(*, vault_id, service_name, username,
-                              password, ttl_seconds=None):
+                              password, ttl_seconds=None,
+                              opaque_server_storage=False):
             _fake_call_index[0] += 1
             now = _time_mod.time()
             draft = CredentialDraft(
@@ -1097,6 +1098,8 @@ class Bug4EndpointTest(_EndpointTestBase):
                            ev.summary())
         self.assertTrue(len(data.get("draft_id") or "") > 0,
                         ev.summary())
+        self.assertIsInstance(data.get("expires_at"), (int, float),
+                              ev.summary())
         self.assertEqual(data.get("actions"), ["save", "cancel"],
                          ev.summary())
 

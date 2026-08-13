@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -50,6 +51,12 @@ logger = logging.getLogger("crypto_wallet_routes")
 
 
 router = APIRouter(tags=["crypto-wallet-engine"])
+
+
+def _reject_legacy_wallet_write_when_v2_enabled() -> None:
+    from zk_migration_flags import ZkMigrationFlags
+    if ZkMigrationFlags.from_environment(os.environ).wallet_write_enabled:
+        raise HTTPException(status_code=410, detail="legacy_wallet_write_disabled")
 
 
 ITEM_TYPE_WALLET_ACCOUNT: str = "crypto_wallet_account"
@@ -879,7 +886,22 @@ def _load_wallet_account_record(
         )
         row = cur.fetchone()
         if not row:
-            return None
+            from zk_migration_flags import ZkMigrationFlags
+            if not ZkMigrationFlags.from_environment(os.environ).wallet_read_enabled:
+                return None
+            cur.execute("""SELECT wallet_record_id,chain,network,asset,public_address,
+              wallet_label,migration_state FROM wallet_v2_records
+              WHERE vault_id=%s AND UPPER(asset)=UPPER(%s)
+              ORDER BY created_at DESC LIMIT 1""", (vault_id, asset.split(':')[0]))
+            v2 = cur.fetchone()
+            if not v2:
+                return None
+            return {"schema": "crypto_wallet_account_v2", "asset": v2["asset"],
+              "network": v2["network"], "walletLabel": v2["wallet_label"],
+              "publicAddress": v2["public_address"], "walletRecordId": v2["wallet_record_id"],
+              "keyOrigin": KEY_ORIGIN_GENERATED_CLIENT_SIDE,
+              "signingMode": SIGNING_MODE_CLIENT_SIDE,
+              "backupStatus": "wallet_v2_encrypted", "migrationState": v2["migration_state"]}
         try:
             return json.loads(row["encrypted_data"])
         except (json.JSONDecodeError, TypeError):
@@ -1314,8 +1336,7 @@ def create_wallet_account(
     payload: CreateWalletPayload,
     principal=Depends(require_crypto_entitlement),
 ):
-
-
+    _reject_legacy_wallet_write_when_v2_enabled()
     _refuse_plaintext_keys(payload)
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()
@@ -2821,6 +2842,7 @@ def create_wallet_account_network(
     payload: CreateWalletPayload,
     principal=Depends(require_crypto_entitlement),
 ):
+    _reject_legacy_wallet_write_when_v2_enabled()
     _refuse_plaintext_keys(payload)
     if not crypto_wallet_engine_enabled():
         return _engine_off_response()

@@ -22,9 +22,11 @@ const int _aesGcmNonceBytes = 12;
 
 class VaultKeyHierarchy {
   final SecretKey mvk;
+  final Map<String, Future<SecretKey>> _subkeyCache =
+      <String, Future<SecretKey>>{};
   VaultKeyHierarchy(this.mvk);
 
-  Future<SecretKey> _sub(String infoLabel) async {
+  Future<SecretKey> _deriveSubkey(String infoLabel) async {
     final mvkBytes = await mvk.extractBytes();
     return _hkdf.deriveKey(
       secretKey: SecretKey(mvkBytes),
@@ -33,14 +35,20 @@ class VaultKeyHierarchy {
     );
   }
 
+  Future<SecretKey> _sub(String infoLabel) =>
+      _subkeyCache.putIfAbsent(infoLabel, () => _deriveSubkey(infoLabel));
+
   Future<SecretKey> metadataKey() => _sub('vaultai.metadata.v1');
   Future<SecretKey> memoryKey() => _sub('vaultai.memory.v1');
-  Future<SecretKey> walletWrapKey() => _sub('vaultai.wallet.v1');
+  Future<SecretKey> credentialKey() => _sub('vaultai.credential.encryption.v2');
+  Future<SecretKey> credentialLookupKey() =>
+      _sub('vaultai.credential.lookup.v2');
+  Future<SecretKey> walletWrapKey() => _sub('vaultai.wallet.v2');
+  Future<SecretKey> walletBackupKey() =>
+      _sub('vaultai.wallet.backup.encryption.v2');
   Future<SecretKey> displayNameKey() => _sub('vaultai.display.v1');
-  Future<SecretKey> semanticLookupKey() =>
-      _sub('vaultai.lookup.semantic.v1');
-  Future<SecretKey> memoryLookupKey() =>
-      _sub('vaultai.lookup.memory.v1');
+  Future<SecretKey> semanticLookupKey() => _sub('vaultai.lookup.semantic.v1');
+  Future<SecretKey> memoryLookupKey() => _sub('vaultai.lookup.memory.v1');
   Future<SecretKey> walletLockLookupKey() =>
       _sub('vaultai.lookup.wallet.lock.v1');
 }
@@ -62,6 +70,22 @@ Future<Uint8List> aesGcmWrap(SecretKey key, List<int> plaintext) async {
   return out.toBytes();
 }
 
+Future<Uint8List> aesGcmWrapWithAad(
+  SecretKey key,
+  List<int> plaintext, {
+  required List<int> aad,
+}) async {
+  final nonce = _randomBytes(_aesGcmNonceBytes);
+  final box =
+      await _aesGcm.encrypt(plaintext, secretKey: key, nonce: nonce, aad: aad);
+  final out = BytesBuilder()
+    ..addByte(0x01)
+    ..add(nonce)
+    ..add(box.cipherText)
+    ..add(box.mac.bytes);
+  return out.toBytes();
+}
+
 Future<Uint8List> aesGcmUnwrap(SecretKey key, Uint8List envelope) async {
   if (envelope.isEmpty || envelope[0] != 0x01) {
     throw StateError('unknown ciphertext envelope version byte');
@@ -74,6 +98,27 @@ Future<Uint8List> aesGcmUnwrap(SecretKey key, Uint8List envelope) async {
   return Uint8List.fromList(
     await _aesGcm.decrypt(box, secretKey: key),
   );
+}
+
+Future<Uint8List> aesGcmUnwrapWithAad(
+  SecretKey key,
+  Uint8List envelope, {
+  required List<int> aad,
+}) async {
+  if (envelope.isEmpty ||
+      envelope[0] != 0x01 ||
+      envelope.length < 1 + _aesGcmNonceBytes + 16) {
+    throw StateError('unknown ciphertext envelope version byte');
+  }
+  final nonce = envelope.sublist(1, 1 + _aesGcmNonceBytes);
+  final tagStart = envelope.length - 16;
+  final box = SecretBox(
+    envelope.sublist(1 + _aesGcmNonceBytes, tagStart),
+    nonce: nonce,
+    mac: Mac(envelope.sublist(tagStart)),
+  );
+  return Uint8List.fromList(
+      await _aesGcm.decrypt(box, secretKey: key, aad: aad));
 }
 
 /// Vault-scoped HMAC-SHA-256 used for keyed lookup hashes.

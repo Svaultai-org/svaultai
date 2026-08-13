@@ -16,6 +16,21 @@ Covers:
 
 from __future__ import annotations
 
+
+def test_delinquent_inheritance_question_answers_billing_condition():
+    from vault_faq_router import build_faq_envelope
+    from vault_faq_content_i18n import apply_locale_to_faq_envelope
+
+    envelope = build_faq_envelope(
+        "What happens to inheritance access if my subscription is delinquent?"
+    )
+    envelope = apply_locale_to_faq_envelope(envelope, "en")
+    assert envelope is not None
+    answer = envelope["message"].lower()
+    assert "preserved" in answer
+    assert "delinquent" in answer
+    assert "reactivating" in answer
+
 import re
 import unittest
 from pathlib import Path
@@ -372,7 +387,8 @@ class TestFaqAnswersHonorContentRules(unittest.TestCase):
         from vault_faq_content import FAQ_BY_ID
         answer = FAQ_BY_ID["forgot-pin"]["answer"].lower()
 
-        self.assertIn("recovery may not be possible", answer)
+        self.assertIn("cannot reset or recover a forgotten pin", answer)
+        self.assertIn("support", answer)
 
     def test_no_reveal_instruction_leaks(self):
         from vault_faq_content import FAQ_ENTRIES

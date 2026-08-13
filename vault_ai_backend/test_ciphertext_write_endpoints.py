@@ -133,18 +133,42 @@ def test_notification_ciphertext_rejects_plaintext_leak() -> None:
         _reject_plaintext_leak(req, ("title", "body", "metadata"))
 
 
-def test_ai_memory_ciphertext_rejects_plaintext_leak() -> None:
+@pytest.mark.parametrize("field", [
+    "memory_key", "memory_value", "memory_normalized_key", "normalized_memory",
+    "summary", "summary_plaintext", "entity", "entity_plaintext", "PIN",
+    "MVK", "memory_key_material",
+])
+def test_ai_memory_ciphertext_rejects_plaintext_fields(field: str) -> None:
     from fastapi import HTTPException
-    req = AiMemoryCiphertextRequest(
-        memory_type="preference",
-        memory_lookup_hash="AA",
-        payload_ciphertext="BB",
-        memory_value="I like tea.",  # LEGACY PLAINTEXT
-    )
-    with pytest.raises(HTTPException):
+    payload = {
+        "memory_id": "qa-contract-memory",
+        "memory_type": "preference",
+        "memory_lookup_hash": "AA",
+        "payload_ciphertext": "BB",
+        field: "SYNTHETIC_SENTINEL",
+    }
+    with pytest.raises((HTTPException, ValueError)):
+        req = AiMemoryCiphertextRequest.model_validate(payload)
         _reject_plaintext_leak(
             req, ("memory_key", "memory_value", "memory_normalized_key"),
         )
+
+
+def test_ai_memory_edit_updates_stable_record_id_before_hash_upsert() -> None:
+    """Changing an encrypted memory title changes its blind lookup hash.
+
+    The stable client record id must therefore be the edit identity; otherwise
+    the insert path collides with the record-id uniqueness constraint.
+    """
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    src = inspect.getsource(mod.ai_memory_ciphertext_upsert)
+    update_pos = src.index("UPDATE vault_ai_memory")
+    insert_pos = src.index("INSERT INTO vault_ai_memory")
+    assert update_pos < insert_pos
+    assert "memory_record_id = %s" in src
+    assert "memory_lookup_hash = %s" in src
 
 
 def test_all_ciphertext_write_endpoints_require_auth() -> None:

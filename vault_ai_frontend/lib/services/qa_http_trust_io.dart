@@ -1,0 +1,53 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:http/http.dart' as http;
+
+const _enabled = bool.fromEnvironment('QA_TRUST_LOCAL_CA', defaultValue: false);
+const _caB64 = String.fromEnvironment('QA_CA_B64', defaultValue: '');
+const _backendBaseUrl = String.fromEnvironment(
+  'BACKEND_BASE_URL',
+  defaultValue: 'https://10.0.2.2:8444',
+);
+
+Future<void> configureQaHttpTrust() async {
+  print('[qa-tls] enabled=$_enabled ca_present=${_caB64.isNotEmpty}');
+  if (!_enabled) return;
+  if (_caB64.isEmpty) {
+    throw StateError('qa_ca_unavailable');
+  }
+  final bytes = base64Decode(_caB64);
+  print('[qa-tls] decode_success=true decoded_len_gt_zero=${bytes.isNotEmpty}');
+  final context = SecurityContext(withTrustedRoots: true);
+  print('[qa-tls] security_context_created=true with_trusted_roots=true');
+  context.setTrustedCertificatesBytes(bytes);
+  print('[qa-tls] set_trusted_certificates_succeeded=true');
+  HttpOverrides.global = _QaOverrides(context);
+  try {
+    // The Android emulator reaches the host at 10.0.2.2, while iOS
+    // simulators use 127.0.0.1. Probe the same configured origin that the app
+    // will use instead of pinning this bootstrap to one device family.
+    final response = await http.get(Uri.parse('$_backendBaseUrl/health'));
+    print('[qa-tls] custom_health_status=${response.statusCode}');
+  } catch (error) {
+    print('[qa-tls] custom_health_error=${error.runtimeType}');
+    rethrow;
+  }
+}
+
+class _QaOverrides extends HttpOverrides {
+  final SecurityContext context;
+  _QaOverrides(this.context);
+
+  @override
+  HttpClient createHttpClient(SecurityContext? _) {
+    // HttpClient construction consults HttpOverrides.global. Temporarily
+    // clear it to avoid recursive construction, then restore this override.
+    final previous = HttpOverrides.current;
+    HttpOverrides.global = null;
+    try {
+      return HttpClient(context: context);
+    } finally {
+      HttpOverrides.global = previous;
+    }
+  }
+}

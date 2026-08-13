@@ -486,6 +486,20 @@ void main() {
       expect(src, contains('FolderBrowser('));
     });
 
+    test('FileV2 management cards remain visible beside the legacy '
+        'folder tree', () {
+      final src = readMain();
+      final fileV2Cards = src.indexOf(
+        '.where((file) => file.isFileV2)',
+        src.indexOf('Widget _buildFilesSection'),
+      );
+      final folderBrowser = src.indexOf('FolderBrowser(', fileV2Cards);
+      expect(fileV2Cards, greaterThanOrEqualTo(0));
+      expect(folderBrowser, greaterThan(fileV2Cards),
+          reason: 'FileV2 rows come from /vault/file-v2, not the legacy '
+              'folder endpoint, and must be rendered before FolderBrowser.');
+    });
+
     test('_buildFilesSection falls back to the flat list when tree '
         'data is null', () {
       final src = readMain();

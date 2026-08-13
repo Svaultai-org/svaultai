@@ -92,6 +92,19 @@ void main() {
   });
 
   group('request lifecycle', () {
+    test('runtime exposes safe iterator ownership and cleanup', () {
+      final runtime = ChatRequestRuntime();
+      final ticket = runtime.begin(nowMicros: 1);
+      expect(runtime.hasActiveIterator, isFalse);
+      final marker = Object();
+      runtime.assignIterator(ticket.requestId, marker);
+      expect(runtime.hasActiveIterator, isTrue);
+      expect(runtime.activeRequestId, ticket.requestId);
+      expect(runtime.takeIterator<Object>(), same(marker));
+      expect(runtime.hasActiveIterator, isFalse);
+      expect(runtime.activeRequestId, isNull);
+    });
+
     test('unique IDs remain distinct at the same timestamp', () {
       final coordinator = ChatRequestCoordinator();
       final first = coordinator.begin(nowMicros: 42);

@@ -22,18 +22,18 @@
 
   <!-- Primary meta -->
   <title>SVaultAI — Private AI-Powered Digital Vault</title>
-  <meta name="description" content="SVaultAI is a private, AI-powered digital vault for securely protecting and managing your digital life, including documents, identity records, credentials, memories, and non-custodial digital assets.">
+  <meta name="description" content="SVaultAI is a private, AI-powered digital vault designed to protect and manage credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets with zero-knowledge, user-controlled access.">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
-  <link rel="canonical" href="https://svaultai.com/">
-  <meta name="theme-color" content="#10A37F">
+  <link rel="canonical" href="https://app.svaultai.com/">
+  <meta name="theme-color" content="#0F1115">
   <meta name="color-scheme" content="dark">
 
   <!-- Open Graph / Facebook / iMessage / WhatsApp / Slack / LinkedIn / Discord -->
   <meta property="og:title" content="SVaultAI — Private AI-Powered Digital Vault">
-  <meta property="og:description" content="SVaultAI is a private, AI-powered digital vault for securely protecting and managing documents, identity records, credentials, memories, inheritance, and non-custodial digital assets.">
+  <meta property="og:description" content="Protect and manage credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets with zero-knowledge, user-controlled access.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://svaultai.com/">
-  <meta property="og:image" content="https://svaultai.com/og-image.png">
+  <meta property="og:url" content="https://app.svaultai.com/">
+  <meta property="og:image" content="https://app.svaultai.com/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="SVaultAI — Private AI-Powered Digital Vault">
@@ -43,8 +43,8 @@
   <!-- Twitter / X -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="SVaultAI — Private AI-Powered Digital Vault">
-  <meta name="twitter:description" content="SVaultAI is a private, AI-powered digital vault for documents, identity records, credentials, memories, inheritance, and non-custodial digital assets.">
-  <meta name="twitter:image" content="https://svaultai.com/og-image.png">
+  <meta name="twitter:description" content="A private, AI-powered digital vault for credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets.">
+  <meta name="twitter:image" content="https://app.svaultai.com/og-image.png">
   <meta name="twitter:image:alt" content="SVaultAI — Private AI-Powered Digital Vault">
 
   <!-- iOS / Apple / PWA -->
@@ -53,10 +53,12 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="SVaultAI">
   <meta name="application-name" content="SVaultAI">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
 
   <link rel="manifest" href="manifest.json">
 
@@ -66,33 +68,40 @@
     "@graph": [
       {
         "@type": "WebSite",
-        "@id": "https://svaultai.com/#website",
-        "url": "https://svaultai.com/",
+        "@id": "https://app.svaultai.com/#website",
+        "url": "https://app.svaultai.com/",
         "name": "SVaultAI",
         "alternateName": ["SVault AI"],
-        "description": "SVaultAI is a private, AI-powered digital vault for securely protecting and managing your digital life, including documents, identity records, credentials, memories, and non-custodial digital assets.",
-        "publisher": { "@id": "https://svaultai.com/#organization" }
+        "description": "SVaultAI is a private, AI-powered digital vault for credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets with zero-knowledge, user-controlled access.",
+        "publisher": { "@id": "https://app.svaultai.com/#organization" }
       },
       {
         "@type": "Organization",
-        "@id": "https://svaultai.com/#organization",
+        "@id": "https://app.svaultai.com/#organization",
         "name": "SVaultAI",
-        "url": "https://svaultai.com/",
+        "url": "https://app.svaultai.com/",
         "logo": {
           "@type": "ImageObject",
-          "url": "https://svaultai.com/icons/Icon-512.png",
+          "url": "https://app.svaultai.com/icons/Icon-512.png",
           "width": 512,
           "height": 512
-        }
+        },
+        "sameAs": [
+          "https://play.google.com/store/apps/details?id=com.svaultai.app"
+        ]
       },
       {
         "@type": "SoftwareApplication",
-        "@id": "https://svaultai.com/#software",
+        "@id": "https://app.svaultai.com/#software",
         "name": "SVaultAI",
-        "url": "https://svaultai.com/",
+        "url": "https://app.svaultai.com/",
+        "logo": "https://app.svaultai.com/icons/Icon-512.png",
+        "image": "https://app.svaultai.com/og-image.png",
         "applicationCategory": "SecurityApplication",
         "operatingSystem": "Web, Android, iOS, Windows, macOS, Linux",
-        "description": "A private, AI-powered digital vault with conversational access for documents, identity records, credentials, memories, inheritance features, and non-custodial digital assets.",
+        "description": "A private, AI-powered digital vault with zero-knowledge, user-controlled access for credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets.",
+        "downloadUrl": "https://play.google.com/store/apps/details?id=com.svaultai.app",
+        "installUrl": "https://play.google.com/store/apps/details?id=com.svaultai.app",
         "featureList": [
           "Private digital vault",
           "AI-powered conversational access",
@@ -102,28 +111,62 @@
           "Non-custodial digital asset tools",
           "User-controlled privacy"
         ],
-        "publisher": { "@id": "https://svaultai.com/#organization" }
+        "publisher": { "@id": "https://app.svaultai.com/#organization" }
       }
     ]
   }
+  </script>
+  <script>
+    // The same Flutter shell serves public and private routes. Keep only the
+    // marketing root and public Help page indexable; Nginx also emits an
+    // X-Robots-Tag header for private paths as the authoritative control.
+    (function () {
+      var path = window.location.pathname.replace(/\/+$/, '') || '/';
+      var isPublic = path === '/' || path === '/help-and-faq-public';
+      if (isPublic) return;
+      document.querySelector('meta[name="robots"]').setAttribute(
+        'content', 'noindex, nofollow, noarchive'
+      );
+      document.querySelector('link[rel="canonical"]')?.remove();
+      document.querySelectorAll('script[type="application/ld+json"]')
+        .forEach(function (node) { node.remove(); });
+    })();
   </script>
 </head>
 <body>
   <main id="seo-content" aria-label="SVaultAI product overview">
     <h1>SVaultAI — Private AI-Powered Digital Vault</h1>
-    <p>SVaultAI is a private, AI-powered digital vault for securely protecting and managing your digital life, including documents, identity records, credentials, memories, and non-custodial digital assets.</p>
-    <p>Use conversational access to organize and retrieve what you explicitly request while keeping privacy under your control. SVaultAI also supports inheritance features for passing protected information through an authorized process.</p>
+    <p>SVaultAI is a private, AI-powered digital vault designed to protect and manage your digital life: credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets.</p>
+    <p>Zero-knowledge, user-controlled access keeps private V2 vault contents outside the operator key boundary. Use conversational access to organize and retrieve only what you authorize.</p>
     <nav aria-label="Public information">
       <a href="/privacy/">Privacy Policy</a>
       <a href="/help-and-faq-public">Help Center</a>
+      <a href="https://play.google.com/store/apps/details?id=com.svaultai.app">Get SVaultAI on Google Play</a>
     </nav>
   </main>
   <style>
-    #seo-content { box-sizing: border-box; max-width: 960px; margin: 0 auto; padding: 48px 24px; color: #f5f7fa; background: #0f1115; font: 16px/1.6 Arial, sans-serif; }
-    #seo-content h1 { font-size: 2rem; line-height: 1.2; }
-    #seo-content a { color: #4de0bb; margin-right: 20px; }
+    /* Crawlable metadata may remain in the DOM, but app visitors must never
+       see it while Flutter starts or updates its service worker. */
+    #seo-content { display: none !important; }
     flt-glass-pane { position: relative; z-index: 1; }
   </style>
+  <script>
+    // The SEO fallback must disappear as soon as Flutter mounts. Leaving it in
+    // normal flow pushes the canvas below the fold and can distort its viewport
+    // after refresh, making an otherwise healthy app look blank or cropped.
+    (function () {
+      function removeSeoFallback() {
+        if (!document.querySelector('flt-glass-pane')) return false;
+        document.getElementById('seo-content')?.remove();
+        return true;
+      }
+      if (!removeSeoFallback()) {
+        new MutationObserver(function (_, observer) {
+          if (removeSeoFallback()) observer.disconnect();
+        }).observe(document.documentElement, { childList: true, subtree: true });
+      }
+    })();
+  </script>
   <!-- 2026-07-14 (Round 12 — explicit SW retirement bootstrap):
        Flutter's `--pwa-strategy=none` build does NOT register a
        service worker. Existing users still controlled by the

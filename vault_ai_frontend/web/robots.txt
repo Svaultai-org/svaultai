@@ -1,4 +1,18 @@
 User-agent: *
 Allow: /
+Allow: /privacy/
+Allow: /help-and-faq-public
+Disallow: /auth
+Disallow: /login
+Disallow: /signup
+Disallow: /unlock
+Disallow: /pin
+Disallow: /recover
+Disallow: /chat
+Disallow: /storage
+Disallow: /devices
+Disallow: /device-pending
+Disallow: /security-center
+Disallow: /vault-frozen
 
-Sitemap: https://svaultai.com/sitemap.xml
+Sitemap: https://app.svaultai.com/sitemap.xml

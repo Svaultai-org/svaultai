@@ -83,6 +83,10 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
+  # Used directly by native privacy acceptance fixtures.
+  uuid: ^4.5.3
   flutter_lints: ^5.0.0
 
   # Store-submission asset generators (Phase-A release hardening).
@@ -123,7 +127,7 @@ flutter_launcher_icons:
   image_path: "assets/branding/vaultai-icon-1024.png"
   min_sdk_android: 21
   adaptive_icon_background: "#0F1115"
-  adaptive_icon_foreground: "assets/branding/vaultai-icon-1024.png"
+  adaptive_icon_foreground: "assets/branding/vaultai-icon-foreground-1024.png"
   web:
     generate: false
   windows:

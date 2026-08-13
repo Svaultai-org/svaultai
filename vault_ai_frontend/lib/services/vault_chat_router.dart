@@ -326,6 +326,58 @@ class VaultChatCard {
   }
 }
 
+/// Pure, non-UI projection of a generated-login draft card. The UI and QA
+/// harness can consume the same already-sanitized card data without adding
+/// another parsing or crypto path.
+class GeneratedLoginPayload {
+  final String draftId;
+  final String service;
+  final String? username;
+  final String? password;
+  final String? url;
+  final String? title;
+  final String? email;
+  final DateTime? expiresAt;
+
+  const GeneratedLoginPayload({
+    required this.draftId,
+    required this.service,
+    this.username,
+    this.password,
+    this.url,
+    this.title,
+    this.email,
+    this.expiresAt,
+  });
+
+  static GeneratedLoginPayload? tryParse(VaultChatCard card) {
+    if (card.cardType != kVcrCardGeneratedLogin || card.data == null) {
+      return null;
+    }
+    final data = card.data!;
+    final view = data['view']?.toString() ?? card.view;
+    if (view != 'create_draft' && view != 'create_draft_batch') return null;
+    final draftId = data['draft_id']?.toString() ?? '';
+    final service = (data['service'] ?? data['service_name'])?.toString() ?? '';
+    if (draftId.isEmpty || service.isEmpty) return null;
+    DateTime? expiry;
+    final rawExpiry = data['expires_at'];
+    if (rawExpiry is num) {
+      expiry = DateTime.fromMillisecondsSinceEpoch(rawExpiry.toInt() * 1000);
+    }
+    return GeneratedLoginPayload(
+      draftId: draftId,
+      service: service,
+      username: data['username']?.toString(),
+      password: data['password']?.toString(),
+      url: data['url']?.toString(),
+      title: data['title']?.toString(),
+      email: data['email']?.toString(),
+      expiresAt: expiry,
+    );
+  }
+}
+
 const Set<String> kVcrForbiddenDataKeys = <String>{
   'password',
   'password_value',
@@ -449,6 +501,7 @@ const Set<String> _kGeneratedLoginDraftKeys = <String>{
   'username',
   'password',
   'draft_id',
+  'expires_at',
   'explicit_fields',
   'actions',
   'email',

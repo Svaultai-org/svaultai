@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../tokens.dart';
 import '../../services/vault_chat_router.dart' as vcr;
 import '../vault_chat_cards.dart' as vcr_ui;
@@ -410,6 +411,25 @@ class _CardBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget body;
     switch (msg.kind) {
+      case ChatMessage.kInlineCredential:
+        body = _InlineCredentialCard(
+          msg: msg,
+          onEdit: onCardAction == null
+              ? null
+              : () => onCardAction!(
+                    msg,
+                    'credential_v2_edit',
+                    msg.payload,
+                  ),
+          onDelete: onCardAction == null
+              ? null
+              : () => onCardAction!(
+                    msg,
+                    'credential_v2_delete',
+                    msg.payload,
+                  ),
+        );
+        break;
       case ChatMessage.kVaultFile:
         body = VaultFileCard(
           msg: msg,
@@ -631,19 +651,30 @@ class _CardBubble extends StatelessWidget {
       // controller turns into a "save it" / "cancel" chat message,
       // which the backend state machine consumes to persist or
       // discard the draft.
-      onGeneratedLoginSave: (draftId, service) {
+      onGeneratedLoginSave: (draftId, service) async {
         if (onCardAction != null) {
-          onCardAction!(msg, 'generated_login_save', {
-            'draft_id': draftId,
-            'service': service,
+          // Use the already-sanitized parsed card as the single source of
+          // lifecycle identity.  The raw envelope can differ in shape from
+          // the card model (and previously dropped draft_id at this
+          // boundary), causing an opaque v2 card to fall back to legacy.
+          final parsed = vcr.GeneratedLoginPayload.tryParse(response.card);
+          final localDraft = response.card.data ?? const <String, dynamic>{};
+          await onCardAction!(msg, 'generated_login_save', {
+            'draft_id': parsed?.draftId ?? draftId,
+            'service': parsed?.service ?? service,
+            'username': parsed?.username ?? localDraft['username'],
+            'password': parsed?.password ?? localDraft['password'],
+            'url': parsed?.url ?? localDraft['url'],
+            'notes': localDraft['notes'],
           });
         }
       },
-      onGeneratedLoginCancel: (draftId, service) {
+      onGeneratedLoginCancel: (draftId, service) async {
         if (onCardAction != null) {
-          onCardAction!(msg, 'generated_login_cancel', {
-            'draft_id': draftId,
-            'service': service,
+          final parsed = vcr.GeneratedLoginPayload.tryParse(response.card);
+          await onCardAction!(msg, 'generated_login_cancel', {
+            'draft_id': parsed?.draftId ?? draftId,
+            'service': parsed?.service ?? service,
           });
         }
       },
@@ -690,6 +721,119 @@ class _CardBubble extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _InlineCredentialCard extends StatefulWidget {
+  final ChatMessage msg;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+
+  const _InlineCredentialCard({
+    required this.msg,
+    this.onEdit,
+    this.onDelete,
+  });
+
+  @override
+  State<_InlineCredentialCard> createState() => _InlineCredentialCardState();
+}
+
+class _InlineCredentialCardState extends State<_InlineCredentialCard> {
+  bool _revealed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final payload = widget.msg.payload ?? const <String, dynamic>{};
+    final service = payload['service']?.toString() ?? '';
+    final username = payload['username']?.toString() ?? '';
+    final password = payload['password']?.toString() ?? '';
+
+    Future<void> copy(String value, String label) async {
+      await Clipboard.setData(ClipboardData(text: value));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$label copied')),
+      );
+    }
+
+    return Container(
+      key: const Key('chat_inline_credential_card'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF252525),
+        borderRadius: BorderRadius.circular(16),
+        border:
+            Border.all(color: const Color(0xFF10A37F).withValues(alpha: .45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(service,
+              key: const Key('chat_inline_credential_service'),
+              style:
+                  const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 14),
+          const Text('Username', style: TextStyle(color: Color(0xFFB4B4B4))),
+          Row(children: [
+            Expanded(
+                child: SelectableText(username,
+                    key: const Key('chat_inline_credential_username'))),
+            IconButton(
+              key: const Key('chat_inline_copy_username'),
+              tooltip: 'Copy username',
+              onPressed: () => copy(username, 'Username'),
+              icon: const Icon(Icons.copy_outlined),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          const Text('Password', style: TextStyle(color: Color(0xFFB4B4B4))),
+          Row(children: [
+            Expanded(
+                child: SelectableText(
+              _revealed ? password : '••••••••••••',
+              key: const Key('chat_inline_credential_password'),
+            )),
+            IconButton(
+              key: const Key('chat_inline_toggle_password'),
+              tooltip: _revealed ? 'Hide password' : 'Reveal password',
+              onPressed: () => setState(() => _revealed = !_revealed),
+              icon: Icon(_revealed
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined),
+            ),
+            IconButton(
+              key: const Key('chat_inline_copy_password'),
+              tooltip: 'Copy password',
+              onPressed: () => copy(password, 'Password'),
+              icon: const Icon(Icons.copy_outlined),
+            ),
+          ]),
+          if (widget.onEdit != null || widget.onDelete != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (widget.onEdit != null)
+                  TextButton.icon(
+                    key: const Key('chat_inline_credential_edit'),
+                    onPressed: widget.onEdit,
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Edit'),
+                  ),
+                if (widget.onDelete != null)
+                  TextButton.icon(
+                    key: const Key('chat_inline_credential_delete'),
+                    onPressed: widget.onDelete,
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Delete'),
+                  ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }

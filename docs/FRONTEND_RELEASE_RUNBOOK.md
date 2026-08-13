@@ -29,7 +29,7 @@ From `vault_ai_frontend/`:
 ```
 .\scripts\build-web-release.ps1 `
   --dart-define=BACKEND_BASE_URL=https://api.svaultai.com `
-  --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true
+  --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=false
 ```
 
 **POSIX shell:**
@@ -37,7 +37,7 @@ From `vault_ai_frontend/`:
 ```
 ./scripts/build-web-release.sh \
   --dart-define=BACKEND_BASE_URL=https://api.svaultai.com \
-  --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true
+  --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=false
 ```
 
 Both scripts:
