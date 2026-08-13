@@ -41,11 +41,9 @@ void main() {
     expect(signup, contains('appBar: TopNavBar'));
     expect(
       mainSource,
-      contains(
-        'initialRoute: kIsWeb ? resolveWebInitialRoute(Uri.base.path) : '
-        "'/login'",
-      ),
+      contains("initialRoute: kIsWeb ? currentWebInitialRoute() : '/login'"),
     );
+    expect(mainSource, contains('platformDispatcher.defaultRouteName'));
     expect(mainSource,
         contains("'/not-found': (_) => const _PublicNotFoundPage()"));
   });
