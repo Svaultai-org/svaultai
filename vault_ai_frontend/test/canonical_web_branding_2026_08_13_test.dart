@@ -39,7 +39,26 @@ void main() {
     );
     expect(login, contains('appBar: TopNavBar'));
     expect(signup, contains('appBar: TopNavBar'));
-    expect(mainSource, contains("initialRoute: kIsWeb ? null : '/login'"));
+    expect(
+      mainSource,
+      contains(
+        'initialRoute: kIsWeb ? resolveWebInitialRoute(Uri.base.path) : '
+        "'/login'",
+      ),
+    );
+    expect(mainSource,
+        contains("'/not-found': (_) => const _PublicNotFoundPage()"));
+  });
+
+  test('public landing copy reflects the full current product positioning', () {
+    expect(
+      mainSource,
+      contains('Your private, AI-powered digital vault.'),
+    );
+    expect(mainSource, contains('credentials, documents, memories, media'));
+    expect(
+        mainSource, contains('inheritance, and non-custodial digital assets'));
+    expect(mainSource, isNot(contains('SVaultAI helps you save logins, IDs')));
   });
 
   test('Help, privacy, and not-found public surfaces reference canonical logo',

@@ -617,6 +617,32 @@ class _PublicNotFoundPage extends StatelessWidget {
   }
 }
 
+String resolveWebInitialRoute(String path) {
+  final normalized = path.isEmpty ? '/' : path;
+  if (normalized == '/help-and-faq-public/') {
+    return '/help-and-faq-public';
+  }
+  const knownRoutes = <String>{
+    '/',
+    '/auth',
+    '/login',
+    '/signup',
+    '/unlock',
+    '/pin',
+    '/vault-frozen',
+    '/recover',
+    '/chat',
+    '/device-pending',
+    '/devices',
+    '/security-center',
+    '/storage',
+    '/help-and-faq-public',
+    kVaultAiPrivacyRoute,
+    '/not-found',
+  };
+  return knownRoutes.contains(normalized) ? normalized : '/not-found';
+}
+
 String? _guessMimeTypeFromName(String name) {
   final lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
@@ -3044,6 +3070,7 @@ class SvaultaiApp extends StatelessWidget {
         '/storage': (_) => const StoragePage(),
         '/help-and-faq-public': (_) => const _PublicHelpCenterRoute(),
         kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
+        '/not-found': (_) => const _PublicNotFoundPage(),
       },
       onUnknownRoute: (_) => MaterialPageRoute<void>(
         settings: const RouteSettings(name: '/not-found'),
@@ -3052,7 +3079,7 @@ class SvaultaiApp extends StatelessWidget {
       // The Web must honor the requested browser path so `/` renders the
       // indexable marketing landing page and direct public/private URLs remain
       // reloadable. Native users still arrive at authentication immediately.
-      initialRoute: kIsWeb ? null : '/login',
+      initialRoute: kIsWeb ? resolveWebInitialRoute(Uri.base.path) : '/login',
     );
   }
 }
@@ -4073,7 +4100,7 @@ class _HeroText extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Your private AI vault.',
+          'Your private, AI-powered digital vault.',
           style: Theme.of(context)
               .textTheme
               .headlineMedium
@@ -4081,7 +4108,7 @@ class _HeroText extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         const Text(
-          'SVaultAI helps you save logins, IDs, cards, files, photos, and notes, then retrieve them naturally in chat.',
+          'Protect and manage credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets with zero-knowledge, user-controlled access.',
           style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 16, height: 1.6),
         ),
         const SizedBox(height: 22),
