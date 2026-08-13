@@ -643,6 +643,13 @@ String resolveWebInitialRoute(String path) {
   return knownRoutes.contains(normalized) ? normalized : '/not-found';
 }
 
+String currentWebInitialRoute() {
+  final requestedRoute =
+      WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+  final requestedPath = Uri.tryParse(requestedRoute)?.path ?? requestedRoute;
+  return resolveWebInitialRoute(requestedPath);
+}
+
 String? _guessMimeTypeFromName(String name) {
   final lower = name.toLowerCase();
   if (lower.endsWith('.png')) return 'image/png';
@@ -3079,7 +3086,7 @@ class SvaultaiApp extends StatelessWidget {
       // The Web must honor the requested browser path so `/` renders the
       // indexable marketing landing page and direct public/private URLs remain
       // reloadable. Native users still arrive at authentication immediately.
-      initialRoute: kIsWeb ? resolveWebInitialRoute(Uri.base.path) : '/login',
+      initialRoute: kIsWeb ? currentWebInitialRoute() : '/login',
     );
   }
 }
