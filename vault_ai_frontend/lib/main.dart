@@ -61,6 +61,8 @@ import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
 import 'services/web_pbkdf2_stub.dart'
     if (dart.library.js_interop) 'services/web_pbkdf2.dart';
+import 'services/web_location_stub.dart'
+    if (dart.library.js_interop) 'services/web_location_web.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
@@ -644,10 +646,7 @@ String resolveWebInitialRoute(String path) {
 }
 
 String currentWebInitialRoute() {
-  final requestedRoute =
-      WidgetsBinding.instance.platformDispatcher.defaultRouteName;
-  final requestedPath = Uri.tryParse(requestedRoute)?.path ?? requestedRoute;
-  return resolveWebInitialRoute(requestedPath);
+  return resolveWebInitialRoute(currentBrowserPath());
 }
 
 String? _guessMimeTypeFromName(String name) {
