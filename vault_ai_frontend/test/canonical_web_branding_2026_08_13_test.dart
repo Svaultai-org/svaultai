@@ -28,7 +28,7 @@ void main() {
     expect(topNav, isNot(contains('Icons.shield_rounded')));
   });
 
-  test('login and signup inherit the canonical shared header', () {
+  test('login and signup inherit the canonical shared header', () async {
     final login = mainSource.substring(
       mainSource.indexOf('class LoginPage'),
       mainSource.indexOf('class SignupPage'),
@@ -43,7 +43,10 @@ void main() {
       mainSource,
       contains("initialRoute: kIsWeb ? currentWebInitialRoute() : '/login'"),
     );
-    expect(mainSource, contains('platformDispatcher.defaultRouteName'));
+    expect(mainSource, contains('resolveWebInitialRoute(currentBrowserPath())'));
+    final webLocation =
+        await File('lib/services/web_location_web.dart').readAsString();
+    expect(webLocation, contains('web.window.location.pathname'));
     expect(mainSource,
         contains("'/not-found': (_) => const _PublicNotFoundPage()"));
   });
