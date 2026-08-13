@@ -33,6 +33,7 @@ never sees your raw records.
 - [Production deployment](#production-deployment)
 - [What SVaultAI is not](#what-svaultai-is-not)
 - [Status](#status)
+- [License and public security transparency](#license-and-public-security-transparency)
 
 ---
 
@@ -486,3 +487,19 @@ phrases, real wallet addresses, real Stripe keys, real session
 tokens, or any real encrypted material**. Redact aggressively.
 The threat model and the incident-response doc explain what a
 useful report looks like.
+
+---
+
+## License and public security transparency
+
+The commercial implementation in this repository is proprietary and is not
+offered under an open-source license. See [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The interim commercial terms
+are explicitly marked `ATTORNEY_REVIEW_REQUIRED=true`.
+
+Security architecture, the V2 threat model, client-key boundaries, encrypted
+record contracts, and independently runnable contract tests are published in
+the separate public
+[SVaultAI Security & Transparency repository](https://github.com/Svaultai-org/svaultai-security).
+That repository's Apache-2.0 license applies only to its own curated material,
+not to this commercial application.

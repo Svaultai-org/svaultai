@@ -1,11 +1,11 @@
 {
     "name": "SVaultAI — Private AI-Powered Digital Vault",
     "short_name": "SVaultAI",
-    "description": "SVaultAI is a private, AI-powered digital vault for documents, identity records, credentials, memories, inheritance, and non-custodial digital assets.",
+    "description": "SVaultAI is a private, AI-powered digital vault for credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets with user-controlled access.",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0F1115",
-    "theme_color": "#10A37F",
+    "theme_color": "#0F1115",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

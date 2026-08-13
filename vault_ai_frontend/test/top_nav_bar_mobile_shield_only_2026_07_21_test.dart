@@ -116,18 +116,27 @@ void main() {
 
   group('TopNavBar — compact mobile navigation', () {
     testWidgets(
-      'redundant shield is hidden on iPhone SE',
+      'canonical image logo replaces the obsolete shield on iPhone SE',
       (tester) async {
         final app = _authedAppState();
         await _pumpHeader(tester, device: DeviceProfiles.iphoneSE, app: app);
-        // The shield is Icon(Icons.shield_rounded, ...) inside a
-        // fixed 42x42 Container. Presence confirms the brand mark
-        // remains visible even when the wordmark is hidden.
+        expect(find.byKey(const Key('top_nav_canonical_logo')), findsOneWidget);
+        final image = tester.widget<Image>(find.descendant(
+          of: find.byKey(const Key('top_nav_canonical_logo')),
+          matching: find.byType(Image),
+        ));
+        expect(
+          (image.image as AssetImage).assetName,
+          'assets/branding/vaultai-icon-1024.png',
+        );
+
+        // The canonical image remains visible even when the mobile wordmark
+        // is hidden; the old generic shield must not return.
         final shield = find.byWidgetPredicate(
           (w) => w is Icon && w.icon == Icons.shield_rounded,
         );
         expect(shield, findsNothing,
-            reason: 'hiding the redundant shield prevents phone overflow');
+            reason: 'the old header logo must not remain in the widget tree');
       },
     );
   });

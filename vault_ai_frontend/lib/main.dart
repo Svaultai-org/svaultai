@@ -480,6 +480,32 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
 
+const String kCanonicalBrandLogoAsset = 'assets/branding/vaultai-icon-1024.png';
+
+class _SVaultAIBrandLogo extends StatelessWidget {
+  final double size;
+
+  const _SVaultAIBrandLogo({super.key, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      image: true,
+      label: 'SVaultAI logo',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(size * 0.24),
+        child: Image.asset(
+          kCanonicalBrandLogoAsset,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.high,
+        ),
+      ),
+    );
+  }
+}
+
 Future<void> openHelpCenter(
   BuildContext context, {
   required hc.HelpCenterMode mode,
@@ -499,7 +525,16 @@ Future<void> openHelpCenter(
           backgroundColor: const Color(0xFF181818),
           appBar: AppBar(
             backgroundColor: const Color(0xFF181818),
-            title: const Text(hc.kHelpCenterTitle),
+            title: const Row(
+              children: [
+                _SVaultAIBrandLogo(
+                  key: Key('help_center_canonical_logo'),
+                  size: 32,
+                ),
+                SizedBox(width: 10),
+                Flexible(child: Text(hc.kHelpCenterTitle)),
+              ],
+            ),
             leading: IconButton(
               key: const Key('help_center_route_back'),
               icon: const Icon(Icons.arrow_back),
@@ -519,6 +554,67 @@ Future<void> openHelpCenter(
       },
     ),
   );
+}
+
+class _PublicHelpCenterRoute extends StatelessWidget {
+  const _PublicHelpCenterRoute();
+
+  @override
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 760;
+    return Scaffold(
+      key: const Key('help_center_route_public_direct'),
+      backgroundColor: const Color(0xFF181818),
+      appBar: TopNavBar(isMobile: isMobile),
+      body: hc.HelpCenterPage(
+        mode: hc.HelpCenterMode.public,
+        onRequireSignIn: () =>
+            Navigator.of(context).pushReplacementNamed('/login'),
+      ),
+    );
+  }
+}
+
+class _PublicNotFoundPage extends StatelessWidget {
+  const _PublicNotFoundPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 760;
+    return Scaffold(
+      key: const Key('public_not_found_page'),
+      appBar: TopNavBar(isMobile: isMobile),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const _SVaultAIBrandLogo(
+                key: Key('not_found_canonical_logo'),
+                size: 72,
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Page not found',
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              const Text('The page you requested is not available.'),
+              const SizedBox(height: 18),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pushNamedAndRemoveUntil(
+                  '/',
+                  (route) => false,
+                ),
+                child: const Text('Go to SVaultAI'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 String? _guessMimeTypeFromName(String name) {
@@ -2946,12 +3042,17 @@ class SvaultaiApp extends StatelessWidget {
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
         '/storage': (_) => const StoragePage(),
+        '/help-and-faq-public': (_) => const _PublicHelpCenterRoute(),
         kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
       },
-      // Native users should arrive at authentication immediately. Keep `/`
-      // available for explicit public/marketing navigation, but do not make
-      // the promotional landing page the app's startup screen.
-      initialRoute: '/login',
+      onUnknownRoute: (_) => MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/not-found'),
+        builder: (_) => const _PublicNotFoundPage(),
+      ),
+      // The Web must honor the requested browser path so `/` renders the
+      // indexable marketing landing page and direct public/private URLs remain
+      // reloadable. Native users still arrive at authentication immediately.
+      initialRoute: kIsWeb ? null : '/login',
     );
   }
 }
@@ -3030,7 +3131,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
     // some space to render.
     final screenWidth = MediaQuery.of(context).size.width;
     final double accountChipMaxWidth =
-        !isMobile ? 260.0 : (screenWidth < 380 ? 120.0 : 180.0);
+        !isMobile ? 260.0 : (screenWidth < 380 ? 84.0 : 160.0);
 
     return AppBar(
       toolbarHeight: 72,
@@ -3059,22 +3160,13 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
-          if (!(isMobile && showMenuButton))
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: const Color(0xFF10A37F).withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: const Color(0xFF10A37F).withValues(alpha: 0.18)),
-              ),
-              child: const Icon(Icons.shield_rounded,
-                  color: Color(0xFF10A37F), size: 22),
-            ),
+          _SVaultAIBrandLogo(
+            key: const Key('top_nav_canonical_logo'),
+            size: isMobile && showMenuButton ? 32 : 42,
+          ),
           // 2026-07-21 (c2f917e follow-up): on phone-width viewports
           // (< 600 CSS px) hide the wordmark entirely and show only
-          // the shield logo. The previous Flexible+ellipsis approach
+          // the canonical image logo. The previous Flexible+ellipsis approach
           // produced "V..." at 320-390px which reads as broken UI.
           // Tablet + desktop (>= 600px) keep the full wordmark.
           if (screenWidth >= 600) ...[
