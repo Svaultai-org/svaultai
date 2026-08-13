@@ -28,7 +28,7 @@ void main() {
     expect(topNav, isNot(contains('Icons.shield_rounded')));
   });
 
-  test('login and signup inherit the canonical shared header', () async {
+  test('login and signup inherit the canonical shared header', () {
     final login = mainSource.substring(
       mainSource.indexOf('class LoginPage'),
       mainSource.indexOf('class SignupPage'),
@@ -41,12 +41,8 @@ void main() {
     expect(signup, contains('appBar: TopNavBar'));
     expect(
       mainSource,
-      contains("initialRoute: kIsWeb ? currentWebInitialRoute() : '/login'"),
+      contains("initialRoute: kIsWeb ? null : '/login'"),
     );
-    expect(mainSource, contains('resolveWebInitialRoute(currentBrowserPath())'));
-    final webLocation =
-        await File('lib/services/web_location_web.dart').readAsString();
-    expect(webLocation, contains('web.window.location.pathname'));
     expect(mainSource,
         contains("'/not-found': (_) => const _PublicNotFoundPage()"));
   });
@@ -70,6 +66,11 @@ void main() {
     final privacy = await File('web/privacy/index.html').readAsString();
     expect(privacy, contains('src="/icons/Icon-192.png"'));
     expect(privacy, isNot(contains('Icons.shield_rounded')));
+
+    final notFound = await File('web/404.html').readAsString();
+    expect(notFound, contains('src="/icons/Icon-192.png"'));
+    expect(notFound, contains('Page not found'));
+    expect(notFound, contains('noindex, nofollow, noarchive'));
   });
 
   test('private route indexing guard is present in HTML and Nginx source',
@@ -88,6 +89,9 @@ void main() {
         dotAll: true,
       )),
     );
+    expect(nginx, contains('error_page 404 /404.html'));
+    expect(nginx, contains('location = /404.html'));
+    expect(nginx, contains('try_files \$uri \$uri/ =404'));
     expect(nginx,
         contains('default                     "noindex, nofollow, noarchive"'));
     for (final publicAsset in <String>[

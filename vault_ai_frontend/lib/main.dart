@@ -61,8 +61,6 @@ import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
 import 'services/web_pbkdf2_stub.dart'
     if (dart.library.js_interop) 'services/web_pbkdf2.dart';
-import 'services/web_location_stub.dart'
-    if (dart.library.js_interop) 'services/web_location_web.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
@@ -617,36 +615,6 @@ class _PublicNotFoundPage extends StatelessWidget {
       ),
     );
   }
-}
-
-String resolveWebInitialRoute(String path) {
-  final normalized = path.isEmpty ? '/' : path;
-  if (normalized == '/help-and-faq-public/') {
-    return '/help-and-faq-public';
-  }
-  const knownRoutes = <String>{
-    '/',
-    '/auth',
-    '/login',
-    '/signup',
-    '/unlock',
-    '/pin',
-    '/vault-frozen',
-    '/recover',
-    '/chat',
-    '/device-pending',
-    '/devices',
-    '/security-center',
-    '/storage',
-    '/help-and-faq-public',
-    kVaultAiPrivacyRoute,
-    '/not-found',
-  };
-  return knownRoutes.contains(normalized) ? normalized : '/not-found';
-}
-
-String currentWebInitialRoute() {
-  return resolveWebInitialRoute(currentBrowserPath());
 }
 
 String? _guessMimeTypeFromName(String name) {
@@ -3085,7 +3053,7 @@ class SvaultaiApp extends StatelessWidget {
       // The Web must honor the requested browser path so `/` renders the
       // indexable marketing landing page and direct public/private URLs remain
       // reloadable. Native users still arrive at authentication immediately.
-      initialRoute: kIsWeb ? currentWebInitialRoute() : '/login',
+      initialRoute: kIsWeb ? null : '/login',
     );
   }
 }
