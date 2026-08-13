@@ -60,6 +60,14 @@ void main() {
     expect(index, contains('noindex, nofollow, noarchive'));
     expect(index, contains("path === '/help-and-faq-public'"));
     expect(nginx, contains('add_header X-Robots-Tag'));
+    expect(nginx, contains(r'map $request_uri $vaultai_robots_header'));
+    expect(
+      nginx,
+      matches(RegExp(
+        r'location = /index\.html\s*\{[^}]*add_header X-Robots-Tag',
+        dotAll: true,
+      )),
+    );
     expect(nginx,
         contains('default                     "noindex, nofollow, noarchive"'));
     for (final publicAsset in <String>[
