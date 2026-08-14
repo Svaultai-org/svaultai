@@ -8,10 +8,12 @@ authoritative state before changing entitlements.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
-from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+import time
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -177,6 +179,27 @@ def _verify_google_pubsub_request(request: Request) -> None:
         raise HTTPException(status_code=403, detail="RTDN service account rejected")
     if claims.get("email_verified") is not True:
         raise HTTPException(status_code=403, detail="RTDN identity is not verified")
+    if str(claims.get("aud") or "") != audience:
+        raise HTTPException(status_code=403, detail="RTDN audience rejected")
+    if str(claims.get("iss") or "") not in {
+        "accounts.google.com", "https://accounts.google.com",
+    }:
+        raise HTTPException(status_code=401, detail="RTDN token issuer invalid")
+    if not str(claims.get("sub") or ""):
+        raise HTTPException(status_code=401, detail="RTDN token subject missing")
+    try:
+        issued_at = float(claims["iat"])
+        expires_at = float(claims["exp"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="RTDN token time invalid") from exc
+    now = time.time()
+    if (
+        issued_at > now + 60
+        or expires_at <= now
+        or expires_at <= issued_at
+        or expires_at - issued_at > 3700
+    ):
+        raise HTTPException(status_code=401, detail="RTDN token time invalid")
 
 
 def _decode_pubsub_message(payload: Any) -> tuple[str, dict[str, Any]]:
@@ -196,6 +219,72 @@ def _decode_pubsub_message(payload: Any) -> tuple[str, dict[str, Any]]:
     return event_id, decoded
 
 
+def _rtdn_event_time(notification: dict[str, Any]) -> datetime:
+    raw = notification.get("eventTimeMillis")
+    if isinstance(raw, bool):
+        raise HTTPException(status_code=400, detail="RTDN event time invalid")
+    try:
+        millis = int(str(raw))
+        event_time = datetime.fromtimestamp(millis / 1000, tz=timezone.utc)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(status_code=400, detail="RTDN event time invalid") from exc
+    if millis <= 0 or event_time > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise HTTPException(status_code=400, detail="RTDN event time invalid")
+    return event_time
+
+
+def _rtdn_notification_kind(
+    notification: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    supported = {
+        "subscription": notification.get("subscriptionNotification"),
+        "voided": notification.get("voidedPurchaseNotification"),
+        "test": notification.get("testNotification"),
+    }
+    present = [
+        (kind, value) for kind, value in supported.items()
+        if isinstance(value, dict)
+    ]
+    unsupported_present = any(
+        isinstance(notification.get(key), dict)
+        for key in (
+            "oneTimeProductNotification",
+            "pendingRefundReviewNotification",
+        )
+    )
+    if len(present) != 1 or unsupported_present:
+        raise HTTPException(status_code=400, detail="unsupported RTDN notification")
+    return present[0]
+
+
+def _parse_voided_subscription(
+    voided: dict[str, Any],
+) -> tuple[str, str, int, int]:
+    purchase_token = str(voided.get("purchaseToken") or "")
+    order_id = str(voided.get("orderId") or "")
+    try:
+        product_type = int(voided.get("productType"))
+        refund_type = int(voided.get("refundType"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail="invalid voided purchase notification",
+        ) from exc
+    # This release has one subscription product. Quantity-based partial
+    # refunds apply to one-time products and must never alter this entitlement.
+    if (
+        not purchase_token
+        or len(purchase_token) > 4096
+        or not order_id
+        or len(order_id) > 512
+        or product_type != 1
+        or refund_type != 1
+    ):
+        raise HTTPException(
+            status_code=400, detail="invalid voided purchase notification",
+        )
+    return purchase_token, order_id, product_type, refund_type
+
+
 @router.post("/billing/google-play/rtdn")
 async def google_play_rtdn(request: Request):
     _verify_google_pubsub_request(request)
@@ -205,30 +294,139 @@ async def google_play_rtdn(request: Request):
         claim_provider_event,
         find_account_for_purchase,
         finish_provider_event,
+        revoke_verified_purchase_entitlement,
     )
     from google_play_billing import (
+        GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
         GOOGLE_PLAY_PACKAGE_NAME,
+        GOOGLE_PLAY_PRODUCT_50GB,
+        GooglePlayConfigurationError,
+        GooglePlayPurchaseNotFoundError,
+        GooglePlayTransientError,
+        GooglePlayVerificationError,
+        verify_google_subscription_identity,
         verify_and_apply_google_subscription,
     )
+    if str(notification.get("version") or "") != "1.0":
+        raise HTTPException(status_code=400, detail="RTDN version unsupported")
     if str(notification.get("packageName") or "") != GOOGLE_PLAY_PACKAGE_NAME:
         raise HTTPException(status_code=400, detail="RTDN package mismatch")
-    sub = notification.get("subscriptionNotification")
-    if not isinstance(sub, dict):
+    event_time = _rtdn_event_time(notification)
+    kind, detail = _rtdn_notification_kind(notification)
+    if kind == "test":
         # Test notifications prove transport/auth without changing entitlement.
-        if isinstance(notification.get("testNotification"), dict):
-            inserted = claim_provider_event(
-                source="google_play", event_id=event_id,
-                signature_verified=True, environment="sandbox",
-                sanitized_payload={"kind": "test", "package_name_valid": True},
+        inserted = claim_provider_event(
+            source="google_play", event_id=event_id,
+            signature_verified=True, environment="sandbox",
+            sanitized_payload={"kind": "test", "package_name_valid": True},
+        )
+        if inserted:
+            finish_provider_event(
+                source="google_play", event_id=event_id, outcome="test_verified",
             )
-            if inserted:
-                finish_provider_event(
-                    source="google_play", event_id=event_id, outcome="test_verified",
+        return {"outcome": "test_verified" if inserted else "duplicate"}
+
+    if kind == "voided":
+        purchase_token, order_id, product_type, refund_type = (
+            _parse_voided_subscription(detail)
+        )
+        inserted = claim_provider_event(
+            source="google_play", event_id=event_id,
+            signature_verified=True, environment="production",
+            sanitized_payload={
+                "kind": "voided_subscription",
+                "product_type": product_type,
+                "refund_type": refund_type,
+                "package_name_valid": True,
+                "purchase_token_sha256": hashlib.sha256(
+                    purchase_token.encode("utf-8")
+                ).hexdigest(),
+                "order_id_sha256": hashlib.sha256(
+                    order_id.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        if not inserted:
+            return {"outcome": "duplicate"}
+        account_id = find_account_for_purchase("google_play", purchase_token)
+        if not account_id:
+            finish_provider_event(
+                source="google_play", event_id=event_id,
+                outcome="ignored_unbound",
+            )
+            return {"outcome": "ignored_unbound"}
+        publisher_lookup = "verified"
+        try:
+            try:
+                verify_google_subscription_identity(
+                    account_id=account_id,
+                    purchase_token=purchase_token,
                 )
-            return {"outcome": "test_verified" if inserted else "duplicate"}
-        raise HTTPException(status_code=400, detail="unsupported RTDN notification")
+            except GooglePlayPurchaseNotFoundError:
+                # A voided purchase may already have disappeared from the
+                # Publisher API. The existing server-verified binding plus the
+                # authenticated Google event remains sufficient to revoke it.
+                publisher_lookup = "not_found_after_void"
+            _entitlement_id, transition = revoke_verified_purchase_entitlement(
+                provider="google_play",
+                account_id=account_id,
+                external_purchase_id=purchase_token,
+                provider_status="VOIDED_PURCHASE_FULL_REFUND",
+                provider_event_at=event_time,
+                provider_event_id=event_id,
+                expected_product_id=GOOGLE_PLAY_PRODUCT_50GB,
+                expected_plan_id=GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+                metadata={
+                    "voided_purchase": True,
+                    "refund_type": "FULL_REFUND",
+                    "publisher_lookup": publisher_lookup,
+                    "order_id_sha256": hashlib.sha256(
+                        order_id.encode("utf-8")
+                    ).hexdigest(),
+                },
+            )
+            finish_provider_event(
+                source="google_play", event_id=event_id, outcome="applied",
+            )
+            return {
+                "outcome": "applied",
+                "status": "revoked",
+                "transition": transition,
+            }
+        except StaleProviderEventError:
+            finish_provider_event(
+                source="google_play", event_id=event_id,
+                outcome="ignored_stale",
+            )
+            return {"outcome": "ignored_stale"}
+        except GooglePlayVerificationError as exc:
+            finish_provider_event(
+                source="google_play", event_id=event_id, outcome="rejected",
+                error_text=type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=400, detail="voided purchase verification failed",
+            ) from exc
+        except (GooglePlayConfigurationError, GooglePlayTransientError) as exc:
+            finish_provider_event(
+                source="google_play", event_id=event_id, outcome="error",
+                error_text=type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503, detail="RTDN processing retry required",
+            ) from exc
+        except Exception as exc:
+            finish_provider_event(
+                source="google_play", event_id=event_id, outcome="error",
+                error_text=type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503, detail="RTDN processing retry required",
+            ) from exc
+
+    sub = detail
     purchase_token = str(sub.get("purchaseToken") or "")
-    if not purchase_token:
+    if not purchase_token or len(purchase_token) > 4096:
         raise HTTPException(status_code=400, detail="RTDN purchase token missing")
     inserted = claim_provider_event(
         source="google_play", event_id=event_id, signature_verified=True,
@@ -237,7 +435,7 @@ async def google_play_rtdn(request: Request):
             "kind": "subscription",
             "notification_type": sub.get("notificationType"),
             "package_name_valid": True,
-            "purchase_token_sha256": __import__("hashlib").sha256(
+            "purchase_token_sha256": hashlib.sha256(
                 purchase_token.encode("utf-8")
             ).hexdigest(),
         },
@@ -250,11 +448,6 @@ async def google_play_rtdn(request: Request):
             source="google_play", event_id=event_id, outcome="ignored_unbound",
         )
         return {"outcome": "ignored_unbound"}
-    millis = notification.get("eventTimeMillis")
-    try:
-        event_time = datetime.fromtimestamp(float(millis) / 1000, tz=timezone.utc)
-    except (TypeError, ValueError, OverflowError):
-        event_time = datetime.now(timezone.utc)
     try:
         result = verify_and_apply_google_subscription(
             account_id=account_id,

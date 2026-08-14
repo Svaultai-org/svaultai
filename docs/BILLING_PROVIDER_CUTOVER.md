@@ -54,6 +54,131 @@ to another SVaultAI account.
 7. Keep production test-purchase acceptance disabled after validation. Do not
    upload or roll out a build without explicit release approval.
 
+## Google Play production authentication decision
+
+The backend uses `google.auth.default(scopes=[androidpublisher])` and supports
+service-account, external-account/Workload Identity Federation (WIF), and
+impersonated ADC files through `google-auth`. The current Hostinger KVM does
+not expose an AWS/Azure instance identity or another renewable OIDC/SAML/X.509
+workload credential. WIF therefore has no ambient source assertion to exchange.
+Adding a private issuer only to avoid one Google key would create a second
+credential system and is not a clean improvement for this host architecture.
+
+For this deployment, the production authentication boundary is the dedicated,
+app-scoped Play service account
+`svaultai-play-billing@svaultai-production.iam.gserviceaccount.com` and one
+host-only ADC file. It must be installed as
+`/root/svaultai-secrets/google-play-billing.json`, owned by numeric UID/GID
+`1001:1001` with mode `0600` inside a root-owned mode-`0700` directory. That
+ownership lets the non-root container user read the bind-mounted file while
+the root-only parent prevents host processes with UID 1001 from traversing to
+it. Mount it read-only at `/run/secrets/google-play-billing.json` and set only:
+
+```text
+GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/google-play-billing.json
+VAULTAI_GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=svaultai-play-billing@svaultai-production.iam.gserviceaccount.com
+```
+
+Do not put the JSON in an env file, repository, release archive, Docker build
+context/image, frontend, APK/AAB, CI artifact, command output, or chat. After
+the owner transfers it directly to the host, install and verify permissions as
+root without printing the file:
+
+```bash
+install -d -o root -g root -m 0700 /root/svaultai-secrets
+install -o 1001 -g 1001 -m 0600 /root/google-play-billing.json.upload \
+  /root/svaultai-secrets/google-play-billing.json
+stat -c '%a %u %g %n' /root/svaultai-secrets/google-play-billing.json
+```
+
+The backend container must add this immutable mount:
+
+```text
+/root/svaultai-secrets/google-play-billing.json:/run/secrets/google-play-billing.json:ro
+```
+
+Once mounted, run the read-only probe in the container. It checks the exact ADC
+project and service-account email, then performs only
+`monetization.subscriptions.get`; it never reads or changes a user purchase:
+
+```bash
+python scripts/verify_google_play_adc.py
+```
+
+## Exact RTDN Pub/Sub configuration
+
+Use these immutable production values:
+
+```text
+PROJECT_ID=svaultai-production
+TOPIC_ID=svaultai-google-play-rtdn
+TOPIC=projects/svaultai-production/topics/svaultai-google-play-rtdn
+SUBSCRIPTION_ID=svaultai-google-play-rtdn-push
+PUSH_SERVICE_ACCOUNT=svaultai-play-rtdn-push@svaultai-production.iam.gserviceaccount.com
+PUSH_ENDPOINT=https://api.svaultai.com/billing/google-play/rtdn
+PUSH_AUDIENCE=https://api.svaultai.com/billing/google-play/rtdn
+```
+
+Run from an owner-controlled Cloud Shell or authenticated administrative
+workstation. These commands create no key and grant the RTDN push identity no
+Play Console permissions:
+
+```bash
+PROJECT_ID=svaultai-production
+TOPIC_ID=svaultai-google-play-rtdn
+SUBSCRIPTION_ID=svaultai-google-play-rtdn-push
+RTDN_PUSH_SA=svaultai-play-rtdn-push@svaultai-production.iam.gserviceaccount.com
+RTDN_ENDPOINT=https://api.svaultai.com/billing/google-play/rtdn
+
+gcloud config set project "$PROJECT_ID"
+gcloud services enable pubsub.googleapis.com
+gcloud iam service-accounts create svaultai-play-rtdn-push \
+  --display-name="SVaultAI Google Play RTDN push" \
+  --description="OIDC identity for authenticated Play RTDN Pub/Sub push only"
+gcloud pubsub topics create "$TOPIC_ID"
+gcloud pubsub topics add-iam-policy-binding "$TOPIC_ID" \
+  --member="serviceAccount:google-play-developer-notifications@system.gserviceaccount.com" \
+  --role="roles/pubsub.publisher"
+
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" \
+  --format='value(projectNumber)')"
+PUBSUB_AGENT="service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com"
+gcloud iam service-accounts add-iam-policy-binding "$RTDN_PUSH_SA" \
+  --member="serviceAccount:${PUBSUB_AGENT}" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="$PROJECT_ID"
+
+gcloud pubsub subscriptions create "$SUBSCRIPTION_ID" \
+  --topic="$TOPIC_ID" \
+  --push-endpoint="$RTDN_ENDPOINT" \
+  --push-auth-service-account="$RTDN_PUSH_SA" \
+  --push-auth-token-audience="$RTDN_ENDPOINT" \
+  --ack-deadline=30
+```
+
+Do not enable payload unwrapping: the backend requires the standard wrapped
+Pub/Sub JSON envelope with `message.messageId` and base64 `message.data`.
+The subscription creator needs `iam.serviceAccounts.actAs` on the RTDN push
+service account. The Pub/Sub service agent receives Token Creator only on that
+one push service account, not project-wide. In Play Console, enter the exact
+topic path `projects/svaultai-production/topics/svaultai-google-play-rtdn` and
+send a test notification only after the backend email/audience variables are
+live.
+
+The endpoint verifies Google's signature and token lifetime plus exact
+`aud`, `email`, `email_verified`, and issuer claims. Every lifecycle event is
+then reconciled against the Android Publisher API. A full subscription void
+revokes only the corresponding 50 GiB billing entitlement and preserves all
+encrypted user data and billing history.
+
+Official configuration references:
+
+- https://developer.android.com/google/play/billing/getting-ready
+- https://developer.android.com/google/play/billing/rtdn-reference
+- https://cloud.google.com/pubsub/docs/authenticate-push-subscriptions
+- https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers
+- https://cloud.google.com/iam/docs/best-practices-service-accounts
+
 ## Public Apple download configuration
 
 - `APP_STORE_URL` is the canonical Apple App Store listing shared by iPhone,

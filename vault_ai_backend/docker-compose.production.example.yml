@@ -41,6 +41,13 @@ services:
       VAULTAI_RATE_LIMIT_BACKEND:    redis
       VAULTAI_RATE_LIMIT_REDIS_URL:  ${VAULTAI_RATE_LIMIT_REDIS_URL}
 
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-play-billing.json
+      VAULTAI_GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL: svaultai-play-billing@svaultai-production.iam.gserviceaccount.com
+      VAULTAI_GOOGLE_PLAY_PACKAGE_NAME: com.svaultai.app
+      VAULTAI_GOOGLE_PLAY_RTDN_AUDIENCE: https://api.svaultai.com/billing/google-play/rtdn
+      VAULTAI_GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL: svaultai-play-rtdn-push@svaultai-production.iam.gserviceaccount.com
+      VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES: "false"
+
       STRIPE_API_KEY:                 ${STRIPE_API_KEY}
       STRIPE_PUBLISHABLE_KEY:         ${STRIPE_PUBLISHABLE_KEY}
       STRIPE_WEBHOOK_SECRET:          ${STRIPE_WEBHOOK_SECRET}
@@ -72,6 +79,8 @@ services:
 
       VAULTAI_CRYPTO_HEALTH_ADMIN_TOKEN:   ${VAULTAI_CRYPTO_HEALTH_ADMIN_TOKEN}
       VAULTAI_BILLING_HEALTH_ADMIN_TOKEN:  ${VAULTAI_BILLING_HEALTH_ADMIN_TOKEN}
+    volumes:
+      - /root/svaultai-secrets/google-play-billing.json:/run/secrets/google-play-billing.json:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/debug/ping"]
       interval: 30s
