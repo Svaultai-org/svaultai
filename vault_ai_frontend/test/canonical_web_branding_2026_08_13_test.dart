@@ -58,6 +58,25 @@ void main() {
     expect(mainSource, isNot(contains('SVaultAI helps you save logins, IDs')));
   });
 
+  test('canonical SEO description is exact and excludes stale search copy',
+      () async {
+    final index = await File('web/index.html').readAsString();
+    const description =
+        'SVaultAI is a private, AI-powered digital vault designed to protect '
+        'and manage credentials, documents, memories, media, identity records, '
+        'inheritance, and non-custodial digital assets with zero-knowledge, '
+        'user-controlled access.';
+    expect(index, contains('<meta name="description" content="$description">'));
+    expect(
+      index,
+      isNot(contains(
+        'passwords, documents, IDs, files, secure notes, and crypto wallet records',
+      )),
+    );
+    expect(index,
+        contains('<link rel="canonical" href="https://app.svaultai.com/">'));
+  });
+
   test('Help, privacy, and not-found public surfaces reference canonical logo',
       () async {
     expect(mainSource, contains("Key('help_center_canonical_logo')"));

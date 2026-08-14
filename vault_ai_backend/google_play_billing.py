@@ -25,14 +25,18 @@ from billing_entitlements import (
 
 GOOGLE_PLAY_PACKAGE_NAME = "com.svaultai.app"
 GOOGLE_PLAY_PRODUCT_50GB = "svaultai_storage_50gb"
-GOOGLE_PLAY_BASE_PLAN_MONTHLY = "monthly"
+GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO = "monthly-auto"
+GOOGLE_PLAY_BASE_PLAN_TYPE = "AUTO_RENEWING"
+GOOGLE_PLAY_BILLING_PERIOD = "P1M"
 STORAGE_BLOCK_BYTES = 53_687_091_200
 INTENDED_MONTHLY_PRICE_CENTS_USD = 2500
 GOOGLE_PLAY_CATALOG = {
     GOOGLE_PLAY_PRODUCT_50GB: {
         "quantity": 1,
         "entitlement_bytes": STORAGE_BLOCK_BYTES,
-        "plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY,
+        "plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        "plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
+        "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
     },
 }
 ANDROID_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
@@ -197,9 +201,11 @@ def verify_and_apply_google_subscription(
         raise GooglePlayVerificationError("Google Play test purchase is not enabled")
 
     auto_plan = line.get("autoRenewingPlan")
-    auto_renewing = isinstance(auto_plan, dict) and bool(
-        auto_plan.get("autoRenewEnabled")
-    )
+    if not isinstance(auto_plan, dict) or isinstance(line.get("prepaidPlan"), dict):
+        raise GooglePlayVerificationError(
+            "Google Play purchase is not from the auto-renewing base plan"
+        )
+    auto_renewing = bool(auto_plan.get("autoRenewEnabled"))
     canceled_at_end = (
         provider_status.upper() == "SUBSCRIPTION_STATE_CANCELED"
         or not auto_renewing
@@ -208,11 +214,11 @@ def verify_and_apply_google_subscription(
     plan_id = (
         str(offer.get("basePlanId"))
         if isinstance(offer, dict) and offer.get("basePlanId")
-        else GOOGLE_PLAY_CATALOG[product_id]["plan_id"]
+        else ""
     )
     # Only the production base plan declared in source can grant production
     # storage. Offers may alter price, but not this entitlement identity.
-    if plan_id != GOOGLE_PLAY_BASE_PLAN_MONTHLY:
+    if plan_id != GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO:
         raise GooglePlayVerificationError("unexpected Google Play base plan")
 
     ack_state = str(payload.get("acknowledgementState") or "")
@@ -237,6 +243,8 @@ def verify_and_apply_google_subscription(
         metadata={
             "acknowledgement_state": ack_state,
             "account_identifier_verified": True,
+            "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
+            "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
         },
     )
     entitlement_id, transition = upsert_verified_entitlement(account_id, update)

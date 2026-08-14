@@ -39,9 +39,23 @@ def _google_payload(account_id="account-1", state="SUBSCRIPTION_STATE_ACTIVE"):
             "productId": google.GOOGLE_PLAY_PRODUCT_50GB,
             "expiryTime": "2099-09-01T00:00:00Z",
             "autoRenewingPlan": {"autoRenewEnabled": True},
-            "offerDetails": {"basePlanId": google.GOOGLE_PLAY_BASE_PLAN_MONTHLY},
+            "offerDetails": {
+                "basePlanId": google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+            },
         }],
     }
+
+
+def test_google_catalog_matches_active_play_console_plan():
+    assert google.GOOGLE_PLAY_PACKAGE_NAME == "com.svaultai.app"
+    assert google.GOOGLE_PLAY_PRODUCT_50GB == "svaultai_storage_50gb"
+    assert google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO == "monthly-auto"
+    assert google.GOOGLE_PLAY_BASE_PLAN_TYPE == "AUTO_RENEWING"
+    assert google.GOOGLE_PLAY_BILLING_PERIOD == "P1M"
+    catalog = google.GOOGLE_PLAY_CATALOG[google.GOOGLE_PLAY_PRODUCT_50GB]
+    assert catalog["plan_id"] == google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO
+    assert catalog["plan_type"] == google.GOOGLE_PLAY_BASE_PLAN_TYPE
+    assert catalog["billing_period"] == google.GOOGLE_PLAY_BILLING_PERIOD
 
 
 def test_google_active_purchase_is_server_derived_and_acknowledged(monkeypatch):
@@ -68,6 +82,38 @@ def test_google_active_purchase_is_server_derived_and_acknowledged(monkeypatch):
     assert update.quantity == 1
     assert update.status == "active"
     assert update.environment == "production"
+    assert update.plan_id == "monthly-auto"
+    assert update.metadata["base_plan_type"] == "AUTO_RENEWING"
+    assert update.metadata["billing_period"] == "P1M"
+
+
+def test_google_rejects_wrong_or_prepaid_base_plan(monkeypatch):
+    monkeypatch.setattr(
+        google,
+        "upsert_verified_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
+    )
+
+    wrong_plan = _google_payload()
+    wrong_plan["lineItems"][0]["offerDetails"]["basePlanId"] = "wrong-plan"
+    with pytest.raises(google.GooglePlayVerificationError):
+        google.verify_and_apply_google_subscription(
+            account_id="account-1",
+            purchase_token="purchase-token",
+            publisher=_Publisher(wrong_plan),
+        )
+
+    prepaid = _google_payload()
+    prepaid["lineItems"][0].pop("autoRenewingPlan")
+    prepaid["lineItems"][0]["prepaidPlan"] = {
+        "allowExtendAfterTime": "2099-08-01T00:00:00Z",
+    }
+    with pytest.raises(google.GooglePlayVerificationError):
+        google.verify_and_apply_google_subscription(
+            account_id="account-1",
+            purchase_token="purchase-token",
+            publisher=_Publisher(prepaid),
+        )
 
 
 def test_google_pending_purchase_never_grants_or_acknowledges(monkeypatch):

@@ -42,7 +42,9 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
     account_id = _account_id(principal)
     from apple_billing import apple_app_account_token, configured_apple_catalog
     from google_play_billing import (
-        GOOGLE_PLAY_BASE_PLAN_MONTHLY,
+        GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        GOOGLE_PLAY_BASE_PLAN_TYPE,
+        GOOGLE_PLAY_BILLING_PERIOD,
         GOOGLE_PLAY_PRODUCT_50GB,
         purchase_account_token,
     )
@@ -61,7 +63,9 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         },
         "google_play": {
             "product_id": GOOGLE_PLAY_PRODUCT_50GB,
-            "base_plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY,
+            "base_plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+            "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
+            "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
             "account_token": purchase_account_token(account_id),
         },
         "apple": {
