@@ -335,6 +335,116 @@ def upsert_verified_entitlement(
         conn.close()
 
 
+def revoke_verified_purchase_entitlement(
+    *,
+    provider: str,
+    account_id: str,
+    external_purchase_id: str,
+    provider_status: str,
+    provider_event_at: datetime,
+    provider_event_id: str,
+    expected_product_id: Optional[str] = None,
+    expected_plan_id: Optional[str] = None,
+    metadata: Optional[Mapping[str, Any]] = None,
+) -> tuple[str, str]:
+    """Revoke exactly one bound entitlement without deleting user data.
+
+    This is intentionally a revoke-only operation. It cannot create a ledger
+    row, transfer a purchase between accounts, or modify vault/account data.
+    """
+    if provider not in PROVIDERS:
+        raise ValueError("unsupported billing provider")
+    if not account_id or not external_purchase_id or not provider_event_id:
+        raise ValueError("bound purchase and provider event identity required")
+    event_at = (
+        provider_event_at
+        if provider_event_at.tzinfo
+        else provider_event_at.replace(tzinfo=timezone.utc)
+    )
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT entitlement_id, account_id, product_id, plan_id, status,
+                   current_period_end, last_provider_event_at, metadata_jsonb
+              FROM billing_entitlements
+             WHERE provider = %s AND external_purchase_id = %s
+             FOR UPDATE
+            """,
+            (provider, external_purchase_id),
+        )
+        existing = cur.fetchone()
+        if not existing:
+            raise BillingProviderError("verified entitlement is not bound")
+        if str(existing["account_id"]) != str(account_id):
+            raise PurchaseAlreadyBoundError(
+                "verified purchase is already bound to another account"
+            )
+        if expected_product_id and str(existing["product_id"]) != expected_product_id:
+            raise BillingProviderError("bound entitlement product mismatch")
+        if expected_plan_id and str(existing.get("plan_id") or "") != expected_plan_id:
+            raise BillingProviderError("bound entitlement plan mismatch")
+        last_event_at = existing.get("last_provider_event_at")
+        if last_event_at and event_at < last_event_at:
+            raise StaleProviderEventError("older provider event ignored")
+
+        previous = str(existing["status"])
+        transition = (
+            "unchanged" if previous == "revoked" else f"{previous}_to_revoked"
+        )
+        existing_metadata = existing.get("metadata_jsonb")
+        merged_metadata = (
+            dict(existing_metadata) if isinstance(existing_metadata, Mapping) else {}
+        )
+        merged_metadata.update(
+            json.loads(json.dumps(dict(metadata or {}), default=str))
+        )
+        period_end = existing.get("current_period_end")
+        if period_end is None or period_end > event_at:
+            period_end = event_at
+
+        entitlement_id = str(existing["entitlement_id"])
+        cur.execute(
+            """
+            UPDATE billing_entitlements
+               SET status = 'revoked', provider_status = %s,
+                   auto_renewing = FALSE, cancel_at_period_end = FALSE,
+                   current_period_end = %s, last_verified_at = NOW(),
+                   last_provider_event_at = %s,
+                   last_provider_event_id = %s, metadata_jsonb = %s,
+                   updated_at = NOW()
+             WHERE entitlement_id = %s
+            """,
+            (
+                provider_status, period_end, event_at, provider_event_id,
+                Json(merged_metadata), entitlement_id,
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO subscription_events (
+                account_id, event_type, source, source_event_id, sales_channel,
+                to_block_count, to_purchased_bytes, occurred_at, payload_jsonb
+            ) VALUES (%s, %s, %s, %s, 'self_service', 0, 0, NOW(), %s)
+            """,
+            (
+                account_id, transition[:64], provider, provider_event_id,
+                Json({
+                    "product_id": str(existing["product_id"]),
+                    "status": "revoked",
+                }),
+            ),
+        )
+        conn.commit()
+        return entitlement_id, transition
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def find_account_for_purchase(provider: str, external_purchase_id: str) -> Optional[str]:
     if provider not in PROVIDERS or not external_purchase_id:
         return None

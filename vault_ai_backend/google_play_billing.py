@@ -50,6 +50,10 @@ class GooglePlayVerificationError(RuntimeError):
     pass
 
 
+class GooglePlayPurchaseNotFoundError(GooglePlayVerificationError):
+    """The Publisher API no longer has a purchase for this token."""
+
+
 class GooglePlayTransientError(RuntimeError):
     pass
 
@@ -63,6 +67,23 @@ class GooglePlayVerificationResult:
     entitlement_id: str
     transition: str
     current_period_end: Optional[datetime]
+
+
+@dataclass(frozen=True)
+class GooglePlaySubscriptionSnapshot:
+    """Authoritative identity and lifecycle fields from SubscriptionsV2."""
+
+    product_id: str
+    plan_id: str
+    normalized_status: str
+    provider_status: str
+    environment: str
+    acknowledgement_state: str
+    auto_renewing: bool
+    cancel_at_period_end: bool
+    current_period_start: Optional[datetime]
+    current_period_end: Optional[datetime]
+    linked_purchase_token: str
 
 
 def purchase_account_token(account_id: str) -> str:
@@ -109,10 +130,19 @@ class GooglePlayPublisherClient:
                 raise GooglePlayTransientError(
                     "Android Publisher verification is temporarily unavailable"
                 )
+            if response.status_code in {404, 410}:
+                raise GooglePlayPurchaseNotFoundError(
+                    "Android Publisher purchase was not found"
+                )
             raise GooglePlayVerificationError(
                 f"Android Publisher verification failed ({response.status_code})"
             )
-        payload = response.json()
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise GooglePlayVerificationError(
+                "invalid Android Publisher response"
+            ) from exc
         if not isinstance(payload, dict):
             raise GooglePlayVerificationError("invalid Android Publisher response")
         return payload
@@ -159,18 +189,16 @@ def _select_catalog_line(payload: Mapping[str, Any]) -> tuple[str, Mapping[str, 
     return matches[0]
 
 
-def verify_and_apply_google_subscription(
+def _verified_subscription_snapshot(
     *,
     account_id: str,
     purchase_token: str,
-    expected_product_id: Optional[str] = None,
-    event_id: Optional[str] = None,
-    event_time: Optional[datetime] = None,
-    publisher: Optional[GooglePlayPublisherClient] = None,
-) -> GooglePlayVerificationResult:
+    expected_product_id: Optional[str],
+    publisher: GooglePlayPublisherClient,
+    enforce_test_purchase_policy: bool,
+) -> GooglePlaySubscriptionSnapshot:
     if not purchase_token or len(purchase_token) > 4096:
         raise GooglePlayVerificationError("invalid Google Play purchase token")
-    publisher = publisher or GooglePlayPublisherClient()
     payload = publisher.get_subscription(purchase_token)
     product_id, line = _select_catalog_line(payload)
     if expected_product_id and expected_product_id != product_id:
@@ -193,9 +221,11 @@ def verify_and_apply_google_subscription(
     normalized = normalize_google_subscription_state(
         provider_status, expiry_time=expiry,
     )
-    test_purchase = "testPurchase" in payload and payload.get("testPurchase") is not None
+    test_purchase = (
+        "testPurchase" in payload and payload.get("testPurchase") is not None
+    )
     environment = "sandbox" if test_purchase else "production"
-    if test_purchase and os.getenv(
+    if enforce_test_purchase_policy and test_purchase and os.getenv(
         "VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "false",
     ).strip().lower() not in {"1", "true", "yes", "on"}:
         raise GooglePlayVerificationError("Google Play test purchase is not enabled")
@@ -216,57 +246,111 @@ def verify_and_apply_google_subscription(
         if isinstance(offer, dict) and offer.get("basePlanId")
         else ""
     )
-    # Only the production base plan declared in source can grant production
-    # storage. Offers may alter price, but not this entitlement identity.
     if plan_id != GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO:
         raise GooglePlayVerificationError("unexpected Google Play base plan")
 
-    ack_state = str(payload.get("acknowledgementState") or "")
-    update = VerifiedEntitlementUpdate(
-        provider="google_play",
-        external_purchase_id=purchase_token,
+    return GooglePlaySubscriptionSnapshot(
         product_id=product_id,
         plan_id=plan_id,
-        quantity=int(GOOGLE_PLAY_CATALOG[product_id]["quantity"]),
-        entitlement_bytes=int(
-            GOOGLE_PLAY_CATALOG[product_id]["entitlement_bytes"]
-        ),
-        status=normalized,
+        normalized_status=normalized,
         provider_status=provider_status,
         environment=environment,
+        acknowledgement_state=str(payload.get("acknowledgementState") or ""),
         auto_renewing=auto_renewing,
         cancel_at_period_end=canceled_at_end,
         current_period_start=start,
         current_period_end=expiry,
+        linked_purchase_token=str(payload.get("linkedPurchaseToken") or ""),
+    )
+
+
+def verify_google_subscription_identity(
+    *,
+    account_id: str,
+    purchase_token: str,
+    publisher: Optional[GooglePlayPublisherClient] = None,
+) -> GooglePlaySubscriptionSnapshot:
+    """Verify a purchase before a revoke-only operation.
+
+    This deliberately cannot acknowledge a purchase or write an entitlement.
+    Test-purchase acceptance is irrelevant here because this path only removes
+    an already-bound grant.
+    """
+    return _verified_subscription_snapshot(
+        account_id=account_id,
+        purchase_token=purchase_token,
+        expected_product_id=GOOGLE_PLAY_PRODUCT_50GB,
+        publisher=publisher or GooglePlayPublisherClient(),
+        enforce_test_purchase_policy=False,
+    )
+
+
+def verify_and_apply_google_subscription(
+    *,
+    account_id: str,
+    purchase_token: str,
+    expected_product_id: Optional[str] = None,
+    event_id: Optional[str] = None,
+    event_time: Optional[datetime] = None,
+    publisher: Optional[GooglePlayPublisherClient] = None,
+) -> GooglePlayVerificationResult:
+    publisher = publisher or GooglePlayPublisherClient()
+    snapshot = _verified_subscription_snapshot(
+        account_id=account_id,
+        purchase_token=purchase_token,
+        expected_product_id=expected_product_id,
+        publisher=publisher,
+        enforce_test_purchase_policy=True,
+    )
+    update = VerifiedEntitlementUpdate(
+        provider="google_play",
+        external_purchase_id=purchase_token,
+        product_id=snapshot.product_id,
+        plan_id=snapshot.plan_id,
+        quantity=int(GOOGLE_PLAY_CATALOG[snapshot.product_id]["quantity"]),
+        entitlement_bytes=int(
+            GOOGLE_PLAY_CATALOG[snapshot.product_id]["entitlement_bytes"]
+        ),
+        status=snapshot.normalized_status,
+        provider_status=snapshot.provider_status,
+        environment=snapshot.environment,
+        auto_renewing=snapshot.auto_renewing,
+        cancel_at_period_end=snapshot.cancel_at_period_end,
+        current_period_start=snapshot.current_period_start,
+        current_period_end=snapshot.current_period_end,
         provider_event_at=event_time or datetime.now(timezone.utc),
         provider_event_id=event_id,
         metadata={
-            "acknowledgement_state": ack_state,
+            "acknowledgement_state": snapshot.acknowledgement_state,
             "account_identifier_verified": True,
             "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
             "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
         },
     )
     entitlement_id, transition = upsert_verified_entitlement(account_id, update)
-    linked_token = str(payload.get("linkedPurchaseToken") or "")
-    if linked_token:
+    if snapshot.linked_purchase_token:
         supersede_linked_purchase(
             provider="google_play",
             account_id=account_id,
-            linked_purchase_id=linked_token,
+            linked_purchase_id=snapshot.linked_purchase_token,
             replacement_purchase_id=purchase_token,
         )
 
-    acknowledged = ack_state == "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED"
-    if normalized in {"active", "reactivated", "grace_period"} and not acknowledged:
-        publisher.acknowledge_subscription(product_id, purchase_token)
+    acknowledged = (
+        snapshot.acknowledgement_state
+        == "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED"
+    )
+    if snapshot.normalized_status in {
+        "active", "reactivated", "grace_period",
+    } and not acknowledged:
+        publisher.acknowledge_subscription(snapshot.product_id, purchase_token)
         acknowledged = True
     return GooglePlayVerificationResult(
-        product_id=product_id,
-        normalized_status=normalized,
-        provider_status=provider_status,
+        product_id=snapshot.product_id,
+        normalized_status=snapshot.normalized_status,
+        provider_status=snapshot.provider_status,
         acknowledged=acknowledged,
         entitlement_id=entitlement_id,
         transition=transition,
-        current_period_end=expiry,
+        current_period_end=snapshot.current_period_end,
     )
