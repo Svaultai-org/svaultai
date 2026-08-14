@@ -8,10 +8,15 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
-import 'main.dart'
-    show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'services/apple_storekit_billing_controller.dart';
 import 'services/google_play_billing_controller.dart';
 import 'ui/tokens.dart';
+
+const String kAppleStoreKitEnvironment = String.fromEnvironment(
+  'APPLE_STOREKIT_ENVIRONMENT',
+  defaultValue: 'production',
+);
 
 String? buildCheckoutRedirectUrl(String queryFlag) {
   if (!kIsWeb) return null;
@@ -58,7 +63,9 @@ class _StoragePageState extends State<StoragePage> {
   String? _error;
   Map<String, dynamic>? _data;
   GooglePlayBillingController? _playBilling;
+  AppleStoreKitBillingController? _appleBilling;
   String? _lastPlayBillingState;
+  String? _lastAppleBillingState;
 
   @override
   void initState() {
@@ -70,10 +77,59 @@ class _StoragePageState extends State<StoragePage> {
   bool get _usesGooglePlayBilling =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  bool get _usesAppleBilling =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   void dispose() {
     _playBilling?.dispose();
+    _appleBilling?.dispose();
     super.dispose();
+  }
+
+  Future<void> _initializeAppleBilling(String authToken) async {
+    if (!_usesAppleBilling || _appleBilling != null) return;
+    try {
+      final providers = await _client.getBillingProviders(authToken: authToken);
+      final apple = providers['apple'];
+      if (apple is! Map || apple['configured'] != true) return;
+      final productId = apple['product_id']?.toString() ?? '';
+      final appAccountToken = apple['app_account_token']?.toString() ?? '';
+      if (productId.isEmpty || appAccountToken.isEmpty || !mounted) return;
+      final controller = AppleStoreKitBillingController(
+        gateway: FlutterAppleBillingGateway(),
+        productId: productId,
+        appAccountToken: appAccountToken,
+        environment: kAppleStoreKitEnvironment == 'sandbox'
+            ? 'sandbox'
+            : 'production',
+        verifyPurchase: ({
+          required String signedTransaction,
+          required String environment,
+        }) =>
+            _client.verifyAppleTransaction(
+          authToken: authToken,
+          signedTransaction: signedTransaction,
+          environment: environment,
+        ),
+      );
+      controller.addListener(_onAppleBillingChanged);
+      setState(() => _appleBilling = controller);
+      await controller.initialize();
+    } catch (_) {
+      // Storage usage and the free tier stay available if StoreKit is unavailable.
+    }
+  }
+
+  void _onAppleBillingChanged() {
+    final controller = _appleBilling;
+    if (!mounted || controller == null) return;
+    final state = controller.state;
+    setState(() {});
+    if (state == 'verified' && _lastAppleBillingState != 'verified') {
+      unawaited(_refresh());
+    }
+    _lastAppleBillingState = state;
   }
 
   Future<void> _initializeGooglePlayBilling(String authToken) async {
@@ -236,6 +292,7 @@ class _StoragePageState extends State<StoragePage> {
         _error = null;
       });
       unawaited(_initializeGooglePlayBilling(token));
+      unawaited(_initializeAppleBilling(token));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -497,23 +554,31 @@ class _StoragePageState extends State<StoragePage> {
         ),
       );
     }
-    // Android uses Play Billing. Web checkout is fail-closed while a new card
-    // provider is reviewed, and Apple purchasing remains deferred until the
-    // StoreKit client and real App Store Connect products are configured.
     final play = _playBilling;
+    final apple = _appleBilling;
     final activeSubscription = hasActiveSubscription(data);
     final playMessage = activeSubscription
         ? 'Your Google Play storage subscription is active. Billing and '
             'cancellation are managed by Google Play.'
         : (play?.message ??
             (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
+    final appleMessage = activeSubscription
+        ? 'Your App Store storage subscription is active. It adds 50 GB, '
+            'renews monthly, and is managed through your Apple account.'
+        : (apple?.message ??
+            (apple?.state == 'ready' ? null : 'Connecting to the App Store…'));
+    final storeCanBuy = _usesGooglePlayBilling
+        ? (play?.canBuy ?? false)
+        : (_usesAppleBilling && (apple?.canBuy ?? false));
     return StorageBody(
       data: data,
-      busy: _busyPurchase || (play?.loading ?? false),
-      onBuyStorage: _usesGooglePlayBilling &&
+      busy: _busyPurchase ||
+          (play?.loading ?? false) ||
+          (apple?.loading ?? false),
+      onBuyStorage: (_usesGooglePlayBilling || _usesAppleBilling) &&
               !activeSubscription &&
-              (play?.canBuy ?? false)
-          ? play!.buy
+              storeCanBuy
+          ? (_usesGooglePlayBilling ? play!.buy : apple!.buy)
           : null,
       onManageSubscription: null,
       unavailableMessage: kIsWeb
@@ -521,11 +586,17 @@ class _StoragePageState extends State<StoragePage> {
               'our payment provider.'
           : (_usesGooglePlayBilling
               ? playMessage
-              : 'Storage upgrades are not yet available on this platform.'),
-      googlePlayPrice: _usesGooglePlayBilling ? play?.product?.price : null,
+              : (_usesAppleBilling
+                  ? appleMessage
+                  : 'Storage upgrades are not available on this platform.')),
+      googlePlayPrice: _usesGooglePlayBilling
+          ? play?.product?.price
+          : (_usesAppleBilling ? apple?.product?.price : null),
       onRestorePurchases: _usesGooglePlayBilling && play?.available == true
           ? play!.restore
-          : null,
+          : (_usesAppleBilling && apple?.available == true
+              ? apple!.restore
+              : null),
     );
   }
 }

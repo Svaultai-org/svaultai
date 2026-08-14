@@ -703,6 +703,42 @@ def test_apple_refund_and_revocation_remove_grant():
     ) == "revoked"
 
 
+def test_apple_transaction_requires_app_account_token(monkeypatch):
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "svaultai.storage.50gb.monthly": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "plan_id": "monthly",
+            },
+        }),
+    )
+    transaction = SimpleNamespace(
+        productId="svaultai.storage.50gb.monthly",
+        transactionId="tx-1",
+        originalTransactionId="otx-1",
+        appAccountToken=None,
+        purchaseDate=1_786_000_000_000,
+        expiresDate=4_102_444_800_000,
+        revocationDate=None,
+        signedDate=1_786_000_001_000,
+    )
+    verifier = SimpleNamespace(verify_transaction=lambda _jws: transaction)
+    monkeypatch.setattr(
+        apple_billing,
+        "upsert_verified_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("unbound purchase must not grant"),
+    )
+    with pytest.raises(apple_billing.AppleTransactionVerificationError):
+        apple_billing.verify_and_apply_apple_transaction(
+            account_id="account-1",
+            signed_transaction="signed-jws",
+            environment="production",
+            verifier=verifier,
+        )
+
+
 def test_apple_library_enums_use_wire_values():
     from appstoreserverlibrary.models.NotificationTypeV2 import NotificationTypeV2
     from appstoreserverlibrary.models.Subtype import Subtype

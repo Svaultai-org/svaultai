@@ -51,8 +51,11 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         purchase_account_token,
     )
     apple_configured = False
+    apple_product_id = None
     try:
-        apple_configured = bool(configured_apple_catalog())
+        apple_catalog = configured_apple_catalog()
+        apple_configured = len(apple_catalog) == 1
+        apple_product_id = next(iter(apple_catalog)) if apple_configured else None
     except Exception:
         apple_configured = False
     return {
@@ -72,6 +75,8 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         },
         "apple": {
             "configured": apple_configured,
+            "product_id": apple_product_id,
+            "billing_period": "P1M" if apple_configured else None,
             "app_account_token": apple_app_account_token(account_id),
         },
         "stripe_legacy": {"checkout_enabled": False, "history_preserved": True},

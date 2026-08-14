@@ -1251,6 +1251,36 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> verifyAppleTransaction({
+    required String authToken,
+    required String signedTransaction,
+    String environment = 'production',
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/apple/verify-transaction');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'signed_transaction': signedTransaction,
+        'environment': environment,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'App Store verification failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid App Store verification response');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> getSecurityCenterSummary({
     required String authToken,
   }) async {

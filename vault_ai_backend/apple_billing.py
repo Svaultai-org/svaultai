@@ -205,9 +205,9 @@ def verify_and_apply_apple_transaction(
     verifier = verifier or AppleSignedDataVerifier(environment)
     transaction = verifier.verify_transaction(signed_transaction)
     supplied_account = str(_attr(transaction, "appAccountToken") or "")
-    if supplied_account and supplied_account.lower() != apple_app_account_token(account_id):
+    if supplied_account.lower() != apple_app_account_token(account_id):
         raise AppleTransactionVerificationError(
-            "Apple purchase is associated with a different SVaultAI account"
+            "Apple purchase is not associated with this SVaultAI account"
         )
     update = _transaction_update(
         transaction,
