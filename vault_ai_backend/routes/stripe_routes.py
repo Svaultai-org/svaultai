@@ -27,9 +27,21 @@ async def create_checkout_session_endpoint(
     payload: CheckoutSessionRequest,
     principal=Depends(verify_trusted_device),
 ):
+    # Stripe permanently declined this merchant. Keep the route as a stable,
+    # truthful tombstone for older clients, but never contact Stripe or expose
+    # provider diagnostics.
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "checkout_provider_retired",
+            "message": (
+                "Storage upgrades are temporarily unavailable on the web "
+                "while we update our payment provider."
+            ),
+        },
+    )
 
-
-    vault_id = principal["vault_id"]
+    vault_id = principal["vault_id"]  # pragma: no cover - legacy source below
 
                                                                      
     print(
@@ -308,7 +320,15 @@ async def create_portal_session_endpoint(
     payload: PortalSessionRequest,
     principal=Depends(verify_trusted_device),
 ):
-    vault_id = principal["vault_id"]
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "subscription_portal_retired",
+            "message": "The former subscription portal is no longer available.",
+        },
+    )
+
+    vault_id = principal["vault_id"]  # pragma: no cover - legacy source below
 
     from billing import ensure_account_for_vault
     from stripe_service import (

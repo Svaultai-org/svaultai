@@ -386,6 +386,23 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
     purchased = int(row["purchased_bytes"])
     block_count_val = int(row["block_count"])
     grant = int(row["storage_bytes_grant"])
+    normalized = None
+    try:
+        from billing_entitlements import get_normalized_account_entitlement
+        normalized = get_normalized_account_entitlement(account_id)
+    except Exception:
+        # During a rolling deploy the application may briefly start before
+        # migration 0042 is applied. Existing legacy entitlements remain the
+        # fail-safe source until the normalized ledger is available.
+        logger.warning(
+            "normalized billing ledger unavailable; using legacy entitlement",
+            exc_info=True,
+        )
+    if normalized is not None:
+        status = normalized.status
+        source = normalized.source
+        purchased = normalized.purchased_bytes
+        block_count_val = normalized.block_count
 
     if bool(row.get("admin_grant_expired")):
         status = "expired"
@@ -417,15 +434,20 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
     used = int(row["used_bytes"])
     pct = compute_percent_used(used, effective)
 
-    period_end = row["current_period_end"]
+    period_end = (
+        normalized.current_period_end
+        if normalized is not None
+        else row["current_period_end"]
+    )
     period_end_iso = (
         period_end.isoformat() if period_end is not None else None
     )
 
                                                                   
     has_active_subscription = (
-        str(row["source"]).lower() == "stripe"
-        and status in _STATUSES_THAT_GRANT_STORAGE
+        normalized.has_active_subscription
+        if normalized is not None
+        else status in _STATUSES_THAT_GRANT_STORAGE
     )
 
     return StorageEntitlement(
@@ -443,7 +465,11 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         status=status,
         source=source,
         current_period_end=period_end_iso,
-        cancel_at_period_end=bool(row["cancel_at_period_end"]),
+        cancel_at_period_end=(
+            normalized.cancel_at_period_end
+            if normalized is not None
+            else bool(row["cancel_at_period_end"])
+        ),
         block_price_cents_usd=price,
         block_bytes=bb,
         has_active_subscription=has_active_subscription,

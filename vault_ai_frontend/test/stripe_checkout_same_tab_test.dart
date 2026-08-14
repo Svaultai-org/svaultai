@@ -173,25 +173,11 @@ void main() {
       }
     });
 
-    test('checkout=success branch does not clear local session', () {
+    test('checkout=success branch is retired', () {
       
       
       final detectIdx = storagePageSrc.indexOf("if (flag == 'success')");
-      expect(detectIdx, greaterThan(-1));
-      final detectEnd = storagePageSrc.indexOf('}', detectIdx + 200);
-      final detectBody = storagePageSrc.substring(detectIdx, detectEnd);
-      for (final banned in const <String>[
-        'clearSession',
-        'signOut',
-        'resetLocalState',
-      ]) {
-        expect(
-          detectBody.contains(banned),
-          isFalse,
-          reason: 'The ?checkout=success detection branch MUST NOT '
-              'call "$banned" — the user stays logged in.',
-        );
-      }
+      expect(detectIdx, lessThan(0));
     });
   });
 }

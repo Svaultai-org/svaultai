@@ -149,8 +149,7 @@ def _count_recent_global_webhooks(window_seconds: int = 60) -> int:
                 """
                 SELECT COUNT(*)::int
                   FROM provider_event_log
-                 WHERE source = 'stripe'
-                   AND received_at > NOW() - (
+                 WHERE received_at > NOW() - (
                          INTERVAL '1 second' * %s
                        );
                 """,
@@ -194,7 +193,7 @@ def _read_last_webhook_event(account_id: str) -> Optional[dict]:
                        se.event_type
                   FROM subscription_events se
                   LEFT JOIN provider_event_log pel
-                         ON pel.source = 'stripe'
+                         ON pel.source = se.source
                         AND pel.source_event_id = se.source_event_id
                  WHERE se.account_id = %s
                  ORDER BY se.occurred_at DESC

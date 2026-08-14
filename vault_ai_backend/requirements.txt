@@ -25,6 +25,11 @@ alembic
 sqlalchemy
 stripe>=7.0
 httpx==0.28.1
+# Store billing verification stays server-side. Google credentials are loaded
+# through Application Default Credentials; Apple signed data is verified with
+# Apple's official server library. Neither dependency belongs in the APK.
+google-auth[requests]>=2.40.0,<3.0
+app-store-server-library>=3.0.0,<4.0
 # Slice 2B — image OCR. Optional at runtime; the OCR module
 # detects pytesseract + Pillow at import and falls back to a
 # clean "OCR engine unavailable" error if either is missing.
