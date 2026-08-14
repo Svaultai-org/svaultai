@@ -56,53 +56,42 @@ to another SVaultAI account.
 
 ## Google Play production authentication decision
 
-The backend uses `google.auth.default(scopes=[androidpublisher])` and supports
-service-account, external-account/Workload Identity Federation (WIF), and
-impersonated ADC files through `google-auth`. The current Hostinger KVM does
-not expose an AWS/Azure instance identity or another renewable OIDC/SAML/X.509
-workload credential. WIF therefore has no ambient source assertion to exchange.
-Adding a private issuer only to avoid one Google key would create a second
-credential system and is not a clean improvement for this host architecture.
+Organization policy `iam.disableServiceAccountKeyCreation` is preserved. No
+downloadable service-account key is required or permitted. Hostinger has no
+ambient renewable identity that Google WIF can exchange, so the smallest
+keyless topology is an isolated Cloud Run bridge with the existing Play
+billing service account attached as its Cloud Run service identity.
 
-For this deployment, the production authentication boundary is the dedicated,
-app-scoped Play service account
-`svaultai-play-billing@svaultai-production.iam.gserviceaccount.com` and one
-host-only ADC file. It must be installed as
-`/root/svaultai-secrets/google-play-billing.json`, owned by numeric UID/GID
-`1001:1001` with mode `0600` inside a root-owned mode-`0700` directory. That
-ownership lets the non-root container user read the bind-mounted file while
-the root-only parent prevents host processes with UID 1001 from traversing to
-it. Mount it read-only at `/run/secrets/google-play-billing.json` and set only:
+Cloud Run resolves `google.auth.default(scopes=[androidpublisher])` through its
+metadata server. The bridge rejects any configured
+`GOOGLE_APPLICATION_CREDENTIALS`, verifies the exact ADC project and service
+account after credential refresh, and exposes only three fixed operations:
 
-```text
-GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/google-play-billing.json
-VAULTAI_GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=svaultai-play-billing@svaultai-production.iam.gserviceaccount.com
-```
+- authoritative SubscriptionsV2 lookup;
+- acknowledgement for the one fixed product;
+- a read-only fixed-catalog/ADC production probe.
 
-Do not put the JSON in an env file, repository, release archive, Docker build
-context/image, frontend, APK/AAB, CI artifact, command output, or chat. After
-the owner transfers it directly to the host, install and verify permissions as
-root without printing the file:
+It has no database, account authentication, vault code, or entitlement-writing
+route. Hostinger remains the only component that correlates the hashed Play
+account identifier, validates lifecycle/product/base-plan state, and writes an
+entitlement. RTDN continues directly to the hardened Hostinger endpoint.
 
-```bash
-install -d -o root -g root -m 0700 /root/svaultai-secrets
-install -o 1001 -g 1001 -m 0600 /root/google-play-billing.json.upload \
-  /root/svaultai-secrets/google-play-billing.json
-stat -c '%a %u %g %n' /root/svaultai-secrets/google-play-billing.json
-```
+Cloud Run ingress is reachable from Hostinger, but every billing operation is
+protected by a 32-byte-or-longer HMAC secret held in Google Secret Manager and
+the root-owned Hostinger environment. Requests carry a signed timestamp and
+random nonce. A 60-second clock window, constant-time signature comparison,
+single-instance bounded nonce cache, and the idempotent/read-only operation set
+limit replay. Responses are independently signed over the request timestamp,
+nonce, HTTP status, and exact body; Hostinger verifies that signature before
+parsing Google data. The public `/healthz` route cannot call Google or change
+billing state.
 
-The backend container must add this immutable mount:
-
-```text
-/root/svaultai-secrets/google-play-billing.json:/run/secrets/google-play-billing.json:ro
-```
-
-Once mounted, run the read-only probe in the container. It checks the exact ADC
-project and service-account email, then performs only
-`monetization.subscriptions.get`; it never reads or changes a user purchase:
+Deploy the bridge and configure Hostinger exactly as documented in
+`docs/GOOGLE_PLAY_KEYLESS_CLOUD_RUN.md`. Then run this read-only probe in the
+Hostinger backend container; it makes no purchase and writes no entitlement:
 
 ```bash
-python scripts/verify_google_play_adc.py
+python scripts/verify_google_play_bridge.py
 ```
 
 ## Exact RTDN Pub/Sub configuration
@@ -176,7 +165,8 @@ Official configuration references:
 - https://developer.android.com/google/play/billing/getting-ready
 - https://developer.android.com/google/play/billing/rtdn-reference
 - https://cloud.google.com/pubsub/docs/authenticate-push-subscriptions
-- https://cloud.google.com/iam/docs/workload-identity-federation-with-other-providers
+- https://cloud.google.com/run/docs/securing/service-identity
+- https://cloud.google.com/run/docs/configuring/services/service-identity
 - https://cloud.google.com/iam/docs/best-practices-service-accounts
 
 ## Public Apple download configuration
