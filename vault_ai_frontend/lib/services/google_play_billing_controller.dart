@@ -2,6 +2,39 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_android/billing_client_wrappers.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
+
+const String kGooglePlayStorageProductId = 'svaultai_storage_50gb';
+const String kGooglePlayStorageBasePlanId = 'monthly-auto';
+const String kGooglePlayStorageBillingPeriod = 'P1M';
+
+bool matchesConfiguredGoogleStoragePlan(
+  ProductDetails candidate, {
+  String basePlanId = kGooglePlayStorageBasePlanId,
+  String billingPeriod = kGooglePlayStorageBillingPeriod,
+}) {
+  if (candidate.id != kGooglePlayStorageProductId ||
+      candidate is! GooglePlayProductDetails) {
+    return false;
+  }
+  final index = candidate.subscriptionIndex;
+  final offers = candidate.productDetails.subscriptionOfferDetails;
+  if (index == null || offers == null || index >= offers.length) {
+    return false;
+  }
+  final offer = offers[index];
+  if (offer.basePlanId != basePlanId ||
+      offer.offerId != null ||
+      offer.installmentPlanDetails != null) {
+    return false;
+  }
+  return offer.pricingPhases.any(
+    (phase) =>
+        phase.billingPeriod == billingPeriod &&
+        phase.recurrenceMode == RecurrenceMode.infiniteRecurring,
+  );
+}
 
 typedef GooglePurchaseVerifier = Future<Map<String, dynamic>> Function({
   required String productId,
@@ -50,6 +83,8 @@ class GooglePlayBillingController extends ChangeNotifier {
   final GooglePurchaseVerifier verifyPurchase;
   final String productId;
   final String accountToken;
+  final String basePlanId;
+  final String billingPeriod;
 
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   final Set<String> _verificationInFlight = <String>{};
@@ -75,6 +110,8 @@ class GooglePlayBillingController extends ChangeNotifier {
     required this.verifyPurchase,
     required this.productId,
     required this.accountToken,
+    this.basePlanId = kGooglePlayStorageBasePlanId,
+    this.billingPeriod = kGooglePlayStorageBillingPeriod,
   });
 
   Future<void> initialize() async {
@@ -99,14 +136,22 @@ class GooglePlayBillingController extends ChangeNotifier {
       loading = true;
       notifyListeners();
       final response = await gateway.queryProductDetails({productId});
-      if (response.error != null || response.productDetails.isEmpty) {
+      final configuredProducts = response.productDetails
+          .where(
+            (item) => matchesConfiguredGoogleStoragePlan(
+              item,
+              basePlanId: basePlanId,
+              billingPeriod: billingPeriod,
+            ),
+          )
+          .toList(growable: false);
+      if (response.error != null || configuredProducts.isEmpty) {
         state = 'unavailable';
-        message = 'The storage subscription is not available in Google Play.';
+        message =
+            'The monthly auto-renewing storage subscription is not available '
+            'in Google Play.';
       } else {
-        product = response.productDetails.firstWhere(
-          (item) => item.id == productId,
-          orElse: () => response.productDetails.first,
-        );
+        product = configuredProducts.first;
         state = 'ready';
         message = null;
       }

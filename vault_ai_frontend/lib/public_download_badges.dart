@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String kGooglePlayListingUrl =
@@ -8,10 +7,10 @@ const String kGooglePlayListingUrl =
 const String kGooglePlayBadgeUrl =
     'https://play.google.com/intl/en_us/badges/static/images/badges/'
     'en_badge_web_generic.png';
-const String kAppleBadgeUrl = 'https://tools.applemediaservices.com/api/badges/'
-    'download-on-the-app-store/black/en-us?size=250x83';
 const String kConfiguredAppStoreUrl =
     String.fromEnvironment('APP_STORE_URL', defaultValue: '');
+const String kConfiguredMacAppStoreUrl =
+    String.fromEnvironment('MAC_APP_STORE_URL', defaultValue: '');
 
 Future<void> _openExternal(String rawUrl) async {
   final uri = Uri.parse(rawUrl);
@@ -24,12 +23,24 @@ Future<void> _openExternal(String rawUrl) async {
 
 class PlatformDownloadBadges extends StatelessWidget {
   final bool compact;
+  final String appStoreUrl;
+  final String macAppStoreUrl;
 
-  const PlatformDownloadBadges({super.key, this.compact = false});
+  const PlatformDownloadBadges({
+    super.key,
+    this.compact = false,
+    this.appStoreUrl = kConfiguredAppStoreUrl,
+    this.macAppStoreUrl = kConfiguredMacAppStoreUrl,
+  });
 
   @override
   Widget build(BuildContext context) {
     final height = compact ? 46.0 : 54.0;
+    final configuredAppleUrl = appStoreUrl.trim();
+    final configuredMacUrl = macAppStoreUrl.trim();
+    final hasAppleUrl = configuredAppleUrl.isNotEmpty;
+    final hasDedicatedMacUrl =
+        configuredMacUrl.isNotEmpty && configuredMacUrl != configuredAppleUrl;
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -60,34 +71,47 @@ class PlatformDownloadBadges extends StatelessWidget {
             ),
           ),
         ),
-        if (kConfiguredAppStoreUrl.isEmpty)
+        if (!hasAppleUrl)
           Semantics(
-            label: 'SVaultAI is coming soon on the App Store.',
+            key: const Key('apple_app_store_badge'),
+            label: 'SVaultAI for Apple platforms. Store link not configured.',
             enabled: false,
-            child: _BadgeFallback(
-              key: const Key('app_store_coming_soon_badge'),
-              height: height,
-              label: 'Coming soon on the App Store',
-              icon: Icons.phone_iphone,
-              muted: true,
+            excludeSemantics: true,
+            child: Tooltip(
+              message: 'Apple App Store',
+              child: _AppleStoreBadge(height: height),
             ),
           )
         else
           Semantics(
+            key: const Key('apple_app_store_badge'),
             link: true,
             label: 'Download SVaultAI on the App Store. Opens in a new tab.',
-            child: InkWell(
-              key: const Key('app_store_download_badge'),
-              onTap: () => _openExternal(kConfiguredAppStoreUrl),
-              borderRadius: BorderRadius.circular(8),
-              child: SvgPicture.network(
-                kAppleBadgeUrl,
-                height: height,
-                semanticsLabel: 'Download on the App Store',
-                placeholderBuilder: (_) => SizedBox(
-                  width: height * 3,
+            excludeSemantics: true,
+            child: Tooltip(
+              message: 'Download SVaultAI on the App Store',
+              child: InkWell(
+                key: const Key('apple_app_store_download_link'),
+                onTap: () => _openExternal(configuredAppleUrl),
+                borderRadius: BorderRadius.circular(8),
+                child: _AppleStoreBadge(height: height),
+              ),
+            ),
+          ),
+        if (hasDedicatedMacUrl)
+          Semantics(
+            link: true,
+            label: 'Download SVaultAI for Mac. Opens in a new tab.',
+            child: Tooltip(
+              message: 'Download SVaultAI for Mac',
+              child: InkWell(
+                key: const Key('mac_app_store_download_action'),
+                onTap: () => _openExternal(configuredMacUrl),
+                borderRadius: BorderRadius.circular(8),
+                child: _BadgeFallback(
                   height: height,
-                  child: const Center(child: CircularProgressIndicator()),
+                  label: 'Download for Mac',
+                  icon: Icons.laptop_mac_outlined,
                 ),
               ),
             ),
@@ -97,18 +121,73 @@ class PlatformDownloadBadges extends StatelessWidget {
   }
 }
 
+class _AppleStoreBadge extends StatelessWidget {
+  final double height;
+
+  const _AppleStoreBadge({required this.height});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: height * 3.012,
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: height * 0.2),
+          child: Row(
+            children: [
+              Icon(Icons.apple, size: height * 0.54, color: Colors.white),
+              SizedBox(width: height * 0.12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Download on the',
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: height * 0.17,
+                        height: 1,
+                      ),
+                    ),
+                    SizedBox(height: height * 0.04),
+                    Text(
+                      'App Store',
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: height * 0.34,
+                        height: 1,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BadgeFallback extends StatelessWidget {
   final double height;
   final String label;
   final IconData icon;
-  final bool muted;
 
   const _BadgeFallback({
-    super.key,
     required this.height,
     required this.label,
     required this.icon,
-    this.muted = false,
   });
 
   @override
@@ -117,14 +196,14 @@ class _BadgeFallback extends StatelessWidget {
       height: height,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        color: muted ? const Color(0xFF24272D) : Colors.black,
+        color: Colors.black,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.white24),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 22, color: muted ? Colors.white60 : Colors.white),
+          Icon(icon, size: 22, color: Colors.white),
           const SizedBox(width: 9),
           Flexible(
             child: FittedBox(
@@ -133,8 +212,8 @@ class _BadgeFallback extends StatelessWidget {
               child: Text(
                 label,
                 maxLines: 1,
-                style: TextStyle(
-                  color: muted ? Colors.white60 : Colors.white,
+                style: const TextStyle(
+                  color: Colors.white,
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
                 ),
@@ -166,8 +245,8 @@ class PublicMobileAppsSection extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Use SVaultAI on Android with the same zero-knowledge, '
-              'user-controlled account. The iPhone app is coming soon.',
+              'Use SVaultAI across supported Android and Apple devices with '
+              'the same zero-knowledge, user-controlled account.',
               style: TextStyle(
                 color: Color(0xFFB4B4B4),
                 fontSize: 16,

@@ -7,7 +7,10 @@ required before purchases can be accepted.
 
 - Free tier: 1 GiB.
 - Google Play product: `svaultai_storage_50gb`.
-- Google Play base plan: `monthly`.
+- Google Play base plan: `monthly-auto`.
+- Google Play base-plan type: auto-renewing.
+- Google Play billing period: `P1M`.
+- Play Console state supplied for this release: active in 174 countries/regions.
 - Entitlement: one 50 GiB storage unit.
 - Intended US reference price: USD 25/month. Android displays Google Play's
   localized `ProductDetails.price`; it does not hardcode a localized price.
@@ -28,11 +31,10 @@ to another SVaultAI account.
 1. Confirm the Play listing for `com.svaultai.app` is publicly available. The
    canonical public URL currently returns HTTP 404 from an unauthenticated
    fetch, so this must be resolved before the download badge can succeed.
-2. Create subscription product `svaultai_storage_50gb` and base plan
-   `monthly`. Configure an auto-renewing monthly subscription that grants one
-   50 GiB unit. Set USD 25/month as the US reference and review every regional
-   price/tax treatment in Play Console. Activate the product and base plan only
-   after their display copy is accurate.
+2. Keep subscription product `svaultai_storage_50gb` and active base plan
+   `monthly-auto` configured as an auto-renewing `P1M` subscription granting
+   one 50 GiB unit. Keep the current production price unchanged and review
+   every regional price/tax treatment in Play Console before release.
 3. Link the Play developer account to a Google Cloud project. Create a
    least-privilege server service account, grant the Play Console permissions
    required to view subscriptions/orders and manage purchase acknowledgement,
@@ -51,6 +53,16 @@ to another SVaultAI account.
    expired, revoked/refunded, restore, retry, and duplicate RTDN flows.
 7. Keep production test-purchase acceptance disabled after validation. Do not
    upload or roll out a build without explicit release approval.
+
+## Public Apple download configuration
+
+- `APP_STORE_URL` is the canonical Apple App Store listing shared by iPhone,
+  iPad, and Mac when one listing supports all three platforms. Until it is
+  configured, the standard Apple badge remains visible but has no link.
+- `MAC_APP_STORE_URL` is optional and must remain empty when the canonical
+  Apple listing already serves macOS. If a genuinely distinct Mac destination
+  is created later, setting it adds one separate "Download for Mac" action.
+- Neither value may point to an invented, placeholder, or unpublished URL.
 
 ## Apple work remaining on macOS
 
