@@ -166,8 +166,8 @@ async def _run(request: Request, operation) -> Response:
         )
 
 
-@app.get("/healthz")
-def healthz():
+@app.get("/v1/health")
+def health():
     # Public but deliberately non-operative: it neither resolves ADC nor calls
     # Android Publisher and cannot read or mutate billing state.
     try:

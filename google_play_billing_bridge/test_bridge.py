@@ -55,6 +55,20 @@ def setup_function():
     main._replay_cache = NonceReplayCache()
 
 
+def test_public_health_is_non_operative(monkeypatch):
+    monkeypatch.setenv(
+        "VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET", SECRET.decode(),
+    )
+    monkeypatch.setattr(
+        main,
+        "verify_catalog",
+        lambda: (_ for _ in ()).throw(AssertionError("health must not call Google")),
+    )
+    response = TestClient(main.app).get("/v1/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_subscription_lookup_requires_hmac_and_signs_response(monkeypatch):
     monkeypatch.setenv(
         "VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET", SECRET.decode(),
