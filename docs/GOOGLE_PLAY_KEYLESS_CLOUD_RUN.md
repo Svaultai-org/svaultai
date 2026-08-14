@@ -12,6 +12,7 @@ PROJECT_ID=svaultai-production
 REGION=us-east4
 SERVICE=svaultai-google-play-billing
 RUNTIME_SERVICE_ACCOUNT=svaultai-play-billing@svaultai-production.iam.gserviceaccount.com
+BUILD_SERVICE_ACCOUNT=svaultai-cloud-run-builder@svaultai-production.iam.gserviceaccount.com
 PACKAGE_NAME=com.svaultai.app
 PRODUCT_ID=svaultai_storage_50gb
 BASE_PLAN_ID=monthly-auto
@@ -38,6 +39,7 @@ PROJECT_ID=svaultai-production
 REGION=us-east4
 SERVICE=svaultai-google-play-billing
 PLAY_SA=svaultai-play-billing@svaultai-production.iam.gserviceaccount.com
+BUILD_SA=svaultai-cloud-run-builder@svaultai-production.iam.gserviceaccount.com
 SECRET_ID=svaultai-google-play-bridge-hmac
 
 gcloud config set project "$PROJECT_ID"
@@ -53,6 +55,22 @@ gcloud services enable \
 The interactive deployer needs `roles/iam.serviceAccountUser` on `PLAY_SA`.
 Grant that binding only to the exact human/group that deploys the service; do
 not make the Play service account an Owner or project Admin.
+
+Use a separate keyless build-only identity. `roles/run.builder` supplies the
+documented source-build permissions without broadening the default Compute
+Engine identity or the Play runtime identity:
+
+```bash
+gcloud iam service-accounts describe "$BUILD_SA" >/dev/null 2>&1 || \
+  gcloud iam service-accounts create svaultai-cloud-run-builder \
+    --display-name="SVaultAI Cloud Run source builder" \
+    --description="Keyless build-only identity for the Play billing bridge"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${BUILD_SA}" \
+  --role=roles/run.builder \
+  --condition=None
+```
 
 Create one application HMAC secret without printing its value. Generate it on
 the Hostinger host in its existing root-only secret directory, then stream it
@@ -84,12 +102,13 @@ gcloud run deploy "$SERVICE" \
   --source=google_play_billing_bridge \
   --region="$REGION" \
   --service-account="$PLAY_SA" \
+  --build-service-account="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}" \
   --set-env-vars="VAULTAI_GOOGLE_PROJECT_ID=${PROJECT_ID},VAULTAI_GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL=${PLAY_SA},VAULTAI_GOOGLE_PLAY_PACKAGE_NAME=com.svaultai.app" \
   --set-secrets="VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET=${SECRET_ID}:latest" \
   --allow-unauthenticated \
   --ingress=all \
   --cpu=1 \
-  --memory=256Mi \
+  --memory=512Mi \
   --concurrency=20 \
   --min-instances=0 \
   --max-instances=1 \
@@ -97,17 +116,18 @@ gcloud run deploy "$SERVICE" \
 
 BRIDGE_URL="$(gcloud run services describe "$SERVICE" \
   --region="$REGION" --format='value(status.url)')"
-curl --fail --silent --show-error "${BRIDGE_URL}/healthz"
+curl --fail --silent --show-error "${BRIDGE_URL}/v1/health"
 ```
 
 `--allow-unauthenticated` is needed because the external Hostinger host has no
 Google workload identity. It does not expose an unauthenticated grant path:
 the service contains no grant route, and all three Google operations enforce
-application HMAC before resolving ADC. `/healthz` is the only public operation.
+application HMAC before resolving ADC. `/v1/health` is the only public
+operation.
 
 ## Hostinger activation and proof
 
-Do not remove direct ADC settings or activate the bridge until `/healthz` is
+Do not remove direct ADC settings or activate the bridge until `/v1/health` is
 healthy. Add the exact Cloud Run HTTPS origin and the existing secret value to
 the root-owned production environment without printing the secret:
 
