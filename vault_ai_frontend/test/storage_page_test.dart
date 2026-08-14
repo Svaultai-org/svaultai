@@ -339,28 +339,21 @@ void main() {
       );
     });
 
-    test('main.dart dashboard upgrade card uses the production copy',
+    test('main.dart has no retired web checkout promotion',
         () {
       
       
       final src = readLib('main.dart');
-      expect(src, contains("'Buy More Storage'"),
-          reason: 'dashboard card title must read Buy More Storage');
+      expect(src, isNot(contains("'Buy More Storage'")));
       
       
-      expect(src, contains('Add storage in 50 GB blocks.'),
-          reason: 'dashboard card body opener regressed');
-      expect(src, contains('limit updates automatically'),
-          reason: 'dashboard card body middle clause regressed');
-      expect(src, contains('after '),
-          reason: 'dashboard card body trailing clause regressed');
+      expect(src, isNot(contains('Add storage in 50 GB blocks.')));
+      expect(src, isNot(contains('limit updates automatically')));
       expect(
         src.contains("'Choose Storage'") ||
             src.contains('filesChooseStorage'),
-        isTrue,
-        reason:
-            'dashboard card must expose a Choose Storage button '
-            '(literal or via AppLocalizations.filesChooseStorage)',
+        isFalse,
+        reason: 'retired web checkout must not expose a purchase button',
       );
       
       expect(src, isNot(contains("'Upgrade Vault Storage'")),
@@ -371,16 +364,14 @@ void main() {
           reason: 'legacy 25 dollar upgrade string not removed');
     });
 
-    test('main.dart dashboard upgrade card routes to /storage with '
-        'autoOpenPicker:true', () {
+    test('main.dart has no legacy checkout auto-open route', () {
       
       
       final src = readLib('main.dart');
       final idx = src.indexOf("'Buy More Storage'");
-      expect(idx, greaterThan(-1),
-          reason: 'Buy More Storage label missing from main.dart');
-      final start = (idx - 200).clamp(0, src.length);
-      final end = (idx + 2500).clamp(0, src.length);
+      expect(idx, lessThan(0));
+      final start = 0;
+      final end = src.length;
       final window = src.substring(start, end);
       expect(
         window,
@@ -394,7 +385,7 @@ void main() {
       );
       expect(
         window,
-        contains("'autoOpenPicker': true"),
+        isNot(contains("'autoOpenPicker': true")),
         reason:
             'dashboard card must pass autoOpenPicker:true so the '
             'Storage page opens the SKU picker on entry — no '
@@ -404,7 +395,7 @@ void main() {
   });
 
   
-  group('storage_page auto-open picker plumbing', () {
+  group('retired checkout cannot auto-open', () {
     String readLib(String relative) {
       final file = File('lib/$relative');
       expect(file.existsSync(), isTrue,
@@ -412,34 +403,32 @@ void main() {
       return file.readAsStringSync();
     }
 
-    test('storage_page.dart reads autoOpenPicker route argument', () {
+    test('storage_page.dart ignores legacy autoOpenPicker arguments', () {
       final src = readLib('storage_page.dart');
       expect(
         src,
-        contains("ModalRoute.of(context)?.settings.arguments"),
-        reason: 'storage page must read its route arguments',
+        isNot(contains("ModalRoute.of(context)?.settings.arguments")),
+        reason: 'retired checkout route arguments must not be read',
       );
       expect(
         src,
-        contains("'autoOpenPicker'"),
-        reason: 'storage page must look for the autoOpenPicker arg',
+        isNot(contains("'autoOpenPicker'")),
+        reason: 'retired checkout must not auto-open',
       );
     });
 
-    test('storage_page.dart auto-open path calls _onBuyStorage', () {
+    test('storage_page.dart has no checkout auto-open helper', () {
       
       
       final src = readLib('storage_page.dart');
       final idx = src.indexOf('void _maybeAutoOpenPicker()');
-      expect(idx, greaterThan(-1),
-          reason: 'auto-open helper definition missing from '
-                  'storage_page.dart');
-      final start = idx;
-      final end = (idx + 1200).clamp(0, src.length);
+      expect(idx, lessThan(0));
+      final start = 0;
+      final end = 1200.clamp(0, src.length);
       final window = src.substring(start, end);
       expect(
         window,
-        contains('_onBuyStorage'),
+        isNot(contains('_onBuyStorage')),
         reason:
             'auto-open helper must invoke _onBuyStorage so the picker '
             'opens via the same path as the button click.',
@@ -945,18 +934,16 @@ void main() {
       );
     });
 
-    test('storage_page.dart reads checkout flag from BOTH route args '
-        'and Uri.base.queryParameters', () {
+    test('storage_page.dart ignores retired checkout return flags', () {
       
       
       final src = readLib('storage_page.dart');
       expect(src,
-          contains("Uri.base.queryParameters['checkout']"),
-          reason: 'Storage page must read ?checkout=... from the URL');
+          isNot(contains("Uri.base.queryParameters['checkout']")),
+          reason: 'retired checkout query flags must not be read');
       expect(src,
-          contains("args['checkout']"),
-          reason: 'Storage page must also read checkout from route '
-                  'arguments for the in-app navigation case');
+          isNot(contains("args['checkout']")),
+          reason: 'retired checkout route flags must not be read');
     });
 
     test('main.dart enables PathUrlStrategy on web so /storage works '

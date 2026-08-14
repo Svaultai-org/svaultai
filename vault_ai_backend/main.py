@@ -328,64 +328,8 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
 
-                                                                      
-    try:
-        from stripe_service import (
-            get_stripe_api_key,
-            get_stripe_block_price_id,
-            get_stripe_webhook_secret,
-        )
-        _api_ok    = bool(get_stripe_api_key())
-        _price_ok  = bool(get_stripe_block_price_id())
-        _whsec_ok  = bool(get_stripe_webhook_secret())
-        print(
-            "[VAULT-DEBUG] STRIPE CONFIG",
-            {
-                "STRIPE_API_KEY":                "present" if _api_ok else "missing",
-                "STRIPE_STORAGE_BLOCK_PRICE_ID": "present" if _price_ok else "missing",
-                "STRIPE_WEBHOOK_SECRET":         "present" if _whsec_ok else "missing",
-                "checkout_ready":                _api_ok and _price_ok,
-                "webhook_ready":                 _api_ok and _whsec_ok,
-            },
-            flush=True,
-        )
-                                                                         
-                                                                     
-        if _api_ok and _price_ok:
-            try:
-                from stripe_service import probe_stripe_price_currency
-                _price_probe = probe_stripe_price_currency()
-                print(
-                    "[VAULT-DEBUG] STRIPE PRICE PROBE",
-                    _price_probe,
-                    flush=True,
-                )
-                if _price_probe.get("ok") and not _price_probe.get(
-                    "matches_expected_usd_2500"
-                ):
-                    print(
-                        "[VAULT-DEBUG] STRIPE PRICE WARNING",
-                        "Configured Price is NOT USD $25/month. App copy "
-                        "shows '$25/month' but Stripe will charge in "
-                        f"{_price_probe.get('currency')!r} at "
-                        f"{_price_probe.get('unit_amount_cents')} "
-                        f"cents/{_price_probe.get('interval')}. "
-                        "Recreate the Stripe Price in USD or update the "
-                        "app copy.",
-                        flush=True,
-                    )
-            except Exception as exc:
-                print(
-                    f"[VAULT-DEBUG] STRIPE PRICE PROBE failed: "
-                    f"{type(exc).__name__}: {exc}",
-                    flush=True,
-                )
-    except Exception as exc:
-        print(
-            f"[VAULT-DEBUG] STRIPE CONFIG read failed: "
-            f"{type(exc).__name__}: {exc}",
-            flush=True,
-        )
+    # Stripe is a legacy-history adapter only. Core startup deliberately does
+    # not load, probe, or require a Stripe merchant configuration.
 
                                                                
     if os.getenv("VAULTAI_CHUNKED_UPLOADS", "false").lower() == "true":
@@ -510,6 +454,8 @@ app.include_router(inheritance_release_router)
                                                                       
 from routes.billing_routes import router as billing_router
 app.include_router(billing_router)
+from routes.provider_billing_routes import router as provider_billing_router
+app.include_router(provider_billing_router)
 app.include_router(file_v2_router)
 
                                                                       

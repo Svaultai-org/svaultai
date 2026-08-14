@@ -27,23 +27,14 @@ void main() {
   });
 
   
-  group('Return-from-checkout success branch', () {
-    test('checkout=success triggers _runPostCheckoutPoll', () {
+  group('Retired return-from-checkout branch', () {
+    test('checkout=success is not detected by active storage UI', () {
       
       
       expect(
         storagePageSrc,
-        contains("if (flag == 'success')"),
-        reason:
-            'storage_page.dart must detect ?checkout=success from '
-            'the Stripe redirect.',
-      );
-      expect(
-        storagePageSrc,
-        contains('_runPostCheckoutPoll()'),
-        reason:
-            'The success branch must invoke _runPostCheckoutPoll() — '
-            'NOT a single _refresh() that races the webhook.',
+        isNot(contains("if (flag == 'success')")),
+        reason: 'retired Stripe return flags must have no active handler',
       );
     });
 
@@ -63,8 +54,7 @@ void main() {
       expect(
         storagePageSrc,
         contains(
-          'Future<Map<String, dynamic>?>\n'
-          '      _pollEntitlementUntilPaidSubscriptionActive(',
+          'Future<Map<String, dynamic>?> _pollEntitlementUntilPaidSubscriptionActive(',
         ),
         reason:
             '_pollEntitlementUntilPaidSubscriptionActive must return '

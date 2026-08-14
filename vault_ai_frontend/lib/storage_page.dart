@@ -1,6 +1,7 @@
 import 'dart:async' show unawaited;
 
-import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -9,8 +10,8 @@ import 'api_client.dart';
 import 'l10n/app_localizations.dart';
 import 'main.dart'
     show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'services/google_play_billing_controller.dart';
 import 'ui/tokens.dart';
-
 
 String? buildCheckoutRedirectUrl(String queryFlag) {
   if (!kIsWeb) return null;
@@ -28,7 +29,6 @@ String? buildCheckoutRedirectUrl(String queryFlag) {
   }
 }
 
-
 String? buildPortalReturnUrl() {
   if (!kIsWeb) return null;
   try {
@@ -44,7 +44,6 @@ String? buildPortalReturnUrl() {
   }
 }
 
-
 class StoragePage extends StatefulWidget {
   const StoragePage({super.key});
 
@@ -58,13 +57,8 @@ class _StoragePageState extends State<StoragePage> {
   bool _busyPurchase = false;
   String? _error;
   Map<String, dynamic>? _data;
-
-  
-  bool _autoOpenPickerRequested = false;
-  bool _autoOpenPickerFired = false;
-
-  
-  String? _checkoutBanner;
+  GooglePlayBillingController? _playBilling;
+  String? _lastPlayBillingState;
 
   @override
   void initState() {
@@ -73,41 +67,57 @@ class _StoragePageState extends State<StoragePage> {
     _refresh();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final args = ModalRoute.of(context)?.settings.arguments;
-    if (args is Map && args['autoOpenPicker'] == true) {
-      _autoOpenPickerRequested = true;
-      _maybeAutoOpenPicker();
-    }
+  bool get _usesGooglePlayBilling =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-    
-    if (_checkoutBanner == null) {
-      String? flag;
-      if (args is Map && args['checkout'] is String) {
-        flag = args['checkout'] as String;
-      } else {
-        try {
-          flag = Uri.base.queryParameters['checkout'];
-        } catch (_) {
-          flag = null;
-        }
-      }
-      if (flag == 'success') {
-        _checkoutBanner = 'success';
-        
-        
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _runPostCheckoutPoll();
-        });
-      } else if (flag == 'cancel') {
-        _checkoutBanner = 'cancel';
-      }
+  @override
+  void dispose() {
+    _playBilling?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeGooglePlayBilling(String authToken) async {
+    if (!_usesGooglePlayBilling || _playBilling != null) return;
+    try {
+      final providers = await _client.getBillingProviders(authToken: authToken);
+      final google = providers['google_play'];
+      if (google is! Map) return;
+      final productId = google['product_id']?.toString() ?? '';
+      final accountToken = google['account_token']?.toString() ?? '';
+      if (productId.isEmpty || accountToken.isEmpty || !mounted) return;
+      final controller = GooglePlayBillingController(
+        gateway: FlutterPlayBillingGateway(),
+        productId: productId,
+        accountToken: accountToken,
+        verifyPurchase: ({
+          required String productId,
+          required String purchaseToken,
+        }) =>
+            _client.verifyGooglePlayPurchase(
+          authToken: authToken,
+          productId: productId,
+          purchaseToken: purchaseToken,
+        ),
+      );
+      controller.addListener(_onGooglePlayBillingChanged);
+      setState(() => _playBilling = controller);
+      await controller.initialize();
+    } catch (_) {
+      // Storage usage and the free tier stay available if Play is unavailable.
     }
   }
 
-  
+  void _onGooglePlayBillingChanged() {
+    final controller = _playBilling;
+    if (!mounted || controller == null) return;
+    final state = controller.state;
+    setState(() {});
+    if (state == 'verified' && _lastPlayBillingState != 'verified') {
+      unawaited(_refresh());
+    }
+    _lastPlayBillingState = state;
+  }
+
   Future<void> _runPostCheckoutPoll() async {
     final app = context.read<AppState>();
     if (!mounted) return;
@@ -126,19 +136,14 @@ class _StoragePageState extends State<StoragePage> {
     if (!mounted) return;
 
     if (reachedData != null) {
-      
-      
       final limitBytes =
           (reachedData['effective_limit_bytes'] as num?)?.toInt() ?? 0;
-      final newLimitGb =
-          limitBytes ~/ (1024 * 1024 * 1024);
+      final newLimitGb = limitBytes ~/ (1024 * 1024 * 1024);
       await showDialog<void>(
         context: context,
         builder: (_) => _UpgradeSuccessDialog(newLimitGb: newLimitGb),
       );
     } else {
-      
-      
       final debugFields = _billingDebugFields(_data ?? const {});
       await showDialog<void>(
         context: context,
@@ -146,8 +151,7 @@ class _StoragePageState extends State<StoragePage> {
           debugFields: debugFields,
           onRefresh: () async {
             Navigator.of(dialogCtx).pop();
-            
-            
+
             await _runPostCheckoutPoll();
           },
         ),
@@ -155,9 +159,7 @@ class _StoragePageState extends State<StoragePage> {
     }
   }
 
-  
-  Future<Map<String, dynamic>?>
-      _pollEntitlementUntilPaidSubscriptionActive({
+  Future<Map<String, dynamic>?> _pollEntitlementUntilPaidSubscriptionActive({
     required AppState app,
   }) async {
     final token = app.sessionToken;
@@ -175,24 +177,18 @@ class _StoragePageState extends State<StoragePage> {
           _loading = false;
           _error = null;
         });
-        
-        
+
         app.applyBillingPayload(data);
         final blocks = (data['block_count'] as num?)?.toInt() ?? 0;
         final active = (data['has_active_subscription'] as bool?) ?? false;
-        
-        
+
         vlog('billing-debug', _billingDebugFields(data, attempt: attempt));
         if (blocks > 0 && active) return data;
-      } catch (_) {
-        
-        
-      }
+      } catch (_) {}
     }
     return null;
   }
 
-  
   Map<String, Object?> _billingDebugFields(
     Map<String, dynamic> data, {
     int? attempt,
@@ -200,8 +196,7 @@ class _StoragePageState extends State<StoragePage> {
     final acctId = (data['account_id'] as String?) ?? '';
     final blocks = (data['block_count'] as num?)?.toInt() ?? 0;
     final active = (data['has_active_subscription'] as bool?) ?? false;
-    final limit =
-        (data['effective_limit_bytes'] as num?)?.toInt() ?? 0;
+    final limit = (data['effective_limit_bytes'] as num?)?.toInt() ?? 0;
     final lwRaw = data['last_webhook_event'];
     String lastWebhook = 'none';
     if (lwRaw is Map) {
@@ -222,30 +217,9 @@ class _StoragePageState extends State<StoragePage> {
     return out;
   }
 
-  void _dismissCheckoutBanner() {
-    setState(() => _checkoutBanner = null);
-  }
-
-  void _maybeAutoOpenPicker() {
-    // Mobile release policy: no Stripe entry points — never fire the
-    // storage-purchase picker even if a deep-link tries to auto-open
-    // it. Web keeps the existing behavior.
-    if (!kIsWeb) return;
-    if (!_autoOpenPickerRequested) return;
-    if (_autoOpenPickerFired) return;
-    if (_loading || _error != null || _data == null) return;
-    _autoOpenPickerFired = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _onBuyStorage();
-    });
-  }
-
   Future<void> _refresh() async {
     final token = context.read<AppState>().sessionToken;
     if (token == null) {
-      
-      
       if (!mounted) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -261,7 +235,7 @@ class _StoragePageState extends State<StoragePage> {
         _loading = false;
         _error = null;
       });
-      _maybeAutoOpenPicker();
+      unawaited(_initializeGooglePlayBilling(token));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -271,7 +245,6 @@ class _StoragePageState extends State<StoragePage> {
     }
   }
 
-  
   Future<void> _onBuyStorage() async {
     final data = _data;
     if (data == null) return;
@@ -280,24 +253,18 @@ class _StoragePageState extends State<StoragePage> {
       backgroundColor: VaultColors.canvas,
       isScrollControlled: true,
       builder: (_) => StoragePlanPicker(
-        currentBlockCount:
-            (data['block_count'] as num?)?.toInt() ?? 0,
-        usedBytes:
-            (data['used_bytes'] as num?)?.toInt() ?? 0,
-        blockBytes:
-            (data['block_bytes'] as num?)?.toInt() ?? 53687091200,
+        currentBlockCount: (data['block_count'] as num?)?.toInt() ?? 0,
+        usedBytes: (data['used_bytes'] as num?)?.toInt() ?? 0,
+        blockBytes: (data['block_bytes'] as num?)?.toInt() ?? 53687091200,
         blockPriceCentsUsd:
             (data['block_price_cents_usd'] as num?)?.toInt() ?? 2500,
         selfServiceMaxBlocks:
             (data['self_service_max_blocks'] as num?)?.toInt() ?? 100,
-        
-        
         hasActiveSubscription: hasActiveSubscription(data),
       ),
     );
     if (picked == null) return;
 
-    
     final currentBlocks = (data['block_count'] as num?)?.toInt() ?? 0;
     if (hasActiveSubscription(data) && picked < currentBlocks) {
       await _showLowerPlanDialog();
@@ -307,7 +274,6 @@ class _StoragePageState extends State<StoragePage> {
     await _startCheckout(picked);
   }
 
-  
   Future<void> _showLowerPlanDialog() async {
     if (!mounted) return;
     await showDialog<void>(
@@ -321,7 +287,6 @@ class _StoragePageState extends State<StoragePage> {
     );
   }
 
-  
   bool _isDowngradeNotSupportedError(Object error) {
     if (error is BillingCheckoutException) {
       return error.code == 'downgrade_not_supported';
@@ -336,8 +301,6 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Future<void> _startCheckout(int blockCount) async {
-    
-    
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null) return;
@@ -346,23 +309,16 @@ class _StoragePageState extends State<StoragePage> {
       final result = await _client.createStripeCheckoutSession(
         authToken: token,
         blockCount: blockCount,
-        
-        
         successUrl: buildCheckoutRedirectUrl('success'),
         cancelUrl:  buildCheckoutRedirectUrl('cancel'),
       );
-      
-      
+
       final action = (result['action'] as String?) ?? 'open_checkout';
 
       if (action == 'updated_existing') {
-        
-        
-        final newBlocks =
-            (result['new_blocks'] as num?)?.toInt() ?? blockCount;
+        final newBlocks = (result['new_blocks'] as num?)?.toInt() ?? blockCount;
         final targetGb = newBlocks * 50;
 
-        
         if (!mounted) return;
         unawaited(showDialog<void>(
           context: context,
@@ -375,20 +331,17 @@ class _StoragePageState extends State<StoragePage> {
           app: app,
         );
 
-        
         if (mounted) {
           Navigator.of(context, rootNavigator: true).pop();
         }
         if (!mounted) return;
 
-        
         await showDialog<void>(
           context: context,
           builder: (dialogCtx) => reached
               ? _UpgradeSuccessDialog(newLimitGb: targetGb)
               : _UpgradeTimeoutDialog(
-                  debugFields:
-                      _billingDebugFields(_data ?? const {}),
+                  debugFields: _billingDebugFields(_data ?? const {}),
                   onRefresh: () async {
                     Navigator.of(dialogCtx).pop();
                     await _refresh();
@@ -398,13 +351,11 @@ class _StoragePageState extends State<StoragePage> {
         return;
       }
 
-      
       final url = (result['checkout_url'] as String?) ?? '';
       if (url.isEmpty) {
         throw Exception('Checkout URL was empty.');
       }
-      
-      
+
       final launched = await launchUrl(
         Uri.parse(url),
         mode: kIsWeb
@@ -416,11 +367,8 @@ class _StoragePageState extends State<StoragePage> {
         throw Exception('Could not open the Stripe checkout page.');
       }
     } catch (e) {
-      
-      
       if (!mounted) return;
-      
-      
+
       if (_isDowngradeNotSupportedError(e)) {
         await _showLowerPlanDialog();
       } else {
@@ -436,7 +384,6 @@ class _StoragePageState extends State<StoragePage> {
     }
   }
 
-  
   Future<bool> _pollEntitlementForBlocks({
     required int targetBlocks,
     required AppState app,
@@ -445,8 +392,7 @@ class _StoragePageState extends State<StoragePage> {
     if (token == null) return false;
     const maxAttempts = 10;
     const interval = Duration(seconds: 1);
-    
-    
+
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       if (attempt > 0) await Future.delayed(interval);
       if (!mounted) return false;
@@ -460,15 +406,11 @@ class _StoragePageState extends State<StoragePage> {
           _loading = false;
           _error = null;
         });
-        
-        
+
         app.applyBillingPayload(data);
         final blocks = (data['block_count'] as num?)?.toInt() ?? 0;
         if (blocks >= targetBlocks) return true;
-      } catch (_) {
-        
-        
-      }
+      } catch (_) {}
     }
     return false;
   }
@@ -524,17 +466,7 @@ class _StoragePageState extends State<StoragePage> {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_checkoutBanner != null)
-                CheckoutReturnBanner(
-                  kind: _checkoutBanner!,
-                  onDismiss: _dismissCheckoutBanner,
-                ),
-              Expanded(child: _buildBody()),
-            ],
-          ),
+          child: _buildBody(),
         ),
       ),
     );
@@ -565,27 +497,43 @@ class _StoragePageState extends State<StoragePage> {
         ),
       );
     }
-    // Mobile builds intentionally do NOT surface Stripe checkout or
-    // the Stripe customer portal — Apple App Store guideline 3.1.1
-    // and Google Play Payments Policy require digital-goods
-    // subscriptions to use StoreKit / Play Billing when sold in-app.
-    // The web build continues to accept payments; mobile users still
-    // see their storage usage and account facts here.
+    // Android uses Play Billing. Web checkout is fail-closed while a new card
+    // provider is reviewed, and Apple purchasing remains deferred until the
+    // StoreKit client and real App Store Connect products are configured.
+    final play = _playBilling;
+    final activeSubscription = hasActiveSubscription(data);
+    final playMessage = activeSubscription
+        ? 'Your Google Play storage subscription is active. Billing and '
+            'cancellation are managed by Google Play.'
+        : (play?.message ??
+            (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
     return StorageBody(
       data: data,
-      busy: _busyPurchase,
-      onBuyStorage: kIsWeb ? _onBuyStorage : null,
-      onManageSubscription: kIsWeb ? _onManageSubscription : null,
+      busy: _busyPurchase || (play?.loading ?? false),
+      onBuyStorage: _usesGooglePlayBilling &&
+              !activeSubscription &&
+              (play?.canBuy ?? false)
+          ? play!.buy
+          : null,
+      onManageSubscription: null,
+      unavailableMessage: kIsWeb
+          ? 'Storage upgrades are temporarily unavailable while we update '
+              'our payment provider.'
+          : (_usesGooglePlayBilling
+              ? playMessage
+              : 'Storage upgrades are not yet available on this platform.'),
+      googlePlayPrice: _usesGooglePlayBilling ? play?.product?.price : null,
+      onRestorePurchases: _usesGooglePlayBilling && play?.available == true
+          ? play!.restore
+          : null,
     );
   }
 }
-
 
 bool nearsLimitWarning(num percentUsed) =>
     percentUsed >= 80.0 && percentUsed < 100.0;
 
 bool limitReachedWarning(num percentUsed) => percentUsed >= 100.0;
-
 
 bool isOnFreeTierOnly(Map<String, dynamic> data) {
   final blockCount = (data['block_count'] as num?) ?? 0;
@@ -593,13 +541,11 @@ bool isOnFreeTierOnly(Map<String, dynamic> data) {
   return blockCount.toInt() == 0 && grant.toInt() == 0;
 }
 
-
 bool isGrandfathered(Map<String, dynamic> data) {
   final blockCount = (data['block_count'] as num?) ?? 0;
   final grant = (data['storage_bytes_grant'] as num?) ?? 0;
   return blockCount.toInt() == 0 && grant.toInt() > 0;
 }
-
 
 String formatBytes(num bytes) {
   if (bytes < 0) return '0 B';
@@ -638,7 +584,6 @@ String _trimZeros(String s) {
   return out;
 }
 
-
 String formatCapacityFromBlocks(int blocks, {int gbPerBlock = 50}) {
   if (blocks <= 0) return '0 GB';
   final gigabytes = blocks * gbPerBlock;
@@ -649,12 +594,10 @@ String formatCapacityFromBlocks(int blocks, {int gbPerBlock = 50}) {
   return '$gigabytes GB';
 }
 
-
 bool hasActiveSubscription(Map<String, dynamic> data) {
   final flag = data['has_active_subscription'];
   if (flag is bool) return flag;
-  
-  
+
   final source = (data['source'] as String?) ?? 'none';
   final status = (data['status'] as String?) ?? 'none';
   if (source != 'stripe') return false;
@@ -666,10 +609,8 @@ bool hasManageableStripeSubscription(Map<String, dynamic> data) {
   final status = (data['status'] as String?) ?? 'none';
   if (source != 'stripe') return false;
 
-
   return status != 'none';
 }
-
 
 const String kStorageInGraceBannerMessage =
     'Your last payment did not go through. Manage subscription to '
@@ -680,7 +621,6 @@ const String kStorageCanceledPendingBannerMessage =
 const String kStorageOverQuotaGraceBannerMessage =
     'Your subscription ended and your vault is over the included '
     'storage limit. Upgrade storage before the grace period ends.';
-
 
 bool isSubscriptionInGrace(Map<String, dynamic> data) {
   final status = (data['status'] as String?) ?? 'none';
@@ -698,12 +638,14 @@ bool isSubscriptionOverQuotaGrace(Map<String, dynamic> data) {
   return status == 'over_quota_grace';
 }
 
-
 class StorageBody extends StatelessWidget {
   final Map<String, dynamic> data;
   final bool busy;
   final VoidCallback? onBuyStorage;
   final VoidCallback? onManageSubscription;
+  final String? unavailableMessage;
+  final String? googlePlayPrice;
+  final VoidCallback? onRestorePurchases;
 
   const StorageBody({
     super.key,
@@ -711,27 +653,27 @@ class StorageBody extends StatelessWidget {
     this.busy = false,
     this.onBuyStorage,
     this.onManageSubscription,
+    this.unavailableMessage,
+    this.googlePlayPrice,
+    this.onRestorePurchases,
   });
 
   @override
   Widget build(BuildContext context) {
     final used = (data['used_bytes'] as num?)?.toInt() ?? 0;
-    
-    
+
     final limit = (data['effective_limit_bytes'] as num?)?.toInt() ??
         kVaultStorageLimitBytes;
     final percent = (data['percent_used'] as num?)?.toDouble() ?? 0.0;
-    final accountType =
-        (data['account_type'] as String?) ?? 'individual';
-    final maxBlocks =
-        (data['self_service_max_blocks'] as num?)?.toInt() ?? 100;
+    final accountType = (data['account_type'] as String?) ?? 'individual';
+    final maxBlocks = (data['self_service_max_blocks'] as num?)?.toInt() ?? 100;
     final includedBytes =
-        (data['included_bytes'] as num?)?.toInt() ??
-            kVaultStorageLimitBytes;
+        (data['included_bytes'] as num?)?.toInt() ?? kVaultStorageLimitBytes;
 
     final canBuy = onBuyStorage != null && !busy;
     final canManage = onManageSubscription != null &&
-        hasManageableStripeSubscription(data) && !busy;
+        hasManageableStripeSubscription(data) &&
+        !busy;
 
     return ListView(
       padding: const EdgeInsets.symmetric(
@@ -745,14 +687,11 @@ class StorageBody extends StatelessWidget {
           percentUsed: percent,
         ),
         const SizedBox(height: VaultSpacing.lg),
-
-        
         if (limitReachedWarning(percent))
           const _WarningBanner(
             severity: 'critical',
             icon: Icons.error_outline,
-            message:
-                'Storage limit reached. Upgrade storage to continue '
+            message: 'Storage limit reached. Upgrade storage to continue '
                 'uploading files.',
           )
         else if (nearsLimitWarning(percent))
@@ -761,11 +700,8 @@ class StorageBody extends StatelessWidget {
             icon: Icons.warning_amber_rounded,
             message: 'Your vault is nearing its storage limit.',
           ),
-
         if (nearsLimitWarning(percent) || limitReachedWarning(percent))
           const SizedBox(height: VaultSpacing.lg),
-
-
         if (isSubscriptionInGrace(data)) ...[
           const _WarningBanner(
             key: Key('storage_in_grace_banner'),
@@ -775,8 +711,6 @@ class StorageBody extends StatelessWidget {
           ),
           const SizedBox(height: VaultSpacing.lg),
         ],
-
-
         if (isSubscriptionOverQuotaGrace(data)) ...[
           const _WarningBanner(
             key: Key('storage_over_quota_grace_banner'),
@@ -786,10 +720,8 @@ class StorageBody extends StatelessWidget {
           ),
           const SizedBox(height: VaultSpacing.lg),
         ],
-
-
-        if (isSubscriptionCanceledPending(data)
-            && !isSubscriptionInGrace(data)) ...[
+        if (isSubscriptionCanceledPending(data) &&
+            !isSubscriptionInGrace(data)) ...[
           const _WarningBanner(
             key: Key('storage_canceled_pending_banner'),
             severity: 'warning',
@@ -798,26 +730,40 @@ class StorageBody extends StatelessWidget {
           ),
           const SizedBox(height: VaultSpacing.lg),
         ],
-
-
-        _PurchaseActionRow(
-          canBuy: canBuy,
-          canManage: canManage,
-          
-          
-          hasActiveSub: hasActiveSubscription(data),
-          onBuy: onBuyStorage,
-          onManage: onManageSubscription,
-        ),
+        if (onBuyStorage != null || unavailableMessage == null)
+          _PurchaseActionRow(
+            canBuy: canBuy,
+            canManage: canManage,
+            hasActiveSub: hasActiveSubscription(data),
+            onBuy: onBuyStorage,
+            onManage: onManageSubscription,
+          ),
+        if (googlePlayPrice != null) ...[
+          const SizedBox(height: VaultSpacing.md),
+          _BillingAvailabilityCard(
+            message: '$googlePlayPrice per month through Google Play. '
+                'Adds 50 GB and renews automatically until canceled.',
+            icon: Icons.shop_2_outlined,
+          ),
+        ],
+        if (unavailableMessage != null) ...[
+          const SizedBox(height: VaultSpacing.md),
+          _BillingAvailabilityCard(message: unavailableMessage!),
+        ],
+        if (onRestorePurchases != null) ...[
+          const SizedBox(height: VaultSpacing.md),
+          OutlinedButton.icon(
+            onPressed: busy ? null : onRestorePurchases,
+            icon: const Icon(Icons.restore),
+            label: const Text('Restore Purchases / Refresh Subscription'),
+          ),
+        ],
         const SizedBox(height: VaultSpacing.lg),
-
         _AccountFactsCard(
           accountType: accountType,
           selfServiceMaxLabel: formatCapacityFromBlocks(maxBlocks),
         ),
         const SizedBox(height: VaultSpacing.lg),
-
-        
         if (isOnFreeTierOnly(data))
           _FreeTierCard(includedBytes: includedBytes)
         else if (isGrandfathered(data))
@@ -825,10 +771,8 @@ class StorageBody extends StatelessWidget {
             grantBytes: (data['storage_bytes_grant'] as num?)?.toInt() ?? 0,
             includedBytes: includedBytes,
           ),
-
         if (isOnFreeTierOnly(data) || isGrandfathered(data))
           const SizedBox(height: VaultSpacing.lg),
-
         const _PricingExamplesCard(),
         const SizedBox(height: VaultSpacing.xl),
       ],
@@ -836,6 +780,35 @@ class StorageBody extends StatelessWidget {
   }
 }
 
+class _BillingAvailabilityCard extends StatelessWidget {
+  final String message;
+  final IconData icon;
+
+  const _BillingAvailabilityCard({
+    required this.message,
+    this.icon = Icons.info_outline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(VaultSpacing.lg),
+      decoration: BoxDecoration(
+        color: VaultColors.surface,
+        borderRadius: BorderRadius.circular(VaultRadius.md),
+        border: Border.all(color: VaultColors.borderSubtle),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: VaultColors.accent),
+          const SizedBox(width: VaultSpacing.md),
+          Expanded(child: Text(message, style: VaultText.body)),
+        ],
+      ),
+    );
+  }
+}
 
 class _PurchaseActionRow extends StatelessWidget {
   final bool canBuy;
@@ -854,10 +827,8 @@ class _PurchaseActionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    
-    
     final primaryLabel = hasActiveSub ? 'Upgrade storage' : 'Buy storage';
-    final primaryIcon  = hasActiveSub ? Icons.upgrade : Icons.add;
+    final primaryIcon = hasActiveSub ? Icons.upgrade : Icons.add;
     return Row(
       children: [
         Expanded(
@@ -896,7 +867,6 @@ class _PurchaseActionRow extends StatelessWidget {
   }
 }
 
-
 class _UsageCard extends StatelessWidget {
   final int used;
   final int limit;
@@ -910,8 +880,6 @@ class _UsageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    
-    
     final progress = (percentUsed / 100.0).clamp(0.0, 1.0);
 
     final barColor = limitReachedWarning(percentUsed)
@@ -983,7 +951,6 @@ class _UsageCard extends StatelessWidget {
   }
 }
 
-
 class _WarningBanner extends StatelessWidget {
   final String severity;
   final IconData icon;
@@ -1019,7 +986,6 @@ class _WarningBanner extends StatelessWidget {
   }
 }
 
-
 class _AccountFactsCard extends StatelessWidget {
   final String accountType;
   final String selfServiceMaxLabel;
@@ -1031,9 +997,8 @@ class _AccountFactsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final prettyType = accountType == 'organization'
-        ? 'Organization'
-        : 'Individual';
+    final prettyType =
+        accountType == 'organization' ? 'Organization' : 'Individual';
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.xl),
       decoration: BoxDecoration(
@@ -1061,15 +1026,15 @@ class _AccountFactsCard extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(k, style: VaultText.body.copyWith(
-          color: VaultColors.textSecondary,
-        )),
+        Text(k,
+            style: VaultText.body.copyWith(
+              color: VaultColors.textSecondary,
+            )),
         Text(v, style: VaultText.body),
       ],
     );
   }
 }
-
 
 class _FreeTierCard extends StatelessWidget {
   final int includedBytes;
@@ -1122,7 +1087,6 @@ class _FreeTierCard extends StatelessWidget {
   }
 }
 
-
 class _GrandfatherCard extends StatelessWidget {
   final int grantBytes;
   final int includedBytes;
@@ -1170,13 +1134,11 @@ class _GrandfatherCard extends StatelessWidget {
   }
 }
 
-
 class _PricingExamplesCard extends StatelessWidget {
   const _PricingExamplesCard();
 
-  
   static const _examples = [
-    ('50 GB',  r'$25/month'),
+    ('50 GB', r'$25/month'),
     ('100 GB', r'$50/month'),
     ('150 GB', r'$75/month'),
     ('500 GB', r'$250/month'),
@@ -1207,8 +1169,7 @@ class _PricingExamplesCard extends StatelessWidget {
           ),
           const SizedBox(height: VaultSpacing.md),
           ..._examples.map((e) => Padding(
-                padding: const EdgeInsets.symmetric(
-                    vertical: VaultSpacing.xs),
+                padding: const EdgeInsets.symmetric(vertical: VaultSpacing.xs),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -1226,19 +1187,17 @@ class _PricingExamplesCard extends StatelessWidget {
   }
 }
 
-
 const List<int> kSelfServiceSkuBlockLadder = [
-  1,    
-  2,    
-  3,    
-  4,    
-  5,    
-  10,   
-  20,   
-  40,   
-  100,  
+  1,
+  2,
+  3,
+  4,
+  5,
+  10,
+  20,
+  40,
+  100,
 ];
-
 
 class StoragePlanPicker extends StatelessWidget {
   final int currentBlockCount;
@@ -1246,8 +1205,7 @@ class StoragePlanPicker extends StatelessWidget {
   final int blockBytes;
   final int blockPriceCentsUsd;
   final int selfServiceMaxBlocks;
-  
-  
+
   final bool hasActiveSubscription;
 
   const StoragePlanPicker({
@@ -1266,12 +1224,10 @@ class StoragePlanPicker extends StatelessWidget {
     return '\$$dollars/month';
   }
 
-  String _capacityLabel(int blocks) =>
-      formatCapacityFromBlocks(blocks, gbPerBlock: blockBytes ~/ (1024 * 1024 * 1024));
+  String _capacityLabel(int blocks) => formatCapacityFromBlocks(blocks,
+      gbPerBlock: blockBytes ~/ (1024 * 1024 * 1024));
 
   String _newLimitLabel(int blocks) {
-    
-    
     final totalBytes = blocks * blockBytes;
     return formatBytes(totalBytes);
   }
@@ -1281,17 +1237,15 @@ class StoragePlanPicker extends StatelessWidget {
     final ladder = kSelfServiceSkuBlockLadder
         .where((b) => b <= selfServiceMaxBlocks)
         .toList();
-    
-    
-    final title = hasActiveSubscription
-        ? 'Upgrade Storage'
-        : 'Buy More Storage';
+
+    final title =
+        hasActiveSubscription ? 'Upgrade Storage' : 'Buy More Storage';
     final intro = hasActiveSubscription
         ? 'Pick a higher tier to bump your existing subscription. You '
-          'will not be sent to Stripe Checkout — the change happens in '
-          'place and the prorated upgrade charge runs immediately.'
+            'will not be sent to Stripe Checkout — the change happens in '
+            'place and the prorated upgrade charge runs immediately.'
         : 'Each block adds 50 GB to your account for \$25/month. '
-          'Checkout opens Stripe in a new tab.';
+            'Checkout opens Stripe in a new tab.';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -1316,8 +1270,6 @@ class StoragePlanPicker extends StatelessWidget {
             ),
             const SizedBox(height: VaultSpacing.sm),
             Text(intro, style: VaultText.body),
-            
-            
             if (hasActiveSubscription) ...[
               const SizedBox(height: VaultSpacing.sm),
               Text(
@@ -1338,27 +1290,22 @@ class StoragePlanPicker extends StatelessWidget {
                 itemBuilder: (_, i) {
                   final blocks = ladder[i];
                   final isCurrent = blocks == currentBlockCount;
-                  final isUpgradeTile =
-                      hasActiveSubscription && !isCurrent &&
+                  final isUpgradeTile = hasActiveSubscription &&
+                      !isCurrent &&
                       blocks > currentBlockCount;
-                  
-                  
-                  final isLowerTile =
-                      hasActiveSubscription && !isCurrent &&
+
+                  final isLowerTile = hasActiveSubscription &&
+                      !isCurrent &&
                       blocks < currentBlockCount;
                   final addedBlocks = blocks - currentBlockCount;
                   return _PlanTile(
                     additionalLabel: _capacityLabel(blocks),
                     monthlyLabel: _priceLabel(blocks),
                     newLimitLabel: _newLimitLabel(blocks),
-                    
-                    
-                    addedCapacityLabel: isUpgradeTile
-                        ? _capacityLabel(addedBlocks)
-                        : null,
-                    addedMonthlyLabel: isUpgradeTile
-                        ? _priceLabel(addedBlocks)
-                        : null,
+                    addedCapacityLabel:
+                        isUpgradeTile ? _capacityLabel(addedBlocks) : null,
+                    addedMonthlyLabel:
+                        isUpgradeTile ? _priceLabel(addedBlocks) : null,
                     showProrationNote: isUpgradeTile,
                     isCurrent: isCurrent,
                     isLowerThanCurrent: isLowerTile,
@@ -1376,19 +1323,16 @@ class StoragePlanPicker extends StatelessWidget {
   }
 }
 
-
 class _PlanTile extends StatelessWidget {
   final String additionalLabel;
   final String monthlyLabel;
   final String newLimitLabel;
-  
-  
+
   final String? addedCapacityLabel;
   final String? addedMonthlyLabel;
   final bool showProrationNote;
   final bool isCurrent;
-  
-  
+
   final bool isLowerThanCurrent;
   final VoidCallback? onTap;
 
@@ -1406,12 +1350,10 @@ class _PlanTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isUpgradeTile = addedCapacityLabel != null
-        && addedMonthlyLabel != null;
+    final isUpgradeTile =
+        addedCapacityLabel != null && addedMonthlyLabel != null;
     return Material(
-      color: isCurrent
-          ? VaultColors.accentSoft
-          : VaultColors.surface,
+      color: isCurrent ? VaultColors.accentSoft : VaultColors.surface,
       borderRadius: BorderRadius.circular(VaultRadius.md),
       child: InkWell(
         onTap: onTap,
@@ -1425,14 +1367,11 @@ class _PlanTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: isUpgradeTile
                       ? [
-                          
                           Text(
                             'New plan  ·  $additionalLabel / $monthlyLabel',
                             style: VaultText.subtitle,
                           ),
                           const SizedBox(height: VaultSpacing.xs),
-                          
-                          
                           Text(
                             'Added today  ·  +$addedCapacityLabel / '
                             '+$addedMonthlyLabel',
@@ -1440,8 +1379,6 @@ class _PlanTile extends StatelessWidget {
                               color: VaultColors.textSecondary,
                             ),
                           ),
-                          
-                          
                           if (showProrationNote)
                             Text(
                               'Today\'s charge  ·  prorated by Stripe',
@@ -1457,8 +1394,6 @@ class _PlanTile extends StatelessWidget {
                           ),
                         ]
                       : [
-                          
-                          
                           Text(
                             'Additional storage  ·  $additionalLabel',
                             style: VaultText.subtitle,
@@ -1485,8 +1420,6 @@ class _PlanTile extends StatelessWidget {
                   style: VaultText.caption,
                 )
               else if (isLowerThanCurrent)
-
-
                 Text(
                   AppLocalizations.of(context).storagePlanLower,
                   style: VaultText.caption,
@@ -1501,7 +1434,6 @@ class _PlanTile extends StatelessWidget {
     );
   }
 }
-
 
 class _ErrorCard extends StatelessWidget {
   final String message;
@@ -1549,7 +1481,6 @@ class _ErrorCard extends StatelessWidget {
   }
 }
 
-
 class CheckoutReturnBanner extends StatelessWidget {
   final String kind;
   final VoidCallback onDismiss;
@@ -1563,23 +1494,17 @@ class CheckoutReturnBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSuccess = kind == 'success';
-    final color = isSuccess
-        ? VaultColors.severityOk
-        : VaultColors.textSecondary;
-    final soft = isSuccess
-        ? VaultColors.severityOkSoft
-        : VaultColors.surfaceMuted;
-    final icon = isSuccess
-        ? Icons.check_circle_outline
-        : Icons.info_outline;
-    final title = isSuccess
-        ? 'Payment confirmed'
-        : 'Checkout cancelled';
+    final color =
+        isSuccess ? VaultColors.severityOk : VaultColors.textSecondary;
+    final soft =
+        isSuccess ? VaultColors.severityOkSoft : VaultColors.surfaceMuted;
+    final icon = isSuccess ? Icons.check_circle_outline : Icons.info_outline;
+    final title = isSuccess ? 'Payment confirmed' : 'Checkout cancelled';
     final body = isSuccess
         ? 'Your new storage will appear here in a moment. '
-          'If it does not, tap refresh.'
+            'If it does not, tap refresh.'
         : 'No changes were made. You can try again whenever you are '
-          'ready.';
+            'ready.';
 
     return Container(
       margin: const EdgeInsets.fromLTRB(
@@ -1621,7 +1546,6 @@ class CheckoutReturnBanner extends StatelessWidget {
   }
 }
 
-
 class _UpgradeProgressDialog extends StatelessWidget {
   const _UpgradeProgressDialog();
 
@@ -1648,11 +1572,9 @@ class _UpgradeProgressDialog extends StatelessWidget {
           ),
         ],
       ),
-      
     );
   }
 }
-
 
 class _UpgradeSuccessDialog extends StatelessWidget {
   final int newLimitGb;
@@ -1664,8 +1586,7 @@ class _UpgradeSuccessDialog extends StatelessWidget {
       backgroundColor: VaultColors.surface,
       title: Row(
         children: const [
-          Icon(Icons.check_circle_outline,
-              color: VaultColors.severityOk),
+          Icon(Icons.check_circle_outline, color: VaultColors.severityOk),
           SizedBox(width: VaultSpacing.sm),
           Expanded(
             child: Text(
@@ -1689,13 +1610,9 @@ class _UpgradeSuccessDialog extends StatelessWidget {
   }
 }
 
-
 class _UpgradeTimeoutDialog extends StatelessWidget {
-  
-  
   final Future<void> Function() onRefresh;
 
-  
   final Map<String, Object?>? debugFields;
 
   const _UpgradeTimeoutDialog({
@@ -1737,16 +1654,13 @@ class _UpgradeTimeoutDialog extends StatelessWidget {
   }
 }
 
-
 class _BillingDebugCard extends StatelessWidget {
   final Map<String, Object?> fields;
   const _BillingDebugCard({required this.fields});
 
   @override
   Widget build(BuildContext context) {
-    final body = fields.entries
-        .map((e) => '${e.key}=${e.value}')
-        .join(', ');
+    final body = fields.entries.map((e) => '${e.key}=${e.value}').join(', ');
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Container(
@@ -1786,10 +1700,7 @@ class _BillingDebugCard extends StatelessWidget {
   }
 }
 
-
 class _LowerPlanDialog extends StatelessWidget {
-  
-  
   final Future<void> Function() onManageSubscription;
   const _LowerPlanDialog({required this.onManageSubscription});
 
@@ -1824,7 +1735,6 @@ class _LowerPlanDialog extends StatelessWidget {
   }
 }
 
-
 class _UpgradeErrorDialog extends StatelessWidget {
   final String message;
   const _UpgradeErrorDialog({required this.message});
@@ -1835,8 +1745,7 @@ class _UpgradeErrorDialog extends StatelessWidget {
       backgroundColor: VaultColors.surface,
       title: Row(
         children: const [
-          Icon(Icons.error_outline,
-              color: VaultColors.severityCrit),
+          Icon(Icons.error_outline, color: VaultColors.severityCrit),
           SizedBox(width: VaultSpacing.sm),
           Expanded(
             child: Text(
@@ -1846,8 +1755,6 @@ class _UpgradeErrorDialog extends StatelessWidget {
           ),
         ],
       ),
-      
-      
       content: SelectableText(message, style: VaultText.body),
       actions: [
         TextButton(

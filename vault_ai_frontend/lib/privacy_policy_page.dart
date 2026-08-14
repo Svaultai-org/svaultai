@@ -129,9 +129,9 @@ class _PrivacyPolicyContent extends StatelessWidget {
                 'services. These providers process information only as needed '
                 'to operate SVaultAI, comply with law, or provide requested '
                 'features.',
-            'Payment information is handled by payment processors such as '
-                'Stripe or mobile app store billing providers. SVaultAI does '
-                'not intentionally store full payment card numbers.',
+            'Payment information is handled by approved payment processors '
+                'or mobile app store billing providers. SVaultAI does not '
+                'intentionally store full payment card numbers.',
           ],
         ),
         _PolicySection(

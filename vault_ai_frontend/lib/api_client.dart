@@ -1112,9 +1112,7 @@ class VaultAIClient {
 
     try {
       final decoded = jsonDecode(responseBody);
-      final detail = decoded is Map<String, dynamic>
-          ? decoded['detail']
-          : null;
+      final detail = decoded is Map<String, dynamic> ? decoded['detail'] : null;
       if (detail is Map) {
         final parsedCode = detail['code']?.toString() ?? '';
         code = parsedCode.isEmpty ? code : parsedCode;
@@ -1195,6 +1193,60 @@ class VaultAIClient {
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid billing response format');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> getBillingProviders({
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/providers');
+    final response = await http.get(
+      uri,
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Billing providers failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid billing-providers response format');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> verifyGooglePlayPurchase({
+    required String authToken,
+    required String productId,
+    required String purchaseToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/google-play/verify');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'product_id': productId,
+        'purchase_token': purchaseToken,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Google Play verification failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid Google Play verification response');
     }
     return decoded;
   }

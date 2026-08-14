@@ -75,6 +75,7 @@ import 'devices_page.dart';
 import 'security_center_page.dart';
 import 'help_center_page.dart' as hc;
 import 'privacy_policy_page.dart';
+import 'public_download_badges.dart';
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
 import 'storage_page.dart';
@@ -4040,26 +4041,59 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
 
     return Scaffold(
       appBar: TopNavBar(isMobile: w < 760),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-                horizontal: isMobile ? 18 : 28, vertical: isMobile ? 18 : 30),
-            child: isMobile
-                ? const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [_HeroText(), SizedBox(height: 20), _HeroCard()],
-                  )
-                : const Row(
-                    children: [
-                      Expanded(child: _HeroText()),
-                      SizedBox(width: 40),
-                      Expanded(child: _HeroCard())
-                    ],
-                  ),
+      body: ListView(
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 18 : 28,
+                  vertical: isMobile ? 24 : 52,
+                ),
+                child: isMobile
+                    ? const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _HeroText(),
+                          SizedBox(height: 24),
+                          _HeroCard(),
+                        ],
+                      )
+                    : const Row(
+                        children: [
+                          Expanded(child: _HeroText()),
+                          SizedBox(width: 40),
+                          Expanded(child: _HeroCard()),
+                        ],
+                      ),
+              ),
+            ),
           ),
-        ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 18 : 28,
+                  vertical: 24,
+                ),
+                child: const PublicMobileAppsSection(),
+              ),
+            ),
+          ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 18 : 28,
+                ),
+                child: const PublicLandingFooter(),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4100,6 +4134,8 @@ class _HeroText extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 20),
+        const PlatformDownloadBadges(compact: true),
       ],
     );
   }
@@ -11996,98 +12032,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 24),
-
-                // Buy-More-Storage promotional card is WEB-ONLY.
-                // Rationale: App Store 3.1.1 + Google Play Payments
-                // Policy require in-app digital-goods purchases to use
-                // StoreKit / Play Billing. Mobile users still upgrade
-                // via the web at app.svaultai.com; hiding this
-                // promotional entry point keeps the mobile store
-                // submission compliant without touching web behavior.
-                if (kIsWeb) ...[
-                  InkWell(
-                    onTap: () => Navigator.pushNamed(
-                      context,
-                      '/storage',
-                      arguments: const {'autoOpenPicker': true},
-                    ),
-                    borderRadius: BorderRadius.circular(18),
-                    child: Container(
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF10A37F).withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color:
-                              const Color(0xFF10A37F).withValues(alpha: 0.30),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: const [
-                              Icon(Icons.cloud_upload_outlined,
-                                  color: Color(0xFF10A37F)),
-                              SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Buy More Storage',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    SizedBox(height: 4),
-                                    Text(
-                                      'Add storage in 50 GB blocks. Your '
-                                      'limit updates automatically after '
-                                      'payment.',
-                                      style: TextStyle(
-                                        color: Color(0xFFB4B4B4),
-                                        height: 1.45,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: ElevatedButton.icon(
-                              onPressed: () => Navigator.pushNamed(
-                                context,
-                                '/storage',
-                                arguments: const {'autoOpenPicker': true},
-                              ),
-                              icon: const Icon(Icons.add, size: 18),
-                              label: Text(
-                                AppLocalizations.of(context).filesChooseStorage,
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF10A37F),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 12,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                ],
 
                 _DeleteVaultSettingsTile(),
 

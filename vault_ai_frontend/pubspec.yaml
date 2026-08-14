@@ -4,7 +4,7 @@ publish_to: 'none'
 # Store-facing marketing version + build number. Bump the +N build
 # number for EVERY submission (App Store Connect + Play Console
 # reject a duplicate build number for the same marketing version).
-version: 1.0.13+14
+version: 1.0.14+15
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -19,10 +19,8 @@ dependencies:
     sdk: flutter
   intl: any
 
-  # Web-only — gives us PathUrlStrategy so Stripe redirects to
-  # /storage?checkout=success route cleanly instead of needing
-  # /#/storage?... The package is a transitive dep of flutter for
-  # web targets, but Dart analyzer requires an explicit entry.
+  # Web-only — gives public and authenticated routes clean URLs instead of
+  # hash-prefixed paths. The analyzer requires this explicit SDK dependency.
   flutter_web_plugins:
     sdk: flutter
 
@@ -37,6 +35,11 @@ dependencies:
 
   # External links (optional, safe to keep)
   url_launcher: ^6.3.2
+
+  # Google Play Billing / future StoreKit client surface. Paid storage is
+  # verified by the SVaultAI backend before this client completes a purchase.
+  in_app_purchase: ^3.3.0
+  flutter_svg: ^2.3.0
 
   # Auth and crypto utilities — vault_name + PIN model uses convert /
   # pointycastle / crypto for PIN-derived AES-GCM material; the
