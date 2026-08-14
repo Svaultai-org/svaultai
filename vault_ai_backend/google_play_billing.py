@@ -8,11 +8,17 @@ server-owned catalog below; client price, quantity, and status are ignored.
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import os
+import secrets
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+
+import httpx
 
 from billing_entitlements import (
     VerifiedEntitlementUpdate,
@@ -28,6 +34,9 @@ GOOGLE_PLAY_PRODUCT_50GB = "svaultai_storage_50gb"
 GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO = "monthly-auto"
 GOOGLE_PLAY_BASE_PLAN_TYPE = "AUTO_RENEWING"
 GOOGLE_PLAY_BILLING_PERIOD = "P1M"
+GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL = (
+    "svaultai-play-billing@svaultai-production.iam.gserviceaccount.com"
+)
 STORAGE_BLOCK_BYTES = 53_687_091_200
 INTENDED_MONTHLY_PRICE_CENTS_USD = 2500
 GOOGLE_PLAY_CATALOG = {
@@ -40,6 +49,11 @@ GOOGLE_PLAY_CATALOG = {
     },
 }
 ANDROID_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
+BRIDGE_PROTOCOL_VERSION = "v1"
+BRIDGE_TIMESTAMP_HEADER = "X-SVaultAI-Timestamp"
+BRIDGE_NONCE_HEADER = "X-SVaultAI-Nonce"
+BRIDGE_SIGNATURE_HEADER = "X-SVaultAI-Signature"
+BRIDGE_RESPONSE_SIGNATURE_HEADER = "X-SVaultAI-Response-Signature"
 
 
 class GooglePlayConfigurationError(RuntimeError):
@@ -94,12 +108,165 @@ def purchase_account_token(account_id: str) -> str:
 
 
 class GooglePlayPublisherClient:
-    def __init__(self, session=None):
+    def __init__(self, session=None, *, bridge_post=None):
         self._session = session
+        self._bridge_post = bridge_post
+
+    @staticmethod
+    def _bridge_configuration() -> tuple[str, bytes] | None:
+        raw_url = os.getenv("VAULTAI_GOOGLE_PLAY_BRIDGE_URL", "").strip()
+        if not raw_url:
+            return None
+        if os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip():
+            raise GooglePlayConfigurationError(
+                "downloadable Google credentials are forbidden with the bridge"
+            )
+        parsed = urlparse(raw_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise GooglePlayConfigurationError(
+                "Google Play bridge URL must be an HTTPS origin"
+            )
+        secret = os.getenv(
+            "VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET", "",
+        ).strip().encode("utf-8")
+        if len(secret) < 32:
+            raise GooglePlayConfigurationError(
+                "Google Play bridge authentication is not configured"
+            )
+        return raw_url.rstrip("/"), secret
+
+    @staticmethod
+    def _canonical_json(payload: Mapping[str, Any]) -> bytes:
+        return json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+    @staticmethod
+    def _request_signature(
+        *, secret: bytes, timestamp: str, nonce: str, path: str, body: bytes,
+    ) -> str:
+        digest = hashlib.sha256(body).hexdigest()
+        canonical = (
+            f"{BRIDGE_PROTOCOL_VERSION}\n{timestamp}\n{nonce}\n"
+            f"POST\n{path}\n{digest}"
+        ).encode("utf-8")
+        return "v1=" + hmac.new(secret, canonical, hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _response_signature(
+        *, secret: bytes, timestamp: str, nonce: str, status: int, body: bytes,
+    ) -> str:
+        digest = hashlib.sha256(body).hexdigest()
+        canonical = (
+            f"{BRIDGE_PROTOCOL_VERSION}\n{timestamp}\n{nonce}\n"
+            f"{status}\n{digest}"
+        ).encode("utf-8")
+        return "v1=" + hmac.new(secret, canonical, hashlib.sha256).hexdigest()
+
+    def _bridge_request(
+        self, path: str, payload: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        configuration = self._bridge_configuration()
+        if configuration is None:
+            raise GooglePlayConfigurationError(
+                "Google Play bridge is not configured"
+            )
+        base_url, secret = configuration
+        timestamp = str(int(time.time()))
+        nonce = secrets.token_urlsafe(24)
+        body = self._canonical_json(payload)
+        signature = self._request_signature(
+            secret=secret,
+            timestamp=timestamp,
+            nonce=nonce,
+            path=path,
+            body=body,
+        )
+        post = self._bridge_post or httpx.post
+        try:
+            response = post(
+                f"{base_url}{path}",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    BRIDGE_TIMESTAMP_HEADER: timestamp,
+                    BRIDGE_NONCE_HEADER: nonce,
+                    BRIDGE_SIGNATURE_HEADER: signature,
+                },
+                timeout=20,
+            )
+        except Exception as exc:
+            raise GooglePlayTransientError(
+                "Google Play bridge is temporarily unavailable"
+            ) from exc
+
+        response_body = bytes(response.content)
+        supplied_response_signature = str(
+            response.headers.get(BRIDGE_RESPONSE_SIGNATURE_HEADER, "")
+        )
+        expected_response_signature = self._response_signature(
+            secret=secret,
+            timestamp=timestamp,
+            nonce=nonce,
+            status=int(response.status_code),
+            body=response_body,
+        )
+        if not hmac.compare_digest(
+            supplied_response_signature, expected_response_signature,
+        ):
+            raise GooglePlayConfigurationError(
+                "Google Play bridge response authentication failed"
+            )
+        try:
+            decoded = json.loads(response_body.decode("utf-8"))
+        except Exception as exc:
+            raise GooglePlayVerificationError(
+                "invalid Google Play bridge response"
+            ) from exc
+        if not isinstance(decoded, dict):
+            raise GooglePlayVerificationError(
+                "invalid Google Play bridge response"
+            )
+        status = int(response.status_code)
+        error_code = str(decoded.get("error") or "")
+        if status == 404 and error_code == "purchase_not_found":
+            raise GooglePlayPurchaseNotFoundError(
+                "Android Publisher purchase was not found"
+            )
+        if status in {401, 403}:
+            raise GooglePlayConfigurationError(
+                "Google Play bridge authentication was rejected"
+            )
+        if status == 429 or status >= 500 or status == 409:
+            raise GooglePlayTransientError(
+                "Google Play bridge is temporarily unavailable"
+            )
+        if status != 200:
+            raise GooglePlayVerificationError(
+                f"Google Play bridge request failed ({status})"
+            )
+        return decoded
 
     def _authorized_session(self):
         if self._session is not None:
             return self._session
+        if os.getenv("VAULTAI_ENV", "").strip().lower() in {
+            "production", "prod", "live",
+        }:
+            raise GooglePlayConfigurationError(
+                "the production Google Play bridge is not configured"
+            )
         try:
             import google.auth
             from google.auth.transport.requests import AuthorizedSession
@@ -114,6 +281,17 @@ class GooglePlayPublisherClient:
         return self._session
 
     def get_subscription(self, purchase_token: str) -> Mapping[str, Any]:
+        if self._session is None and self._bridge_configuration() is not None:
+            result = self._bridge_request(
+                "/v1/subscriptions:get",
+                {"purchase_token": purchase_token},
+            )
+            subscription = result.get("subscription")
+            if not isinstance(subscription, dict):
+                raise GooglePlayVerificationError(
+                    "invalid Google Play bridge response"
+                )
+            return subscription
         package = _configured_package_name()
         url = (
             "https://androidpublisher.googleapis.com/androidpublisher/v3/"
@@ -148,6 +326,16 @@ class GooglePlayPublisherClient:
         return payload
 
     def acknowledge_subscription(self, product_id: str, purchase_token: str) -> None:
+        if self._session is None and self._bridge_configuration() is not None:
+            result = self._bridge_request(
+                "/v1/subscriptions:acknowledge",
+                {"product_id": product_id, "purchase_token": purchase_token},
+            )
+            if result.get("acknowledged") is not True:
+                raise GooglePlayVerificationError(
+                    "invalid Google Play bridge acknowledgement"
+                )
+            return
         package = _configured_package_name()
         url = (
             "https://androidpublisher.googleapis.com/androidpublisher/v3/"
@@ -160,6 +348,30 @@ class GooglePlayPublisherClient:
             raise GooglePlayTransientError(
                 f"Google Play acknowledgement failed ({response.status_code})"
             )
+
+    def verify_catalog(self) -> Mapping[str, Any]:
+        result = self._bridge_request(
+            "/v1/catalog:verify",
+            {"product_id": GOOGLE_PLAY_PRODUCT_50GB},
+        )
+        expected = {
+            "adc_resolution": "PASS",
+            "adc_identity": os.getenv(
+                "VAULTAI_GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL",
+                GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL,
+            ).strip().lower(),
+            "android_publisher_api_auth": "PASS",
+            "package_name": GOOGLE_PLAY_PACKAGE_NAME,
+            "product_id": GOOGLE_PLAY_PRODUCT_50GB,
+            "base_plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+            "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
+            "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
+        }
+        if any(str(result.get(key) or "") != value for key, value in expected.items()):
+            raise GooglePlayVerificationError(
+                "Google Play bridge catalog verification mismatch"
+            )
+        return result
 
 
 def _configured_package_name() -> str:

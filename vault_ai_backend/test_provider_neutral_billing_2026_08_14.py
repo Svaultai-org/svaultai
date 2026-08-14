@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import time
 from datetime import datetime, timezone
@@ -210,6 +211,99 @@ def test_google_publisher_distinguishes_voided_purchase_not_found():
     client = google.GooglePlayPublisherClient(session=session)
     with pytest.raises(google.GooglePlayPurchaseNotFoundError):
         client.get_subscription("purchase-token")
+
+
+def test_google_bridge_response_is_authenticated_before_use(monkeypatch):
+    secret = "test-only-host-bridge-secret-at-least-32-bytes"
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_BRIDGE_URL", "https://bridge.example")
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET", secret)
+    monkeypatch.setenv(
+        "VAULTAI_GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL",
+        "svaultai-play-billing@svaultai-production.iam.gserviceaccount.com",
+    )
+    monkeypatch.setattr(google.time, "time", lambda: 1_700_000_000)
+    monkeypatch.setattr(google.secrets, "token_urlsafe", lambda _size: "n" * 32)
+    subscription = _google_payload()
+
+    def post(url, *, content, headers, timeout):
+        assert url == "https://bridge.example/v1/subscriptions:get"
+        assert timeout == 20
+        assert json.loads(content) == {"purchase_token": "purchase-token"}
+        expected_request = google.GooglePlayPublisherClient._request_signature(
+            secret=secret.encode(),
+            timestamp=headers[google.BRIDGE_TIMESTAMP_HEADER],
+            nonce=headers[google.BRIDGE_NONCE_HEADER],
+            path="/v1/subscriptions:get",
+            body=content,
+        )
+        assert hmac.compare_digest(
+            headers[google.BRIDGE_SIGNATURE_HEADER], expected_request,
+        )
+        response_body = google.GooglePlayPublisherClient._canonical_json(
+            {"subscription": subscription},
+        )
+        response_signature = (
+            google.GooglePlayPublisherClient._response_signature(
+                secret=secret.encode(),
+                timestamp=headers[google.BRIDGE_TIMESTAMP_HEADER],
+                nonce=headers[google.BRIDGE_NONCE_HEADER],
+                status=200,
+                body=response_body,
+            )
+        )
+        return SimpleNamespace(
+            status_code=200,
+            content=response_body,
+            headers={google.BRIDGE_RESPONSE_SIGNATURE_HEADER: response_signature},
+        )
+
+    client = google.GooglePlayPublisherClient(bridge_post=post)
+    assert client.get_subscription("purchase-token") == subscription
+
+
+def test_google_bridge_tampered_response_fails_closed(monkeypatch):
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_BRIDGE_URL", "https://bridge.example")
+    monkeypatch.setenv(
+        "VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET",
+        "test-only-host-bridge-secret-at-least-32-bytes",
+    )
+
+    def post(*_args, **_kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            content=b'{"subscription":{}}',
+            headers={google.BRIDGE_RESPONSE_SIGNATURE_HEADER: "v1=invalid"},
+        )
+
+    with pytest.raises(google.GooglePlayConfigurationError):
+        google.GooglePlayPublisherClient(bridge_post=post).get_subscription(
+            "purchase-token"
+        )
+
+
+def test_google_production_forbids_direct_adc_when_bridge_is_absent(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ENV", "production")
+    monkeypatch.delenv("VAULTAI_GOOGLE_PLAY_BRIDGE_URL", raising=False)
+    with pytest.raises(google.GooglePlayConfigurationError):
+        google.GooglePlayPublisherClient().get_subscription("purchase-token")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://bridge.example",
+        "https://user@bridge.example",
+        "https://bridge.example/unexpected-path",
+        "https://bridge.example?token=forbidden",
+    ],
+)
+def test_google_bridge_requires_clean_https_origin(monkeypatch, url):
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_BRIDGE_URL", url)
+    monkeypatch.setenv(
+        "VAULTAI_GOOGLE_PLAY_BRIDGE_HMAC_SECRET", "x" * 32,
+    )
+    with pytest.raises(google.GooglePlayConfigurationError):
+        google.GooglePlayPublisherClient().get_subscription("purchase-token")
 
 
 @pytest.mark.parametrize(
