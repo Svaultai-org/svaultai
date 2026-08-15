@@ -50,11 +50,23 @@ void main() {
     });
 
     test('natural explicit login creation remains a credential intent', () {
-      final intent =
-          parseCredentialV2CreateIntent('create me a facebook logins');
+      const text = 'create me a facebook logins';
+      final intent = parseCredentialV2CreateIntent(text);
 
       expect(intent, isNotNull);
       expect(intent!.service, 'facebook');
+      expect(parseCredentialV2LookupIntent(text), isNull);
+      expect(extractInventoryPrivateLookupTopic(text), isNull);
+      expect(looksLikePrivateCredentialQuery(text), isTrue);
+      expect(shouldAttemptCredentialV2Lookup(text), isFalse);
+    });
+
+    test('explicit credential reads still use the local lookup route', () {
+      expect(
+          shouldAttemptCredentialV2Lookup('show me my github login'), isTrue);
+      expect(
+          shouldAttemptCredentialV2Lookup('what is my login password'), isTrue);
+      expect(shouldAttemptCredentialV2Lookup('what are you'), isFalse);
     });
 
     test('feature-route mismatch has actionable non-network recovery', () {
