@@ -124,6 +124,15 @@ import 'i18n/language_registry.dart';
 
 Object? _qaSemanticsHandle;
 
+String safeCredentialInventoryRecoveryMessage(Object error) {
+  if (error is CredentialV2RequestException && error.statusCode == 404) {
+    return 'This app and vault service are temporarily out of sync. Tap '
+        'Retry. No saved login was changed.';
+  }
+  return 'Saved logins are temporarily unavailable. Tap Retry. No saved '
+      'login was changed.';
+}
+
 class LocalMemoryLookupIntent {
   final String subject;
   final bool listAll;
@@ -146,21 +155,79 @@ class LocalMemoryMatchResult {
 class LocalMemoryFact {
   final String subject;
   final String value;
+  final String? relationship;
+  final String? attribute;
+  final String memoryType;
+  final List<String> tags;
 
-  const LocalMemoryFact(this.subject, this.value);
+  const LocalMemoryFact(
+    this.subject,
+    this.value, {
+    this.relationship,
+    this.attribute,
+    this.memoryType = 'note',
+    this.tags = const <String>[],
+  });
+
+  String get normalized => relationship != null && attribute != null
+      ? '$relationship:$attribute'
+      : subject;
 }
 
 LocalMemoryFact? parseLocalMemoryFact(String input) {
-  final text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  var text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  text = text
+      .replaceFirst(
+        RegExp(
+          r'(?:\s*,\s*|\s+)(?:please\s+)?(?:save|remember)\s+(?:it|this|that)$',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .trim();
   final match = RegExp(
-    r'^(?:(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
+    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(text);
   if (match == null) return null;
   final subject = (match.group(1) ?? '').trim();
   final value = (match.group(2) ?? '').trim();
   if (subject.isEmpty || value.isEmpty) return null;
+  final relationshipMatch = RegExp(
+    r"^(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*(?:(?:full|first|given)\s+)?name$",
+    caseSensitive: false,
+  ).firstMatch(subject);
+  if (relationshipMatch != null) {
+    final rawRelationship = relationshipMatch.group(1)!.toLowerCase();
+    final relationship = <String>{
+      'mother',
+      'mom',
+      'mum',
+      'mommy',
+      'mama',
+    }.contains(rawRelationship)
+        ? 'mother'
+        : 'father';
+    return LocalMemoryFact(
+      subject,
+      value,
+      relationship: relationship,
+      attribute: 'name',
+      memoryType: 'identity',
+      tags: <String>['family', relationship, 'name'],
+    );
+  }
   return LocalMemoryFact(subject, value);
+}
+
+bool hasExplicitLocalMemorySaveDirective(String input) {
+  final text = input.trim();
+  return RegExp(r'^(?:please\s+)?(?:remember|save)\b', caseSensitive: false)
+          .hasMatch(text) ||
+      RegExp(
+        r'(?:\s*,\s*|\s+)(?:please\s+)?(?:save|remember)\s+(?:it|this|that)[.?!]*$',
+        caseSensitive: false,
+      ).hasMatch(text);
 }
 
 String? parseLocalMemoryContextSaveSubject(String input) {
@@ -7705,6 +7772,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     AppState app,
   ) async {
     if (attachments.isNotEmpty) return false;
+    if (!zkV2CredentialWriteEnabled) return false;
     final intent = parseCredentialV2CreateIntent(text);
     if (intent == null) return false;
     final service = intent.service?.trim();
@@ -7750,7 +7818,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
     } catch (_) {
       _appendAssistantMessage(
-        'I could not safely check your existing logins. Your vault stayed unchanged.',
+        'I could not safely check your existing logins. Your vault stayed '
+        'unchanged. Try sending the request again, or open Logins and tap '
+        'Retry.',
       );
       return true;
     }
@@ -13154,15 +13224,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (app.handleApiException(e)) return;
 
       if (mounted) {
+        final recovery = safeCredentialInventoryRecoveryMessage(e);
         setState(() {
           hasLoadedSecureItems = true;
-          secureItemsError = e.toString();
+          secureItemsError = recovery;
         });
+        _showSnack(recovery);
       }
       vlog('secure_items.load.failed', {'error_type': e.runtimeType});
-      _showSnack(
-        'Could not load your saved logins. Check your connection and try again.',
-      );
     } finally {
       if (mounted) {
         setState(() {
@@ -16814,10 +16883,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
     if (!enabled || app.sessionToken == null) return false;
 
-    final explicitSave = RegExp(
-      r'^(?:remember|save)\b',
-      caseSensitive: false,
-    ).hasMatch(text.trim());
+    final explicitSave = hasExplicitLocalMemorySaveDirective(text);
     LocalMemoryFact? fact = explicitSave ? parseLocalMemoryFact(text) : null;
     final requestedSubject = parseLocalMemoryContextSaveSubject(text);
     if (fact == null && requestedSubject == null) return false;
@@ -16849,7 +16915,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       final identity = sha256
           .convert(utf8.encode(
-            '${fact.subject.toLowerCase()}\u0000${fact.value}',
+            '${fact.normalized.toLowerCase()}\u0000${fact.value}',
           ))
           .toString();
       await MemoryV2Repository(
@@ -16857,12 +16923,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: app.sessionToken!,
       ).create(
         memoryId: 'memory-${identity.substring(0, 32)}',
-        memoryType: 'note',
+        memoryType: fact.memoryType,
         plaintext: MemoryV2Plaintext(
           value: fact.value,
-          normalized: fact.subject,
+          normalized: fact.normalized,
           summary: 'My ${fact.subject} is ${fact.value}',
-          tags: _memoryTerms(fact.subject).toList(growable: false),
+          tags: <String>{..._memoryTerms(fact.subject), ...fact.tags}
+              .toList(growable: false),
         ),
       );
       _appendAssistantMessage('Saved: ${fact.subject}.');
@@ -17216,6 +17283,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw StateError('correlated assistant placeholder missing');
       }
       String buffer = '';
+      bool terminalFailureRendered = false;
       // Per-send ZK memory-proposal state. The backend emits the
       // sentinel exactly once per turn, but SSE decoding may deliver
       // it across chunks — track whether we've already fired the
@@ -17460,11 +17528,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         // desync symptom.
         if (app.handleApiException(err)) return;
         if (!mounted) return;
+        terminalFailureRendered = true;
         setState(() {
           thinking = false;
           msgs[assistantIndex] = _Msg(
             'assistant',
-            friendlyChatGenerationFailure(text),
+            err is ChatResponseTimeoutException
+                ? chatTimeoutRecovery
+                : friendlyChatGenerationFailure(text),
           ).withCorrelationFrom(msgs[assistantIndex]);
         });
       } finally {
@@ -17491,6 +17562,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           // tap.
           _maybeTriggerPendingFileAction(structured);
         }
+      } else if (!terminalFailureRendered &&
+          mounted &&
+          _chatRequests.acceptsEvents(chatRequestId)) {
+        setState(() {
+          msgs[assistantIndex] = _Msg(
+            'assistant',
+            friendlyChatGenerationFailure(text),
+          ).withCorrelationFrom(msgs[assistantIndex]);
+        });
       }
 
       if (mounted && thinking) {
