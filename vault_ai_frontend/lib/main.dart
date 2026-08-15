@@ -7649,6 +7649,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!zkV2CredentialReadEnabled || attachments.isNotEmpty) return false;
     if (_credentialLookupInFlight) return true;
     final intent = parseCredentialV2LookupIntent(text);
+    if (!shouldAttemptCredentialV2Lookup(text)) return false;
     if (intent?.listAll == true) {
       input.clear();
       setState(() => selectedSection = _DashboardSection.logins);

@@ -256,6 +256,18 @@ bool looksLikePrivateCredentialQuery(String text) {
   }).isNotEmpty;
 }
 
+/// Returns whether a message belongs to the local credential lookup route.
+///
+/// Creation requests contain credential vocabulary too, but when local v2
+/// writes are disabled they must fall through to the backend draft workflow.
+/// Treating them as broad lookups would consume the message after an inventory
+/// read and incorrectly report that no saved login exists.
+bool shouldAttemptCredentialV2Lookup(String text) {
+  if (parseCredentialV2CreateIntent(text) != null) return false;
+  return parseCredentialV2LookupIntent(text) != null ||
+      looksLikePrivateCredentialQuery(text);
+}
+
 class CredentialV2Repository {
   final CredentialV2Crypto crypto;
   final CredentialV2Api api;
