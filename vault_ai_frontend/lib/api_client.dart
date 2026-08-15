@@ -4333,6 +4333,7 @@ class VaultAIClient {
     required String itemType,
     required String pin,
     required String authToken,
+    bool forceLegacyTransport = false,
     String? newService,
     Map<String, dynamic>? fields,
   }) async {
@@ -4340,7 +4341,7 @@ class VaultAIClient {
     // (i.e. this is a ZK/adopted vault), the item is written to
     // /vault/ciphertext/vault-items instead of /update-secure-item —
     // no readable item_type / service / payload leaves the client.
-    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+    if (!forceLegacyTransport && zk_mvk_store.ZkActiveMvk.current() != null) {
       final zkResp = await tryZkVaultItemCiphertextUpsert(
         baseUrl: baseUrl,
         authToken: authToken,

@@ -69,6 +69,22 @@ void main() {
       expect(shouldAttemptCredentialV2Lookup('what are you'), isFalse);
     });
 
+    test('known legacy credential edits cannot divert into a v2 upsert', () {
+      final apiSource = File('lib/api_client.dart').readAsStringSync();
+      final mainSource = File('lib/main.dart').readAsStringSync();
+
+      expect(apiSource, contains('bool forceLegacyTransport = false'));
+      expect(
+        apiSource,
+        contains('if (!forceLegacyTransport && '
+            'zk_mvk_store.ZkActiveMvk.current() != null)'),
+      );
+      expect(
+        mainSource,
+        contains('forceLegacyTransport: true,'),
+      );
+    });
+
     test('feature-route mismatch has actionable non-network recovery', () {
       final copy = safeCredentialInventoryRecoveryMessage(
         const CredentialV2RequestException(404),

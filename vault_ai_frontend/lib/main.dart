@@ -8225,7 +8225,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _openSecureItemEditDialog(String service, String itemType,
-      {Map<String, String>? initialFields, bool createMode = false}) async {
+      {Map<String, String>? initialFields,
+      bool createMode = false,
+      bool forceLegacyTransport = false}) async {
     final app = context.read<AppState>();
     if (!app.billingWritesAllowed) {
       _showSnack(app.billingWriteBlockedMessage);
@@ -8304,6 +8306,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             fields: fields.isEmpty ? null : fields,
             pin: pin,
             authToken: token,
+            forceLegacyTransport: forceLegacyTransport,
           );
 
           final isLogin = itemType == 'login' || itemType == 'credential';
@@ -18874,7 +18877,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (item.cryptoVersion == credentialV2CryptoVersion) {
               unawaited(_openCredentialV2Editor(item));
             } else {
-              unawaited(_openSecureItemEditDialog(item.service, item.itemType));
+              unawaited(_openSecureItemEditDialog(
+                item.service,
+                item.itemType,
+                forceLegacyTransport: true,
+              ));
             }
           },
           onDeleteItem: (item) {
