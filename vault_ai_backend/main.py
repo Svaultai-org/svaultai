@@ -8972,6 +8972,19 @@ async def health():
         )
 
 
+@app.get("/release-contract")
+async def release_contract():
+    """Expose only the public API/feature contract for release preflight."""
+    from zk_migration_flags import WEB_API_CONTRACT, ZkMigrationFlags
+
+    flags = ZkMigrationFlags.from_environment(os.environ)
+    flags.validate_dependencies()
+    return {
+        "apiContract": WEB_API_CONTRACT,
+        "features": flags.public_web_features(),
+    }
+
+
 @app.post("/get-or-create-vault-meta")
 async def get_or_create_vault_meta_endpoint(
     request: Request,

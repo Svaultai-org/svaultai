@@ -116,6 +116,22 @@ else
         echo "[verify-web-release]   contents: $(cat "$release_json")" >&2
         fail=$((fail+1))
     fi
+    if ! grep -q '"apiContract":"svaultai-core-v2-2026-08-15"' "$release_json"; then
+        echo "[verify-web-release] FAIL: release.json API contract is missing or unexpected." >&2
+        fail=$((fail+1))
+    fi
+    for expected_feature in \
+        '"credentialV2Read":true' \
+        '"credentialV2Write":false' \
+        '"memoryV2Read":true' \
+        '"memoryV2Write":true' \
+        '"fileV2Read":true' \
+        '"fileV2Write":true'; do
+        if ! grep -q "$expected_feature" "$release_json"; then
+            echo "[verify-web-release] FAIL: release.json feature contract mismatch: $expected_feature" >&2
+            fail=$((fail+1))
+        fi
+    done
 fi
 
 # ---- 3) flutter_service_worker.js is the migration SW -----------------

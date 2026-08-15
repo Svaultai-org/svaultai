@@ -10,6 +10,70 @@ import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/wallet_backup_v2_repository.dart';
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 
+enum ChatResponseTimeoutPhase { connect, firstEvent, idle, total }
+
+class ChatResponseTimeoutException implements Exception {
+  final ChatResponseTimeoutPhase phase;
+
+  const ChatResponseTimeoutException(this.phase);
+
+  @override
+  String toString() => 'ChatResponseTimeoutException(phase: ${phase.name})';
+}
+
+const Duration chatConnectTimeout = Duration(seconds: 30);
+const Duration chatFirstEventTimeout = Duration(seconds: 120);
+const Duration chatIdleTimeout = Duration(seconds: 60);
+const Duration chatTotalTimeout = Duration(minutes: 5);
+
+/// Applies bounded first-event, idle, and total deadlines to a chat stream.
+///
+/// The idle deadline resets after each event, so a legitimate long response
+/// can continue while it is making progress. Timeout errors contain no
+/// response bodies, request content, tokens, or decrypted data.
+Stream<T> boundedChatResponseStream<T>(
+  Stream<T> source, {
+  Duration firstEventTimeout = chatFirstEventTimeout,
+  Duration idleTimeout = chatIdleTimeout,
+  Duration totalTimeout = chatTotalTimeout,
+}) async* {
+  final iterator = StreamIterator<T>(source);
+  final elapsed = Stopwatch()..start();
+  var receivedEvent = false;
+  try {
+    while (true) {
+      final totalRemaining = totalTimeout - elapsed.elapsed;
+      if (totalRemaining <= Duration.zero) {
+        throw const ChatResponseTimeoutException(
+          ChatResponseTimeoutPhase.total,
+        );
+      }
+      final phaseTimeout = receivedEvent ? idleTimeout : firstEventTimeout;
+      final wait =
+          totalRemaining < phaseTimeout ? totalRemaining : phaseTimeout;
+      final totalDeadlineWins = totalRemaining <= phaseTimeout;
+      late final bool hasNext;
+      try {
+        hasNext = await iterator.moveNext().timeout(wait);
+      } on TimeoutException {
+        throw ChatResponseTimeoutException(
+          totalDeadlineWins
+              ? ChatResponseTimeoutPhase.total
+              : receivedEvent
+                  ? ChatResponseTimeoutPhase.idle
+                  : ChatResponseTimeoutPhase.firstEvent,
+        );
+      }
+      if (!hasNext) break;
+      receivedEvent = true;
+      yield iterator.current;
+    }
+  } finally {
+    elapsed.stop();
+    await iterator.cancel();
+  }
+}
+
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
   final payload = data == null
@@ -1725,44 +1789,58 @@ class VaultAIClient {
       kdfIterationsUsed: kdfIterationsUsed,
     ));
 
-    final response = await request.send();
-    _vlog('chat.response', {
-      'status': response.statusCode,
-      'content_type': response.headers['content-type'] ?? '-',
-    });
-
-    if (response.statusCode != 200) {
-      final errorBody = await response.stream.bytesToString();
-
-      _vlog('chat.error', {
-        'status': response.statusCode,
-        'body': errorBody,
-      });
-      _throwIfAuthExpired(response.statusCode, errorBody);
-      _throwIfDeviceNotTrusted(response.statusCode, errorBody);
-      _throwIfLockOrFrozen(response.statusCode, errorBody);
-      // 2026-07-21: 409 kdf_generation_stale MUST throw its
-      // typed exception BEFORE the generic 400 InvalidVaultUnlock
-      // check — a stale-generation request is a specific,
-      // recoverable state (client re-derives from response salt +
-      // user taps send), NOT a session-expired condition.
-      _throwIfKdfGenerationStale(response.statusCode, errorBody);
-      _throwIfInvalidVaultUnlock(response.statusCode, errorBody);
-      throw Exception(_formatBackendError(
-        prefix: 'Chat failed',
-        statusCode: response.statusCode,
-        responseBody: errorBody,
-      ));
-    }
-
-    final lineStream =
-        response.stream.transform(utf8.decoder).transform(const LineSplitter());
-
-    await for (final line in lineStream) {
-      final cleaned = _cleanSseLine(line);
-      if (cleaned != null && cleaned.isNotEmpty) {
-        yield cleaned;
+    final requestClient = http.Client();
+    try {
+      late final http.StreamedResponse response;
+      try {
+        response =
+            await requestClient.send(request).timeout(chatConnectTimeout);
+      } on TimeoutException {
+        throw const ChatResponseTimeoutException(
+          ChatResponseTimeoutPhase.connect,
+        );
       }
+      _vlog('chat.response', {
+        'status': response.statusCode,
+        'content_type': response.headers['content-type'] ?? '-',
+      });
+
+      if (response.statusCode != 200) {
+        final errorBody = await response.stream.bytesToString();
+
+        _vlog('chat.error', {
+          'status': response.statusCode,
+          'body': errorBody,
+        });
+        _throwIfAuthExpired(response.statusCode, errorBody);
+        _throwIfDeviceNotTrusted(response.statusCode, errorBody);
+        _throwIfLockOrFrozen(response.statusCode, errorBody);
+        // 2026-07-21: 409 kdf_generation_stale MUST throw its
+        // typed exception BEFORE the generic 400 InvalidVaultUnlock
+        // check — a stale-generation request is a specific,
+        // recoverable state (client re-derives from response salt +
+        // user taps send), NOT a session-expired condition.
+        _throwIfKdfGenerationStale(response.statusCode, errorBody);
+        _throwIfInvalidVaultUnlock(response.statusCode, errorBody);
+        throw Exception(_formatBackendError(
+          prefix: 'Chat failed',
+          statusCode: response.statusCode,
+          responseBody: errorBody,
+        ));
+      }
+
+      final lineStream = response.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+
+      await for (final line in boundedChatResponseStream(lineStream)) {
+        final cleaned = _cleanSseLine(line);
+        if (cleaned != null && cleaned.isNotEmpty) {
+          yield cleaned;
+        }
+      }
+    } finally {
+      requestClient.close();
     }
   }
 

@@ -37,6 +37,20 @@ services:
       VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST:  "false"
       MASS_ACTION_PROTECTION_ENABLED:      "true"
 
+      # Keep this matrix in lockstep with the production web build script.
+      # A missing backend flag defaults false and makes the corresponding
+      # authenticated route return 404.
+      ZK_V2_READ_ENABLED:              "true"
+      ZK_V2_WRITE_ENABLED:             "false"
+      ZK_V2_MIGRATION_ENABLED:         "false"
+      MEMORY_V2_READ_ENABLED:          "true"
+      MEMORY_V2_WRITE_ENABLED:         "true"
+      MEMORY_V2_MIGRATION_ENABLED:     "false"
+      FILE_V2_READ_ENABLED:            "true"
+      FILE_V2_WRITE_ENABLED:           "true"
+      FILE_V2_MIGRATION_ENABLED:       "false"
+      PRIVATE_VAULT_LOCAL_ROUTING_ENABLED: "false"
+
       RATE_LIMIT_ENABLED:            "true"
       VAULTAI_RATE_LIMIT_BACKEND:    redis
       VAULTAI_RATE_LIMIT_REDIS_URL:  ${VAULTAI_RATE_LIMIT_REDIS_URL}
