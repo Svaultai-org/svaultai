@@ -112,7 +112,7 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
       ) ??
       supplied(
         RegExp(
-          r'^(?:save\s+)?(?:my\s+)?(.+?)\s+(?:login\s+)?(?:username|user)\s+(?:is\s+)?(\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+(?:is\s+)?(\S+)$',
+          r'^(?:(?:save|store|remember)\s+)?(?:my\s+)?(.+?)\s+(?:is\s+)?(?:login\s*[,;:]?\s+)?(?:username|user)\s+(?:is\s+)?(\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+(?:is\s+)?(\S+)$',
           caseSensitive: false,
         ),
         serviceGroup: 1,

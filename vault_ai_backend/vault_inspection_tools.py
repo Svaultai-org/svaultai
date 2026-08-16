@@ -1591,6 +1591,13 @@ def generate_credential_draft(
                 os.getenv("ZK_V2_GENERATED_DRAFT_OPAQUE", "false")
                 .strip().lower() in ("1", "true", "yes", "on")
             ),
+            # A complete username+password assertion is storage input, not
+            # generated content. Partial inputs still generate the missing
+            # field and therefore retain generated provenance.
+            generated=not (
+                _supplied_username is not None
+                and _supplied_password is not None
+            ),
         )
     except Exception:
         logger.exception("[INSPECT] draft store failed")

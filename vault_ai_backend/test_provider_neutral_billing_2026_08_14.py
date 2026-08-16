@@ -670,6 +670,7 @@ def test_apple_catalog_is_explicit_and_transaction_mapping_is_verified(monkeypat
                 "quantity": 1,
                 "entitlement_bytes": 53_687_091_200,
                 "plan_id": "monthly",
+                "billing_period": "P1M",
             },
         }),
     )
@@ -691,6 +692,286 @@ def test_apple_catalog_is_explicit_and_transaction_mapping_is_verified(monkeypat
     assert update.status == "active"
     assert update.original_transaction_id == "otx-1"
     assert update.entitlement_bytes == 53_687_091_200
+
+
+@pytest.mark.asyncio
+async def test_apple_provider_catalog_returns_only_explicit_product_ids(monkeypatch):
+    monkeypatch.setattr(
+        provider_routes, "_account_id", lambda _principal: "account-apple-test"
+    )
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "svaultai.storage.50gb.monthly": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "plan_id": "monthly",
+                "billing_period": "P1M",
+            },
+        }),
+    )
+
+    payload = await provider_routes.billing_providers(
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    assert payload["apple"]["configured"] is True
+    assert payload["apple"]["product_id"] == "svaultai.storage.50gb.monthly"
+    assert payload["apple"]["product_ids"] == [
+        "svaultai.storage.50gb.monthly"
+    ]
+    assert payload["apple"]["billing_period"] == "P1M"
+    assert payload["apple"]["storage_entitlement_bytes"] == 53_687_091_200
+    assert payload["apple"]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_apple_provider_catalog_does_not_guess_among_multiple_tiers(monkeypatch):
+    monkeypatch.setattr(
+        provider_routes, "_account_id", lambda _principal: "account-apple-test"
+    )
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "synthetic.storage.50gb": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "billing_period": "P1M",
+            },
+            "synthetic.storage.100gb": {
+                "quantity": 2,
+                "entitlement_bytes": 107_374_182_400,
+                "billing_period": "P1M",
+            },
+        }),
+    )
+
+    payload = await provider_routes.billing_providers(
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    assert payload["apple"]["configured"] is True
+    assert payload["apple"]["product_id"] is None
+    assert payload["apple"]["product_ids"] == [
+        "synthetic.storage.100gb",
+        "synthetic.storage.50gb",
+    ]
+    assert payload["apple"]["billing_period"] is None
+    assert payload["apple"]["storage_entitlement_bytes"] is None
+    assert payload["apple"]["quantity"] is None
+
+
+@pytest.mark.asyncio
+async def test_apple_provider_catalog_fails_closed_without_billing_period(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        provider_routes, "_account_id", lambda _principal: "account-apple-test"
+    )
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "svaultai.storage.50gb.monthly": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "plan_id": "monthly",
+            },
+        }),
+    )
+
+    payload = await provider_routes.billing_providers(
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    assert payload["apple"]["configured"] is False
+    assert payload["apple"]["product_id"] is None
+    assert payload["apple"]["billing_period"] is None
+
+
+class _AppleJSONRequest:
+    def __init__(self, payload=None, *, error=None):
+        self.payload = payload
+        self.error = error
+
+    async def json(self):
+        if self.error is not None:
+            raise self.error
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_apple_sandbox_notification_is_verified_logged_and_idempotent(
+    monkeypatch,
+):
+    notification = SimpleNamespace(
+        notificationUUID="synthetic-notification-event",
+        notificationType="TEST",
+        subtype=None,
+        data=SimpleNamespace(signedTransactionInfo=None),
+    )
+    verifier = SimpleNamespace()
+    monkeypatch.setattr(
+        apple_billing,
+        "decode_verified_apple_notification",
+        lambda _payload: ("sandbox", verifier, notification),
+    )
+    claims = []
+    finishes = []
+    inserted = [True, False]
+    monkeypatch.setattr(
+        ent,
+        "claim_provider_event",
+        lambda **kwargs: claims.append(dict(kwargs)) or inserted.pop(0),
+    )
+    monkeypatch.setattr(
+        ent,
+        "finish_provider_event",
+        lambda **kwargs: finishes.append(dict(kwargs)),
+    )
+    request = _AppleJSONRequest({"signedPayload": "synthetic-signed-jws"})
+
+    first = await provider_routes.apple_notifications_v2(request)
+    second = await provider_routes.apple_notifications_v2(request)
+
+    assert first == {"outcome": "verified_no_transaction"}
+    assert second == {"outcome": "duplicate"}
+    assert claims[0]["signature_verified"] is True
+    assert claims[0]["environment"] == "sandbox"
+    assert claims[0]["sanitized_payload"] == {
+        "notification_type": "TEST",
+        "subtype": None,
+    }
+    assert "synthetic-signed-jws" not in json.dumps(claims)
+    assert finishes == [{
+        "source": "apple",
+        "event_id": "synthetic-notification-event",
+        "outcome": "verified_no_transaction",
+    }]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "error", "expected_status"),
+    [
+        ({}, None, 400),
+        (None, ValueError("invalid json"), 400),
+    ],
+)
+async def test_apple_unsigned_notification_is_rejected_before_event_log(
+    monkeypatch, payload, error, expected_status,
+):
+    claims = []
+    monkeypatch.setattr(
+        ent,
+        "claim_provider_event",
+        lambda **kwargs: claims.append(dict(kwargs)) or True,
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        await provider_routes.apple_notifications_v2(
+            _AppleJSONRequest(payload, error=error),
+        )
+
+    assert rejected.value.status_code == expected_status
+    assert claims == []
+
+
+@pytest.mark.asyncio
+async def test_apple_invalid_signature_is_rejected_before_event_log(monkeypatch):
+    monkeypatch.setattr(
+        apple_billing,
+        "decode_verified_apple_notification",
+        lambda _payload: (_ for _ in ()).throw(
+            apple_billing.AppleTransactionVerificationError("invalid")
+        ),
+    )
+    claims = []
+    monkeypatch.setattr(
+        ent,
+        "claim_provider_event",
+        lambda **kwargs: claims.append(dict(kwargs)) or True,
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        await provider_routes.apple_notifications_v2(
+            _AppleJSONRequest({"signedPayload": "unsigned-or-invalid"}),
+        )
+
+    assert rejected.value.status_code == 400
+    assert claims == []
+
+
+@pytest.mark.asyncio
+async def test_apple_notification_configuration_failure_requests_retry(monkeypatch):
+    monkeypatch.setattr(
+        apple_billing,
+        "decode_verified_apple_notification",
+        lambda _payload: (_ for _ in ()).throw(
+            apple_billing.AppleBillingConfigurationError("not configured")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as rejected:
+        await provider_routes.apple_notifications_v2(
+            _AppleJSONRequest({"signedPayload": "synthetic-jws"}),
+        )
+
+    assert rejected.value.status_code == 503
+
+
+def test_apple_notification_verifier_accepts_sandbox_only_when_enabled(
+    monkeypatch,
+):
+    calls = []
+
+    class _Verifier:
+        def __init__(self, environment):
+            self.environment = environment
+
+        def verify_notification(self, _payload):
+            calls.append(self.environment)
+            if self.environment == "production":
+                raise apple_billing.AppleTransactionVerificationError(
+                    "wrong environment"
+                )
+            return "verified-sandbox-notification"
+
+    monkeypatch.setenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "true")
+    environment, verifier, notification = (
+        apple_billing.decode_verified_apple_notification(
+            "synthetic-jws",
+            verifier_factory=_Verifier,
+        )
+    )
+
+    assert calls == ["production", "sandbox"]
+    assert environment == "sandbox"
+    assert verifier.environment == "sandbox"
+    assert notification == "verified-sandbox-notification"
+
+
+def test_apple_notification_verifier_rejects_sandbox_when_disabled(monkeypatch):
+    calls = []
+
+    class _Verifier:
+        def __init__(self, environment):
+            self.environment = environment
+
+        def verify_notification(self, _payload):
+            calls.append(self.environment)
+            raise apple_billing.AppleTransactionVerificationError(
+                "wrong environment"
+            )
+
+    monkeypatch.setenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "false")
+
+    with pytest.raises(apple_billing.AppleTransactionVerificationError):
+        apple_billing.decode_verified_apple_notification(
+            "synthetic-jws",
+            verifier_factory=_Verifier,
+        )
+
+    assert calls == ["production"]
 
 
 def test_apple_refund_and_revocation_remove_grant():

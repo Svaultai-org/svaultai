@@ -975,6 +975,16 @@ def _try_route_inner(
     services_from_text = _extract_credential_services_from_message(
         decrypted_message
     )
+    # "Save/store/remember my <service> login" is a confirmation of an
+    # existing draft, never permission to generate replacement values. The
+    # endpoint resolves it against an exact-service pending draft before this
+    # router runs; without one, leave it unhandled so no generation occurs.
+    try:
+        from vault_pending_draft_confirm import pending_draft_confirm_service
+        if pending_draft_confirm_service(decrypted_message) is not None:
+            services_from_text = []
+    except Exception:
+        pass
     if services_from_text and not (
         cred_cmd is not None and cred_cmd.action == ACTION_CREATE
     ):
@@ -1359,7 +1369,9 @@ def _try_route_inner(
 # Service-name extractor (light-weight — only positive matches)
 # ---------------------------------------------------------------------------
 
-# "create/save/generate/make (me )? (an|the|my|a)? <SERVICE> (login|account|credential)"
+# Service extraction for explicit credential commands. ``save`` remains here
+# so supplied-value forms can identify their service; the generation-only
+# extractor below deliberately excludes it.
 # Order matters in the determiner alternation: `an` before `a` so
 # "make an amazon login" does NOT capture the trailing "n" of "an"
 # into the service token.
@@ -1440,12 +1452,12 @@ def _extract_credential_services_from_message(message: str) -> list[str]:
         return []
     lowered = message.lower()
     if not re.search(
-        r"\b(create|save|make|generate|set\s+up|add)\b", lowered
+        r"\b(create|make|generate|set\s+up|add)\b", lowered
     ):
         return []
     tail = re.sub(
         r"^\s*(?:please\s+|can\s+you\s+|could\s+you\s+)?"
-        r"(?:create|save|make|generate|set\s+up|add)"
+        r"(?:create|make|generate|set\s+up|add)"
         r"(?:\s+(?:me|my|us))?\s+",
         "",
         message,

@@ -60,7 +60,7 @@ def save_pending_credential(
                 "fields": fields,
             },
             key,
-            generated=True,
+            generated=bool(draft.generated),
         )
         try:
             consume_draft(vault_id=vault_id, draft_id=draft.draft_id)

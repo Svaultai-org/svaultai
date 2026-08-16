@@ -15,8 +15,13 @@ required before purchases can be accepted.
 - Intended US reference price: USD 25/month. Android displays Google Play's
   localized `ProductDetails.price`; it does not hardcode a localized price.
 - Production Android package: `com.svaultai.app`.
-- Apple product IDs are intentionally unset until App Store Connect creates
-  the real IDs.
+- Apple bundle ID: `com.svaultai.app`.
+- Apple numeric app ID: `6800601455`.
+- Apple subscription group: `SVaultAI Storage`.
+- Apple product: `svaultai.storage.50gb.monthly`.
+- Apple billing period: auto-renewing `P1M`.
+- Apple entitlement: 50 GiB total; the paid plan replaces the free 1 GiB
+  limit and is not additive.
 - Web checkout remains disabled until a provider approves the fully disclosed
   business model in writing.
 
@@ -179,50 +184,24 @@ Official configuration references:
   is created later, setting it adds one separate "Download for Mac" action.
 - Neither value may point to an invented, placeholder, or unpublished URL.
 
-## Apple App Store operator configuration
+## Apple production activation
 
-The StoreKit 2 client and verified server boundaries are implemented. App Store
-Connect remains authoritative for identifiers and pricing, so first inspect the
-existing `com.svaultai.app` record and do not create a duplicate app. If that
-record has no subscription identifier already referenced by production, create:
+The catalog was verified in App Store Connect on 2026-08-17. Product
+`svaultai.storage.50gb.monthly` is in review at USD 25/month with regional
+pricing configured; no duplicate Apple products exist.
 
-- subscription group: `SVaultAI Storage`
-- auto-renewable subscription: `SVaultAI 50 GB Storage`
-- product ID: `svaultai.storage.50gb.monthly`
-- duration: one month
-- base United States price: USD 25.00; review Apple's generated regional prices
-  before saving and do not silently substitute a different tier
-
-If App Store Connect already contains a real identifier, use it instead of the
-proposed identifier everywhere below. Configure the Hostinger secret store with
-the real numeric Apple app ID and:
-
-```text
-VAULTAI_APPLE_BUNDLE_ID=com.svaultai.app
-VAULTAI_APPLE_APP_ID=<numeric App Store Connect Apple ID>
-VAULTAI_APPLE_ROOT_CERT_DIR=<directory containing current Apple PKI roots>
-VAULTAI_APPLE_PRODUCT_MAP_JSON={"svaultai.storage.50gb.monthly":{"quantity":1,"entitlement_bytes":53687091200,"plan_id":"monthly"}}
-VAULTAI_APPLE_ACCEPT_SANDBOX=false
-```
-
-Store current Apple root certificates outside Git. In App Store Connect set
-both Production and Sandbox App Store Server Notifications V2 URLs to:
-
-```text
-https://api.svaultai.com/billing/apple/notifications-v2
-```
-
-Temporarily enable sandbox acceptance only for the validation backend and build
-the sandbox client with `--dart-define=APPLE_STOREKIT_ENVIRONMENT=sandbox`.
-App Store release builds must omit that define (the fail-closed default is
-`production`) and run with `VAULTAI_APPLE_ACCEPT_SANDBOX=false`.
-Use Xcode StoreKit testing and an App Store sandbox account to validate purchase,
-restore, renewal, grace period, billing retry, recovery, expiration, refund,
-revocation, duplicate delivery, relogin, and cross-device refresh. The client
-sends Apple's signed StoreKit 2 transaction JWS to
-`/billing/apple/verify-transaction` and finishes it only after authoritative
-server verification. One active product maps to one 50 GiB ledger entitlement;
-renewals update its period and never stack another grant.
+1. Configure the bundle ID, numeric Apple app ID, Apple PKI root certificates,
+   and an explicit `VAULTAI_APPLE_PRODUCT_MAP_JSON` mapping. The mapping must
+   contain `quantity=1`, `entitlement_bytes=53687091200`, `plan_id=monthly`,
+   and `billing_period=P1M`.
+2. Set App Store Server Notifications V2 production and sandbox URLs to
+   `/billing/apple/notifications-v2`, then use Apple's test-notification API.
+3. Implement the StoreKit 2 client with the backend-provided opaque
+   `appAccountToken`, send Apple-signed transaction JWS to
+   `/billing/apple/verify-transaction`, and finish only verified transactions.
+5. Validate purchase, restore, renewal, grace, billing retry, expiration,
+   refund, revocation, duplicate notification, and cross-device sign-in using
+   Xcode StoreKit testing and App Store sandbox. Windows cannot certify these.
 
 ## Web-card provider shortlist
 

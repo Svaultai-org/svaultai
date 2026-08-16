@@ -634,18 +634,31 @@ class _StoragePageState extends State<StoragePage> {
     final play = _playBilling;
     final apple = _appleBilling;
     final activeSubscription = hasActiveSubscription(data);
-    final playMessage = activeSubscription
+    final activeProvider = billingProviderLabel(data);
+    final playOwnsSubscription =
+        activeSubscription && billingSource(data) == 'google_play';
+    final appleOwnsSubscription =
+        activeSubscription && billingSource(data) == 'apple';
+    final playMessage = playOwnsSubscription
         ? 'Your Google Play storage subscription is active. Billing and '
             'cancellation are managed by Google Play.'
-        : (_storeConnectionError ??
-            play?.message ??
-            (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
-    final appleMessage = activeSubscription
+        : activeSubscription
+            ? 'Your storage entitlement is active through $activeProvider. '
+                'It is not a Google Play subscription.'
+            : (_storeConnectionError ??
+                play?.message ??
+                (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
+    final appleMessage = appleOwnsSubscription
         ? 'Your App Store storage subscription is active. Billing and '
             'cancellation are managed by Apple.'
-        : (_storeConnectionError ??
-            apple?.message ??
-            (apple?.state == 'ready' ? null : 'Connecting to the App Store…'));
+        : activeSubscription
+            ? 'Your storage entitlement is active through $activeProvider. '
+                'It is not an App Store subscription.'
+            : (_storeConnectionError ??
+                apple?.message ??
+                (apple?.state == 'ready'
+                    ? null
+                    : 'Connecting to the App Store…'));
     final storeCanBuy = _usesGooglePlayBilling
         ? (play?.canBuy ?? false)
         : (_usesAppleBilling && (apple?.canBuy ?? false));
@@ -687,6 +700,9 @@ class _StoragePageState extends State<StoragePage> {
               ? apple!.restore
               : null),
       onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
+      // The native controllers expose one 50 GB product. Stripe-era tier
+      // examples are not native store products and must not be advertised.
+      showPricingExamples: false,
     );
   }
 }
@@ -765,6 +781,19 @@ bool hasActiveSubscription(Map<String, dynamic> data) {
   return const {'active', 'in_grace', 'canceled_pending'}.contains(status);
 }
 
+String billingSource(Map<String, dynamic> data) =>
+    ((data['source'] as String?) ?? 'none').trim().toLowerCase();
+
+String billingProviderLabel(Map<String, dynamic> data) {
+  return switch (billingSource(data)) {
+    'apple' => 'the App Store',
+    'google_play' => 'Google Play',
+    'web_card' => 'the web billing provider',
+    'stripe' || 'stripe_legacy' => 'the legacy web billing provider',
+    _ => 'another verified provider',
+  };
+}
+
 bool hasManageableStripeSubscription(Map<String, dynamic> data) {
   final source = (data['source'] as String?) ?? 'none';
   final status = (data['status'] as String?) ?? 'none';
@@ -810,6 +839,7 @@ class StorageBody extends StatelessWidget {
   final bool showAppleSubscriptionDisclosure;
   final VoidCallback? onRestorePurchases;
   final VoidCallback? onRetryStore;
+  final bool showPricingExamples;
 
   const StorageBody({
     super.key,
@@ -823,6 +853,7 @@ class StorageBody extends StatelessWidget {
     this.showAppleSubscriptionDisclosure = false,
     this.onRestorePurchases,
     this.onRetryStore,
+    this.showPricingExamples = true,
   });
 
   @override
@@ -957,7 +988,7 @@ class StorageBody extends StatelessWidget {
           ),
         if (isOnFreeTierOnly(data) || isGrandfathered(data))
           const SizedBox(height: VaultSpacing.lg),
-        const _PricingExamplesCard(),
+        if (showPricingExamples) const _PricingExamplesCard(),
         const SizedBox(height: VaultSpacing.xl),
       ],
     );
