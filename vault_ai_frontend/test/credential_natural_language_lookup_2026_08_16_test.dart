@@ -17,6 +17,7 @@ void main() {
 
   group('credential natural-language lookup normalization', () {
     final variants = <String, CredentialV2RequestedField>{
+      'show my facebook login': CredentialV2RequestedField.summary,
       'show me my facebook login': CredentialV2RequestedField.summary,
       'what is my facebook login': CredentialV2RequestedField.summary,
       "what's my facebook login": CredentialV2RequestedField.summary,
@@ -24,6 +25,7 @@ void main() {
       'give me my facebook login': CredentialV2RequestedField.summary,
       'get my facebook login': CredentialV2RequestedField.summary,
       'find my facebook login': CredentialV2RequestedField.summary,
+      'open my facebook login': CredentialV2RequestedField.summary,
       'my facebook login': CredentialV2RequestedField.summary,
       'facebook login': CredentialV2RequestedField.summary,
       'do i have a facebook login': CredentialV2RequestedField.summary,

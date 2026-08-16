@@ -119,7 +119,10 @@ def save_pending_credential(
             "fields": fields,
         },
         key,
-        generated=True,
+        generated=not (
+            bool(legacy.get("explicit_username_supplied"))
+            and bool(legacy.get("explicit_password_supplied"))
+        ),
     )
     try:
         memory.pop("pending_login_draft", None)

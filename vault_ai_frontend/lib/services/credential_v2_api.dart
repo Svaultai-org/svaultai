@@ -4,6 +4,11 @@ import 'package:http/http.dart' as http;
 
 import 'credential_v2.dart';
 import 'credential_v2_qa_diagnostics.dart';
+export 'release_feature_contract.dart'
+    show
+        zkV2CredentialReadEnabled,
+        zkV2CredentialWriteEnabled,
+        zkV2CredentialMigrationEnabled;
 
 const bool _qaPutDiagnostics =
     bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
@@ -12,13 +17,6 @@ void _qaPutTrace(String stage, {String? error}) {
   if (!_qaPutDiagnostics) return;
   print('[qa-v2-put] $stage${error == null ? '' : ' error=$error'}');
 }
-
-const bool zkV2CredentialReadEnabled =
-    bool.fromEnvironment('ZK_V2_READ_ENABLED', defaultValue: false);
-const bool zkV2CredentialWriteEnabled =
-    bool.fromEnvironment('ZK_V2_WRITE_ENABLED', defaultValue: false);
-const bool zkV2CredentialMigrationEnabled =
-    bool.fromEnvironment('ZK_V2_MIGRATION_ENABLED', defaultValue: false);
 
 class CredentialV2RequestException implements Exception {
   final int statusCode;
@@ -80,7 +78,8 @@ class CredentialV2Api {
       _qaPutTrace('http_client_call_returned');
       if (_qaPutDiagnostics) {
         print('CREDENTIAL_V2_CREATE_HTTP_STATUS=${response.statusCode}');
-        print('CREDENTIAL_V2_CREATE_HTTP_2XX=${response.statusCode >= 200 && response.statusCode < 300}');
+        print(
+            'CREDENTIAL_V2_CREATE_HTTP_2XX=${response.statusCode >= 200 && response.statusCode < 300}');
       }
       return _envelopeResponse(response);
     } on FormatException {

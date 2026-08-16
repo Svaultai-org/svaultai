@@ -1,4 +1,4 @@
-import 'dart:async' show unawaited;
+import 'dart:async' show TimeoutException, unawaited;
 
 import 'package:flutter/foundation.dart'
     show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
@@ -8,10 +8,17 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
-import 'main.dart'
-    show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'services/apple_storekit_billing_controller.dart';
 import 'services/google_play_billing_controller.dart';
 import 'ui/tokens.dart';
+
+const String kAppleStoreKitEnvironment = String.fromEnvironment(
+  'APPLE_STOREKIT_ENVIRONMENT',
+  defaultValue: 'production',
+);
+
+const Duration kStoreConnectionTimeout = Duration(seconds: 12);
 
 String? buildCheckoutRedirectUrl(String queryFlag) {
   if (!kIsWeb) return null;
@@ -58,7 +65,11 @@ class _StoragePageState extends State<StoragePage> {
   String? _error;
   Map<String, dynamic>? _data;
   GooglePlayBillingController? _playBilling;
+  AppleStoreKitBillingController? _appleBilling;
   String? _lastPlayBillingState;
+  String? _lastAppleBillingState;
+  String? _storeConnectionError;
+  bool _storeConnectionInFlight = false;
 
   @override
   void initState() {
@@ -70,21 +81,127 @@ class _StoragePageState extends State<StoragePage> {
   bool get _usesGooglePlayBilling =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  bool get _usesAppleBilling =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
   @override
   void dispose() {
     _playBilling?.dispose();
+    _appleBilling?.dispose();
     super.dispose();
   }
 
-  Future<void> _initializeGooglePlayBilling(String authToken) async {
-    if (!_usesGooglePlayBilling || _playBilling != null) return;
+  Future<void> _initializeAppleBilling(
+    String authToken, {
+    bool retry = false,
+  }) async {
+    if (!_usesAppleBilling || _storeConnectionInFlight) return;
+    if (_appleBilling != null) {
+      if (retry) await _appleBilling!.retry();
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _storeConnectionInFlight = true;
+        _storeConnectionError = null;
+      });
+    }
     try {
-      final providers = await _client.getBillingProviders(authToken: authToken);
+      final providers = await _client
+          .getBillingProviders(authToken: authToken)
+          .timeout(kStoreConnectionTimeout);
+      final apple = providers['apple'];
+      if (apple is! Map || apple['configured'] != true) {
+        throw StateError('app_store_not_configured');
+      }
+      final productId = apple['product_id']?.toString() ?? '';
+      final appAccountToken = apple['app_account_token']?.toString() ?? '';
+      if (productId.isEmpty || appAccountToken.isEmpty || !mounted) {
+        throw StateError('app_store_configuration_incomplete');
+      }
+      final controller = AppleStoreKitBillingController(
+        gateway: FlutterAppleBillingGateway(),
+        productId: productId,
+        appAccountToken: appAccountToken,
+        environment:
+            kAppleStoreKitEnvironment == 'sandbox' ? 'sandbox' : 'production',
+        verifyPurchase: ({
+          required String signedTransaction,
+          required String environment,
+        }) =>
+            _client.verifyAppleTransaction(
+          authToken: authToken,
+          signedTransaction: signedTransaction,
+          environment: environment,
+        ),
+      );
+      controller.addListener(_onAppleBillingChanged);
+      setState(() => _appleBilling = controller);
+      await controller.initialize();
+    } on TimeoutException {
+      if (mounted) {
+        setState(() => _storeConnectionError =
+            'The App Store took too long to respond. Tap Retry.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _storeConnectionError =
+            'The App Store is temporarily unavailable. Tap Retry.');
+      }
+    } finally {
+      if (mounted) setState(() => _storeConnectionInFlight = false);
+    }
+  }
+
+  void _onAppleBillingChanged() {
+    final controller = _appleBilling;
+    if (!mounted || controller == null) return;
+    final state = controller.state;
+    setState(() {});
+    if (state == 'verified' && _lastAppleBillingState != 'verified') {
+      unawaited(_refresh());
+    }
+    _lastAppleBillingState = state;
+  }
+
+  Future<void> _retryStoreBilling() async {
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
+    if (_usesAppleBilling) {
+      await _initializeAppleBilling(token, retry: true);
+    } else if (_usesGooglePlayBilling) {
+      final play = _playBilling;
+      if (play == null) {
+        await _initializeGooglePlayBilling(token);
+      } else {
+        await play.initialize(forceRetry: true);
+      }
+    }
+  }
+
+  Future<void> _initializeGooglePlayBilling(String authToken) async {
+    if (!_usesGooglePlayBilling ||
+        _playBilling != null ||
+        _storeConnectionInFlight) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _storeConnectionInFlight = true;
+        _storeConnectionError = null;
+      });
+    }
+    try {
+      final providers = await _client
+          .getBillingProviders(authToken: authToken)
+          .timeout(kStoreConnectionTimeout);
       final google = providers['google_play'];
-      if (google is! Map) return;
+      if (google is! Map) throw StateError('google_play_not_configured');
       final productId = google['product_id']?.toString() ?? '';
       final accountToken = google['account_token']?.toString() ?? '';
-      if (productId.isEmpty || accountToken.isEmpty || !mounted) return;
+      if (productId.isEmpty || accountToken.isEmpty || !mounted) {
+        throw StateError('google_play_configuration_incomplete');
+      }
       final controller = GooglePlayBillingController(
         gateway: FlutterPlayBillingGateway(),
         productId: productId,
@@ -102,8 +219,18 @@ class _StoragePageState extends State<StoragePage> {
       controller.addListener(_onGooglePlayBillingChanged);
       setState(() => _playBilling = controller);
       await controller.initialize();
+    } on TimeoutException {
+      if (mounted) {
+        setState(() => _storeConnectionError =
+            'Google Play took too long to respond. Tap Retry.');
+      }
     } catch (_) {
-      // Storage usage and the free tier stay available if Play is unavailable.
+      if (mounted) {
+        setState(() => _storeConnectionError =
+            'Google Play Billing is temporarily unavailable. Tap Retry.');
+      }
+    } finally {
+      if (mounted) setState(() => _storeConnectionInFlight = false);
     }
   }
 
@@ -236,6 +363,7 @@ class _StoragePageState extends State<StoragePage> {
         _error = null;
       });
       unawaited(_initializeGooglePlayBilling(token));
+      unawaited(_initializeAppleBilling(token));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -497,23 +625,41 @@ class _StoragePageState extends State<StoragePage> {
         ),
       );
     }
-    // Android uses Play Billing. Web checkout is fail-closed while a new card
-    // provider is reviewed, and Apple purchasing remains deferred until the
-    // StoreKit client and real App Store Connect products are configured.
     final play = _playBilling;
+    final apple = _appleBilling;
     final activeSubscription = hasActiveSubscription(data);
     final playMessage = activeSubscription
         ? 'Your Google Play storage subscription is active. Billing and '
             'cancellation are managed by Google Play.'
-        : (play?.message ??
+        : (_storeConnectionError ??
+            play?.message ??
             (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
+    final appleMessage = activeSubscription
+        ? 'Your App Store storage subscription is active. Billing and '
+            'cancellation are managed by Apple.'
+        : (_storeConnectionError ??
+            apple?.message ??
+            (apple?.state == 'ready' ? null : 'Connecting to the App Store…'));
+    final storeCanBuy = _usesGooglePlayBilling
+        ? (play?.canBuy ?? false)
+        : (_usesAppleBilling && (apple?.canBuy ?? false));
+    final storeNeedsRetry = (_usesGooglePlayBilling &&
+            play?.state != 'ready' &&
+            !(play?.loading ?? false)) ||
+        (_usesAppleBilling &&
+            apple?.state != 'ready' &&
+            !(apple?.loading ?? false) &&
+            !_storeConnectionInFlight);
     return StorageBody(
       data: data,
-      busy: _busyPurchase || (play?.loading ?? false),
-      onBuyStorage: _usesGooglePlayBilling &&
+      busy: _busyPurchase ||
+          (play?.loading ?? false) ||
+          (apple?.loading ?? false) ||
+          _storeConnectionInFlight,
+      onBuyStorage: (_usesGooglePlayBilling || _usesAppleBilling) &&
               !activeSubscription &&
-              (play?.canBuy ?? false)
-          ? play!.buy
+              storeCanBuy
+          ? (_usesGooglePlayBilling ? play!.buy : apple!.buy)
           : null,
       onManageSubscription: null,
       unavailableMessage: kIsWeb
@@ -521,11 +667,19 @@ class _StoragePageState extends State<StoragePage> {
               'our payment provider.'
           : (_usesGooglePlayBilling
               ? playMessage
-              : 'Storage upgrades are not yet available on this platform.'),
-      googlePlayPrice: _usesGooglePlayBilling ? play?.product?.price : null,
+              : (_usesAppleBilling
+                  ? appleMessage
+                  : 'Storage upgrades are not available on this platform.')),
+      storePrice: _usesGooglePlayBilling
+          ? play?.product?.price
+          : (_usesAppleBilling ? apple?.product?.price : null),
+      storeName: _usesAppleBilling ? 'the App Store' : 'Google Play',
       onRestorePurchases: _usesGooglePlayBilling && play?.available == true
           ? play!.restore
-          : null,
+          : (_usesAppleBilling && apple?.available == true
+              ? apple!.restore
+              : null),
+      onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
     );
   }
 }
@@ -644,8 +798,10 @@ class StorageBody extends StatelessWidget {
   final VoidCallback? onBuyStorage;
   final VoidCallback? onManageSubscription;
   final String? unavailableMessage;
-  final String? googlePlayPrice;
+  final String? storePrice;
+  final String storeName;
   final VoidCallback? onRestorePurchases;
+  final VoidCallback? onRetryStore;
 
   const StorageBody({
     super.key,
@@ -654,8 +810,10 @@ class StorageBody extends StatelessWidget {
     this.onBuyStorage,
     this.onManageSubscription,
     this.unavailableMessage,
-    this.googlePlayPrice,
+    this.storePrice,
+    this.storeName = 'Google Play',
     this.onRestorePurchases,
+    this.onRetryStore,
   });
 
   @override
@@ -738,10 +896,10 @@ class StorageBody extends StatelessWidget {
             onBuy: onBuyStorage,
             onManage: onManageSubscription,
           ),
-        if (googlePlayPrice != null) ...[
+        if (storePrice != null) ...[
           const SizedBox(height: VaultSpacing.md),
           _BillingAvailabilityCard(
-            message: '$googlePlayPrice per month through Google Play. '
+            message: '$storePrice per month through $storeName. '
                 'Adds 50 GB and renews automatically until canceled.',
             icon: Icons.shop_2_outlined,
           ),
@@ -756,6 +914,15 @@ class StorageBody extends StatelessWidget {
             onPressed: busy ? null : onRestorePurchases,
             icon: const Icon(Icons.restore),
             label: const Text('Restore Purchases / Refresh Subscription'),
+          ),
+        ],
+        if (onRetryStore != null) ...[
+          const SizedBox(height: VaultSpacing.md),
+          OutlinedButton.icon(
+            key: const Key('storage_store_retry'),
+            onPressed: busy ? null : onRetryStore,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry store connection'),
           ),
         ],
         const SizedBox(height: VaultSpacing.lg),

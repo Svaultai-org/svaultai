@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../api_client.dart';
 import '../../services/memory_v2_repository.dart';
+import '../../services/release_feature_contract.dart';
 import '../../l10n/app_localizations.dart';
 import '../motion.dart';
 import '../primitives.dart';
@@ -474,15 +475,14 @@ class MemoryPage extends StatefulWidget {
 }
 
 class _MemoryPageState extends State<MemoryPage> {
-  static const _memoryV2Enabled =
-      bool.fromEnvironment('MEMORY_V2_READ_ENABLED', defaultValue: false);
-  static const _qaDiagnostics = bool.fromEnvironment(
-      'QA_CHAT_PRIVACY_DIAGNOSTICS',
-      defaultValue: false);
+  static const _memoryV2Enabled = memoryV2ReadEnabled;
+  static const _qaDiagnostics =
+      bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS', defaultValue: false);
 
   void _qaMemoryCreateStage(String stage) {
     if (_qaDiagnostics) print('MEMORY_CREATE_STAGE=$stage');
   }
+
   List<Map<String, dynamic>>? _items;
   Map<String, dynamic> _counts = const {};
   bool _loading = true;

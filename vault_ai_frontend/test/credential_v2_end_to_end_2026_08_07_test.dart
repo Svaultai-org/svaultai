@@ -266,6 +266,75 @@ void main() {
     expect(wireKeys, isNot(contains('mvk')));
   });
 
+  test(
+      'supplied values survive intent draft confirmation encrypted save and retrieval',
+      () async {
+    const cases = <String>[
+      'username john password abc123 is my instagram login',
+      'my instagram username is john and password is abc123',
+      'instagram login is john / abc123',
+      'save instagram username john password abc123',
+      'save my instagram login john and pass abc123',
+    ];
+
+    for (var index = 0; index < cases.length; index++) {
+      final intent = parseCredentialV2CreateIntent(cases[index]);
+      expect(intent, isNotNull, reason: cases[index]);
+      expect(intent!.service!.toLowerCase(), 'instagram', reason: cases[index]);
+      expect(intent.username, 'john', reason: cases[index]);
+      expect(intent.password, 'abc123', reason: cases[index]);
+      expect(intent.hasSuppliedValues, isTrue, reason: cases[index]);
+
+      // The in-memory draft models the existing confirm-before-write flow.
+      final draft = generateCredentialV2Plaintext(
+        intent.service!,
+        username: intent.username,
+        password: intent.password,
+        random: Random(index + 100),
+      );
+      expect(draft.username, 'john', reason: cases[index]);
+      expect(draft.password, 'abc123', reason: cases[index]);
+
+      final stored = <String, CredentialV2Envelope>{};
+      final client = MockClient((request) async {
+        final recordId = request.url.pathSegments.last;
+        if (request.method == 'PUT') {
+          final envelope = CredentialV2Envelope.fromResponse({
+            ...jsonDecode(request.body) as Map<String, dynamic>,
+            'migration_state': 'v2_written',
+            'verification_state': 'not_verified',
+          });
+          stored[recordId] = envelope;
+          return http.Response(jsonEncode(responseFor(envelope)), 200);
+        }
+        if (request.method == 'GET') {
+          return http.Response(
+            jsonEncode(responseFor(stored[recordId]!)),
+            200,
+          );
+        }
+        return http.Response('{}', 404);
+      });
+      final repository = CredentialV2Repository(
+        crypto: crypto(index + 200),
+        api: CredentialV2Api(
+          baseUrl: 'https://unit.test',
+          sessionToken: 'session-only',
+          client: client,
+        ),
+      );
+      final recordId = 'supplied-values-$index';
+      await repository.create(recordId: recordId, credential: draft);
+
+      final wire = jsonEncode(stored[recordId]!.toRequestBody());
+      expect(wire, isNot(contains('john')), reason: cases[index]);
+      expect(wire, isNot(contains('abc123')), reason: cases[index]);
+      final retrieved = await repository.reveal(recordId);
+      expect(retrieved.username, 'john', reason: cases[index]);
+      expect(retrieved.password, 'abc123', reason: cases[index]);
+    }
+  });
+
   test('nonce is unique for repeated writes of the same record', () async {
     final service = crypto();
     final first =

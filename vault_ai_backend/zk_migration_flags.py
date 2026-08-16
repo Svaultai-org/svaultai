@@ -10,7 +10,7 @@ from typing import Mapping
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"", "0", "false", "no", "off"}
 
-WEB_API_CONTRACT = "svaultai-core-v2-2026-08-15"
+WEB_API_CONTRACT = "svaultai-core-v2-2026-08-16"
 
 
 def _flag(source: Mapping[str, str], name: str) -> bool:
@@ -89,13 +89,27 @@ class ZkMigrationFlags:
         if self.wallet_write_enabled and not self.wallet_read_enabled:
             raise ValueError("wallet v2 write requires wallet v2 read")
 
-    def public_web_features(self) -> dict[str, bool]:
-        """Return the non-secret feature matrix expected by the web client."""
+    def public_client_features(self) -> dict[str, bool]:
+        """Return every non-secret flag shared by current client builds."""
         return {
             "credentialV2Read": self.read_enabled,
             "credentialV2Write": self.write_enabled,
+            "credentialV2Migration": self.migration_enabled,
             "memoryV2Read": self.memory_read_enabled,
             "memoryV2Write": self.memory_write_enabled,
+            "memoryV2Migration": self.memory_migration_enabled,
             "fileV2Read": self.file_read_enabled,
             "fileV2Write": self.file_write_enabled,
+            "fileV2Migration": self.file_migration_enabled,
+            "walletBackupV2Read": self.wallet_backup_read_enabled,
+            "walletBackupV2Write": self.wallet_backup_write_enabled,
+            "walletBackupV2Migration": self.wallet_backup_migration_enabled,
+            "walletV2Read": self.wallet_read_enabled,
+            "walletV2Write": self.wallet_write_enabled,
+            "walletV2Migration": self.wallet_migration_enabled,
+            "privateVaultLocalRouting": self.private_local_routing_enabled,
         }
+
+    def public_web_features(self) -> dict[str, bool]:
+        """Compatibility alias for older release-preflight callers."""
+        return self.public_client_features()

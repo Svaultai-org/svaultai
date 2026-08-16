@@ -8981,7 +8981,7 @@ async def release_contract():
     flags.validate_dependencies()
     return {
         "apiContract": WEB_API_CONTRACT,
-        "features": flags.public_web_features(),
+        "features": flags.public_client_features(),
     }
 
 
@@ -15445,7 +15445,10 @@ async def chat_endpoint(
                                 "fields": _sm_new_fields,
                             },
                             key,
-                            generated=True,
+                            generated=not (
+                                bool(_sm_draft.get("explicit_username_supplied"))
+                                and bool(_sm_draft.get("explicit_password_supplied"))
+                            ),
                         )
                     except Exception:
                         logger.exception(
@@ -16085,6 +16088,33 @@ async def chat_endpoint(
         )
 
         intent = intent_data.get("intent")
+
+        # Explicit username+password assertions are save/create data even when
+        # the classifier mistakes conversational wording ("... is my login")
+        # for retrieval. Values stay inside the existing encrypted
+        # draft-confirm-save path and are never included in diagnostics.
+        _assertion_command = _extract_credential_command(
+            decrypted_message or "",
+            has_pending_draft=False,
+        )
+        if (
+            _assertion_command.action == _CMD_CREATE
+            and _assertion_command.explicit_fields.get(_FIELD_USERNAME)
+            and _assertion_command.explicit_fields.get(_FIELD_PASSWORD)
+        ):
+            _assertion_service = (
+                _assertion_command.service or intent_data.get("service")
+            )
+            if _normalize_service_name(_assertion_service) != "general":
+                intent = "generate_login"
+                intent_data["intent"] = intent
+                intent_data["service"] = _assertion_service
+                intent_data["parts_wanted"] = "username_password"
+                print(
+                    "[CHAT-DEBUG] credential_assertion_override "
+                    "explicit_username=true explicit_password=true",
+                    flush=True,
+                )
         print(f"[CHAT-DEBUG] intent_ok intent={intent!r}", flush=True)
 
                                                                     
@@ -16408,7 +16438,10 @@ async def chat_endpoint(
                         "fields": new_fields,
                     },
                     key,
-                    generated=True,
+                    generated=not (
+                        bool(_explicit_supplied_username)
+                        and bool(_explicit_password_value)
+                    ),
                 )
                 memory["last_generated_login"] = {
                     "service": service,
@@ -16430,7 +16463,11 @@ async def chat_endpoint(
                     ),
                 }
                 save_lines = [
-                    f"I generated and saved your {service.title()} login.",
+                    (
+                        f"I saved your {service.title()} login using the values you supplied."
+                        if _explicit_supplied_username and _explicit_password_value
+                        else f"I generated and saved your {service.title()} login."
+                    ),
                 ]
                 if new_fields.get("username"):
                     save_lines.append(f"Username: {new_fields['username']}")
@@ -16467,6 +16504,7 @@ async def chat_endpoint(
                 # confirm handlers can distinguish "generated" from
                 # "user provided" without inspecting the value.
                 "explicit_username_supplied": bool(_explicit_supplied_username),
+                "explicit_password_supplied": bool(_explicit_password_value),
                 "ts": int(time.time()),
             }
 
@@ -16494,9 +16532,13 @@ async def chat_endpoint(
                     # user supplied it. Only the password was
                     # generated.
                     reply_lines.append(
-                        f"Drafting a {service.title()} login with the "
-                        "username you gave me and a fresh strong "
-                        "password."
+                        (
+                            f"Drafting a {service.title()} login with the "
+                            "username and password you gave me."
+                            if _explicit_password_value
+                            else f"Drafting a {service.title()} login with the "
+                            "username you gave me and a fresh strong password."
+                        )
                     )
                 else:
                     reply_lines.append(
