@@ -58,6 +58,7 @@ import 'services/attachment_title_binding.dart';
 import 'services/native_media_capture.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
+import 'services/release_feature_contract.dart';
 import 'services/vault_local_file_lookup.dart';
 import 'services/web_pbkdf2_stub.dart'
     if (dart.library.js_interop) 'services/web_pbkdf2.dart';
@@ -400,9 +401,9 @@ String? extractInventoryPrivateLookupTopic(String text) {
   // lookup merely because they use a private-looking form such as
   // "what is my ETH balance?".
   if (RegExp(
-    r'\b(?:crypto|wallet|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20)\b',
-    caseSensitive: false,
-  ).hasMatch(normalized) &&
+        r'\b(?:crypto|wallet|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20)\b',
+        caseSensitive: false,
+      ).hasMatch(normalized) &&
       RegExp(
         r'\b(?:balance|wallet|address|receive|send|transaction|history|gas|fee)\b',
         caseSensitive: false,
@@ -7864,6 +7865,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final credential = generateCredentialV2Plaintext(
       service,
       username: intent.username,
+      password: intent.password,
     );
     final recordId = _newCredentialV2RecordId();
     try {
@@ -7878,7 +7880,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         input.clear();
         msgs.add(_Msg(
           'assistant',
-          'I generated and securely saved your ${credential.service} login.',
+          intent.hasSuppliedValues
+              ? 'I securely saved your ${credential.service} login using the values you supplied.'
+              : 'I generated and securely saved your ${credential.service} login.',
           kind: ChatMessage.kInlineCredential,
           payload: <String, dynamic>{
             'record_id': recordId,
@@ -8215,10 +8219,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final data = await showMemoryEditorDialog(context);
     if (data == null) return;
     try {
-      const memoryV2Enabled = bool.fromEnvironment(
-        'MEMORY_V2_WRITE_ENABLED',
-        defaultValue: false,
-      );
+      const memoryV2Enabled = memoryV2WriteEnabled;
       if (memoryV2Enabled) {
         final memoryId = 'memory-${DateTime.now().microsecondsSinceEpoch}';
         final repository = MemoryV2Repository(
@@ -11846,7 +11847,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 const SizedBox(height: 24),
                 const LanguageCard(),
                 const SizedBox(height: 24),
-
                 const Text(
                   'Current plan',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
@@ -11914,9 +11914,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     );
                   }),
                 ),
-
                 const SizedBox(height: 16),
-
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/security-center'),
                   borderRadius: BorderRadius.circular(18),
@@ -11960,7 +11958,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/storage'),
                   borderRadius: BorderRadius.circular(18),
@@ -12003,7 +12000,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/devices'),
                   borderRadius: BorderRadius.circular(18),
@@ -12045,7 +12041,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-
                 InkWell(
                   key: const Key('settings_help_and_faq_tile'),
                   onTap: () => openHelpCenter(
@@ -12092,9 +12087,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 12),
-
                 InkWell(
                   key: const Key('settings_privacy_policy_tile'),
                   onTap: () => Navigator.pushNamed(
@@ -12142,11 +12135,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                   ),
                 ),
-
                 _DeleteVaultSettingsTile(),
-
                 const SizedBox(height: 24),
-
                 CryptoVaultLockedCard(
                   tier: !app.isBillingLoaded
                       ? kTierLoadingLabel
@@ -12987,8 +12977,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final duplicateAction =
         job.duplicateAction ?? (ctx.isBatchUpload ? 'skip' : 'prompt');
 
-    const fileV2Write =
-        bool.fromEnvironment('FILE_V2_WRITE_ENABLED', defaultValue: false);
+    const fileV2Write = fileV2WriteEnabled;
     if (fileV2Write) {
       final repo = FileV2Repository.current();
       if (repo == null) throw StateError('file_v2_requires_active_mvk');
@@ -13367,8 +13356,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
 
-      const fileV2Read =
-          bool.fromEnvironment('FILE_V2_READ_ENABLED', defaultValue: false);
+      const fileV2Read = fileV2ReadEnabled;
       if (fileV2Read) {
         final repo = FileV2Repository.current();
         if (repo != null) {
@@ -13833,10 +13821,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (mt is! String || mt.isEmpty) return;
       if (mk is! String || mk.isEmpty) return;
       if (mv is! String || mv.isEmpty) return;
-      const memoryV2Enabled = bool.fromEnvironment(
-        'MEMORY_V2_WRITE_ENABLED',
-        defaultValue: false,
-      );
+      const memoryV2Enabled = memoryV2WriteEnabled;
       if (!memoryV2Enabled) {
         final legacyClient = VaultAIClient(baseUrl: backendBaseUrl);
         await legacyClient.tryZkFinalizeMemoryProposal(
@@ -16140,10 +16125,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw StateError('subscription_delinquent_write_blocked');
     }
     try {
-      const memoryV2Enabled = bool.fromEnvironment(
-        'MEMORY_V2_WRITE_ENABLED',
-        defaultValue: false,
-      );
+      const memoryV2Enabled = memoryV2WriteEnabled;
       String? message;
       if (memoryV2Enabled) {
         final title = (payload['title'] ??
@@ -16496,8 +16478,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
 
       Future<void> loadMemories() async {
-        const memoryEnabled =
-            bool.fromEnvironment('MEMORY_V2_READ_ENABLED', defaultValue: false);
+        const memoryEnabled = memoryV2ReadEnabled;
         if (memoryEnabled && app.sessionToken != null) {
           try {
             final memoryRecords = await MemoryV2Repository(
@@ -16879,8 +16860,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     const diagnostics = bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS',
         defaultValue: false);
     if (diagnostics) print('QA_MEMORY_CHAT_INTENT_LOCAL=true');
-    const enabled =
-        bool.fromEnvironment('MEMORY_V2_READ_ENABLED', defaultValue: false);
+    const enabled = memoryV2ReadEnabled;
     if (!enabled || app.sessionToken == null) return true;
     try {
       final repo = MemoryV2Repository(
@@ -16916,10 +16896,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Future<bool> _tryLocalMemoryV2ContextSave(String text, AppState app) async {
     if (attachments.isNotEmpty) return false;
-    const enabled = bool.fromEnvironment(
-      'MEMORY_V2_WRITE_ENABLED',
-      defaultValue: false,
-    );
+    const enabled = memoryV2WriteEnabled;
     if (!enabled || app.sessionToken == null) return false;
 
     final explicitSave = hasExplicitLocalMemorySaveDirective(text);
@@ -17001,10 +16978,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // commands that could expose secret material are stopped before the remote
     // chat/provider path. Domain-specific local handlers (credential-v2 and
     // file lookup) run below; unsupported sensitive domains fail closed.
-    const privateLocalRouting = bool.fromEnvironment(
-      'PRIVATE_VAULT_LOCAL_ROUTING_ENABLED',
-      defaultValue: false,
-    );
+    const privateLocalRouting = privateVaultLocalRoutingEnabled;
     vlog('chat.preSend', {
       'vault_id': activeVaultId,
       'vaultName': vaultName,
@@ -17049,6 +17023,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _scrollToBottom();
     }
     debugPrint('ROUTING_STARTED_AT=${DateTime.now().toIso8601String()}');
+    final credentialCreateRequiresBackend =
+        shouldRouteCredentialV2CreateToBackend(
+      text,
+      localWriteEnabled: zkV2CredentialWriteEnabled,
+    );
 
     // Deterministic ACCOUNT-USERNAME intent (login identifier only).
     // "What is my username" / "What's my account name" / "What
@@ -17098,6 +17077,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     if (privateLocalRouting &&
         attachments.isEmpty &&
+        !credentialCreateRequiresBackend &&
         _looksLikePrivateVaultCommand(text)) {
       setState(() {
         msgs.add(_Msg('assistant',

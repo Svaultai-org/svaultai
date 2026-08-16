@@ -85,6 +85,9 @@ class GooglePlayBillingController extends ChangeNotifier {
   final String accountToken;
   final String basePlanId;
   final String billingPeriod;
+  final Duration connectionTimeout;
+  final Duration actionTimeout;
+  final Duration verificationTimeout;
 
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   final Set<String> _verificationInFlight = <String>{};
@@ -112,12 +115,15 @@ class GooglePlayBillingController extends ChangeNotifier {
     required this.accountToken,
     this.basePlanId = kGooglePlayStorageBasePlanId,
     this.billingPeriod = kGooglePlayStorageBillingPeriod,
+    this.connectionTimeout = const Duration(seconds: 12),
+    this.actionTimeout = const Duration(seconds: 20),
+    this.verificationTimeout = const Duration(seconds: 30),
   });
 
-  Future<void> initialize() async {
-    if (initialized) return;
+  Future<void> initialize({bool forceRetry = false}) async {
+    if ((initialized && !forceRetry) || loading) return;
     initialized = true;
-    _subscription = gateway.purchaseStream.listen(
+    _subscription ??= gateway.purchaseStream.listen(
       _handlePurchases,
       onError: (_) {
         state = 'unavailable';
@@ -125,17 +131,22 @@ class GooglePlayBillingController extends ChangeNotifier {
         notifyListeners();
       },
     );
+    loading = true;
+    available = false;
+    product = null;
+    state = 'connecting';
+    message = 'Connecting to Google Play…';
+    notifyListeners();
     try {
-      available = await gateway.isAvailable();
+      available = await gateway.isAvailable().timeout(connectionTimeout);
       if (!available) {
         state = 'unavailable';
         message = 'Google Play Billing is unavailable on this device.';
         notifyListeners();
         return;
       }
-      loading = true;
-      notifyListeners();
-      final response = await gateway.queryProductDetails({productId});
+      final response = await gateway
+          .queryProductDetails({productId}).timeout(connectionTimeout);
       final configuredProducts = response.productDetails
           .where(
             (item) => matchesConfiguredGoogleStoragePlan(
@@ -155,14 +166,19 @@ class GooglePlayBillingController extends ChangeNotifier {
         state = 'ready';
         message = null;
       }
+    } on TimeoutException {
+      state = 'timed_out';
+      message = 'Google Play took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'Google Play Billing is temporarily unavailable.';
+      message = 'Google Play Billing is temporarily unavailable. Tap Retry.';
     } finally {
       loading = false;
       notifyListeners();
     }
   }
+
+  Future<void> retry() => initialize(forceRetry: true);
 
   Future<void> buy() async {
     final currentProduct = product;
@@ -172,18 +188,23 @@ class GooglePlayBillingController extends ChangeNotifier {
     message = null;
     notifyListeners();
     try {
-      final launched = await gateway.buySubscription(
-        PurchaseParam(
-          productDetails: currentProduct,
-          applicationUserName: accountToken,
-        ),
-      );
+      final launched = await gateway
+          .buySubscription(
+            PurchaseParam(
+              productDetails: currentProduct,
+              applicationUserName: accountToken,
+            ),
+          )
+          .timeout(actionTimeout);
       if (!launched) {
         state = 'unavailable';
         message = 'Google Play could not start the purchase.';
       } else {
         message = 'Complete your purchase in Google Play.';
       }
+    } on TimeoutException {
+      state = 'timed_out';
+      message = 'Google Play took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
       message = 'Google Play could not start the purchase.';
@@ -200,8 +221,11 @@ class GooglePlayBillingController extends ChangeNotifier {
     message = null;
     notifyListeners();
     try {
-      await gateway.restorePurchases();
+      await gateway.restorePurchases().timeout(actionTimeout);
       message = 'Checking your Google Play subscriptions…';
+    } on TimeoutException {
+      state = 'timed_out';
+      message = 'Google Play took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
       message = 'Google Play could not restore purchases.';
@@ -250,7 +274,7 @@ class GooglePlayBillingController extends ChangeNotifier {
       final result = await verifyPurchase(
         productId: purchase.productID,
         purchaseToken: token,
-      );
+      ).timeout(verificationTimeout);
       if (result['verified'] != true) {
         throw StateError('server verification rejected');
       }
@@ -258,7 +282,7 @@ class GooglePlayBillingController extends ChangeNotifier {
       // backend also acknowledges with the Developer API for reliability;
       // this client completion is safe and idempotent.
       if (purchase.pendingCompletePurchase) {
-        await gateway.completePurchase(purchase);
+        await gateway.completePurchase(purchase).timeout(actionTimeout);
       }
       _completedTokens.add(token);
       state = 'verified';

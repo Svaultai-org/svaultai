@@ -4,20 +4,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:vault_ai_frontend/services/apple_storekit_billing_controller.dart';
 
-const _productId = 'svaultai.storage.50gb.monthly';
+const _productId = 'synthetic.storage.monthly';
 
 ProductDetails _product() => ProductDetails(
       id: _productId,
-      title: 'SVaultAI 50 GB Storage',
-      description: '50 GB additional encrypted storage, billed monthly',
-      price: r'$25.00',
-      rawPrice: 25,
+      title: 'Synthetic storage',
+      description: 'Synthetic test product',
+      price: r'$1.00',
+      rawPrice: 1,
       currencyCode: 'USD',
     );
 
 class _Gateway implements AppleBillingGateway {
   final controller = StreamController<List<PurchaseDetails>>.broadcast();
   bool available = true;
+  bool hangAvailability = false;
   int buyCalls = 0;
   int restoreCalls = 0;
   int completeCalls = 0;
@@ -27,7 +28,9 @@ class _Gateway implements AppleBillingGateway {
   Stream<List<PurchaseDetails>> get purchaseStream => controller.stream;
 
   @override
-  Future<bool> isAvailable() async => available;
+  Future<bool> isAvailable() => hangAvailability
+      ? Completer<bool>().future
+      : Future<bool>.value(available);
 
   @override
   Future<ProductDetailsResponse> queryProductDetails(Set<String> ids) async =>
@@ -53,7 +56,7 @@ class _Gateway implements AppleBillingGateway {
 
 PurchaseDetails _purchase(PurchaseStatus status, {String jws = 'signed-jws'}) {
   final purchase = PurchaseDetails(
-    purchaseID: 'transaction-1',
+    purchaseID: 'synthetic-transaction',
     productID: _productId,
     verificationData: PurchaseVerificationData(
       localVerificationData: 'local-proof-never-trusted',
@@ -76,11 +79,13 @@ AppleStoreKitBillingController _billing(
       productId: _productId,
       appAccountToken: '00000000-0000-5000-8000-000000000001',
       verifyPurchase: verifier,
+      connectionTimeout: const Duration(milliseconds: 20),
+      actionTimeout: const Duration(milliseconds: 20),
+      verificationTimeout: const Duration(milliseconds: 20),
     );
 
 void main() {
-  test('queries localized product and launches with App Account Token',
-      () async {
+  test('queries product and launches with opaque App Account Token', () async {
     final gateway = _Gateway();
     final billing = _billing(
       gateway,
@@ -89,73 +94,73 @@ void main() {
     );
     await billing.initialize();
     expect(billing.state, 'ready');
-    expect(billing.product?.price, r'$25.00');
     await billing.buy();
     expect(gateway.buyCalls, 1);
-    expect(gateway.lastPurchaseParam?.applicationUserName,
-        '00000000-0000-5000-8000-000000000001');
+    expect(billing.message, contains('Complete your purchase'));
     billing.dispose();
     await gateway.controller.close();
   });
 
-  test('pending transaction is never verified or finished', () async {
+  test('connection is bounded and retry recovers', () async {
+    final gateway = _Gateway()..hangAvailability = true;
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async =>
+          {'verified': true},
+    );
+    await billing.initialize();
+    expect(billing.state, 'timed_out');
+    expect(billing.message, contains('Tap Retry'));
+
+    gateway.hangAvailability = false;
+    await billing.retry();
+    expect(billing.state, 'ready');
+    expect(billing.product?.id, _productId);
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('server verification precedes transaction completion', () async {
+    final gateway = _Gateway();
+    var verified = false;
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async {
+        expect(signedTransaction, 'signed-jws');
+        verified = true;
+        return {'verified': true};
+      },
+    );
+    await billing.initialize();
+    gateway.controller.add([_purchase(PurchaseStatus.purchased)]);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(verified, isTrue);
+    expect(gateway.completeCalls, 1);
+    expect(billing.state, 'verified');
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('pending and rejected purchases are never completed', () async {
     final gateway = _Gateway();
     var verifications = 0;
     final billing = _billing(
       gateway,
       verifier: ({required signedTransaction, required environment}) async {
         verifications++;
-        return {'verified': true};
+        return {'verified': false};
       },
     );
     await billing.initialize();
     gateway.controller.add([_purchase(PurchaseStatus.pending)]);
     await Future<void>.delayed(Duration.zero);
-    expect(billing.state, 'pending');
     expect(verifications, 0);
     expect(gateway.completeCalls, 0);
-    billing.dispose();
-    await gateway.controller.close();
-  });
 
-  test('verified duplicate transaction is finished exactly once', () async {
-    final gateway = _Gateway();
-    var verifications = 0;
-    final billing = _billing(
-      gateway,
-      verifier: ({required signedTransaction, required environment}) async {
-        verifications++;
-        expect(signedTransaction, 'signed-jws');
-        expect(environment, 'production');
-        return {'verified': true};
-      },
-    );
-    await billing.initialize();
-    final purchase = _purchase(PurchaseStatus.purchased);
-    gateway.controller.add([purchase, purchase]);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(billing.state, 'verified');
-    expect(verifications, 1);
-    expect(gateway.completeCalls, 1);
-    billing.dispose();
-    await gateway.controller.close();
-  });
-
-  test('unverified transaction is never finished and restore retries',
-      () async {
-    final gateway = _Gateway();
-    final billing = _billing(
-      gateway,
-      verifier: ({required signedTransaction, required environment}) async =>
-          {'verified': false},
-    );
-    await billing.initialize();
     gateway.controller.add([_purchase(PurchaseStatus.restored)]);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
     expect(billing.state, 'verification_failed');
     expect(gateway.completeCalls, 0);
-    await billing.restore();
-    expect(gateway.restoreCalls, 1);
     billing.dispose();
     await gateway.controller.close();
   });

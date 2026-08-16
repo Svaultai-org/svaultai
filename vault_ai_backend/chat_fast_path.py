@@ -61,6 +61,8 @@ import logging
 import time
 from typing import Any, Callable, Optional
 
+from vault_credential_command import is_explicit_credential_assertion_create
+
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +244,12 @@ def peek_intent_without_side_effects(
         return None
     text = decrypted_message.strip()
     if not text:
+        return None
+    # A complete user-supplied login is create/save data. Credential words
+    # make the deterministic card router look retrieval-like, but allowing
+    # that envelope to short-circuit here prevents the downstream draft flow
+    # from preserving the supplied values.
+    if is_explicit_credential_assertion_create(text):
         return None
     try:
         envelope = build_envelope(text)

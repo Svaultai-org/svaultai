@@ -40,12 +40,17 @@ String credentialV2LookupReply(
 class CredentialV2CreateIntent {
   final String? service;
   final String? username;
+  final String? password;
   final bool explicitlyAnother;
   const CredentialV2CreateIntent({
     this.service,
     this.username,
+    this.password,
     this.explicitlyAnother = false,
   });
+
+  bool get hasSuppliedValues =>
+      username?.isNotEmpty == true || password?.isNotEmpty == true;
 }
 
 class CredentialV2DeleteIntent {
@@ -59,6 +64,80 @@ class CredentialV2DeleteIntent {
 CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
   var normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
   if (normalized.isEmpty) return null;
+
+  String cleanValue(String? value) => (value ?? '')
+      .trim()
+      .replaceFirst(RegExp(r'^["\x27`]'), '')
+      .replaceFirst(RegExp(r'["\x27`,;]+$'), '');
+
+  CredentialV2CreateIntent? supplied(
+    RegExp pattern, {
+    required int serviceGroup,
+    required int usernameGroup,
+    required int passwordGroup,
+  }) {
+    final match = pattern.firstMatch(normalized);
+    if (match == null) return null;
+    final service = cleanValue(match.group(serviceGroup));
+    final username = cleanValue(match.group(usernameGroup));
+    final password = cleanValue(match.group(passwordGroup));
+    if (service.isEmpty || username.isEmpty || password.isEmpty) return null;
+    return CredentialV2CreateIntent(
+      service: service,
+      username: username,
+      password: password,
+    );
+  }
+
+  // Credential assertions are creation data even without a leading "save".
+  // These anchored shapes keep arbitrary service labels data-driven while
+  // ensuring the two explicitly labelled values are never regenerated.
+  final suppliedIntent = supplied(
+        RegExp(
+          r'^username\s+(\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+(\S+)\s+is\s+my\s+(.+?)\s+login$',
+          caseSensitive: false,
+        ),
+        serviceGroup: 3,
+        usernameGroup: 1,
+        passwordGroup: 2,
+      ) ??
+      supplied(
+        RegExp(
+          r'^my\s+(.+?)\s+username\s+is\s+(\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+is\s+(\S+)$',
+          caseSensitive: false,
+        ),
+        serviceGroup: 1,
+        usernameGroup: 2,
+        passwordGroup: 3,
+      ) ??
+      supplied(
+        RegExp(
+          r'^(?:save\s+)?(?:my\s+)?(.+?)\s+(?:login\s+)?(?:username|user)\s+(?:is\s+)?(\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+(?:is\s+)?(\S+)$',
+          caseSensitive: false,
+        ),
+        serviceGroup: 1,
+        usernameGroup: 2,
+        passwordGroup: 3,
+      ) ??
+      supplied(
+        RegExp(
+          r'^(?:save\s+)?(?:my\s+)?(.+?)\s+login\s+is\s+(\S+)\s*(?:/|and)\s*(\S+)$',
+          caseSensitive: false,
+        ),
+        serviceGroup: 1,
+        usernameGroup: 2,
+        passwordGroup: 3,
+      ) ??
+      supplied(
+        RegExp(
+          r'^save\s+(?:my\s+)?(.+?)\s+login\s+(\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+(\S+)$',
+          caseSensitive: false,
+        ),
+        serviceGroup: 1,
+        usernameGroup: 2,
+        passwordGroup: 3,
+      );
+  if (suppliedIntent != null) return suppliedIntent;
   final usernameMatch = RegExp(
     r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:the\s+)?(?:username|email)(?:\s+address)?$',
     caseSensitive: false,
@@ -153,6 +232,7 @@ CredentialV2Plaintext generateCredentialV2Plaintext(
   String service, {
   Random? random,
   String? username,
+  String? password,
 }) {
   final rng = random ?? Random.secure();
   final slug = service
@@ -177,12 +257,15 @@ CredentialV2Plaintext generateCredentialV2Plaintext(
     (_) => all[rng.nextInt(all.length)],
   ));
   required.shuffle(rng);
+  final suppliedPassword = password?.trim();
   return CredentialV2Plaintext(
     service: service.trim(),
     username: username?.trim().isNotEmpty == true
         ? username!.trim()
         : '${stem}_$suffix',
-    password: required.join(),
+    password: suppliedPassword?.isNotEmpty == true
+        ? suppliedPassword!
+        : required.join(),
     url: 'https://www.$stem.com',
     notes: 'Generated locally by SVaultAI.',
   );
@@ -452,6 +535,17 @@ bool shouldAttemptCredentialV2Lookup(String text) {
   return parseCredentialV2LookupIntent(text) != null ||
       looksLikePrivateCredentialQuery(text);
 }
+
+/// Allows a recognized credential-creation message to use the backend draft
+/// workflow while the client-side encrypted write rollout is disabled.
+///
+/// Without this exception, the final private-command safety guard consumes
+/// supplied username/password assertions before the draft can preserve them.
+bool shouldRouteCredentialV2CreateToBackend(
+  String text, {
+  required bool localWriteEnabled,
+}) =>
+    !localWriteEnabled && parseCredentialV2CreateIntent(text) != null;
 
 class CredentialV2Repository {
   final CredentialV2Crypto crypto;

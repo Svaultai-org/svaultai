@@ -228,6 +228,59 @@ _EMAIL_LABEL_RE    = re.compile(r"\bemail(?:\s+address)?\b", re.IGNORECASE)
 _URL_LABEL_RE      = re.compile(r"\b(?:url|link|website|site)\b", re.IGNORECASE)
 
 
+# Fully labelled credential assertions. The service is captured only from a
+# positive login-shaped phrase, while username/password values remain exact.
+# These run before the more permissive single-field patterns so a value can
+# never swallow the following field label.
+_CREDENTIAL_ASSERTION_PATTERNS = (
+    re.compile(
+        r"^username\s+(?P<username>\S+)\s+(?:and\s+)?"
+        r"(?:password|pass|pwd)\s+(?P<password>\S+)\s+is\s+my\s+"
+        r"(?P<service>.+?)\s+login[.!?]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^my\s+(?P<service>.+?)\s+username\s+is\s+"
+        r"(?P<username>\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+is\s+"
+        r"(?P<password>\S+)[.!?]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:save\s+)?(?:my\s+)?(?P<service>.+?)\s+"
+        r"(?:login\s+)?(?:username|user)\s+(?:is\s+)?"
+        r"(?P<username>\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+"
+        r"(?:is\s+)?(?P<password>\S+)[.!?]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:save\s+)?(?:my\s+)?(?P<service>.+?)\s+login\s+is\s+"
+        r"(?P<username>\S+)\s*(?:/|and)\s*(?P<password>\S+)[.!?]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^save\s+(?:my\s+)?(?P<service>.+?)\s+login\s+"
+        r"(?P<username>\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+"
+        r"(?P<password>\S+)[.!?]*$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _extract_credential_assertion(message: str) -> Optional[dict[str, str]]:
+    text = (message or "").strip()
+    for pattern in _CREDENTIAL_ASSERTION_PATTERNS:
+        match = pattern.fullmatch(text)
+        if match is None:
+            continue
+        values = {
+            key: _clean_captured_value(match.group(key))
+            for key in ("service", FIELD_USERNAME, FIELD_PASSWORD)
+        }
+        if all(values.values()):
+            return values
+    return None
+
+
 # ``field: value`` and ``field = value`` and ``field is value`` styles.
 # Value captures up to end of line, closing bracket, or a semicolon.
 _FIELD_VALUE_PATTERNS = (
@@ -578,6 +631,13 @@ def extract_explicit_fields(message: Optional[str]) -> dict[str, str]:
         return out
     text = message
 
+    assertion = _extract_credential_assertion(text)
+    if assertion is not None:
+        return {
+            FIELD_USERNAME: assertion[FIELD_USERNAME],
+            FIELD_PASSWORD: assertion[FIELD_PASSWORD],
+        }
+
     # Priority 1: "with my email X as my username" — explicit dual assignment.
     m = _EMAIL_AS_USERNAME_RE.search(text)
     if m:
@@ -701,6 +761,7 @@ def extract_credential_command(
     raw = message
     stripped = _strip_leading_filler(raw)
     explicit = extract_explicit_fields(raw)
+    assertion = _extract_credential_assertion(raw)
     generate = _detect_generate_hints(raw)
     preserve = _detect_preserve_hints(raw)
     try:
@@ -768,6 +829,7 @@ def extract_credential_command(
     if explicit or generate:
         return CredentialCommand(
             action=ACTION_CREATE,
+            service=assertion.get("service") if assertion else None,
             explicit_fields=dict(explicit),
             generate_fields=generate - set(explicit.keys()),
             preserve_fields=preserve - set(explicit.keys()),
@@ -775,6 +837,22 @@ def extract_credential_command(
         )
 
     return CredentialCommand(action=ACTION_UNRELATED)
+
+
+def is_explicit_credential_assertion_create(message: str) -> bool:
+    """Return whether ``message`` supplies a complete login to create.
+
+    This small predicate is shared with the earliest chat fast path so a
+    username/password assertion cannot be mistaken for credential retrieval
+    before the authoritative draft workflow gets a chance to run.
+    """
+    command = extract_credential_command(message, has_pending_draft=False)
+    return bool(
+        command.action == ACTION_CREATE
+        and (command.service or "").strip()
+        and command.explicit_fields.get(FIELD_USERNAME)
+        and command.explicit_fields.get(FIELD_PASSWORD)
+    )
 
 
 __all__ = [
@@ -797,4 +875,5 @@ __all__ = [
     "CredentialCommand",
     "extract_explicit_fields",
     "extract_credential_command",
+    "is_explicit_credential_assertion_create",
 ]

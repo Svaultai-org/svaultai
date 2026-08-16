@@ -51,6 +51,9 @@ class AppleStoreKitBillingController extends ChangeNotifier {
   final String productId;
   final String appAccountToken;
   final String environment;
+  final Duration connectionTimeout;
+  final Duration actionTimeout;
+  final Duration verificationTimeout;
 
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   final Set<String> _verificationInFlight = <String>{};
@@ -71,56 +74,70 @@ class AppleStoreKitBillingController extends ChangeNotifier {
       !restoring &&
       !const {'launching', 'pending', 'verifying'}.contains(state);
 
+  bool get canRetry => !loading && !restoring && state != 'ready';
+
   AppleStoreKitBillingController({
     required this.gateway,
     required this.verifyPurchase,
     required this.productId,
     required this.appAccountToken,
     this.environment = 'production',
+    this.connectionTimeout = const Duration(seconds: 12),
+    this.actionTimeout = const Duration(seconds: 20),
+    this.verificationTimeout = const Duration(seconds: 30),
   });
 
-  Future<void> initialize() async {
-    if (initialized) return;
+  Future<void> initialize({bool forceRetry = false}) async {
+    if ((initialized && !forceRetry) || loading) return;
     initialized = true;
-    _subscription = gateway.purchaseStream.listen(
+    _subscription ??= gateway.purchaseStream.listen(
       _handlePurchases,
       onError: (_) {
         state = 'unavailable';
-        message = 'The App Store is temporarily unavailable.';
+        message = 'The App Store is temporarily unavailable. Tap Retry.';
         notifyListeners();
       },
     );
+    loading = true;
+    available = false;
+    product = null;
+    state = 'connecting';
+    message = 'Connecting to the App Store…';
+    notifyListeners();
     try {
-      available = await gateway.isAvailable();
+      available = await gateway.isAvailable().timeout(connectionTimeout);
       if (!available) {
         state = 'unavailable';
         message = 'App Store purchases are unavailable on this device.';
-        notifyListeners();
         return;
       }
-      loading = true;
-      notifyListeners();
-      final response = await gateway.queryProductDetails({productId});
+      final response = await gateway
+          .queryProductDetails({productId}).timeout(connectionTimeout);
       final matches = response.productDetails
           .where((candidate) => candidate.id == productId)
           .toList(growable: false);
       if (response.error != null || matches.length != 1) {
         state = 'unavailable';
         message =
-            'The monthly storage subscription is unavailable in the App Store.';
+            'The monthly storage subscription is unavailable in the App Store. Tap Retry.';
       } else {
         product = matches.single;
         state = 'ready';
         message = null;
       }
+    } on TimeoutException {
+      state = 'timed_out';
+      message = 'The App Store took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'The App Store is temporarily unavailable.';
+      message = 'The App Store is temporarily unavailable. Tap Retry.';
     } finally {
       loading = false;
       notifyListeners();
     }
   }
+
+  Future<void> retry() => initialize(forceRetry: true);
 
   Future<void> buy() async {
     final currentProduct = product;
@@ -130,19 +147,24 @@ class AppleStoreKitBillingController extends ChangeNotifier {
     message = null;
     notifyListeners();
     try {
-      final launched = await gateway.buySubscription(PurchaseParam(
-        productDetails: currentProduct,
-        applicationUserName: appAccountToken,
-      ));
+      final launched = await gateway
+          .buySubscription(PurchaseParam(
+            productDetails: currentProduct,
+            applicationUserName: appAccountToken,
+          ))
+          .timeout(actionTimeout);
       if (!launched) {
         state = 'unavailable';
-        message = 'The App Store could not start the purchase.';
+        message = 'The App Store could not start the purchase. Tap Retry.';
       } else {
         message = 'Complete your purchase in the App Store.';
       }
+    } on TimeoutException {
+      state = 'timed_out';
+      message = 'The App Store took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'The App Store could not start the purchase.';
+      message = 'The App Store could not start the purchase. Tap Retry.';
     } finally {
       loading = false;
       notifyListeners();
@@ -156,11 +178,14 @@ class AppleStoreKitBillingController extends ChangeNotifier {
     message = null;
     notifyListeners();
     try {
-      await gateway.restorePurchases();
+      await gateway.restorePurchases().timeout(actionTimeout);
       message = 'Checking your App Store subscriptions…';
+    } on TimeoutException {
+      state = 'timed_out';
+      message = 'The App Store took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'The App Store could not restore purchases.';
+      message = 'The App Store could not restore purchases. Tap Retry.';
     } finally {
       restoring = false;
       notifyListeners();
@@ -209,12 +234,12 @@ class AppleStoreKitBillingController extends ChangeNotifier {
       final result = await verifyPurchase(
         signedTransaction: signedTransaction,
         environment: environment,
-      );
+      ).timeout(verificationTimeout);
       if (result['verified'] != true) {
         throw StateError('server verification rejected');
       }
       if (purchase.pendingCompletePurchase) {
-        await gateway.completePurchase(purchase);
+        await gateway.completePurchase(purchase).timeout(actionTimeout);
       }
       _completedTransactions.add(signedTransaction);
       state = 'verified';
