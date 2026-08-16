@@ -135,14 +135,21 @@ void main() {
       final unlockIdx = src.indexOf('class _UnlockPageState');
       final endIdx = src.indexOf('class PinGatePage', unlockIdx);
       final window = src.substring(unlockIdx, endIdx);
-      // Positive: the entry classifier picks vaultName vs
-      // vaultHandle based on whether the cached name looks like a
-      // VLT display. Under the corrected identity model, most
-      // returning users have the user-typed name in that slot.
+      // Positive: display name and private handle are selected from separate
+      // state slots. A VLT value is never recovered from lastVaultName or a
+      // visible controller.
+      expect(
+        window.contains('vh.userFacingVaultNameOrNull(app.lastVaultName)'),
+        isTrue,
+      );
       expect(
         window.contains(
-          'final entryIsVltHandle = vh.isExplicitVaultHandleDisplay(name);',
+          'vh.canonicalInternalVaultHandleOrNull(app.vaultHandle)',
         ),
+        isTrue,
+      );
+      expect(
+        window.contains('final entryIsVltHandle = displayVaultName == null;'),
         isTrue,
       );
       // Positive: the ZK call routes both cases correctly.

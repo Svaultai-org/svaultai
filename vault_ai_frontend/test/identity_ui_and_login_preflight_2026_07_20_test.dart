@@ -406,20 +406,16 @@ void main() {
   });
 
   group('LoginPage prefills the friendly username, not the handle', () {
-    test('_autofillCachedHandle reads last_display_username first', () {
+    test('_autofillCachedHandle never assigns the cached handle', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('_autofillCachedHandle');
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 2000).clamp(0, src.length));
-      final usernameIdx = window.indexOf("'last_display_username'");
-      final handleIdx = window.indexOf('readCachedVaultHandle()');
-      expect(usernameIdx, greaterThan(-1),
-          reason: 'autofill must prefer the persisted friendly '
-              'username so returning users do not see a VLT '
-              'handle in their login form');
-      expect(usernameIdx, lessThan(handleIdx),
-          reason: 'username must be checked BEFORE the legacy '
-              'cached handle');
+      expect(window, contains('userFacingVaultNameOrNull'));
+      expect(window, isNot(contains('readCachedVaultHandle()')),
+          reason: 'an internal handle may support private auth '
+              'rehydration but must never initialize the visible field');
+      expect(window, isNot(contains('vaultNameCtrl.text = cached')));
     });
   });
 }
