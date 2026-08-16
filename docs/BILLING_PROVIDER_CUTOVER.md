@@ -15,8 +15,13 @@ required before purchases can be accepted.
 - Intended US reference price: USD 25/month. Android displays Google Play's
   localized `ProductDetails.price`; it does not hardcode a localized price.
 - Production Android package: `com.svaultai.app`.
-- Apple product IDs are intentionally unset until App Store Connect creates
-  the real IDs.
+- Apple bundle ID: `com.svaultai.app`.
+- Apple numeric app ID: `6800601455`.
+- Apple subscription group: `SVaultAI Storage`.
+- Apple product: `svaultai.storage.50gb.monthly`.
+- Apple billing period: auto-renewing `P1M`.
+- Apple entitlement: 50 GiB total; the paid plan replaces the free 1 GiB
+  limit and is not additive.
 - Web checkout remains disabled until a provider approves the fully disclosed
   business model in writing.
 
@@ -179,15 +184,19 @@ Official configuration references:
   is created later, setting it adds one separate "Download for Mac" action.
 - Neither value may point to an invented, placeholder, or unpublished URL.
 
-## Apple work remaining on macOS
+## Apple production activation
 
-1. Create the real auto-renewable subscription and base product configuration
-   in App Store Connect; do not reuse the Google identifier by assumption.
-2. Configure the actual bundle ID, numeric Apple app ID, Apple PKI root
-   certificates, and an explicit `VAULTAI_APPLE_PRODUCT_MAP_JSON` mapping.
-3. Set App Store Server Notifications V2 production and sandbox URLs to
+The catalog was verified in App Store Connect on 2026-08-17. Product
+`svaultai.storage.50gb.monthly` is in review at USD 25/month with regional
+pricing configured; no duplicate Apple products exist.
+
+1. Configure the bundle ID, numeric Apple app ID, Apple PKI root certificates,
+   and an explicit `VAULTAI_APPLE_PRODUCT_MAP_JSON` mapping. The mapping must
+   contain `quantity=1`, `entitlement_bytes=53687091200`, `plan_id=monthly`,
+   and `billing_period=P1M`.
+2. Set App Store Server Notifications V2 production and sandbox URLs to
    `/billing/apple/notifications-v2`, then use Apple's test-notification API.
-4. Implement the StoreKit 2 client with the backend-provided opaque
+3. Implement the StoreKit 2 client with the backend-provided opaque
    `appAccountToken`, send Apple-signed transaction JWS to
    `/billing/apple/verify-transaction`, and finish only verified transactions.
 5. Validate purchase, restore, renewal, grace, billing retry, expiration,

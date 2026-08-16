@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from device_gate import verify_trusted_device
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class GooglePlayVerifyRequest(BaseModel):
@@ -42,7 +44,11 @@ def _account_id(principal: dict) -> str:
 @router.get("/billing/providers")
 async def billing_providers(principal=Depends(verify_trusted_device)):
     account_id = _account_id(principal)
-    from apple_billing import apple_app_account_token, configured_apple_catalog
+    from apple_billing import (
+        AppleBillingConfigurationError,
+        apple_app_account_token,
+        configured_apple_catalog,
+    )
     from google_play_billing import (
         GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
         GOOGLE_PLAY_BASE_PLAN_TYPE,
@@ -50,11 +56,21 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         GOOGLE_PLAY_PRODUCT_50GB,
         purchase_account_token,
     )
-    apple_configured = False
+    apple_catalog = {}
     try:
-        apple_configured = bool(configured_apple_catalog())
-    except Exception:
-        apple_configured = False
+        apple_catalog = configured_apple_catalog()
+    except AppleBillingConfigurationError:
+        logger.error(
+            "[APPLE-BILLING] provider_catalog_unavailable "
+            "reason=invalid_configuration"
+        )
+        apple_catalog = {}
+    apple_product_ids = sorted(apple_catalog)
+    apple_product = (
+        apple_catalog[apple_product_ids[0]]
+        if len(apple_product_ids) == 1
+        else None
+    )
     return {
         "web_card": {
             "checkout_enabled": False,
@@ -71,7 +87,31 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
             "account_token": purchase_account_token(account_id),
         },
         "apple": {
-            "configured": apple_configured,
+            "configured": bool(apple_product_ids),
+            # The current iOS controller can purchase one configured product.
+            # With zero or multiple IDs, omit the singular selection so the
+            # client fails closed instead of inventing a tier.
+            "product_id": (
+                apple_product_ids[0]
+                if len(apple_product_ids) == 1
+                else None
+            ),
+            "product_ids": apple_product_ids,
+            "billing_period": (
+                apple_product["billing_period"]
+                if apple_product is not None
+                else None
+            ),
+            "storage_entitlement_bytes": (
+                int(apple_product["entitlement_bytes"])
+                if apple_product is not None
+                else None
+            ),
+            "quantity": (
+                int(apple_product["quantity"])
+                if apple_product is not None
+                else None
+            ),
             "app_account_token": apple_app_account_token(account_id),
         },
         "stripe_legacy": {"checkout_enabled": False, "history_preserved": True},
@@ -507,6 +547,8 @@ async def verify_apple_transaction(
 @router.post("/billing/apple/notifications-v2")
 async def apple_notifications_v2(request: Request):
     from apple_billing import (
+        AppleBillingConfigurationError,
+        AppleTransactionVerificationError,
         _attr,
         _transaction_update,
         decode_verified_apple_notification,
@@ -520,20 +562,47 @@ async def apple_notifications_v2(request: Request):
         finish_provider_event,
         upsert_verified_entitlement,
     )
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception as exc:
+        logger.warning(
+            "[APPLE-BILLING] notification_rejected reason=invalid_json"
+        )
+        raise HTTPException(
+            status_code=400, detail="Apple signed payload missing"
+        ) from exc
     signed_payload = str(body.get("signedPayload") or "") if isinstance(body, dict) else ""
     if not signed_payload or len(signed_payload) > 200_000:
+        logger.warning(
+            "[APPLE-BILLING] notification_rejected "
+            "reason=missing_or_oversize_payload"
+        )
         raise HTTPException(status_code=400, detail="Apple signed payload missing")
     try:
         environment, verifier, notification = decode_verified_apple_notification(
             signed_payload,
         )
-    except Exception as exc:
+    except AppleBillingConfigurationError as exc:
+        logger.error(
+            "[APPLE-BILLING] notification_rejected "
+            "reason=verification_not_configured"
+        )
+        raise HTTPException(
+            status_code=503, detail="Apple notification verification unavailable"
+        ) from exc
+    except AppleTransactionVerificationError as exc:
+        logger.warning(
+            "[APPLE-BILLING] notification_rejected "
+            "reason=signature_or_identity_invalid"
+        )
         raise HTTPException(status_code=400, detail="Apple notification invalid") from exc
     event_id = str(_attr(notification, "notificationUUID") or "")
     event_type = enum_text(_attr(notification, "notificationType"))
     subtype = enum_text(_attr(notification, "subtype"))
     if not event_id:
+        logger.warning(
+            "[APPLE-BILLING] notification_rejected reason=missing_event_id"
+        )
         raise HTTPException(status_code=400, detail="Apple notification identity missing")
     inserted = claim_provider_event(
         source="apple", event_id=event_id, signature_verified=True,
@@ -541,11 +610,23 @@ async def apple_notifications_v2(request: Request):
         sanitized_payload={"notification_type": event_type, "subtype": subtype or None},
     )
     if not inserted:
+        logger.info(
+            "[APPLE-BILLING] notification_processed "
+            "environment=%s outcome=duplicate event_hash=%s",
+            environment,
+            hashlib.sha256(event_id.encode("utf-8")).hexdigest()[:12],
+        )
         return {"outcome": "duplicate"}
     data = _attr(notification, "data")
     signed_transaction = str(_attr(data, "signedTransactionInfo") or "")
     if not signed_transaction:
         finish_provider_event(source="apple", event_id=event_id, outcome="verified_no_transaction")
+        logger.info(
+            "[APPLE-BILLING] notification_processed "
+            "environment=%s outcome=verified_no_transaction event_hash=%s",
+            environment,
+            hashlib.sha256(event_id.encode("utf-8")).hexdigest()[:12],
+        )
         return {"outcome": "verified_no_transaction"}
     try:
         transaction = verifier.verify_transaction(signed_transaction)

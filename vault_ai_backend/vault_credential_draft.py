@@ -92,6 +92,7 @@ class CredentialDraft:
     saved:        bool = False
     service_key:  str = ""
     opaque_server_storage: bool = False
+    generated: bool = True
 
     def __repr__(self) -> str:
         return (
@@ -116,6 +117,7 @@ class CredentialDraft:
             "expires_at":   int(self.expires_at),
             "saved":        bool(self.saved),
             "opaque_server_storage": bool(self.opaque_server_storage),
+            "generated": bool(self.generated),
         }
 
 
@@ -137,6 +139,7 @@ def _serialize(draft: CredentialDraft) -> bytes:
         "expires_at":   draft.expires_at,
         "saved":        draft.saved,
         "opaque_server_storage": draft.opaque_server_storage,
+        "generated": draft.generated,
     }
     if not draft.opaque_server_storage:
         payload["username"] = draft.username
@@ -167,6 +170,7 @@ def _deserialize(raw: bytes) -> Optional[CredentialDraft]:
             saved=bool(d.get("saved") or False),
             service_key=str(d.get("service_key") or ""),
             opaque_server_storage=bool(d.get("opaque_server_storage") or False),
+            generated=bool(d.get("generated", True)),
         )
     except Exception as e:
         logger.warning(
@@ -248,6 +252,7 @@ def store_draft(
     password: str,
     ttl_seconds: Optional[int] = None,
     opaque_server_storage: bool = False,
+    generated: bool = True,
 ) -> CredentialDraft:
     if not vault_id:
         raise ValueError("vault_id required")
@@ -274,6 +279,7 @@ def store_draft(
         saved=False,
         service_key=_service_key(service_name),
         opaque_server_storage=bool(opaque_server_storage),
+        generated=bool(generated),
     )
     if opaque_server_storage:
         # The caller receives the generated values for client-side
@@ -289,6 +295,7 @@ def store_draft(
             saved=False,
             service_key=draft.service_key,
             opaque_server_storage=True,
+            generated=draft.generated,
         )
         _write(stored, ttl)
     else:
@@ -361,6 +368,8 @@ def consume_draft(
         expires_at=d.expires_at,
         saved=True,
         service_key=d.service_key,
+        opaque_server_storage=d.opaque_server_storage,
+        generated=d.generated,
     )
 
 

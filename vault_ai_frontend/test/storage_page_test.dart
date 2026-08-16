@@ -1004,9 +1004,40 @@ void main() {
       };
       expect(hasActiveSubscription(data), isFalse);
     });
+
+    test('billing source labels never claim a cross-provider entitlement', () {
+      expect(
+        billingProviderLabel(<String, dynamic>{'source': 'apple'}),
+        'the App Store',
+      );
+      expect(
+        billingProviderLabel(<String, dynamic>{'source': 'google_play'}),
+        'Google Play',
+      );
+      expect(
+        billingProviderLabel(<String, dynamic>{'source': 'stripe_legacy'}),
+        'the legacy web billing provider',
+      );
+    });
   });
 
   group('StorageBody purchase action button', () {
+    testWidgets('native single-product surface hides unsupported tier prices',
+        (tester) async {
+      await _enlargeSurface(tester);
+      await tester.pumpWidget(_wrap(StorageBody(
+        data: _entitlement(),
+        showPricingExamples: false,
+        unavailableMessage: 'No store product is configured.',
+      )));
+
+      expect(find.text('No store product is configured.'), findsOneWidget);
+      expect(find.text('100 GB'), findsNothing);
+      expect(find.text(r'$50/month'), findsNothing);
+      expect(find.text('150 GB'), findsNothing);
+      expect(find.text('500 GB'), findsNothing);
+    });
+
     testWidgets('shows "Buy storage" when user has NO active subscription',
         (tester) async {
       await _enlargeSurface(tester);
