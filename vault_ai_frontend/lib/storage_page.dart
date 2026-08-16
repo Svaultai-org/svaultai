@@ -8,7 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
-import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'main.dart'
+    show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
 import 'privacy_policy_page.dart' show kVaultAiPrivacyUrl;
 import 'services/apple_storekit_billing_controller.dart';
 import 'services/google_play_billing_controller.dart';
@@ -442,7 +443,7 @@ class _StoragePageState extends State<StoragePage> {
         authToken: token,
         blockCount: blockCount,
         successUrl: buildCheckoutRedirectUrl('success'),
-        cancelUrl: buildCheckoutRedirectUrl('cancel'),
+        cancelUrl:  buildCheckoutRedirectUrl('cancel'),
       );
 
       final action = (result['action'] as String?) ?? 'open_checkout';
