@@ -839,6 +839,22 @@ def extract_credential_command(
     return CredentialCommand(action=ACTION_UNRELATED)
 
 
+def is_explicit_credential_assertion_create(message: str) -> bool:
+    """Return whether ``message`` supplies a complete login to create.
+
+    This small predicate is shared with the earliest chat fast path so a
+    username/password assertion cannot be mistaken for credential retrieval
+    before the authoritative draft workflow gets a chance to run.
+    """
+    command = extract_credential_command(message, has_pending_draft=False)
+    return bool(
+        command.action == ACTION_CREATE
+        and (command.service or "").strip()
+        and command.explicit_fields.get(FIELD_USERNAME)
+        and command.explicit_fields.get(FIELD_PASSWORD)
+    )
+
+
 __all__ = [
     "ACTION_CREATE",
     "ACTION_EDIT_PENDING",
@@ -859,4 +875,5 @@ __all__ = [
     "CredentialCommand",
     "extract_explicit_fields",
     "extract_credential_command",
+    "is_explicit_credential_assertion_create",
 ]
