@@ -221,6 +221,7 @@ def _apply_command(
 
         if FIELD_PASSWORD in cmd.explicit_fields:
             new_draft["password"] = cmd.explicit_fields[FIELD_PASSWORD]
+            new_draft["explicit_password_supplied"] = True
             changed.add(FIELD_PASSWORD)
 
         opts = list(new_draft.get("username_options") or [])

@@ -80,27 +80,18 @@ This guard prevents shipping a production release with APP_RELEASE=dev
     Write-Host "[vault-release] APP_RELEASE=$shaFull" -ForegroundColor Cyan
     Write-Host "[vault-release] (display-only short: $shaShort)" -ForegroundColor Cyan
 
+    python scripts/verify-release-contract.py --backend-url https://api.svaultai.com/release-contract
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error '[vault-release] live backend feature contract is incompatible.'
+        exit 7
+    }
+
     # ---- Build ----
     $buildArgs = @(
         'build', 'web', '--release',
         '--pwa-strategy=none',
         "--dart-define=APP_RELEASE=$shaFull",
-        '--dart-define=ZK_V2_READ_ENABLED=true',
-        '--dart-define=ZK_V2_WRITE_ENABLED=false',
-        '--dart-define=ZK_V2_MIGRATION_ENABLED=false',
-        '--dart-define=MEMORY_V2_READ_ENABLED=true',
-        '--dart-define=MEMORY_V2_WRITE_ENABLED=true',
-        '--dart-define=MEMORY_V2_MIGRATION_ENABLED=false',
-        '--dart-define=FILE_V2_READ_ENABLED=true',
-        '--dart-define=FILE_V2_WRITE_ENABLED=true',
-        '--dart-define=FILE_V2_MIGRATION_ENABLED=false',
-        '--dart-define=WALLET_BACKUP_V2_READ_ENABLED=false',
-        '--dart-define=WALLET_BACKUP_V2_WRITE_ENABLED=false',
-        '--dart-define=WALLET_BACKUP_V2_MIGRATION_ENABLED=false',
-        '--dart-define=WALLET_V2_READ_ENABLED=false',
-        '--dart-define=WALLET_V2_WRITE_ENABLED=false',
-        '--dart-define=WALLET_V2_MIGRATION_ENABLED=false',
-        '--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=false',
+        '--dart-define-from-file=config/release-contract.production.json',
         '--dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet',
         '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true',
         '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true',
@@ -152,14 +143,24 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         commit      = $shaFull
         commitShort = $shaShort
         builtAt     = $builtAt
-        apiContract = 'svaultai-core-v2-2026-08-15'
+        apiContract = 'svaultai-core-v2-2026-08-16'
         features    = @{
             credentialV2Read  = $true
             credentialV2Write = $false
+            credentialV2Migration = $false
             memoryV2Read      = $true
             memoryV2Write     = $true
+            memoryV2Migration = $false
             fileV2Read        = $true
             fileV2Write       = $true
+            fileV2Migration   = $false
+            walletBackupV2Read = $false
+            walletBackupV2Write = $false
+            walletBackupV2Migration = $false
+            walletV2Read = $false
+            walletV2Write = $false
+            walletV2Migration = $false
+            privateVaultLocalRouting = $false
         }
     } | ConvertTo-Json -Compress
     $releasePath = Join-Path $flutterProjectRoot 'build/web/release.json'

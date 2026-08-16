@@ -2,46 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
-import 'package:in_app_purchase_android/billing_client_wrappers.dart';
-import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
-const String kGooglePlayStorageProductId = 'svaultai_storage_50gb';
-const String kGooglePlayStorageBasePlanId = 'monthly-auto';
-const String kGooglePlayStorageBillingPeriod = 'P1M';
-
-bool matchesConfiguredGoogleStoragePlan(
-  ProductDetails candidate, {
-  String basePlanId = kGooglePlayStorageBasePlanId,
-  String billingPeriod = kGooglePlayStorageBillingPeriod,
-}) {
-  if (candidate.id != kGooglePlayStorageProductId ||
-      candidate is! GooglePlayProductDetails) {
-    return false;
-  }
-  final index = candidate.subscriptionIndex;
-  final offers = candidate.productDetails.subscriptionOfferDetails;
-  if (index == null || offers == null || index >= offers.length) {
-    return false;
-  }
-  final offer = offers[index];
-  if (offer.basePlanId != basePlanId ||
-      offer.offerId != null ||
-      offer.installmentPlanDetails != null) {
-    return false;
-  }
-  return offer.pricingPhases.any(
-    (phase) =>
-        phase.billingPeriod == billingPeriod &&
-        phase.recurrenceMode == RecurrenceMode.infiniteRecurring,
-  );
-}
-
-typedef GooglePurchaseVerifier = Future<Map<String, dynamic>> Function({
-  required String productId,
-  required String purchaseToken,
+typedef ApplePurchaseVerifier = Future<Map<String, dynamic>> Function({
+  required String signedTransaction,
+  required String environment,
 });
 
-abstract class PlayBillingGateway {
+abstract class AppleBillingGateway {
   Stream<List<PurchaseDetails>> get purchaseStream;
   Future<bool> isAvailable();
   Future<ProductDetailsResponse> queryProductDetails(Set<String> productIds);
@@ -50,10 +17,10 @@ abstract class PlayBillingGateway {
   Future<void> completePurchase(PurchaseDetails purchase);
 }
 
-class FlutterPlayBillingGateway implements PlayBillingGateway {
+class FlutterAppleBillingGateway implements AppleBillingGateway {
   final InAppPurchase _delegate;
 
-  FlutterPlayBillingGateway({InAppPurchase? delegate})
+  FlutterAppleBillingGateway({InAppPurchase? delegate})
       : _delegate = delegate ?? InAppPurchase.instance;
 
   @override
@@ -78,20 +45,19 @@ class FlutterPlayBillingGateway implements PlayBillingGateway {
       _delegate.completePurchase(purchase);
 }
 
-class GooglePlayBillingController extends ChangeNotifier {
-  final PlayBillingGateway gateway;
-  final GooglePurchaseVerifier verifyPurchase;
+class AppleStoreKitBillingController extends ChangeNotifier {
+  final AppleBillingGateway gateway;
+  final ApplePurchaseVerifier verifyPurchase;
   final String productId;
-  final String accountToken;
-  final String basePlanId;
-  final String billingPeriod;
+  final String appAccountToken;
+  final String environment;
   final Duration connectionTimeout;
   final Duration actionTimeout;
   final Duration verificationTimeout;
 
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   final Set<String> _verificationInFlight = <String>{};
-  final Set<String> _completedTokens = <String>{};
+  final Set<String> _completedTransactions = <String>{};
 
   bool initialized = false;
   bool available = false;
@@ -108,13 +74,14 @@ class GooglePlayBillingController extends ChangeNotifier {
       !restoring &&
       !const {'launching', 'pending', 'verifying'}.contains(state);
 
-  GooglePlayBillingController({
+  bool get canRetry => !loading && !restoring && state != 'ready';
+
+  AppleStoreKitBillingController({
     required this.gateway,
     required this.verifyPurchase,
     required this.productId,
-    required this.accountToken,
-    this.basePlanId = kGooglePlayStorageBasePlanId,
-    this.billingPeriod = kGooglePlayStorageBillingPeriod,
+    required this.appAccountToken,
+    this.environment = 'production',
     this.connectionTimeout = const Duration(seconds: 12),
     this.actionTimeout = const Duration(seconds: 20),
     this.verificationTimeout = const Duration(seconds: 30),
@@ -127,7 +94,7 @@ class GooglePlayBillingController extends ChangeNotifier {
       _handlePurchases,
       onError: (_) {
         state = 'unavailable';
-        message = 'Google Play Billing is temporarily unavailable.';
+        message = 'The App Store is temporarily unavailable. Tap Retry.';
         notifyListeners();
       },
     );
@@ -135,43 +102,35 @@ class GooglePlayBillingController extends ChangeNotifier {
     available = false;
     product = null;
     state = 'connecting';
-    message = 'Connecting to Google Play…';
+    message = 'Connecting to the App Store…';
     notifyListeners();
     try {
       available = await gateway.isAvailable().timeout(connectionTimeout);
       if (!available) {
         state = 'unavailable';
-        message = 'Google Play Billing is unavailable on this device.';
-        notifyListeners();
+        message = 'App Store purchases are unavailable on this device.';
         return;
       }
       final response = await gateway
           .queryProductDetails({productId}).timeout(connectionTimeout);
-      final configuredProducts = response.productDetails
-          .where(
-            (item) => matchesConfiguredGoogleStoragePlan(
-              item,
-              basePlanId: basePlanId,
-              billingPeriod: billingPeriod,
-            ),
-          )
+      final matches = response.productDetails
+          .where((candidate) => candidate.id == productId)
           .toList(growable: false);
-      if (response.error != null || configuredProducts.isEmpty) {
+      if (response.error != null || matches.length != 1) {
         state = 'unavailable';
         message =
-            'The monthly auto-renewing storage subscription is not available '
-            'in Google Play.';
+            'The monthly storage subscription is unavailable in the App Store. Tap Retry.';
       } else {
-        product = configuredProducts.first;
+        product = matches.single;
         state = 'ready';
         message = null;
       }
     } on TimeoutException {
       state = 'timed_out';
-      message = 'Google Play took too long to respond. Tap Retry.';
+      message = 'The App Store took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'Google Play Billing is temporarily unavailable. Tap Retry.';
+      message = 'The App Store is temporarily unavailable. Tap Retry.';
     } finally {
       loading = false;
       notifyListeners();
@@ -182,32 +141,30 @@ class GooglePlayBillingController extends ChangeNotifier {
 
   Future<void> buy() async {
     final currentProduct = product;
-    if (!available || currentProduct == null || loading) return;
+    if (!canBuy || currentProduct == null) return;
     loading = true;
     state = 'launching';
     message = null;
     notifyListeners();
     try {
       final launched = await gateway
-          .buySubscription(
-            PurchaseParam(
-              productDetails: currentProduct,
-              applicationUserName: accountToken,
-            ),
-          )
+          .buySubscription(PurchaseParam(
+            productDetails: currentProduct,
+            applicationUserName: appAccountToken,
+          ))
           .timeout(actionTimeout);
       if (!launched) {
         state = 'unavailable';
-        message = 'Google Play could not start the purchase.';
+        message = 'The App Store could not start the purchase. Tap Retry.';
       } else {
-        message = 'Complete your purchase in Google Play.';
+        message = 'Complete your purchase in the App Store.';
       }
     } on TimeoutException {
       state = 'timed_out';
-      message = 'Google Play took too long to respond. Tap Retry.';
+      message = 'The App Store took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'Google Play could not start the purchase.';
+      message = 'The App Store could not start the purchase. Tap Retry.';
     } finally {
       loading = false;
       notifyListeners();
@@ -222,13 +179,13 @@ class GooglePlayBillingController extends ChangeNotifier {
     notifyListeners();
     try {
       await gateway.restorePurchases().timeout(actionTimeout);
-      message = 'Checking your Google Play subscriptions…';
+      message = 'Checking your App Store subscriptions…';
     } on TimeoutException {
       state = 'timed_out';
-      message = 'Google Play took too long to respond. Tap Retry.';
+      message = 'The App Store took too long to respond. Tap Retry.';
     } catch (_) {
       state = 'unavailable';
-      message = 'Google Play could not restore purchases.';
+      message = 'The App Store could not restore purchases. Tap Retry.';
     } finally {
       restoring = false;
       notifyListeners();
@@ -242,7 +199,7 @@ class GooglePlayBillingController extends ChangeNotifier {
         case PurchaseStatus.pending:
           state = 'pending';
           message =
-              'Purchase pending. Storage will update after Google confirms payment.';
+              'Purchase pending. Storage will update after Apple confirms payment.';
           notifyListeners();
           break;
         case PurchaseStatus.purchased:
@@ -256,7 +213,7 @@ class GooglePlayBillingController extends ChangeNotifier {
           break;
         case PurchaseStatus.error:
           state = 'error';
-          message = 'Google Play could not complete the purchase.';
+          message = 'The App Store could not complete the purchase.';
           notifyListeners();
           break;
       }
@@ -264,27 +221,27 @@ class GooglePlayBillingController extends ChangeNotifier {
   }
 
   Future<void> _verifyThenComplete(PurchaseDetails purchase) async {
-    final token = purchase.verificationData.serverVerificationData;
-    if (token.isEmpty || _completedTokens.contains(token)) return;
-    if (!_verificationInFlight.add(token)) return;
+    final signedTransaction = purchase.verificationData.serverVerificationData;
+    if (signedTransaction.isEmpty ||
+        _completedTransactions.contains(signedTransaction) ||
+        !_verificationInFlight.add(signedTransaction)) {
+      return;
+    }
     state = 'verifying';
-    message = 'Verifying your purchase…';
+    message = 'Verifying your App Store purchase…';
     notifyListeners();
     try {
       final result = await verifyPurchase(
-        productId: purchase.productID,
-        purchaseToken: token,
+        signedTransaction: signedTransaction,
+        environment: environment,
       ).timeout(verificationTimeout);
       if (result['verified'] != true) {
         throw StateError('server verification rejected');
       }
-      // completePurchase is deliberately after server verification. The
-      // backend also acknowledges with the Developer API for reliability;
-      // this client completion is safe and idempotent.
       if (purchase.pendingCompletePurchase) {
         await gateway.completePurchase(purchase).timeout(actionTimeout);
       }
-      _completedTokens.add(token);
+      _completedTransactions.add(signedTransaction);
       state = 'verified';
       message = 'Subscription verified. Your storage limit is updated.';
     } catch (_) {
@@ -292,7 +249,7 @@ class GooglePlayBillingController extends ChangeNotifier {
       message =
           'Purchase verification is pending. Use Restore Purchases to retry.';
     } finally {
-      _verificationInFlight.remove(token);
+      _verificationInFlight.remove(signedTransaction);
       notifyListeners();
     }
   }

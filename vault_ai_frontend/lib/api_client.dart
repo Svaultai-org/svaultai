@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import 'services/session_termination.dart' as st;
+import 'services/release_feature_contract.dart';
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/wallet_backup_v2_repository.dart';
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
@@ -1311,6 +1312,36 @@ class VaultAIClient {
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid Google Play verification response');
+    }
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> verifyAppleTransaction({
+    required String authToken,
+    required String signedTransaction,
+    String environment = 'production',
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/apple/verify-transaction');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'signed_transaction': signedTransaction,
+        'environment': environment,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'App Store verification failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid App Store verification response');
     }
     return decoded;
   }
@@ -3189,9 +3220,6 @@ class VaultAIClient {
     String? note,
     String? title,
   }) async {
-    const walletBackupV2WriteEnabled = bool.fromEnvironment(
-        'WALLET_BACKUP_V2_WRITE_ENABLED',
-        defaultValue: false);
     if (walletBackupV2WriteEnabled) {
       final repository =
           WalletBackupV2Repository.current(api: this, authToken: authToken);
@@ -3344,9 +3372,6 @@ class VaultAIClient {
     required String service,
     required String itemType,
   }) async {
-    const walletBackupV2ReadEnabled = bool.fromEnvironment(
-        'WALLET_BACKUP_V2_READ_ENABLED',
-        defaultValue: false);
     if (walletBackupV2ReadEnabled) {
       final repository =
           WalletBackupV2Repository.current(api: this, authToken: authToken);

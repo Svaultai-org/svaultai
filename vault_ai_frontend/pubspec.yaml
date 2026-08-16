@@ -4,7 +4,7 @@ publish_to: 'none'
 # Store-facing marketing version + build number. Bump the +N build
 # number for EVERY submission (App Store Connect + Play Console
 # reject a duplicate build number for the same marketing version).
-version: 1.0.15+16
+version: 1.0.16+17
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -40,6 +40,7 @@ dependencies:
   # verified by the SVaultAI backend before this client completes a purchase.
   in_app_purchase: ^3.3.0
   in_app_purchase_android: ^0.5.0
+  in_app_purchase_storekit: ^0.4.11
 
   # Auth and crypto utilities — vault_name + PIN model uses convert /
   # pointycastle / crypto for PIN-derived AES-GCM material; the
