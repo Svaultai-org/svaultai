@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from vault_credential_command import ACTION_CREATE, extract_credential_command
+from vault_credential_command import (
+    ACTION_CREATE,
+    extract_credential_command,
+    is_explicit_credential_assertion_create,
+)
 from vault_pending_credential_confirm import save_pending_credential
 
 
@@ -25,6 +29,16 @@ def test_assertion_parses_exact_supplied_values_and_never_becomes_lookup(message
         "username": "john",
         "password": "abc123",
     }
+    assert is_explicit_credential_assertion_create(message)
+
+
+def test_lookup_and_incomplete_values_do_not_bypass_fast_path():
+    assert not is_explicit_credential_assertion_create(
+        "what is my instagram login"
+    )
+    assert not is_explicit_credential_assertion_create(
+        "save instagram username john"
+    )
 
 
 def test_supplied_values_survive_draft_confirmation_save_without_generation():

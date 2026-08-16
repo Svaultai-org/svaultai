@@ -93,6 +93,22 @@ class TestSafeIntentSet(unittest.TestCase):
 
 class TestPeekIntentWithoutSideEffects(unittest.TestCase):
 
+    def test_complete_credential_assertion_bypasses_lookup_fast_path(self):
+        called: list[str] = []
+
+        def build(text: str) -> dict:
+            called.append(text)
+            return {"intent": "vault_login_search", "card": {}}
+
+        env = cfp.peek_intent_without_side_effects(
+            "username audit-user password Audit-pass! "
+            "is my AuditService login",
+            build_envelope=build,
+        )
+
+        self.assertIsNone(env)
+        self.assertEqual(called, [])
+
     def test_router_peek_calls_build_envelope_once(self):
         called: list[str] = []
 
