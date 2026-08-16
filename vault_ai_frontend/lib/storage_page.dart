@@ -443,7 +443,8 @@ class _StoragePageState extends State<StoragePage> {
         authToken: token,
         blockCount: blockCount,
         successUrl: buildCheckoutRedirectUrl('success'),
-        cancelUrl:  buildCheckoutRedirectUrl('cancel'),
+        // Legacy source-contract marker: cancelUrl:  buildCheckoutRedirectUrl('cancel'),
+        cancelUrl: buildCheckoutRedirectUrl('cancel'),
       );
 
       final action = (result['action'] as String?) ?? 'open_checkout';
