@@ -1256,7 +1256,7 @@ Future<void> main() async {
         } catch (_) {}
         try {
           rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-            appState.lastVaultName != null ? '/unlock' : '/login',
+            appState.hasRememberedVaultLogin ? '/unlock' : '/login',
             (_) => false,
           );
         } catch (_) {}
@@ -1539,32 +1539,47 @@ class AppState extends ChangeNotifier {
   /// product-facing identity.
   String? vaultHandle;
 
-  String? lastVaultName;
+  String? _lastVaultName;
+  String? get lastVaultName => _lastVaultName;
+  set lastVaultName(String? value) {
+    _lastVaultName = vh.userFacingVaultNameOrNull(value);
+  }
+
+  /// A returning session may be rehydrated with either a friendly vault name
+  /// or a private vault handle. The latter is an authentication input only and
+  /// must never be copied into a text controller.
+  bool get hasRememberedVaultLogin =>
+      _lastVaultName != null ||
+      vh.canonicalInternalVaultHandleOrNull(vaultHandle) != null;
 
   String? _vaultName;
   String? get vaultName => _vaultName;
   set vaultName(String? value) {
     final prev = _vaultName;
-    _vaultName = value;
+    final displayValue = vh.userFacingVaultNameOrNull(value);
+    _vaultName = displayValue;
     final currentVaultId = vaultId;
 
     vlog('appstate.vaultName.set', {
       'prev': prev,
-      'next': value,
-      'rebind': prev != value,
+      'next': displayValue,
+      'rebind': prev != displayValue,
       'vault_id': currentVaultId,
     });
     if (currentVaultId == null) return;
-    if (prev != null && prev != value) {
+    if (prev != null && prev != displayValue) {
       vlog('appstate.vaultName.rebind-clears-cache', {
         'vault_id': currentVaultId,
         'prev': prev,
-        'next': value,
+        'next': displayValue,
       });
       _VaultCrypto.clearCache(currentVaultId);
     }
-    if (value != null) {
-      _VaultCrypto.setActiveVault(vaultId: currentVaultId, vaultName: value);
+    if (displayValue != null) {
+      _VaultCrypto.setActiveVault(
+        vaultId: currentVaultId,
+        vaultName: displayValue,
+      );
     }
   }
 
@@ -1700,13 +1715,16 @@ class AppState extends ChangeNotifier {
   Future<void> requestSwitchVault(
       String newVaultName, BuildContext context) async {
     final currentVaultId = vaultId;
+    final displaySafeVaultName = vh.userFacingVaultNameOrNull(newVaultName);
     if (currentVaultId == null) return;
-    if (newVaultName == vaultName) return;
+    if (displaySafeVaultName == null || displaySafeVaultName == vaultName) {
+      return;
+    }
 
     perf_cache.clearCacheOnVaultSwitch(currentVaultId, null);
 
     _VaultCrypto.clearCache(currentVaultId);
-    vaultName = newVaultName;
+    vaultName = displaySafeVaultName;
     unlocked = false;
     pinAttempts = 0;
     lockoutUntil = null;
@@ -1812,7 +1830,7 @@ class AppState extends ChangeNotifier {
         SnackBar(content: Text(error.message)),
       );
       rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-        lastVaultName != null ? '/unlock' : '/login',
+        hasRememberedVaultLogin ? '/unlock' : '/login',
         (_) => false,
       );
       return true;
@@ -1976,7 +1994,6 @@ class AppState extends ChangeNotifier {
   Future<void> hydrate() async {
     final sp = await SharedPreferences.getInstance();
     sessionToken = await NativeSecureStore.readString('session_token');
-    lastVaultName = await NativeSecureStore.readString('last_vault_name');
     // Restore the friendly identity fields FIRST so any UI that
     // paints before /auth/me returns (or if /auth/me never returns)
     // shows the user's chosen name and their display name rather
@@ -1997,13 +2014,29 @@ class AppState extends ChangeNotifier {
         persistedDisplay,
       );
     }
-    final persistedName =
-        await NativeSecureStore.readString('last_vault_name') ??
-            sp.getString('last_canonical_username') ??
-            sp.getString('last_vault_ai_name');
-    if (persistedName != null && persistedName.isNotEmpty) {
+    final storedLastVaultName =
+        await NativeSecureStore.readString('last_vault_name');
+    final persistedNameCandidates = <String?>[
+      storedLastVaultName,
+      sp.getString('last_canonical_username'),
+      sp.getString('last_vault_ai_name'),
+    ];
+    String? persistedName;
+    String? handleRecoveredFromNameSlot;
+    for (final candidate in persistedNameCandidates) {
+      persistedName ??= vh.userFacingVaultNameOrNull(candidate);
+      handleRecoveredFromNameSlot ??=
+          vh.canonicalInternalVaultHandleOrNull(candidate);
+    }
+    lastVaultName = persistedName;
+    if (persistedName != null) {
       vaultName = persistedName;
       await NativeSecureStore.writeString('last_vault_name', persistedName);
+    } else if (storedLastVaultName != null) {
+      // A previous build could persist a VLT handle in the display-name slot.
+      // It is migrated to last_vault_handle below (when valid), then removed
+      // only from this UI-facing slot so a hard restart cannot paint it.
+      await NativeSecureStore.deleteString('last_vault_name');
     }
     // Drop the retired keys once we've migrated their values so
     // subsequent hydrates go straight to the new ones. Best-effort;
@@ -2018,6 +2051,12 @@ class AppState extends ChangeNotifier {
         await NativeSecureStore.readString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
+    } else if (handleRecoveredFromNameSlot != null) {
+      vaultHandle = handleRecoveredFromNameSlot;
+      await NativeSecureStore.writeString(
+        'last_vault_handle',
+        handleRecoveredFromNameSlot,
+      );
     } else {
       final adoptedHandle = await legacy_adopt.readCachedVaultHandle();
       if (adoptedHandle != null && adoptedHandle.isNotEmpty) {
@@ -2043,8 +2082,8 @@ class AppState extends ChangeNotifier {
         // user's typed name is safe on-device) rather than clobber it.
         final rawName = me['vault_name'];
         if (rawName != null) {
-          final name = rawName.toString().trim();
-          if (name.isNotEmpty) {
+          final name = vh.userFacingVaultNameOrNull(rawName.toString());
+          if (name != null) {
             vaultName = name;
             lastVaultName = name;
             await NativeSecureStore.writeString('last_vault_name', name);
@@ -2093,14 +2132,21 @@ class AppState extends ChangeNotifier {
     st.SessionTermination.instance.reset();
     sessionToken = token;
     vaultId = vaultIdValue;
-    vaultName = vaultNameValue;
-    lastVaultName = vaultNameValue;
+    final displayVaultName = vh.userFacingVaultNameOrNull(vaultNameValue);
+    final handleFromNameSlot =
+        vh.canonicalInternalVaultHandleOrNull(vaultNameValue);
+    vaultName = displayVaultName;
+    lastVaultName = displayVaultName;
     final persistenceWrites = <Future<void>>[];
-    if (vaultHandleValue != null && vaultHandleValue.isNotEmpty) {
-      vaultHandle = vaultHandleValue;
+    final privateVaultHandle =
+        vaultHandleValue != null && vaultHandleValue.isNotEmpty
+            ? vaultHandleValue
+            : handleFromNameSlot;
+    if (privateVaultHandle != null && privateVaultHandle.isNotEmpty) {
+      vaultHandle = privateVaultHandle;
       persistenceWrites.add(NativeSecureStore.writeString(
         'last_vault_handle',
-        vaultHandleValue,
+        privateVaultHandle,
       ));
     }
     if (displayNameValue != null && displayNameValue.isNotEmpty) {
@@ -2113,15 +2159,21 @@ class AppState extends ChangeNotifier {
       ));
     }
     authed = true;
-    persistenceWrites.addAll([
-      NativeSecureStore.writeString('session_token', token),
-      NativeSecureStore.writeString('last_vault_name', vaultNameValue),
-    ]);
+    persistenceWrites
+        .add(NativeSecureStore.writeString('session_token', token));
+    if (displayVaultName != null) {
+      persistenceWrites.add(
+        NativeSecureStore.writeString('last_vault_name', displayVaultName),
+      );
+    } else {
+      persistenceWrites.add(NativeSecureStore.deleteString('last_vault_name'));
+    }
     await Future.wait(persistenceWrites);
     notifyListeners();
   }
 
   Future<void> clearSession({bool keepLastVaultName = true}) async {
+    final rememberedVaultHandle = keepLastVaultName ? vaultHandle : null;
     _runShutdownHooks();
 
     perf_cache.clearCacheOnLogout();
@@ -2169,7 +2221,10 @@ class AppState extends ChangeNotifier {
     sessionToken = null;
     vaultId = null;
     vaultName = null;
-    vaultHandle = null;
+    // Retain only the opaque identifier needed for a returning user's
+    // PIN-only ZK rehydration. It remains private and is never copied into the
+    // sign-in controller. "Use another vault" passes false and clears it.
+    vaultHandle = rememberedVaultHandle;
     displayName = null;
     authed = false;
     unlocked = false;
@@ -2203,7 +2258,7 @@ class AppState extends ChangeNotifier {
   Future<LoginResult?> _restoreZkSessionKeysAfterPin({
     required String pin,
     required String expectedVaultId,
-    required String vaultNameHint,
+    String? vaultNameHint,
     String? vaultHandleHint,
     required String reason,
   }) async {
@@ -2248,13 +2303,21 @@ class AppState extends ChangeNotifier {
         return null;
       }
 
-      final resolvedVaultName = _nonEmptyTrimmed(result.vaultName) ??
-          loginId.vaultName ??
-          _nonEmptyTrimmed(vaultNameHint) ??
-          _nonEmptyTrimmed(vaultName) ??
-          _nonEmptyTrimmed(lastVaultName) ??
-          _nonEmptyTrimmed(result.displayName) ??
-          result.vaultHandle;
+      final resolvedVaultName =
+          vh.userFacingVaultNameOrNull(result.vaultName) ??
+              vh.userFacingVaultNameOrNull(loginId.vaultName) ??
+              vh.userFacingVaultNameOrNull(vaultNameHint) ??
+              vh.userFacingVaultNameOrNull(vaultName) ??
+              vh.userFacingVaultNameOrNull(lastVaultName) ??
+              vh.userFacingVaultNameOrNull(result.displayName);
+      if (resolvedVaultName == null) {
+        inheritanceRevealDiag('${reason}_zk_restore_no_display_name', {
+          'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
+          'id_source': loginId.source,
+          'internal_handle_suppressed': true,
+        });
+        return null;
+      }
 
       _VaultCrypto
               ._keyCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
@@ -2332,12 +2395,14 @@ class AppState extends ChangeNotifier {
     String pin, {
     bool restoreZkSessionKeys = false,
   }) async {
-    final knownVaultName = vaultName ?? lastVaultName;
-    if (knownVaultName == null) return false;
+    final knownVaultName = vh.userFacingVaultNameOrNull(vaultName) ??
+        vh.userFacingVaultNameOrNull(lastVaultName);
+    final knownVaultHandle = vh.canonicalInternalVaultHandleOrNull(vaultHandle);
+    if (knownVaultName == null && knownVaultHandle == null) return false;
 
     vlog('pin.verify.start', {
-      'vaultName': knownVaultName,
-      'vaultNameLen': knownVaultName.length,
+      'display_source': knownVaultName == null ? 'empty' : 'vault_name',
+      'internal_handle_available': knownVaultHandle != null,
       'pinLen': pin.length,
     });
 
@@ -2375,7 +2440,7 @@ class AppState extends ChangeNotifier {
           pin: pin,
           expectedVaultId: vaultId!,
           vaultNameHint: knownVaultName,
-          vaultHandleHint: vaultHandle,
+          vaultHandleHint: knownVaultHandle,
           reason: 'verify_pin',
         );
       }
@@ -2383,12 +2448,17 @@ class AppState extends ChangeNotifier {
       if (zkRestore != null) {
         activeToken = zkRestore.sessionToken;
         activeVaultId = zkRestore.vaultId;
-        activeVaultName =
-            _nonEmptyTrimmed(zkRestore.vaultName) ?? knownVaultName;
+        final restoredDisplayName =
+            vh.userFacingVaultNameOrNull(zkRestore.vaultName) ??
+                knownVaultName ??
+                vh.userFacingVaultNameOrNull(zkRestore.displayName);
+        if (restoredDisplayName == null) return false;
+        activeVaultName = restoredDisplayName;
         activeDisplay = zkRestore.displayName;
         activeVaultHandle = zkRestore.vaultHandle;
         vlog('pin.timing.zk_login', {'elapsed_ms': tick()});
       } else {
+        if (knownVaultName == null) return false;
         final Map<String, dynamic> loginResult;
         try {
           loginResult = await client.authLogin(
@@ -2623,10 +2693,15 @@ class AppState extends ChangeNotifier {
             vaultName != backendVaultName,
         'has_pin': result['has_pin'],
       });
-      if (backendVaultName != null && backendVaultName.trim().isNotEmpty) {
-        vaultName = backendVaultName.trim();
-        lastVaultName = vaultName;
-        await NativeSecureStore.writeString('last_vault_name', vaultName!);
+      final displaySafeBackendName =
+          vh.userFacingVaultNameOrNull(backendVaultName);
+      if (displaySafeBackendName != null) {
+        vaultName = displaySafeBackendName;
+        lastVaultName = displaySafeBackendName;
+        await NativeSecureStore.writeString(
+          'last_vault_name',
+          displaySafeBackendName,
+        );
       }
 
       notifyListeners();
@@ -2638,7 +2713,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> loadVaultName() async {
     final token = sessionToken;
-    final localVaultName = lastVaultName;
+    final localVaultName = vh.userFacingVaultNameOrNull(lastVaultName);
 
     if (token == null) {
       if (localVaultName != null && localVaultName.trim().isNotEmpty) {
@@ -2670,12 +2745,15 @@ class AppState extends ChangeNotifier {
             vaultName != backendVaultName,
       });
 
-      if (hasVault &&
-          backendVaultName != null &&
-          backendVaultName.trim().isNotEmpty) {
-        vaultName = backendVaultName.trim();
-        lastVaultName = vaultName;
-        await NativeSecureStore.writeString('last_vault_name', vaultName!);
+      final displaySafeBackendName =
+          vh.userFacingVaultNameOrNull(backendVaultName);
+      if (hasVault && displaySafeBackendName != null) {
+        vaultName = displaySafeBackendName;
+        lastVaultName = displaySafeBackendName;
+        await NativeSecureStore.writeString(
+          'last_vault_name',
+          displaySafeBackendName,
+        );
       } else {
         vaultName = null;
       }
@@ -3366,12 +3444,13 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       }
                       if (v == 'sign_out') {
                         final app = context.read<AppState>();
-                        final hadLastVaultName = app.lastVaultName != null;
+                        final hadRememberedVaultLogin =
+                            app.hasRememberedVaultLogin;
                         await app.signOutEverywhere();
                         if (context.mounted) {
                           Navigator.pushNamedAndRemoveUntil(
                             context,
-                            hadLastVaultName ? '/unlock' : '/login',
+                            hadRememberedVaultLogin ? '/unlock' : '/login',
                             (_) => false,
                           );
                         }
@@ -4741,7 +4820,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
-  bool _isZkHandleInput = false;
 
   bool _showForm = false;
 
@@ -4750,47 +4828,31 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     super.initState();
     _scheduleGuard('initState');
     _autofillCachedHandle();
-    vaultNameCtrl.addListener(_maybeMarkZkHandle);
-  }
-
-  void _maybeMarkZkHandle() {
-    final zk = vh.isExplicitVaultHandleDisplay(vaultNameCtrl.text.trim());
-    if (zk != _isZkHandleInput) {
-      setState(() => _isZkHandleInput = zk);
-    }
   }
 
   Future<void> _autofillCachedHandle() async {
-    // Prefer the persisted vault name (last_vault_name) — that's
-    // what the user actually types to sign in. Fall back to the
-    // cached VLT handle only if we don't have a vault name yet
-    // (e.g. an adopted-legacy account whose signup happened before
-    // we started persisting it). We never overwrite whatever the
-    // user has already started typing.
+    // Only a verified user-facing name may initialize this controller. A
+    // private VLT handle stays in AppState/NativeSecureStore for PIN-only ZK
+    // rehydration and is never used as a display fallback. We never overwrite
+    // whatever the user has already started typing.
     //
     // Back-compat: read the legacy pre-2026-07-20 keys
-    // (last_canonical_username / last_display_username) if the new
+    // (last_canonical_username) if the new
     // key isn't populated yet — hydrate() migrates them into the
     // new key on next launch.
     try {
       final sp = await SharedPreferences.getInstance();
-      final persistedName =
-          await NativeSecureStore.readString('last_vault_name') ??
-              sp.getString('last_canonical_username') ??
-              sp.getString('last_display_username');
-      if (!mounted) return;
-      if (persistedName != null &&
-          persistedName.isNotEmpty &&
-          vaultNameCtrl.text.isEmpty) {
-        vaultNameCtrl.text = persistedName;
-        _maybeMarkZkHandle();
-        return;
+      final candidates = <String?>[
+        await NativeSecureStore.readString('last_vault_name'),
+        sp.getString('last_canonical_username'),
+      ];
+      String? persistedName;
+      for (final candidate in candidates) {
+        persistedName ??= vh.userFacingVaultNameOrNull(candidate);
       }
-      final cached = await legacy_adopt.readCachedVaultHandle();
       if (!mounted) return;
-      if (cached != null && cached.isNotEmpty && vaultNameCtrl.text.isEmpty) {
-        vaultNameCtrl.text = cached;
-        _maybeMarkZkHandle();
+      if (persistedName != null && vaultNameCtrl.text.isEmpty) {
+        vaultNameCtrl.text = persistedName;
       }
     } catch (_) {}
   }
@@ -4833,7 +4895,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         return;
       }
 
-      if (app.lastVaultName != null && app.lastVaultName!.isNotEmpty) {
+      if (app.hasRememberedVaultLogin) {
         Navigator.of(context).pushReplacementNamed('/unlock');
         return;
       }
@@ -4994,8 +5056,14 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // (backfilled vault_name) > user-typed (when entry was a
         // vault name) > displayName (legacy fallback). Never the
         // VLT handle.
-        final resolvedVaultName = loginResult.vaultName ??
-            (entryIsHandle ? loginResult.displayName : vaultName);
+        final resolvedVaultName =
+            vh.userFacingVaultNameOrNull(loginResult.vaultName) ??
+                (entryIsHandle
+                    ? vh.userFacingVaultNameOrNull(loginResult.displayName)
+                    : vh.userFacingVaultNameOrNull(vaultName));
+        if (resolvedVaultName == null) {
+          throw StateError('Authenticated vault has no display-safe name');
+        }
         _qaPostUnwrapStage('login_result_ready');
         _qaPostUnwrapStage('set_session_entered');
         await app.setSession(
@@ -5249,11 +5317,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final result = await client.authLogin(vaultName: vaultName, pin: pin);
       final token = result['session_token']?.toString() ?? '';
       final vaultId = result['vault_id']?.toString() ?? '';
-      final outName = result['vault_name']?.toString() ?? vaultName;
+      final outName =
+          vh.userFacingVaultNameOrNull(result['vault_name']?.toString()) ??
+              vh.userFacingVaultNameOrNull(vaultName);
       final display = result['display_username']?.toString();
       final vaultHandle = result['vault_handle']?.toString();
       final newDeviceTrusted = result['new_device_trusted'] == true;
-      if (token.isEmpty || vaultId.isEmpty) {
+      if (token.isEmpty || vaultId.isEmpty || outName == null) {
         throw Exception('Login response missing session_token / vault_id');
       }
       await app.setSession(
@@ -5924,7 +5994,9 @@ class _UnlockPageState extends State<UnlockPage> {
 
   Future<void> _submit() async {
     final app = context.read<AppState>();
-    final name = app.lastVaultName;
+    final displayVaultName = vh.userFacingVaultNameOrNull(app.lastVaultName);
+    final privateVaultHandle =
+        vh.canonicalInternalVaultHandleOrNull(app.vaultHandle);
     // Cache invariants: to run the ZK unlock path we need either the
     // last used vault_handle (VLT-... display) OR the last used
     // vault_name (legacy). A stale / partially-cleared cache — for
@@ -5932,13 +6004,15 @@ class _UnlockPageState extends State<UnlockPage> {
     // wiped — would send us to /unlock with no way to look up the
     // account. Route the user through full /login instead of
     // attempting an unlock that would 100% miss.
-    if (name == null || name.isEmpty) {
+    if (displayVaultName == null && privateVaultHandle == null) {
       releaseWebDiagnosticPrint(
-        '[zk-unlock-diag] cache_incomplete=lastVaultName_missing',
+        '[zk-unlock-diag] cache_incomplete=no_private_login_identifier',
       );
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
+    final entryIsVltHandle = displayVaultName == null;
+    final name = displayVaultName ?? privateVaultHandle!;
     final pin = pinCtrl.text.trim();
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
@@ -5973,17 +6047,9 @@ class _UnlockPageState extends State<UnlockPage> {
     }
 
     pageTiming('submit_entry');
-    // Under the corrected identity model (ed825aa), lastVaultName
-    // holds the USER-TYPED vault name — the same string used for
-    // both signing in and as the vault AI's name. Only sessions
-    // predating that migration might carry a VLT-... handle in
-    // this slot (via the SharedPreferences fallback chain in
-    // hydrate). Route accordingly: user-typed name → ZK vault-
-    // name path; literal VLT handle → ZK handle path. Legacy
-    // /auth/login is a last-resort fallback for unadopted pre-ZK
-    // accounts (the ZK path 401's on those because no vault_handle
-    // row exists for the derived bytes).
-    final entryIsVltHandle = vh.isExplicitVaultHandleDisplay(name);
+    // Friendly names and internal handles remain separate in state. Unlock can
+    // privately use the remembered handle when no display name is available;
+    // it is never assigned to the sign-in controller or rendered here.
     String unlockLastStep = 'submit_entry';
     bool zkLoginNotFound = false;
     {
@@ -6007,10 +6073,14 @@ class _UnlockPageState extends State<UnlockPage> {
         // client-side app.vaultName / decrypted displayName when
         // the entry was a VLT handle. Never the VLT handle
         // itself.
-        final resolvedVaultName = loginResult.vaultName ??
-            (entryIsVltHandle
-                ? (app.vaultName ?? loginResult.displayName)
-                : name);
+        final resolvedVaultName =
+            vh.userFacingVaultNameOrNull(loginResult.vaultName) ??
+                vh.userFacingVaultNameOrNull(app.vaultName) ??
+                vh.userFacingVaultNameOrNull(displayVaultName) ??
+                vh.userFacingVaultNameOrNull(loginResult.displayName);
+        if (resolvedVaultName == null) {
+          throw StateError('Authenticated vault has no display-safe name');
+        }
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -6279,7 +6349,7 @@ class _UnlockPageState extends State<UnlockPage> {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
 
-    if (app.lastVaultName == null) {
+    if (!app.hasRememberedVaultLogin) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.pushReplacementNamed(context, '/login');
       });
@@ -6410,7 +6480,7 @@ class _PinGatePageState extends State<PinGatePage> {
         if (!mounted) return;
         Navigator.pushReplacementNamed(
           context,
-          app.lastVaultName != null ? '/unlock' : '/login',
+          app.hasRememberedVaultLogin ? '/unlock' : '/login',
         );
       });
       return;
@@ -6451,14 +6521,14 @@ class _PinGatePageState extends State<PinGatePage> {
 
       app.recoveryInfo = null;
 
-      if (hasVault &&
-          backendVaultName != null &&
-          backendVaultName.trim().isNotEmpty) {
-        app.vaultName = backendVaultName.trim();
-        app.lastVaultName = backendVaultName.trim();
+      final displaySafeBackendName =
+          vh.userFacingVaultNameOrNull(backendVaultName);
+      if (hasVault && displaySafeBackendName != null) {
+        app.vaultName = displaySafeBackendName;
+        app.lastVaultName = displaySafeBackendName;
         await NativeSecureStore.writeString(
           'last_vault_name',
-          backendVaultName.trim(),
+          displaySafeBackendName,
         );
       }
 
