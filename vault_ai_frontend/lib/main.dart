@@ -124,6 +124,15 @@ import 'i18n/language_registry.dart';
 
 Object? _qaSemanticsHandle;
 
+String safeCredentialInventoryRecoveryMessage(Object error) {
+  if (error is CredentialV2RequestException && error.statusCode == 404) {
+    return 'This app and vault service are temporarily out of sync. Tap '
+        'Retry. No saved login was changed.';
+  }
+  return 'Saved logins are temporarily unavailable. Tap Retry. No saved '
+      'login was changed.';
+}
+
 class LocalMemoryLookupIntent {
   final String subject;
   final bool listAll;
@@ -146,21 +155,79 @@ class LocalMemoryMatchResult {
 class LocalMemoryFact {
   final String subject;
   final String value;
+  final String? relationship;
+  final String? attribute;
+  final String memoryType;
+  final List<String> tags;
 
-  const LocalMemoryFact(this.subject, this.value);
+  const LocalMemoryFact(
+    this.subject,
+    this.value, {
+    this.relationship,
+    this.attribute,
+    this.memoryType = 'note',
+    this.tags = const <String>[],
+  });
+
+  String get normalized => relationship != null && attribute != null
+      ? '$relationship:$attribute'
+      : subject;
 }
 
 LocalMemoryFact? parseLocalMemoryFact(String input) {
-  final text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  var text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  text = text
+      .replaceFirst(
+        RegExp(
+          r'(?:\s*,\s*|\s+)(?:please\s+)?(?:save|remember)\s+(?:it|this|that)$',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .trim();
   final match = RegExp(
-    r'^(?:(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
+    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(text);
   if (match == null) return null;
   final subject = (match.group(1) ?? '').trim();
   final value = (match.group(2) ?? '').trim();
   if (subject.isEmpty || value.isEmpty) return null;
+  final relationshipMatch = RegExp(
+    r"^(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*(?:(?:full|first|given)\s+)?name$",
+    caseSensitive: false,
+  ).firstMatch(subject);
+  if (relationshipMatch != null) {
+    final rawRelationship = relationshipMatch.group(1)!.toLowerCase();
+    final relationship = <String>{
+      'mother',
+      'mom',
+      'mum',
+      'mommy',
+      'mama',
+    }.contains(rawRelationship)
+        ? 'mother'
+        : 'father';
+    return LocalMemoryFact(
+      subject,
+      value,
+      relationship: relationship,
+      attribute: 'name',
+      memoryType: 'identity',
+      tags: <String>['family', relationship, 'name'],
+    );
+  }
   return LocalMemoryFact(subject, value);
+}
+
+bool hasExplicitLocalMemorySaveDirective(String input) {
+  final text = input.trim();
+  return RegExp(r'^(?:please\s+)?(?:remember|save)\b', caseSensitive: false)
+          .hasMatch(text) ||
+      RegExp(
+        r'(?:\s*,\s*|\s+)(?:please\s+)?(?:save|remember)\s+(?:it|this|that)[.?!]*$',
+        caseSensitive: false,
+      ).hasMatch(text);
 }
 
 String? parseLocalMemoryContextSaveSubject(String input) {
@@ -7582,6 +7649,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!zkV2CredentialReadEnabled || attachments.isNotEmpty) return false;
     if (_credentialLookupInFlight) return true;
     final intent = parseCredentialV2LookupIntent(text);
+    if (!shouldAttemptCredentialV2Lookup(text)) return false;
+    vlog('credential.lookup.route', {
+      'route': 'local_credential_retrieval',
+      'normalized_intent': intent == null ? 'broad_private_lookup' : 'lookup',
+      'service': intent?.service ?? '',
+      'requested_field': intent?.requestedField.name ?? 'summary',
+    });
     if (intent?.listAll == true) {
       input.clear();
       setState(() => selectedSection = _DashboardSection.logins);
@@ -7592,38 +7666,66 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (repository == null) return false;
     _credentialLookupInFlight = true;
     try {
-      // An explicit "show/find/open <service> login" request is exact. Never
-      // let a deleted `qa-nova-9315` fuzzy-match an unrelated `Nova46880`
-      // credential. Broad matching remains available only for non-explicit
-      // private inventory probes.
+      // Exact labels win. Natural parent labels (Facebook -> Facebook
+      // Personal/Business) and a unique one-edit brand typo are considered
+      // only after an exact miss; digit-bearing identifiers stay exact-only.
       final matches = intent?.service?.trim().isNotEmpty == true
-          ? await repository.exactLookup(
-              field: 'service',
-              value: intent!.service!.trim(),
-            )
+          ? await repository.naturalServiceLookup(intent!.service!.trim())
           : matchCredentialV2RecordsForText(
               text,
               await repository.listDecrypted(),
             );
-      if (matches.isEmpty && intent?.service?.trim().isNotEmpty == true) {
+      vlog('credential.lookup.match', {
+        'route': 'credential_v2',
+        'service': intent?.service ?? '',
+        'match_count': matches.length,
+        'reason_code': matches.isEmpty
+            ? 'v2_no_match'
+            : matches.length == 1
+                ? 'v2_unique_match'
+                : 'v2_ambiguous_match',
+      });
+      var legacyMatches = <VaultLoginItem>[];
+      if (matches.length <= 1 && intent?.service?.trim().isNotEmpty == true) {
         if (vaultLogins.isEmpty && !loadingLogins) {
           await _loadVaultLogins();
         }
-        final wanted = intent!.service!
-            .toLowerCase()
-            .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-            .trim();
-        final legacyMatches = vaultLogins.where((item) {
-          if (item.cryptoVersion == credentialV2CryptoVersion) return false;
-          final service = item.service
-              .toLowerCase()
-              .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-              .trim();
-          return service == wanted;
-        }).toList(growable: false);
-        if (legacyMatches.length == 1) {
+        legacyMatches = matchCredentialServiceCandidates(
+          intent!.service!,
+          vaultLogins.where(
+            (item) => item.cryptoVersion != credentialV2CryptoVersion,
+          ),
+          (item) => item.service,
+        );
+        vlog('credential.lookup.match', {
+          'route': 'legacy_credential',
+          'service': intent.service ?? '',
+          'match_count': legacyMatches.length,
+          'reason_code': legacyMatches.isEmpty
+              ? 'legacy_no_match'
+              : legacyMatches.length == 1
+                  ? 'legacy_unique_match'
+                  : 'legacy_ambiguous_match',
+        });
+        if (matches.isEmpty && legacyMatches.length == 1) {
           final legacy = legacyMatches.single;
           await _openLegacySecureItemDirect(legacy.service, legacy.itemType);
+          return true;
+        }
+        if (matches.length + legacyMatches.length > 1) {
+          final options = <String>[
+            ...matches.map((record) => record.plaintext.service),
+            ...legacyMatches.map((item) => item.service),
+          ].take(8).map((service) => '• $service').join('\n');
+          if (mounted) {
+            setState(() {
+              msgs.add(_Msg(
+                'assistant',
+                'I found multiple matching saved logins. Ask for the exact service name:\n$options',
+              ));
+            });
+            _scrollToBottom();
+          }
           return true;
         }
       }
@@ -7650,7 +7752,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             msgs.add(_Msg(
               'assistant',
-              'Here is your ${match.plaintext.service} login.',
+              credentialV2LookupReply(
+                match.plaintext.service,
+                intent?.requestedField ?? CredentialV2RequestedField.summary,
+              ),
               kind: ChatMessage.kInlineCredential,
               payload: <String, dynamic>{
                 'record_id': match.recordId,
@@ -7667,8 +7772,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!mounted) return true;
       final options = matches
           .take(8)
-          .map((record) =>
-              '• ${record.plaintext.service} — ${record.plaintext.username}')
+          .map((record) => '• ${record.plaintext.service}')
           .join('\n');
       setState(() {
         msgs.add(_Msg(
@@ -7705,6 +7809,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     AppState app,
   ) async {
     if (attachments.isNotEmpty) return false;
+    if (!zkV2CredentialWriteEnabled) return false;
     final intent = parseCredentialV2CreateIntent(text);
     if (intent == null) return false;
     final service = intent.service?.trim();
@@ -7750,7 +7855,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
     } catch (_) {
       _appendAssistantMessage(
-        'I could not safely check your existing logins. Your vault stayed unchanged.',
+        'I could not safely check your existing logins. Your vault stayed '
+        'unchanged. Try sending the request again, or open Logins and tap '
+        'Retry.',
       );
       return true;
     }
@@ -8154,7 +8261,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _openSecureItemEditDialog(String service, String itemType,
-      {Map<String, String>? initialFields, bool createMode = false}) async {
+      {Map<String, String>? initialFields,
+      bool createMode = false,
+      bool forceLegacyTransport = false}) async {
     final app = context.read<AppState>();
     if (!app.billingWritesAllowed) {
       _showSnack(app.billingWriteBlockedMessage);
@@ -8233,6 +8342,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             fields: fields.isEmpty ? null : fields,
             pin: pin,
             authToken: token,
+            forceLegacyTransport: forceLegacyTransport,
           );
 
           final isLogin = itemType == 'login' || itemType == 'credential';
@@ -13154,15 +13264,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (app.handleApiException(e)) return;
 
       if (mounted) {
+        final recovery = safeCredentialInventoryRecoveryMessage(e);
         setState(() {
           hasLoadedSecureItems = true;
-          secureItemsError = e.toString();
+          secureItemsError = recovery;
         });
+        _showSnack(recovery);
       }
       vlog('secure_items.load.failed', {'error_type': e.runtimeType});
-      _showSnack(
-        'Could not load your saved logins. Check your connection and try again.',
-      );
     } finally {
       if (mounted) {
         setState(() {
@@ -16585,8 +16694,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (credentialMatches.length > 1) {
             final options = credentialMatches
                 .take(8)
-                .map((record) =>
-                    '• ${record.plaintext.service} — ${record.plaintext.username}')
+                .map((record) => '• ${record.plaintext.service}')
                 .join('\n');
             if (mounted) {
               setState(() {
@@ -16814,10 +16922,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
     if (!enabled || app.sessionToken == null) return false;
 
-    final explicitSave = RegExp(
-      r'^(?:remember|save)\b',
-      caseSensitive: false,
-    ).hasMatch(text.trim());
+    final explicitSave = hasExplicitLocalMemorySaveDirective(text);
     LocalMemoryFact? fact = explicitSave ? parseLocalMemoryFact(text) : null;
     final requestedSubject = parseLocalMemoryContextSaveSubject(text);
     if (fact == null && requestedSubject == null) return false;
@@ -16849,7 +16954,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       final identity = sha256
           .convert(utf8.encode(
-            '${fact.subject.toLowerCase()}\u0000${fact.value}',
+            '${fact.normalized.toLowerCase()}\u0000${fact.value}',
           ))
           .toString();
       await MemoryV2Repository(
@@ -16857,12 +16962,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: app.sessionToken!,
       ).create(
         memoryId: 'memory-${identity.substring(0, 32)}',
-        memoryType: 'note',
+        memoryType: fact.memoryType,
         plaintext: MemoryV2Plaintext(
           value: fact.value,
-          normalized: fact.subject,
+          normalized: fact.normalized,
           summary: 'My ${fact.subject} is ${fact.value}',
-          tags: _memoryTerms(fact.subject).toList(growable: false),
+          tags: <String>{..._memoryTerms(fact.subject), ...fact.tags}
+              .toList(growable: false),
         ),
       );
       _appendAssistantMessage('Saved: ${fact.subject}.');
@@ -17216,6 +17322,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw StateError('correlated assistant placeholder missing');
       }
       String buffer = '';
+      bool terminalFailureRendered = false;
       // Per-send ZK memory-proposal state. The backend emits the
       // sentinel exactly once per turn, but SSE decoding may deliver
       // it across chunks — track whether we've already fired the
@@ -17460,11 +17567,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         // desync symptom.
         if (app.handleApiException(err)) return;
         if (!mounted) return;
+        terminalFailureRendered = true;
         setState(() {
           thinking = false;
           msgs[assistantIndex] = _Msg(
             'assistant',
-            friendlyChatGenerationFailure(text),
+            err is ChatResponseTimeoutException
+                ? chatTimeoutRecovery
+                : friendlyChatGenerationFailure(text),
           ).withCorrelationFrom(msgs[assistantIndex]);
         });
       } finally {
@@ -17491,6 +17601,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           // tap.
           _maybeTriggerPendingFileAction(structured);
         }
+      } else if (!terminalFailureRendered &&
+          mounted &&
+          _chatRequests.acceptsEvents(chatRequestId)) {
+        setState(() {
+          msgs[assistantIndex] = _Msg(
+            'assistant',
+            friendlyChatGenerationFailure(text),
+          ).withCorrelationFrom(msgs[assistantIndex]);
+        });
       }
 
       if (mounted && thinking) {
@@ -18793,7 +18912,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (item.cryptoVersion == credentialV2CryptoVersion) {
               unawaited(_openCredentialV2Editor(item));
             } else {
-              unawaited(_openSecureItemEditDialog(item.service, item.itemType));
+              unawaited(_openSecureItemEditDialog(
+                item.service,
+                item.itemType,
+                forceLegacyTransport: true,
+              ));
             }
           },
           onDeleteItem: (item) {

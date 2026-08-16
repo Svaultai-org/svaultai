@@ -84,7 +84,7 @@ _ATTR_RE = r"(?:birthday|birth\s+date|date\s+of\s+birth|dob)"
 _SUBJECT_RE = r"(?:mom|mum|mother|mama|dad|father|papa)"
 _APOSTROPHE_RE = r"(?:'|\u2019)"
 _SAVE_TRIGGER_RE = re.compile(
-    r"^\s*(?:remember(?:\s+that)?|save\s+this(?:\s+about\s+me)?|"
+    r"^\s*(?:please\s+)?(?:remember(?:\s+that)?|save\s+this(?:\s+about\s+me)?|"
     r"save\s+that|save\s+memory|save\s+this\s+memory|"
     r"don(?:'|\u2019)?t\s+forget|dont\s+forget|"
     r"keep\s+this(?:\s+for\s+me)?|note\s+that)\s*:?\s+"
@@ -138,6 +138,18 @@ _FORGET_RE = re.compile(
 _MAIDEN_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
     r"maiden\s+name\s*(?:is|=|:)?\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_RELATIONSHIP_NAME_FACT_RE = re.compile(
+    rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})"
+    rf"(?:{_APOSTROPHE_RE}s)?\s+"
+    r"(?P<attribute>(?:full\s+|first\s+|given\s+)?name)\s*"
+    r"(?:is|=|:)\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_SAVE_TRIGGER_RE = re.compile(
+    r"^(?P<fact>.+?)(?:\s*,\s*|\s+)"
+    r"(?:please\s+)?(?:save|remember)\s+(?:it|this|that)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 _MAIDEN_RECALL_RE = re.compile(
@@ -524,6 +536,26 @@ def _parse_fact_statement(
             is_correction=is_correction,
         )
 
+    m = _RELATIONSHIP_NAME_FACT_RE.match(text)
+    if m:
+        subject, display, relationship = _subject_parts(m.group("subject"))
+        value = _display_name_value(m.group("value"))
+        return PersonalMemoryIntent(
+            action=action,
+            subject=subject,
+            subject_display=display,
+            relationship=relationship,
+            attribute="name",
+            title=f"{display.title()}'s name",
+            memory_type="identity",
+            category="family",
+            value=value,
+            display_value=value,
+            tags=("family", "identity", "name"),
+            is_correction=is_correction,
+            needs_clarification=not bool(value),
+        )
+
     m = _MAIDEN_FACT_RE.match(text)
     if m:
         subject, display, relationship = _subject_parts(m.group("subject"))
@@ -894,8 +926,17 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
         re.search(r"\b(?:actually|correction|correct|update|change)\b", text, re.I)
     )
     save_match = _SAVE_TRIGGER_RE.match(text)
-    fact_text = save_match.group("fact") if save_match else text
-    if save_match is not None:
+    trailing_save_match = (
+        None if save_match is not None else _TRAILING_SAVE_TRIGGER_RE.match(text)
+    )
+    fact_text = (
+        save_match.group("fact")
+        if save_match is not None
+        else trailing_save_match.group("fact")
+        if trailing_save_match is not None
+        else text
+    )
+    if save_match is not None or trailing_save_match is not None:
         return _parse_fact_statement(
             fact_text,
             action="save",

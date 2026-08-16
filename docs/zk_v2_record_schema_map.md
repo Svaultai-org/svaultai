@@ -31,9 +31,12 @@ envelope. Initial migration work never deletes legacy representations.
 - Unknown versions fail closed with `unsupported_crypto_version`.
 - V2 never silently falls back to legacy, and an existing v2 envelope cannot
   be overwritten through a v1 write.
-- `ZK_V2_READ_ENABLED`, `ZK_V2_WRITE_ENABLED`, and
-  `ZK_V2_MIGRATION_ENABLED` are explicit and default to `false`, including in
-  the production example. Migration requires both read and write to be on.
+- Every v2 flag defaults to `false` in code. The production web compose example
+  explicitly enables the same credential-read, memory-read/write, and
+  file-read/write matrix pinned by `scripts/build-web-release.*`. Omitting a
+  backend flag makes its route return 404, so release preflight must compare
+  the public frontend `/release.json` contract with backend
+  `/release-contract`. Migration requires both read and write to be on.
 
 The stale `APP_RELEASE` value in the ignored production client configuration is
 operationally significant: it is sent as `X-App-Release` and participates in

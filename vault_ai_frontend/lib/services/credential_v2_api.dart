@@ -20,6 +20,15 @@ const bool zkV2CredentialWriteEnabled =
 const bool zkV2CredentialMigrationEnabled =
     bool.fromEnvironment('ZK_V2_MIGRATION_ENABLED', defaultValue: false);
 
+class CredentialV2RequestException implements Exception {
+  final int statusCode;
+
+  const CredentialV2RequestException(this.statusCode);
+
+  @override
+  String toString() => 'CredentialV2RequestException(statusCode: $statusCode)';
+}
+
 class CredentialV2Api {
   final String baseUrl;
   final String sessionToken;
@@ -222,5 +231,5 @@ class CredentialV2Api {
   }
 
   Exception _failure(http.Response response) =>
-      Exception('Credential v2 request failed (${response.statusCode})');
+      CredentialV2RequestException(response.statusCode);
 }

@@ -165,7 +165,7 @@ fi
 
 # 5. release.json.
 release_path="$project_root/build/web/release.json"
-printf '{"commit":"%s","commitShort":"%s","builtAt":"%s"}\n' \
+printf '{"commit":"%s","commitShort":"%s","builtAt":"%s","apiContract":"svaultai-core-v2-2026-08-15","features":{"credentialV2Read":true,"credentialV2Write":false,"memoryV2Read":true,"memoryV2Write":true,"fileV2Read":true,"fileV2Write":true}}\n' \
     "$sha_full" "$sha_short" "$built_at" > "$release_path"
 
 echo "[vault-release] wrote $release_path"

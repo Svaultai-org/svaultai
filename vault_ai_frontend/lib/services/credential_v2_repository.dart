@@ -15,8 +15,27 @@ void _qaV2Trace(String stage, {String? error}) {
 class CredentialV2LookupIntent {
   final bool listAll;
   final String? service;
-  const CredentialV2LookupIntent._({required this.listAll, this.service});
+  final CredentialV2RequestedField requestedField;
+  const CredentialV2LookupIntent._({
+    required this.listAll,
+    this.service,
+    this.requestedField = CredentialV2RequestedField.summary,
+  });
 }
+
+enum CredentialV2RequestedField { summary, username, password }
+
+String credentialV2LookupReply(
+  String service,
+  CredentialV2RequestedField requestedField,
+) =>
+    switch (requestedField) {
+      CredentialV2RequestedField.username =>
+        'Here is the saved username for your $service login.',
+      CredentialV2RequestedField.password =>
+        'I found your $service login. Use Reveal password to view it.',
+      CredentialV2RequestedField.summary => 'Here is your $service login.',
+    };
 
 class CredentialV2CreateIntent {
   final String? service;
@@ -47,6 +66,14 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
   final suppliedUsername = usernameMatch?.group(1)?.trim();
   if (usernameMatch != null) {
     normalized = normalized.substring(0, usernameMatch.start).trim();
+  }
+  // "Give me my Facebook login" is a possessive retrieval request. Keep
+  // "give me a/new Facebook login" available to the creation flow.
+  if (RegExp(
+    r'^(?:please\s+)?give(?:\s+me)?\s+my\s+.+?\s+(?:login|logins|credential|credentials|account)$',
+    caseSensitive: false,
+  ).hasMatch(normalized)) {
+    return null;
   }
   final explicitlyAnother =
       RegExp(r'\b(?:another|second|additional)\b', caseSensitive: false)
@@ -162,20 +189,95 @@ CredentialV2Plaintext generateCredentialV2Plaintext(
 }
 
 CredentialV2LookupIntent? parseCredentialV2LookupIntent(String text) {
-  final normalized = text.trim();
+  var normalized = text
+      .trim()
+      .replaceAll('\u2019', "'")
+      .replaceAll(RegExp(r'[.?!,:;]+$'), '')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ');
+  if (normalized.isEmpty ||
+      parseCredentialV2CreateIntent(normalized) != null ||
+      parseCredentialV2DeleteIntent(normalized) != null) {
+    return null;
+  }
   if (RegExp(
-    r'^(?:show|list|open)\s+(?:me\s+)?(?:my\s+)?saved\s+logins?\??$',
+    r'^(?:(?:please\s+)?(?:show|list|open|get|find)(?:\s+me)?|what\s+are)\s+(?:my\s+)?(?:saved\s+)?(?:logins?|credentials?)$',
     caseSensitive: false,
   ).hasMatch(normalized)) {
     return const CredentialV2LookupIntent._(listAll: true);
   }
-  final match = RegExp(
-    r'^(?:show|find|open|get)\s+(?:me\s+)?(?:my\s+)?(.+?)\s+(?:saved\s+)?login\??$',
+
+  // Preserve the service while removing only anchored conversational
+  // wrappers. A credential noun or requested field is still required below,
+  // so a general question such as "what is facebook" remains Brain-owned.
+  normalized = normalized.replaceFirst(
+    RegExp(
+      r"^(?:(?:please\s+)?(?:can|could|would)\s+you\s+(?:show|find|get|open|tell)(?:\s+me)?|(?:please\s+)?(?:show|find|get|open|give|tell)(?:\s+me)?|what\s+is|what's|what\s+are|what(?=\s+(?:username|password)\b)|which|where\s+is|do\s+i\s+have)\s+",
+      caseSensitive: false,
+    ),
+    '',
+  );
+  normalized = normalized
+      .replaceFirst(
+        RegExp(r'^(?:(?:a|an|the|my)\s+)+', caseSensitive: false),
+        '',
+      )
+      .trim();
+
+  CredentialV2LookupIntent? intentFor(
+    String? rawService, {
+    CredentialV2RequestedField field = CredentialV2RequestedField.summary,
+  }) {
+    final service = rawService
+        ?.replaceFirst(
+          RegExp(r'^(?:(?:a|an|the|my)\s+)+', caseSensitive: false),
+          '',
+        )
+        .trim();
+    if (service == null || service.isEmpty) return null;
+    return CredentialV2LookupIntent._(
+      listAll: false,
+      service: service,
+      requestedField: field,
+    );
+  }
+
+  // Field-first phrasing: "what username did I save for Facebook" and
+  // "the password for my Facebook login".
+  var match = RegExp(
+    r'^(username|password)\s+(?:did\s+i\s+(?:save|store|use)\s+for|(?:saved\s+)?for|of)\s+(.+?)(?:\s+(?:saved\s+)?(?:login|logins|credential|credentials|account)(?:\s+details?)?)?$',
     caseSensitive: false,
   ).firstMatch(normalized);
-  final service = match?.group(1)?.trim();
-  if (service == null || service.isEmpty) return null;
-  return CredentialV2LookupIntent._(listAll: false, service: service);
+  if (match != null) {
+    return intentFor(
+      match.group(2),
+      field: match.group(1)!.toLowerCase() == 'password'
+          ? CredentialV2RequestedField.password
+          : CredentialV2RequestedField.username,
+    );
+  }
+
+  // Service-first field phrasing: "my Facebook username/password".
+  match = RegExp(
+    r'^(.+?)\s+(username|password)$',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (match != null) {
+    return intentFor(
+      match.group(1),
+      field: match.group(2)!.toLowerCase() == 'password'
+          ? CredentialV2RequestedField.password
+          : CredentialV2RequestedField.username,
+    );
+  }
+
+  // Credential-shaped shorthand and conversational requests. The anchored
+  // suffix supplies the item type; arbitrary service names remain data-driven.
+  match = RegExp(
+    r'^(.+?)\s+(?:saved\s+)?(?:login|logins|credential|credentials|account)(?:\s+details?)?$',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  return intentFor(match?.group(1));
 }
 
 class DecryptedCredentialV2Record {
@@ -242,6 +344,89 @@ List<DecryptedCredentialV2Record> matchCredentialV2RecordsForText(
       .toList(growable: false);
 }
 
+/// Resolve a parsed service without weakening exact identifiers. Exact labels
+/// win; ordinary word-based services may then match a more-specific label
+/// (for example Facebook -> Facebook Personal and Facebook Business). A
+/// single one-edit typo is accepted only for an unambiguous alphabetic service.
+List<DecryptedCredentialV2Record> matchCredentialV2RecordsForService(
+  String service,
+  Iterable<DecryptedCredentialV2Record> records,
+) =>
+    matchCredentialServiceCandidates(
+      service,
+      records,
+      (record) => record.plaintext.service,
+    );
+
+List<T> matchCredentialServiceCandidates<T>(
+  String service,
+  Iterable<T> records,
+  String Function(T record) serviceOf,
+) {
+  final query = _credentialLookupNormalized(service);
+  if (query.isEmpty) return <T>[];
+  final available = records.toList(growable: false);
+  final exact = available
+      .where(
+          (record) => _credentialLookupNormalized(serviceOf(record)) == query)
+      .toList(growable: false);
+  if (exact.isNotEmpty) return exact;
+
+  // Generated/synthetic identifiers are intentionally exact-only. This keeps
+  // a deleted qa-nova-9315 request from resolving to an unrelated Nova46880.
+  if (RegExp(r'[0-9]').hasMatch(query)) {
+    return <T>[];
+  }
+
+  final queryTokens = query.split(' ').where((token) => token.isNotEmpty);
+  final contained = available.where((record) {
+    final candidate = _credentialLookupNormalized(serviceOf(record));
+    final candidateTokens = candidate.split(' ').toSet();
+    return queryTokens.every(candidateTokens.contains);
+  }).toList(growable: false);
+  if (contained.isNotEmpty) return contained;
+
+  if (!RegExp(r'^[a-z ]+$').hasMatch(query)) {
+    return <T>[];
+  }
+  final typoMatches = available.where((record) {
+    final candidate = _credentialLookupNormalized(serviceOf(record));
+    return RegExp(r'^[a-z ]+$').hasMatch(candidate) &&
+        _isAtMostOneEditApart(query, candidate);
+  }).toList(growable: false);
+  return typoMatches.length == 1 ? typoMatches : <T>[];
+}
+
+bool _isAtMostOneEditApart(String left, String right) {
+  if (left == right) return true;
+  if ((left.length - right.length).abs() > 1) return false;
+  if (left.length == right.length) {
+    var differences = 0;
+    for (var index = 0; index < left.length; index++) {
+      if (left.codeUnitAt(index) != right.codeUnitAt(index) &&
+          ++differences > 1) {
+        return false;
+      }
+    }
+    return true;
+  }
+  final shorter = left.length < right.length ? left : right;
+  final longer = left.length < right.length ? right : left;
+  var shortIndex = 0;
+  var longIndex = 0;
+  var edits = 0;
+  while (shortIndex < shorter.length && longIndex < longer.length) {
+    if (shorter.codeUnitAt(shortIndex) == longer.codeUnitAt(longIndex)) {
+      shortIndex++;
+      longIndex++;
+      continue;
+    }
+    if (++edits > 1) return false;
+    longIndex++;
+  }
+  return true;
+}
+
 bool looksLikePrivateCredentialQuery(String text) {
   final tokens = _credentialLookupNormalized(text).split(' ').toSet();
   return tokens.intersection(const {
@@ -254,6 +439,18 @@ bool looksLikePrivateCredentialQuery(String text) {
     'username',
     'usernames',
   }).isNotEmpty;
+}
+
+/// Returns whether a message belongs to the local credential lookup route.
+///
+/// Creation requests contain credential vocabulary too, but when local v2
+/// writes are disabled they must fall through to the backend draft workflow.
+/// Treating them as broad lookups would consume the message after an inventory
+/// read and incorrectly report that no saved login exists.
+bool shouldAttemptCredentialV2Lookup(String text) {
+  if (parseCredentialV2CreateIntent(text) != null) return false;
+  return parseCredentialV2LookupIntent(text) != null ||
+      looksLikePrivateCredentialQuery(text);
 }
 
 class CredentialV2Repository {
@@ -394,6 +591,17 @@ class CredentialV2Repository {
         .where((record) =>
             normalizeExactLookup(record.plaintext.service) == normalized)
         .toList(growable: false);
+  }
+
+  Future<List<DecryptedCredentialV2Record>> naturalServiceLookup(
+    String service,
+  ) async {
+    final exact = await exactLookup(field: 'service', value: service);
+    if (exact.isNotEmpty) return exact;
+    return matchCredentialV2RecordsForService(
+      service,
+      await listDecrypted(),
+    );
   }
 
   Future<void> delete(String recordId) => api.delete(recordId);

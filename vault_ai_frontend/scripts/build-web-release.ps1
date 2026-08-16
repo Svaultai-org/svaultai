@@ -152,6 +152,15 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         commit      = $shaFull
         commitShort = $shaShort
         builtAt     = $builtAt
+        apiContract = 'svaultai-core-v2-2026-08-15'
+        features    = @{
+            credentialV2Read  = $true
+            credentialV2Write = $false
+            memoryV2Read      = $true
+            memoryV2Write     = $true
+            fileV2Read        = $true
+            fileV2Write       = $true
+        }
     } | ConvertTo-Json -Compress
     $releasePath = Join-Path $flutterProjectRoot 'build/web/release.json'
     [System.IO.File]::WriteAllText(
