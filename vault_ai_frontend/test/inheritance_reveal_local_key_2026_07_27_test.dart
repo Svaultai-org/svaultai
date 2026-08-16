@@ -371,7 +371,8 @@ void main() {
       );
     });
 
-    test('PIN reauth forwards the typed OPAQUE vault handle into session state', () {
+    test('PIN reauth forwards the typed OPAQUE vault handle into session state',
+        () {
       expect(mainSource.contains('loginResult.vaultHandle'), isTrue);
       expect(
         mainSource.contains('vaultHandleValue: loginResult.vaultHandle'),
@@ -457,12 +458,14 @@ void main() {
           isFalse);
     });
 
-    test('logout clears vaultHandle memory and persisted storage', () {
+    test('account switch clears vaultHandle; ordinary logout retains auth hint',
+        () {
       final idx = mainSource.indexOf('Future<void> clearSession');
       expect(idx, greaterThan(-1));
       final window =
-          mainSource.substring(idx, (idx + 2800).clamp(0, mainSource.length));
-      expect(window.contains('vaultHandle = null'), isTrue);
+          mainSource.substring(idx, (idx + 4200).clamp(0, mainSource.length));
+      expect(window.contains('rememberedVaultHandle'), isTrue);
+      expect(window.contains('vaultHandle = rememberedVaultHandle'), isTrue);
       expect(
         window.contains("NativeSecureStore.deleteString('last_vault_handle')"),
         isTrue,
