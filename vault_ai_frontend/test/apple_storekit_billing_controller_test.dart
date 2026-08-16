@@ -164,4 +164,33 @@ void main() {
     billing.dispose();
     await gateway.controller.close();
   });
+
+  test('restore verifies and completes a restored transaction once', () async {
+    final gateway = _Gateway();
+    var verifications = 0;
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async {
+        verifications++;
+        expect(signedTransaction, 'signed-jws');
+        return {'verified': true};
+      },
+    );
+    await billing.initialize();
+
+    await billing.restore();
+    expect(gateway.restoreCalls, 1);
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(verifications, 1);
+    expect(gateway.completeCalls, 1);
+    expect(billing.state, 'verified');
+
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(verifications, 1);
+    expect(gateway.completeCalls, 1);
+    billing.dispose();
+    await gateway.controller.close();
+  });
 }

@@ -15,6 +15,8 @@ from vault_pending_credential_confirm import save_pending_credential
     [
         "username john password abc123 is my instagram login",
         "my instagram username is john and password is abc123",
+        "instagram is username john and password abc123",
+        "remember my instagram login, username john, password abc123",
         "instagram login is john / abc123",
         "save instagram username john password abc123",
         "save my instagram login john and pass abc123",

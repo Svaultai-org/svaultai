@@ -13002,12 +13002,41 @@ async def chat_endpoint(
         try:
             from vault_pending_draft_confirm import (
                 is_pending_draft_confirm_phrase as _cred_save_confirm_phrase,
+                pending_draft_confirm_service as _cred_confirm_service,
+                NO_DRAFT_FRIENDLY_REPLY as _cred_no_draft_reply,
             )
             _credential_save_preconfirm = _cred_save_confirm_phrase(
                 decrypted_message or "",
             )
+            _credential_confirm_selection_hint = req.selection_hint
+            if not _credential_save_preconfirm:
+                _named_confirm_service = _cred_confirm_service(
+                    decrypted_message or "",
+                )
+                if _named_confirm_service:
+                    from vault_credential_draft import (
+                        get_draft as _get_named_credential_draft,
+                    )
+                    _named_confirm_draft = _get_named_credential_draft(
+                        vault_id=vault_id,
+                        service_name=_named_confirm_service,
+                    )
+                    if _named_confirm_draft is None:
+                        try:
+                            request.state.chat_path = (
+                                "pending_credential_not_found"
+                            )
+                        except Exception:
+                            pass
+                        return encrypted_reply(_cred_no_draft_reply)
+                    _credential_save_preconfirm = True
+                    _credential_confirm_selection_hint = {
+                        "kind": "generated_login_draft",
+                        "id": str(_named_confirm_draft.draft_id or ""),
+                    }
         except Exception:
             _credential_save_preconfirm = False
+            _credential_confirm_selection_hint = req.selection_hint
         try:
             _credential_cancel_preconfirm = bool(
                 re.match(
@@ -13077,7 +13106,7 @@ async def chat_endpoint(
                         key=key,
                         memory=_credential_confirm_memory,
                         save_secret_tool=save_secret_tool,
-                        selection_hint=req.selection_hint,
+                        selection_hint=_credential_confirm_selection_hint,
                     )
                 else:
                     from vault_pending_credential_confirm import (
@@ -14145,6 +14174,92 @@ async def chat_endpoint(
                 extra=f"fast_path=1 lang={_reply_language}",
             )
             return encrypted_reply(json.dumps(_fast_envelope))
+
+        # User-supplied credential fields are a privacy boundary, not general
+        # conversation. The general-chat guard below can legitimately choose
+        # an AI-authored response, so route these commands first and fail
+        # closed if deterministic handling cannot prepare the encrypted draft.
+        # No field value is included in diagnostics or sent to an AI provider.
+        _supplied_credential_command = _extract_credential_command(
+            decrypted_message or "",
+            has_pending_draft=False,
+        )
+        if (
+            _supplied_credential_command.action == _CMD_CREATE
+            and bool(_supplied_credential_command.explicit_fields)
+        ):
+            try:
+                from vault_chat_deterministic_router import (
+                    try_route_deterministically as _private_cred_route,
+                )
+                from vault_inspection_tools import (
+                    generate_credential_draft as _private_cred_drafter,
+                )
+                from vault_chat_active_entity import (
+                    set_active_entity as _private_cred_set_active,
+                    get_active_entity as _private_cred_get_active,
+                )
+
+                def _private_cred_files_lister():
+                    return _list_uploaded_files_for_credential_search(
+                        vault_id, key,
+                    ) or []
+
+                _private_cred_outcome = _private_cred_route(
+                    vault_id=vault_id,
+                    session_id=_chat_session_id,
+                    key=key,
+                    decrypted_message=decrypted_message or "",
+                    files_lister=_private_cred_files_lister,
+                    credential_drafter=_private_cred_drafter,
+                    active_entity_getter=_private_cred_get_active,
+                    active_entity_setter=_private_cred_set_active,
+                    chat_request_id=_chat_request_id or "",
+                    credential_saver=save_secret_tool,
+                )
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] supplied_credential_private_route_failed "
+                    "vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
+                _private_cred_outcome = None
+
+            if _private_cred_outcome is None:
+                try:
+                    request.state.chat_path = "credential_private_route_failed"
+                except Exception:
+                    pass
+                return encrypted_reply(
+                    "I couldn't prepare that login for secure saving right "
+                    "now. Your supplied values were not sent to an AI "
+                    "provider. Please try again."
+                )
+
+            if _private_cred_outcome.pin_active_entity is not None:
+                try:
+                    _pin_type, _pin_ref, _pin_label, _pin_actions = (
+                        _private_cred_outcome.pin_active_entity
+                    )
+                    _private_cred_set_active(
+                        vault_id,
+                        entity_type=_pin_type,
+                        entity_ref=_pin_ref,
+                        display_label=_pin_label,
+                        allowed_actions=_pin_actions,
+                        session_id=_chat_session_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[CHAT-DEBUG] supplied_credential_pin_failed"
+                    )
+            try:
+                request.state.chat_path = (
+                    _private_cred_outcome.chat_path_tag
+                )
+            except Exception:
+                pass
+            return encrypted_reply(_private_cred_outcome.envelope_json)
 
         # Retrieval-free general conversation guard. Explicit vault actions
         # and FAQ cards have already had first refusal in the fast router.

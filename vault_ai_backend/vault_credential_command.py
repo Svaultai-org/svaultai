@@ -246,8 +246,9 @@ _CREDENTIAL_ASSERTION_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"^(?:save\s+)?(?:my\s+)?(?P<service>.+?)\s+"
-        r"(?:login\s+)?(?:username|user)\s+(?:is\s+)?"
+        r"^(?:(?:save|store|remember)\s+)?(?:my\s+)?"
+        r"(?P<service>.+?)\s+(?:is\s+)?"
+        r"(?:login\s*[,;:]?\s+)?(?:username|user)\s+(?:is\s+)?"
         r"(?P<username>\S+)\s+(?:and\s+)?(?:password|pass|pwd)\s+"
         r"(?:is\s+)?(?P<password>\S+)[.!?]*$",
         re.IGNORECASE,

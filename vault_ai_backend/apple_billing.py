@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,14 +49,25 @@ def configured_apple_catalog() -> dict[str, dict[str, Any]]:
     for product_id, config in payload.items():
         if not isinstance(product_id, str) or not isinstance(config, dict):
             raise AppleBillingConfigurationError("invalid Apple product entry")
-        quantity = int(config.get("quantity") or 0)
-        entitlement_bytes = int(config.get("entitlement_bytes") or 0)
-        if quantity < 1 or entitlement_bytes < 1:
+        try:
+            quantity = int(config.get("quantity") or 0)
+            entitlement_bytes = int(config.get("entitlement_bytes") or 0)
+        except (TypeError, ValueError) as exc:
+            raise AppleBillingConfigurationError(
+                "invalid Apple entitlement entry"
+            ) from exc
+        billing_period = str(config.get("billing_period") or "").strip().upper()
+        if (
+            quantity < 1
+            or entitlement_bytes < 1
+            or re.fullmatch(r"P[1-9][0-9]*[DWMY]", billing_period) is None
+        ):
             raise AppleBillingConfigurationError("invalid Apple entitlement entry")
         catalog[product_id] = {
             "quantity": quantity,
             "entitlement_bytes": entitlement_bytes,
             "plan_id": str(config.get("plan_id") or "monthly"),
+            "billing_period": billing_period,
         }
     return catalog
 
@@ -99,7 +111,12 @@ class AppleSignedDataVerifier:
                 "Apple bundle ID and root certificate directory are required"
             )
         paths = sorted(Path(cert_dir).glob("*.cer"))
-        roots = [path.read_bytes() for path in paths]
+        try:
+            roots = [path.read_bytes() for path in paths]
+        except OSError as exc:
+            raise AppleBillingConfigurationError(
+                "Apple root certificates are unreadable"
+            ) from exc
         if not roots:
             raise AppleBillingConfigurationError("Apple root certificates missing")
         if environment == "production":
@@ -109,7 +126,12 @@ class AppleSignedDataVerifier:
                     "Apple numeric app ID is required for production"
                 )
             env_value = Environment.PRODUCTION
-            app_id = int(app_id_raw)
+            try:
+                app_id = int(app_id_raw)
+            except ValueError as exc:
+                raise AppleBillingConfigurationError(
+                    "Apple numeric app ID is invalid"
+                ) from exc
         elif environment == "sandbox":
             env_value = Environment.SANDBOX
             app_id = None
@@ -232,6 +254,7 @@ def decode_verified_apple_notification(
 ) -> tuple[str, Any, Any]:
     """Verify strictly in each configured environment; never decode unsigned JWS."""
     errors = []
+    configured_environment_count = 0
     environments = ["production"]
     if os.getenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "false").strip().lower() in {
         "1", "true", "yes", "on",
@@ -240,9 +263,16 @@ def decode_verified_apple_notification(
     for environment in environments:
         try:
             verifier = verifier_factory(environment)
+            configured_environment_count += 1
             return environment, verifier, verifier.verify_notification(signed_payload)
-        except (AppleBillingConfigurationError, AppleTransactionVerificationError) as exc:
+        except AppleBillingConfigurationError as exc:
             errors.append(exc)
+        except AppleTransactionVerificationError as exc:
+            errors.append(exc)
+    if configured_environment_count == 0:
+        raise AppleBillingConfigurationError(
+            "Apple notification verification is not configured"
+        ) from (errors[-1] if errors else None)
     raise AppleTransactionVerificationError(
         "Apple notification could not be verified in an enabled environment"
     ) from (errors[-1] if errors else None)

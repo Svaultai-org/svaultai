@@ -599,7 +599,8 @@ class _ChatEndpointHarness:
 
         def _fake_store_draft(*, vault_id, service_name, username,
                               password, ttl_seconds=None,
-                              opaque_server_storage=False):
+                              opaque_server_storage=False,
+                              generated=True):
             _fake_call_index[0] += 1
             now = _time_mod.time()
             draft = CredentialDraft(
@@ -610,6 +611,7 @@ class _ChatEndpointHarness:
                 password=password,
                 created_at=now,
                 expires_at=now + 600.0,
+                generated=generated,
             )
             self.credential_draft_calls.append({
                 "service_name": service_name,
@@ -1060,6 +1062,32 @@ class Bug4EndpointTest(_EndpointTestBase):
             f"{call['username']!r}\n{ev.summary()}",
         )
 
+    def test_existing_credential_assertion_never_reaches_external_planner(self):
+        self.h.arm_planner_sentinel()
+        ev = self.h.post_message(
+            "instagram is username synthetic-user-12 and password "
+            "Synthetic-pass-223"
+        )
+
+        self.assertHTTP200(ev)
+        self.assertResponseType(ev, "vault_chat_card")
+        self.assertChatPath(ev, "deterministic_credential_create")
+        self.assertPlannerNotInvoked(ev)
+        self.assertEqual(len(self.h.credential_draft_calls), 1)
+        call = self.h.credential_draft_calls[0]
+        self.assertEqual(call["service_name"].lower(), "instagram")
+        self.assertEqual(call["username"], "synthetic-user-12")
+        self.assertEqual(call["password"], "Synthetic-pass-223")
+
+        data = (ev.envelope or {}).get("card", {}).get("data", {})
+        self.assertEqual(data.get("service"), "instagram")
+        self.assertEqual(data.get("username"), "synthetic-user-12")
+        self.assertEqual(data.get("password"), "Synthetic-pass-223")
+        self.assertEqual(
+            set(data.get("explicit_fields") or []),
+            {"username", "password"},
+        )
+
     def test_hbo_max_create_draft_has_full_card_data(self):
         self.h.arm_planner_sentinel()
         ev = self.h.post_message(
@@ -1121,6 +1149,20 @@ class Bug4EndpointTest(_EndpointTestBase):
         self.assertEqual(
             self.h.credential_draft_calls[-1]["username"],
             "user@example.com",
+        )
+
+    def test_service_save_without_pending_never_generates_or_calls_ai(self):
+        self.h.arm_planner_sentinel()
+        calls_before = len(self.h.credential_draft_calls)
+        ev = self.h.post_message("save my instagram login")
+
+        self.assertHTTP200(ev)
+        self.assertChatPath(ev, "pending_credential_not_found")
+        self.assertPlannerNotInvoked(ev)
+        self.assertEqual(len(self.h.credential_draft_calls), calls_before)
+        self.assertIn(
+            "don't have a pending save",
+            str(ev.envelope_json or "").lower(),
         )
 
     def test_disney_login_plain_username(self):

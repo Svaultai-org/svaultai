@@ -114,6 +114,13 @@ _COMPILED_SAVE_THEMED: tuple[re.Pattern[str], ...] = tuple(
 )
 
 
+_SERVICE_SCOPED_CONFIRM_RE = re.compile(
+    r"^\s*(?:save|store|remember)\s+(?:my\s+|the\s+)?"
+    r"(?P<service>.+?)\s+(?:login|credential|account)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
 NO_DRAFT_FRIENDLY_REPLY: str = (
     "I don't have a pending save right now. Tell me what you'd "
     "like to save first."
@@ -148,8 +155,27 @@ def is_save_themed_confirm_phrase(user_message: Optional[str]) -> bool:
     return False
 
 
+def pending_draft_confirm_service(
+    user_message: Optional[str],
+) -> Optional[str]:
+    """Return the named service for an unambiguous pending-draft save.
+
+    The caller must still prove a live draft exists for this exact service.
+    Keeping that check outside the text classifier prevents a stale draft for
+    one service from being saved by a request naming another service.
+    """
+    if not isinstance(user_message, str):
+        return None
+    match = _SERVICE_SCOPED_CONFIRM_RE.fullmatch(user_message.strip())
+    if match is None:
+        return None
+    service = str(match.group("service") or "").strip(" ,.;:!?")
+    return service or None
+
+
 __all__ = [
     "is_pending_draft_confirm_phrase",
     "is_save_themed_confirm_phrase",
+    "pending_draft_confirm_service",
     "NO_DRAFT_FRIENDLY_REPLY",
 ]
