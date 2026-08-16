@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
 import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
+import 'privacy_policy_page.dart' show kVaultAiPrivacyUrl;
 import 'services/apple_storekit_billing_controller.dart';
 import 'services/google_play_billing_controller.dart';
 import 'ui/tokens.dart';
@@ -17,6 +18,9 @@ const String kAppleStoreKitEnvironment = String.fromEnvironment(
   'APPLE_STOREKIT_ENVIRONMENT',
   defaultValue: 'production',
 );
+
+const String kAppleStandardEulaUrl =
+    'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
 
 String? buildCheckoutRedirectUrl(String queryFlag) {
   if (!kIsWeb) return null;
@@ -100,9 +104,8 @@ class _StoragePageState extends State<StoragePage> {
         gateway: FlutterAppleBillingGateway(),
         productId: productId,
         appAccountToken: appAccountToken,
-        environment: kAppleStoreKitEnvironment == 'sandbox'
-            ? 'sandbox'
-            : 'production',
+        environment:
+            kAppleStoreKitEnvironment == 'sandbox' ? 'sandbox' : 'production',
         verifyPurchase: ({
           required String signedTransaction,
           required String environment,
@@ -367,7 +370,7 @@ class _StoragePageState extends State<StoragePage> {
         authToken: token,
         blockCount: blockCount,
         successUrl: buildCheckoutRedirectUrl('success'),
-        cancelUrl:  buildCheckoutRedirectUrl('cancel'),
+        cancelUrl: buildCheckoutRedirectUrl('cancel'),
       );
 
       final action = (result['action'] as String?) ?? 'open_checkout';
@@ -589,9 +592,13 @@ class _StoragePageState extends State<StoragePage> {
               : (_usesAppleBilling
                   ? appleMessage
                   : 'Storage upgrades are not available on this platform.')),
-      googlePlayPrice: _usesGooglePlayBilling
+      storePrice: _usesGooglePlayBilling
           ? play?.product?.price
           : (_usesAppleBilling ? apple?.product?.price : null),
+      storeName: _usesGooglePlayBilling
+          ? 'Google Play'
+          : (_usesAppleBilling ? 'the App Store' : null),
+      showAppleSubscriptionDisclosure: _usesAppleBilling,
       onRestorePurchases: _usesGooglePlayBilling && play?.available == true
           ? play!.restore
           : (_usesAppleBilling && apple?.available == true
@@ -715,7 +722,9 @@ class StorageBody extends StatelessWidget {
   final VoidCallback? onBuyStorage;
   final VoidCallback? onManageSubscription;
   final String? unavailableMessage;
-  final String? googlePlayPrice;
+  final String? storePrice;
+  final String? storeName;
+  final bool showAppleSubscriptionDisclosure;
   final VoidCallback? onRestorePurchases;
 
   const StorageBody({
@@ -725,7 +734,9 @@ class StorageBody extends StatelessWidget {
     this.onBuyStorage,
     this.onManageSubscription,
     this.unavailableMessage,
-    this.googlePlayPrice,
+    this.storePrice,
+    this.storeName,
+    this.showAppleSubscriptionDisclosure = false,
     this.onRestorePurchases,
   });
 
@@ -809,13 +820,21 @@ class StorageBody extends StatelessWidget {
             onBuy: onBuyStorage,
             onManage: onManageSubscription,
           ),
-        if (googlePlayPrice != null) ...[
+        if (storePrice != null && storeName != null) ...[
           const SizedBox(height: VaultSpacing.md),
           _BillingAvailabilityCard(
-            message: '$googlePlayPrice per month through Google Play. '
-                'Adds 50 GB and renews automatically until canceled.',
+            message: showAppleSubscriptionDisclosure
+                ? 'SVaultAI 50 GB Storage — 1 month, $storePrice through '
+                    '$storeName. Adds 50 GB and renews automatically each '
+                    'month until canceled.'
+                : '$storePrice per month through $storeName. Adds 50 GB and '
+                    'renews automatically until canceled.',
             icon: Icons.shop_2_outlined,
           ),
+        ],
+        if (showAppleSubscriptionDisclosure) ...[
+          const SizedBox(height: VaultSpacing.sm),
+          const _AppleSubscriptionLegalLinks(),
         ],
         if (unavailableMessage != null) ...[
           const SizedBox(height: VaultSpacing.md),
@@ -846,6 +865,32 @@ class StorageBody extends StatelessWidget {
           const SizedBox(height: VaultSpacing.lg),
         const _PricingExamplesCard(),
         const SizedBox(height: VaultSpacing.xl),
+      ],
+    );
+  }
+}
+
+class _AppleSubscriptionLegalLinks extends StatelessWidget {
+  const _AppleSubscriptionLegalLinks();
+
+  Future<void> _open(String url) async {
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: VaultSpacing.sm,
+      runSpacing: VaultSpacing.sm,
+      children: [
+        TextButton(
+          onPressed: () => _open(kVaultAiPrivacyUrl),
+          child: const Text('Privacy Policy'),
+        ),
+        TextButton(
+          onPressed: () => _open(kAppleStandardEulaUrl),
+          child: const Text('Terms of Use (EULA)'),
+        ),
       ],
     );
   }
