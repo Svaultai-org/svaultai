@@ -61,6 +61,36 @@ void main() {
       expect(shouldAttemptCredentialV2Lookup(text), isFalse);
     });
 
+    test('credential assertions bypass the private-command catch-all', () {
+      const assertion =
+          'username audit-user password Audit-pass! is my AuditService login';
+
+      expect(
+        shouldRouteCredentialV2CreateToBackend(
+          assertion,
+          localWriteEnabled: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldRouteCredentialV2CreateToBackend(
+          assertion,
+          localWriteEnabled: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRouteCredentialV2CreateToBackend(
+          'what is my password',
+          localWriteEnabled: false,
+        ),
+        isFalse,
+      );
+
+      final source = File('lib/main.dart').readAsStringSync();
+      expect(source, contains('!credentialCreateRequiresBackend &&'));
+    });
+
     test('explicit credential reads still use the local lookup route', () {
       expect(
           shouldAttemptCredentialV2Lookup('show me my github login'), isTrue);
