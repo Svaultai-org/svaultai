@@ -17023,6 +17023,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _scrollToBottom();
     }
     debugPrint('ROUTING_STARTED_AT=${DateTime.now().toIso8601String()}');
+    final credentialCreateRequiresBackend =
+        shouldRouteCredentialV2CreateToBackend(
+      text,
+      localWriteEnabled: zkV2CredentialWriteEnabled,
+    );
 
     // Deterministic ACCOUNT-USERNAME intent (login identifier only).
     // "What is my username" / "What's my account name" / "What
@@ -17072,6 +17077,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     if (privateLocalRouting &&
         attachments.isEmpty &&
+        !credentialCreateRequiresBackend &&
         _looksLikePrivateVaultCommand(text)) {
       setState(() {
         msgs.add(_Msg('assistant',

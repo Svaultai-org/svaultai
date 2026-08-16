@@ -536,6 +536,17 @@ bool shouldAttemptCredentialV2Lookup(String text) {
       looksLikePrivateCredentialQuery(text);
 }
 
+/// Allows a recognized credential-creation message to use the backend draft
+/// workflow while the client-side encrypted write rollout is disabled.
+///
+/// Without this exception, the final private-command safety guard consumes
+/// supplied username/password assertions before the draft can preserve them.
+bool shouldRouteCredentialV2CreateToBackend(
+  String text, {
+  required bool localWriteEnabled,
+}) =>
+    !localWriteEnabled && parseCredentialV2CreateIntent(text) != null;
+
 class CredentialV2Repository {
   final CredentialV2Crypto crypto;
   final CredentialV2Api api;
