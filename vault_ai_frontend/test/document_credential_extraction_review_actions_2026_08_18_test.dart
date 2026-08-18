@@ -225,6 +225,27 @@ void main() {
     expect(backendAssignment, greaterThan(localRoutes));
   });
 
+  test('missing current attachment fails closed before credential lookup', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final localRoutes = source.indexOf('if (!hasPrivateBackendCommand) {');
+    final missingAttachment = source.indexOf(
+      'shouldUseServerReadableCredentialReview(text)',
+      localRoutes,
+    );
+    final credentialLookup = source.indexOf(
+      '_tryLocalCredentialV2LookupReply(text, app)',
+      localRoutes,
+    );
+
+    expect(localRoutes, greaterThanOrEqualTo(0));
+    expect(missingAttachment, greaterThan(localRoutes));
+    expect(credentialLookup, greaterThan(missingAttachment));
+    expect(
+      source,
+      contains('No credential draft was created and nothing was saved.'),
+    );
+  });
+
   testWidgets('renders three masked mixed candidates with per-row actions',
       (tester) async {
     await _pump(tester, onAction: (_, __) {});
