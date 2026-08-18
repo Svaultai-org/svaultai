@@ -531,6 +531,12 @@ def test_doc_kind_auto_inferred_from_category_keywords():
     assert _infer_doc_kind_from_query("show me all ID photos") == "id_photo"
     assert _infer_doc_kind_from_query("find my passport") == "id_photo"
     assert _infer_doc_kind_from_query("driver license please") == "id_photo"
+    assert _infer_doc_kind_from_query(
+        "find me DL of the name Louis Lodato"
+    ) == "id_photo"
+    assert _infer_doc_kind_from_query(
+        "driving licence for Louis Lodato"
+    ) == "id_photo"
     assert _infer_doc_kind_from_query("ID card for Louis") == "id_photo"
 
 
@@ -552,6 +558,20 @@ def test_entity_extraction_strips_category_words():
         is_id_class_search=True,
     )
     assert out == "louis lodato"
+
+
+def test_driver_license_aliases_do_not_pollute_person_query():
+    from vault_complete_search import _extract_entity_from_query
+
+    for query in (
+        "find me DL of the name Louis Lodato",
+        "find the driver's license for Louis Lodato",
+        "find the driving licence for Louis Lodato",
+    ):
+        assert _extract_entity_from_query(
+            query,
+            is_id_class_search=True,
+        ) == "louis lodato"
 
 
 def test_entity_extraction_yields_empty_for_broad_query():

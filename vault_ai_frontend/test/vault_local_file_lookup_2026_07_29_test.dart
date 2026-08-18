@@ -94,6 +94,58 @@ void main() {
     );
 
     expect(match, isNull);
+    expect(
+      shouldDeferLocalFileMissToSemanticSearch(
+        query: 'passport',
+        match: match,
+      ),
+      isTrue,
+    );
+  });
+
+  test('content and person lookup miss defers to semantic vault search', () {
+    final query = extractLocalFileLookupQuery(
+      'find me DL of the name Louis Lodato',
+    );
+    expect(query, 'DL of the name Louis Lodato');
+    final metadataOnlyMatch = resolveLocalVaultFileLookup(
+      query: query!,
+      files: const [
+        VaultLocalFileLookupEntry(
+          id: 'dl-image',
+          fileName: 'Driver License-Lou.jpg',
+          mimeType: 'image/jpeg',
+          assetType: 'image',
+          sizeBytes: 100,
+        ),
+      ],
+    );
+    expect(metadataOnlyMatch, isNull);
+    expect(
+      shouldDeferLocalFileMissToSemanticSearch(
+        query: query,
+        match: metadataOnlyMatch,
+      ),
+      isTrue,
+    );
+  });
+
+  test('local metadata miss is non-terminal in both chat interceptors', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(
+      source,
+      contains('shouldDeferLocalFileMissToSemanticSearch('),
+    );
+    expect(
+      source,
+      contains('extractLocalFileLookupQuery(text) != null'),
+    );
+    expect(
+      source,
+      isNot(contains(
+        'I could not identify one matching saved file. Add a more specific title or topic.',
+      )),
+    );
   });
 
   test('natural workplace document phrasing resolves synthetic file', () {
