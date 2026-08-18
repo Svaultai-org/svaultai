@@ -10,6 +10,8 @@ import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
 List<Map<String, dynamic>> _records() => <Map<String, dynamic>>[
       {
         'candidate_id': 'aaaaaaaaaaaaaaaaaaaaaaaa',
+        'record_type': 'LOGIN',
+        'secret_type': 'login',
         'service': 'Synthetic Alpha',
         'username': 'alpha-user',
         'email': null,
@@ -17,10 +19,17 @@ List<Map<String, dynamic>> _records() => <Map<String, dynamic>>[
         'password_present': true,
         'pin_present': false,
         'note_present': false,
-        'source_context': 'synthetic-three-logins.pdf',
+        'source_context': 'synthetic-three-logins.pdf, page 1',
+        'fields': const <String, dynamic>{
+          'username': 'alpha-user',
+          'password': 'Alpha-Secret !@# with spaces',
+          'url': 'https://alpha.example.invalid',
+        },
       },
       {
         'candidate_id': 'bbbbbbbbbbbbbbbbbbbbbbbb',
+        'record_type': 'ACCOUNT_NUMBER',
+        'secret_type': 'account_number',
         'service': 'Synthetic Beta',
         'username': null,
         'email': 'beta@example.invalid',
@@ -28,10 +37,19 @@ List<Map<String, dynamic>> _records() => <Map<String, dynamic>>[
         'password_present': true,
         'pin_present': false,
         'note_present': true,
-        'source_context': 'synthetic-three-logins.pdf',
+        'source_context': 'synthetic-three-logins.pdf, page 2',
+        'fields': const <String, dynamic>{
+          'email': 'beta@example.invalid',
+          'password': 'Beta-Secret',
+          'account_number': '0001 0020 0300',
+          'note': 'synthetic note',
+          'url': 'https://beta.example.invalid',
+        },
       },
       {
         'candidate_id': 'cccccccccccccccccccccccc',
+        'record_type': 'PIN',
+        'secret_type': 'pin',
         'service': 'Synthetic Gamma',
         'username': 'gamma-user',
         'email': null,
@@ -39,7 +57,13 @@ List<Map<String, dynamic>> _records() => <Map<String, dynamic>>[
         'password_present': true,
         'pin_present': false,
         'note_present': false,
-        'source_context': 'synthetic-three-logins.pdf',
+        'source_context': 'synthetic-three-logins.pdf, page 3',
+        'fields': const <String, dynamic>{
+          'username': 'gamma-user',
+          'password': 'Gamma-Secret',
+          'pin': '0042',
+          'url': 'https://gamma.example.invalid',
+        },
       },
     ];
 
@@ -50,6 +74,11 @@ ChatMessage _message({List<Map<String, dynamic>>? records}) => ChatMessage(
       payload: <String, dynamic>{
         'records': records ?? _records(),
         'count': (records ?? _records()).length,
+        'analysis_counts': const <String, dynamic>{
+          'pdf_page_count': 3,
+          'text_extraction_page_count': 3,
+          'normalized_record_count': 3,
+        },
         'text_available': true,
         'file': const <String, dynamic>{
           'file_id': 'file-synthetic',
@@ -164,20 +193,78 @@ void main() {
     expect(backendAssignment, greaterThan(localRoutes));
   });
 
-  testWidgets('renders three masked candidates with per-row actions',
+  testWidgets('renders three masked mixed candidates with per-row actions',
       (tester) async {
     await _pump(tester, onAction: (_, __) {});
 
     expect(find.text('Synthetic Alpha'), findsOneWidget);
-    expect(find.text('Synthetic Beta'), findsOneWidget);
-    expect(find.text('Synthetic Gamma'), findsOneWidget);
-    expect(find.text('Password: ••••••••••'), findsNWidgets(3));
-    expect(find.text('Save'), findsNWidgets(3));
-    expect(find.text('Edit'), findsNWidgets(3));
-    expect(find.text('Ignore'), findsNWidgets(3));
+    expect(find.text('Password: ••••••••••'), findsWidgets);
+    expect(find.text('Save'), findsWidgets);
+    expect(find.text('Edit'), findsWidgets);
+    expect(find.text('Ignore'), findsWidgets);
     expect(find.byKey(const Key('credential_extraction_save_selected')),
         findsOneWidget);
     expect(find.textContaining('Alpha-Secret'), findsNothing);
+    expect(find.text('login'), findsOneWidget);
+    expect(find.text('Pages: 3/3  •  Candidates: 3'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Synthetic Gamma'), findsOneWidget);
+    expect(find.text('pin'), findsOneWidget);
+  });
+
+  testWidgets('owner reveal shows exact punctuation and whitespace value',
+      (tester) async {
+    await _pump(tester, onAction: (_, __) {});
+
+    const exact = 'Alpha-Secret !@# with spaces';
+    expect(find.textContaining(exact), findsNothing);
+    await tester.tap(find.byKey(const ValueKey(
+      'credential_extraction_reveal_aaaaaaaaaaaaaaaaaaaaaaaa',
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Password: $exact'), findsOneWidget);
+    expect(find.text('Hide extracted values'), findsOneWidget);
+  });
+
+  testWidgets('all sixty candidates remain selected and actionable',
+      (tester) async {
+    final many = List<Map<String, dynamic>>.generate(60, (index) {
+      final id = index.toString().padLeft(24, '0');
+      return <String, dynamic>{
+        'candidate_id': id,
+        'record_type': 'LOGIN',
+        'secret_type': 'login',
+        'service': 'Synthetic $index',
+        'password_present': true,
+        'pin_present': false,
+        'note_present': false,
+        'source_context': 'synthetic-twelve-pages.pdf, page ${index ~/ 5 + 1}',
+        'fields': <String, dynamic>{
+          'username': 'user-$index',
+          'password': 'Secret-$index',
+        },
+      };
+    });
+    String? action;
+    Map<String, dynamic>? data;
+    await _pump(
+      tester,
+      records: many,
+      onAction: (nextAction, nextData) {
+        action = nextAction;
+        data = nextData;
+      },
+    );
+
+    expect(CredentialExtractionReviewCard.maxRows, greaterThanOrEqualTo(60));
+    expect(find.text('Save selected (60)'), findsOneWidget);
+    await tester.tap(find.byKey(
+      const Key('credential_extraction_save_selected'),
+    ));
+    await tester.pumpAndSettle();
+    expect(action, 'credential_extraction_save_selected');
+    expect((data?['candidate_ids'] as List).length, 60);
   });
 
   testWidgets('ignore one excludes it from save selected', (tester) async {

@@ -14544,6 +14544,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'records': records,
           'file': fileMap,
           if (decoded['count'] is int) 'count': decoded['count'],
+          if (decoded['analysis_counts'] is Map)
+            'analysis_counts':
+                (decoded['analysis_counts'] as Map).cast<String, dynamic>(),
           if (decoded['text_available'] is bool)
             'text_available': decoded['text_available'],
         };
