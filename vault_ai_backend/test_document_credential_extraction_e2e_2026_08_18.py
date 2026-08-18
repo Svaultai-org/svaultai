@@ -4,6 +4,8 @@ import base64
 import io
 import inspect
 import json
+import logging
+import io as stdlib_io
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,7 @@ from reportlab.pdfgen import canvas
 
 import extractor
 import main
+from secure_document_extractor import extract_secure_records, extraction_counts
 
 
 SYNTHETIC_TEXT = """Synthetic Alpha
@@ -42,8 +45,55 @@ def _synthetic_pdf_bytes() -> bytes:
     return output.getvalue()
 
 
+def _synthetic_twelve_page_mixed_pdf() -> tuple[bytes, int]:
+    output = io.BytesIO()
+    pdf = canvas.Canvas(output)
+    expected = 0
+    for page in range(1, 13):
+        y = 750
+        for row in range(1, 6):
+            expected += 1
+            is_duplicate = page == 12 and row == 5
+            title = (
+                "Synthetic Service P1 R1"
+                if is_duplicate else f"Synthetic Service P{page} R{row}"
+            )
+            pdf.drawString(72, y, title)
+            y -= 18
+            variant = 1 if is_duplicate else row % 5
+            if variant == 1:
+                username = "user-p1-r1" if is_duplicate else f"user-p{page}-r{row}"
+                password = "P1!R1 #Exact" if is_duplicate else f"P{page}!R{row} #Exact"
+                pdf.drawString(72, y, f"username: {username}")
+                y -= 18
+                pdf.drawString(72, y, f"password: {password}")
+            elif variant == 2:
+                pdf.drawString(72, y, f"email: p{page}r{row}@example.invalid")
+                y -= 18
+                pdf.drawString(72, y, f"password: Email-P{page}?R{row}!")
+            elif variant == 3:
+                pdf.drawString(72, y, f"pin: {page:02d}{row:02d}")
+                y -= 18
+                pdf.drawString(72, y, f"account number: {page:02d}000000{row}")
+            elif variant == 4:
+                pdf.drawString(
+                    72, y,
+                    f"url: https://p{page}-r{row}.example.invalid/login",
+                )
+                y -= 18
+                pdf.drawString(72, y, f"access code: ACCESS-{page}-{row}!")
+            else:
+                pdf.drawString(72, y, f"secure identifier: MEMBER-{page}-{row}")
+                y -= 18
+                pdf.drawString(72, y, f"password: Space kept P{page} R{row}!")
+            y -= 38
+        pdf.showPage()
+    pdf.save()
+    return output.getvalue(), expected
+
+
 def _records() -> list[dict]:
-    return extractor.extract_multiple_credentials(SYNTHETIC_TEXT)
+    return extract_secure_records(SYNTHETIC_TEXT)
 
 
 def _pending(records: list[dict]) -> tuple[dict, list[dict]]:
@@ -63,6 +113,86 @@ def _pending(records: list[dict]) -> tuple[dict, list[dict]]:
 
 
 class DocumentCredentialExtractionE2ETests(unittest.TestCase):
+    def test_all_supported_secure_record_types_are_normalized(self):
+        cases = (
+            ("username: user\npassword: pass", "LOGIN"),
+            ("account number: 123456789\nusername: owner", "ACCOUNT"),
+            ("pin: 1234", "PIN"),
+            ("account number: 123456789", "ACCOUNT_NUMBER"),
+            ("secure identifier: MEMBER-1", "SECURE_IDENTIFIER"),
+            ("url: https://example.invalid", "URL"),
+            ("access code: RECOVERY-1", "RECOVERY_OR_ACCESS_CODE"),
+            ("note: private synthetic note", "OTHER_SECURE_RECORD"),
+        )
+        text_parts = ["[[SVAULTAI_PAGE:1]]"]
+        for index, (body, _expected) in enumerate(cases, 1):
+            text_parts.extend((f"[[SVAULTAI_RECORD:p1-r{index}]]", body))
+        records = extract_secure_records("\n".join(text_parts))
+        self.assertEqual(
+            [record["record_type"] for record in records],
+            [expected for _body, expected in cases],
+        )
+
+    def test_extracted_values_are_not_written_to_logs(self):
+        stream = stdlib_io.StringIO()
+        handler = logging.StreamHandler(stream)
+        root = logging.getLogger()
+        root.addHandler(handler)
+        try:
+            main._build_credential_extraction_review_envelope(
+                file_id="file-synthetic",
+                file_name="synthetic.pdf",
+                saved_name=None,
+                relative_path=None,
+                records=_records(),
+                message="Review",
+                text_available=True,
+            )
+        finally:
+            root.removeHandler(handler)
+        logged = stream.getvalue()
+        self.assertNotIn("Alpha-Secret-1", logged)
+        self.assertNotIn("alpha-user", logged)
+
+    def test_twelve_page_mixed_document_preserves_every_page_and_record(self):
+        pdf_bytes, expected = _synthetic_twelve_page_mixed_pdf()
+        text = main._extract_text_from_bytes(
+            "synthetic-twelve-page-mixed.pdf", pdf_bytes,
+        )
+        records = extract_secure_records(text or "")
+        counts = extraction_counts(text or "", records)
+
+        self.assertEqual(expected, 60)
+        self.assertEqual(len(records), expected)
+        self.assertEqual(counts["pdf_page_count"], 12)
+        self.assertEqual(counts["text_extraction_page_count"], 12)
+        self.assertEqual(counts["raw_secret_candidate_count"], expected)
+        self.assertEqual(counts["normalized_record_count"], expected)
+        self.assertEqual(counts["ui_rendered_record_count"], expected)
+        pages = {
+            page
+            for record in records
+            for page in record["provenance"]["page_numbers"]
+        }
+        self.assertIn(1, pages)
+        self.assertIn(6, pages)
+        self.assertIn(12, pages)
+        self.assertTrue(any(r["record_type"] == "ACCOUNT" for r in records))
+        self.assertTrue(any(
+            r["record_type"] == "RECOVERY_OR_ACCESS_CODE" for r in records
+        ))
+        exact = next(
+            r for r in records
+            if r["service"] == "Synthetic Service P11 R5"
+        )
+        self.assertEqual(exact["fields"]["password"], "Space kept P11 R5!")
+        duplicate_rows = [
+            r for r in records
+            if r["service"] == "Synthetic Service P1 R1"
+            and r["fields"].get("password") == "P1!R1 #Exact"
+        ]
+        self.assertEqual(len(duplicate_rows), 2)
+
     def test_synthetic_pdf_extracts_three_exact_source_candidates(self):
         text = main._extract_text_from_bytes(
             "synthetic-three-logins.pdf", _synthetic_pdf_bytes()
@@ -101,7 +231,7 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
             len(extractor.extract_multiple_credentials(docx_text or "")), 3
         )
 
-    def test_ocr_populated_image_text_uses_the_same_masked_review(self):
+    def test_ocr_populated_image_text_uses_owner_review(self):
         with patch.object(
             main,
             "_load_one_file_for_analysis",
@@ -124,9 +254,12 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         self.assertTrue(
             all(record["password_present"] for record in payload["records"])
         )
-        self.assertNotIn("Alpha-Secret-1", envelope)
+        self.assertEqual(
+            payload["records"][0]["fields"]["password"],
+            "Alpha-Secret-1",
+        )
 
-    def test_review_envelope_masks_secrets_and_normalizes_source_fields(self):
+    def test_review_envelope_exposes_exact_values_only_in_encrypted_payload(self):
         records = _records()
         envelope = main._build_credential_extraction_review_envelope(
             file_id="file-synthetic",
@@ -137,13 +270,14 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
             message="Review",
             text_available=True,
         )
-        self.assertNotIn("Alpha-Secret-1", envelope)
-        self.assertNotIn("Beta-Secret-2", envelope)
-        self.assertNotIn("Gamma-Secret-3", envelope)
         payload = json.loads(envelope)
         self.assertEqual(payload["count"], 3)
         self.assertEqual(len({row["candidate_id"] for row in payload["records"]}), 3)
         self.assertTrue(all(row["password_present"] for row in payload["records"]))
+        self.assertEqual(
+            payload["records"][0]["fields"]["password"],
+            "Alpha-Secret-1",
+        )
         self.assertEqual(
             payload["records"][0]["website"],
             "https://alpha.example.invalid",
@@ -207,7 +341,7 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         }
         with patch.object(main, "_load_one_file_for_analysis", return_value=file_row), patch.object(
             main, "extract_multiple_credentials", return_value=records
-        ), patch.object(main, "_peek_existing_login_fields", return_value={}), patch.object(
+        ), patch.object(main, "_peek_existing_secret_fields", return_value={}), patch.object(
             main,
             "save_secret_tool",
             side_effect=lambda vault_id, payload, key: saved.append(payload),
@@ -245,7 +379,7 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         }
         with patch.object(main, "_load_one_file_for_analysis", return_value=file_row), patch.object(
             main, "extract_multiple_credentials", return_value=records
-        ), patch.object(main, "_peek_existing_login_fields", return_value={}), patch.object(
+        ), patch.object(main, "_peek_existing_secret_fields", return_value={}), patch.object(
             main,
             "save_secret_tool",
             side_effect=lambda vault_id, payload, key: saved.append(payload),
@@ -279,7 +413,7 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
             main, "extract_multiple_credentials", return_value=records
         ), patch.object(
             main,
-            "_peek_existing_login_fields",
+            "_peek_existing_secret_fields",
             return_value=dict(records[0]["fields"]),
         ), patch.object(main, "save_secret_tool") as save_mock:
             reply = main._handle_credential_extraction_action(
@@ -317,7 +451,8 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         self.assertEqual(payload["records"], [])
         self.assertEqual(
             payload["message"],
-            "I couldn't identify any credentials in this file. Nothing was saved.",
+            "I couldn't identify any supported secure records in this file. "
+            "Nothing was saved.",
         )
 
 

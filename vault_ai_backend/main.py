@@ -100,6 +100,13 @@ from cryptography.exceptions import InvalidTag
 from device_gate import verify_trusted_device
 from tools import SYSTEM_PROMPT, VAULT_FUNCTIONS
 from extractor import redact_message, extract_credentials, extract_multiple_credentials
+from secure_document_extractor import (
+    MAX_SECURE_DOCUMENT_RECORDS,
+    extract_pdf_text_with_layout,
+    extract_secure_records,
+    extraction_counts as secure_extraction_counts,
+    has_structured_layout,
+)
 from username_policy import (
     PolicyCache as UsernamePolicyCache,
     UsernamePolicy,
@@ -1725,11 +1732,11 @@ present ("passedwordtex.pdf"). Set asset_name=null when the user
 refers to "this file" / "that file" without naming one — the
 handler falls back to the last opened file in chat memory.
 
-The handler builds a credential_extraction_review card that lists
-the detected login records (service, username/email if safe,
-password_present: true) for the user to review. It NEVER auto-
-saves. The user must affirmatively confirm before any record
-becomes a vault login.
+The handler builds a credential_extraction_review card that lists all
+supported secure-record candidates with page provenance. Sensitive values
+stay inside the encrypted response and the client hides them until the
+unlocked owner explicitly reveals them. It NEVER auto-saves. The user must
+affirmatively confirm before any candidate becomes a vault item.
 
 extract_logins_from_file is DIFFERENT from
 search_files_for_credentials: the latter ranks files, the former
@@ -4880,40 +4887,39 @@ def _build_credential_extraction_review_envelope(
     records: list[dict],
     message: str,
     text_available: bool,
+    analysis_counts: Optional[dict] = None,
 ) -> str:
 
 
     safe_records: list[dict] = []
     source_label = (saved_name or file_name or "this file").strip()
-    for raw_index, raw in enumerate(records[:50]):
+    for raw_index, raw in enumerate(records[:MAX_SECURE_DOCUMENT_RECORDS]):
         if not isinstance(raw, dict):
             continue
         fields = raw.get("fields") if isinstance(raw.get("fields"), dict) else {}
-        service = (raw.get("service") or "general").strip() or "general"
-        username = fields.get("username") if isinstance(fields, dict) else None
-        email = fields.get("email") if isinstance(fields, dict) else None
-        if isinstance(username, str):
-            username = username.strip() or None
-        else:
-            username = None
-        if isinstance(email, str):
-            email = email.strip() or None
-        else:
-            email = None
+        service = str(raw.get("service") or "general").strip() or "general"
+        exact_fields = {
+            str(name): value
+            for name, value in fields.items()
+            if isinstance(name, str) and isinstance(value, str) and value != ""
+        }
+        username = exact_fields.get("username")
+        email = exact_fields.get("email")
         website = fields.get("url") or fields.get("website")
-        if isinstance(website, str):
-            website = website.strip()[:500] or None
-        else:
+        if not isinstance(website, str) or website == "":
             website = None
+        provenance = (
+            dict(raw.get("provenance"))
+            if isinstance(raw.get("provenance"), dict)
+            else {}
+        )
         import hashlib
         candidate_material = json.dumps(
             {
                 "file_id": str(file_id or ""),
                 "index": raw_index,
                 "service": service,
-                "username": username,
-                "email": email,
-                "website": website,
+                "source_ref": provenance.get("source_ref"),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -4921,14 +4927,21 @@ def _build_credential_extraction_review_envelope(
         ).encode("utf-8")
         safe_records.append({
             "candidate_id":      hashlib.sha256(candidate_material).hexdigest()[:24],
+            "record_type":       str(raw.get("record_type") or raw.get("secret_type") or "OTHER_SECURE_RECORD").upper(),
+            "secret_type":       str(raw.get("secret_type") or "other_secure_record"),
             "service":           service,
             "username":          username,
             "email":             email,
             "website":           website,
-            "password_present":  bool(fields.get("password")) if isinstance(fields, dict) else False,
-            "pin_present":       bool(fields.get("pin")) if isinstance(fields, dict) else False,
-            "note_present":      bool(fields.get("note")) if isinstance(fields, dict) else False,
-            "source_context":    source_label,
+            "fields":            exact_fields,
+            "password_present":  bool(exact_fields.get("password")),
+            "pin_present":       bool(exact_fields.get("pin")),
+            "note_present":      bool(exact_fields.get("note")),
+            "source_context":    (
+                f"{source_label}, page {provenance.get('page_number')}"
+                if provenance.get("page_number") else source_label
+            ),
+            "provenance":        provenance,
         })
     payload = {
         "type":           "credential_extraction_review",
@@ -4942,6 +4955,7 @@ def _build_credential_extraction_review_envelope(
         "count":          len(safe_records),
         "records":        safe_records,
         "text_available": bool(text_available),
+        "analysis_counts": dict(analysis_counts or {}),
     }
     return json.dumps(payload)
 
@@ -4953,13 +4967,13 @@ _CREDENTIAL_EXTRACTION_ACTION_PREFIX = (
 _CONFIRM_CREDENTIAL_EXTRACTION_RE = re.compile(
     r"^\s*(?:yes[, ]+)?(?:approve|confirm|import|save)\s+"
     r"(?:(?:all|these|them|the)\s+)?(?:extracted\s+)?"
-    r"(?:(?:login|credential)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
+    r"(?:(?:login|credential|secure)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 _CANCEL_CREDENTIAL_EXTRACTION_RE = re.compile(
     r"^\s*(?:cancel|discard|reject|do\s+not\s+save|don't\s+save)\s+"
     r"(?:(?:all|these|them|the)\s+)?(?:extracted\s+)?"
-    r"(?:(?:login|credential)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
+    r"(?:(?:login|credential|secure)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 
@@ -4986,7 +5000,10 @@ def _parse_credential_extraction_action(text: Optional[str]) -> Optional[dict]:
     candidate_ids = payload.get("candidate_ids")
     if candidate_ids is None:
         candidate_ids = []
-    if not isinstance(candidate_ids, list) or len(candidate_ids) > 50:
+    if (
+        not isinstance(candidate_ids, list)
+        or len(candidate_ids) > MAX_SECURE_DOCUMENT_RECORDS
+    ):
         return {}
     cleaned_ids = []
     for value in candidate_ids:
@@ -5007,22 +5024,26 @@ def _parse_credential_extraction_action(text: Optional[str]) -> Optional[dict]:
     }
 
 
-def _valid_extracted_login_records(records: object) -> tuple[list[dict], int]:
+def _valid_extracted_secure_records(records: object) -> tuple[list[dict], int]:
     if not isinstance(records, list):
         return [], int(records is not None)
     valid: list[dict] = []
     rejected = 0
-    for raw in records[:50]:
+    for raw in records[:MAX_SECURE_DOCUMENT_RECORDS]:
         if (
             isinstance(raw, dict)
-            and raw.get("secret_type") == "login"
             and _is_valid_secret_payload(raw)
         ):
             valid.append(raw)
         else:
             rejected += 1
-    rejected += max(0, len(records) - 50)
+    rejected += max(0, len(records) - MAX_SECURE_DOCUMENT_RECORDS)
     return valid, rejected
+
+
+# Backward-compatible internal name for older callers/tests.  Document review
+# now accepts all validated secure-record types rather than login-only rows.
+_valid_extracted_login_records = _valid_extracted_secure_records
 
 
 def _remember_credential_extraction_review(memory: dict, envelope_json: str) -> None:
@@ -5070,13 +5091,13 @@ def _confirm_credential_extraction_review(
             "saved. Run the review again."
         )
     try:
-        extracted = extract_multiple_credentials(plaintext) or []
+        extracted = extract_secure_records(plaintext) or []
     except Exception:
         logger.exception("[CHAT-DEBUG] credential_review_reextract_failed")
         extracted = []
-    records, rejected = _valid_extracted_login_records(extracted)
+    records, rejected = _valid_extracted_secure_records(extracted)
     if not records:
-        return "No valid reviewed login records remained, so nothing was saved."
+        return "No valid reviewed secure records remained, so nothing was saved."
 
     review_json = _build_credential_extraction_review_envelope(
         file_id=file_id,
@@ -5086,6 +5107,7 @@ def _confirm_credential_extraction_review(
         records=records,
         message="",
         text_available=True,
+        analysis_counts=secure_extraction_counts(plaintext, records),
     )
     safe_records = json.loads(review_json).get("records", [])
     import hashlib
@@ -5124,7 +5146,7 @@ def _confirm_credential_extraction_review(
     if failed:
         suffix_parts.append(f"{failed} record(s) could not be saved")
     suffix = f" ({'; '.join(suffix_parts)})." if suffix_parts else "."
-    return f"Saved {saved} approved login record(s){suffix}"
+    return f"Saved {saved} approved secure record(s){suffix}"
 
 
 def _credential_extraction_review_records(
@@ -5140,13 +5162,13 @@ def _credential_extraction_review_records(
             "Run the extraction review again."
         )
     try:
-        extracted = extract_multiple_credentials(plaintext) or []
+        extracted = extract_secure_records(plaintext) or []
     except Exception:
         logger.exception("[CHAT-DEBUG] credential_review_action_reextract_failed")
         return file_row, [], [], (
             "I couldn't re-read the credential candidates, so nothing was saved."
         )
-    records, _rejected = _valid_extracted_login_records(extracted)
+    records, _rejected = _valid_extracted_secure_records(extracted)
     review_json = _build_credential_extraction_review_envelope(
         file_id=file_id,
         file_name=file_row.get("file_name"),
@@ -5155,6 +5177,7 @@ def _credential_extraction_review_records(
         records=records,
         message="",
         text_available=True,
+        analysis_counts=secure_extraction_counts(plaintext, records),
     )
     safe_records = json.loads(review_json).get("records", [])
     import hashlib
@@ -5182,13 +5205,19 @@ def _apply_credential_extraction_overrides(
     """Apply one encrypted edit request; never emit field values to logs."""
     if not isinstance(raw_overrides, dict):
         return dict(record)
-    allowed = {"service", "username", "email", "password", "website", "notes"}
+    allowed = {
+        "service", "username", "email", "password", "website", "notes",
+        "pin", "account_number", "secure_identifier", "access_code",
+        "secure_value",
+    }
     if any(str(key) not in allowed for key in raw_overrides):
         return None
     updated = {
-        "secret_type": "login",
+        "secret_type": str(record.get("secret_type") or "other_secure_record"),
+        "record_type": str(record.get("record_type") or "OTHER_SECURE_RECORD"),
         "service": str(record.get("service") or ""),
         "fields": dict(record.get("fields") or {}),
+        "provenance": dict(record.get("provenance") or {}),
     }
     if "service" in raw_overrides:
         service = str(raw_overrides.get("service") or "").strip()[:120]
@@ -5201,11 +5230,16 @@ def _apply_credential_extraction_overrides(
         "password": "password",
         "website": "url",
         "notes": "note",
+        "pin": "pin",
+        "account_number": "account_number",
+        "secure_identifier": "secure_identifier",
+        "access_code": "access_code",
+        "secure_value": "secure_value",
     }
     for incoming, target in field_map.items():
         if incoming not in raw_overrides:
             continue
-        value = str(raw_overrides.get(incoming) or "").strip()
+        value = str(raw_overrides.get(incoming) or "")
         max_length = 4096 if incoming in {"password", "notes"} else 500
         value = value[:max_length]
         if value:
@@ -5249,8 +5283,11 @@ def _handle_credential_extraction_action(
             failed += 1
             continue
         service = str(edited.get("service") or "")
+        secret_type = str(edited.get("secret_type") or "other_secure_record")
         fields = dict(edited.get("fields") or {})
-        existing = _peek_existing_login_fields(vault_id, service, key)
+        existing = _peek_existing_secret_fields(
+            vault_id, secret_type, service, key,
+        )
         if existing:
             if fields and all(
                 str(existing.get(name) or "") == str(value or "")
@@ -5258,7 +5295,7 @@ def _handle_credential_extraction_action(
             ):
                 duplicates += 1
             else:
-                # Never overwrite a same-service login silently from a file.
+                # Never overwrite a same-service secure record silently.
                 conflicts += 1
             continue
         try:
@@ -5272,13 +5309,13 @@ def _handle_credential_extraction_action(
                 (vault_id or "")[:8] + "...",
             )
 
-    parts = [f"Saved {saved} selected login record(s)."]
+    parts = [f"Saved {saved} selected secure record(s)."]
     if duplicates:
         parts.append(f"Skipped {duplicates} exact duplicate(s).")
     if conflicts:
         parts.append(
             f"Skipped {conflicts} same-service conflict(s) to avoid "
-            "overwriting an existing login."
+            "overwriting an existing secure record."
         )
     if failed:
         parts.append(f"{failed} selected record(s) could not be saved.")
@@ -5342,15 +5379,15 @@ def _handle_extract_logins_from_file(
         )
 
     try:
-        from extractor import extract_multiple_credentials
-        extracted_records = extract_multiple_credentials(plaintext) or []
+        extracted_records = extract_secure_records(plaintext) or []
     except Exception:
-        logger.exception("extract_multiple_credentials failed")
+        logger.exception("extract_secure_records failed")
         extracted_records = []
 
-    records, rejected_count = _valid_extracted_login_records(
+    records, rejected_count = _valid_extracted_secure_records(
         extracted_records,
     )
+    analysis_counts = secure_extraction_counts(plaintext, records)
 
     if not records:
         return _build_credential_extraction_review_envelope(
@@ -5360,16 +5397,17 @@ def _handle_extract_logins_from_file(
             relative_path=relative_path,
             records=[],
             message=(
-                "I couldn't identify any credentials in this file. "
+                "I couldn't identify any supported secure records in this file. "
                 "Nothing was saved."
             ),
             text_available=True,
+            analysis_counts=analysis_counts,
         )
 
     label = saved_name or file_name or "this file"
     n = len(records)
     message = (
-        f"I found {n} login record{'s' if n != 1 else ''} in {label}. "
+        f"I found {n} secure record{'s' if n != 1 else ''} in {label}. "
         "Review the list below — nothing is saved until you confirm."
     )
     if rejected_count:
@@ -5385,6 +5423,7 @@ def _handle_extract_logins_from_file(
         records=records,
         message=message,
         text_available=True,
+        analysis_counts=analysis_counts,
     )
 
 
@@ -6447,12 +6486,23 @@ def _extract_text_from_bytes(file_name: str, file_bytes: bytes) -> Optional[str]
             except Exception:
                 return file_bytes.decode("utf-8", errors="ignore").strip()
 
-        if lower_name.endswith(".pdf") and PyPDF2 is not None:
+        if lower_name.endswith(".pdf"):
+            structured = extract_pdf_text_with_layout(file_bytes)
+            if structured:
+                return structured
+            if PyPDF2 is None:
+                return None
             reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
             pages = []
-            for page in reader.pages:
-                pages.append((page.extract_text() or "").strip())
-            return "\n".join([p for p in pages if p]).strip()
+            for page_number, page in enumerate(reader.pages, 1):
+                page_text = (page.extract_text() or "").strip()
+                if page_text:
+                    pages.append(
+                        f"[[SVAULTAI_PAGE:{page_number}]]\n"
+                        f"[[SVAULTAI_RECORD:p{page_number}-r1]]\n"
+                        f"{page_text}"
+                    )
+            return "\n".join(pages).strip()
 
         if lower_name.endswith(".docx") and docx is not None:
             document = docx.Document(io.BytesIO(file_bytes))
@@ -7237,8 +7287,8 @@ async def handle_tool_call(
         return "Tool execution failed."
 
 
-def _peek_existing_login_fields(
-    vault_id: str, service: str, key: bytes,
+def _peek_existing_secret_fields(
+    vault_id: str, secret_type: str, service: str, key: bytes,
 ) -> dict:
 
 
@@ -7250,12 +7300,12 @@ def _peek_existing_login_fields(
             SELECT encrypted_data
             FROM vault_items
             WHERE vault_id = %s
-              AND item_type = 'login'
+              AND item_type = %s
               AND LOWER(service) = LOWER(%s)
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            (vault_id, service),
+            (vault_id, secret_type, service),
         )
         row = cursor.fetchone()
     finally:
@@ -7265,9 +7315,18 @@ def _peek_existing_login_fields(
         return {}
     try:
         decoded = json.loads(decrypt_message(row["encrypted_data"], key))
-        return decoded if isinstance(decoded, dict) else {}
+        if not isinstance(decoded, dict):
+            return {}
+        inner = decoded.get("fields")
+        return dict(inner) if isinstance(inner, dict) else decoded
     except Exception:
         return {}
+
+
+def _peek_existing_login_fields(
+    vault_id: str, service: str, key: bytes,
+) -> dict:
+    return _peek_existing_secret_fields(vault_id, "login", service, key)
 
 
 class SaveSecretError(Exception):
@@ -8092,8 +8151,11 @@ def save_uploaded_file(
         for payload in payloads:
                                                                          
                                                                       
+            is_review_only_secure_document = has_structured_layout(
+                extracted_text,
+            )
             is_login_payload = (payload or {}).get("secret_type") == "login"
-            if is_login_payload:
+            if is_login_payload or is_review_only_secure_document:
                 # Credential documents always enter the review/confirmation
                 # workflow.  Even an explicit "extract and save" upload
                 # instruction is approval to inspect, not permission to write
