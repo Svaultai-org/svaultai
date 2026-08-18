@@ -17192,6 +17192,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // injected vault-AI identity context answers with the
     // persistent AI keeper's name and role.
     if (!hasPrivateBackendCommand) {
+      if (attachments.isEmpty &&
+          shouldUseServerReadableCredentialReview(text)) {
+        _appendAssistantMessage(
+          'Attach the file you want analyzed, then send that request again. '
+          'No credential draft was created and nothing was saved.',
+        );
+        return;
+      }
+
       if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
         input.clear();
         return;
