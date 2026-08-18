@@ -4910,6 +4910,16 @@ def _build_credential_extraction_review_envelope(
         }
         username = exact_fields.get("username")
         email = exact_fields.get("email")
+        login_identifier_type = next((
+            field_name for field_name in (
+                "username", "email", "user_id", "login_id", "account_id",
+            )
+            if exact_fields.get(field_name)
+        ), None)
+        login_identifier = (
+            exact_fields.get(login_identifier_type)
+            if login_identifier_type else None
+        )
         website = fields.get("url") or fields.get("website")
         if not isinstance(website, str) or website == "":
             website = None
@@ -4937,11 +4947,15 @@ def _build_credential_extraction_review_envelope(
             "service":           service,
             "username":          username,
             "email":             email,
+            "login_identifier":  login_identifier,
+            "login_identifier_type": login_identifier_type,
             "website":           website,
             "fields":            exact_fields,
             "password_present":  bool(exact_fields.get("password")),
             "pin_present":       bool(exact_fields.get("pin")),
-            "note_present":      bool(exact_fields.get("note")),
+            "note_present":      bool(
+                exact_fields.get("notes") or exact_fields.get("note")
+            ),
             "source_context":    (
                 f"{source_label}, page {provenance.get('page_number')}"
                 if provenance.get("page_number") else source_label
@@ -5212,8 +5226,8 @@ def _apply_credential_extraction_overrides(
         return dict(record)
     allowed = {
         "service", "username", "email", "password", "website", "notes",
-        "pin", "account_number", "secure_identifier", "access_code",
-        "secure_value",
+        "pin", "user_id", "login_id", "account_id", "account_number",
+        "secure_identifier", "access_code", "secure_value",
     }
     if any(str(key) not in allowed for key in raw_overrides):
         return None
@@ -5232,9 +5246,12 @@ def _apply_credential_extraction_overrides(
     field_map = {
         "username": "username",
         "email": "email",
+        "user_id": "user_id",
+        "login_id": "login_id",
+        "account_id": "account_id",
         "password": "password",
         "website": "url",
-        "notes": "note",
+        "notes": "notes",
         "pin": "pin",
         "account_number": "account_number",
         "secure_identifier": "secure_identifier",
@@ -5320,6 +5337,55 @@ def _decode_encrypted_secret_fields(encrypted_data: object, key: bytes) -> dict:
         return {}
 
 
+def _secure_record_provenance(raw: object) -> dict:
+    """Return bounded, non-secret source metadata for encrypted storage."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    page_number = raw.get("page_number")
+    if isinstance(page_number, int) and 0 < page_number <= 100_000:
+        out["page_number"] = page_number
+    page_numbers = raw.get("page_numbers")
+    if isinstance(page_numbers, list):
+        clean_pages = [
+            page for page in page_numbers[:100]
+            if isinstance(page, int) and 0 < page <= 100_000
+        ]
+        if clean_pages:
+            out["page_numbers"] = clean_pages
+    source_ref = raw.get("source_ref")
+    if isinstance(source_ref, str) and source_ref:
+        out["source_ref"] = source_ref[:240]
+    source_span_hash = raw.get("source_span_hash")
+    if (
+        isinstance(source_span_hash, str)
+        and re.fullmatch(r"[a-fA-F0-9]{64}", source_span_hash)
+    ):
+        out["source_span_hash"] = source_span_hash.lower()
+    return out
+
+
+def _build_secure_record_storage_envelope(
+    *,
+    secret_type: str,
+    record_type: Optional[str],
+    service: str,
+    fields: dict,
+    notes: str = "",
+    provenance: object = None,
+) -> dict:
+    """Canonical encrypted representation shared by single and bulk saves."""
+    return {
+        "schema": "secure_record_v1",
+        "category": secret_type,
+        "record_type": str(record_type or secret_type).upper(),
+        "title": service,
+        "fields": dict(fields),
+        "notes": notes,
+        "provenance": _secure_record_provenance(provenance),
+    }
+
+
 def _save_extracted_secret_batch(
     vault_id: str, records: list[dict], key: bytes,
 ) -> tuple[int, int, int, int]:
@@ -5331,7 +5397,7 @@ def _save_extracted_secret_batch(
     user-visible response.
     """
     ensure_vault_exists(vault_id)
-    prepared_inputs: list[tuple[str, str, dict, str]] = []
+    prepared_inputs: list[tuple[str, str, str, dict, str, dict]] = []
     failed = 0
     for record in records[:MAX_SECURE_DOCUMENT_RECORDS]:
         reason = _classify_save_login_payload(record)
@@ -5343,12 +5409,16 @@ def _save_extracted_secret_batch(
         fields = dict(record.get("fields") or {})
         notes = record.get("notes")
         envelope_notes = notes if isinstance(notes, str) else ""
-        prepared_inputs.append((item_type, service, fields, envelope_notes))
+        record_type = str(record.get("record_type") or item_type).upper()
+        provenance = _secure_record_provenance(record.get("provenance"))
+        prepared_inputs.append((
+            item_type, record_type, service, fields, envelope_notes, provenance,
+        ))
 
     if not prepared_inputs:
         return 0, 0, 0, failed
 
-    item_types = sorted({item_type for item_type, _, _, _ in prepared_inputs})
+    item_types = sorted({row[0] for row in prepared_inputs})
     conn = get_db()
     saved = 0
     duplicates = 0
@@ -5390,7 +5460,9 @@ def _save_extracted_secret_batch(
         insert_rows: list[tuple[str, str, str, dict]] = []
         pending_fields: dict[tuple[str, str], dict] = dict(existing_by_key)
         pending_bytes = 0
-        for item_type, service, fields, envelope_notes in prepared_inputs:
+        for (
+            item_type, record_type, service, fields, envelope_notes, provenance,
+        ) in prepared_inputs:
             row_key = (item_type, service.lower())
             existing_fields = pending_fields.get(row_key)
             if existing_fields is not None:
@@ -5402,12 +5474,14 @@ def _save_extracted_secret_batch(
                 else:
                     conflicts += 1
                 continue
-            envelope_payload = {
-                "category": item_type,
-                "title": service,
-                "fields": fields,
-                "notes": envelope_notes,
-            }
+            envelope_payload = _build_secure_record_storage_envelope(
+                secret_type=item_type,
+                record_type=record_type,
+                service=service,
+                fields=fields,
+                notes=envelope_notes,
+                provenance=provenance,
+            )
             encrypted_data = encrypt_message(
                 json.dumps(envelope_payload, ensure_ascii=False), key,
             )
@@ -6645,7 +6719,10 @@ def _is_high_confidence_login(payload: Optional[dict]) -> bool:
         v = fields.get(name)
         return bool(v is not None and str(v).strip())
 
-    has_identifier = _has("username") or _has("email")
+    has_identifier = any(_has(name) for name in (
+        "username", "email", "user_id", "login_id", "account_id",
+        "account_number",
+    ))
     has_secret = _has("password") or _has("pin") or _has("token") or _has("api_key")
     return has_identifier and has_secret
 
@@ -7768,6 +7845,8 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
         })
         old_fields: dict = {}
         old_notes: Optional[str] = None
+        old_record_type: Optional[str] = None
+        old_provenance: dict = {}
         previous_size = 0
 
         if existing and existing.get("encrypted_data"):
@@ -7784,6 +7863,11 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
                         old_fields = inner if isinstance(inner, dict) else {}
                         if isinstance(decoded.get("notes"), str):
                             old_notes = decoded.get("notes")
+                        if isinstance(decoded.get("record_type"), str):
+                            old_record_type = decoded.get("record_type")
+                        old_provenance = _secure_record_provenance(
+                            decoded.get("provenance")
+                        )
                     else:
                                                                  
                                                              
@@ -7793,6 +7877,8 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
                                                              
                 old_fields = {}
                 old_notes = None
+                old_record_type = None
+                old_provenance = {}
 
                                                              
         fields = {**old_fields, **new_fields}
@@ -7805,12 +7891,22 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
             envelope_notes = old_notes
         else:
             envelope_notes = ""
-        envelope_payload = {
-            "category": secret_type,
-            "title":    service,
-            "fields":   fields,
-            "notes":    envelope_notes,
-        }
+        record_type = args.get("record_type")
+        if not isinstance(record_type, str) or not record_type.strip():
+            record_type = old_record_type or str(secret_type).upper()
+        provenance = (
+            args.get("provenance")
+            if isinstance(args.get("provenance"), dict)
+            else old_provenance
+        )
+        envelope_payload = _build_secure_record_storage_envelope(
+            secret_type=str(secret_type),
+            record_type=record_type,
+            service=service,
+            fields=fields,
+            notes=envelope_notes,
+            provenance=provenance,
+        )
         encrypted_data = encrypt_message(
             json.dumps(envelope_payload, ensure_ascii=False), key,
         )

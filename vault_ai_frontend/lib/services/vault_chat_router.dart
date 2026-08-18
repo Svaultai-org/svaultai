@@ -429,9 +429,12 @@ const Set<String> _kLoginDetailPayloadKeys = <String>{
 
 const Set<String> _kLoginDetailLoginKeys = <String>{
   'id',
+  'record_id',
   'title',
   'service',
   'username',
+  'identifier_type',
+  'identifier_label',
   'password',
   'domain',
   'website',

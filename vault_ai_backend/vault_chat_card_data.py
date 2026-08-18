@@ -207,6 +207,28 @@ def _extract_domain(username: Optional[str], service: Optional[str]) -> Optional
     return None
 
 
+_LOGIN_IDENTIFIER_FIELD_ORDER: tuple[str, ...] = (
+    "username",
+    "email",
+    "user_id",
+    "login_id",
+    "account_id",
+)
+
+
+def _canonical_login_identifier(
+    fields: dict[str, Any],
+) -> tuple[str, str]:
+    """Keep legacy username consumers useful without erasing field type."""
+    if not isinstance(fields, dict):
+        return "", ""
+    for field_name in _LOGIN_IDENTIFIER_FIELD_ORDER:
+        value = fields.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return field_name, value.strip()
+    return "", ""
+
+
 
 def _unavailable(schema: str, reason: str) -> dict[str, Any]:
     return {
@@ -476,7 +498,7 @@ def _project_login_row(row: dict[str, Any], key: bytes) -> dict[str, Any]:
 
     service = str(row.get("service") or plain.get("service") or "")
     title   = str(plain.get("title") or service or "").strip() or service
-    username_raw = str(fields.get("username") or "").strip()
+    identifier_type, username_raw = _canonical_login_identifier(fields)
     domain = _extract_domain(username_raw, service)
     return {
         "id":              str(row.get("id") or ""),
@@ -484,6 +506,7 @@ def _project_login_row(row: dict[str, Any], key: bytes) -> dict[str, Any]:
         "service":         service,
         "username_masked": _mask_username(username_raw),
         "has_username":    bool(username_raw),
+        "identifier_type": identifier_type,
         "domain":          domain,
         "updated_at":      _row_updated_at_iso(row),
         "generated":       bool(plain.get("generated")),
@@ -512,7 +535,7 @@ def _derive_website(fields: dict[str, Any], service: str) -> str:
                 v = "https://" + v
             return v
     dom = _extract_domain(
-        str(fields.get("username") or "").strip(),
+        _canonical_login_identifier(fields)[1],
         service,
     )
     if dom:
@@ -522,11 +545,19 @@ def _derive_website(fields: dict[str, Any], service: str) -> str:
 
 _LOGIN_DETAIL_FIELD_LABELS: dict[str, str] = {
     "username": "Username",
+    "email": "Email",
+    "user_id": "User ID",
+    "login_id": "Login ID",
+    "account_id": "Account ID",
+    "account_number": "Account number",
     "password": "Password",
     "website": "Website",
     "url": "Website or URL",
     "notes": "Note",
     "note": "Note",
+    "secure_identifier": "Secure identifier",
+    "access_code": "Access code",
+    "secure_value": "Secure value",
 }
 
 
@@ -578,7 +609,7 @@ def _project_login_row_detail(
 
     service = str(row.get("service") or plain.get("service") or "")
     title = str(plain.get("title") or service or "").strip() or service
-    username = str(fields.get("username") or "").strip()
+    identifier_type, username = _canonical_login_identifier(fields)
     password = str(fields.get("password") or "")
     notes = ""
     for k in ("notes", "note"):
@@ -596,6 +627,10 @@ def _project_login_row_detail(
         "title":      title,
         "service":    service,
         "username":   username,
+        "identifier_type": identifier_type,
+        "identifier_label": _LOGIN_DETAIL_FIELD_LABELS.get(
+            identifier_type, "Username",
+        ),
         "password":   password,
         "domain":     domain,
         "website":    website,
@@ -608,7 +643,8 @@ def _project_login_row_detail(
 
 _ALLOWED_DETAIL_LOGIN_KEYS: frozenset[str] = frozenset({
     "id", "record_id", "title", "service", "username", "password",
-    "domain", "website", "notes", "fields", "updated_at", "generated",
+    "identifier_type", "identifier_label", "domain", "website", "notes",
+    "fields", "updated_at", "generated",
 })
 
 _ALLOWED_DETAIL_PAYLOAD_KEYS: frozenset[str] = frozenset({
@@ -655,7 +691,7 @@ def _project_login_chooser_row(
         fields = {}
     service = str(row.get("service") or plain.get("service") or "")
     title = str(plain.get("title") or service or "").strip() or service
-    username_raw = str(fields.get("username") or "").strip()
+    _identifier_type, username_raw = _canonical_login_identifier(fields)
     return {
         "id":              str(row.get("id") or ""),
         "title":           title,

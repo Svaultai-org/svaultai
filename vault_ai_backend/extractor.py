@@ -223,7 +223,9 @@ def _normalize_extracted_identity(username: str | None, email: str | None) -> tu
     if username:
         username = username.strip()
     if email:
-        email = email.strip().lower()
+        # Preserve the user's exact source value.  Case-insensitive comparison
+        # is only used to avoid storing an identical username/email twice.
+        email = email.strip()
 
     if username and email and username.strip().lower() == email.strip().lower():
         return username, None
@@ -242,11 +244,16 @@ def _clean_field(value: str | None) -> str | None:
 def extract_credentials(text: str):
     service = detect_service(text)
     username = None
+    user_id = None
+    login_id = None
+    account_id = None
+    account_number = None
     password = None
     email = None
     pin = None
     note = None
     url = None
+    secure_value = None
 
     username_patterns = [
         r"\busername\s*(?:is|=|:)\s*([^\s,;|]+)",
@@ -259,6 +266,36 @@ def extract_credentials(text: str):
         if match:
             username = _clean_field(match.group(1))
             break
+
+    typed_identifier_patterns = {
+        "user_id": (
+            r"\b(?:user[\s_-]*id|userid|member[\s_-]*id|customer[\s_-]*id|client[\s_-]*id)"
+            r"\s*(?:is|=|:)?\s*([^\s,;|]+)",
+        ),
+        "login_id": (
+            r"\b(?:login[\s_-]*id|account[\s_-]+login)"
+            r"\s*(?:is|=|:)?\s*([^\s,;|]+)",
+        ),
+        "account_id": (
+            r"\b(?:account[\s_-]*id|accountid)"
+            r"\s*(?:is|=|:)?\s*([^\s,;|]+)",
+        ),
+        "account_number": (
+            r"\b(?:account|acct)(?:[\s_-]+(?:number|no\.?|#))"
+            r"\s*(?:is|=|:)?\s*([^\s,;|]+)",
+        ),
+    }
+    typed_identifiers = {}
+    for field_name, patterns in typed_identifier_patterns.items():
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                typed_identifiers[field_name] = _clean_field(match.group(1))
+                break
+    user_id = typed_identifiers.get("user_id")
+    login_id = typed_identifiers.get("login_id")
+    account_id = typed_identifiers.get("account_id")
+    account_number = typed_identifiers.get("account_number")
 
     email_patterns = [
         r"\bemail\s*(?:is|=|:)\s*([^\s,;|]+@[^\s,;|]+)",
@@ -311,18 +348,35 @@ def extract_credentials(text: str):
             url = _clean_field(match.group(1))
             break
 
+    secure_value_match = re.search(
+        r"\b(?:secure[\s_-]+value|secret[\s_-]+value|additional[\s_-]+secret)"
+        r"\s*(?:is|=|:)?\s*([^\r\n,;|]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if secure_value_match:
+        secure_value = _clean_field(secure_value_match.group(1))
+
     username, email = _normalize_extracted_identity(username, email)
 
-    has_potential_secret = bool(username or email or password or pin or note)
+    has_potential_secret = bool(
+        username or email or user_id or login_id or account_id
+        or account_number or password or pin or note or secure_value
+    )
 
     return {
         "service": service,
         "username": username,
         "email": email,
+        "user_id": user_id,
+        "login_id": login_id,
+        "account_id": account_id,
+        "account_number": account_number,
         "password": password,
         "pin": pin,
         "note": note,
         "url": url,
+        "secure_value": secure_value,
         "has_potential_secret": has_potential_secret,
     }
 
@@ -381,6 +435,11 @@ def extract_multiple_credentials(text: str) -> list[dict]:
                 fields["username"] = username
             if email:
                 fields["email"] = email
+            for field_name in (
+                "user_id", "login_id", "account_id", "account_number",
+            ):
+                if extracted.get(field_name):
+                    fields[field_name] = extracted[field_name]
             if extracted.get("password"):
                 fields["password"] = extracted["password"]
             if extracted.get("pin"):
@@ -389,6 +448,8 @@ def extract_multiple_credentials(text: str) -> list[dict]:
                 fields["note"] = extracted["note"]
             if extracted.get("url"):
                 fields["url"] = extracted["url"]
+            if extracted.get("secure_value"):
+                fields["secure_value"] = extracted["secure_value"]
 
             if not fields:
                 continue
@@ -397,10 +458,15 @@ def extract_multiple_credentials(text: str) -> list[dict]:
                 service,
                 fields.get("username"),
                 fields.get("email"),
+                fields.get("user_id"),
+                fields.get("login_id"),
+                fields.get("account_id"),
+                fields.get("account_number"),
                 fields.get("password"),
                 fields.get("pin"),
                 fields.get("note"),
                 fields.get("url"),
+                fields.get("secure_value"),
             )
             if dedupe_key in seen:
                 continue

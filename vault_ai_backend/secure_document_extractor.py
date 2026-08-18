@@ -30,39 +30,55 @@ class _LayoutRecord:
 
 _FIELD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("username", re.compile(
-        r"^\s*(?:user\s*name|username|user|login(?:\s+id)?)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:user[\s_-]*name|username|user(?![\s_-]*id\b))\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("email", re.compile(
-        r"^\s*(?:e-?mail(?:\s+address)?)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:e-?mail(?:[\s_-]+address)?)\s*(?:[:=\-]\s*|\s+)(.+)$",
+        re.IGNORECASE,
+    )),
+    ("user_id", re.compile(
+        r"^\s*(?:user[\s_-]*id|userid|member[\s_-]*id|customer[\s_-]*id|client[\s_-]*id)\s*(?:[:=\-]\s*|\s+)(.+)$",
+        re.IGNORECASE,
+    )),
+    ("login_id", re.compile(
+        r"^\s*(?:login[\s_-]*id|login|account[\s_-]+login)\s*(?:[:=\-]\s*|\s+)(.+)$",
+        re.IGNORECASE,
+    )),
+    ("account_id", re.compile(
+        r"^\s*(?:account[\s_-]*id|accountid)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("password", re.compile(
-        r"^\s*(?:password|passwd|pass|pwd)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:password|passwd|pass|pwd)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("pin", re.compile(
-        r"^\s*(?:pin(?:\s+(?:code|number))?)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:pin(?:[\s_-]+(?:code|number))?)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("account_number", re.compile(
-        r"^\s*(?:account|acct)(?:\s+(?:number|no\.?|#))\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:account|acct)[\s_-]+(?:number|no\.?|#)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("secure_identifier", re.compile(
-        r"^\s*(?:(?:account|member|customer|client|secure)\s+id(?:entifier)?|identifier|secure\s+identifier)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:secure[\s_-]+id(?:entifier)?|identifier|secure[\s_-]+identifier)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("access_code", re.compile(
-        r"^\s*(?:(?:recovery|access|verification|auth|2fa|otp)\s+code)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:(?:recovery|access|verification|auth|2fa|otp)[\s_-]+code)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
     ("url", re.compile(
-        r"^\s*(?:website|url|site)\s*[:=\-]?\s+(.+)$",
+        r"^\s*(?:website|url|site)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
-    ("note", re.compile(
-        r"^\s*(?:note|notes)\s*[:=\-]?\s+(.+)$",
+    ("secure_value", re.compile(
+        r"^\s*(?:secure[\s_-]+value|secret[\s_-]+value|additional[\s_-]+secret)\s*(?:[:=\-]\s*|\s+)(.+)$",
+        re.IGNORECASE,
+    )),
+    ("notes", re.compile(
+        r"^\s*(?:note|notes)\s*(?:[:=\-]\s*|\s+)(.+)$",
         re.IGNORECASE,
     )),
 )
@@ -242,19 +258,26 @@ def _put_unique(fields: dict[str, str], name: str, value: str) -> None:
 
 
 def _record_type(fields: dict[str, str]) -> tuple[str, str]:
+    # A password-bearing record remains login-retrievable even when it also
+    # carries account, PIN, or custom secure fields.  Those richer fields are
+    # retained in the encrypted field map rather than changing the record out
+    # of the ordinary login retrieval path.
+    if "password" in fields:
+        return "login", "LOGIN"
     if "access_code" in fields:
         return "recovery_or_access_code", "RECOVERY_OR_ACCESS_CODE"
     if "account_number" in fields:
         if len(fields) == 1:
             return "account_number", "ACCOUNT_NUMBER"
         return "account", "ACCOUNT"
-    if "password" in fields:
-        return "login", "LOGIN"
     if "pin" in fields:
         return "pin", "PIN"
     if "url" in fields and len(fields) == 1:
         return "url", "URL"
-    if any(key in fields for key in ("username", "email", "secure_identifier")):
+    if any(key in fields for key in (
+        "username", "email", "user_id", "login_id", "account_id",
+        "secure_identifier",
+    )):
         return "secure_identifier", "SECURE_IDENTIFIER"
     return "other_secure_record", "OTHER_SECURE_RECORD"
 

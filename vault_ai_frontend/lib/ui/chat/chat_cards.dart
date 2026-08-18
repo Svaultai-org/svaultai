@@ -2629,6 +2629,15 @@ class _CredentialExtractionReviewCardState
     final email = TextEditingController(
       text: fields['email']?.toString() ?? record['email']?.toString() ?? '',
     );
+    final userId = TextEditingController(
+      text: fields['user_id']?.toString() ?? '',
+    );
+    final loginId = TextEditingController(
+      text: fields['login_id']?.toString() ?? '',
+    );
+    final accountId = TextEditingController(
+      text: fields['account_id']?.toString() ?? '',
+    );
     final website = TextEditingController(
       text: fields['url']?.toString() ?? record['website']?.toString() ?? '',
     );
@@ -2672,6 +2681,21 @@ class _CredentialExtractionReviewCardState
                 controller: email,
                 keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(labelText: 'Email'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_user_id'),
+                controller: userId,
+                decoration: const InputDecoration(labelText: 'User ID'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_login_id'),
+                controller: loginId,
+                decoration: const InputDecoration(labelText: 'Login ID'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_account_id'),
+                controller: accountId,
+                decoration: const InputDecoration(labelText: 'Account ID'),
               ),
               TextField(
                 key: const Key('credential_extraction_edit_website'),
@@ -2744,6 +2768,9 @@ class _CredentialExtractionReviewCardState
                 'service': cleanService,
                 'username': username.text.trim(),
                 'email': email.text.trim(),
+                'user_id': userId.text.trim(),
+                'login_id': loginId.text.trim(),
+                'account_id': accountId.text.trim(),
                 'website': website.text.trim(),
                 'notes': notes.text.trim(),
                 'pin': pin.text,
@@ -2764,6 +2791,9 @@ class _CredentialExtractionReviewCardState
     service.dispose();
     username.dispose();
     email.dispose();
+    userId.dispose();
+    loginId.dispose();
+    accountId.dispose();
     website.dispose();
     replacementPassword.dispose();
     pin.dispose();
@@ -2974,16 +3004,19 @@ class _ExtractionReviewRow extends StatelessWidget {
     final recordType =
         (record['record_type'] as String?)?.trim().toUpperCase() ??
             'SECURE RECORD';
-    final username =
-        (fields['username'] ?? record['username'])?.toString().trim();
-    final email = (fields['email'] ?? record['email'])?.toString().trim();
     final passwordPresent = record['password_present'] == true;
     final pinPresent = record['pin_present'] == true;
     final notePresent = record['note_present'] == true;
     final website =
         (fields['url'] ?? record['website'])?.toString().trim();
     final sourceContext = (record['source_context'] as String?)?.trim();
-    const sensitiveLabels = <String, String>{
+    const fieldLabels = <String, String>{
+      'username': 'Username',
+      'email': 'Email',
+      'user_id': 'User ID',
+      'login_id': 'Login ID',
+      'account_id': 'Account ID',
+      'url': 'Website or URL',
       'password': 'Password',
       'pin': 'PIN',
       'account_number': 'Account number',
@@ -2991,17 +3024,34 @@ class _ExtractionReviewRow extends StatelessWidget {
       'access_code': 'Access code',
       'secure_value': 'Secure value',
       'value': 'Secure value',
+      'notes': 'Note',
       'note': 'Note',
     };
-    final sensitiveFields = <MapEntry<String, String>>[
-      for (final entry in sensitiveLabels.entries)
-        if ((fields[entry.key]?.toString() ?? '').isNotEmpty)
-          MapEntry(entry.value, fields[entry.key].toString()),
+    const publicFieldNames = <String>{
+      'username',
+      'email',
+      'user_id',
+      'login_id',
+      'account_id',
+    };
+    String labelFor(String name) => fieldLabels[name] ?? name
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+    final identifierFields = <MapEntry<String, String>>[
+      for (final entry in fields.entries)
+        if (publicFieldNames.contains(entry.key) &&
+            (entry.value?.toString() ?? '').isNotEmpty)
+          MapEntry(labelFor(entry.key), entry.value.toString()),
     ];
-
-    final identifier = (email != null && email.isNotEmpty)
-        ? email
-        : (username != null && username.isNotEmpty ? username : null);
+    final sensitiveFields = <MapEntry<String, String>>[
+      for (final entry in fields.entries)
+        if (!publicFieldNames.contains(entry.key) &&
+            entry.key != 'url' &&
+            (entry.value?.toString() ?? '').isNotEmpty)
+          MapEntry(labelFor(entry.key), entry.value.toString()),
+    ];
 
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.md),
@@ -3046,26 +3096,15 @@ class _ExtractionReviewRow extends StatelessWidget {
             icon: Icons.security_outlined,
             tint: VaultColors.severityInfo,
           ),
-          if (identifier != null) ...[
+          if (identifierFields.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(
-                  Icons.person_outline,
-                  size: 12,
-                  color: VaultColors.textTertiary,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    identifier,
-                    style: VaultText.caption,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+            for (final entry in identifierFields)
+              Text(
+                '${entry.key}: ${entry.value}',
+                style: VaultText.caption,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
           ],
           if (website != null && website.isNotEmpty) ...[
             const SizedBox(height: 4),
