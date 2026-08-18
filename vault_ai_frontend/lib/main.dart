@@ -17427,6 +17427,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       final explicitSaveOnly = hadAttachments &&
           uploadedFileIds.isNotEmpty &&
+          !isCurrentAttachmentCredentialReview &&
           RegExp(r'\b(?:save|upload|store|keep|add)\b', caseSensitive: false)
               .hasMatch(text) &&
           !RegExp(r'\b(?:analy[sz]e|summari[sz]e|explain|compare|read|what)\b',
