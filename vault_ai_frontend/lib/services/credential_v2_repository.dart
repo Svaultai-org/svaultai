@@ -64,6 +64,7 @@ class CredentialV2DeleteIntent {
 CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
   var normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
   if (normalized.isEmpty) return null;
+  if (isCredentialExtractionReviewDecision(normalized)) return null;
 
   String cleanValue(String? value) => (value ?? '')
       .trim()
@@ -524,6 +525,14 @@ bool looksLikePrivateCredentialQuery(String text) {
   }).isNotEmpty;
 }
 
+/// A credential-extraction review is owned by the backend's pending review
+/// state, not by local saved-login retrieval.  These deliberately narrow
+/// phrases must reach that confirmation/cancellation state machine.
+bool isCredentialExtractionReviewDecision(String text) => RegExp(
+      r"^\s*(?:(?:yes[, ]+)?(?:approve|confirm|import|save)|(?:cancel|discard|reject|do\s+not\s+save|don't\s+save))\s+(?:(?:all|these|them|the)\s+)?(?:extracted\s+)?(?:(?:login|credential)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
+      caseSensitive: false,
+    ).hasMatch(text);
+
 /// Returns whether a message belongs to the local credential lookup route.
 ///
 /// Creation requests contain credential vocabulary too, but when local v2
@@ -531,6 +540,7 @@ bool looksLikePrivateCredentialQuery(String text) {
 /// Treating them as broad lookups would consume the message after an inventory
 /// read and incorrectly report that no saved login exists.
 bool shouldAttemptCredentialV2Lookup(String text) {
+  if (isCredentialExtractionReviewDecision(text)) return false;
   if (parseCredentialV2CreateIntent(text) != null) return false;
   return parseCredentialV2LookupIntent(text) != null ||
       looksLikePrivateCredentialQuery(text);

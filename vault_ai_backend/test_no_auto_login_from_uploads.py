@@ -79,6 +79,13 @@ class UserRequestedLoginExtractionTests(unittest.TestCase):
             )
         )
 
+    def test_analyze_and_save_all_credentials_is_review_request(self):
+        self.assertTrue(
+            _user_requested_login_extraction(
+                "analyze and save all credentials added"
+            )
+        )
+
                                   
     def test_none_is_false(self):
         self.assertFalse(_user_requested_login_extraction(None))
@@ -264,17 +271,16 @@ class SaveUploadedFileLoginGateTests(unittest.TestCase):
             "default upload must never forward login payloads to save_secret_tool",
         )
 
-    def test_explicit_extract_with_high_confidence_login_creates_one_item(self):
-                                                                     
-                                                
+    def test_explicit_extract_still_requires_review_before_persistence(self):
         calls = self._run(
             accompanying_login_payloads=[self._login_payload()],
             auto_save=True,
         )
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][1]["service"], "gmail")
         self.assertEqual(
-            calls[0][1]["fields"]["username"], "alice@example.com"
+            calls,
+            [],
+            "even explicit extraction must not persist before review and a "
+            "separate confirmation turn",
         )
 
     def test_default_upload_with_no_payloads_is_a_no_op(self):

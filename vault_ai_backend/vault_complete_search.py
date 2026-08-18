@@ -116,7 +116,7 @@ _ID_CLASS_KEYWORDS: frozenset[str] = frozenset({
     "id", "ids", "photo", "photos", "card", "cards",
     "passport", "passports", "license", "licenses",
     "licence", "licences", "identity", "identification",
-    "drivers", "driver", "dl", "permit", "passports",
+    "drivers", "driver", "driving", "dl", "permit", "passports",
     "national", "state",
 })
 

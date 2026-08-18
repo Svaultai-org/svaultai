@@ -1361,6 +1361,8 @@ def build_crypto_delegated_show_vault_envelope() -> dict[str, Any]:
 
 def build_vault_chat_envelope(
     message: str,
+    *,
+    has_current_attachments: bool = False,
 ) -> dict[str, Any] | None:
     """Classify `message` and produce a chat envelope, or None.
 
@@ -1381,6 +1383,24 @@ def build_vault_chat_envelope(
     """
     if not isinstance(message, str):
         return None
+    if has_current_attachments:
+        # The closed-set card router does not read file contents.  Defer
+        # current-attachment questions to the existing analysis/semantic
+        # pipeline instead of allowing a word such as "credentials" to be
+        # misread as a historical saved-login lookup.
+        try:
+            from vault_brain_intent import (
+                is_current_attachment_content_request,
+            )
+            if is_current_attachment_content_request(
+                message,
+                has_uploaded_files_in_turn=True,
+            ):
+                return None
+        except Exception:
+            # Fail toward the attachment-aware pipeline.  Returning a
+            # historical data card here would be a scope error.
+            return None
     result = classify_and_build_vault_intent(message)
     if not isinstance(result, dict):
         return None

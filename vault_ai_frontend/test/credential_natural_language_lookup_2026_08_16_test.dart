@@ -127,6 +127,23 @@ void main() {
   });
 
   group('credential intent boundaries', () {
+    test('extraction review decisions reach pending review state', () {
+      for (final text in <String>[
+        'approve all extracted credentials',
+        'save these extracted login records',
+        'discard the extracted credentials',
+      ]) {
+        expect(isCredentialExtractionReviewDecision(text), isTrue,
+            reason: text);
+        expect(parseCredentialV2CreateIntent(text), isNull, reason: text);
+        expect(shouldAttemptCredentialV2Lookup(text), isFalse, reason: text);
+      }
+      expect(
+        isCredentialExtractionReviewDecision('show my facebook login'),
+        isFalse,
+      );
+    });
+
     test('non-credential intents remain outside credential lookup', () {
       for (final text in <String>[
         "what is my mother's name",
