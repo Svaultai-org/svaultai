@@ -214,6 +214,12 @@ def is_current_attachment_content_request(
         return False
     if _EXPLICIT_EXISTING_VAULT_SCOPE.search(text):
         return False
+    try:
+        from attachment_command_intent import classify_attachment_command
+        if classify_attachment_command(text) is not None:
+            return True
+    except Exception:
+        pass
     return bool(
         _CURRENT_ATTACHMENT_REFERENT.search(text)
         or _CURRENT_ATTACHMENT_ANALYSIS.search(text)

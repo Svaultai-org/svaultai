@@ -107,6 +107,11 @@ from secure_document_extractor import (
     extraction_counts as secure_extraction_counts,
     has_structured_layout,
 )
+from attachment_command_intent import (
+    ATTACHMENT_INTENT_CREDENTIAL_EXTRACTION,
+    classify_attachment_command,
+    references_attachment_object,
+)
 from username_policy import (
     PolicyCache as UsernamePolicyCache,
     UsernamePolicy,
@@ -6684,6 +6689,11 @@ def _user_requested_login_extraction(text: Optional[str]) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
+    if (
+        classify_attachment_command(stripped)
+        == ATTACHMENT_INTENT_CREDENTIAL_EXTRACTION
+    ):
+        return True
     if _EXPLICIT_LOGIN_EXTRACTION.search(stripped):
         return True
     # Attachment-scoped document language frequently puts the file verb far
@@ -6704,6 +6714,35 @@ def _user_requested_login_extraction(text: Optional[str]) -> bool:
         normalized,
     ))
     return has_document_scope and has_review_verb and has_credential_noun
+
+
+_EXPLICIT_CREDENTIAL_GENERATION_RE = re.compile(
+    r"\b(?:generate|create|make|set\s+up)\b"
+    r"[^\n]{0,120}?"
+    r"\b(?:login|account|credential|username|password|sign[\s-]?in)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_coherent_credential_creation_request(text: Optional[str]) -> bool:
+    """Require explicit generation or labelled supplied credential fields."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    try:
+        command = _extract_credential_command(
+            text,
+            has_pending_draft=False,
+        )
+    except Exception:
+        command = None
+    if command is not None and command.action == _CMD_CREATE:
+        fields = dict(command.explicit_fields or {})
+        has_identity = bool(
+            fields.get(_FIELD_USERNAME) or fields.get(_FIELD_EMAIL)
+        )
+        if command.service and has_identity and fields.get(_FIELD_PASSWORD):
+            return True
+    return bool(_EXPLICIT_CREDENTIAL_GENERATION_RE.search(text))
 
 
 def _maybe_extract_login_payload(
@@ -13799,6 +13838,9 @@ async def chat_endpoint(
             )
             return encrypted_reply(_action_reply)
 
+        _attachment_command_kind = classify_attachment_command(
+            decrypted_message or ""
+        )
         _current_attachment_extraction = bool(
             req.uploaded_file_ids
             and _user_requested_login_extraction(decrypted_message or "")
@@ -13862,6 +13904,24 @@ async def chat_endpoint(
                 _review_count,
             )
             return encrypted_reply(_review_reply)
+
+        # A prompt that explicitly points at "this" file/document cannot be
+        # credential creation when no current-message attachment exists.
+        # Fail closed before generated-draft state, deterministic routing, or
+        # any AI classifier sees the instruction tokens.
+        if (
+            not req.uploaded_file_ids
+            and _attachment_command_kind is not None
+            and references_attachment_object(decrypted_message or "")
+        ):
+            try:
+                request.state.chat_path = "attachment_context_required"
+            except Exception:
+                pass
+            return encrypted_reply(
+                "Attach the file you want analyzed, then send that request "
+                "again. No credential draft was created and nothing was saved."
+            )
 
         try:
             from vault_pending_draft_confirm import (
@@ -17348,6 +17408,21 @@ async def chat_endpoint(
             )
 
         if intent == "generate_login":
+            if not _is_coherent_credential_creation_request(
+                decrypted_message or ""
+            ):
+                try:
+                    request.state.chat_path = (
+                        "credential_creation_rejected_incoherent"
+                    )
+                except Exception:
+                    pass
+                return encrypted_reply(
+                    "I couldn't identify a coherent credential creation "
+                    "request. Ask me to generate a login for a named service, "
+                    "or provide labelled username and password values. "
+                    "Nothing was created or saved."
+                )
             print(
                 f"[CHAT-DEBUG] generate_login_start service={service!r} "
                 f"parts_wanted={intent_data.get('parts_wanted')!r}",
