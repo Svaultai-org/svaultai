@@ -16806,6 +16806,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
       final isBareInventoryProbe =
           normalizedInput.toLowerCase() == topic.toLowerCase();
+      if (candidates.isEmpty && extractLocalFileLookupQuery(text) != null) {
+        // Local file inventory contains metadata only.  A miss here is not
+        // evidence that OCR, transcript, entity, or semantic indexes have no
+        // match, so let the existing shared vault search pipeline answer it.
+        return false;
+      }
       if (candidates.isEmpty && isBareInventoryProbe) {
         // A bare word is private only when local inventory gives us evidence.
         // Otherwise preserve ordinary general chat (for example, "hey").
@@ -16882,18 +16888,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             sizeBytes: file.fileSize,
           )),
     );
-    if (match == null) {
-      setState(() {
-        selectedSection = _DashboardSection.chat;
-        input.clear();
-        msgs.add(_Msg('assistant',
-            'I could not identify one matching saved file. Add a more specific title or topic.'));
-      });
-      _scrollToBottom();
-      return true;
+    if (shouldDeferLocalFileMissToSemanticSearch(
+      query: query,
+      match: match,
+    )) {
+      return false;
     }
 
-    final file = match.entry;
+    // The list-all branch returned above and a null match was deferred, so a
+    // match is guaranteed here.
+    final resolvedMatch = match!;
+
+    final file = resolvedMatch.entry;
     final label = file.displayName;
     final savedName = (file.savedName ?? '').trim();
     final relativePath = (file.relativePath ?? '').trim();
@@ -17148,6 +17154,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (privateLocalRouting &&
         attachments.isEmpty &&
         !credentialCreateRequiresBackend &&
+        !isCredentialExtractionReviewDecision(text) &&
         _looksLikePrivateVaultCommand(text)) {
       setState(() {
         msgs.add(_Msg('assistant',

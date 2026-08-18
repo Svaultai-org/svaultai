@@ -165,6 +165,61 @@ _QUESTION_SHAPE = re.compile(
     re.IGNORECASE,
 )
 
+# A file attached to the current composer turn is a stronger scope signal than
+# a domain noun inside the prompt.  In particular, "analyze ... credentials"
+# asks about the new document; it is not a request to open a historical saved
+# login.  Keep this vocabulary action-oriented and data-agnostic so it works
+# for arbitrary file types and subjects.
+_CURRENT_ATTACHMENT_ANALYSIS = re.compile(
+    r"\b(analys(?:e|is)|analyz(?:e|is)|inspect|review|read|scan|"
+    r"summari[sz]e|extract|identify|classify|explain|compare|"
+    r"transcribe|describe|understand|what|which|who|where|when|why|how)\b",
+    re.IGNORECASE,
+)
+
+# Users can override current-attachment precedence by explicitly asking for
+# historical vault state.  Merely mentioning a credential/login is not such
+# an override: those nouns may describe content in the attached document.
+_EXPLICIT_EXISTING_VAULT_SCOPE = re.compile(
+    r"\b(search|look\s+through|scan|check)\s+(?:in\s+)?(?:my|the)\s+vault\b|"
+    r"\b(?:existing|previously|already)\s+(?:saved|uploaded)\b|"
+    r"\bhistorical\s+(?:file|document|item|login|credential)s?\b",
+    re.IGNORECASE,
+)
+
+_CURRENT_ATTACHMENT_REFERENT = re.compile(
+    r"\b(this|that|attached|attachment|newly\s+uploaded|just\s+uploaded|"
+    r"current)\s+(?:file|pdf|document|doc|image|photo|picture|recording|"
+    r"audio|video|page|attachment)?\b",
+    re.IGNORECASE,
+)
+
+
+def is_current_attachment_content_request(
+    message: str,
+    *,
+    has_uploaded_files_in_turn: bool,
+) -> bool:
+    """Return whether the current turn should be answered from its upload.
+
+    This is a routing-only predicate.  It never inspects file contents and it
+    deliberately logs/returns no user text.  Explicit historical-vault scope
+    wins; otherwise an attachment referent, analysis action, or ordinary
+    question shape binds the prompt to the file that arrived in this turn.
+    """
+    if not has_uploaded_files_in_turn or not isinstance(message, str):
+        return False
+    text = message.strip()
+    if not text:
+        return False
+    if _EXPLICIT_EXISTING_VAULT_SCOPE.search(text):
+        return False
+    return bool(
+        _CURRENT_ATTACHMENT_REFERENT.search(text)
+        or _CURRENT_ATTACHMENT_ANALYSIS.search(text)
+        or _QUESTION_SHAPE.search(text)
+    )
+
                                                                      
 _LIST_SAVED_LOGINS = re.compile(
     r"\b(show|list|see|view)\b[^?]*?\b(my\s+)?"
@@ -225,6 +280,26 @@ def classify_brain_intent(
         return BrainIntent(intent=NOT_VAULT_CONTENT, reason="empty")
 
     text = str(message).strip()
+
+    # Current-turn attachment scope must be resolved before credential nouns
+    # and imperative-action guards.  The old ordering converted
+    # "analyze and save all credentials added" into a historical login
+    # lookup, so the newly uploaded document was never read.
+    if is_current_attachment_content_request(
+        text,
+        has_uploaded_files_in_turn=has_uploaded_files_in_turn,
+    ):
+        if _SUMMARIZE_VERB.search(text):
+            return BrainIntent(
+                intent=SUMMARIZE_FILE_CONTENT,
+                reason="upload_turn_summary_request",
+                scope_hint="this_file",
+            )
+        return BrainIntent(
+            intent=ANSWER_FROM_FILE_CONTENT,
+            reason="upload_turn_content_request",
+            scope_hint="this_file",
+        )
 
                                                                      
     if (
@@ -312,13 +387,6 @@ def classify_brain_intent(
         )
 
                                                                   
-    if has_uploaded_files_in_turn and _QUESTION_SHAPE.search(text):
-        return BrainIntent(
-            intent=ANSWER_FROM_FILE_CONTENT,
-            reason="upload_turn_question",
-            scope_hint="this_file",
-        )
-
                                                                    
     if (
         _CREDENTIAL_FILES_SEARCH.search(text)
@@ -441,4 +509,5 @@ __all__ = [
     "classify_brain_intent",
     "is_credential_files_query",
     "looks_like_vault_files_question",
+    "is_current_attachment_content_request",
 ]

@@ -37,6 +37,16 @@ class VaultLocalFileLookupMatch {
 
 const String localFileListAllQuery = '__vaultai_list_all_files__';
 
+/// Filename metadata can prove a unique local hit, but it cannot prove that a
+/// vault has no content-level match.  A metadata miss therefore falls through
+/// to the shared semantic/OCR/vision retrieval path instead of producing a
+/// terminal "not found" response on the client.
+bool shouldDeferLocalFileMissToSemanticSearch({
+  required String query,
+  required VaultLocalFileLookupMatch? match,
+}) =>
+    query != localFileListAllQuery && match == null;
+
 String? extractLocalFileLookupQuery(String message) {
   final text = message.trim();
   if (text.isEmpty) return null;
@@ -67,7 +77,7 @@ String? extractLocalFileLookupQuery(String message) {
   ).firstMatch(text);
   if (forMatch != null) return forMatch.group(1)?.trim();
   final match = RegExp(
-    r'^\s*(?:show(?:\s+me)?|open|view|find|get|download)\s+'
+    r'^\s*(?:show|open|view|find|get|download)(?:\s+me)?\s+'
     r'(?:(?:the|my)\s+)?'
     r'(?:(?:file|document|doc|image|photo|picture|video|audio)\s+)?'
     r'(.+?)\s*[.!?]*\s*$',

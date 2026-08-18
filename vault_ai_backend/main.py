@@ -4923,19 +4923,158 @@ def _build_credential_extraction_review_envelope(
     return json.dumps(payload)
 
 
+_PENDING_CREDENTIAL_EXTRACTION_KEY = "pending_credential_extraction_review"
+_CONFIRM_CREDENTIAL_EXTRACTION_RE = re.compile(
+    r"^\s*(?:yes[, ]+)?(?:approve|confirm|import|save)\s+"
+    r"(?:(?:all|these|them|the)\s+)?(?:extracted\s+)?"
+    r"(?:(?:login|credential)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+_CANCEL_CREDENTIAL_EXTRACTION_RE = re.compile(
+    r"^\s*(?:cancel|discard|reject|do\s+not\s+save|don't\s+save)\s+"
+    r"(?:(?:all|these|them|the)\s+)?(?:extracted\s+)?"
+    r"(?:(?:login|credential)s?(?:\s+records?)?|records?)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _valid_extracted_login_records(records: object) -> tuple[list[dict], int]:
+    if not isinstance(records, list):
+        return [], int(records is not None)
+    valid: list[dict] = []
+    rejected = 0
+    for raw in records[:50]:
+        if (
+            isinstance(raw, dict)
+            and raw.get("secret_type") == "login"
+            and _is_valid_secret_payload(raw)
+        ):
+            valid.append(raw)
+        else:
+            rejected += 1
+    rejected += max(0, len(records) - 50)
+    return valid, rejected
+
+
+def _remember_credential_extraction_review(memory: dict, envelope_json: str) -> None:
+    """Persist only source binding + safe-projection hash in chat state."""
+    try:
+        payload = json.loads(envelope_json)
+        file_data = payload.get("file") if isinstance(payload, dict) else None
+        records = payload.get("records") if isinstance(payload, dict) else None
+        file_id = str((file_data or {}).get("file_id") or "")
+        if not file_id or not isinstance(records, list) or not records:
+            memory.pop(_PENDING_CREDENTIAL_EXTRACTION_KEY, None)
+            return
+        import hashlib
+        canonical = json.dumps(
+            records,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        memory[_PENDING_CREDENTIAL_EXTRACTION_KEY] = {
+            "file_id": file_id,
+            "record_count": len(records),
+            "review_fingerprint": hashlib.sha256(canonical).hexdigest(),
+            "created_at": int(time.time()),
+        }
+    except Exception:
+        logger.exception(
+            "[CHAT-DEBUG] credential_review_state_write_failed"
+        )
+
+
+def _confirm_credential_extraction_review(
+    *,
+    vault_id: str,
+    key: bytes,
+    pending: dict,
+) -> str:
+    """Re-read, re-validate, and persist the exact reviewed record set."""
+    file_id = str((pending or {}).get("file_id") or "")
+    file_row = _load_one_file_for_analysis(vault_id, file_id, key)
+    plaintext = file_row.get("extracted_text") if file_row else None
+    if not plaintext:
+        return (
+            "I couldn't re-read the reviewed file, so no credentials were "
+            "saved. Run the review again."
+        )
+    try:
+        extracted = extract_multiple_credentials(plaintext) or []
+    except Exception:
+        logger.exception("[CHAT-DEBUG] credential_review_reextract_failed")
+        extracted = []
+    records, rejected = _valid_extracted_login_records(extracted)
+    if not records:
+        return "No valid reviewed login records remained, so nothing was saved."
+
+    review_json = _build_credential_extraction_review_envelope(
+        file_id=file_id,
+        file_name=file_row.get("file_name"),
+        saved_name=file_row.get("saved_name"),
+        relative_path=file_row.get("relative_path"),
+        records=records,
+        message="",
+        text_available=True,
+    )
+    safe_records = json.loads(review_json).get("records", [])
+    import hashlib
+    actual_fingerprint = hashlib.sha256(json.dumps(
+        safe_records,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    if (
+        int((pending or {}).get("record_count") or 0) != len(safe_records)
+        or str((pending or {}).get("review_fingerprint") or "")
+        != actual_fingerprint
+    ):
+        return (
+            "The extracted record set changed since review, so nothing was "
+            "saved. Review the file again before approving it."
+        )
+
+    saved = 0
+    failed = 0
+    for record in records:
+        try:
+            save_secret_tool(vault_id, record, key)
+            saved += 1
+        except Exception:
+            failed += 1
+            logger.warning(
+                "[CHAT-DEBUG] approved_credential_record_save_failed "
+                "vault=%s",
+                (vault_id or "")[:8] + "...",
+            )
+    suffix_parts = []
+    if rejected:
+        suffix_parts.append(f"{rejected} malformed row(s) ignored")
+    if failed:
+        suffix_parts.append(f"{failed} record(s) could not be saved")
+    suffix = f" ({'; '.join(suffix_parts)})." if suffix_parts else "."
+    return f"Saved {saved} approved login record(s){suffix}"
+
+
 def _handle_extract_logins_from_file(
     *,
     vault_id: str,
     key: Optional[bytes],
     asset_name: Optional[str],
+    file_id: Optional[str] = None,
 ) -> str:
 
-
-    file_row = _resolve_file_for_analysis(
-        vault_id,
-        asset_name=asset_name,
-        decrypted_message=asset_name or "",
-        key=key,
+    file_row = (
+        _load_one_file_for_analysis(vault_id, str(file_id), key)
+        if file_id
+        else _resolve_file_for_analysis(
+            vault_id,
+            asset_name=asset_name,
+            decrypted_message=asset_name or "",
+            key=key,
+        )
     )
     if not file_row:
         return _build_credential_extraction_review_envelope(
@@ -4975,10 +5114,14 @@ def _handle_extract_logins_from_file(
 
     try:
         from extractor import extract_multiple_credentials
-        records = extract_multiple_credentials(plaintext) or []
+        extracted_records = extract_multiple_credentials(plaintext) or []
     except Exception:
         logger.exception("extract_multiple_credentials failed")
-        records = []
+        extracted_records = []
+
+    records, rejected_count = _valid_extracted_login_records(
+        extracted_records,
+    )
 
     if not records:
         return _build_credential_extraction_review_envelope(
@@ -5002,6 +5145,11 @@ def _handle_extract_logins_from_file(
         f"I found {n} login record{'s' if n != 1 else ''} in {label}. "
         "Review the list below — nothing is saved until you confirm."
     )
+    if rejected_count:
+        message += (
+            f" I ignored {rejected_count} malformed or unsupported "
+            "row(s)."
+        )
     return _build_credential_extraction_review_envelope(
         file_id=file_id,
         file_name=file_name,
@@ -7699,7 +7847,11 @@ def save_uploaded_file(
                                                                          
                                                                       
             is_login_payload = (payload or {}).get("secret_type") == "login"
-            if is_login_payload and not auto_save_login_credentials:
+            if is_login_payload:
+                # Credential documents always enter the review/confirmation
+                # workflow.  Even an explicit "extract and save" upload
+                # instruction is approval to inspect, not permission to write
+                # newly parsed secrets without showing the proposed records.
                 skipped_login_count += 1
                 continue
             try:
@@ -7719,7 +7871,7 @@ def save_uploaded_file(
             "upload.login_autosave_skipped",
             file_name=file_name,
             skipped_count=skipped_login_count,
-            reason="auto_save_login_credentials=False",
+            reason="credential_review_confirmation_required",
         )
 
     autosaved_secret = saved_count > 0
@@ -10650,9 +10802,10 @@ async def upload_file_endpoint(
         file_bytes = await file.read()
         resolved_content_type = content_type or file.content_type
 
-        auto_save_login_credentials = _user_requested_login_extraction(
-            accompanying_text,
-        )
+        # The text is still used by chat to request an extraction review, but
+        # upload itself never persists parsed login records.  Confirmation is
+        # a separate authenticated chat turn.
+        auto_save_login_credentials = False
 
         safe_relative_path = _sanitize_relative_path(relative_path)
 
@@ -13768,9 +13921,13 @@ async def chat_endpoint(
                 from vault_chat_router import (
                     build_vault_chat_envelope as _fp_build_envelope,
                 )
+                _fp_build_for_turn = lambda message: _fp_build_envelope(
+                    message,
+                    has_current_attachments=bool(req.uploaded_file_ids),
+                )
                 _fast_envelope = _cfp.peek_intent_without_side_effects(
                     decrypted_message or "",
-                    build_envelope=_fp_build_envelope,
+                    build_envelope=_fp_build_for_turn,
                 )
 
 
@@ -13789,7 +13946,7 @@ async def chat_endpoint(
                             _fast_envelope = (
                                 _cfp.peek_intent_without_side_effects(
                                     _translated_query,
-                                    build_envelope=_fp_build_envelope,
+                                    build_envelope=_fp_build_for_turn,
                                 )
                             )
                         except Exception:
@@ -13824,6 +13981,12 @@ async def chat_endpoint(
                 _fast_pending_confirm = (
                     _fp_pending_check(decrypted_message or "")
                     or _fp_save_themed(decrypted_message or "")
+                    or bool(_CONFIRM_CREDENTIAL_EXTRACTION_RE.match(
+                        decrypted_message or ""
+                    ))
+                    or bool(_CANCEL_CREDENTIAL_EXTRACTION_RE.match(
+                        decrypted_message or ""
+                    ))
                 )
             except Exception:
                 _fast_pending_confirm = True
@@ -14456,6 +14619,70 @@ async def chat_endpoint(
             raise
         print("[CHAT-DEBUG] memory_ok", flush=True)
 
+        # Credential documents use an explicit two-turn contract:
+        # extraction produces a masked review card; only a later authenticated
+        # approve/save turn may persist the exact reviewed records.  Chat state
+        # retains only the source file id, record count, and a hash of the safe
+        # review projection; never passwords, PINs, or raw extracted text.
+        _pending_extraction_review = memory.get(
+            _PENDING_CREDENTIAL_EXTRACTION_KEY
+        )
+        if (
+            isinstance(_pending_extraction_review, dict)
+            and _CANCEL_CREDENTIAL_EXTRACTION_RE.match(
+                decrypted_message or ""
+            )
+        ):
+            memory.pop(_PENDING_CREDENTIAL_EXTRACTION_KEY, None)
+            try:
+                request.state.chat_path = "credential_extraction_cancelled"
+            except Exception:
+                pass
+            return encrypted_reply(
+                "Discarded the extracted credential review. Nothing was saved."
+            )
+        if (
+            isinstance(_pending_extraction_review, dict)
+            and _CONFIRM_CREDENTIAL_EXTRACTION_RE.match(
+                decrypted_message or ""
+            )
+        ):
+            memory.pop(_PENDING_CREDENTIAL_EXTRACTION_KEY, None)
+            _approved_reply = _confirm_credential_extraction_review(
+                vault_id=vault_id,
+                key=key,
+                pending=_pending_extraction_review,
+            )
+            try:
+                request.state.chat_path = "credential_extraction_confirmed"
+            except Exception:
+                pass
+            return encrypted_reply(_approved_reply)
+
+        if (
+            req.uploaded_file_ids
+            and _user_requested_login_extraction(decrypted_message or "")
+        ):
+            if len(req.uploaded_file_ids) > 1:
+                memory.pop(_PENDING_CREDENTIAL_EXTRACTION_KEY, None)
+                return encrypted_reply(
+                    "I received more than one current attachment. Open or "
+                    "name the credential document you want me to review, "
+                    "then ask again. Nothing was saved."
+                )
+            _review_reply = _handle_extract_logins_from_file(
+                vault_id=vault_id,
+                key=key,
+                asset_name=None,
+                file_id=str(req.uploaded_file_ids[0]),
+            )
+            _remember_credential_extraction_review(memory, _review_reply)
+            try:
+                request.state.chat_path = "credential_extraction_review"
+            except Exception:
+                pass
+            return encrypted_reply(_review_reply)
+
         # ------------------------------------------------------------------
         # [DETERMINISTIC-ROUTER] — 2026-07-31 relocation.
         #
@@ -14922,6 +15149,7 @@ async def chat_endpoint(
             try:
                 _vcr_envelope = _vcr_build_envelope(
                     decrypted_message or "",
+                    has_current_attachments=bool(req.uploaded_file_ids),
                 )
             except Exception:
                 logger.exception(
@@ -17438,6 +17666,7 @@ async def chat_endpoint(
                     key=key,
                     asset_name=asset_name,
                 )
+                _remember_credential_extraction_review(memory, reply)
                 return encrypted_reply(reply)
             except Exception:
                 logger.exception("extract_logins_from_file failed")
