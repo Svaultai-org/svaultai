@@ -55,6 +55,7 @@ import 'services/zk_auth_service.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
 import 'services/attachment_title_binding.dart';
+import 'services/attachment_credential_review.dart';
 import 'services/native_media_capture.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
@@ -13048,7 +13049,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         job.duplicateAction ?? (ctx.isBatchUpload ? 'skip' : 'prompt');
 
     const fileV2Write = fileV2WriteEnabled;
-    if (fileV2Write) {
+    final needsServerCredentialReview =
+        shouldUseServerReadableCredentialReview(ctx.accompanyingText);
+    if (fileV2Write && !needsServerCredentialReview) {
       final repo = FileV2Repository.current();
       if (repo == null) throw StateError('file_v2_requires_active_mvk');
       final fileId =

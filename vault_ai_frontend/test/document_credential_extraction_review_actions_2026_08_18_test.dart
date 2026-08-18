@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/services/attachment_credential_review.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_cards.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
 
@@ -85,6 +86,49 @@ Future<void> _pump(
 }
 
 void main() {
+  test('only attachment credential review uses the analyzable upload path', () {
+    for (final phrase in <String>[
+      'analyze this file and save the credentials',
+      'read this document and find all logins',
+      'extract the passwords from this file',
+      'show me all credentials in this document',
+      'find all usernames and passwords in this PDF',
+      'analyze this attached PDF and save credentials',
+    ]) {
+      expect(
+        shouldUseServerReadableCredentialReview(phrase),
+        isTrue,
+        reason: phrase,
+      );
+    }
+    for (final phrase in <String>[
+      'generate me an instagram login',
+      'create a new password for Facebook',
+      'upload this file',
+      'summarize this document',
+      'show my facebook login',
+    ]) {
+      expect(
+        shouldUseServerReadableCredentialReview(phrase),
+        isFalse,
+        reason: phrase,
+      );
+    }
+  });
+
+  test('file-v2 is bypassed only for an explicit credential review', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(
+      source,
+      contains('if (fileV2Write && !needsServerCredentialReview)'),
+    );
+    expect(
+      source,
+      contains('shouldUseServerReadableCredentialReview('
+          'ctx.accompanyingText)'),
+    );
+  });
+
   test('encrypted review command bypasses local natural-language routers', () {
     final source = File('lib/main.dart').readAsStringSync();
     final sendStart = source.indexOf('Future<void> _send() async');
