@@ -123,6 +123,14 @@ void main() {
       'show me all credentials in this document',
       'find all usernames and passwords in this PDF',
       'analyze this attached PDF and save credentials',
+      'analyze this and save yhe credentials',
+      'anlyze this and save the credentials',
+      'analyse this and save credentials',
+      'analyze ths and find all passwords',
+      'read this file and extract credntials',
+      'read this and get all passwords',
+      'find the logins in this',
+      'what credentials are in this?',
     ]) {
       expect(
         shouldUseServerReadableCredentialReview(phrase),
@@ -136,6 +144,7 @@ void main() {
       'upload this file',
       'summarize this document',
       'show my facebook login',
+      'username anlyze password credntials',
     ]) {
       expect(
         shouldUseServerReadableCredentialReview(phrase),
@@ -143,6 +152,17 @@ void main() {
         reason: phrase,
       );
     }
+  });
+
+  test('command normalization is disposable and never rewrites secret data',
+      () {
+    const supplied = 'username anlyze password credntials';
+    expect(
+      normalizeAttachmentCommandLanguage(supplied),
+      'username analyze password credentials',
+    );
+    expect(supplied, 'username anlyze password credntials');
+    expect(shouldUseServerReadableCredentialReview(supplied), isFalse);
   });
 
   test('file-v2 is bypassed only for an explicit credential review', () {
@@ -158,7 +178,8 @@ void main() {
     );
   });
 
-  test('credential review continues after the analyzable upload auto-names', () {
+  test('credential review continues after the analyzable upload auto-names',
+      () {
     final source = File('lib/main.dart').readAsStringSync();
     expect(
       source,
@@ -168,6 +189,11 @@ void main() {
       source,
       contains('if (uploadOutcome.autoNamedAny &&\n'
           '          !isCurrentAttachmentCredentialReview)'),
+    );
+    expect(
+      source,
+      contains('uploadedFileIds.isNotEmpty &&\n'
+          '          !isCurrentAttachmentCredentialReview &&'),
     );
   });
 
