@@ -747,18 +747,118 @@ class _InlineCredentialCard extends StatefulWidget {
 class _InlineCredentialCardState extends State<_InlineCredentialCard> {
   bool _revealed = false;
 
+  static const Map<String, String> _fieldLabels = <String, String>{
+    'username': 'Username',
+    'email': 'Email',
+    'user_id': 'User ID',
+    'login_id': 'Login ID',
+    'account_id': 'Account ID',
+    'account_number': 'Account number',
+    'password': 'Password',
+    'pin': 'PIN',
+    'url': 'Website or URL',
+    'secure_identifier': 'Secure identifier',
+    'access_code': 'Access code',
+    'secure_value': 'Secure value',
+    'secret_value': 'Secure value',
+    'value': 'Secure value',
+    'notes': 'Notes',
+    'note': 'Notes',
+  };
+
+  static const Set<String> _publicFieldNames = <String>{
+    'username',
+    'email',
+    'user_id',
+    'login_id',
+    'account_id',
+    'url',
+  };
+
+  String _labelFor(String name) => _fieldLabels[name] ?? name
+      .split('_')
+      .where((part) => part.isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+
   @override
   Widget build(BuildContext context) {
     final payload = widget.msg.payload ?? const <String, dynamic>{};
     final service = payload['service']?.toString() ?? '';
     final username = payload['username']?.toString() ?? '';
     final password = payload['password']?.toString() ?? '';
+    final rawFields = payload['fields'];
+    final fields = <String, String>{};
+    if (rawFields is Map) {
+      for (final entry in rawFields.entries) {
+        final name = entry.key.toString().trim().toLowerCase();
+        final value = entry.value?.toString() ?? '';
+        if (name.isNotEmpty && value.isNotEmpty) fields[name] = value;
+      }
+    }
+    if (fields.isEmpty) {
+      if (username.isNotEmpty) fields['username'] = username;
+      if (password.isNotEmpty) fields['password'] = password;
+      final url = payload['url']?.toString() ?? '';
+      if (url.isNotEmpty) fields['url'] = url;
+    } else if (!fields.containsKey('password') && password.isNotEmpty) {
+      fields['password'] = password;
+    }
+    final publicFields = fields.entries
+        .where((entry) => _publicFieldNames.contains(entry.key))
+        .toList(growable: false);
+    final sensitiveFields = fields.entries
+        .where((entry) => !_publicFieldNames.contains(entry.key))
+        .toList(growable: false);
 
     Future<void> copy(String value, String label) async {
       await Clipboard.setData(ClipboardData(text: value));
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$label copied')),
+      );
+    }
+
+    Widget fieldRow(
+      MapEntry<String, String> entry, {
+      required bool obscure,
+    }) {
+      final label = _labelFor(entry.key);
+      final isUsername = entry.key == 'username';
+      final isPassword = entry.key == 'password';
+      final valueKey = isUsername
+          ? const Key('chat_inline_credential_username')
+          : isPassword
+              ? const Key('chat_inline_credential_password')
+              : ValueKey('chat_inline_credential_${entry.key}');
+      final copyKey = isUsername
+          ? const Key('chat_inline_copy_username')
+          : isPassword
+              ? const Key('chat_inline_copy_password')
+              : ValueKey('chat_inline_copy_${entry.key}');
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: Color(0xFFB4B4B4))),
+            Row(children: [
+              Expanded(
+                child: SelectableText(
+                  obscure ? '••••••••••••' : entry.value,
+                  key: valueKey,
+                ),
+              ),
+              if (!obscure || isPassword)
+                IconButton(
+                  key: copyKey,
+                  tooltip: 'Copy ${label.toLowerCase()}',
+                  onPressed: () => copy(entry.value, label),
+                  icon: const Icon(Icons.copy_outlined),
+                ),
+            ]),
+          ],
+        ),
       );
     }
 
@@ -779,41 +879,22 @@ class _InlineCredentialCardState extends State<_InlineCredentialCard> {
               style:
                   const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
           const SizedBox(height: 14),
-          const Text('Username', style: TextStyle(color: Color(0xFFB4B4B4))),
-          Row(children: [
-            Expanded(
-                child: SelectableText(username,
-                    key: const Key('chat_inline_credential_username'))),
-            IconButton(
-              key: const Key('chat_inline_copy_username'),
-              tooltip: 'Copy username',
-              onPressed: () => copy(username, 'Username'),
-              icon: const Icon(Icons.copy_outlined),
+          for (final entry in publicFields)
+            fieldRow(entry, obscure: false),
+          for (final entry in sensitiveFields)
+            fieldRow(entry, obscure: !_revealed),
+          if (sensitiveFields.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('chat_inline_toggle_password'),
+                onPressed: () => setState(() => _revealed = !_revealed),
+                icon: Icon(_revealed
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined),
+                label: Text(_revealed ? 'Hide values' : 'Reveal values'),
+              ),
             ),
-          ]),
-          const SizedBox(height: 8),
-          const Text('Password', style: TextStyle(color: Color(0xFFB4B4B4))),
-          Row(children: [
-            Expanded(
-                child: SelectableText(
-              _revealed ? password : '••••••••••••',
-              key: const Key('chat_inline_credential_password'),
-            )),
-            IconButton(
-              key: const Key('chat_inline_toggle_password'),
-              tooltip: _revealed ? 'Hide password' : 'Reveal password',
-              onPressed: () => setState(() => _revealed = !_revealed),
-              icon: Icon(_revealed
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined),
-            ),
-            IconButton(
-              key: const Key('chat_inline_copy_password'),
-              tooltip: 'Copy password',
-              onPressed: () => copy(password, 'Password'),
-              icon: const Icon(Icons.copy_outlined),
-            ),
-          ]),
           if (widget.onEdit != null || widget.onDelete != null) ...[
             const SizedBox(height: 8),
             Row(
