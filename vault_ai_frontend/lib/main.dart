@@ -17361,6 +17361,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     var uploadedFileIds = <String>[];
     final hadAttachments = pendingAttachments.isNotEmpty;
+    final isCurrentAttachmentCredentialReview = hadAttachments &&
+        shouldUseServerReadableCredentialReview(text);
     var uploadCommitted = false;
 
     try {
@@ -17410,7 +17412,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
-      if (uploadOutcome.autoNamedAny) {
+      if (uploadOutcome.autoNamedAny &&
+          !isCurrentAttachmentCredentialReview) {
         if (!mounted) return;
         _chatRequests.complete(chatRequestId);
         setState(() {

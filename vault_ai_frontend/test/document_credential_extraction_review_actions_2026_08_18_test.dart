@@ -129,6 +129,19 @@ void main() {
     );
   });
 
+  test('credential review continues after the analyzable upload auto-names', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(
+      source,
+      contains('final isCurrentAttachmentCredentialReview = hadAttachments &&'),
+    );
+    expect(
+      source,
+      contains('if (uploadOutcome.autoNamedAny &&\n'
+          '          !isCurrentAttachmentCredentialReview)'),
+    );
+  });
+
   test('encrypted review command bypasses local natural-language routers', () {
     final source = File('lib/main.dart').readAsStringSync();
     final sendStart = source.indexOf('Future<void> _send() async');
