@@ -344,8 +344,12 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         ), patch.object(main, "_peek_existing_secret_fields", return_value={}), patch.object(
             main,
             "save_secret_tool",
-            side_effect=lambda vault_id, payload, key: saved.append(payload),
-        ):
+            side_effect=lambda vault_id, payload, key, **_kwargs: saved.append(payload),
+        ) as save_mock, patch(
+            "relationship_builder.rebuild_vault_relationships_safe"
+        ) as rebuild_mock, patch(
+            "vault_intelligence_updater.on_credential_changed"
+        ) as intelligence_mock:
             reply = main._handle_credential_extraction_action(
                 vault_id="vault-synthetic",
                 key=b"k" * 32,
@@ -362,6 +366,12 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         self.assertEqual(len(saved), 2)
         self.assertEqual(saved[0], records[0])
         self.assertEqual(saved[1], records[2])
+        self.assertTrue(all(
+            call.kwargs.get("defer_postprocessing") is True
+            for call in save_mock.call_args_list
+        ))
+        rebuild_mock.assert_called_once_with("vault-synthetic")
+        intelligence_mock.assert_called_once_with("vault-synthetic")
         self.assertIn("Saved 2 selected", reply)
         self.assertIn("No unselected candidates were saved", reply)
 
@@ -382,7 +392,7 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         ), patch.object(main, "_peek_existing_secret_fields", return_value={}), patch.object(
             main,
             "save_secret_tool",
-            side_effect=lambda vault_id, payload, key: saved.append(payload),
+            side_effect=lambda vault_id, payload, key, **_kwargs: saved.append(payload),
         ):
             main._handle_credential_extraction_action(
                 vault_id="vault-synthetic",

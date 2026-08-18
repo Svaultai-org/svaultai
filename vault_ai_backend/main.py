@@ -5274,6 +5274,7 @@ def _handle_credential_extraction_action(
     duplicates = 0
     conflicts = 0
     failed = 0
+    defer_postprocessing = len(selected) > 1
     for candidate_id in selected:
         edited = _apply_credential_extraction_overrides(
             candidate_map[candidate_id],
@@ -5299,7 +5300,12 @@ def _handle_credential_extraction_action(
                 conflicts += 1
             continue
         try:
-            save_secret_tool(vault_id, edited, key)
+            save_secret_tool(
+                vault_id,
+                edited,
+                key,
+                defer_postprocessing=defer_postprocessing,
+            )
             saved += 1
         except Exception:
             failed += 1
@@ -5308,6 +5314,18 @@ def _handle_credential_extraction_action(
                 "vault=%s",
                 (vault_id or "")[:8] + "...",
             )
+
+    if saved and defer_postprocessing:
+        try:
+            from relationship_builder import rebuild_vault_relationships_safe
+            rebuild_vault_relationships_safe(vault_id)
+        except Exception:
+            pass
+        try:
+            from vault_intelligence_updater import on_credential_changed
+            on_credential_changed(vault_id)
+        except Exception:
+            pass
 
     parts = [f"Saved {saved} selected secure record(s)."]
     if duplicates:
@@ -7416,7 +7434,8 @@ def _classify_save_login_payload(args) -> Optional[str]:
 
 
 def save_secret_tool(vault_id: str, args: dict, key: bytes,
-                     *, generated: bool = False):
+                     *, generated: bool = False,
+                     defer_postprocessing: bool = False):
 
 
     ensure_vault_exists(vault_id)
@@ -7583,18 +7602,19 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
             pass
 
                                                                        
-        try:
-            _rel_id = (
-                existing["id"] if existing
-                else locals().get("_new_item_id")
-            )
-            if _rel_id is not None:
-                from relationship_builder import build_relationships_for_item_safe
-                build_relationships_for_item_safe(
-                    vault_id, int(_rel_id), replace=True,
+        if not defer_postprocessing:
+            try:
+                _rel_id = (
+                    existing["id"] if existing
+                    else locals().get("_new_item_id")
                 )
-        except Exception:
-            pass
+                if _rel_id is not None:
+                    from relationship_builder import build_relationships_for_item_safe
+                    build_relationships_for_item_safe(
+                        vault_id, int(_rel_id), replace=True,
+                    )
+            except Exception:
+                pass
 
     finally:
         conn.close()
@@ -7603,11 +7623,12 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
     remember_service(vault_id, service)
 
                                                                  
-    try:
-        from vault_intelligence_updater import on_credential_changed
-        on_credential_changed(vault_id)
-    except Exception:
-        pass
+    if not defer_postprocessing:
+        try:
+            from vault_intelligence_updater import on_credential_changed
+            on_credential_changed(vault_id)
+        except Exception:
+            pass
 
     pretty_service = service.title()
 
