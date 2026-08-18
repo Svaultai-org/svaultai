@@ -507,6 +507,9 @@ class _CardBubble extends StatelessWidget {
         body = CredentialExtractionReviewCard(
           msg: msg,
           onOpen: (fileMsg) => onOpenVaultFile?.call(fileMsg),
+          onAction: onCardAction == null
+              ? null
+              : (action, data) => onCardAction!(msg, action, data),
         );
         break;
       case ChatMessage.kDeepAnswerProgress:

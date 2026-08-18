@@ -246,6 +246,7 @@ def extract_credentials(text: str):
     email = None
     pin = None
     note = None
+    url = None
 
     username_patterns = [
         r"\busername\s*(?:is|=|:)\s*([^\s,;|]+)",
@@ -298,6 +299,18 @@ def extract_credentials(text: str):
             note = _clean_field(match.group(1))
             break
 
+    url_patterns = [
+        r"\b(?:website|url|site)\s*(?:is|=|:)?\s*"
+        r"(https?://[^\s,;|]+|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}"
+        r"(?:/[^\s,;|]*)?)",
+        r"\b(https?://[^\s,;|]+)",
+    ]
+    for pattern in url_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            url = _clean_field(match.group(1))
+            break
+
     username, email = _normalize_extracted_identity(username, email)
 
     has_potential_secret = bool(username or email or password or pin or note)
@@ -309,6 +322,7 @@ def extract_credentials(text: str):
         "password": password,
         "pin": pin,
         "note": note,
+        "url": url,
         "has_potential_secret": has_potential_secret,
     }
 
@@ -373,6 +387,8 @@ def extract_multiple_credentials(text: str) -> list[dict]:
                 fields["pin"] = extracted["pin"]
             if extracted.get("note"):
                 fields["note"] = extracted["note"]
+            if extracted.get("url"):
+                fields["url"] = extracted["url"]
 
             if not fields:
                 continue
@@ -384,6 +400,7 @@ def extract_multiple_credentials(text: str) -> list[dict]:
                 fields.get("password"),
                 fields.get("pin"),
                 fields.get("note"),
+                fields.get("url"),
             )
             if dedupe_key in seen:
                 continue
