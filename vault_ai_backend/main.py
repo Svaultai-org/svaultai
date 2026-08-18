@@ -5261,20 +5261,255 @@ def _rebuild_relationships_after_bulk_secure_save(vault_id: str) -> None:
         )
 
 
-def _schedule_relationship_rebuild_after_bulk_secure_save(vault_id: str) -> None:
+def _postprocess_bulk_secure_items(
+    vault_id: str, item_refs: list[tuple[int, str, str]],
+) -> None:
+    """Enrich batch-saved items without retaining any secret field values."""
+    try:
+        from asset_tagger import tag_vault_item_safe
+        for item_id, service, item_type in item_refs:
+            tag_vault_item_safe(
+                vault_id,
+                item_id,
+                service=service,
+                item_type=item_type,
+                replace=True,
+            )
+    except Exception:
+        logger.warning(
+            "[CHAT-DEBUG] bulk_secure_tag_enrichment_failed vault=%s",
+            (vault_id or "")[:8] + "...",
+        )
+    _rebuild_relationships_after_bulk_secure_save(vault_id)
+
+
+def _schedule_bulk_secure_postprocessing(
+    vault_id: str, item_refs: list[tuple[int, str, str]],
+) -> None:
     """Keep derived-index work off the user-visible bulk response path."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         # Synchronous callers (including deterministic tests) still get the
         # same completed derived state before returning.
-        _rebuild_relationships_after_bulk_secure_save(vault_id)
+        _postprocess_bulk_secure_items(vault_id, item_refs)
         return
     loop.run_in_executor(
         None,
-        _rebuild_relationships_after_bulk_secure_save,
+        _postprocess_bulk_secure_items,
         vault_id,
+        item_refs,
     )
+
+
+def _decode_encrypted_secret_fields(encrypted_data: object, key: bytes) -> dict:
+    if not encrypted_data:
+        return {}
+    try:
+        decoded = json.loads(decrypt_message(str(encrypted_data), key))
+        if not isinstance(decoded, dict):
+            return {}
+        inner = decoded.get("fields")
+        return dict(inner) if isinstance(inner, dict) else decoded
+    except Exception:
+        return {}
+
+
+def _save_extracted_secret_batch(
+    vault_id: str, records: list[dict], key: bytes,
+) -> tuple[int, int, int, int]:
+    """Persist a reviewed selection in one bounded transaction.
+
+    Only encrypted envelopes and non-secret metadata are written.  Password
+    audit hashes and deterministic item tags share the same transaction;
+    slower service classification and relationship derivation run after the
+    user-visible response.
+    """
+    ensure_vault_exists(vault_id)
+    prepared_inputs: list[tuple[str, str, dict, str]] = []
+    failed = 0
+    for record in records[:MAX_SECURE_DOCUMENT_RECORDS]:
+        reason = _classify_save_login_payload(record)
+        if reason is not None:
+            failed += 1
+            continue
+        item_type = str(record.get("secret_type") or "other_secure_record")
+        service = _normalize_service_name(record.get("service"))
+        fields = dict(record.get("fields") or {})
+        notes = record.get("notes")
+        envelope_notes = notes if isinstance(notes, str) else ""
+        prepared_inputs.append((item_type, service, fields, envelope_notes))
+
+    if not prepared_inputs:
+        return 0, 0, 0, failed
+
+    item_types = sorted({item_type for item_type, _, _, _ in prepared_inputs})
+    conn = get_db()
+    saved = 0
+    duplicates = 0
+    conflicts = 0
+    committed_bytes = 0
+    saved_refs: list[tuple[int, str, str]] = []
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            SELECT id, item_type, service, encrypted_data
+            FROM vault_items
+            WHERE vault_id = %s AND item_type = ANY(%s)
+            ORDER BY created_at DESC
+            """,
+            (vault_id, item_types),
+        )
+        existing_by_key: dict[tuple[str, str], dict] = {}
+        for row in cursor.fetchall() or []:
+            row_key = (
+                str(row.get("item_type") or ""),
+                str(row.get("service") or "").lower(),
+            )
+            if row_key not in existing_by_key:
+                existing_by_key[row_key] = _decode_encrypted_secret_fields(
+                    row.get("encrypted_data"), key,
+                )
+
+        from billing import get_account_id_for_vault, get_entitlement
+        billing_account_id = get_account_id_for_vault(vault_id)
+        if billing_account_id is None:
+            billing_limit = int(MAX_VAULT_BYTES)
+            billing_used = get_vault_total_bytes(vault_id)
+        else:
+            entitlement = get_entitlement(billing_account_id)
+            billing_limit = entitlement.effective_limit_bytes
+            billing_used = entitlement.used_bytes
+
+        insert_rows: list[tuple[str, str, str, dict]] = []
+        pending_fields: dict[tuple[str, str], dict] = dict(existing_by_key)
+        pending_bytes = 0
+        for item_type, service, fields, envelope_notes in prepared_inputs:
+            row_key = (item_type, service.lower())
+            existing_fields = pending_fields.get(row_key)
+            if existing_fields is not None:
+                if fields and all(
+                    str(existing_fields.get(name) or "") == str(value or "")
+                    for name, value in fields.items()
+                ):
+                    duplicates += 1
+                else:
+                    conflicts += 1
+                continue
+            envelope_payload = {
+                "category": item_type,
+                "title": service,
+                "fields": fields,
+                "notes": envelope_notes,
+            }
+            encrypted_data = encrypt_message(
+                json.dumps(envelope_payload, ensure_ascii=False), key,
+            )
+            encrypted_size = len(encrypted_data.encode("utf-8"))
+            if billing_used + pending_bytes + encrypted_size > billing_limit:
+                failed += 1
+                continue
+            insert_rows.append((item_type, service, encrypted_data, fields))
+            pending_fields[row_key] = fields
+            pending_bytes += encrypted_size
+
+        password_audit_rows: list[tuple[str, int, bytes, int, bool]] = []
+        tag_rows: list[tuple[str, int, str, float]] = []
+        for item_type, service, encrypted_data, fields in insert_rows:
+            cursor.execute(
+                """
+                INSERT INTO vault_items
+                    (vault_id, item_type, service, encrypted_data)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (vault_id, item_type, service, encrypted_data),
+            )
+            new_row = cursor.fetchone()
+            item_id = int(new_row["id"] if isinstance(new_row, dict) else new_row[0])
+            saved_refs.append((item_id, service, item_type))
+            saved += 1
+            committed_bytes += len(encrypted_data.encode("utf-8"))
+
+            password = fields.get("password")
+            if password:
+                from password_audit import hash_password, score_password
+                password_audit_rows.append((
+                    vault_id,
+                    item_id,
+                    hash_password(vault_id, str(password)),
+                    score_password(str(password)),
+                    False,
+                ))
+
+            from asset_tagger import classify_tags
+            for tag, confidence in classify_tags(item_type=item_type):
+                tag_rows.append((vault_id, item_id, tag, confidence))
+
+        if password_audit_rows:
+            cursor.executemany(
+                """
+                INSERT INTO vault_password_audit
+                    (vault_id, vault_item_id, password_hash_sha256,
+                     password_strength_score, generated_by_vaultai)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (vault_id, vault_item_id) DO UPDATE SET
+                    password_hash_sha256 = EXCLUDED.password_hash_sha256,
+                    password_strength_score = EXCLUDED.password_strength_score,
+                    generated_by_vaultai =
+                        vault_password_audit.generated_by_vaultai
+                        OR EXCLUDED.generated_by_vaultai,
+                    updated_at = NOW()
+                """,
+                password_audit_rows,
+            )
+        if tag_rows:
+            cursor.executemany(
+                """
+                INSERT INTO vault_asset_tags
+                    (vault_id, source_kind, vault_item_id, tag, confidence)
+                VALUES (%s, 'vault_item', %s, %s, %s)
+                ON CONFLICT (vault_id, vault_item_id, tag)
+                    WHERE vault_item_id IS NOT NULL DO NOTHING
+                """,
+                tag_rows,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        logger.warning(
+            "[CHAT-DEBUG] selected_credential_batch_save_failed vault=%s",
+            (vault_id or "")[:8] + "...",
+        )
+        return 0, duplicates, conflicts, failed + len(prepared_inputs)
+    finally:
+        conn.close()
+
+    if committed_bytes:
+        bump_vault_total_bytes(vault_id, committed_bytes)
+    if saved_refs:
+        last_service = saved_refs[-1][1]
+        _set_last_service(vault_id, last_service)
+        remember_service(vault_id, last_service)
+        try:
+            from semantic_embedder import enqueue_vault_item_embedding
+            for item_id, service, item_type in saved_refs:
+                enqueue_vault_item_embedding(
+                    client, vault_id, item_id, "item_service", service,
+                )
+                enqueue_vault_item_embedding(
+                    client, vault_id, item_id, "item_type", item_type,
+                )
+        except Exception:
+            pass
+        try:
+            from vault_intelligence_updater import on_credential_changed
+            on_credential_changed(vault_id)
+        except Exception:
+            pass
+        _schedule_bulk_secure_postprocessing(vault_id, saved_refs)
+    return saved, duplicates, conflicts, failed
 
 
 def _handle_credential_extraction_action(
@@ -5298,11 +5533,9 @@ def _handle_credential_extraction_action(
         return "No valid reviewed candidates were selected, so nothing was saved."
 
     overrides_by_id = action.get("overrides") or {}
-    saved = 0
-    duplicates = 0
-    conflicts = 0
-    failed = 0
     defer_postprocessing = len(selected) > 1
+    edited_records: list[dict] = []
+    failed = 0
     for candidate_id in selected:
         edited = _apply_credential_extraction_overrides(
             candidate_map[candidate_id],
@@ -5311,45 +5544,45 @@ def _handle_credential_extraction_action(
         if edited is None:
             failed += 1
             continue
-        service = str(edited.get("service") or "")
-        secret_type = str(edited.get("secret_type") or "other_secure_record")
-        fields = dict(edited.get("fields") or {})
-        existing = _peek_existing_secret_fields(
-            vault_id, secret_type, service, key,
-        )
-        if existing:
-            if fields and all(
-                str(existing.get(name) or "") == str(value or "")
-                for name, value in fields.items()
-            ):
-                duplicates += 1
-            else:
-                # Never overwrite a same-service secure record silently.
-                conflicts += 1
-            continue
-        try:
-            save_secret_tool(
-                vault_id,
-                edited,
-                key,
-                defer_postprocessing=defer_postprocessing,
-            )
-            saved += 1
-        except Exception:
-            failed += 1
-            logger.warning(
-                "[CHAT-DEBUG] selected_credential_record_save_failed "
-                "vault=%s",
-                (vault_id or "")[:8] + "...",
-            )
+        edited_records.append(edited)
 
-    if saved and defer_postprocessing:
-        try:
-            from vault_intelligence_updater import on_credential_changed
-            on_credential_changed(vault_id)
-        except Exception:
-            pass
-        _schedule_relationship_rebuild_after_bulk_secure_save(vault_id)
+    if defer_postprocessing:
+        batch_saved, duplicates, conflicts, batch_failed = (
+            _save_extracted_secret_batch(vault_id, edited_records, key)
+        )
+        saved = batch_saved
+        failed += batch_failed
+    else:
+        saved = 0
+        duplicates = 0
+        conflicts = 0
+        for edited in edited_records:
+            service = str(edited.get("service") or "")
+            secret_type = str(edited.get("secret_type") or "other_secure_record")
+            fields = dict(edited.get("fields") or {})
+            existing = _peek_existing_secret_fields(
+                vault_id, secret_type, service, key,
+            )
+            if existing:
+                if fields and all(
+                    str(existing.get(name) or "") == str(value or "")
+                    for name, value in fields.items()
+                ):
+                    duplicates += 1
+                else:
+                    # Never overwrite a same-service secure record silently.
+                    conflicts += 1
+                continue
+            try:
+                save_secret_tool(vault_id, edited, key)
+                saved += 1
+            except Exception:
+                failed += 1
+                logger.warning(
+                    "[CHAT-DEBUG] selected_credential_record_save_failed "
+                    "vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
 
     parts = [f"Saved {saved} selected secure record(s)."]
     if duplicates:

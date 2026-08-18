@@ -341,15 +341,13 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         }
         with patch.object(main, "_load_one_file_for_analysis", return_value=file_row), patch.object(
             main, "extract_multiple_credentials", return_value=records
-        ), patch.object(main, "_peek_existing_secret_fields", return_value={}), patch.object(
+        ), patch.object(
             main,
-            "save_secret_tool",
-            side_effect=lambda vault_id, payload, key, **_kwargs: saved.append(payload),
-        ) as save_mock, patch(
-            "relationship_builder.rebuild_vault_relationships_safe"
-        ) as rebuild_mock, patch(
-            "vault_intelligence_updater.on_credential_changed"
-        ) as intelligence_mock:
+            "_save_extracted_secret_batch",
+            side_effect=lambda vault_id, payloads, key: (
+                saved.extend(payloads) or (len(payloads), 0, 0, 0)
+            ),
+        ) as batch_mock:
             reply = main._handle_credential_extraction_action(
                 vault_id="vault-synthetic",
                 key=b"k" * 32,
@@ -366,14 +364,19 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
         self.assertEqual(len(saved), 2)
         self.assertEqual(saved[0], records[0])
         self.assertEqual(saved[1], records[2])
-        self.assertTrue(all(
-            call.kwargs.get("defer_postprocessing") is True
-            for call in save_mock.call_args_list
-        ))
-        rebuild_mock.assert_called_once_with("vault-synthetic")
-        intelligence_mock.assert_called_once_with("vault-synthetic")
+        batch_mock.assert_called_once_with(
+            "vault-synthetic", [records[0], records[2]], b"k" * 32,
+        )
         self.assertIn("Saved 2 selected", reply)
         self.assertIn("No unselected candidates were saved", reply)
+
+    def test_bulk_save_uses_one_transaction_and_defers_metadata_enrichment(self):
+        source = inspect.getsource(main._save_extracted_secret_batch)
+        self.assertEqual(source.count("conn = get_db()"), 1)
+        self.assertEqual(source.count("conn.commit()"), 1)
+        self.assertIn("cursor.executemany", source)
+        self.assertIn("_schedule_bulk_secure_postprocessing", source)
+        self.assertNotIn("save_secret_tool(", source)
 
     def test_edit_before_save_and_duplicate_detection_fail_closed(self):
         records = _records()
