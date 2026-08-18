@@ -183,12 +183,18 @@ void main() {
     final source = File('lib/main.dart').readAsStringSync();
     expect(
       source,
-      contains('final isCurrentAttachmentCredentialReview = hadAttachments &&'),
+      contains('final isCurrentAttachmentCredentialReview =\n'
+          '        rawPendingAttachments.isNotEmpty &&'),
     );
     expect(
       source,
-      contains('if (uploadOutcome.autoNamedAny &&\n'
-          '          !isCurrentAttachmentCredentialReview)'),
+      contains('final attachmentTitle = isCurrentAttachmentCredentialReview\n'
+          '        ? null'),
+    );
+    expect(
+      source,
+      contains('if (uploadOutcome.autoNamedAny && '
+          '!isCurrentAttachmentCredentialReview)'),
     );
     expect(
       source,

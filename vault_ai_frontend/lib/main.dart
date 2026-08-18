@@ -16072,8 +16072,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final candidateIds = (data?['candidate_ids'] is List)
           ? (data!['candidate_ids'] as List)
               .map((value) => value.toString().trim())
-              .where((value) =>
-                  RegExp(r'^[a-f0-9]{24}$').hasMatch(value))
+              .where((value) => RegExp(r'^[a-f0-9]{24}$').hasMatch(value))
               .toList(growable: false)
           : const <String>[];
       final wireAction = action == 'credential_extraction_save_selected'
@@ -17249,10 +17248,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     final replyLanguageCode = app.chatReplyLanguageCode;
     final rawPendingAttachments = attachments.map((a) => a.copy()).toList();
-    final attachmentTitle = attachmentTitleFromComposerText(
-      text,
-      attachmentCount: rawPendingAttachments.length,
-    );
+    final isCurrentAttachmentCredentialReview =
+        rawPendingAttachments.isNotEmpty &&
+            shouldUseServerReadableCredentialReview(text);
+    final attachmentTitle = isCurrentAttachmentCredentialReview
+        ? null
+        : attachmentTitleFromComposerText(
+            text,
+            attachmentCount: rawPendingAttachments.length,
+          );
     final pendingAttachments = attachmentTitle == null
         ? rawPendingAttachments
         : [
@@ -17364,8 +17368,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     var uploadedFileIds = <String>[];
     final hadAttachments = pendingAttachments.isNotEmpty;
-    final isCurrentAttachmentCredentialReview = hadAttachments &&
-        shouldUseServerReadableCredentialReview(text);
     var uploadCommitted = false;
 
     try {
@@ -17415,8 +17417,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
-      if (uploadOutcome.autoNamedAny &&
-          !isCurrentAttachmentCredentialReview) {
+      if (uploadOutcome.autoNamedAny && !isCurrentAttachmentCredentialReview) {
         if (!mounted) return;
         _chatRequests.complete(chatRequestId);
         setState(() {
