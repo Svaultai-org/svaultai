@@ -7232,10 +7232,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       final raw = fetched['fields'];
       final fields = raw is Map ? Map<String, dynamic>.from(raw) : const {};
-      final username = fields['username']?.toString();
-      final value = fields['password']?.toString() ??
-          fields['secret_value']?.toString() ??
-          fields.values.whereType<String>().firstOrNull;
+      String? firstNonEmptyField(Iterable<String> names) {
+        for (final name in names) {
+          final value = fields[name]?.toString().trim() ?? '';
+          if (value.isNotEmpty) return value;
+        }
+        return null;
+      }
+
+      final identifier = firstNonEmptyField(const <String>[
+        'username',
+        'email',
+        'user_id',
+        'login_id',
+        'account_id',
+      ]);
+      final value = firstNonEmptyField(const <String>[
+        'password',
+        'secure_value',
+        'secret_value',
+        'access_code',
+        'value',
+      ]);
       if (!mounted) return;
       setState(() {
         msgs.add(_Msg(
@@ -7244,8 +7262,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           kind: ChatMessage.kInlineCredential,
           payload: <String, dynamic>{
             'service': service,
-            'username': username ?? '',
+            'username': identifier ?? '',
             'password': value ?? '',
+            'fields': fields,
           },
         ));
       });
