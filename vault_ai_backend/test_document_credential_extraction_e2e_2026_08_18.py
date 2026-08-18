@@ -7,6 +7,7 @@ import json
 import unittest
 from unittest.mock import patch
 
+import docx
 from reportlab.pdfgen import canvas
 
 import extractor
@@ -81,6 +82,49 @@ class DocumentCredentialExtractionE2ETests(unittest.TestCase):
             records[2]["fields"].get("url"),
             "https://gamma.example.invalid/login",
         )
+
+    def test_txt_and_docx_use_the_same_three_candidate_extractor(self):
+        txt = main._extract_text_from_bytes(
+            "synthetic-three-logins.txt", SYNTHETIC_TEXT.encode("utf-8")
+        )
+        self.assertEqual(len(extractor.extract_multiple_credentials(txt or "")), 3)
+
+        document = docx.Document()
+        for line in SYNTHETIC_TEXT.splitlines():
+            document.add_paragraph(line)
+        output = io.BytesIO()
+        document.save(output)
+        docx_text = main._extract_text_from_bytes(
+            "synthetic-three-logins.docx", output.getvalue()
+        )
+        self.assertEqual(
+            len(extractor.extract_multiple_credentials(docx_text or "")), 3
+        )
+
+    def test_ocr_populated_image_text_uses_the_same_masked_review(self):
+        with patch.object(
+            main,
+            "_load_one_file_for_analysis",
+            return_value={
+                "id": "image-synthetic",
+                "file_name": "synthetic-three-logins.png",
+                "saved_name": None,
+                "relative_path": None,
+                "extracted_text": SYNTHETIC_TEXT,
+            },
+        ):
+            envelope = main._handle_extract_logins_from_file(
+                vault_id="vault-synthetic",
+                key=b"k" * 32,
+                asset_name=None,
+                file_id="image-synthetic",
+            )
+        payload = json.loads(envelope)
+        self.assertEqual(payload["count"], 3)
+        self.assertTrue(
+            all(record["password_present"] for record in payload["records"])
+        )
+        self.assertNotIn("Alpha-Secret-1", envelope)
 
     def test_review_envelope_masks_secrets_and_normalizes_source_fields(self):
         records = _records()

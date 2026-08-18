@@ -15980,10 +15980,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _sendQuickPrompt(String text) async {
+  Future<void> _sendQuickPrompt(
+    String text, {
+    String? encryptedBackendCommand,
+  }) async {
     setState(() {
       selectedSection = _DashboardSection.chat;
       input.text = text;
+      _nextEncryptedBackendCommand = encryptedBackendCommand;
     });
     await Future.delayed(const Duration(milliseconds: 50));
     await _send();
@@ -16053,6 +16057,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final prompt =
           title.isEmpty ? 'Show my selected file' : 'Show my $title file';
       _sendQuickPrompt(prompt);
+      return;
+    }
+    if (action == 'credential_extraction_save' ||
+        action == 'credential_extraction_save_selected' ||
+        action == 'credential_extraction_edit_and_save' ||
+        action == 'credential_extraction_cancel') {
+      final candidateIds = (data?['candidate_ids'] is List)
+          ? (data!['candidate_ids'] as List)
+              .map((value) => value.toString().trim())
+              .where((value) =>
+                  RegExp(r'^[a-f0-9]{24}$').hasMatch(value))
+              .toList(growable: false)
+          : const <String>[];
+      final wireAction = action == 'credential_extraction_save_selected'
+          ? 'save_selected'
+          : action == 'credential_extraction_edit_and_save'
+              ? 'edit_and_save'
+              : action == 'credential_extraction_cancel'
+                  ? 'cancel'
+                  : 'save';
+      if (wireAction != 'cancel' && candidateIds.isEmpty) {
+        _showSnack('Select at least one credential candidate.');
+        throw StateError('credential_extraction_selection_missing');
+      }
+      final overrides = (data?['overrides'] is Map)
+          ? (data!['overrides'] as Map).cast<String, dynamic>()
+          : const <String, dynamic>{};
+      final wirePayload = <String, dynamic>{
+        'action': wireAction,
+        'candidate_ids': candidateIds,
+        if (overrides.isNotEmpty) 'overrides': overrides,
+      };
+      final encoded = base64Url
+          .encode(utf8.encode(jsonEncode(wirePayload)))
+          .replaceAll('=', '');
+      final privateCommand =
+          '__svaultai_credential_extraction_action_v1__:$encoded';
+      final visiblePrompt = wireAction == 'cancel'
+          ? 'Cancel this credential review'
+          : wireAction == 'edit_and_save'
+              ? 'Save my edited credential candidate'
+              : candidateIds.length == 1
+                  ? 'Save this selected credential candidate'
+                  : 'Save ${candidateIds.length} selected credential candidates';
+      await _sendQuickPrompt(
+        visiblePrompt,
+        encryptedBackendCommand: privateCommand,
+      );
       return;
     }
     // 2026-08-01 generated-login draft Save / Cancel from the card
@@ -16256,6 +16308,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// after send. The hint is a structured field on the /chat body —
   /// it never appears in the user-visible chat prose.
   Map<String, String>? _nextSelectionHint;
+
+  /// One-shot private command used by structured review cards. The visible
+  /// chat bubble remains a human-readable action label, while this payload is
+  /// placed inside the already encrypted chat message. It is never copied to
+  /// selection_hint, request diagnostics, analytics, or plaintext logs.
+  String? _nextEncryptedBackendCommand;
 
   /// The last file id the user opened/downloaded via a direct card
   /// tap (i.e. without a chat prompt in between). Set from
@@ -17038,6 +17096,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
 
+    // Structured card actions must reach the backend verbatim after message
+    // encryption. Consume the one-shot command before any local natural-
+    // language router can mistake its human-readable bubble for a new vault
+    // request. A failed/expired send must not leave a secret-bearing command
+    // queued for an unrelated later message.
+    final privateBackendCommand = _nextEncryptedBackendCommand;
+    _nextEncryptedBackendCommand = null;
+    final hasPrivateBackendCommand =
+        privateBackendCommand != null && privateBackendCommand.isNotEmpty;
+
     final app = context.read<AppState>();
     final token = app.sessionToken;
 
@@ -17118,40 +17186,43 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // regex — they fall through to the LLM path where the server-
     // injected vault-AI identity context answers with the
     // persistent AI keeper's name and role.
-    if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
-      input.clear();
-      return;
-    }
+    if (!hasPrivateBackendCommand) {
+      if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
+        input.clear();
+        return;
+      }
 
-    if (await _tryLocalPrivateDeleteReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalPrivateDeleteReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalCredentialV2CreateReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalCredentialV2CreateReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalCredentialV2LookupReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalCredentialV2LookupReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalMemoryV2ContextSave(text, app)) {
-      return;
-    }
+      if (await _tryLocalMemoryV2ContextSave(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalPrivateDomainArbitration(text, app)) {
-      return;
-    }
+      if (await _tryLocalPrivateDomainArbitration(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalMemoryV2LookupReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalMemoryV2LookupReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalVaultFileLookupReply(text)) {
-      return;
+      if (await _tryLocalVaultFileLookupReply(text)) {
+        return;
+      }
     }
 
     if (privateLocalRouting &&
+        !hasPrivateBackendCommand &&
         attachments.isEmpty &&
         !credentialCreateRequiresBackend &&
         !isCredentialExtractionReviewDecision(text) &&
@@ -17230,6 +17301,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final assistantMessageId = chatTicket.assistantMessageId;
 
     var backendText = text;
+    if (hasPrivateBackendCommand) {
+      backendText = privateBackendCommand;
+    }
     final isConversationalFollowUp = RegExp(
       r'^(?:go on|continue|tell me more|what do you mean|wait[, ]+what do you mean|say (?:that|it) (?:again|more simply)|make (?:that|it) simpler|explain (?:that|it)|why|how so|what assumptions am i making|challenge my thinking gently|(?:now )?give me the strongest counterargument|summarize (?:that|the tradeoff)(?: in three sentences)?)\??[.!]?$',
       caseSensitive: false,

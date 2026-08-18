@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -84,6 +85,28 @@ Future<void> _pump(
 }
 
 void main() {
+  test('encrypted review command bypasses local natural-language routers', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final sendStart = source.indexOf('Future<void> _send() async');
+    final commandConsume = source.indexOf(
+      'final privateBackendCommand = _nextEncryptedBackendCommand;',
+      sendStart,
+    );
+    final localRoutes = source.indexOf(
+      'if (!hasPrivateBackendCommand) {',
+      commandConsume,
+    );
+    final backendAssignment = source.indexOf(
+      'backendText = privateBackendCommand;',
+      localRoutes,
+    );
+
+    expect(sendStart, greaterThanOrEqualTo(0));
+    expect(commandConsume, greaterThan(sendStart));
+    expect(localRoutes, greaterThan(commandConsume));
+    expect(backendAssignment, greaterThan(localRoutes));
+  });
+
   testWidgets('renders three masked candidates with per-row actions',
       (tester) async {
     await _pump(tester, onAction: (_, __) {});
