@@ -5249,6 +5249,34 @@ def _apply_credential_extraction_overrides(
     return updated if _is_valid_secret_payload(updated) else None
 
 
+def _rebuild_relationships_after_bulk_secure_save(vault_id: str) -> None:
+    """Refresh derived relationships without retaining any secret values."""
+    try:
+        from relationship_builder import rebuild_vault_relationships_safe
+        rebuild_vault_relationships_safe(vault_id)
+    except Exception:
+        logger.warning(
+            "[CHAT-DEBUG] bulk_secure_relationship_rebuild_failed vault=%s",
+            (vault_id or "")[:8] + "...",
+        )
+
+
+def _schedule_relationship_rebuild_after_bulk_secure_save(vault_id: str) -> None:
+    """Keep derived-index work off the user-visible bulk response path."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Synchronous callers (including deterministic tests) still get the
+        # same completed derived state before returning.
+        _rebuild_relationships_after_bulk_secure_save(vault_id)
+        return
+    loop.run_in_executor(
+        None,
+        _rebuild_relationships_after_bulk_secure_save,
+        vault_id,
+    )
+
+
 def _handle_credential_extraction_action(
     *, vault_id: str, key: bytes, pending: dict, action: dict,
 ) -> str:
@@ -5317,15 +5345,11 @@ def _handle_credential_extraction_action(
 
     if saved and defer_postprocessing:
         try:
-            from relationship_builder import rebuild_vault_relationships_safe
-            rebuild_vault_relationships_safe(vault_id)
-        except Exception:
-            pass
-        try:
             from vault_intelligence_updater import on_credential_changed
             on_credential_changed(vault_id)
         except Exception:
             pass
+        _schedule_relationship_rebuild_after_bulk_secure_save(vault_id)
 
     parts = [f"Saved {saved} selected secure record(s)."]
     if duplicates:
