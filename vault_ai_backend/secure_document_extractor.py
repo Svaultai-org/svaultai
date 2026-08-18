@@ -158,17 +158,13 @@ def extract_pdf_text_with_layout(file_bytes: bytes) -> Optional[str]:
                 merged_from_previous[page_index]
             )
             groups[0] = title + groups[0]
-            source_page = previous_page
-            page_suffix = f"-p{page_number}"
-        else:
-            source_page = page_number
-            page_suffix = ""
         for record_index, lines in enumerate(groups, 1):
-            source_record_index = (
-                previous_record_index
-                if page_index in merged_from_previous and record_index == 1
-                else record_index
+            crosses_page = (
+                page_index in merged_from_previous and record_index == 1
             )
+            source_page = previous_page if crosses_page else page_number
+            source_record_index = previous_record_index if crosses_page else record_index
+            page_suffix = f"-p{page_number}" if crosses_page else ""
             source_ref = (
                 f"p{source_page}-r{source_record_index}{page_suffix}"
             )

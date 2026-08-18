@@ -45,6 +45,23 @@ def _synthetic_pdf_bytes() -> bytes:
     return output.getvalue()
 
 
+def _orphan_title_pdf_bytes() -> bytes:
+    output = io.BytesIO()
+    pdf = canvas.Canvas(output)
+    pdf.drawString(72, 760, "Page One Complete")
+    pdf.drawString(72, 742, "username: first-user")
+    pdf.drawString(72, 724, "password: First-Secret")
+    pdf.drawString(72, 650, "Cross Page Title")
+    pdf.showPage()
+    pdf.drawString(72, 760, "username: cross-user")
+    pdf.drawString(72, 742, "password: Cross-Secret")
+    pdf.drawString(72, 650, "Page Two Only")
+    pdf.drawString(72, 632, "username: second-user")
+    pdf.drawString(72, 614, "password: Second-Secret")
+    pdf.save()
+    return output.getvalue()
+
+
 def _synthetic_twelve_page_mixed_pdf() -> tuple[bytes, int]:
     output = io.BytesIO()
     pdf = canvas.Canvas(output)
@@ -113,6 +130,23 @@ def _pending(records: list[dict]) -> tuple[dict, list[dict]]:
 
 
 class DocumentCredentialExtractionE2ETests(unittest.TestCase):
+    def test_only_orphan_title_record_spans_two_pages(self):
+        text = main.extract_pdf_text_with_layout(_orphan_title_pdf_bytes())
+        records = extract_secure_records(text)
+        by_service = {record["service"]: record for record in records}
+        self.assertEqual(
+            by_service["Cross Page Title"]["provenance"]["page_numbers"],
+            [1, 2],
+        )
+        self.assertEqual(
+            by_service["Page Two Only"]["provenance"]["page_numbers"],
+            [2],
+        )
+        self.assertEqual(
+            by_service["Page Two Only"]["provenance"]["page_number"],
+            2,
+        )
+
     def test_all_supported_secure_record_types_are_normalized(self):
         cases = (
             ("username: user\npassword: pass", "LOGIN"),
