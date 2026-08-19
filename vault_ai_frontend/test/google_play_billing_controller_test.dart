@@ -49,9 +49,10 @@ class _Gateway implements PlayBillingGateway {
   final List<ProductDetails> products;
   bool available = true;
   int buyCalls = 0;
-  int restoreCalls = 0;
+  int queryPurchaseCalls = 0;
   int completeCalls = 0;
   PurchaseParam? lastPurchaseParam;
+  List<PurchaseDetails> queriedPurchases = <PurchaseDetails>[];
 
   ProductDetails get product => products.first;
 
@@ -76,8 +77,11 @@ class _Gateway implements PlayBillingGateway {
   }
 
   @override
-  Future<void> restorePurchases() async {
-    restoreCalls++;
+  Future<List<PurchaseDetails>> queryPurchases({
+    String? applicationUserName,
+  }) async {
+    queryPurchaseCalls++;
+    return queriedPurchases;
   }
 
   @override
@@ -101,6 +105,36 @@ PurchaseDetails _purchase(PurchaseStatus status, {String token = 'token-1'}) {
   purchase.pendingCompletePurchase = true;
   return purchase;
 }
+
+Future<Map<String, dynamic>> _noSubscription({
+  required List<String> purchaseTokens,
+}) async =>
+    {
+      'reconciled': true,
+      'status': 'none',
+      'has_active_subscription': false,
+      'cleared_pending': true,
+    };
+
+Future<Map<String, dynamic>> _activeSubscription({
+  required List<String> purchaseTokens,
+}) async =>
+    {
+      'reconciled': true,
+      'status': 'active',
+      'has_active_subscription': true,
+      'cleared_pending': false,
+    };
+
+Future<Map<String, dynamic>> _pendingSubscription({
+  required List<String> purchaseTokens,
+}) async =>
+    {
+      'reconciled': true,
+      'status': 'pending',
+      'has_active_subscription': false,
+      'cleared_pending': false,
+    };
 
 void main() {
   test('only monthly-auto P1M infinite-recurring base plan is accepted', () {
@@ -131,6 +165,7 @@ void main() {
       gateway: gateway,
       productId: _productId,
       accountToken: 'opaque-account-token',
+      reconcilePurchases: _noSubscription,
       verifyPurchase: ({required productId, required purchaseToken}) async =>
           {'verified': true},
     );
@@ -148,6 +183,7 @@ void main() {
       gateway: gateway,
       productId: _productId,
       accountToken: 'opaque-account-token',
+      reconcilePurchases: _noSubscription,
       verifyPurchase: ({required productId, required purchaseToken}) async =>
           {'verified': true},
     );
@@ -169,6 +205,7 @@ void main() {
       gateway: gateway,
       productId: _productId,
       accountToken: 'opaque-account-token',
+      reconcilePurchases: _pendingSubscription,
       verifyPurchase: ({required productId, required purchaseToken}) async {
         verifications++;
         return {'verified': true};
@@ -184,6 +221,33 @@ void main() {
     await gateway.controller.close();
   });
 
+  test('pending purchase without a token stays pending', () async {
+    final gateway = _Gateway();
+    var reconciliationCalls = 0;
+    final billing = GooglePlayBillingController(
+      gateway: gateway,
+      productId: _productId,
+      accountToken: 'opaque-account-token',
+      reconcilePurchases: ({required purchaseTokens}) async {
+        reconciliationCalls++;
+        return _noSubscription(purchaseTokens: purchaseTokens);
+      },
+      verifyPurchase: ({required productId, required purchaseToken}) async =>
+          {'verified': true, 'status': 'active'},
+    );
+    await billing.initialize();
+    gateway.controller.add([
+      _purchase(PurchaseStatus.pending, token: ''),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    expect(billing.state, 'pending');
+    expect(reconciliationCalls, 0);
+    expect(gateway.completeCalls, 0);
+    expect(billing.canBuy, isFalse);
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
   test('verified duplicate callback completes exactly once', () async {
     final gateway = _Gateway();
     var verifications = 0;
@@ -191,9 +255,10 @@ void main() {
       gateway: gateway,
       productId: _productId,
       accountToken: 'opaque-account-token',
+      reconcilePurchases: _activeSubscription,
       verifyPurchase: ({required productId, required purchaseToken}) async {
         verifications++;
-        return {'verified': true};
+        return {'verified': true, 'status': 'active'};
       },
     );
     await billing.initialize();
@@ -210,10 +275,18 @@ void main() {
   test('server rejection never completes purchase and restore remains usable',
       () async {
     final gateway = _Gateway();
+    var reconciliationCalls = 0;
     final billing = GooglePlayBillingController(
       gateway: gateway,
       productId: _productId,
       accountToken: 'opaque-account-token',
+      reconcilePurchases: ({required purchaseTokens}) async {
+        reconciliationCalls++;
+        if (reconciliationCalls == 1) {
+          throw StateError('temporary reconciliation failure');
+        }
+        return _noSubscription(purchaseTokens: purchaseTokens);
+      },
       verifyPurchase: ({required productId, required purchaseToken}) async =>
           {'verified': false},
     );
@@ -223,7 +296,10 @@ void main() {
     expect(billing.state, 'verification_failed');
     expect(gateway.completeCalls, 0);
     await billing.restore();
-    expect(gateway.restoreCalls, 1);
+    expect(gateway.queryPurchaseCalls, 1);
+    expect(billing.state, 'reconciled');
+    expect(billing.canBuy, isTrue);
+    expect(billing.message, contains('No active Google Play subscription'));
     billing.dispose();
     await gateway.controller.close();
   });
@@ -234,16 +310,38 @@ void main() {
       gateway: gateway,
       productId: _productId,
       accountToken: 'opaque-account-token',
+      reconcilePurchases: _noSubscription,
       verifyPurchase: ({required productId, required purchaseToken}) async =>
           {'verified': true},
     );
     await billing.initialize();
     gateway.controller.add([_purchase(PurchaseStatus.canceled)]);
     await Future<void>.delayed(Duration.zero);
-    expect(billing.state, 'canceled');
+    expect(billing.state, 'reconciled');
     expect(billing.canBuy, isTrue);
     await billing.buy();
     expect(gateway.buyCalls, 1);
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('server terminal state never completes and leaves buy available',
+      () async {
+    final gateway = _Gateway();
+    final billing = GooglePlayBillingController(
+      gateway: gateway,
+      productId: _productId,
+      accountToken: 'opaque-account-token',
+      reconcilePurchases: _noSubscription,
+      verifyPurchase: ({required productId, required purchaseToken}) async =>
+          {'verified': true, 'status': 'expired'},
+    );
+    await billing.initialize();
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(billing.state, 'reconciled');
+    expect(gateway.completeCalls, 0);
+    expect(billing.canBuy, isTrue);
     billing.dispose();
     await gateway.controller.close();
   });

@@ -31,6 +31,10 @@ class GooglePlayVerifyRequest(BaseModel):
     product_id: str = Field(..., min_length=1, max_length=200)
 
 
+class GooglePlayReconcileRequest(BaseModel):
+    purchase_tokens: list[str] = Field(default_factory=list, max_length=20)
+
+
 class AppleTransactionRequest(BaseModel):
     signed_transaction: str = Field(..., min_length=1, max_length=100_000)
     environment: Literal["production", "sandbox"] = "production"
@@ -195,6 +199,73 @@ async def verify_google_play_purchase(
             result.current_period_end.isoformat()
             if result.current_period_end else None
         ),
+    }
+
+
+@router.post("/billing/google-play/reconcile")
+async def reconcile_google_play_purchases(
+    payload: GooglePlayReconcileRequest,
+    principal=Depends(verify_trusted_device),
+):
+    """Re-fetch current and server-bound purchases from Google Play.
+
+    An empty device list is meaningful: the server still checks any bound
+    non-terminal purchase before reporting the account's final entitlement.
+    """
+    from billing_entitlements import PurchaseAlreadyBoundError
+    from google_play_billing import (
+        GooglePlayConfigurationError,
+        GooglePlayTransientError,
+        GooglePlayVerificationError,
+        reconcile_google_subscriptions,
+    )
+
+    account_id = _account_id(principal)
+    try:
+        result = reconcile_google_subscriptions(
+            account_id=account_id,
+            current_purchase_tokens=payload.purchase_tokens,
+        )
+    except PurchaseAlreadyBoundError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "purchase_already_bound",
+                "message": "This verified purchase belongs to another SVaultAI account.",
+            },
+        ) from exc
+    except GooglePlayConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "google_play_verification_unavailable",
+                "message": "Google Play verification is temporarily unavailable.",
+            },
+        ) from exc
+    except GooglePlayTransientError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "google_play_verification_retry",
+                "message": "Google Play verification is temporarily unavailable.",
+            },
+        ) from exc
+    except GooglePlayVerificationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "google_play_purchase_invalid",
+                "message": "Google Play could not verify this purchase.",
+            },
+        ) from exc
+    return {
+        "reconciled": True,
+        "provider": "google_play",
+        "status": result.status,
+        "has_active_subscription": result.has_active_subscription,
+        "current_purchase_count": result.current_purchase_count,
+        "reconciled_count": result.reconciled_count,
+        "cleared_pending": result.cleared_pending,
     }
 
 

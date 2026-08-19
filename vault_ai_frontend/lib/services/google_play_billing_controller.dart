@@ -41,12 +41,16 @@ typedef GooglePurchaseVerifier = Future<Map<String, dynamic>> Function({
   required String purchaseToken,
 });
 
+typedef GooglePurchaseReconciler = Future<Map<String, dynamic>> Function({
+  required List<String> purchaseTokens,
+});
+
 abstract class PlayBillingGateway {
   Stream<List<PurchaseDetails>> get purchaseStream;
   Future<bool> isAvailable();
   Future<ProductDetailsResponse> queryProductDetails(Set<String> productIds);
   Future<bool> buySubscription(PurchaseParam purchaseParam);
-  Future<void> restorePurchases();
+  Future<List<PurchaseDetails>> queryPurchases({String? applicationUserName});
   Future<void> completePurchase(PurchaseDetails purchase);
 }
 
@@ -71,7 +75,20 @@ class FlutterPlayBillingGateway implements PlayBillingGateway {
       _delegate.buyNonConsumable(purchaseParam: purchaseParam);
 
   @override
-  Future<void> restorePurchases() => _delegate.restorePurchases();
+  Future<List<PurchaseDetails>> queryPurchases({
+    String? applicationUserName,
+  }) async {
+    final addition = _delegate
+        .getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
+    final response = await addition.queryPastPurchases(
+      applicationUserName: applicationUserName,
+    );
+    final error = response.error;
+    if (error != null) {
+      throw StateError('Google Play purchase query failed: ${error.code}');
+    }
+    return response.pastPurchases;
+  }
 
   @override
   Future<void> completePurchase(PurchaseDetails purchase) =>
@@ -81,6 +98,7 @@ class FlutterPlayBillingGateway implements PlayBillingGateway {
 class GooglePlayBillingController extends ChangeNotifier {
   final PlayBillingGateway gateway;
   final GooglePurchaseVerifier verifyPurchase;
+  final GooglePurchaseReconciler reconcilePurchases;
   final String productId;
   final String accountToken;
   final String basePlanId;
@@ -111,6 +129,7 @@ class GooglePlayBillingController extends ChangeNotifier {
   GooglePlayBillingController({
     required this.gateway,
     required this.verifyPurchase,
+    required this.reconcilePurchases,
     required this.productId,
     required this.accountToken,
     this.basePlanId = kGooglePlayStorageBasePlanId,
@@ -214,15 +233,26 @@ class GooglePlayBillingController extends ChangeNotifier {
     }
   }
 
-  Future<void> restore() async {
+  Future<void> restore({bool silent = false}) async {
     if (!available || restoring) return;
     restoring = true;
-    state = 'restoring';
-    message = null;
-    notifyListeners();
+    if (!silent) {
+      state = 'restoring';
+      message = null;
+      notifyListeners();
+    }
     try {
-      await gateway.restorePurchases().timeout(actionTimeout);
-      message = 'Checking your Google Play subscriptions…';
+      final purchases = await gateway
+          .queryPurchases(applicationUserName: accountToken)
+          .timeout(actionTimeout);
+      final current = purchases
+          .where((purchase) => purchase.productID == productId)
+          .toList(growable: false);
+      if (current.isEmpty) {
+        await _reconcileCurrentPurchases(const <PurchaseDetails>[]);
+      } else {
+        await _handlePurchases(current);
+      }
     } on TimeoutException {
       state = 'timed_out';
       message = 'Google Play took too long to respond. Tap Retry.';
@@ -236,8 +266,10 @@ class GooglePlayBillingController extends ChangeNotifier {
   }
 
   Future<void> _handlePurchases(List<PurchaseDetails> purchases) async {
+    final current = <PurchaseDetails>[];
     for (final purchase in purchases) {
       if (purchase.productID != productId) continue;
+      current.add(purchase);
       switch (purchase.status) {
         case PurchaseStatus.pending:
           state = 'pending';
@@ -261,6 +293,58 @@ class GooglePlayBillingController extends ChangeNotifier {
           break;
       }
     }
+    if (current.isNotEmpty) {
+      await _reconcileCurrentPurchases(current);
+    }
+  }
+
+  Future<void> _reconcileCurrentPurchases(
+    List<PurchaseDetails> purchases,
+  ) async {
+    final tokens = <String>[];
+    var hasPendingPurchase = false;
+    for (final purchase in purchases) {
+      hasPendingPurchase =
+          hasPendingPurchase || purchase.status == PurchaseStatus.pending;
+      final token = purchase.verificationData.serverVerificationData.trim();
+      if (token.isNotEmpty && !tokens.contains(token)) tokens.add(token);
+    }
+    if (hasPendingPurchase && tokens.isEmpty) {
+      state = 'pending';
+      message =
+          'Purchase pending. Storage will update after Google confirms payment.';
+      notifyListeners();
+      return;
+    }
+    try {
+      final result = await reconcilePurchases(purchaseTokens: tokens)
+          .timeout(verificationTimeout);
+      if (result['reconciled'] != true) {
+        throw StateError('server reconciliation rejected');
+      }
+      final serverStatus = result['status']?.toString() ?? 'none';
+      final active = result['has_active_subscription'] == true;
+      final clearedPending = result['cleared_pending'] == true;
+      if (active) {
+        state = 'verified';
+        message = 'Subscription verified. Your storage limit is updated.';
+      } else if (serverStatus == 'pending' ||
+          (hasPendingPurchase && !clearedPending)) {
+        state = 'pending';
+        message =
+            'Purchase pending. Storage will update after Google confirms payment.';
+      } else {
+        state = 'reconciled';
+        message =
+            'No active Google Play subscription was found. You can buy storage.';
+      }
+    } catch (_) {
+      state = hasPendingPurchase ? 'pending' : 'verification_failed';
+      message = hasPendingPurchase
+          ? 'Purchase pending. Storage will update after Google confirms payment.'
+          : 'Purchase verification is pending. Use Restore Purchases to retry.';
+    }
+    notifyListeners();
   }
 
   Future<void> _verifyThenComplete(PurchaseDetails purchase) async {
@@ -277,6 +361,20 @@ class GooglePlayBillingController extends ChangeNotifier {
       ).timeout(verificationTimeout);
       if (result['verified'] != true) {
         throw StateError('server verification rejected');
+      }
+      final serverStatus = result['status']?.toString() ?? '';
+      if (serverStatus == 'pending') {
+        state = 'pending';
+        message =
+            'Purchase pending. Storage will update after Google confirms payment.';
+        return;
+      }
+      if (!const {'active', 'reactivated', 'grace_period'}
+          .contains(serverStatus)) {
+        state = 'reconciled';
+        message =
+            'No active Google Play subscription was found. You can buy storage.';
+        return;
       }
       // completePurchase is deliberately after server verification. The
       // backend also acknowledges with the Developer API for reliability;
