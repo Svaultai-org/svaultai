@@ -411,7 +411,11 @@ void main() {
          'user bubble, and does NOT navigate', () {
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      final windowEnd = (sendIdx + 20000).clamp(0, src.length);
+      final nextMethodIdx = src.indexOf(
+        'Future<void> _pickAttachment()',
+        sendIdx,
+      );
+      final windowEnd = nextMethodIdx > sendIdx ? nextMethodIdx : src.length;
       final fn = src.substring(sendIdx, windowEnd);
       // Slice the branch body via brace-depth so nested
       // `if (!mounted) return;` bail-outs don't cut it short.

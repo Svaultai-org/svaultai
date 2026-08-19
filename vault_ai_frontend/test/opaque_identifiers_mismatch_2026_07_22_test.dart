@@ -209,21 +209,28 @@ void main() {
 
   group('UnlockPage cache invariants', () {
     test(
-        'UnlockPage._submit routes to /login when lastVaultName is '
-        'null/empty', () {
+        'UnlockPage._submit routes to /login when both cached identifiers '
+        'are unavailable', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _UnlockPageState');
       final endIdx = src.indexOf('_useAnotherVault', idx);
       final window = src.substring(idx, endIdx);
-      // The submit body's very first branch guards on lastVaultName.
-      // If a future refactor drops that guard, an unlock attempt
-      // against no cached identifier would explode.
+      // A friendly vault name is optional when a private vault handle is
+      // available for rehydration. Only the absence of both identifiers must
+      // route to full login; the handle must never become display state.
       expect(
-        window.contains('name == null || name.isEmpty'),
+        window.contains(
+          'displayVaultName == null && privateVaultHandle == null',
+        ),
         isTrue,
         reason: 'UnlockPage must route to /login when the cached '
-            'identity is incomplete — attempting unlock without '
-            'a cached name has no possible success path',
+            'identity has neither a display-safe name nor a private handle',
+      );
+      expect(
+        window.contains('final name = displayVaultName ?? privateVaultHandle!'),
+        isTrue,
+        reason: 'private handle rehydration must remain available when the '
+            'display name is unavailable',
       );
     });
   });

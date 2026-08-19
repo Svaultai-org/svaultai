@@ -82,20 +82,30 @@ void main() {
           },
           records: [
             {
+              'record_type': 'LOGIN',
+              'secret_type': 'login',
               'service': 'Gmail',
-              'username': null,
-              'email': 'alice@example.com',
               'password_present': true,
               'pin_present': false,
               'note_present': false,
+              'fields': const <String, dynamic>{
+                'email': 'alice@example.com',
+                'password': 'gmail-password',
+              },
             },
             {
+              'record_type': 'LOGIN',
+              'secret_type': 'login',
               'service': 'Wells Fargo',
-              'username': null,
-              'email': 'alice@example.com',
               'password_present': true,
               'pin_present': true,
               'note_present': true,
+              'fields': const <String, dynamic>{
+                'email': 'alice@example.com',
+                'password': 'bank-password',
+                'pin': '246810',
+                'notes': 'synthetic fixture note',
+              },
             },
           ],
         ),
@@ -105,7 +115,7 @@ void main() {
       expect(find.text('Gmail'), findsOneWidget);
       expect(find.text('Wells Fargo'), findsOneWidget);
       
-      expect(find.text('alice@example.com'), findsWidgets);
+      expect(find.text('Email: alice@example.com'), findsWidgets);
       
       expect(find.text('password present'), findsNWidgets(2));
       
@@ -128,16 +138,18 @@ void main() {
           file: {'file_id': 'f1', 'file_name': 'big-leak.json'},
           records: [
             {
+              'record_type': 'LOGIN',
+              'secret_type': 'login',
               'service': 'Gmail',
-              'username': null,
-              'email': 'alice@example.com',
               'password_present': true,
               'pin_present': true,
               'note_present': true,
-              
-              'password': 'hunter2-extraction',
-              'pin': '7777',
-              'note': 'note-value-extraction',
+              'fields': const <String, dynamic>{
+                'email': 'alice@example.com',
+                'password': 'hunter2-extraction',
+                'pin': '7777',
+                'notes': 'note-value-extraction',
+              },
             },
           ],
         ),
@@ -162,12 +174,15 @@ void main() {
           file: {'file_id': 'f1', 'file_name': 'partial.json'},
           records: [
             {
+              'record_type': 'LOGIN',
+              'secret_type': 'login',
               'service': 'Slack',
-              'username': 'alice',
-              'email': null,
               'password_present': false,
               'pin_present': false,
               'note_present': false,
+              'fields': const <String, dynamic>{
+                'username': 'alice',
+              },
             },
           ],
         ),
