@@ -142,7 +142,11 @@ async def verify_google_play_purchase(
     payload: GooglePlayVerifyRequest,
     principal=Depends(verify_trusted_device),
 ):
-    from billing_entitlements import PurchaseAlreadyBoundError
+    from billing_entitlements import (
+        ConflictingActiveEntitlementError,
+        PurchaseAlreadyBoundError,
+        StaleProviderEventError,
+    )
     from google_play_billing import (
         GooglePlayConfigurationError,
         GooglePlayTransientError,
@@ -162,6 +166,25 @@ async def verify_google_play_purchase(
             detail={
                 "code": "purchase_already_bound",
                 "message": "This verified purchase belongs to another SVaultAI account.",
+            },
+        ) from exc
+    except ConflictingActiveEntitlementError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "google_play_replacement_required",
+                "message": (
+                    "Use Google Play's subscription change flow to replace "
+                    "the current storage plan."
+                ),
+            },
+        ) from exc
+    except StaleProviderEventError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "google_play_purchase_superseded",
+                "message": "This Google Play purchase has already been replaced.",
             },
         ) from exc
     except GooglePlayConfigurationError as exc:
@@ -380,8 +403,8 @@ def _parse_voided_subscription(
         raise HTTPException(
             status_code=400, detail="invalid voided purchase notification",
         ) from exc
-    # This release has one subscription product. Quantity-based partial
-    # refunds apply to one-time products and must never alter this entitlement.
+    # Quantity-based partial refunds apply to one-time products and must never
+    # alter the mutually exclusive storage-subscription entitlement family.
     if (
         not purchase_token
         or len(purchase_token) > 4096
@@ -401,6 +424,7 @@ async def google_play_rtdn(request: Request):
     _verify_google_pubsub_request(request)
     event_id, notification = _decode_pubsub_message(await request.json())
     from billing_entitlements import (
+        ConflictingActiveEntitlementError,
         StaleProviderEventError,
         claim_provider_event,
         find_account_for_purchase,
@@ -408,10 +432,9 @@ async def google_play_rtdn(request: Request):
         revoke_verified_purchase_entitlement,
     )
     from google_play_billing import (
-        GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
         GOOGLE_PLAY_PACKAGE_NAME,
-        GOOGLE_PLAY_PRODUCT_50GB,
         GooglePlayConfigurationError,
+        GooglePlayPublisherClient,
         GooglePlayPurchaseNotFoundError,
         GooglePlayTransientError,
         GooglePlayVerificationError,
@@ -467,9 +490,10 @@ async def google_play_rtdn(request: Request):
             )
             return {"outcome": "ignored_unbound"}
         publisher_lookup = "verified"
+        verified_snapshot = None
         try:
             try:
-                verify_google_subscription_identity(
+                verified_snapshot = verify_google_subscription_identity(
                     account_id=account_id,
                     purchase_token=purchase_token,
                 )
@@ -485,8 +509,12 @@ async def google_play_rtdn(request: Request):
                 provider_status="VOIDED_PURCHASE_FULL_REFUND",
                 provider_event_at=event_time,
                 provider_event_id=event_id,
-                expected_product_id=GOOGLE_PLAY_PRODUCT_50GB,
-                expected_plan_id=GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+                expected_product_id=(
+                    verified_snapshot.product_id if verified_snapshot else None
+                ),
+                expected_plan_id=(
+                    verified_snapshot.plan_id if verified_snapshot else None
+                ),
                 metadata={
                     "voided_purchase": True,
                     "refund_type": "FULL_REFUND",
@@ -553,18 +581,36 @@ async def google_play_rtdn(request: Request):
     )
     if not inserted:
         return {"outcome": "duplicate"}
-    account_id = find_account_for_purchase("google_play", purchase_token)
-    if not account_id:
-        finish_provider_event(
-            source="google_play", event_id=event_id, outcome="ignored_unbound",
-        )
-        return {"outcome": "ignored_unbound"}
     try:
+        account_id = find_account_for_purchase("google_play", purchase_token)
+        publisher = None
+        authoritative_payload = None
+        if not account_id:
+            # Replacement RTDN can arrive before the app verifies the new
+            # token. Fetch authoritative state and bind only through Google's
+            # linkedPurchaseToken; the RTDN body itself never grants storage.
+            publisher = GooglePlayPublisherClient()
+            authoritative_payload = publisher.get_subscription(purchase_token)
+            linked_purchase_token = str(
+                authoritative_payload.get("linkedPurchaseToken") or ""
+            )
+            if linked_purchase_token:
+                account_id = find_account_for_purchase(
+                    "google_play", linked_purchase_token,
+                )
+        if not account_id:
+            finish_provider_event(
+                source="google_play", event_id=event_id,
+                outcome="ignored_unbound",
+            )
+            return {"outcome": "ignored_unbound"}
         result = verify_and_apply_google_subscription(
             account_id=account_id,
             purchase_token=purchase_token,
             event_id=event_id,
             event_time=event_time,
+            publisher=publisher,
+            authoritative_payload=authoritative_payload,
         )
         finish_provider_event(
             source="google_play", event_id=event_id, outcome="applied",
@@ -574,6 +620,22 @@ async def google_play_rtdn(request: Request):
             source="google_play", event_id=event_id, outcome="ignored_stale",
         )
         return {"outcome": "ignored_stale"}
+    except (GooglePlayVerificationError, ConflictingActiveEntitlementError) as exc:
+        finish_provider_event(
+            source="google_play", event_id=event_id, outcome="rejected",
+            error_text=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=400, detail="RTDN subscription verification failed",
+        ) from exc
+    except (GooglePlayConfigurationError, GooglePlayTransientError) as exc:
+        finish_provider_event(
+            source="google_play", event_id=event_id, outcome="error",
+            error_text=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503, detail="RTDN processing retry required",
+        ) from exc
     except Exception as exc:
         finish_provider_event(
             source="google_play", event_id=event_id, outcome="error",
