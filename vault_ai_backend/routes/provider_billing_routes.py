@@ -58,6 +58,7 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         GOOGLE_PLAY_BASE_PLAN_TYPE,
         GOOGLE_PLAY_BILLING_PERIOD,
         GOOGLE_PLAY_PRODUCT_50GB,
+        GOOGLE_PLAY_STORAGE_CATALOG,
         purchase_account_token,
     )
     apple_catalog = {}
@@ -75,6 +76,10 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         if len(apple_product_ids) == 1
         else None
     )
+    google_play_tiers = sorted(
+        GOOGLE_PLAY_STORAGE_CATALOG.values(),
+        key=lambda tier: tier.tier_rank,
+    )
     return {
         "web_card": {
             "checkout_enabled": False,
@@ -85,6 +90,19 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         },
         "google_play": {
             "product_id": GOOGLE_PLAY_PRODUCT_50GB,
+            "product_ids": [tier.product_id for tier in google_play_tiers],
+            "products": [
+                {
+                    "product_id": tier.product_id,
+                    "base_plan_id": tier.base_plan_id,
+                    "billing_period": tier.billing_period,
+                    "tier_rank": tier.tier_rank,
+                    "display_capacity": tier.display_capacity,
+                    "storage_entitlement_bytes": tier.storage_bytes,
+                    "quantity": tier.quantity,
+                }
+                for tier in google_play_tiers
+            ],
             "base_plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
             "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
             "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
