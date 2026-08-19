@@ -112,6 +112,75 @@ def test_google_active_purchase_is_server_derived_and_acknowledged(monkeypatch):
     assert update.metadata["billing_period"] == "P1M"
 
 
+def test_google_authoritative_test_purchase_is_accepted_only_when_enabled(
+    monkeypatch,
+):
+    payload = _google_payload()
+    payload["testPurchase"] = {}
+    writes = []
+    monkeypatch.setattr(
+        google,
+        "upsert_verified_entitlement",
+        lambda account_id, update: (
+            writes.append((account_id, update)) or ("e1", "none_to_active")
+        ),
+    )
+    monkeypatch.setattr(google, "supersede_linked_purchase", lambda **_kwargs: None)
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "true")
+
+    result = google.verify_and_apply_google_subscription(
+        account_id="account-1",
+        purchase_token="purchase-token",
+        publisher=_Publisher(payload),
+    )
+
+    assert result.normalized_status == "active"
+    assert writes[0][1].environment == "sandbox"
+
+
+def test_google_authoritative_test_purchase_is_rejected_when_disabled(monkeypatch):
+    payload = _google_payload()
+    payload["testPurchase"] = {}
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "false")
+    monkeypatch.setattr(
+        google,
+        "upsert_verified_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
+    )
+
+    with pytest.raises(
+        google.GooglePlayVerificationError,
+        match="test purchase is not enabled",
+    ):
+        google.verify_and_apply_google_subscription(
+            account_id="account-1",
+            purchase_token="purchase-token",
+            publisher=_Publisher(payload),
+        )
+
+
+def test_google_fabricated_test_token_is_rejected_before_entitlement_write(
+    monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "true")
+    monkeypatch.setattr(
+        google,
+        "upsert_verified_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
+    )
+
+    class MissingPublisher:
+        def get_subscription(self, _token):
+            raise google.GooglePlayPurchaseNotFoundError("not found")
+
+    with pytest.raises(google.GooglePlayPurchaseNotFoundError):
+        google.verify_and_apply_google_subscription(
+            account_id="account-1",
+            purchase_token="fabricated-token",
+            publisher=MissingPublisher(),
+        )
+
+
 def test_google_rejects_wrong_or_prepaid_base_plan(monkeypatch):
     monkeypatch.setattr(
         google,
