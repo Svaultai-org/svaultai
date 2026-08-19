@@ -5,8 +5,8 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
 
 version_code="$(sed -nE 's/^version:[[:space:]]*[^+]+\+([0-9]+)[[:space:]]*$/\1/p' pubspec.yaml)"
-if [[ -z "$version_code" || "$version_code" -le 16 ]]; then
-  echo "[android-release] versionCode must exceed accepted Play versionCode 16." >&2
+if [[ -z "$version_code" || "$version_code" -le 17 ]]; then
+  echo "[android-release] versionCode must exceed uploaded Play versionCode 17." >&2
   exit 2
 fi
 release_sha="$(git rev-parse HEAD)"

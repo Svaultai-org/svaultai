@@ -8,8 +8,8 @@ try {
         throw '[android-release] pubspec versionCode is missing.'
     }
     $versionCode = [int]$versionLine.Matches[0].Groups[1].Value
-    if ($versionCode -le 16) {
-        throw "[android-release] versionCode $versionCode must exceed accepted Play versionCode 16."
+    if ($versionCode -le 17) {
+        throw "[android-release] versionCode $versionCode must exceed uploaded Play versionCode 17."
     }
 
     $releaseSha = (git rev-parse HEAD).Trim()
