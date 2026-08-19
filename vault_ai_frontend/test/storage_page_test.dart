@@ -265,7 +265,7 @@ void main() {
       expect(find.text('Free Tier'), findsNothing);
       expect(find.text('Need more space?'), findsNothing);
       
-      expect(find.text('Additional storage pricing'), findsOneWidget);
+      expect(find.text('Additional storage pricing'), findsNothing);
     });
 
     testWidgets('grandfather user over 80% shows the warn banner too',
@@ -787,7 +787,7 @@ void main() {
       expect(find.text('Organization'), findsOneWidget);
       
       
-      expect(find.text('Self-service maximum'), findsOneWidget);
+      expect(find.text('Self-service maximum'), findsNothing);
       
       
       expect(find.text('Grandfathered storage'), findsOneWidget);
@@ -810,28 +810,27 @@ void main() {
       }
     });
 
-    testWidgets('self-service maximum row renders as 5 TB',
+    testWidgets('does not advertise the unsupported 5 TB maximum',
         (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement();
       await tester.pumpWidget(_wrap(StorageBody(data: data)));
       
-      expect(find.text('5 TB'), findsOneWidget);
+      expect(find.text('Self-service maximum'), findsNothing);
+      expect(find.text('5 TB'), findsNothing);
     });
 
-    testWidgets('pricing examples list shows the four locked tiers',
+    testWidgets('unsupported pricing examples are hidden by default',
         (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement();
       await tester.pumpWidget(_wrap(StorageBody(data: data)));
-      expect(find.text('50 GB'), findsOneWidget);
-      expect(find.text('100 GB'), findsOneWidget);
-      expect(find.text('150 GB'), findsOneWidget);
-      expect(find.text('500 GB'), findsOneWidget);
-      expect(find.text(r'$25/month'), findsOneWidget);
-      expect(find.text(r'$50/month'), findsOneWidget);
-      expect(find.text(r'$75/month'), findsOneWidget);
-      expect(find.text(r'$250/month'), findsOneWidget);
+      expect(find.text('100 GB'), findsNothing);
+      expect(find.text('150 GB'), findsNothing);
+      expect(find.text('500 GB'), findsNothing);
+      expect(find.text(r'$50/month'), findsNothing);
+      expect(find.text(r'$75/month'), findsNothing);
+      expect(find.text(r'$250/month'), findsNothing);
     });
   });
 
