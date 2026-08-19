@@ -155,7 +155,7 @@ void main() {
       expect(find.text('Storage Usage'), findsOneWidget);
       expect(find.textContaining('0%'), findsOneWidget);
       
-      expect(find.text('Free Tier'), findsOneWidget);
+      expect(find.text('Free plan'), findsOneWidget);
       expect(find.text('Need more space?'), findsOneWidget);
       
       expect(
@@ -262,7 +262,7 @@ void main() {
 
       expect(find.text('Grandfathered storage'), findsOneWidget);
       
-      expect(find.text('Free Tier'), findsNothing);
+      expect(find.text('Free plan'), findsNothing);
       expect(find.text('Need more space?'), findsNothing);
       
       expect(find.text('Additional storage pricing'), findsNothing);

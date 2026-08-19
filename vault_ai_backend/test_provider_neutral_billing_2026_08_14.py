@@ -961,6 +961,52 @@ async def test_apple_provider_catalog_returns_only_explicit_product_ids(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_google_play_provider_catalog_exposes_exact_storage_allowlist(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        provider_routes, "_account_id", lambda _principal: "account-play-test"
+    )
+
+    payload = await provider_routes.billing_providers(
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    google_provider = payload["google_play"]
+    expected_ids = [
+        "svaultai_storage_50gb",
+        "svaultai_storage_100gb",
+        "svaultai_storage_150gb",
+        "svaultai_storage_200gb",
+        "svaultai_storage_250gb",
+        "svaultai_storage_300gb",
+        "svaultai_storage_500gb",
+        "svaultai_storage_1tb",
+    ]
+    assert google_provider["product_id"] == expected_ids[0]
+    assert google_provider["product_ids"] == expected_ids
+    assert google_provider["base_plan_id"] == "monthly-auto"
+    assert google_provider["base_plan_type"] == "AUTO_RENEWING"
+    assert google_provider["billing_period"] == "P1M"
+    assert [item["product_id"] for item in google_provider["products"]] == expected_ids
+    assert [item["tier_rank"] for item in google_provider["products"]] == list(
+        range(1, 9)
+    )
+    assert [item["quantity"] for item in google_provider["products"]] == [
+        1, 2, 3, 4, 5, 6, 10, 20,
+    ]
+    assert [item["display_capacity"] for item in google_provider["products"]] == [
+        "50 GB", "100 GB", "150 GB", "200 GB", "250 GB", "300 GB",
+        "500 GB", "1 TB",
+    ]
+    assert all(
+        item["base_plan_id"] == "monthly-auto"
+        and item["billing_period"] == "P1M"
+        for item in google_provider["products"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_apple_provider_catalog_does_not_guess_among_multiple_tiers(monkeypatch):
     monkeypatch.setattr(
         provider_routes, "_account_id", lambda _principal: "account-apple-test"
