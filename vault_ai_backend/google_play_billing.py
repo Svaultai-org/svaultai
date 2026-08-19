@@ -22,8 +22,11 @@ import httpx
 
 from billing_entitlements import (
     VerifiedEntitlementUpdate,
+    get_normalized_account_entitlement,
+    list_bound_provider_entitlements,
     normalize_google_subscription_state,
     supersede_linked_purchase,
+    terminalize_missing_provider_purchase,
     upsert_verified_entitlement,
     utc_from_rfc3339,
 )
@@ -81,6 +84,15 @@ class GooglePlayVerificationResult:
     entitlement_id: str
     transition: str
     current_period_end: Optional[datetime]
+
+
+@dataclass(frozen=True)
+class GooglePlayReconciliationResult:
+    status: str
+    has_active_subscription: bool
+    current_purchase_count: int
+    reconciled_count: int
+    cleared_pending: bool
 
 
 @dataclass(frozen=True)
@@ -565,4 +577,98 @@ def verify_and_apply_google_subscription(
         entitlement_id=entitlement_id,
         transition=transition,
         current_period_end=snapshot.current_period_end,
+    )
+
+
+def reconcile_google_subscriptions(
+    *,
+    account_id: str,
+    current_purchase_tokens: list[str],
+    publisher: Optional[GooglePlayPublisherClient] = None,
+) -> GooglePlayReconciliationResult:
+    """Refresh device-visible and server-bound purchases from Google Play.
+
+    Device tokens are identifiers only; every lifecycle decision comes from
+    SubscriptionsV2. Server-bound non-terminal tokens are also checked so an
+    empty BillingClient result can clear a stale pending row safely.
+    """
+    if not account_id:
+        raise GooglePlayVerificationError("billing account is required")
+    if len(current_purchase_tokens) > 20:
+        raise GooglePlayVerificationError("too many Google Play purchase tokens")
+
+    current: list[str] = []
+    seen: set[str] = set()
+    for raw in current_purchase_tokens:
+        token = str(raw or "").strip()
+        if not token or len(token) > 4096:
+            raise GooglePlayVerificationError("invalid Google Play purchase token")
+        if token not in seen:
+            seen.add(token)
+            current.append(token)
+
+    bound_rows = list_bound_provider_entitlements(
+        provider="google_play", account_id=account_id,
+    )
+    bound = {
+        str(row["external_purchase_id"]): row
+        for row in bound_rows
+        if row.get("external_purchase_id")
+    }
+    tokens = list(current)
+    for token, row in bound.items():
+        if (
+            str(row.get("status") or "")
+            not in {"canceled", "expired", "revoked", "refunded"}
+            and token not in seen
+        ):
+            seen.add(token)
+            tokens.append(token)
+
+    publisher = publisher or GooglePlayPublisherClient()
+    reconciled_count = 0
+    cleared_server_pending = False
+    for token in tokens:
+        try:
+            verify_and_apply_google_subscription(
+                account_id=account_id,
+                purchase_token=token,
+                expected_product_id=GOOGLE_PLAY_PRODUCT_50GB,
+                publisher=publisher,
+            )
+            reconciled_count += 1
+        except GooglePlayPurchaseNotFoundError:
+            existing = bound.get(token)
+            if existing is None:
+                # An unbound device token cannot remove or create entitlement.
+                continue
+            previous = str(existing.get("status") or "")
+            now = datetime.now(timezone.utc)
+            digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
+            terminalize_missing_provider_purchase(
+                provider="google_play",
+                account_id=account_id,
+                external_purchase_id=token,
+                provider_status="SUBSCRIPTION_NOT_FOUND_DURING_RECONCILIATION",
+                provider_event_at=now,
+                provider_event_id=(
+                    f"reconcile-missing-{digest}-{time.time_ns()}"
+                ),
+            )
+            reconciled_count += 1
+            cleared_server_pending = cleared_server_pending or previous == "pending"
+
+    entitlement = get_normalized_account_entitlement(account_id)
+    status = entitlement.status if entitlement is not None else "none"
+    active = bool(
+        entitlement is not None and entitlement.has_active_subscription
+    )
+    return GooglePlayReconciliationResult(
+        status=status,
+        has_active_subscription=active,
+        current_purchase_count=len(current),
+        reconciled_count=reconciled_count,
+        cleared_pending=(
+            cleared_server_pending or (not active and status != "pending")
+        ),
     )

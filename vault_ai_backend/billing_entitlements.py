@@ -116,6 +116,9 @@ def normalize_google_subscription_state(
         "SUBSCRIPTION_STATE_CANCELED": "active",
         "SUBSCRIPTION_STATE_EXPIRED": "expired",
         "SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED": "canceled",
+        # Defensive aliases used by lifecycle fixtures and older integrations.
+        "SUBSCRIPTION_STATE_PENDING_PURCHASE_EXPIRED": "canceled",
+        "SUBSCRIPTION_STATE_REVOKED": "revoked",
     }.get(state, "pending")
 
 
@@ -438,6 +441,140 @@ def revoke_verified_purchase_entitlement(
         )
         conn.commit()
         return entitlement_id, transition
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def list_bound_provider_entitlements(
+    *, provider: str, account_id: str,
+) -> list[dict[str, Any]]:
+    """Return server-bound purchase identities for authoritative refresh.
+
+    This is an internal billing operation. Purchase identifiers must never be
+    returned by an HTTP response or written to logs.
+    """
+    if provider not in PROVIDERS:
+        raise ValueError("unsupported billing provider")
+    if not account_id:
+        raise ValueError("account_id required")
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT external_purchase_id, status, product_id, plan_id
+              FROM billing_entitlements
+             WHERE provider = %s AND account_id = %s
+             ORDER BY updated_at DESC
+            """,
+            (provider, account_id),
+        )
+        return [dict(row) for row in (cur.fetchall() or [])]
+    finally:
+        conn.close()
+
+
+def terminalize_missing_provider_purchase(
+    *,
+    provider: str,
+    account_id: str,
+    external_purchase_id: str,
+    provider_status: str,
+    provider_event_at: datetime,
+    provider_event_id: str,
+) -> tuple[str, str, str]:
+    """Fail closed when an already-bound purchase is authoritatively gone.
+
+    A never-completed pending purchase becomes ``canceled``. A previously
+    verified non-terminal purchase becomes ``expired``. Existing terminal
+    states remain terminal. The operation cannot create or transfer a grant.
+    """
+    if provider not in PROVIDERS:
+        raise ValueError("unsupported billing provider")
+    if not account_id or not external_purchase_id or not provider_event_id:
+        raise ValueError("bound purchase and provider event identity required")
+    event_at = (
+        provider_event_at
+        if provider_event_at.tzinfo
+        else provider_event_at.replace(tzinfo=timezone.utc)
+    )
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT entitlement_id, account_id, product_id, status,
+                   current_period_end, last_provider_event_at
+              FROM billing_entitlements
+             WHERE provider = %s AND external_purchase_id = %s
+             FOR UPDATE
+            """,
+            (provider, external_purchase_id),
+        )
+        existing = cur.fetchone()
+        if not existing:
+            raise BillingProviderError("verified entitlement is not bound")
+        if str(existing["account_id"]) != str(account_id):
+            raise PurchaseAlreadyBoundError(
+                "verified purchase is already bound to another account"
+            )
+        last_event_at = existing.get("last_provider_event_at")
+        if last_event_at and event_at < last_event_at:
+            raise StaleProviderEventError("older provider event ignored")
+
+        previous = str(existing["status"])
+        if previous in {"canceled", "expired", "revoked", "refunded"}:
+            terminal_status = previous
+        elif previous == "pending":
+            terminal_status = "canceled"
+        else:
+            terminal_status = "expired"
+        transition = (
+            "unchanged"
+            if previous == terminal_status
+            else f"{previous}_to_{terminal_status}"
+        )
+        period_end = existing.get("current_period_end")
+        if period_end is None or period_end > event_at:
+            period_end = event_at
+
+        entitlement_id = str(existing["entitlement_id"])
+        cur.execute(
+            """
+            UPDATE billing_entitlements
+               SET status = %s, provider_status = %s,
+                   auto_renewing = FALSE, cancel_at_period_end = FALSE,
+                   current_period_end = %s, last_verified_at = NOW(),
+                   last_provider_event_at = %s,
+                   last_provider_event_id = %s, updated_at = NOW()
+             WHERE entitlement_id = %s
+            """,
+            (
+                terminal_status, provider_status, period_end, event_at,
+                provider_event_id, entitlement_id,
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO subscription_events (
+                account_id, event_type, source, source_event_id, sales_channel,
+                to_block_count, to_purchased_bytes, occurred_at, payload_jsonb
+            ) VALUES (%s, %s, %s, %s, 'self_service', 0, 0, NOW(), %s)
+            """,
+            (
+                account_id, transition[:64], provider, provider_event_id,
+                Json({
+                    "product_id": str(existing["product_id"]),
+                    "status": terminal_status,
+                    "reason": "authoritative_purchase_not_found",
+                }),
+            ),
+        )
+        conn.commit()
+        return entitlement_id, transition, terminal_status
     except Exception:
         conn.rollback()
         raise

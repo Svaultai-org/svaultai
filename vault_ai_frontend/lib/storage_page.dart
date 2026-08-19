@@ -215,10 +215,16 @@ class _StoragePageState extends State<StoragePage> {
           productId: productId,
           purchaseToken: purchaseToken,
         ),
+        reconcilePurchases: ({required List<String> purchaseTokens}) =>
+            _client.reconcileGooglePlayPurchases(
+          authToken: authToken,
+          purchaseTokens: purchaseTokens,
+        ),
       );
       controller.addListener(_onGooglePlayBillingChanged);
       setState(() => _playBilling = controller);
       await controller.initialize();
+      await controller.restore(silent: true);
     } on TimeoutException {
       if (mounted) {
         setState(() => _storeConnectionError =
@@ -239,7 +245,8 @@ class _StoragePageState extends State<StoragePage> {
     if (!mounted || controller == null) return;
     final state = controller.state;
     setState(() {});
-    if (state == 'verified' && _lastPlayBillingState != 'verified') {
+    if (const {'verified', 'reconciled'}.contains(state) &&
+        _lastPlayBillingState != state) {
       unawaited(_refresh());
     }
     _lastPlayBillingState = state;

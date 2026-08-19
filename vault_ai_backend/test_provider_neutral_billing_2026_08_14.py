@@ -314,6 +314,8 @@ def test_google_bridge_requires_clean_https_origin(monkeypatch, url):
         ("SUBSCRIPTION_STATE_ON_HOLD", "delinquent"),
         ("SUBSCRIPTION_STATE_EXPIRED", "expired"),
         ("SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED", "canceled"),
+        ("SUBSCRIPTION_STATE_PENDING_PURCHASE_EXPIRED", "canceled"),
+        ("SUBSCRIPTION_STATE_REVOKED", "revoked"),
     ],
 )
 def test_google_lifecycle_normalization(provider_state, normalized):
@@ -321,6 +323,137 @@ def test_google_lifecycle_normalization(provider_state, normalized):
         provider_state,
         expiry_time=datetime(2099, 1, 1, tzinfo=timezone.utc),
     ) == normalized
+
+
+def test_google_empty_device_query_reconciles_to_free_without_ledger(monkeypatch):
+    monkeypatch.setattr(
+        google, "list_bound_provider_entitlements", lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        google, "get_normalized_account_entitlement", lambda _account_id: None,
+    )
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=[],
+        publisher=SimpleNamespace(),
+    )
+    assert result.status == "none"
+    assert result.has_active_subscription is False
+    assert result.current_purchase_count == 0
+    assert result.cleared_pending is True
+
+
+def test_google_missing_bound_pending_purchase_is_canceled(monkeypatch):
+    monkeypatch.setattr(
+        google,
+        "list_bound_provider_entitlements",
+        lambda **_kwargs: [{
+            "external_purchase_id": "purchase-token",
+            "status": "pending",
+            "product_id": google.GOOGLE_PLAY_PRODUCT_50GB,
+            "plan_id": google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        }],
+    )
+    terminalized = []
+    monkeypatch.setattr(
+        google,
+        "terminalize_missing_provider_purchase",
+        lambda **kwargs: (
+            terminalized.append(kwargs) or ("entitlement-1", "pending_to_canceled", "canceled")
+        ),
+    )
+    monkeypatch.setattr(
+        google,
+        "get_normalized_account_entitlement",
+        lambda _account_id: SimpleNamespace(
+            status="past_due", has_active_subscription=False,
+        ),
+    )
+
+    class MissingPublisher:
+        def get_subscription(self, _token):
+            raise google.GooglePlayPurchaseNotFoundError("gone")
+
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=[],
+        publisher=MissingPublisher(),
+    )
+    assert result.cleared_pending is True
+    assert result.has_active_subscription is False
+    assert terminalized[0]["provider_status"] == (
+        "SUBSCRIPTION_NOT_FOUND_DURING_RECONCILIATION"
+    )
+
+
+def test_google_reconcile_applies_authoritative_pending_cancellation(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        google,
+        "list_bound_provider_entitlements",
+        lambda **_kwargs: [{
+            "external_purchase_id": "purchase-token",
+            "status": "pending",
+            "product_id": google.GOOGLE_PLAY_PRODUCT_50GB,
+            "plan_id": google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        }],
+    )
+    monkeypatch.setattr(
+        google,
+        "upsert_verified_entitlement",
+        lambda _account_id, update: (
+            captured.append(update) or ("entitlement-1", "pending_to_canceled")
+        ),
+    )
+    monkeypatch.setattr(google, "supersede_linked_purchase", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        google,
+        "get_normalized_account_entitlement",
+        lambda _account_id: SimpleNamespace(
+            status="past_due", has_active_subscription=False,
+        ),
+    )
+    publisher = _Publisher(
+        _google_payload(state="SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED")
+    )
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=["purchase-token"],
+        publisher=publisher,
+    )
+    assert captured[0].status == "canceled"
+    assert publisher.acknowledged == []
+    assert result.has_active_subscription is False
+    assert result.status == "past_due"
+
+
+@pytest.mark.asyncio
+async def test_google_reconcile_route_returns_safe_final_state(monkeypatch):
+    monkeypatch.setattr(provider_routes, "_account_id", lambda _principal: "account-1")
+    monkeypatch.setattr(
+        google,
+        "reconcile_google_subscriptions",
+        lambda **_kwargs: google.GooglePlayReconciliationResult(
+            status="none",
+            has_active_subscription=False,
+            current_purchase_count=0,
+            reconciled_count=0,
+            cleared_pending=True,
+        ),
+    )
+    response = await provider_routes.reconcile_google_play_purchases(
+        provider_routes.GooglePlayReconcileRequest(purchase_tokens=[]),
+        principal={"vault_id": "vault-1"},
+    )
+    assert response == {
+        "reconciled": True,
+        "provider": "google_play",
+        "status": "none",
+        "has_active_subscription": False,
+        "current_purchase_count": 0,
+        "reconciled_count": 0,
+        "cleared_pending": True,
+    }
 
 
 def test_rtdn_decoder_requires_message_id_and_base64_json():
