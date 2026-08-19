@@ -163,12 +163,12 @@ class CredentialExtractionConfirmationTests(unittest.TestCase):
             return_value=file_row,
         ), patch.object(
             self.main,
-            "extract_multiple_credentials",
+            "extract_secure_records",
             return_value=records,
         ), patch.object(
             self.main,
             "save_secret_tool",
-            side_effect=lambda vault_id, payload, key: saved.append(payload),
+            side_effect=lambda vault_id, payload, key, **_kwargs: saved.append(payload),
         ):
             reply = self.main._confirm_credential_extraction_review(
                 vault_id="vault-synthetic",
@@ -194,7 +194,7 @@ class CredentialExtractionConfirmationTests(unittest.TestCase):
             },
         ), patch.object(
             self.main,
-            "extract_multiple_credentials",
+            "extract_secure_records",
             return_value=changed,
         ), patch.object(self.main, "save_secret_tool") as save_mock:
             reply = self.main._confirm_credential_extraction_review(

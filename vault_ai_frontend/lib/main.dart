@@ -55,6 +55,7 @@ import 'services/zk_auth_service.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
 import 'services/attachment_title_binding.dart';
+import 'services/attachment_credential_review.dart';
 import 'services/native_media_capture.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
@@ -7250,10 +7251,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       final raw = fetched['fields'];
       final fields = raw is Map ? Map<String, dynamic>.from(raw) : const {};
-      final username = fields['username']?.toString();
-      final value = fields['password']?.toString() ??
-          fields['secret_value']?.toString() ??
-          fields.values.whereType<String>().firstOrNull;
+      String? firstNonEmptyField(Iterable<String> names) {
+        for (final name in names) {
+          final value = fields[name]?.toString().trim() ?? '';
+          if (value.isNotEmpty) return value;
+        }
+        return null;
+      }
+
+      final identifier = firstNonEmptyField(const <String>[
+        'username',
+        'email',
+        'user_id',
+        'login_id',
+        'account_id',
+      ]);
+      final value = firstNonEmptyField(const <String>[
+        'password',
+        'secure_value',
+        'secret_value',
+        'access_code',
+        'value',
+      ]);
       if (!mounted) return;
       setState(() {
         msgs.add(_Msg(
@@ -7262,8 +7281,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           kind: ChatMessage.kInlineCredential,
           payload: <String, dynamic>{
             'service': service,
-            'username': username ?? '',
+            'username': identifier ?? '',
             'password': value ?? '',
+            'fields': fields,
           },
         ));
       });
@@ -13067,7 +13087,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         job.duplicateAction ?? (ctx.isBatchUpload ? 'skip' : 'prompt');
 
     const fileV2Write = fileV2WriteEnabled;
-    if (fileV2Write) {
+    final needsServerCredentialReview =
+        shouldUseServerReadableCredentialReview(ctx.accompanyingText);
+    if (fileV2Write && !needsServerCredentialReview) {
       final repo = FileV2Repository.current();
       if (repo == null) throw StateError('file_v2_requires_active_mvk');
       final fileId =
@@ -14560,6 +14582,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'records': records,
           'file': fileMap,
           if (decoded['count'] is int) 'count': decoded['count'],
+          if (decoded['analysis_counts'] is Map)
+            'analysis_counts':
+                (decoded['analysis_counts'] as Map).cast<String, dynamic>(),
           if (decoded['text_available'] is bool)
             'text_available': decoded['text_available'],
         };
@@ -15999,10 +16024,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _sendQuickPrompt(String text) async {
+  Future<void> _sendQuickPrompt(
+    String text, {
+    String? encryptedBackendCommand,
+  }) async {
     setState(() {
       selectedSection = _DashboardSection.chat;
       input.text = text;
+      _nextEncryptedBackendCommand = encryptedBackendCommand;
     });
     await Future.delayed(const Duration(milliseconds: 50));
     await _send();
@@ -16072,6 +16101,53 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final prompt =
           title.isEmpty ? 'Show my selected file' : 'Show my $title file';
       _sendQuickPrompt(prompt);
+      return;
+    }
+    if (action == 'credential_extraction_save' ||
+        action == 'credential_extraction_save_selected' ||
+        action == 'credential_extraction_edit_and_save' ||
+        action == 'credential_extraction_cancel') {
+      final candidateIds = (data?['candidate_ids'] is List)
+          ? (data!['candidate_ids'] as List)
+              .map((value) => value.toString().trim())
+              .where((value) => RegExp(r'^[a-f0-9]{24}$').hasMatch(value))
+              .toList(growable: false)
+          : const <String>[];
+      final wireAction = action == 'credential_extraction_save_selected'
+          ? 'save_selected'
+          : action == 'credential_extraction_edit_and_save'
+              ? 'edit_and_save'
+              : action == 'credential_extraction_cancel'
+                  ? 'cancel'
+                  : 'save';
+      if (wireAction != 'cancel' && candidateIds.isEmpty) {
+        _showSnack('Select at least one credential candidate.');
+        throw StateError('credential_extraction_selection_missing');
+      }
+      final overrides = (data?['overrides'] is Map)
+          ? (data!['overrides'] as Map).cast<String, dynamic>()
+          : const <String, dynamic>{};
+      final wirePayload = <String, dynamic>{
+        'action': wireAction,
+        'candidate_ids': candidateIds,
+        if (overrides.isNotEmpty) 'overrides': overrides,
+      };
+      final encoded = base64Url
+          .encode(utf8.encode(jsonEncode(wirePayload)))
+          .replaceAll('=', '');
+      final privateCommand =
+          '__svaultai_credential_extraction_action_v1__:$encoded';
+      final visiblePrompt = wireAction == 'cancel'
+          ? 'Cancel this credential review'
+          : wireAction == 'edit_and_save'
+              ? 'Save my edited credential candidate'
+              : candidateIds.length == 1
+                  ? 'Save this selected credential candidate'
+                  : 'Save ${candidateIds.length} selected credential candidates';
+      await _sendQuickPrompt(
+        visiblePrompt,
+        encryptedBackendCommand: privateCommand,
+      );
       return;
     }
     // 2026-08-01 generated-login draft Save / Cancel from the card
@@ -16275,6 +16351,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// after send. The hint is a structured field on the /chat body —
   /// it never appears in the user-visible chat prose.
   Map<String, String>? _nextSelectionHint;
+
+  /// One-shot private command used by structured review cards. The visible
+  /// chat bubble remains a human-readable action label, while this payload is
+  /// placed inside the already encrypted chat message. It is never copied to
+  /// selection_hint, request diagnostics, analytics, or plaintext logs.
+  String? _nextEncryptedBackendCommand;
 
   /// The last file id the user opened/downloaded via a direct card
   /// tap (i.e. without a chat prompt in between). Set from
@@ -17057,6 +17139,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
 
+    // Structured card actions must reach the backend verbatim after message
+    // encryption. Consume the one-shot command before any local natural-
+    // language router can mistake its human-readable bubble for a new vault
+    // request. A failed/expired send must not leave a secret-bearing command
+    // queued for an unrelated later message.
+    final privateBackendCommand = _nextEncryptedBackendCommand;
+    _nextEncryptedBackendCommand = null;
+    final hasPrivateBackendCommand =
+        privateBackendCommand != null && privateBackendCommand.isNotEmpty;
+
     final app = context.read<AppState>();
     final token = app.sessionToken;
 
@@ -17137,40 +17229,52 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // regex — they fall through to the LLM path where the server-
     // injected vault-AI identity context answers with the
     // persistent AI keeper's name and role.
-    if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
-      input.clear();
-      return;
-    }
+    if (!hasPrivateBackendCommand) {
+      if (attachments.isEmpty &&
+          shouldUseServerReadableCredentialReview(text)) {
+        _appendAssistantMessage(
+          'Attach the file you want analyzed, then send that request again. '
+          'No credential draft was created and nothing was saved.',
+        );
+        return;
+      }
 
-    if (await _tryLocalPrivateDeleteReply(text, app)) {
-      return;
-    }
+      if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
+        input.clear();
+        return;
+      }
 
-    if (await _tryLocalCredentialV2CreateReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalPrivateDeleteReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalCredentialV2LookupReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalCredentialV2CreateReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalMemoryV2ContextSave(text, app)) {
-      return;
-    }
+      if (await _tryLocalCredentialV2LookupReply(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalPrivateDomainArbitration(text, app)) {
-      return;
-    }
+      if (await _tryLocalMemoryV2ContextSave(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalMemoryV2LookupReply(text, app)) {
-      return;
-    }
+      if (await _tryLocalPrivateDomainArbitration(text, app)) {
+        return;
+      }
 
-    if (await _tryLocalVaultFileLookupReply(text)) {
-      return;
+      if (await _tryLocalMemoryV2LookupReply(text, app)) {
+        return;
+      }
+
+      if (await _tryLocalVaultFileLookupReply(text)) {
+        return;
+      }
     }
 
     if (privateLocalRouting &&
+        !hasPrivateBackendCommand &&
         attachments.isEmpty &&
         !credentialCreateRequiresBackend &&
         !isCredentialExtractionReviewDecision(text) &&
@@ -17191,10 +17295,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     final replyLanguageCode = app.chatReplyLanguageCode;
     final rawPendingAttachments = attachments.map((a) => a.copy()).toList();
-    final attachmentTitle = attachmentTitleFromComposerText(
-      text,
-      attachmentCount: rawPendingAttachments.length,
-    );
+    final isCurrentAttachmentCredentialReview =
+        rawPendingAttachments.isNotEmpty &&
+            shouldUseServerReadableCredentialReview(text);
+    final attachmentTitle = isCurrentAttachmentCredentialReview
+        ? null
+        : attachmentTitleFromComposerText(
+            text,
+            attachmentCount: rawPendingAttachments.length,
+          );
     final pendingAttachments = attachmentTitle == null
         ? rawPendingAttachments
         : [
@@ -17249,6 +17358,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final assistantMessageId = chatTicket.assistantMessageId;
 
     var backendText = text;
+    if (hasPrivateBackendCommand) {
+      backendText = privateBackendCommand;
+    }
     final isConversationalFollowUp = RegExp(
       r'^(?:go on|continue|tell me more|what do you mean|wait[, ]+what do you mean|say (?:that|it) (?:again|more simply)|make (?:that|it) simpler|explain (?:that|it)|why|how so|what assumptions am i making|challenge my thinking gently|(?:now )?give me the strongest counterargument|summarize (?:that|the tradeoff)(?: in three sentences)?)\??[.!]?$',
       caseSensitive: false,
@@ -17352,7 +17464,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
-      if (uploadOutcome.autoNamedAny) {
+      if (uploadOutcome.autoNamedAny && !isCurrentAttachmentCredentialReview) {
         if (!mounted) return;
         _chatRequests.complete(chatRequestId);
         setState(() {
@@ -17363,6 +17475,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       final explicitSaveOnly = hadAttachments &&
           uploadedFileIds.isNotEmpty &&
+          !isCurrentAttachmentCredentialReview &&
           RegExp(r'\b(?:save|upload|store|keep|add)\b', caseSensitive: false)
               .hasMatch(text) &&
           !RegExp(r'\b(?:analy[sz]e|summari[sz]e|explain|compare|read|what)\b',

@@ -100,7 +100,7 @@ void main() {
           ],
         ),
       );
-      expect(find.text('Review extracted logins'), findsOneWidget);
+      expect(find.text('Review extracted secure records'), findsOneWidget);
       expect(find.text('Bitwarden export'), findsOneWidget);
       expect(find.text('Gmail'), findsOneWidget);
       expect(find.text('Wells Fargo'), findsOneWidget);
@@ -113,8 +113,7 @@ void main() {
       expect(find.text('note present'), findsOneWidget);
       
       expect(
-        find.textContaining(
-            'will not save anything until you confirm'),
+        find.textContaining('Nothing is saved until you confirm'),
         findsOneWidget,
       );
     });

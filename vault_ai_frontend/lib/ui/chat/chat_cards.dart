@@ -2519,29 +2519,304 @@ class _CredentialFileRow extends StatelessWidget {
   }
 }
 
-class CredentialExtractionReviewCard extends StatelessWidget {
+class CredentialExtractionReviewCard extends StatefulWidget {
   final ChatMessage msg;
 
   final void Function(ChatMessage fileMsg)? onOpen;
+  final FutureOr<void> Function(
+    String action,
+    Map<String, dynamic>? data,
+  )? onAction;
 
-  static const int maxRows = 50;
-  static const double maxListHeight = 360;
+  static const int maxRows = 200;
+  static const double maxListHeight = 520;
 
   const CredentialExtractionReviewCard({
     super.key,
     required this.msg,
     this.onOpen,
+    this.onAction,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final p = msg.payload ?? const <String, dynamic>{};
-    final records = (p['records'] is List)
+  State<CredentialExtractionReviewCard> createState() =>
+      _CredentialExtractionReviewCardState();
+}
+
+class _CredentialExtractionReviewCardState
+    extends State<CredentialExtractionReviewCard> {
+  final Set<String> _selected = <String>{};
+  final Set<String> _handled = <String>{};
+  final Set<String> _ignored = <String>{};
+  final Set<String> _busy = <String>{};
+  final Set<String> _revealed = <String>{};
+
+  List<Map<String, dynamic>> get _records {
+    final p = widget.msg.payload ?? const <String, dynamic>{};
+    return (p['records'] is List)
         ? (p['records'] as List)
             .whereType<Map>()
             .map((m) => m.cast<String, dynamic>())
-            .toList()
+            .take(CredentialExtractionReviewCard.maxRows)
+            .toList(growable: false)
         : const <Map<String, dynamic>>[];
+  }
+
+  String _candidateId(Map<String, dynamic> record, int index) =>
+      (record['candidate_id']?.toString().trim().isNotEmpty ?? false)
+          ? record['candidate_id'].toString().trim()
+          : 'candidate-${index + 1}';
+
+  @override
+  void initState() {
+    super.initState();
+    for (var i = 0; i < _records.length; i++) {
+      _selected.add(_candidateId(_records[i], i));
+    }
+  }
+
+  Future<void> _submit(
+    String action,
+    List<String> ids, {
+    Map<String, dynamic>? overrides,
+  }) async {
+    final callback = widget.onAction;
+    if (callback == null || ids.any((id) => id.startsWith('candidate-'))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This review action is unavailable.')),
+      );
+      return;
+    }
+    setState(() => _busy.addAll(ids));
+    try {
+      await callback(action, <String, dynamic>{
+        'candidate_ids': ids,
+        if (overrides != null && overrides.isNotEmpty)
+          'overrides': overrides,
+      });
+      if (!mounted) return;
+      setState(() {
+        _busy.removeAll(ids);
+        _handled.addAll(ids);
+        _selected.removeAll(ids);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy.removeAll(ids));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not complete that credential review action.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editAndSave(
+    Map<String, dynamic> record,
+    String candidateId,
+  ) async {
+    final fields = (record['fields'] is Map)
+        ? (record['fields'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final service = TextEditingController(
+      text: record['service']?.toString() ?? '',
+    );
+    final username = TextEditingController(
+      text: fields['username']?.toString() ??
+          record['username']?.toString() ??
+          '',
+    );
+    final email = TextEditingController(
+      text: fields['email']?.toString() ?? record['email']?.toString() ?? '',
+    );
+    final userId = TextEditingController(
+      text: fields['user_id']?.toString() ?? '',
+    );
+    final loginId = TextEditingController(
+      text: fields['login_id']?.toString() ?? '',
+    );
+    final accountId = TextEditingController(
+      text: fields['account_id']?.toString() ?? '',
+    );
+    final website = TextEditingController(
+      text: fields['url']?.toString() ?? record['website']?.toString() ?? '',
+    );
+    final replacementPassword = TextEditingController();
+    final pin = TextEditingController(text: fields['pin']?.toString() ?? '');
+    final accountNumber = TextEditingController(
+      text: fields['account_number']?.toString() ?? '',
+    );
+    final secureIdentifier = TextEditingController(
+      text: fields['secure_identifier']?.toString() ?? '',
+    );
+    final accessCode = TextEditingController(
+      text: fields['access_code']?.toString() ?? '',
+    );
+    final secureValue = TextEditingController(
+      text: fields['secure_value']?.toString() ?? '',
+    );
+    final notes = TextEditingController(
+      text: fields['note']?.toString() ?? '',
+    );
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Edit credential before saving'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                key: const Key('credential_extraction_edit_service'),
+                controller: service,
+                decoration: const InputDecoration(labelText: 'Service'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_username'),
+                controller: username,
+                decoration: const InputDecoration(labelText: 'Username'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_email'),
+                controller: email,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_user_id'),
+                controller: userId,
+                decoration: const InputDecoration(labelText: 'User ID'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_login_id'),
+                controller: loginId,
+                decoration: const InputDecoration(labelText: 'Login ID'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_account_id'),
+                controller: accountId,
+                decoration: const InputDecoration(labelText: 'Account ID'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_website'),
+                controller: website,
+                decoration: const InputDecoration(labelText: 'Website'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_password'),
+                controller: replacementPassword,
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: const InputDecoration(
+                  labelText: 'Replacement password (optional)',
+                  helperText: 'Leave blank to keep the extracted password.',
+                ),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_pin'),
+                controller: pin,
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: const InputDecoration(labelText: 'PIN'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_account_number'),
+                controller: accountNumber,
+                decoration: const InputDecoration(labelText: 'Account number'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_secure_identifier'),
+                controller: secureIdentifier,
+                decoration:
+                    const InputDecoration(labelText: 'Secure identifier'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_access_code'),
+                controller: accessCode,
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                decoration: const InputDecoration(labelText: 'Access code'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_secure_value'),
+                controller: secureValue,
+                decoration: const InputDecoration(labelText: 'Secure value'),
+              ),
+              TextField(
+                key: const Key('credential_extraction_edit_notes'),
+                controller: notes,
+                maxLines: 2,
+                decoration: const InputDecoration(labelText: 'Notes'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('credential_extraction_edit_save'),
+            onPressed: () {
+              final cleanService = service.text.trim();
+              if (cleanService.isEmpty) return;
+              Navigator.of(dialogContext).pop(<String, dynamic>{
+                'service': cleanService,
+                'username': username.text.trim(),
+                'email': email.text.trim(),
+                'user_id': userId.text.trim(),
+                'login_id': loginId.text.trim(),
+                'account_id': accountId.text.trim(),
+                'website': website.text.trim(),
+                'notes': notes.text.trim(),
+                'pin': pin.text,
+                'account_number': accountNumber.text,
+                'secure_identifier': secureIdentifier.text,
+                'access_code': accessCode.text,
+                'secure_value': secureValue.text,
+                if (replacementPassword.text.isNotEmpty)
+                  'password': replacementPassword.text,
+              });
+            },
+            child: const Text('Save changes'),
+          ),
+        ],
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    service.dispose();
+    username.dispose();
+    email.dispose();
+    userId.dispose();
+    loginId.dispose();
+    accountId.dispose();
+    website.dispose();
+    replacementPassword.dispose();
+    pin.dispose();
+    accountNumber.dispose();
+    secureIdentifier.dispose();
+    accessCode.dispose();
+    secureValue.dispose();
+    notes.dispose();
+    if (result == null || !mounted) return;
+    await _submit(
+      'credential_extraction_edit_and_save',
+      <String>[candidateId],
+      overrides: <String, dynamic>{candidateId: result},
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.msg.payload ?? const <String, dynamic>{};
+    final records = _records;
+    final analysisCounts = (p['analysis_counts'] is Map)
+        ? (p['analysis_counts'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
     final fileMap = (p['file'] is Map)
         ? (p['file'] as Map).cast<String, dynamic>()
         : const <String, dynamic>{};
@@ -2550,9 +2825,6 @@ class CredentialExtractionReviewCard extends StatelessWidget {
             (fileMap['saved_name'] as String).trim().isNotEmpty)
         ? (fileMap['saved_name'] as String).trim()
         : ((fileMap['file_name'] as String?)?.trim() ?? 'the selected file');
-
-    final shown =
-        records.length > maxRows ? records.take(maxRows).toList() : records;
 
     return VaultCard(
       padding: const EdgeInsets.all(VaultSpacing.lg),
@@ -2563,7 +2835,7 @@ class CredentialExtractionReviewCard extends StatelessWidget {
           CardHeader(
             icon: Icons.fact_check_outlined,
             iconColor: VaultColors.accent,
-            title: 'Review extracted logins',
+            title: 'Review extracted secure records',
             subtitle: fileLabel,
             trailing: const MetaPill(
               label: 'review only',
@@ -2571,14 +2843,25 @@ class CredentialExtractionReviewCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: VaultSpacing.md),
-          if (msg.text.trim().isNotEmpty) Text(msg.text, style: VaultText.body),
+          if (widget.msg.text.trim().isNotEmpty)
+            Text(widget.msg.text, style: VaultText.body),
           const SizedBox(height: VaultSpacing.md),
           _HonestyHint(
             icon: Icons.shield_outlined,
-            text: 'I will not save anything until you confirm. Password '
-                'values are never shown — only that a password is '
-                'present in each record.',
+            text: 'Nothing is saved until you confirm. Sensitive values are '
+                'hidden by default; use the eye control to reveal the exact '
+                'value extracted from the document.',
           ),
+          if (analysisCounts.isNotEmpty) ...[
+            const SizedBox(height: VaultSpacing.sm),
+            Text(
+              'Pages: ${analysisCounts['text_extraction_page_count'] ?? 0}/'
+              '${analysisCounts['pdf_page_count'] ?? 0}  •  '
+              'Candidates: ${analysisCounts['normalized_record_count'] ?? records.length}',
+              key: const Key('credential_extraction_analysis_counts'),
+              style: VaultText.caption,
+            ),
+          ],
           if (!textAvailable) ...[
             const SizedBox(height: VaultSpacing.md),
             _HonestyHint(
@@ -2587,22 +2870,96 @@ class CredentialExtractionReviewCard extends StatelessWidget {
                   'analysis to extract it, then ask again.',
             ),
           ],
-          if (shown.isNotEmpty) ...[
+          if (records.isNotEmpty) ...[
             const SizedBox(height: VaultSpacing.md),
             ConstrainedBox(
               constraints: const BoxConstraints(
-                maxHeight: maxListHeight,
+                maxHeight: CredentialExtractionReviewCard.maxListHeight,
               ),
               child: Scrollbar(
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: shown.length,
+                  itemCount: records.length,
                   separatorBuilder: (_, __) =>
                       const SizedBox(height: VaultSpacing.sm),
-                  itemBuilder: (context, i) =>
-                      _ExtractionReviewRow(record: shown[i]),
+                  itemBuilder: (context, i) {
+                    final record = records[i];
+                    final candidateId = _candidateId(record, i);
+                    return _ExtractionReviewRow(
+                      record: record,
+                      selected: _selected.contains(candidateId),
+                      handled: _handled.contains(candidateId),
+                      ignored: _ignored.contains(candidateId),
+                      busy: _busy.contains(candidateId),
+                      revealed: _revealed.contains(candidateId),
+                      onSelected: (value) => setState(() {
+                        if (value) {
+                          _selected.add(candidateId);
+                        } else {
+                          _selected.remove(candidateId);
+                        }
+                      }),
+                      onSave: () => _submit(
+                        'credential_extraction_save',
+                        <String>[candidateId],
+                      ),
+                      onEdit: () => _editAndSave(record, candidateId),
+                      onIgnore: () => setState(() {
+                        _ignored.add(candidateId);
+                        _selected.remove(candidateId);
+                      }),
+                      onReveal: () => setState(() {
+                        if (_revealed.contains(candidateId)) {
+                          _revealed.remove(candidateId);
+                        } else {
+                          _revealed.add(candidateId);
+                        }
+                      }),
+                    );
+                  },
                 ),
               ),
+            ),
+            const SizedBox(height: VaultSpacing.md),
+            Wrap(
+              spacing: VaultSpacing.sm,
+              runSpacing: VaultSpacing.sm,
+              children: [
+                FilledButton.icon(
+                  key: const Key('credential_extraction_save_selected'),
+                  onPressed: _selected.isEmpty || _busy.isNotEmpty
+                      ? null
+                      : () => _submit(
+                            'credential_extraction_save_selected',
+                            _selected.toList(growable: false),
+                          ),
+                  icon: const Icon(Icons.save_outlined),
+                  label: Text('Save selected (${_selected.length})'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('credential_extraction_ignore_all'),
+                  onPressed: _busy.isNotEmpty
+                      ? null
+                      : () async {
+                          final callback = widget.onAction;
+                          if (callback != null) {
+                            await callback(
+                              'credential_extraction_cancel',
+                              const <String, dynamic>{},
+                            );
+                          }
+                          if (!mounted) return;
+                          setState(() {
+                            for (var i = 0; i < records.length; i++) {
+                              _ignored.add(_candidateId(records[i], i));
+                            }
+                            _selected.clear();
+                          });
+                        },
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('Ignore all'),
+                ),
+              ],
             ),
           ],
         ],
@@ -2613,20 +2970,88 @@ class CredentialExtractionReviewCard extends StatelessWidget {
 
 class _ExtractionReviewRow extends StatelessWidget {
   final Map<String, dynamic> record;
-  const _ExtractionReviewRow({required this.record});
+  final bool selected;
+  final bool handled;
+  final bool ignored;
+  final bool busy;
+  final bool revealed;
+  final ValueChanged<bool> onSelected;
+  final VoidCallback onSave;
+  final VoidCallback onEdit;
+  final VoidCallback onIgnore;
+  final VoidCallback onReveal;
+
+  const _ExtractionReviewRow({
+    required this.record,
+    required this.selected,
+    required this.handled,
+    required this.ignored,
+    required this.busy,
+    required this.revealed,
+    required this.onSelected,
+    required this.onSave,
+    required this.onEdit,
+    required this.onIgnore,
+    required this.onReveal,
+  });
 
   @override
   Widget build(BuildContext context) {
     final service = (record['service'] as String?)?.trim();
-    final username = (record['username'] as String?)?.trim();
-    final email = (record['email'] as String?)?.trim();
+    final fields = (record['fields'] is Map)
+        ? (record['fields'] as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final recordType =
+        (record['record_type'] as String?)?.trim().toUpperCase() ??
+            'SECURE RECORD';
     final passwordPresent = record['password_present'] == true;
     final pinPresent = record['pin_present'] == true;
     final notePresent = record['note_present'] == true;
-
-    final identifier = (email != null && email.isNotEmpty)
-        ? email
-        : (username != null && username.isNotEmpty ? username : null);
+    final website =
+        (fields['url'] ?? record['website'])?.toString().trim();
+    final sourceContext = (record['source_context'] as String?)?.trim();
+    const fieldLabels = <String, String>{
+      'username': 'Username',
+      'email': 'Email',
+      'user_id': 'User ID',
+      'login_id': 'Login ID',
+      'account_id': 'Account ID',
+      'url': 'Website or URL',
+      'password': 'Password',
+      'pin': 'PIN',
+      'account_number': 'Account number',
+      'secure_identifier': 'Secure identifier',
+      'access_code': 'Access code',
+      'secure_value': 'Secure value',
+      'value': 'Secure value',
+      'notes': 'Note',
+      'note': 'Note',
+    };
+    const publicFieldNames = <String>{
+      'username',
+      'email',
+      'user_id',
+      'login_id',
+      'account_id',
+    };
+    String labelFor(String name) => fieldLabels[name] ?? name
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+    final identifierFields = <MapEntry<String, String>>[
+      for (final entry in fields.entries)
+        if (publicFieldNames.contains(entry.key) &&
+            (entry.value?.toString() ?? '').isNotEmpty)
+          MapEntry(labelFor(entry.key), entry.value.toString()),
+    ];
+    final sensitiveFields = <MapEntry<String, String>>[
+      for (final entry in fields.entries)
+        if (!publicFieldNames.contains(entry.key) &&
+            entry.key != 'url' &&
+            (entry.value?.toString() ?? '').isNotEmpty)
+          MapEntry(labelFor(entry.key), entry.value.toString()),
+    ];
 
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.md),
@@ -2640,6 +3065,15 @@ class _ExtractionReviewRow extends StatelessWidget {
         children: [
           Row(
             children: [
+              Checkbox(
+                key: ValueKey(
+                  'credential_extraction_select_${record['candidate_id']}',
+                ),
+                value: selected,
+                onChanged: handled || ignored || busy
+                    ? null
+                    : (value) => onSelected(value ?? false),
+              ),
               const Icon(
                 Icons.business_outlined,
                 size: 14,
@@ -2656,25 +3090,70 @@ class _ExtractionReviewRow extends StatelessWidget {
               ),
             ],
           ),
-          if (identifier != null) ...[
+          const SizedBox(height: 4),
+          MetaPill(
+            label: recordType.replaceAll('_', ' ').toLowerCase(),
+            icon: Icons.security_outlined,
+            tint: VaultColors.severityInfo,
+          ),
+          if (identifierFields.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(
-                  Icons.person_outline,
-                  size: 12,
-                  color: VaultColors.textTertiary,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    identifier,
-                    style: VaultText.caption,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+            for (final entry in identifierFields)
+              Text(
+                '${entry.key}: ${entry.value}',
+                style: VaultText.caption,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+          if (website != null && website.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text('Website: $website', style: VaultText.caption),
+          ],
+          if (sourceContext != null && sourceContext.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Source: $sourceContext',
+              style: VaultText.caption.copyWith(
+                color: VaultColors.textTertiary,
+              ),
+            ),
+          ],
+          if (sensitiveFields.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            if (revealed)
+              ...sensitiveFields.map(
+                (entry) => SelectableText(
+                  '${entry.key}: ${entry.value}',
+                  key: ValueKey(
+                    'credential_extraction_revealed_${record['candidate_id']}_${entry.key}',
                   ),
+                  style: VaultText.body,
                 ),
-              ],
+              )
+            else
+              ...sensitiveFields.map(
+                (entry) => Text(
+                  '${entry.key}: ••••••••••',
+                  key: entry.key == 'Password'
+                      ? const Key('credential_extraction_masked_password')
+                      : null,
+                ),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: ValueKey(
+                  'credential_extraction_reveal_${record['candidate_id']}',
+                ),
+                onPressed: busy ? null : onReveal,
+                icon: Icon(
+                  revealed ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                ),
+                label: Text(
+                  revealed ? 'Hide extracted values' : 'Show extracted values',
+                ),
+              ),
             ),
           ],
           const SizedBox(height: VaultSpacing.xs + 2),
@@ -2705,6 +3184,54 @@ class _ExtractionReviewRow extends StatelessWidget {
                 ),
             ],
           ),
+          const SizedBox(height: VaultSpacing.sm),
+          if (handled)
+            const MetaPill(
+              label: 'handled',
+              icon: Icons.check_circle_outline,
+              tint: VaultColors.severityOk,
+            )
+          else if (ignored)
+            const MetaPill(
+              label: 'ignored',
+              icon: Icons.remove_circle_outline,
+              tint: VaultColors.textTertiary,
+            )
+          else
+            Wrap(
+              spacing: VaultSpacing.xs,
+              children: [
+                TextButton.icon(
+                  key: ValueKey(
+                    'credential_extraction_save_${record['candidate_id']}',
+                  ),
+                  onPressed: busy ? null : onSave,
+                  icon: busy
+                      ? const SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('Save'),
+                ),
+                TextButton.icon(
+                  key: ValueKey(
+                    'credential_extraction_edit_${record['candidate_id']}',
+                  ),
+                  onPressed: busy ? null : onEdit,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Edit'),
+                ),
+                TextButton.icon(
+                  key: ValueKey(
+                    'credential_extraction_ignore_${record['candidate_id']}',
+                  ),
+                  onPressed: busy ? null : onIgnore,
+                  icon: const Icon(Icons.remove_circle_outline),
+                  label: const Text('Ignore'),
+                ),
+              ],
+            ),
         ],
       ),
     );
