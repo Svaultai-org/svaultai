@@ -5991,6 +5991,26 @@ class _UnlockPageState extends State<UnlockPage> {
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
+  bool _loginReplacementScheduled = false;
+
+  /// Own the remembered-vault -> full-login route replacement in one place.
+  ///
+  /// `clearSession(keepLastVaultName: false)` notifies AppState listeners. That
+  /// notification rebuilds this page before `_useAnotherVault` resumes. The
+  /// old implementation scheduled a replacement from `build` *and* pushed a
+  /// second replacement from the tap handler, leaving two iOS route
+  /// transitions composited over the same outgoing frame. On a physical
+  /// device that could briefly present the outgoing page in repeated vertical
+  /// strips. Guarding the post-frame replacement gives both callers the same
+  /// single route operation without adding a timing delay or visual overlay.
+  void _replaceWithLoginOnce() {
+    if (_loginReplacementScheduled) return;
+    _loginReplacementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed('/login');
+    });
+  }
 
   Future<void> _submit() async {
     final app = context.read<AppState>();
@@ -6339,10 +6359,11 @@ class _UnlockPageState extends State<UnlockPage> {
   }
 
   Future<void> _useAnotherVault() async {
+    if (_loginReplacementScheduled) return;
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    _replaceWithLoginOnce();
   }
 
   @override
@@ -6350,9 +6371,7 @@ class _UnlockPageState extends State<UnlockPage> {
     final app = context.watch<AppState>();
 
     if (!app.hasRememberedVaultLogin) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.pushReplacementNamed(context, '/login');
-      });
+      _replaceWithLoginOnce();
       return const Scaffold();
     }
     final w = MediaQuery.of(context).size.width;
