@@ -51,6 +51,34 @@ String? buildPortalReturnUrl() {
   }
 }
 
+const String kAndroidApplicationId = 'com.svaultai.app';
+
+Uri buildGooglePlaySubscriptionManagementUri({
+  String productId = kGooglePlayStorageProductId,
+  String packageName = kAndroidApplicationId,
+}) {
+  return Uri.https(
+    'play.google.com',
+    '/store/account/subscriptions',
+    <String, String>{
+      'sku': productId,
+      'package': packageName,
+    },
+  );
+}
+
+bool shouldShowStoreConnectionRetry({
+  required String? storeState,
+  required bool loading,
+  required bool connectionInFlight,
+  String? connectionError,
+}) {
+  if (loading || connectionInFlight) return false;
+  if ((connectionError ?? '').trim().isNotEmpty) return true;
+  return const <String>{'unavailable', 'timed_out'}
+      .contains((storeState ?? '').trim().toLowerCase());
+}
+
 class StoragePage extends StatefulWidget {
   const StoragePage({super.key});
 
@@ -174,8 +202,40 @@ class _StoragePageState extends State<StoragePage> {
       if (play == null) {
         await _initializeGooglePlayBilling(token);
       } else {
-        await play.initialize(forceRetry: true);
+        if (mounted) {
+          setState(() {
+            _storeConnectionError = null;
+            _storeConnectionInFlight = true;
+          });
+        }
+        try {
+          await play.initialize(forceRetry: true);
+        } finally {
+          if (mounted) setState(() => _storeConnectionInFlight = false);
+        }
       }
+    }
+  }
+
+  Future<void> _manageGooglePlaySubscription() async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _busyPurchase = true);
+    try {
+      final launched = await launchUrl(
+        buildGooglePlaySubscriptionManagementUri(),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        throw StateError('Google Play subscription page did not open.');
+      }
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Could not open Google Play subscriptions.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busyPurchase = false);
     }
   }
 
@@ -663,13 +723,20 @@ class _StoragePageState extends State<StoragePage> {
     final storeCanBuy = _usesGooglePlayBilling
         ? (play?.canBuy ?? false)
         : (_usesAppleBilling && (apple?.canBuy ?? false));
-    final storeNeedsRetry = (_usesGooglePlayBilling &&
-            play?.state != 'ready' &&
-            !(play?.loading ?? false)) ||
-        (_usesAppleBilling &&
-            apple?.state != 'ready' &&
-            !(apple?.loading ?? false) &&
-            !_storeConnectionInFlight);
+    final storeNeedsRetry = _usesGooglePlayBilling
+        ? shouldShowStoreConnectionRetry(
+            storeState: play?.state,
+            loading: play?.loading ?? false,
+            connectionInFlight: _storeConnectionInFlight,
+            connectionError: _storeConnectionError,
+          )
+        : (_usesAppleBilling &&
+            shouldShowStoreConnectionRetry(
+              storeState: apple?.state,
+              loading: apple?.loading ?? false,
+              connectionInFlight: _storeConnectionInFlight,
+              connectionError: _storeConnectionError,
+            ));
     return StorageBody(
       data: data,
       busy: _busyPurchase ||
@@ -681,12 +748,13 @@ class _StoragePageState extends State<StoragePage> {
               storeCanBuy
           ? (_usesGooglePlayBilling ? play!.buy : apple!.buy)
           : null,
-      onManageSubscription: null,
+      onManageSubscription:
+          playOwnsSubscription ? _manageGooglePlaySubscription : null,
       unavailableMessage: kIsWeb
           ? 'Storage upgrades are temporarily unavailable while we update '
               'our payment provider.'
           : (_usesGooglePlayBilling
-              ? playMessage
+              ? (playOwnsSubscription ? null : playMessage)
               : (_usesAppleBilling
                   ? appleMessage
                   : 'Storage upgrades are not available on this platform.')),
@@ -700,6 +768,9 @@ class _StoragePageState extends State<StoragePage> {
               ? apple!.restore
               : null),
       onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
+      purchasablePlanLabel:
+          (_usesGooglePlayBilling || _usesAppleBilling) ? '50 GB' : null,
+      showStorePlanSummary: playOwnsSubscription,
       // The native controllers expose one 50 GB product. Stripe-era tier
       // examples are not native store products and must not be advertised.
       showPricingExamples: false,
@@ -838,6 +909,8 @@ class StorageBody extends StatelessWidget {
   final String storeName;
   final VoidCallback? onRestorePurchases;
   final VoidCallback? onRetryStore;
+  final String? purchasablePlanLabel;
+  final bool showStorePlanSummary;
   final bool showPricingExamples;
 
   const StorageBody({
@@ -851,7 +924,9 @@ class StorageBody extends StatelessWidget {
     this.storeName = 'Google Play',
     this.onRestorePurchases,
     this.onRetryStore,
-    this.showPricingExamples = true,
+    this.purchasablePlanLabel,
+    this.showStorePlanSummary = false,
+    this.showPricingExamples = false,
   });
 
   @override
@@ -862,7 +937,6 @@ class StorageBody extends StatelessWidget {
         kVaultStorageLimitBytes;
     final percent = (data['percent_used'] as num?)?.toDouble() ?? 0.0;
     final accountType = (data['account_type'] as String?) ?? 'individual';
-    final maxBlocks = (data['self_service_max_blocks'] as num?)?.toInt() ?? 100;
     final includedBytes =
         (data['included_bytes'] as num?)?.toInt() ?? kVaultStorageLimitBytes;
 
@@ -926,15 +1000,24 @@ class StorageBody extends StatelessWidget {
           ),
           const SizedBox(height: VaultSpacing.lg),
         ],
-        if (onBuyStorage != null || unavailableMessage == null)
+        if (showStorePlanSummary && hasActiveSubscription(data))
+          _ActiveStoreSubscriptionCard(
+            capacityLabel: formatBytes(limit),
+            localizedPrice: storePrice,
+            storeName: storeName,
+            busy: busy,
+            onManage: onManageSubscription,
+          )
+        else if (onBuyStorage != null || unavailableMessage == null)
           _PurchaseActionRow(
             canBuy: canBuy,
             canManage: canManage,
             hasActiveSub: hasActiveSubscription(data),
             onBuy: onBuyStorage,
             onManage: onManageSubscription,
+            buyPlanLabel: purchasablePlanLabel,
           ),
-        if (storePrice != null) ...[
+        if (storePrice != null && !showStorePlanSummary) ...[
           const SizedBox(height: VaultSpacing.md),
           _BillingAvailabilityCard(
             message: '$storePrice per month through $storeName. '
@@ -946,28 +1029,16 @@ class StorageBody extends StatelessWidget {
           const SizedBox(height: VaultSpacing.md),
           _BillingAvailabilityCard(message: unavailableMessage!),
         ],
-        if (onRestorePurchases != null) ...[
+        if (onRestorePurchases != null || onRetryStore != null) ...[
           const SizedBox(height: VaultSpacing.md),
-          OutlinedButton.icon(
-            onPressed: busy ? null : onRestorePurchases,
-            icon: const Icon(Icons.restore),
-            label: const Text('Restore Purchases / Refresh Subscription'),
-          ),
-        ],
-        if (onRetryStore != null) ...[
-          const SizedBox(height: VaultSpacing.md),
-          OutlinedButton.icon(
-            key: const Key('storage_store_retry'),
-            onPressed: busy ? null : onRetryStore,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry store connection'),
+          _StoreRecoveryActions(
+            busy: busy,
+            onRestorePurchases: onRestorePurchases,
+            onRetryStore: onRetryStore,
           ),
         ],
         const SizedBox(height: VaultSpacing.lg),
-        _AccountFactsCard(
-          accountType: accountType,
-          selfServiceMaxLabel: formatCapacityFromBlocks(maxBlocks),
-        ),
+        _AccountFactsCard(accountType: accountType),
         const SizedBox(height: VaultSpacing.lg),
         if (isOnFreeTierOnly(data))
           _FreeTierCard(includedBytes: includedBytes)
@@ -1015,12 +1086,126 @@ class _BillingAvailabilityCard extends StatelessWidget {
   }
 }
 
+class _ActiveStoreSubscriptionCard extends StatelessWidget {
+  final String capacityLabel;
+  final String? localizedPrice;
+  final String storeName;
+  final bool busy;
+  final VoidCallback? onManage;
+
+  const _ActiveStoreSubscriptionCard({
+    required this.capacityLabel,
+    required this.localizedPrice,
+    required this.storeName,
+    required this.busy,
+    required this.onManage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('storage_active_store_plan'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(VaultSpacing.xl),
+      decoration: BoxDecoration(
+        color: VaultColors.surface,
+        borderRadius: BorderRadius.circular(VaultRadius.lg),
+        border: Border.all(color: VaultColors.borderSubtle),
+        boxShadow: VaultShadows.e1,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Current plan', style: VaultText.subtitle),
+          const SizedBox(height: VaultSpacing.sm),
+          Text(capacityLabel, style: VaultText.headline),
+          const SizedBox(height: VaultSpacing.sm),
+          Text(
+            'Subscription active',
+            style: VaultText.body.copyWith(color: VaultColors.accentBright),
+          ),
+          if (localizedPrice != null) ...[
+            const SizedBox(height: VaultSpacing.xs),
+            Text('$localizedPrice/month', style: VaultText.body),
+          ],
+          const SizedBox(height: VaultSpacing.xs),
+          Text(
+            'Managed by $storeName',
+            style: VaultText.bodySm.copyWith(
+              color: VaultColors.textSecondary,
+            ),
+          ),
+          if (onManage != null) ...[
+            const SizedBox(height: VaultSpacing.lg),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                key: const Key('storage_manage_subscription'),
+                onPressed: busy ? null : onManage,
+                icon: const Icon(Icons.settings_outlined),
+                label: const Text('Manage subscription'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: VaultColors.accent,
+                  foregroundColor: VaultColors.textOnAccent,
+                  padding: const EdgeInsets.symmetric(
+                    vertical: VaultSpacing.lg,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreRecoveryActions extends StatelessWidget {
+  final bool busy;
+  final VoidCallback? onRestorePurchases;
+  final VoidCallback? onRetryStore;
+
+  const _StoreRecoveryActions({
+    required this.busy,
+    required this.onRestorePurchases,
+    required this.onRetryStore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Having trouble?',
+          style: VaultText.bodySm.copyWith(color: VaultColors.textSecondary),
+        ),
+        if (onRestorePurchases != null)
+          TextButton.icon(
+            key: const Key('storage_restore_purchases'),
+            onPressed: busy ? null : onRestorePurchases,
+            icon: const Icon(Icons.restore),
+            label: const Text('Restore purchases / Refresh'),
+          ),
+        if (onRetryStore != null)
+          OutlinedButton.icon(
+            key: const Key('storage_store_retry'),
+            onPressed: busy ? null : onRetryStore,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry store connection'),
+          ),
+      ],
+    );
+  }
+}
+
 class _PurchaseActionRow extends StatelessWidget {
   final bool canBuy;
   final bool canManage;
   final bool hasActiveSub;
   final VoidCallback? onBuy;
   final VoidCallback? onManage;
+  final String? buyPlanLabel;
 
   const _PurchaseActionRow({
     required this.canBuy,
@@ -1028,11 +1213,14 @@ class _PurchaseActionRow extends StatelessWidget {
     required this.hasActiveSub,
     required this.onBuy,
     required this.onManage,
+    required this.buyPlanLabel,
   });
 
   @override
   Widget build(BuildContext context) {
-    final primaryLabel = hasActiveSub ? 'Upgrade storage' : 'Buy storage';
+    final primaryLabel = hasActiveSub
+        ? 'Upgrade storage'
+        : (buyPlanLabel == null ? 'Buy storage' : 'Buy $buyPlanLabel');
     final primaryIcon = hasActiveSub ? Icons.upgrade : Icons.add;
     return Row(
       children: [
@@ -1193,11 +1381,9 @@ class _WarningBanner extends StatelessWidget {
 
 class _AccountFactsCard extends StatelessWidget {
   final String accountType;
-  final String selfServiceMaxLabel;
 
   const _AccountFactsCard({
     required this.accountType,
-    required this.selfServiceMaxLabel,
   });
 
   @override
@@ -1220,8 +1406,6 @@ class _AccountFactsCard extends StatelessWidget {
           ),
           const SizedBox(height: VaultSpacing.md),
           _kvRow('Account type', prettyType),
-          const SizedBox(height: VaultSpacing.sm),
-          _kvRow('Self-service maximum', selfServiceMaxLabel),
         ],
       ),
     );
