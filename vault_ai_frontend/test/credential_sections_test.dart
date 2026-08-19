@@ -1,5 +1,3 @@
-
-
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -9,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_cards.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
-
 
 ChatMessage _extractionReviewMsg({
   required List<Map<String, dynamic>> records,
@@ -29,7 +26,6 @@ ChatMessage _extractionReviewMsg({
     },
   );
 }
-
 
 Future<void> _pumpExtractionReview(
   WidgetTester tester, {
@@ -65,11 +61,9 @@ Future<void> _pumpExtractionReview(
   await tester.pumpAndSettle();
 }
 
-
 void main() {
   group('CredentialExtractionReviewCard', () {
-    testWidgets('renders header + safety hint + records list',
-        (tester) async {
+    testWidgets('renders header + safety hint + records list', (tester) async {
       await _pumpExtractionReview(
         tester,
         msg: _extractionReviewMsg(
@@ -83,16 +77,18 @@ void main() {
           records: [
             {
               'service': 'Gmail',
-              'username': null,
-              'email': 'alice@example.com',
+              'fields': {
+                'email': 'alice@example.com',
+              },
               'password_present': true,
               'pin_present': false,
               'note_present': false,
             },
             {
               'service': 'Wells Fargo',
-              'username': null,
-              'email': 'alice@example.com',
+              'fields': {
+                'email': 'alice@example.com',
+              },
               'password_present': true,
               'pin_present': true,
               'note_present': true,
@@ -104,24 +100,23 @@ void main() {
       expect(find.text('Bitwarden export'), findsOneWidget);
       expect(find.text('Gmail'), findsOneWidget);
       expect(find.text('Wells Fargo'), findsOneWidget);
-      
-      expect(find.text('alice@example.com'), findsWidgets);
-      
+
+      expect(find.textContaining('alice@example.com'), findsWidgets);
+
       expect(find.text('password present'), findsNWidgets(2));
-      
+
       expect(find.text('PIN present'), findsOneWidget);
       expect(find.text('note present'), findsOneWidget);
-      
+
       expect(
         find.textContaining('Nothing is saved until you confirm'),
         findsOneWidget,
       );
     });
 
-    testWidgets('NEVER renders password / pin / note VALUES even if '
+    testWidgets(
+        'NEVER renders password / pin / note VALUES even if '
         'records carry them', (tester) async {
-      
-      
       await _pumpExtractionReview(
         tester,
         msg: _extractionReviewMsg(
@@ -134,7 +129,6 @@ void main() {
               'password_present': true,
               'pin_present': true,
               'note_present': true,
-              
               'password': 'hunter2-extraction',
               'pin': '7777',
               'note': 'note-value-extraction',
@@ -148,7 +142,8 @@ void main() {
         'note-value-extraction',
       ]) {
         expect(
-          find.textContaining(leaked), findsNothing,
+          find.textContaining(leaked),
+          findsNothing,
           reason: 'extraction review must never render value "$leaked"',
         );
       }
@@ -176,7 +171,8 @@ void main() {
       expect(find.text('password present'), findsNothing);
     });
 
-    testWidgets('shows "Run vault analysis" hint when text_available is '
+    testWidgets(
+        'shows "Run vault analysis" hint when text_available is '
         'false', (tester) async {
       await _pumpExtractionReview(
         tester,
@@ -202,8 +198,7 @@ void main() {
     });
 
     test('chat_bubble.dart routes kCredentialExtractionReview', () async {
-      final src =
-          await File('lib/ui/chat/chat_bubble.dart').readAsString();
+      final src = await File('lib/ui/chat/chat_bubble.dart').readAsString();
       expect(src, contains('kCredentialExtractionReview'));
       expect(src, contains('CredentialExtractionReviewCard'));
     });
@@ -214,10 +209,9 @@ void main() {
       expect(src, contains("type == 'credential_extraction_review'"));
     });
 
-    test('main.dart parser still threads sections + actions + '
+    test(
+        'main.dart parser still threads sections + actions + '
         'has_content_matches into payload', () async {
-      
-      
       final src = await File('lib/main.dart').readAsString();
       expect(src, contains("'sections': sections"),
           reason: 'parser must thread sections into the payload');

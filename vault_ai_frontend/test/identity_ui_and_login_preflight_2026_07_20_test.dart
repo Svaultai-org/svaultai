@@ -304,7 +304,12 @@ void main() {
       // the last thing inside _submit; the sign-up page's own error
       // stringifier lives BEFORE _UnlockPageState in the file and
       // must not be picked up here.
-      final endIdx = src.indexOf('_useAnotherVault', startIdx);
+      // Match the method declaration rather than references in comments or
+      // the single-route transition guard near the top of UnlockPage.
+      final endIdx = src.indexOf(
+        'Future<void> _useAnotherVault()',
+        startIdx,
+      );
       expect(endIdx, greaterThan(startIdx));
       final window = src.substring(startIdx, endIdx);
       // Same regression guard as the LoginPage version.
