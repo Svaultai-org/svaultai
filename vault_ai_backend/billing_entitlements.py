@@ -37,6 +37,28 @@ class StaleProviderEventError(BillingProviderError):
     """An older provider event attempted to overwrite newer state."""
 
 
+class ConflictingActiveEntitlementError(BillingProviderError):
+    """A second active tier was presented without provider replacement proof."""
+
+
+@dataclass(frozen=True)
+class ScheduledEntitlementReplacement:
+    """A provider-verified future total entitlement that does not grant yet."""
+
+    product_id: str
+    plan_id: str
+    entitlement_bytes: int
+    effective_at: datetime
+
+    def validate(self) -> None:
+        if not self.product_id or not self.plan_id:
+            raise ValueError("scheduled replacement identity is required")
+        if self.entitlement_bytes < 0:
+            raise ValueError("scheduled replacement entitlement is invalid")
+        if self.effective_at.tzinfo is None:
+            raise ValueError("scheduled replacement time must be timezone-aware")
+
+
 @dataclass(frozen=True)
 class VerifiedEntitlementUpdate:
     provider: str
@@ -216,6 +238,10 @@ def upsert_verified_entitlement(
     if not account_id:
         raise ValueError("account_id required")
     update.validate()
+    if update.provider == "google_play":
+        raise ValueError(
+            "Google Play storage must use atomic one-of-N reconciliation"
+        )
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -327,6 +353,270 @@ def upsert_verified_entitlement(
                 update.provider_event_id, update.quantity,
                 update.entitlement_bytes,
                 Json({"product_id": update.product_id, "status": update.status}),
+            ),
+        )
+        conn.commit()
+        return entitlement_id, transition
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def reconcile_google_play_storage_entitlement(
+    account_id: str,
+    update: VerifiedEntitlementUpdate,
+    *,
+    linked_purchase_id: str = "",
+    scheduled_replacement: Optional[ScheduledEntitlementReplacement] = None,
+) -> tuple[str, str]:
+    """Atomically reconcile one authoritative Google Play storage tier.
+
+    The account/family advisory lock and partial unique index added by the
+    companion migration protect against concurrent client verification and
+    RTDN workers. A second active purchase is accepted only when Google links
+    it to the currently granting purchase. Scheduled replacements are stored
+    on the current row but contribute no bytes until Play reports them active.
+    """
+    if not account_id:
+        raise ValueError("account_id required")
+    update.validate()
+    if update.provider != "google_play":
+        raise ValueError("Google Play reconciliation requires google_play")
+    if scheduled_replacement is not None:
+        scheduled_replacement.validate()
+        if update.status not in GRANTING_STATUSES:
+            raise ValueError("a non-granting purchase cannot schedule a tier")
+        if scheduled_replacement.entitlement_bytes >= update.entitlement_bytes:
+            raise ValueError("deferred storage replacement must be a lower tier")
+    linked_purchase_id = (linked_purchase_id or "").strip()
+    if linked_purchase_id == update.external_purchase_id:
+        raise ValueError("a purchase cannot replace itself")
+
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        # Serialize all changes for one account/family and also serialize the
+        # global purchase token so cross-account restore races fail cleanly.
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"{account_id}:google_play:storage",),
+        )
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"google_play:purchase:{update.external_purchase_id}",),
+        )
+        cur.execute(
+            """
+            SELECT entitlement_id, account_id, status, last_provider_event_at,
+                   superseded_by_purchase_id
+              FROM billing_entitlements
+             WHERE provider = 'google_play'
+               AND external_purchase_id = %s
+             FOR UPDATE
+            """,
+            (update.external_purchase_id,),
+        )
+        existing = cur.fetchone()
+        if existing and str(existing["account_id"]) != str(account_id):
+            raise PurchaseAlreadyBoundError(
+                "verified purchase is already bound to another account"
+            )
+        if (
+            existing
+            and update.provider_event_at
+            and existing.get("last_provider_event_at")
+            and update.provider_event_at < existing["last_provider_event_at"]
+        ):
+            raise StaleProviderEventError("older provider event ignored")
+        if (
+            existing
+            and existing.get("superseded_by_purchase_id")
+            and update.status in GRANTING_STATUSES
+        ):
+            raise StaleProviderEventError("superseded purchase cannot grant")
+
+        linked = None
+        if linked_purchase_id:
+            cur.execute(
+                """
+                SELECT entitlement_id, account_id, external_purchase_id, status
+                  FROM billing_entitlements
+                 WHERE provider = 'google_play'
+                   AND external_purchase_id = %s
+                 FOR UPDATE
+                """,
+                (linked_purchase_id,),
+            )
+            linked = cur.fetchone()
+            if linked and str(linked["account_id"]) != str(account_id):
+                raise PurchaseAlreadyBoundError(
+                    "linked purchase is bound to another account"
+                )
+
+        cur.execute(
+            """
+            SELECT entitlement_id, external_purchase_id
+              FROM billing_entitlements
+             WHERE account_id = %s
+               AND provider = 'google_play'
+               AND entitlement_family = 'storage'
+               AND verification_state = 'verified'
+               AND status IN ('active', 'reactivated', 'grace_period')
+             FOR UPDATE
+            """,
+            (account_id,),
+        )
+        active_rows = cur.fetchall() or []
+        other_active = [
+            row for row in active_rows
+            if str(row["external_purchase_id"]) != update.external_purchase_id
+        ]
+        if update.status in GRANTING_STATUSES and other_active:
+            if (
+                len(other_active) != 1
+                or not linked_purchase_id
+                or str(other_active[0]["external_purchase_id"])
+                != linked_purchase_id
+            ):
+                raise ConflictingActiveEntitlementError(
+                    "active Google Play tier requires replacement linkage"
+                )
+
+        # Only a granting replacement supersedes its predecessor. Pending or
+        # canceled replacement attempts must leave the existing grant intact.
+        if update.status in GRANTING_STATUSES and linked_purchase_id and linked:
+            cur.execute(
+                """
+                UPDATE billing_entitlements
+                   SET status = CASE
+                           WHEN status IN ('active', 'reactivated', 'grace_period')
+                           THEN 'canceled'
+                           ELSE status
+                       END,
+                       auto_renewing = CASE
+                           WHEN status IN ('active', 'reactivated', 'grace_period')
+                           THEN FALSE
+                           ELSE auto_renewing
+                       END,
+                       cancel_at_period_end = CASE
+                           WHEN status IN ('active', 'reactivated', 'grace_period')
+                           THEN FALSE
+                           ELSE cancel_at_period_end
+                       END,
+                       superseded_by_purchase_id = %s,
+                       updated_at = NOW()
+                 WHERE entitlement_id = %s
+                """,
+                (update.external_purchase_id, linked["entitlement_id"]),
+            )
+
+        previous = str(existing["status"]) if existing else "none"
+        metadata = json.loads(json.dumps(dict(update.metadata or {}), default=str))
+        scheduled_product_id = (
+            scheduled_replacement.product_id if scheduled_replacement else None
+        )
+        scheduled_plan_id = (
+            scheduled_replacement.plan_id if scheduled_replacement else None
+        )
+        scheduled_bytes = (
+            scheduled_replacement.entitlement_bytes
+            if scheduled_replacement else None
+        )
+        scheduled_effective_at = (
+            scheduled_replacement.effective_at if scheduled_replacement else None
+        )
+        if existing:
+            entitlement_id = str(existing["entitlement_id"])
+            cur.execute(
+                """
+                UPDATE billing_entitlements
+                   SET entitlement_family = 'storage', product_id = %s,
+                       plan_id = %s, quantity = %s, entitlement_bytes = %s,
+                       status = %s, provider_status = %s,
+                       verification_state = 'verified', environment = %s,
+                       auto_renewing = %s, cancel_at_period_end = %s,
+                       current_period_start = %s, current_period_end = %s,
+                       scheduled_product_id = %s, scheduled_plan_id = %s,
+                       scheduled_entitlement_bytes = %s,
+                       scheduled_effective_at = %s,
+                       last_verified_at = NOW(), last_provider_event_at = %s,
+                       last_provider_event_id = %s, metadata_jsonb = %s,
+                       updated_at = NOW()
+                 WHERE entitlement_id = %s
+                """,
+                (
+                    update.product_id, update.plan_id, update.quantity,
+                    update.entitlement_bytes, update.status,
+                    update.provider_status, update.environment,
+                    update.auto_renewing, update.cancel_at_period_end,
+                    update.current_period_start, update.current_period_end,
+                    scheduled_product_id, scheduled_plan_id, scheduled_bytes,
+                    scheduled_effective_at, update.provider_event_at,
+                    update.provider_event_id, Json(metadata), entitlement_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO billing_entitlements (
+                    account_id, provider, entitlement_family,
+                    external_purchase_id, original_transaction_id,
+                    product_id, plan_id, quantity, entitlement_bytes,
+                    status, provider_status, verification_state, environment,
+                    auto_renewing, cancel_at_period_end, current_period_start,
+                    current_period_end, scheduled_product_id,
+                    scheduled_plan_id, scheduled_entitlement_bytes,
+                    scheduled_effective_at, last_verified_at,
+                    last_provider_event_at, last_provider_event_id,
+                    metadata_jsonb
+                ) VALUES (
+                    %s, 'google_play', 'storage', %s, %s, %s, %s, %s, %s,
+                    %s, %s, 'verified', %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, NOW(), %s, %s, %s
+                )
+                RETURNING entitlement_id
+                """,
+                (
+                    account_id, update.external_purchase_id,
+                    update.original_transaction_id, update.product_id,
+                    update.plan_id, update.quantity, update.entitlement_bytes,
+                    update.status, update.provider_status, update.environment,
+                    update.auto_renewing, update.cancel_at_period_end,
+                    update.current_period_start, update.current_period_end,
+                    scheduled_product_id, scheduled_plan_id, scheduled_bytes,
+                    scheduled_effective_at, update.provider_event_at,
+                    update.provider_event_id, Json(metadata),
+                ),
+            )
+            entitlement_id = str(cur.fetchone()["entitlement_id"])
+
+        transition = "reactivated" if (
+            previous in {"delinquent", "canceled", "expired", "revoked", "refunded"}
+            and update.status in GRANTING_STATUSES
+        ) else (
+            "unchanged"
+            if previous == update.status
+            else f"{previous}_to_{update.status}"
+        )
+        cur.execute(
+            """
+            INSERT INTO subscription_events (
+                account_id, event_type, source, source_event_id, sales_channel,
+                to_block_count, to_purchased_bytes, occurred_at, payload_jsonb
+            ) VALUES (%s, %s, 'google_play', %s, 'self_service', %s, %s, NOW(), %s)
+            """,
+            (
+                account_id, transition[:64], update.provider_event_id,
+                update.quantity, update.entitlement_bytes,
+                Json({
+                    "product_id": update.product_id,
+                    "status": update.status,
+                    "entitlement_family": "storage",
+                    "replacement": bool(linked_purchase_id),
+                    "scheduled_product_id": scheduled_product_id,
+                }),
             ),
         )
         conn.commit()
@@ -630,9 +920,18 @@ def supersede_linked_purchase(
     *, provider: str, account_id: str,
     linked_purchase_id: str, replacement_purchase_id: str,
 ) -> None:
-    """Remove a provider-declared predecessor grant without rebinding it."""
+    """Legacy helper for non-Google providers.
+
+    Google Play replacement must never use this separate transaction; its
+    predecessor and replacement are reconciled atomically by
+    reconcile_google_play_storage_entitlement.
+    """
     if provider not in PROVIDERS or not linked_purchase_id:
         return
+    if provider == "google_play":
+        raise ValueError(
+            "Google Play replacement requires atomic one-of-N reconciliation"
+        )
     if linked_purchase_id == replacement_purchase_id:
         return
     conn = get_db()
@@ -665,7 +964,8 @@ def get_normalized_account_entitlement(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT provider, status, quantity, entitlement_bytes,
+            SELECT provider, entitlement_family, external_purchase_id,
+                   status, quantity, entitlement_bytes,
                    current_period_end, cancel_at_period_end
               FROM billing_entitlements
              WHERE account_id = %s
@@ -681,7 +981,7 @@ def get_normalized_account_entitlement(
         return None
 
     now = datetime.now(timezone.utc)
-    active = [
+    active_candidates = [
         r for r in rows
         if str(r["status"]) in GRANTING_STATUSES
         and (
@@ -693,6 +993,21 @@ def get_normalized_account_entitlement(
             ) > now
         )
     ]
+    # Google storage products are mutually exclusive total entitlements. The
+    # database constraint should make this list at most one; selecting only the
+    # newest row is an additional fail-safe during rolling migration and means
+    # an old+new replacement can never be added together.
+    google_storage = [
+        r for r in active_candidates
+        if str(r["provider"]) == "google_play"
+        and str(r.get("entitlement_family") or "storage") == "storage"
+    ]
+    active = [
+        r for r in active_candidates
+        if r not in google_storage
+    ]
+    if google_storage:
+        active.append(google_storage[0])
     purchased = sum(int(r["entitlement_bytes"] or 0) for r in active)
     blocks = sum(int(r["quantity"] or 0) for r in active)
     sources = sorted({str(r["provider"]) for r in active})
