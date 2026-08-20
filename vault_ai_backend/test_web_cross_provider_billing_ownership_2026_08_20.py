@@ -76,7 +76,36 @@ def _row(
         "ownership_target_provider": migration_target,
         "ownership_migration_status": migration_status,
         "ownership_reason_code": ownership_reason,
+        "ownership_current_entitlement_id": None,
+        "ownership_legacy_subscription_account_id": None,
+        "ownership_legacy_source_subscription_id": None,
+        "entitlement_source": "billing_entitlements",
     }
+
+
+def _legacy_row(
+    *,
+    display_tier: str = "50 GB",
+    status: str = "active",
+    migration_status: str = "none",
+    ownership_reason: str | None = None,
+):
+    row = _row(
+        "stripe_legacy", "", 1, display_tier=display_tier,
+        migration_current="web_card", migration_status=migration_status,
+        ownership_reason=ownership_reason,
+    )
+    row.update({
+        "entitlement_id": None,
+        "external_purchase_id": "sub_legacy_fixture",
+        "product_id": None,
+        "plan_id": None,
+        "status": status,
+        "ownership_legacy_subscription_account_id": ACCOUNT_ID,
+        "ownership_legacy_source_subscription_id": "sub_legacy_fixture",
+        "entitlement_source": "account_subscriptions",
+    })
+    return row
 
 
 @pytest.mark.parametrize(
@@ -158,6 +187,68 @@ def test_multiple_provider_conflict_never_sums(monkeypatch, providers):
         "multiple_active_storage_entitlements"
     )
     assert normalized.web_card_purchase_allowed is False
+
+
+def test_legacy_stripe_only_is_web_card_incumbent(monkeypatch):
+    legacy = _legacy_row()
+    monkeypatch.setattr(ent, "get_db", lambda: _Connection([legacy]))
+
+    normalized = ent.get_normalized_account_entitlement(ACCOUNT_ID)
+
+    assert normalized.provider == "web_card"
+    assert normalized.current_provider == "web_card"
+    assert normalized.product_id is None
+    assert normalized.storage_bytes == 53_687_091_200
+    assert normalized.ownership_status == "owned"
+    assert normalized.web_card_purchase_allowed is False
+
+
+@pytest.mark.parametrize("later_provider", [
+    "google_play", "apple", "web_card",
+])
+def test_legacy_incumbent_conflicts_with_every_later_provider_without_summing(
+    monkeypatch, later_provider,
+):
+    legacy = _legacy_row(
+        migration_status="conflict",
+        ownership_reason="multiple_active_storage_entitlements",
+    )
+    later = _row(
+        later_provider, f"{later_provider}.250gb", 5,
+        display_tier="250 GB", migration_current="web_card",
+        migration_status="conflict",
+        ownership_reason="multiple_active_storage_entitlements",
+    )
+    later["ownership_legacy_subscription_account_id"] = ACCOUNT_ID
+    later["ownership_legacy_source_subscription_id"] = "sub_legacy_fixture"
+    monkeypatch.setattr(
+        ent, "get_db", lambda: _Connection([legacy, later]),
+    )
+
+    normalized = ent.get_normalized_account_entitlement(ACCOUNT_ID)
+
+    assert normalized.provider == "web_card"
+    assert normalized.current_provider == "web_card"
+    assert normalized.storage_bytes == legacy["entitlement_bytes"]
+    assert normalized.storage_bytes != (
+        legacy["entitlement_bytes"] + later["entitlement_bytes"]
+    )
+    assert normalized.ownership_status == "conflict"
+    assert normalized.conflict_reason_code == (
+        "multiple_active_storage_entitlements"
+    )
+    assert normalized.web_card_purchase_allowed is False
+
+
+def test_terminal_legacy_stripe_row_does_not_grant_or_revive(monkeypatch):
+    terminal = _legacy_row(status="expired")
+    monkeypatch.setattr(ent, "get_db", lambda: _Connection([terminal]))
+
+    normalized = ent.get_normalized_account_entitlement(ACCOUNT_ID)
+
+    assert normalized.provider == "free"
+    assert normalized.purchased_bytes == 0
+    assert normalized.has_active_subscription is False
 
 
 def test_pending_migration_keeps_current_provider_authoritative(monkeypatch):
@@ -262,6 +353,38 @@ def test_verified_store_entitlement_overrides_expired_legacy_admin_grant(
     assert resolved.web_card_purchase_allowed is False
 
 
+def test_legacy_fallback_preserves_capacity_and_blocks_second_web_purchase(
+    monkeypatch,
+):
+    account_row = {
+        "account_id": ACCOUNT_ID,
+        "account_type": "individual",
+        "sales_channel": "self_service",
+        "status": "active",
+        "source": "stripe",
+        "block_count": 1,
+        "purchased_bytes": 53_687_091_200,
+        "storage_bytes_grant": 0,
+        "storage_bytes_grant_expires_at": None,
+        "current_period_end": FUTURE,
+        "admin_grant_expired": False,
+        "cancel_at_period_end": False,
+        "used_bytes": 0,
+    }
+    monkeypatch.setattr(
+        billing, "get_db", lambda: _Connection([account_row]),
+    )
+    monkeypatch.setattr(
+        ent, "get_normalized_account_entitlement", lambda _account: None,
+    )
+
+    resolved = billing.get_entitlement(ACCOUNT_ID)
+
+    assert resolved.provider == "web_card"
+    assert resolved.effective_limit_bytes == 53_687_091_200
+    assert resolved.web_card_purchase_allowed is False
+
+
 @pytest.mark.asyncio
 async def test_billing_me_exposes_lossless_owner_contract(monkeypatch):
     fixture = billing.StorageEntitlement(
@@ -323,6 +446,30 @@ def test_migration_defines_owner_and_pending_provider_state():
     assert "migration_status" in migration
     assert "one_active_storage_billing_owner" in migration
     assert "multiple_active_storage_entitlements" in migration
+
+
+def test_migration_backfills_legacy_stripe_idempotently_and_guards_both_sides():
+    migration = Path(
+        "migrations/versions/0044_storage_billing_ownership.py"
+    ).read_text(encoding="utf-8")
+    assert "FROM account_subscriptions s" in migration
+    assert "legacy_subscription_account_id" in migration
+    assert "legacy_source_subscription_id" in migration
+    assert "'stripe_legacy'::TEXT" in migration
+    assert "'active', 'in_grace', 'canceled_pending'" in migration
+    assert "ON CONFLICT (account_id, entitlement_family) DO NOTHING" in migration
+    assert "CREATE TRIGGER billing_entitlements_one_storage_owner" in migration
+    assert "CREATE TRIGGER account_subscriptions_one_storage_owner" in migration
+    assert "explicit provider migration required" in migration
+
+
+def test_legacy_capacity_is_read_from_existing_purchased_bytes():
+    migration = Path(
+        "migrations/versions/0044_storage_billing_ownership.py"
+    ).read_text(encoding="utf-8")
+    assert "s.purchased_bytes > 0" in migration
+    assert "UPDATE account_subscriptions" not in migration
+    assert "UPDATE billing_entitlements" not in migration
 
 
 def test_database_owner_constraint_has_operator_safe_domain_error():

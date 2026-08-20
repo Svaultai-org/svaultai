@@ -502,9 +502,10 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
             current_provider = provider
             subscription_status = status
             ownership_status = "owned"
-            web_card_purchase_allowed = provider not in {
-                "google_play", "apple"
-            }
+            # An active legacy web-card subscription already owns storage.
+            # A second web checkout is an explicit migration/upgrade flow,
+            # never a generic purchase.
+            web_card_purchase_allowed = False
             try:
                 from billing_entitlements import canonical_storage_display_tier
                 display_tier = canonical_storage_display_tier(purchased_active)
