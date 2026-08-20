@@ -19,6 +19,9 @@ const String kAppleStoreKitEnvironment = String.fromEnvironment(
 );
 
 const Duration kStoreConnectionTimeout = Duration(seconds: 12);
+const String kGooglePlayPackageName = 'com.svaultai.app';
+const String kAppleManageSubscriptionsUrl =
+    'https://apps.apple.com/account/subscriptions';
 
 String? buildCheckoutRedirectUrl(String queryFlag) {
   if (!kIsWeb) return null;
@@ -60,10 +63,7 @@ Uri buildGooglePlaySubscriptionManagementUri({
   return Uri.https(
     'play.google.com',
     '/store/account/subscriptions',
-    <String, String>{
-      'sku': productId,
-      'package': packageName,
-    },
+    <String, String>{'sku': productId, 'package': packageName},
   );
 }
 
@@ -75,8 +75,10 @@ bool shouldShowStoreConnectionRetry({
 }) {
   if (loading || connectionInFlight) return false;
   if ((connectionError ?? '').trim().isNotEmpty) return true;
-  return const <String>{'unavailable', 'timed_out'}
-      .contains((storeState ?? '').trim().toLowerCase());
+  return const <String>{
+    'unavailable',
+    'timed_out',
+  }.contains((storeState ?? '').trim().toLowerCase());
 }
 
 @immutable
@@ -106,6 +108,71 @@ List<StoreStorageTierChoice> selectableGooglePlayStorageTiers(
   return List<StoreStorageTierChoice>.unmodifiable(
     choices.where((choice) => choice.rank > currentTierRank),
   );
+}
+
+String billingProvider(Map<String, dynamic> data) {
+  final authoritative = data['provider']?.toString().trim().toLowerCase();
+  if (authoritative != null && authoritative.isNotEmpty) {
+    return authoritative == 'stripe_legacy' ? 'web_card' : authoritative;
+  }
+  final legacy = data['source']?.toString().trim().toLowerCase() ?? 'free';
+  return switch (legacy) {
+    'stripe' || 'stripe_legacy' => 'web_card',
+    'none' || 'safe_default' => 'free',
+    _ => legacy,
+  };
+}
+
+String billingDisplayTier(Map<String, dynamic> data) {
+  final explicit = data['display_tier']?.toString().trim();
+  if (explicit != null && explicit.isNotEmpty) return explicit;
+  final productId = data['product_id']?.toString().toLowerCase() ?? '';
+  if (productId.endsWith('1tb') || productId.contains('1tb')) return '1 TB';
+  final bytes =
+      (data['storage_bytes'] as num?)?.toInt() ??
+      (data['effective_limit_bytes'] as num?)?.toInt() ??
+      0;
+  if (bytes == 1073741824000) return '1 TB';
+  return formatBytes(bytes);
+}
+
+bool webCardPurchaseAllowed(Map<String, dynamic> data) {
+  final provider = billingProvider(data);
+  if ({'google_play', 'apple'}.contains(provider)) return false;
+  if (data['conflict_reason_code'] != null ||
+      data['migration_status'] == 'pending') {
+    return false;
+  }
+  if (data['web_card_purchase_allowed'] is bool) {
+    return data['web_card_purchase_allowed'] == true;
+  }
+  return true;
+}
+
+Uri? providerManageSubscriptionUri(Map<String, dynamic> data) {
+  if (!hasActiveSubscription(data)) return null;
+  switch (billingProvider(data)) {
+    case 'google_play':
+      final productId = data['product_id']?.toString().trim() ?? '';
+      if (productId.isEmpty) return null;
+      return Uri.https('play.google.com', '/store/account/subscriptions', {
+        'sku': productId,
+        'package': kGooglePlayPackageName,
+      });
+    case 'apple':
+      return Uri.parse(kAppleManageSubscriptionsUrl);
+    default:
+      return null;
+  }
+}
+
+String billedThroughLabel(Map<String, dynamic> data) {
+  return switch (billingProvider(data)) {
+    'google_play' => 'Billed through Google Play',
+    'apple' => 'Billed through Apple',
+    'web_card' => 'Billed on SVaultAI web',
+    _ => '',
+  };
 }
 
 class StoragePage extends StatefulWidget {
@@ -180,30 +247,35 @@ class _StoragePageState extends State<StoragePage> {
         gateway: FlutterAppleBillingGateway(),
         productId: productId,
         appAccountToken: appAccountToken,
-        environment:
-            kAppleStoreKitEnvironment == 'sandbox' ? 'sandbox' : 'production',
-        verifyPurchase: ({
-          required String signedTransaction,
-          required String environment,
-        }) =>
-            _client.verifyAppleTransaction(
-          authToken: authToken,
-          signedTransaction: signedTransaction,
-          environment: environment,
-        ),
+        environment: kAppleStoreKitEnvironment == 'sandbox'
+            ? 'sandbox'
+            : 'production',
+        verifyPurchase:
+            ({
+              required String signedTransaction,
+              required String environment,
+            }) => _client.verifyAppleTransaction(
+              authToken: authToken,
+              signedTransaction: signedTransaction,
+              environment: environment,
+            ),
       );
       controller.addListener(_onAppleBillingChanged);
       setState(() => _appleBilling = controller);
       await controller.initialize();
     } on TimeoutException {
       if (mounted) {
-        setState(() => _storeConnectionError =
-            'The App Store took too long to respond. Tap Retry.');
+        setState(
+          () => _storeConnectionError =
+              'The App Store took too long to respond. Tap Retry.',
+        );
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _storeConnectionError =
-            'The App Store is temporarily unavailable. Tap Retry.');
+        setState(
+          () => _storeConnectionError =
+              'The App Store is temporarily unavailable. Tap Retry.',
+        );
       }
     } finally {
       if (mounted) setState(() => _storeConnectionInFlight = false);
@@ -297,20 +369,18 @@ class _StoragePageState extends State<StoragePage> {
         gateway: FlutterPlayBillingGateway(),
         catalog: catalog,
         accountToken: accountToken,
-        verifyPurchase: ({
-          required String productId,
-          required String purchaseToken,
-        }) =>
-            _client.verifyGooglePlayPurchase(
-          authToken: authToken,
-          productId: productId,
-          purchaseToken: purchaseToken,
-        ),
+        verifyPurchase:
+            ({required String productId, required String purchaseToken}) =>
+                _client.verifyGooglePlayPurchase(
+                  authToken: authToken,
+                  productId: productId,
+                  purchaseToken: purchaseToken,
+                ),
         reconcilePurchases: ({required List<String> purchaseTokens}) =>
             _client.reconcileGooglePlayPurchases(
-          authToken: authToken,
-          purchaseTokens: purchaseTokens,
-        ),
+              authToken: authToken,
+              purchaseTokens: purchaseTokens,
+            ),
       );
       controller.addListener(_onGooglePlayBillingChanged);
       setState(() => _playBilling = controller);
@@ -318,13 +388,17 @@ class _StoragePageState extends State<StoragePage> {
       await controller.restore(silent: true);
     } on TimeoutException {
       if (mounted) {
-        setState(() => _storeConnectionError =
-            'Google Play took too long to respond. Tap Retry.');
+        setState(
+          () => _storeConnectionError =
+              'Google Play took too long to respond. Tap Retry.',
+        );
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _storeConnectionError =
-            'Google Play Billing is temporarily unavailable. Tap Retry.');
+        setState(
+          () => _storeConnectionError =
+              'Google Play Billing is temporarily unavailable. Tap Retry.',
+        );
       }
     } finally {
       if (mounted) setState(() => _storeConnectionInFlight = false);
@@ -359,14 +433,17 @@ class _StoragePageState extends State<StoragePage> {
   Future<void> _runPostCheckoutPoll() async {
     final app = context.read<AppState>();
     if (!mounted) return;
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const _UpgradeProgressDialog(),
-    ));
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const _UpgradeProgressDialog(),
+      ),
+    );
 
-    final reachedData =
-        await _pollEntitlementUntilPaidSubscriptionActive(app: app);
+    final reachedData = await _pollEntitlementUntilPaidSubscriptionActive(
+      app: app,
+    );
 
     if (mounted) {
       Navigator.of(context, rootNavigator: true).pop();
@@ -549,7 +626,7 @@ class _StoragePageState extends State<StoragePage> {
         authToken: token,
         blockCount: blockCount,
         successUrl: buildCheckoutRedirectUrl('success'),
-        cancelUrl:  buildCheckoutRedirectUrl('cancel'),
+        cancelUrl: buildCheckoutRedirectUrl('cancel'),
       );
 
       final action = (result['action'] as String?) ?? 'open_checkout';
@@ -559,11 +636,13 @@ class _StoragePageState extends State<StoragePage> {
         final targetGb = newBlocks * 50;
 
         if (!mounted) return;
-        unawaited(showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => const _UpgradeProgressDialog(),
-        ));
+        unawaited(
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const _UpgradeProgressDialog(),
+          ),
+        );
 
         final reached = await _pollEntitlementForBlocks(
           targetBlocks: newBlocks,
@@ -613,9 +692,8 @@ class _StoragePageState extends State<StoragePage> {
       } else {
         await showDialog<void>(
           context: context,
-          builder: (_) => _UpgradeErrorDialog(
-            message: _friendlyCheckoutErrorMessage(e),
-          ),
+          builder: (_) =>
+              _UpgradeErrorDialog(message: _friendlyCheckoutErrorMessage(e)),
         );
       }
     } finally {
@@ -636,9 +714,7 @@ class _StoragePageState extends State<StoragePage> {
       if (attempt > 0) await Future.delayed(interval);
       if (!mounted) return false;
       try {
-        final data = await _client.getBillingMe(
-          authToken: token,
-        );
+        final data = await _client.getBillingMe(authToken: token);
         if (!mounted) return false;
         setState(() {
           _data = data;
@@ -678,6 +754,28 @@ class _StoragePageState extends State<StoragePage> {
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('Could not open portal: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busyPurchase = false);
+    }
+  }
+
+  Future<void> _onManageProviderSubscription(Map<String, dynamic> data) async {
+    final uri = providerManageSubscriptionUri(data);
+    if (uri == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _busyPurchase = true);
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) throw StateError('subscription_management_unavailable');
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Could not open subscription management.'),
+        ),
       );
     } finally {
       if (mounted) setState(() => _busyPurchase = false);
@@ -740,6 +838,8 @@ class _StoragePageState extends State<StoragePage> {
     final apple = _appleBilling;
     final activeSubscription = hasActiveSubscription(data);
     final activeProvider = billingProviderLabel(data);
+    final provider = billingProvider(data);
+    final providerManageUri = providerManageSubscriptionUri(data);
     final playOwnsSubscription =
         activeSubscription && billingSource(data) == 'google_play';
     final appleOwnsSubscription =
@@ -760,28 +860,28 @@ class _StoragePageState extends State<StoragePage> {
     }.contains(play?.state);
     final playMessage = playOwnsSubscription
         ? (currentPlayTier == null
-            ? 'The active Google Play storage tier could not be matched. '
-                'Use Restore purchases / Refresh.'
-            : (!playCatalogReady
-                ? (_storeConnectionError ?? play?.message)
-                : (showPlayOperationalMessage ? play?.message : null)))
+              ? 'The active Google Play storage tier could not be matched. '
+                    'Use Restore purchases / Refresh.'
+              : (!playCatalogReady
+                    ? (_storeConnectionError ?? play?.message)
+                    : (showPlayOperationalMessage ? play?.message : null)))
         : activeSubscription
-            ? 'Your storage entitlement is active through $activeProvider. '
-                'It is not a Google Play subscription.'
-            : (_storeConnectionError ??
-                play?.message ??
-                (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
+        ? 'Your storage entitlement is active through $activeProvider. '
+              'It is not a Google Play subscription.'
+        : (_storeConnectionError ??
+              play?.message ??
+              (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
     final appleMessage = appleOwnsSubscription
         ? 'Your App Store storage subscription is active. Billing and '
-            'cancellation are managed by Apple.'
+              'cancellation are managed by Apple.'
         : activeSubscription
-            ? 'Your storage entitlement is active through $activeProvider. '
-                'It is not an App Store subscription.'
-            : (_storeConnectionError ??
-                apple?.message ??
-                (apple?.state == 'ready'
-                    ? null
-                    : 'Connecting to the App Store…'));
+        ? 'Your storage entitlement is active through $activeProvider. '
+              'It is not an App Store subscription.'
+        : (_storeConnectionError ??
+              apple?.message ??
+              (apple?.state == 'ready'
+                  ? null
+                  : 'Connecting to the App Store…'));
     final storeCanBuy = _usesGooglePlayBilling
         ? (play?.canBuy ?? false)
         : (_usesAppleBilling && (apple?.canBuy ?? false));
@@ -790,12 +890,14 @@ class _StoragePageState extends State<StoragePage> {
       for (final tier in play!.catalog) {
         final product = play.productFor(tier.productId);
         if (product == null) continue;
-        allPlayTierChoices.add(StoreStorageTierChoice(
-          productId: tier.productId,
-          capacityLabel: tier.capacityLabel,
-          localizedPrice: product.price,
-          rank: tier.rank,
-        ));
+        allPlayTierChoices.add(
+          StoreStorageTierChoice(
+            productId: tier.productId,
+            capacityLabel: tier.capacityLabel,
+            localizedPrice: product.price,
+            rank: tier.rank,
+          ),
+        );
       }
     }
     final playTierChoices = selectableGooglePlayStorageTiers(
@@ -811,53 +913,68 @@ class _StoragePageState extends State<StoragePage> {
             connectionError: _storeConnectionError,
           )
         : (_usesAppleBilling &&
-            shouldShowStoreConnectionRetry(
-              storeState: apple?.state,
-              loading: apple?.loading ?? false,
-              connectionInFlight: _storeConnectionInFlight,
-              connectionError: _storeConnectionError,
-            ));
+              shouldShowStoreConnectionRetry(
+                storeState: apple?.state,
+                loading: apple?.loading ?? false,
+                connectionInFlight: _storeConnectionInFlight,
+                connectionError: _storeConnectionError,
+              ));
     return StorageBody(
       data: data,
-      busy: _busyPurchase ||
+      busy:
+          _busyPurchase ||
           (play?.loading ?? false) ||
           (apple?.loading ?? false) ||
           _storeConnectionInFlight,
-      onBuyStorage: (_usesGooglePlayBilling || _usesAppleBilling) &&
+      onBuyStorage:
+          (_usesGooglePlayBilling || _usesAppleBilling) &&
               !activeSubscription &&
               storeCanBuy
           ? (_usesAppleBilling ? apple!.buy : null)
           : null,
-      onManageSubscription: playOwnsSubscription && currentPlayTier != null
-          ? () => _manageGooglePlaySubscription(
-                productId: currentPlayTier.productId,
-              )
-          : null,
+      onManageSubscription: kIsWeb
+          ? (providerManageUri != null
+                ? () => _onManageProviderSubscription(data)
+                : (provider == 'web_card' && activeSubscription
+                      ? _onManageSubscription
+                      : null))
+          : (playOwnsSubscription && currentPlayTier != null
+                ? () => _manageGooglePlaySubscription(
+                    productId: currentPlayTier.productId,
+                  )
+                : (appleOwnsSubscription && providerManageUri != null
+                      ? () => _onManageProviderSubscription(data)
+                      : null)),
       unavailableMessage: kIsWeb
-          ? 'Storage upgrades are temporarily unavailable while we update '
-              'our payment provider.'
+          ? (activeSubscription && {'google_play', 'apple'}.contains(provider)
+                ? 'Storage changes are managed through '
+                      '${provider == 'google_play' ? 'Google Play' : 'Apple'}. '
+                      'Web purchase is disabled while this subscription is active.'
+                : 'Storage upgrades are temporarily unavailable while we update '
+                      'our payment provider.')
           : (_usesGooglePlayBilling
-              ? playMessage
-              : (_usesAppleBilling
-                  ? appleMessage
-                  : 'Storage upgrades are not available on this platform.')),
+                ? playMessage
+                : (_usesAppleBilling
+                      ? appleMessage
+                      : 'Storage upgrades are not available on this platform.')),
       storePrice: _usesGooglePlayBilling
           ? (currentPlayTier == null
-              ? null
-              : play?.productFor(currentPlayTier.productId)?.price)
+                ? null
+                : play?.productFor(currentPlayTier.productId)?.price)
           : (_usesAppleBilling ? apple?.product?.price : null),
       activeStorePlanLabel: currentPlayTier?.capacityLabel,
       storeName: _usesAppleBilling ? 'the App Store' : 'Google Play',
       onRestorePurchases: _usesGooglePlayBilling && play?.available == true
           ? play!.restore
           : (_usesAppleBilling && apple?.available == true
-              ? apple!.restore
-              : null),
+                ? apple!.restore
+                : null),
       onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
       purchasablePlanLabel: _usesAppleBilling ? '50 GB' : null,
-      showStorePlanSummary: playOwnsSubscription,
+      showStorePlanSummary: !kIsWeb && playOwnsSubscription,
       storeTierChoices: playTierChoices,
-      onSelectStoreTier: _usesGooglePlayBilling &&
+      onSelectStoreTier:
+          _usesGooglePlayBilling &&
               storeCanBuy &&
               (!playOwnsSubscription || currentPlayTier != null)
           ? _buyGooglePlayTier
@@ -888,6 +1005,7 @@ bool isGrandfathered(Map<String, dynamic> data) {
 
 String formatBytes(num bytes) {
   if (bytes < 0) return '0 B';
+  if (bytes.toInt() == 1073741824000) return '1 TB';
   const kib = 1024.0;
   const mib = 1024.0 * 1024.0;
   const gib = 1024.0 * 1024.0 * 1024.0;
@@ -937,14 +1055,16 @@ bool hasActiveSubscription(Map<String, dynamic> data) {
   final flag = data['has_active_subscription'];
   if (flag is bool) return flag;
 
-  final source = (data['source'] as String?) ?? 'none';
-  final status = (data['status'] as String?) ?? 'none';
-  if (source != 'stripe') return false;
+  final provider = billingProvider(data);
+  final status =
+      data['subscription_status']?.toString() ??
+      data['status']?.toString() ??
+      'none';
+  if (!{'google_play', 'apple', 'web_card'}.contains(provider)) return false;
   return const {'active', 'in_grace', 'canceled_pending'}.contains(status);
 }
 
-String billingSource(Map<String, dynamic> data) =>
-    ((data['source'] as String?) ?? 'none').trim().toLowerCase();
+String billingSource(Map<String, dynamic> data) => billingProvider(data);
 
 String billingProviderLabel(Map<String, dynamic> data) {
   return switch (billingSource(data)) {
@@ -1030,17 +1150,25 @@ class StorageBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final used = (data['used_bytes'] as num?)?.toInt() ?? 0;
 
-    final limit = (data['effective_limit_bytes'] as num?)?.toInt() ??
+    final limit =
+        (data['effective_limit_bytes'] as num?)?.toInt() ??
         kVaultStorageLimitBytes;
     final percent = (data['percent_used'] as num?)?.toDouble() ?? 0.0;
     final accountType = (data['account_type'] as String?) ?? 'individual';
     final includedBytes =
         (data['included_bytes'] as num?)?.toInt() ?? kVaultStorageLimitBytes;
 
-    final canBuy = onBuyStorage != null && !busy;
-    final canManage = onManageSubscription != null &&
-        hasManageableStripeSubscription(data) &&
-        !busy;
+    final storeBilled =
+        hasActiveSubscription(data) &&
+        {'google_play', 'apple'}.contains(billingProvider(data));
+    final canBuy =
+        onBuyStorage != null && webCardPurchaseAllowed(data) && !busy;
+    final canManage =
+        onManageSubscription != null && hasActiveSubscription(data) && !busy;
+    final showPurchaseActions =
+        !storeBilled &&
+        webCardPurchaseAllowed(data) &&
+        (onBuyStorage != null || unavailableMessage == null);
 
     return ListView(
       padding: const EdgeInsets.symmetric(
@@ -1048,17 +1176,22 @@ class StorageBody extends StatelessWidget {
         vertical: VaultSpacing.xl,
       ),
       children: [
-        _UsageCard(
-          used: used,
-          limit: limit,
-          percentUsed: percent,
-        ),
+        _UsageCard(used: used, limit: limit, percentUsed: percent),
         const SizedBox(height: VaultSpacing.lg),
+        if (!showStorePlanSummary || !hasActiveSubscription(data)) ...[
+          _CurrentBillingPlanCard(
+            data: data,
+            busy: busy,
+            onManage: canManage ? onManageSubscription : null,
+          ),
+          const SizedBox(height: VaultSpacing.lg),
+        ],
         if (limitReachedWarning(percent))
           const _WarningBanner(
             severity: 'critical',
             icon: Icons.error_outline,
-            message: 'Storage limit reached. Upgrade storage to continue '
+            message:
+                'Storage limit reached. Upgrade storage to continue '
                 'uploading files.',
           )
         else if (nearsLimitWarning(percent))
@@ -1109,8 +1242,7 @@ class StorageBody extends StatelessWidget {
             busy: busy,
             onManage: onManageSubscription,
           )
-        else if (storeTierChoices.isEmpty &&
-            (onBuyStorage != null || unavailableMessage == null))
+        else if (storeTierChoices.isEmpty && showPurchaseActions)
           _PurchaseActionRow(
             canBuy: canBuy,
             canManage: canManage,
@@ -1133,7 +1265,8 @@ class StorageBody extends StatelessWidget {
             storeTierChoices.isEmpty) ...[
           const SizedBox(height: VaultSpacing.md),
           _BillingAvailabilityCard(
-            message: '$storePrice per month through $storeName. '
+            message:
+                '$storePrice per month through $storeName. '
                 'Adds 50 GB and renews automatically until canceled.',
             icon: Icons.shop_2_outlined,
           ),
@@ -1158,11 +1291,96 @@ class StorageBody extends StatelessWidget {
             grantBytes: (data['storage_bytes_grant'] as num?)?.toInt() ?? 0,
             includedBytes: includedBytes,
           ),
-        if (isGrandfathered(data))
-          const SizedBox(height: VaultSpacing.lg),
+        if (isGrandfathered(data)) const SizedBox(height: VaultSpacing.lg),
         if (showPricingExamples) const _PricingExamplesCard(),
         const SizedBox(height: VaultSpacing.xl),
       ],
+    );
+  }
+}
+
+class _CurrentBillingPlanCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final bool busy;
+  final VoidCallback? onManage;
+
+  const _CurrentBillingPlanCard({
+    required this.data,
+    required this.busy,
+    this.onManage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = billingProvider(data);
+    final active = hasActiveSubscription(data);
+    final conflict =
+        data['conflict_reason_code'] != null ||
+        data['ownership_status'] == 'conflict';
+    final tier = billingDisplayTier(data);
+    final freeLabel = provider == 'free' && !active;
+    final billedThrough = billedThroughLabel(data);
+
+    return Container(
+      key: const Key('storage_current_billing_plan'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(VaultSpacing.xl),
+      decoration: BoxDecoration(
+        color: VaultColors.surface,
+        borderRadius: BorderRadius.circular(VaultRadius.lg),
+        border: Border.all(color: VaultColors.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Current plan', style: VaultText.subtitle),
+          const SizedBox(height: VaultSpacing.sm),
+          Text(
+            freeLabel ? 'Free — 1 GB' : tier,
+            key: const Key('storage_current_plan_tier'),
+            style: VaultText.headline,
+          ),
+          if (conflict) ...[
+            const SizedBox(height: VaultSpacing.sm),
+            Text(
+              'Billing ownership needs review. Your current storage limit '
+              'remains available, and new purchases are blocked.',
+              key: const Key('storage_billing_owner_conflict'),
+              style: VaultText.body.copyWith(color: VaultColors.severityWarn),
+            ),
+          ] else if (active) ...[
+            const SizedBox(height: VaultSpacing.sm),
+            const Text(
+              'Subscription active',
+              key: Key('storage_subscription_active'),
+              style: VaultText.body,
+            ),
+            if (billedThrough.isNotEmpty) ...[
+              const SizedBox(height: VaultSpacing.xs),
+              Text(
+                billedThrough,
+                key: const Key('storage_billed_through'),
+                style: VaultText.body.copyWith(
+                  color: VaultColors.textSecondary,
+                ),
+              ),
+            ],
+          ],
+          if (onManage != null) ...[
+            const SizedBox(height: VaultSpacing.lg),
+            OutlinedButton.icon(
+              key: const Key('storage_manage_provider_subscription'),
+              onPressed: busy ? null : onManage,
+              icon: const Icon(Icons.settings_outlined),
+              label: Text(
+                provider == 'web_card'
+                    ? 'Manage billing'
+                    : 'Manage subscription',
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1234,9 +1452,7 @@ class _StoreTierSelector extends StatelessWidget {
             upgrading
                 ? 'Choose a higher total storage limit.'
                 : 'Choose your total storage limit.',
-            style: VaultText.bodySm.copyWith(
-              color: VaultColors.textSecondary,
-            ),
+            style: VaultText.bodySm.copyWith(color: VaultColors.textSecondary),
           ),
           const SizedBox(height: VaultSpacing.lg),
           for (var index = 0; index < choices.length; index++) ...[
@@ -1323,9 +1539,7 @@ class _ActiveStoreSubscriptionCard extends StatelessWidget {
           const SizedBox(height: VaultSpacing.xs),
           Text(
             'Managed by $storeName',
-            style: VaultText.bodySm.copyWith(
-              color: VaultColors.textSecondary,
-            ),
+            style: VaultText.bodySm.copyWith(color: VaultColors.textSecondary),
           ),
           if (onManage != null) ...[
             const SizedBox(height: VaultSpacing.lg),
@@ -1424,9 +1638,7 @@ class _PurchaseActionRow extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: VaultColors.accent,
               foregroundColor: VaultColors.textOnAccent,
-              padding: const EdgeInsets.symmetric(
-                vertical: VaultSpacing.lg,
-              ),
+              padding: const EdgeInsets.symmetric(vertical: VaultSpacing.lg),
             ),
           ),
         ),
@@ -1441,9 +1653,7 @@ class _PurchaseActionRow extends StatelessWidget {
               ),
               style: OutlinedButton.styleFrom(
                 foregroundColor: VaultColors.textPrimary,
-                padding: const EdgeInsets.symmetric(
-                  vertical: VaultSpacing.lg,
-                ),
+                padding: const EdgeInsets.symmetric(vertical: VaultSpacing.lg),
               ),
             ),
           ),
@@ -1470,8 +1680,8 @@ class _UsageCard extends StatelessWidget {
     final barColor = limitReachedWarning(percentUsed)
         ? VaultColors.severityCrit
         : nearsLimitWarning(percentUsed)
-            ? VaultColors.severityWarn
-            : VaultColors.accent;
+        ? VaultColors.severityWarn
+        : VaultColors.accent;
 
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.xl),
@@ -1519,15 +1729,19 @@ class _UsageCard extends StatelessWidget {
           const SizedBox(height: VaultSpacing.sm),
           Row(
             children: [
-              Text('Used: ${formatBytes(used)}',
-                  style: VaultText.bodySm.copyWith(
-                    color: VaultColors.textSecondary,
-                  )),
+              Text(
+                'Used: ${formatBytes(used)}',
+                style: VaultText.bodySm.copyWith(
+                  color: VaultColors.textSecondary,
+                ),
+              ),
               const Spacer(),
-              Text('Limit: ${formatBytes(limit)}',
-                  style: VaultText.bodySm.copyWith(
-                    color: VaultColors.textSecondary,
-                  )),
+              Text(
+                'Limit: ${formatBytes(limit)}',
+                style: VaultText.bodySm.copyWith(
+                  color: VaultColors.textSecondary,
+                ),
+              ),
             ],
           ),
         ],
@@ -1562,9 +1776,7 @@ class _WarningBanner extends StatelessWidget {
         children: [
           Icon(icon, color: color),
           const SizedBox(width: VaultSpacing.md),
-          Expanded(
-            child: Text(message, style: VaultText.body),
-          ),
+          Expanded(child: Text(message, style: VaultText.body)),
         ],
       ),
     );
@@ -1574,14 +1786,13 @@ class _WarningBanner extends StatelessWidget {
 class _AccountFactsCard extends StatelessWidget {
   final String accountType;
 
-  const _AccountFactsCard({
-    required this.accountType,
-  });
+  const _AccountFactsCard({required this.accountType});
 
   @override
   Widget build(BuildContext context) {
-    final prettyType =
-        accountType == 'organization' ? 'Organization' : 'Individual';
+    final prettyType = accountType == 'organization'
+        ? 'Organization'
+        : 'Individual';
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.xl),
       decoration: BoxDecoration(
@@ -1607,10 +1818,10 @@ class _AccountFactsCard extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(k,
-            style: VaultText.body.copyWith(
-              color: VaultColors.textSecondary,
-            )),
+        Text(
+          k,
+          style: VaultText.body.copyWith(color: VaultColors.textSecondary),
+        ),
         Text(v, style: VaultText.body),
       ],
     );
@@ -1635,8 +1846,10 @@ class _FreeTierCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.card_giftcard_outlined,
-                  color: VaultColors.accent),
+              const Icon(
+                Icons.card_giftcard_outlined,
+                color: VaultColors.accent,
+              ),
               const SizedBox(width: VaultSpacing.sm),
               Text('Free plan', style: VaultText.title),
             ],
@@ -1644,9 +1857,7 @@ class _FreeTierCard extends StatelessWidget {
           const SizedBox(height: VaultSpacing.sm),
           Text(
             '${formatBytes(includedBytes)} included',
-            style: VaultText.body.copyWith(
-              color: VaultColors.textSecondary,
-            ),
+            style: VaultText.body.copyWith(color: VaultColors.textSecondary),
           ),
           const SizedBox(height: VaultSpacing.lg),
           Text(
@@ -1689,8 +1900,10 @@ class _GrandfatherCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.history_toggle_off,
-                  color: VaultColors.severityInfo),
+              const Icon(
+                Icons.history_toggle_off,
+                color: VaultColors.severityInfo,
+              ),
               const SizedBox(width: VaultSpacing.sm),
               Text(
                 AppLocalizations.of(context).storageGrandfathered,
@@ -1741,41 +1954,33 @@ class _PricingExamplesCard extends StatelessWidget {
           const SizedBox(height: VaultSpacing.sm),
           Text(
             'Choose how much storage you want to add.',
-            style: VaultText.bodySm.copyWith(
-              color: VaultColors.textSecondary,
-            ),
+            style: VaultText.bodySm.copyWith(color: VaultColors.textSecondary),
           ),
           const SizedBox(height: VaultSpacing.md),
-          ..._examples.map((e) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: VaultSpacing.xs),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(e.$1, style: VaultText.body),
-                    Text(e.$2,
-                        style: VaultText.mono.copyWith(
-                          color: VaultColors.textSecondary,
-                        )),
-                  ],
-                ),
-              )),
+          ..._examples.map(
+            (e) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: VaultSpacing.xs),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(e.$1, style: VaultText.body),
+                  Text(
+                    e.$2,
+                    style: VaultText.mono.copyWith(
+                      color: VaultColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-const List<int> kSelfServiceSkuBlockLadder = [
-  1,
-  2,
-  3,
-  4,
-  5,
-  10,
-  20,
-  40,
-  100,
-];
+const List<int> kSelfServiceSkuBlockLadder = [1, 2, 3, 4, 5, 10, 20, 40, 100];
 
 class StoragePlanPicker extends StatelessWidget {
   final int currentBlockCount;
@@ -1802,8 +2007,10 @@ class StoragePlanPicker extends StatelessWidget {
     return '\$$dollars/month';
   }
 
-  String _capacityLabel(int blocks) => formatCapacityFromBlocks(blocks,
-      gbPerBlock: blockBytes ~/ (1024 * 1024 * 1024));
+  String _capacityLabel(int blocks) => formatCapacityFromBlocks(
+    blocks,
+    gbPerBlock: blockBytes ~/ (1024 * 1024 * 1024),
+  );
 
   String _newLimitLabel(int blocks) {
     final totalBytes = blocks * blockBytes;
@@ -1816,14 +2023,15 @@ class StoragePlanPicker extends StatelessWidget {
         .where((b) => b <= selfServiceMaxBlocks)
         .toList();
 
-    final title =
-        hasActiveSubscription ? 'Upgrade Storage' : 'Buy More Storage';
+    final title = hasActiveSubscription
+        ? 'Upgrade Storage'
+        : 'Buy More Storage';
     final intro = hasActiveSubscription
         ? 'Pick a higher tier to bump your existing subscription. You '
-            'will not be sent to Stripe Checkout — the change happens in '
-            'place and the prorated upgrade charge runs immediately.'
+              'will not be sent to Stripe Checkout — the change happens in '
+              'place and the prorated upgrade charge runs immediately.'
         : 'Each block adds 50 GB to your account for \$25/month. '
-            'Checkout opens Stripe in a new tab.';
+              'Checkout opens Stripe in a new tab.';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -1868,11 +2076,13 @@ class StoragePlanPicker extends StatelessWidget {
                 itemBuilder: (_, i) {
                   final blocks = ladder[i];
                   final isCurrent = blocks == currentBlockCount;
-                  final isUpgradeTile = hasActiveSubscription &&
+                  final isUpgradeTile =
+                      hasActiveSubscription &&
                       !isCurrent &&
                       blocks > currentBlockCount;
 
-                  final isLowerTile = hasActiveSubscription &&
+                  final isLowerTile =
+                      hasActiveSubscription &&
                       !isCurrent &&
                       blocks < currentBlockCount;
                   final addedBlocks = blocks - currentBlockCount;
@@ -1880,10 +2090,12 @@ class StoragePlanPicker extends StatelessWidget {
                     additionalLabel: _capacityLabel(blocks),
                     monthlyLabel: _priceLabel(blocks),
                     newLimitLabel: _newLimitLabel(blocks),
-                    addedCapacityLabel:
-                        isUpgradeTile ? _capacityLabel(addedBlocks) : null,
-                    addedMonthlyLabel:
-                        isUpgradeTile ? _priceLabel(addedBlocks) : null,
+                    addedCapacityLabel: isUpgradeTile
+                        ? _capacityLabel(addedBlocks)
+                        : null,
+                    addedMonthlyLabel: isUpgradeTile
+                        ? _priceLabel(addedBlocks)
+                        : null,
                     showProrationNote: isUpgradeTile,
                     isCurrent: isCurrent,
                     isLowerThanCurrent: isLowerTile,
@@ -2003,8 +2215,10 @@ class _PlanTile extends StatelessWidget {
                   style: VaultText.caption,
                 )
               else
-                const Icon(Icons.chevron_right,
-                    color: VaultColors.textSecondary),
+                const Icon(
+                  Icons.chevron_right,
+                  color: VaultColors.textSecondary,
+                ),
             ],
           ),
         ),
@@ -2072,17 +2286,19 @@ class CheckoutReturnBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSuccess = kind == 'success';
-    final color =
-        isSuccess ? VaultColors.severityOk : VaultColors.textSecondary;
-    final soft =
-        isSuccess ? VaultColors.severityOkSoft : VaultColors.surfaceMuted;
+    final color = isSuccess
+        ? VaultColors.severityOk
+        : VaultColors.textSecondary;
+    final soft = isSuccess
+        ? VaultColors.severityOkSoft
+        : VaultColors.surfaceMuted;
     final icon = isSuccess ? Icons.check_circle_outline : Icons.info_outline;
     final title = isSuccess ? 'Payment confirmed' : 'Checkout cancelled';
     final body = isSuccess
         ? 'Your new storage will appear here in a moment. '
-            'If it does not, tap refresh.'
+              'If it does not, tap refresh.'
         : 'No changes were made. You can try again whenever you are '
-            'ready.';
+              'ready.';
 
     return Container(
       margin: const EdgeInsets.fromLTRB(
@@ -2193,19 +2409,13 @@ class _UpgradeTimeoutDialog extends StatelessWidget {
 
   final Map<String, Object?>? debugFields;
 
-  const _UpgradeTimeoutDialog({
-    required this.onRefresh,
-    this.debugFields,
-  });
+  const _UpgradeTimeoutDialog({required this.onRefresh, this.debugFields});
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: VaultColors.surface,
-      title: const Text(
-        'Payment received',
-        style: VaultText.title,
-      ),
+      title: const Text('Payment received', style: VaultText.title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2246,19 +2456,12 @@ class _BillingDebugCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFF262626),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: const Color(0xFF3A3A3A),
-            width: 1,
-          ),
+          border: Border.all(color: const Color(0xFF3A3A3A), width: 1),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(
-              Icons.info_outline,
-              size: 16,
-              color: Color(0xFFB4B4B4),
-            ),
+            const Icon(Icons.info_outline, size: 16, color: Color(0xFFB4B4B4)),
             const SizedBox(width: 8),
             Expanded(
               child: SelectableText(
@@ -2286,10 +2489,7 @@ class _LowerPlanDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: VaultColors.surface,
-      title: const Text(
-        'Changing to a lower plan',
-        style: VaultText.title,
-      ),
+      title: const Text('Changing to a lower plan', style: VaultText.title),
       content: const Text(
         'To reduce your storage plan, open Manage Subscription. '
         'Changes to a lower plan may take effect at the end of your '
@@ -2304,9 +2504,7 @@ class _LowerPlanDialog extends StatelessWidget {
         FilledButton.icon(
           onPressed: onManageSubscription,
           icon: const Icon(Icons.settings_outlined),
-          label: Text(
-            AppLocalizations.of(context).settingsManageSubscription,
-          ),
+          label: Text(AppLocalizations.of(context).settingsManageSubscription),
         ),
       ],
     );
@@ -2326,10 +2524,7 @@ class _UpgradeErrorDialog extends StatelessWidget {
           Icon(Icons.error_outline, color: VaultColors.severityCrit),
           SizedBox(width: VaultSpacing.sm),
           Expanded(
-            child: Text(
-              "Upgrade couldn't start",
-              style: VaultText.title,
-            ),
+            child: Text("Upgrade couldn't start", style: VaultText.title),
           ),
         ],
       ),

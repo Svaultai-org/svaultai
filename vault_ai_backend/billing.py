@@ -61,6 +61,20 @@ class StorageEntitlement:
                                                                    
                                                            
     has_active_subscription: bool
+    provider: str = "free"
+    product_id: Optional[str] = None
+    base_plan_id: Optional[str] = None
+    billing_period: Optional[str] = None
+    storage_bytes: int = DEFAULT_FREE_STORAGE_BYTES
+    display_tier: str = "1 GB"
+    subscription_status: str = "free"
+    entitlement_family: str = "storage"
+    ownership_status: str = "free"
+    conflict_reason_code: Optional[str] = None
+    current_provider: str = "free"
+    target_provider: Optional[str] = None
+    migration_status: str = "none"
+    web_card_purchase_allowed: bool = True
 
 
 _PRICING_CACHE: dict[str, int] = {}
@@ -386,6 +400,19 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
     purchased = int(row["purchased_bytes"])
     block_count_val = int(row["block_count"])
     grant = int(row["storage_bytes_grant"])
+    provider = "free"
+    product_id = None
+    base_plan_id = None
+    billing_period = None
+    display_tier = "1 GB"
+    subscription_status = "free"
+    entitlement_family = "storage"
+    ownership_status = "free"
+    conflict_reason_code = None
+    current_provider = "free"
+    target_provider = None
+    migration_status = "none"
+    web_card_purchase_allowed = True
     normalized = None
     try:
         from billing_entitlements import get_normalized_account_entitlement
@@ -403,11 +430,28 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         source = normalized.source
         purchased = normalized.purchased_bytes
         block_count_val = normalized.block_count
+        provider = normalized.provider
+        product_id = normalized.product_id
+        base_plan_id = normalized.base_plan_id
+        billing_period = normalized.billing_period
+        display_tier = normalized.display_tier
+        subscription_status = normalized.subscription_status
+        entitlement_family = normalized.entitlement_family
+        ownership_status = normalized.ownership_status
+        conflict_reason_code = normalized.conflict_reason_code
+        current_provider = normalized.current_provider
+        target_provider = normalized.target_provider
+        migration_status = normalized.migration_status
+        web_card_purchase_allowed = normalized.web_card_purchase_allowed
 
-    if bool(row.get("admin_grant_expired")):
+    if normalized is None and bool(row.get("admin_grant_expired")):
         status = "expired"
         purchased = 0
         block_count_val = 0
+        provider = "free"
+        current_provider = "free"
+        display_tier = "1 GB"
+        subscription_status = "free"
 
                                                                     
     grant_expires = row["storage_bytes_grant_expires_at"]
@@ -450,6 +494,28 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         else status in _STATUSES_THAT_GRANT_STORAGE
     )
 
+    if normalized is None:
+        if has_active_subscription and purchased_active > 0:
+            provider = "web_card" if source in {
+                "stripe", "stripe_legacy", "web_card"
+            } else source
+            current_provider = provider
+            subscription_status = status
+            ownership_status = "owned"
+            web_card_purchase_allowed = provider not in {
+                "google_play", "apple"
+            }
+            try:
+                from billing_entitlements import canonical_storage_display_tier
+                display_tier = canonical_storage_display_tier(purchased_active)
+            except Exception:
+                display_tier = f"{block_count_val * 50} GB"
+        else:
+            provider = "free"
+            current_provider = "free"
+            display_tier = "1 GB"
+            subscription_status = "free" if status == "none" else status
+
     return StorageEntitlement(
         account_id=str(row["account_id"]),
         account_type=str(row["account_type"]),
@@ -473,6 +539,20 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         block_price_cents_usd=price,
         block_bytes=bb,
         has_active_subscription=has_active_subscription,
+        provider=provider,
+        product_id=product_id,
+        base_plan_id=base_plan_id,
+        billing_period=billing_period,
+        storage_bytes=(purchased_active if purchased_active > 0 else effective),
+        display_tier=display_tier,
+        subscription_status=subscription_status,
+        entitlement_family=entitlement_family,
+        ownership_status=ownership_status,
+        conflict_reason_code=conflict_reason_code,
+        current_provider=current_provider,
+        target_provider=target_provider,
+        migration_status=migration_status,
+        web_card_purchase_allowed=web_card_purchase_allowed,
     )
 
 
