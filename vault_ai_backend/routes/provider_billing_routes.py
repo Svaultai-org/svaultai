@@ -48,6 +48,8 @@ def _account_id(principal: dict) -> str:
 @router.get("/billing/providers")
 async def billing_providers(principal=Depends(verify_trusted_device)):
     account_id = _account_id(principal)
+    from billing_entitlements import web_card_purchase_allowed_for_account
+    web_card_purchase_allowed = web_card_purchase_allowed_for_account(account_id)
     from apple_billing import (
         AppleBillingConfigurationError,
         apple_app_account_token,
@@ -83,6 +85,7 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
     return {
         "web_card": {
             "checkout_enabled": False,
+            "purchase_allowed": web_card_purchase_allowed,
             "message": (
                 "Storage upgrades are temporarily unavailable on the web "
                 "while we update our payment provider."
@@ -142,7 +145,19 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
 
 @router.post("/billing/web/checkout-session")
 async def web_checkout_disabled(principal=Depends(verify_trusted_device)):
-    _account_id(principal)
+    account_id = _account_id(principal)
+    from billing_entitlements import web_card_purchase_allowed_for_account
+    if not web_card_purchase_allowed_for_account(account_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_store_billing_owner",
+                "message": (
+                    "Storage billing is owned by an active app-store "
+                    "subscription. Provider migration is not available yet."
+                ),
+            },
+        )
     raise HTTPException(
         status_code=503,
         detail={
@@ -164,6 +179,7 @@ async def verify_google_play_purchase(
         ConflictingActiveEntitlementError,
         PurchaseAlreadyBoundError,
         StaleProviderEventError,
+        StorageBillingOwnerConflictError,
     )
     from google_play_billing import (
         GooglePlayConfigurationError,
@@ -184,6 +200,17 @@ async def verify_google_play_purchase(
             detail={
                 "code": "purchase_already_bound",
                 "message": "This verified purchase belongs to another SVaultAI account.",
+            },
+        ) from exc
+    except StorageBillingOwnerConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_storage_billing_owner",
+                "message": (
+                    "Another verified provider currently owns storage billing. "
+                    "Provider migration is not available yet."
+                ),
             },
         ) from exc
     except ConflictingActiveEntitlementError as exc:
@@ -673,6 +700,7 @@ async def verify_apple_transaction(
         AppleTransactionVerificationError,
         verify_and_apply_apple_transaction,
     )
+    from billing_entitlements import StorageBillingOwnerConflictError
     if payload.environment == "sandbox" and os.getenv(
         "VAULTAI_APPLE_ACCEPT_SANDBOX", "false",
     ).strip().lower() not in {"1", "true", "yes", "on"}:
@@ -687,6 +715,17 @@ async def verify_apple_transaction(
         raise HTTPException(
             status_code=503,
             detail={"code": "apple_billing_not_configured", "message": "Apple billing is not configured."},
+        ) from exc
+    except StorageBillingOwnerConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_storage_billing_owner",
+                "message": (
+                    "Another verified provider currently owns storage billing. "
+                    "Provider migration is not available yet."
+                ),
+            },
         ) from exc
     except AppleTransactionVerificationError as exc:
         raise HTTPException(

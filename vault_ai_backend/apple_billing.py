@@ -17,6 +17,7 @@ from typing import Any, Mapping, Optional
 
 from billing_entitlements import (
     VerifiedEntitlementUpdate,
+    canonical_storage_display_tier,
     normalize_apple_transaction_state,
     upsert_verified_entitlement,
 )
@@ -211,7 +212,13 @@ def _transaction_update(
             or datetime.now(timezone.utc)
         ),
         provider_event_id=event_id,
-        metadata={"subtype": subtype or None},
+        metadata={
+            "subtype": subtype or None,
+            "billing_period": str(config["billing_period"]),
+            "display_capacity": canonical_storage_display_tier(
+                int(config["entitlement_bytes"]),
+            ),
+        },
     )
 
 

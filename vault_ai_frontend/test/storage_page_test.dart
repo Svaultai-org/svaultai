@@ -480,6 +480,7 @@ void main() {
         status: 'in_grace',
       );
       data['source'] = 'stripe';
+      data['has_active_subscription'] = true;
       await tester.pumpWidget(_wrap(StorageBody(
         data: data,
         onBuyStorage: () {},
@@ -913,7 +914,7 @@ void main() {
       );
       expect(
         window,
-        contains("cancelUrl:  buildCheckoutRedirectUrl('cancel')"),
+        contains("cancelUrl: buildCheckoutRedirectUrl('cancel')"),
         reason: 'cancel_url must be forwarded too.',
       );
     });
@@ -995,13 +996,13 @@ void main() {
       expect(hasActiveSubscription(data), isTrue);
     });
 
-    test('Apple-source sub never flags as Stripe-modifiable', () {
+    test('Apple-source sub is recognized as active but never Stripe-inferred', () {
       
       
       final data = <String, dynamic>{
         'source': 'apple', 'status': 'active',
       };
-      expect(hasActiveSubscription(data), isFalse);
+      expect(hasActiveSubscription(data), isTrue);
     });
 
     test('billing source labels never claim a cross-provider entitlement', () {
@@ -1015,7 +1016,7 @@ void main() {
       );
       expect(
         billingProviderLabel(<String, dynamic>{'source': 'stripe_legacy'}),
-        'the legacy web billing provider',
+        'the web billing provider',
       );
     });
   });
