@@ -1041,26 +1041,73 @@ def get_normalized_account_entitlement(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT e.entitlement_id, e.provider, e.entitlement_family,
-                   e.external_purchase_id, e.product_id, e.plan_id,
-                   e.status, e.quantity, e.entitlement_bytes,
-                   e.current_period_end, e.cancel_at_period_end,
-                   e.metadata_jsonb, e.created_at, e.updated_at,
-                   o.current_provider AS ownership_current_provider,
-                   o.target_provider AS ownership_target_provider,
-                   o.migration_status AS ownership_migration_status,
-                   o.reason_code AS ownership_reason_code
-              FROM billing_entitlements e
-              LEFT JOIN billing_provider_ownership o
-                ON o.account_id = e.account_id
-               AND o.entitlement_family = e.entitlement_family
-             WHERE e.account_id = %s
-               AND e.verification_state = 'verified'
-               AND e.entitlement_family = 'storage'
-             ORDER BY e.created_at ASC, e.provider ASC,
-                      e.external_purchase_id ASC
+            WITH ownership_candidates AS (
+                SELECT e.entitlement_id, e.provider, e.entitlement_family,
+                       e.external_purchase_id, e.product_id, e.plan_id,
+                       e.status, e.quantity, e.entitlement_bytes,
+                       e.current_period_end, e.cancel_at_period_end,
+                       e.metadata_jsonb, e.created_at, e.updated_at,
+                       o.current_provider AS ownership_current_provider,
+                       o.current_entitlement_id
+                           AS ownership_current_entitlement_id,
+                       o.legacy_subscription_account_id
+                           AS ownership_legacy_subscription_account_id,
+                       o.legacy_source_subscription_id
+                           AS ownership_legacy_source_subscription_id,
+                       o.target_provider AS ownership_target_provider,
+                       o.migration_status AS ownership_migration_status,
+                       o.reason_code AS ownership_reason_code,
+                       'billing_entitlements'::TEXT AS entitlement_source
+                  FROM billing_entitlements e
+                  LEFT JOIN billing_provider_ownership o
+                    ON o.account_id = e.account_id
+                   AND o.entitlement_family = e.entitlement_family
+                 WHERE e.account_id = %s
+                   AND e.verification_state = 'verified'
+                   AND e.entitlement_family = 'storage'
+
+                UNION ALL
+
+                SELECT NULL::UUID, 'stripe_legacy'::TEXT, 'storage'::TEXT,
+                       COALESCE(
+                           s.source_subscription_id,
+                           'legacy-account:' || s.account_id::TEXT
+                       ),
+                       NULL::TEXT, NULL::TEXT,
+                       CASE
+                           WHEN s.status = 'in_grace' THEN 'grace_period'
+                           ELSE 'active'
+                       END,
+                       s.block_count, s.purchased_bytes,
+                       s.current_period_end, s.cancel_at_period_end,
+                       jsonb_build_object(
+                           'billing_period', s.billing_period,
+                           'legacy_status', s.status
+                       ),
+                       s.created_at, s.updated_at,
+                       o.current_provider,
+                       o.current_entitlement_id,
+                       o.legacy_subscription_account_id,
+                       o.legacy_source_subscription_id,
+                       o.target_provider, o.migration_status, o.reason_code,
+                       'account_subscriptions'::TEXT
+                  FROM account_subscriptions s
+                  LEFT JOIN billing_provider_ownership o
+                    ON o.account_id = s.account_id
+                   AND o.entitlement_family = 'storage'
+                 WHERE s.account_id = %s
+                   AND s.source = 'stripe'
+                   AND s.status IN (
+                       'active', 'in_grace', 'canceled_pending'
+                   )
+                   AND s.purchased_bytes > 0
+            )
+            SELECT *
+              FROM ownership_candidates
+             ORDER BY created_at ASC, provider ASC,
+                      external_purchase_id ASC
             """,
-            (account_id,),
+            (account_id, account_id),
         )
         rows = cur.fetchall() or []
     finally:
@@ -1073,6 +1120,9 @@ def get_normalized_account_entitlement(
         r for r in rows
         if str(r["status"]) in GRANTING_STATUSES
         and (
+            str(r.get("entitlement_source") or "")
+            == "account_subscriptions"
+            or
             r["current_period_end"] is None
             or (
                 r["current_period_end"]
@@ -1088,12 +1138,32 @@ def get_normalized_account_entitlement(
             ownership.get("ownership_current_provider") or ""
         ).strip()
         if migration_current:
-            owned = [
+            exact_ledger_owner = [
                 row for row in active
-                if str(row["provider"]) == migration_current
+                if row.get("ownership_current_entitlement_id") is not None
+                and row.get("entitlement_id")
+                == row.get("ownership_current_entitlement_id")
             ]
-            if owned:
-                ownership = owned[0]
+            exact_legacy_owner = [
+                row for row in active
+                if (
+                    str(row.get("entitlement_source") or "")
+                    == "account_subscriptions"
+                    and row.get("ownership_legacy_subscription_account_id")
+                    is not None
+                )
+            ]
+            provider_owner = [
+                row for row in active
+                if _public_provider(str(row["provider"]))
+                == migration_current
+            ]
+            if exact_ledger_owner:
+                ownership = exact_ledger_owner[0]
+            elif exact_legacy_owner:
+                ownership = exact_legacy_owner[0]
+            elif provider_owner:
+                ownership = provider_owner[0]
         status = (
             "in_grace"
             if str(ownership["status"]) == "grace_period"
@@ -1202,7 +1272,7 @@ def get_normalized_account_entitlement(
         target_provider=target_provider,
         migration_status=migration_status,
         web_card_purchase_allowed=(
-            provider not in {"google_play", "apple"}
+            not active
             and not conflict
             and migration_status != "pending"
         ),
