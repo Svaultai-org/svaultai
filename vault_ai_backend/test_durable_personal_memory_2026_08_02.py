@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import time
 from typing import Any, Optional
 
 import pytest
@@ -289,10 +290,11 @@ def test_aliases_recall_the_same_structured_fact(memory_store):
 
 
 @pytest.mark.parametrize("apostrophe", ["'", "\u2019"])
+@pytest.mark.parametrize("separator", [" ", " as "])
 def test_explicit_mother_name_save_precedes_credential_routing(
-    memory_store, apostrophe
+    memory_store, apostrophe, separator
 ):
-    message = f"save my mother{apostrophe}s name as lodato kendra"
+    message = f"save my mother{apostrophe}s name{separator}lodato kendra"
     intent = dpm.parse_personal_memory_intent(message)
     assert intent is not None
     assert intent.action == "save"
@@ -319,6 +321,7 @@ def test_explicit_mother_name_save_precedes_credential_routing(
         ("my sister's phone number is 5551234, remember it", "sister", "phone_number", "5551234"),
         ("save my son's school as Lincoln High", "son", "school", "Lincoln High"),
         ("my wife's favorite color is blue", "wife", "favorite_color", "blue"),
+        ("remember that lodato kendra is my mother", "mother", "name", "lodato kendra"),
     ],
 )
 def test_family_facts_are_structured_memory(
@@ -1092,6 +1095,35 @@ def test_exact_memory_route_handles_chat_endpoint_before_ai_planner(monkeypatch)
             store,
             ["December 12, 1975", "1975-12-12"],
         )
+    finally:
+        harness.tearDown()
+
+
+def test_no_as_mother_name_uses_release_chat_fast_path(monkeypatch):
+    from test_chat_endpoint_deterministic_2026_08_01 import _ChatEndpointHarness
+
+    store = _MemoryStore()
+    harness = _ChatEndpointHarness()
+    harness.setUp()
+    try:
+        harness._patch("durable_personal_memory.get_db", side_effect=store.get_db)
+        harness.arm_planner_sentinel()
+
+        started = time.perf_counter()
+        saved = harness.post_message("save my mother’s name lodato kendra")
+        duration_ms = (time.perf_counter() - started) * 1000
+        assert saved.http_status == 200, saved.summary()
+        assert saved.x_chat_path == "personal_memory", saved.summary()
+        assert not saved.planner_invoked, saved.summary()
+        print(f"memory_fast_path_duration_ms={duration_ms:.3f}")
+        assert duration_ms < 1000
+        assert len(store.active_rows("vault-endpoint-test-0001")) == 1
+
+        recalled = harness.post_message("what is my mother's name")
+        assert recalled.http_status == 200, recalled.summary()
+        assert recalled.x_chat_path == "personal_memory", recalled.summary()
+        assert not recalled.planner_invoked, recalled.summary()
+        assert "lodato kendra" in (recalled.envelope_json or "").lower()
     finally:
         harness.tearDown()
 

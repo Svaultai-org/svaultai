@@ -153,12 +153,16 @@ _RELATIONSHIP_NAME_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})"
     rf"(?:{_APOSTROPHE_RE}s)?\s+"
     r"(?P<attribute>(?:full\s+|first\s+|given\s+)?name)\s*"
-    r"(?:is|as|=|:)\s*(?P<value>.+?)\s*$",
+    r"(?:(?:is|as|=|:)\s*)?(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
 _RELATIONSHIP_NAMED_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})\s+is\s+named\s+"
     r"(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_REVERSE_RELATIONSHIP_NAME_FACT_RE = re.compile(
+    rf"^(?P<value>.+?)\s+is\s+(?:my\s+)?(?P<subject>{_SUBJECT_RE})\s*$",
     re.IGNORECASE,
 )
 _RELATIONSHIP_ATTRIBUTE_FACT_RE = re.compile(
@@ -571,6 +575,7 @@ def _parse_fact_statement(
     m = (
         _RELATIONSHIP_NAME_FACT_RE.match(text)
         or _RELATIONSHIP_NAMED_FACT_RE.match(text)
+        or _REVERSE_RELATIONSHIP_NAME_FACT_RE.match(text)
     )
     if m:
         subject, display, relationship = _subject_parts(m.group("subject"))

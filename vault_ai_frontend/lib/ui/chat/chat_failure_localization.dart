@@ -31,7 +31,7 @@ const String generalChatFailure =
     "I couldn't complete that response right now. Please try again in a moment.";
 
 const String chatTimeoutRecovery =
-    'Brain took too long to finish that response. Please try again. Your '
+    'That took too long to finish. Please try again. Your '
     'vault was not changed by this failed request.';
 
 const Map<String, String> _languageAliases = {

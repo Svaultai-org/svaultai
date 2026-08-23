@@ -35,6 +35,14 @@ void main() {
       expect(copy, contains('try again'));
       expect(copy, contains('cancel'));
     });
+
+    test('timeout copy is generic and never impersonates a vault', () {
+      expect(chatTimeoutRecovery,
+          'That took too long to finish. Please try again. Your vault was not changed by this failed request.');
+      expect(chatTimeoutRecovery.toLowerCase(), isNot(contains('brain')));
+      expect(chatTimeoutRecovery.toLowerCase(), isNot(contains('alex')));
+      expect(chatTimeoutRecovery.toLowerCase(), isNot(contains('testy')));
+    });
   });
 
   group('immutable turn correlation', () {
