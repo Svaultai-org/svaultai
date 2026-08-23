@@ -6,8 +6,8 @@ import 'package:vault_ai_frontend/services/apple_storekit_billing_controller.dar
 
 const _productId = 'synthetic.storage.monthly';
 
-ProductDetails _product() => ProductDetails(
-      id: _productId,
+ProductDetails _product([String id = _productId]) => ProductDetails(
+      id: id,
       title: 'Synthetic storage',
       description: 'Synthetic test product',
       price: r'$1.00',
@@ -141,6 +141,38 @@ void main() {
     expect(billing.returnedProductIds, isEmpty);
     expect(billing.notFoundProductIds, [_productId]);
     expect(billing.state, 'unavailable');
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('keeps valid returned products when StoreKit returns a partial catalog',
+      () async {
+    const pendingProductId = 'synthetic.storage.pending.monthly';
+    final gateway = _Gateway()
+      ..productResponse = ProductDetailsResponse(
+        productDetails: [_product()],
+        notFoundIDs: const <String>[pendingProductId],
+      );
+    final billing = AppleStoreKitBillingController(
+      gateway: gateway,
+      productIds: const <String>[_productId, pendingProductId],
+      appAccountToken: '00000000-0000-5000-8000-000000000001',
+      verifyPurchase:
+          ({required signedTransaction, required environment}) async =>
+              {'verified': true},
+      connectionTimeout: const Duration(milliseconds: 20),
+      actionTimeout: const Duration(milliseconds: 20),
+      verificationTimeout: const Duration(milliseconds: 20),
+    );
+
+    await billing.initialize();
+
+    expect(billing.state, 'ready');
+    expect(billing.returnedProductIds, [_productId]);
+    expect(billing.notFoundProductIds, [pendingProductId]);
+    expect(billing.productFor(_productId), isNotNull);
+    expect(billing.productFor(pendingProductId), isNull);
+    expect(billing.canBuy, isTrue);
     billing.dispose();
     await gateway.controller.close();
   });

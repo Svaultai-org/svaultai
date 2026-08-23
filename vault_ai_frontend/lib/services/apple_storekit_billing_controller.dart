@@ -151,10 +151,13 @@ class AppleStoreKitBillingController extends ChangeNotifier {
           returned[candidate.id] = candidate;
         }
       }
-      if (response.error != null ||
-          requestedProductIds.isEmpty ||
-          returned.length != requestedProductIds.length ||
-          notFoundProductIds.isNotEmpty) {
+      // StoreKit may legitimately return only the subset of products that is
+      // currently discoverable in this storefront (for example while newer
+      // tiers are still propagating through App Store Connect).  A returned
+      // product is still authoritative StoreKit data and remains constrained
+      // to the backend-recognized requested ids above.  Do not hide valid
+      // plans merely because sibling products are not yet discoverable.
+      if (requestedProductIds.isEmpty || returned.isEmpty) {
         state = 'unavailable';
         message = 'The configured storage subscriptions are unavailable in '
             'the App Store. Tap Retry.';
