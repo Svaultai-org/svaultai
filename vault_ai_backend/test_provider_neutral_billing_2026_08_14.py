@@ -1278,6 +1278,73 @@ def test_apple_notification_verifier_rejects_sandbox_when_disabled(monkeypatch):
     assert calls == ["production"]
 
 
+@pytest.mark.asyncio
+async def test_apple_client_transaction_falls_back_to_sandbox_for_testflight(
+    monkeypatch,
+):
+    calls = []
+
+    def _verify(**kwargs):
+        calls.append(kwargs["environment"])
+        if kwargs["environment"] == "production":
+            raise apple_billing.AppleTransactionVerificationError(
+                "wrong environment"
+            )
+        return {
+            "verified": True,
+            "provider": "apple",
+            "product_id": "svaultai.storage.50gb.monthly",
+            "status": "active",
+        }
+
+    monkeypatch.setenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "true")
+    monkeypatch.setattr(
+        apple_billing, "verify_and_apply_apple_transaction", _verify,
+    )
+    monkeypatch.setattr(provider_routes, "_account_id", lambda _principal: "account")
+
+    result = await provider_routes.verify_apple_transaction(
+        provider_routes.AppleTransactionRequest(
+            signed_transaction="synthetic-sandbox-jws",
+            environment="production",
+        ),
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    assert calls == ["production", "sandbox"]
+    assert result["verified"] is True
+    assert result["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_apple_client_transaction_never_tries_sandbox_when_disabled(
+    monkeypatch,
+):
+    calls = []
+
+    def _verify(**kwargs):
+        calls.append(kwargs["environment"])
+        raise apple_billing.AppleTransactionVerificationError("invalid")
+
+    monkeypatch.setenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "false")
+    monkeypatch.setattr(
+        apple_billing, "verify_and_apply_apple_transaction", _verify,
+    )
+    monkeypatch.setattr(provider_routes, "_account_id", lambda _principal: "account")
+
+    with pytest.raises(HTTPException) as rejected:
+        await provider_routes.verify_apple_transaction(
+            provider_routes.AppleTransactionRequest(
+                signed_transaction="synthetic-invalid-jws",
+                environment="production",
+            ),
+            principal={"vault_id": "synthetic-vault"},
+        )
+
+    assert rejected.value.status_code == 400
+    assert calls == ["production"]
+
+
 def test_apple_refund_and_revocation_remove_grant():
     future = datetime(2099, 1, 1, tzinfo=timezone.utc)
     assert ent.normalize_apple_transaction_state(

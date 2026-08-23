@@ -724,11 +724,42 @@ async def verify_apple_transaction(
         "VAULTAI_APPLE_ACCEPT_SANDBOX", "false",
     ).strip().lower() not in {"1", "true", "yes", "on"}:
         raise HTTPException(status_code=403, detail="Apple sandbox is disabled")
+    sandbox_enabled = os.getenv(
+        "VAULTAI_APPLE_ACCEPT_SANDBOX", "false",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    verification_environments = [payload.environment]
+    # TestFlight receipts are signed for Apple's Sandbox even though the
+    # distributed binary is a production/App Store build. The environment in
+    # the request is only a verifier preference; acceptance is still decided
+    # cryptographically by Apple's environment-specific SignedDataVerifier.
+    # Trying the other enabled verifier lets an existing TestFlight purchase
+    # be restored without trusting an unsigned client environment label.
+    if sandbox_enabled:
+        for candidate in ("production", "sandbox"):
+            if candidate not in verification_environments:
+                verification_environments.append(candidate)
+    last_verification_error = None
     try:
-        return verify_and_apply_apple_transaction(
-            account_id=_account_id(principal),
-            signed_transaction=payload.signed_transaction,
-            environment=payload.environment,
+        for environment in verification_environments:
+            try:
+                result = verify_and_apply_apple_transaction(
+                    account_id=_account_id(principal),
+                    signed_transaction=payload.signed_transaction,
+                    environment=environment,
+                )
+                logger.info(
+                    "[APPLE-BILLING] client_transaction_verified "
+                    "requested_environment=%s verified_environment=%s",
+                    payload.environment,
+                    environment,
+                )
+                return result
+            except AppleTransactionVerificationError as exc:
+                last_verification_error = exc
+        if last_verification_error is not None:
+            raise last_verification_error
+        raise AppleTransactionVerificationError(
+            "Apple transaction could not be verified in an enabled environment"
         )
     except AppleBillingConfigurationError as exc:
         raise HTTPException(
