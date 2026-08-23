@@ -87,10 +87,12 @@ def test_google_active_purchase_is_server_derived_and_acknowledged(monkeypatch):
     captured = []
     monkeypatch.setattr(
         google,
-        "upsert_verified_entitlement",
-        lambda account_id, update: (captured.append((account_id, update)) or ("e1", "none_to_active")),
+        "reconcile_google_play_storage_entitlement",
+        lambda account_id, update, **kwargs: (
+            captured.append((account_id, update, kwargs))
+            or ("e1", "none_to_active")
+        ),
     )
-    monkeypatch.setattr(google, "supersede_linked_purchase", lambda **_kwargs: None)
     publisher = _Publisher(_google_payload())
     result = google.verify_and_apply_google_subscription(
         account_id="account-1",
@@ -112,10 +114,79 @@ def test_google_active_purchase_is_server_derived_and_acknowledged(monkeypatch):
     assert update.metadata["billing_period"] == "P1M"
 
 
+def test_google_authoritative_test_purchase_is_accepted_only_when_enabled(
+    monkeypatch,
+):
+    payload = _google_payload()
+    payload["testPurchase"] = {}
+    writes = []
+    monkeypatch.setattr(
+        google,
+        "reconcile_google_play_storage_entitlement",
+        lambda account_id, update, **kwargs: (
+            writes.append((account_id, update, kwargs))
+            or ("e1", "none_to_active")
+        ),
+    )
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "true")
+
+    result = google.verify_and_apply_google_subscription(
+        account_id="account-1",
+        purchase_token="purchase-token",
+        publisher=_Publisher(payload),
+    )
+
+    assert result.normalized_status == "active"
+    assert writes[0][1].environment == "sandbox"
+
+
+def test_google_authoritative_test_purchase_is_rejected_when_disabled(monkeypatch):
+    payload = _google_payload()
+    payload["testPurchase"] = {}
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "false")
+    monkeypatch.setattr(
+        google,
+        "reconcile_google_play_storage_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
+    )
+
+    with pytest.raises(
+        google.GooglePlayVerificationError,
+        match="test purchase is not enabled",
+    ):
+        google.verify_and_apply_google_subscription(
+            account_id="account-1",
+            purchase_token="purchase-token",
+            publisher=_Publisher(payload),
+        )
+
+
+def test_google_fabricated_test_token_is_rejected_before_entitlement_write(
+    monkeypatch,
+):
+    monkeypatch.setenv("VAULTAI_GOOGLE_PLAY_ALLOW_TEST_PURCHASES", "true")
+    monkeypatch.setattr(
+        google,
+        "reconcile_google_play_storage_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
+    )
+
+    class MissingPublisher:
+        def get_subscription(self, _token):
+            raise google.GooglePlayPurchaseNotFoundError("not found")
+
+    with pytest.raises(google.GooglePlayPurchaseNotFoundError):
+        google.verify_and_apply_google_subscription(
+            account_id="account-1",
+            purchase_token="fabricated-token",
+            publisher=MissingPublisher(),
+        )
+
+
 def test_google_rejects_wrong_or_prepaid_base_plan(monkeypatch):
     monkeypatch.setattr(
         google,
-        "upsert_verified_entitlement",
+        "reconcile_google_play_storage_entitlement",
         lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
     )
 
@@ -145,10 +216,11 @@ def test_google_pending_purchase_never_grants_or_acknowledges(monkeypatch):
     captured = []
     monkeypatch.setattr(
         google,
-        "upsert_verified_entitlement",
-        lambda _account_id, update: (captured.append(update) or ("e1", "none_to_pending")),
+        "reconcile_google_play_storage_entitlement",
+        lambda _account_id, update, **_kwargs: (
+            captured.append(update) or ("e1", "none_to_pending")
+        ),
     )
-    monkeypatch.setattr(google, "supersede_linked_purchase", lambda **_kwargs: None)
     publisher = _Publisher(_google_payload(state="SUBSCRIPTION_STATE_PENDING"))
     result = google.verify_and_apply_google_subscription(
         account_id="account-1",
@@ -162,7 +234,7 @@ def test_google_pending_purchase_never_grants_or_acknowledges(monkeypatch):
 
 def test_google_account_correlation_mismatch_is_rejected(monkeypatch):
     monkeypatch.setattr(
-        google, "upsert_verified_entitlement",
+        google, "reconcile_google_play_storage_entitlement",
         lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
     )
     with pytest.raises(google.GooglePlayVerificationError):
@@ -177,7 +249,7 @@ def test_google_account_correlation_is_required(monkeypatch):
     payload = _google_payload()
     payload.pop("externalAccountIdentifiers")
     monkeypatch.setattr(
-        google, "upsert_verified_entitlement",
+        google, "reconcile_google_play_storage_entitlement",
         lambda *_args, **_kwargs: pytest.fail("must not write entitlement"),
     )
     with pytest.raises(google.GooglePlayVerificationError):
@@ -191,7 +263,7 @@ def test_google_account_correlation_is_required(monkeypatch):
 def test_google_revoke_identity_check_never_writes_or_acknowledges(monkeypatch):
     monkeypatch.setattr(
         google,
-        "upsert_verified_entitlement",
+        "reconcile_google_play_storage_entitlement",
         lambda *_args, **_kwargs: pytest.fail("revoke check must not write"),
     )
     publisher = _Publisher(_google_payload())
@@ -314,6 +386,8 @@ def test_google_bridge_requires_clean_https_origin(monkeypatch, url):
         ("SUBSCRIPTION_STATE_ON_HOLD", "delinquent"),
         ("SUBSCRIPTION_STATE_EXPIRED", "expired"),
         ("SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED", "canceled"),
+        ("SUBSCRIPTION_STATE_PENDING_PURCHASE_EXPIRED", "canceled"),
+        ("SUBSCRIPTION_STATE_REVOKED", "revoked"),
     ],
 )
 def test_google_lifecycle_normalization(provider_state, normalized):
@@ -321,6 +395,167 @@ def test_google_lifecycle_normalization(provider_state, normalized):
         provider_state,
         expiry_time=datetime(2099, 1, 1, tzinfo=timezone.utc),
     ) == normalized
+
+
+def test_google_empty_device_query_reconciles_to_free_without_ledger(monkeypatch):
+    monkeypatch.setattr(
+        google, "list_bound_provider_entitlements", lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        google, "get_normalized_account_entitlement", lambda _account_id: None,
+    )
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=[],
+        publisher=SimpleNamespace(),
+    )
+    assert result.status == "none"
+    assert result.has_active_subscription is False
+    assert result.current_purchase_count == 0
+    assert result.cleared_pending is True
+
+
+def test_google_missing_bound_pending_purchase_is_canceled(monkeypatch):
+    monkeypatch.setattr(
+        google,
+        "list_bound_provider_entitlements",
+        lambda **_kwargs: [{
+            "external_purchase_id": "purchase-token",
+            "status": "pending",
+            "product_id": google.GOOGLE_PLAY_PRODUCT_50GB,
+            "plan_id": google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        }],
+    )
+    terminalized = []
+    monkeypatch.setattr(
+        google,
+        "terminalize_missing_provider_purchase",
+        lambda **kwargs: (
+            terminalized.append(kwargs) or ("entitlement-1", "pending_to_canceled", "canceled")
+        ),
+    )
+    monkeypatch.setattr(
+        google,
+        "get_normalized_account_entitlement",
+        lambda _account_id: SimpleNamespace(
+            status="past_due", has_active_subscription=False,
+        ),
+    )
+
+    class MissingPublisher:
+        def get_subscription(self, _token):
+            raise google.GooglePlayPurchaseNotFoundError("gone")
+
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=[],
+        publisher=MissingPublisher(),
+    )
+    assert result.cleared_pending is True
+    assert result.has_active_subscription is False
+    assert terminalized[0]["provider_status"] == (
+        "SUBSCRIPTION_NOT_FOUND_DURING_RECONCILIATION"
+    )
+
+
+def test_google_reconcile_applies_authoritative_pending_cancellation(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        google,
+        "list_bound_provider_entitlements",
+        lambda **_kwargs: [{
+            "external_purchase_id": "purchase-token",
+            "status": "pending",
+            "product_id": google.GOOGLE_PLAY_PRODUCT_50GB,
+            "plan_id": google.GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+        }],
+    )
+    monkeypatch.setattr(
+        google,
+        "reconcile_google_play_storage_entitlement",
+        lambda _account_id, update, **_kwargs: (
+            captured.append(update) or ("entitlement-1", "pending_to_canceled")
+        ),
+    )
+    monkeypatch.setattr(
+        google,
+        "get_normalized_account_entitlement",
+        lambda _account_id: SimpleNamespace(
+            status="past_due", has_active_subscription=False,
+        ),
+    )
+    publisher = _Publisher(
+        _google_payload(state="SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED")
+    )
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=["purchase-token"],
+        publisher=publisher,
+    )
+    assert captured[0].status == "canceled"
+    assert publisher.acknowledged == []
+    assert result.has_active_subscription is False
+    assert result.status == "past_due"
+
+
+def test_google_reconcile_accepts_authoritative_non_50gb_catalog_tier(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        google, "list_bound_provider_entitlements", lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        google,
+        "verify_and_apply_google_subscription",
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(normalized_status="active")
+        ),
+    )
+    monkeypatch.setattr(
+        google,
+        "get_normalized_account_entitlement",
+        lambda _account_id: SimpleNamespace(
+            status="active", has_active_subscription=True,
+        ),
+    )
+
+    result = google.reconcile_google_subscriptions(
+        account_id="account-1",
+        current_purchase_tokens=["authoritative-100gb-token"],
+        publisher=SimpleNamespace(),
+    )
+
+    assert calls[0]["expected_product_id"] is None
+    assert result.has_active_subscription is True
+
+
+@pytest.mark.asyncio
+async def test_google_reconcile_route_returns_safe_final_state(monkeypatch):
+    monkeypatch.setattr(provider_routes, "_account_id", lambda _principal: "account-1")
+    monkeypatch.setattr(
+        google,
+        "reconcile_google_subscriptions",
+        lambda **_kwargs: google.GooglePlayReconciliationResult(
+            status="none",
+            has_active_subscription=False,
+            current_purchase_count=0,
+            reconciled_count=0,
+            cleared_pending=True,
+        ),
+    )
+    response = await provider_routes.reconcile_google_play_purchases(
+        provider_routes.GooglePlayReconcileRequest(purchase_tokens=[]),
+        principal={"vault_id": "vault-1"},
+    )
+    assert response == {
+        "reconciled": True,
+        "provider": "google_play",
+        "status": "none",
+        "has_active_subscription": False,
+        "current_purchase_count": 0,
+        "reconciled_count": 0,
+        "cleared_pending": True,
+    }
 
 
 def test_rtdn_decoder_requires_message_id_and_base64_json():
@@ -723,6 +958,52 @@ async def test_apple_provider_catalog_returns_only_explicit_product_ids(monkeypa
     assert payload["apple"]["billing_period"] == "P1M"
     assert payload["apple"]["storage_entitlement_bytes"] == 53_687_091_200
     assert payload["apple"]["quantity"] == 1
+
+
+@pytest.mark.asyncio
+async def test_google_play_provider_catalog_exposes_exact_storage_allowlist(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        provider_routes, "_account_id", lambda _principal: "account-play-test"
+    )
+
+    payload = await provider_routes.billing_providers(
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    google_provider = payload["google_play"]
+    expected_ids = [
+        "svaultai_storage_50gb",
+        "svaultai_storage_100gb",
+        "svaultai_storage_150gb",
+        "svaultai_storage_200gb",
+        "svaultai_storage_250gb",
+        "svaultai_storage_300gb",
+        "svaultai_storage_500gb",
+        "svaultai_storage_1tb",
+    ]
+    assert google_provider["product_id"] == expected_ids[0]
+    assert google_provider["product_ids"] == expected_ids
+    assert google_provider["base_plan_id"] == "monthly-auto"
+    assert google_provider["base_plan_type"] == "AUTO_RENEWING"
+    assert google_provider["billing_period"] == "P1M"
+    assert [item["product_id"] for item in google_provider["products"]] == expected_ids
+    assert [item["tier_rank"] for item in google_provider["products"]] == list(
+        range(1, 9)
+    )
+    assert [item["quantity"] for item in google_provider["products"]] == [
+        1, 2, 3, 4, 5, 6, 10, 20,
+    ]
+    assert [item["display_capacity"] for item in google_provider["products"]] == [
+        "50 GB", "100 GB", "150 GB", "200 GB", "250 GB", "300 GB",
+        "500 GB", "1 TB",
+    ]
+    assert all(
+        item["base_plan_id"] == "monthly-auto"
+        and item["billing_period"] == "P1M"
+        for item in google_provider["products"]
+    )
 
 
 @pytest.mark.asyncio

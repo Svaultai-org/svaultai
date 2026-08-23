@@ -155,7 +155,7 @@ void main() {
       expect(find.text('Storage Usage'), findsOneWidget);
       expect(find.textContaining('0%'), findsOneWidget);
       
-      expect(find.text('Free Tier'), findsOneWidget);
+      expect(find.text('Free plan'), findsOneWidget);
       expect(find.text('Need more space?'), findsOneWidget);
       
       expect(
@@ -262,10 +262,10 @@ void main() {
 
       expect(find.text('Grandfathered storage'), findsOneWidget);
       
-      expect(find.text('Free Tier'), findsNothing);
+      expect(find.text('Free plan'), findsNothing);
       expect(find.text('Need more space?'), findsNothing);
       
-      expect(find.text('Additional storage pricing'), findsOneWidget);
+      expect(find.text('Additional storage pricing'), findsNothing);
     });
 
     testWidgets('grandfather user over 80% shows the warn banner too',
@@ -480,6 +480,7 @@ void main() {
         status: 'in_grace',
       );
       data['source'] = 'stripe';
+      data['has_active_subscription'] = true;
       await tester.pumpWidget(_wrap(StorageBody(
         data: data,
         onBuyStorage: () {},
@@ -787,7 +788,7 @@ void main() {
       expect(find.text('Organization'), findsOneWidget);
       
       
-      expect(find.text('Self-service maximum'), findsOneWidget);
+      expect(find.text('Self-service maximum'), findsNothing);
       
       
       expect(find.text('Grandfathered storage'), findsOneWidget);
@@ -810,28 +811,27 @@ void main() {
       }
     });
 
-    testWidgets('self-service maximum row renders as 5 TB',
+    testWidgets('does not advertise the unsupported 5 TB maximum',
         (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement();
       await tester.pumpWidget(_wrap(StorageBody(data: data)));
       
-      expect(find.text('5 TB'), findsOneWidget);
+      expect(find.text('Self-service maximum'), findsNothing);
+      expect(find.text('5 TB'), findsNothing);
     });
 
-    testWidgets('pricing examples list shows the four locked tiers',
+    testWidgets('unsupported pricing examples are hidden by default',
         (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement();
       await tester.pumpWidget(_wrap(StorageBody(data: data)));
-      expect(find.text('50 GB'), findsOneWidget);
-      expect(find.text('100 GB'), findsOneWidget);
-      expect(find.text('150 GB'), findsOneWidget);
-      expect(find.text('500 GB'), findsOneWidget);
-      expect(find.text(r'$25/month'), findsOneWidget);
-      expect(find.text(r'$50/month'), findsOneWidget);
-      expect(find.text(r'$75/month'), findsOneWidget);
-      expect(find.text(r'$250/month'), findsOneWidget);
+      expect(find.text('100 GB'), findsNothing);
+      expect(find.text('150 GB'), findsNothing);
+      expect(find.text('500 GB'), findsNothing);
+      expect(find.text(r'$50/month'), findsNothing);
+      expect(find.text(r'$75/month'), findsNothing);
+      expect(find.text(r'$250/month'), findsNothing);
     });
   });
 
@@ -914,7 +914,7 @@ void main() {
       );
       expect(
         window,
-        contains("cancelUrl:  buildCheckoutRedirectUrl('cancel')"),
+        contains("cancelUrl: buildCheckoutRedirectUrl('cancel')"),
         reason: 'cancel_url must be forwarded too.',
       );
     });
@@ -996,13 +996,13 @@ void main() {
       expect(hasActiveSubscription(data), isTrue);
     });
 
-    test('Apple-source sub never flags as Stripe-modifiable', () {
+    test('Apple-source sub is recognized as active but never Stripe-inferred', () {
       
       
       final data = <String, dynamic>{
         'source': 'apple', 'status': 'active',
       };
-      expect(hasActiveSubscription(data), isFalse);
+      expect(hasActiveSubscription(data), isTrue);
     });
 
     test('billing source labels never claim a cross-provider entitlement', () {
@@ -1016,7 +1016,7 @@ void main() {
       );
       expect(
         billingProviderLabel(<String, dynamic>{'source': 'stripe_legacy'}),
-        'the legacy web billing provider',
+        'the web billing provider',
       );
     });
   });

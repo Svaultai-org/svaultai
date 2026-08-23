@@ -98,6 +98,8 @@ async def billing_me(principal=Depends(verify_trusted_device)):
 
     payload["recent_webhook_count"] = _count_recent_global_webhooks()
     payload["billing_state"] = "ok"
+    if ent.conflict_reason_code:
+        payload["billing_state"] = "provider_conflict"
     return payload
 
 
@@ -131,6 +133,20 @@ def _billing_me_safe_default_payload() -> dict:
         "block_price_cents_usd":    block_price_cents_usd(),
         "block_bytes":              block_bytes(),
         "has_active_subscription":  False,
+        "provider":                 "free",
+        "product_id":               None,
+        "base_plan_id":             None,
+        "billing_period":            None,
+        "storage_bytes":             inc,
+        "display_tier":              "1 GB",
+        "subscription_status":       "free",
+        "entitlement_family":        "storage",
+        "ownership_status":          "free",
+        "conflict_reason_code":      None,
+        "current_provider":          "free",
+        "target_provider":           None,
+        "migration_status":          "none",
+        "web_card_purchase_allowed": True,
         "last_webhook_event":       None,
         "recent_webhook_count":     0,
         "billing_state":            "safe_default",

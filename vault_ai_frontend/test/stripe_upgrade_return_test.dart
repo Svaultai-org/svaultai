@@ -211,10 +211,12 @@ void main() {
     test('vlog is imported from main.dart', () {
       expect(
         storagePageSrc,
-        contains(
-          "import 'main.dart'\n"
-          "    show AppState, backendBaseUrl, "
-          "kVaultStorageLimitBytes, vlog;",
+        matches(
+          RegExp(
+            r"import 'main\.dart'\s+show\s+"
+            r'AppState,\s*backendBaseUrl,\s*'
+            r'kVaultStorageLimitBytes,\s*vlog;',
+          ),
         ),
         reason: 'storage_page.dart must import vlog so the dev '
             'diagnostic line surfaces in the browser console.',

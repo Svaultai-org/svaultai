@@ -1316,6 +1316,34 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> reconcileGooglePlayPurchases({
+    required String authToken,
+    required List<String> purchaseTokens,
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/google-play/reconcile');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode({
+        'purchase_tokens': purchaseTokens,
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Google Play reconciliation failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid Google Play reconciliation response');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> verifyAppleTransaction({
     required String authToken,
     required String signedTransaction,

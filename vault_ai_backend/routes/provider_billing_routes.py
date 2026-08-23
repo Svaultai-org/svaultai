@@ -31,6 +31,10 @@ class GooglePlayVerifyRequest(BaseModel):
     product_id: str = Field(..., min_length=1, max_length=200)
 
 
+class GooglePlayReconcileRequest(BaseModel):
+    purchase_tokens: list[str] = Field(default_factory=list, max_length=20)
+
+
 class AppleTransactionRequest(BaseModel):
     signed_transaction: str = Field(..., min_length=1, max_length=100_000)
     environment: Literal["production", "sandbox"] = "production"
@@ -44,6 +48,8 @@ def _account_id(principal: dict) -> str:
 @router.get("/billing/providers")
 async def billing_providers(principal=Depends(verify_trusted_device)):
     account_id = _account_id(principal)
+    from billing_entitlements import web_card_purchase_allowed_for_account
+    web_card_purchase_allowed = web_card_purchase_allowed_for_account(account_id)
     from apple_billing import (
         AppleBillingConfigurationError,
         apple_app_account_token,
@@ -54,6 +60,7 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         GOOGLE_PLAY_BASE_PLAN_TYPE,
         GOOGLE_PLAY_BILLING_PERIOD,
         GOOGLE_PLAY_PRODUCT_50GB,
+        GOOGLE_PLAY_STORAGE_CATALOG,
         purchase_account_token,
     )
     apple_catalog = {}
@@ -71,9 +78,14 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         if len(apple_product_ids) == 1
         else None
     )
+    google_play_tiers = sorted(
+        GOOGLE_PLAY_STORAGE_CATALOG.values(),
+        key=lambda tier: tier.tier_rank,
+    )
     return {
         "web_card": {
             "checkout_enabled": False,
+            "purchase_allowed": web_card_purchase_allowed,
             "message": (
                 "Storage upgrades are temporarily unavailable on the web "
                 "while we update our payment provider."
@@ -81,6 +93,19 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         },
         "google_play": {
             "product_id": GOOGLE_PLAY_PRODUCT_50GB,
+            "product_ids": [tier.product_id for tier in google_play_tiers],
+            "products": [
+                {
+                    "product_id": tier.product_id,
+                    "base_plan_id": tier.base_plan_id,
+                    "billing_period": tier.billing_period,
+                    "tier_rank": tier.tier_rank,
+                    "display_capacity": tier.display_capacity,
+                    "storage_entitlement_bytes": tier.storage_bytes,
+                    "quantity": tier.quantity,
+                }
+                for tier in google_play_tiers
+            ],
             "base_plan_id": GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
             "base_plan_type": GOOGLE_PLAY_BASE_PLAN_TYPE,
             "billing_period": GOOGLE_PLAY_BILLING_PERIOD,
@@ -120,7 +145,19 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
 
 @router.post("/billing/web/checkout-session")
 async def web_checkout_disabled(principal=Depends(verify_trusted_device)):
-    _account_id(principal)
+    account_id = _account_id(principal)
+    from billing_entitlements import web_card_purchase_allowed_for_account
+    if not web_card_purchase_allowed_for_account(account_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_store_billing_owner",
+                "message": (
+                    "Storage billing is owned by an active app-store "
+                    "subscription. Provider migration is not available yet."
+                ),
+            },
+        )
     raise HTTPException(
         status_code=503,
         detail={
@@ -138,7 +175,12 @@ async def verify_google_play_purchase(
     payload: GooglePlayVerifyRequest,
     principal=Depends(verify_trusted_device),
 ):
-    from billing_entitlements import PurchaseAlreadyBoundError
+    from billing_entitlements import (
+        ConflictingActiveEntitlementError,
+        PurchaseAlreadyBoundError,
+        StaleProviderEventError,
+        StorageBillingOwnerConflictError,
+    )
     from google_play_billing import (
         GooglePlayConfigurationError,
         GooglePlayTransientError,
@@ -158,6 +200,36 @@ async def verify_google_play_purchase(
             detail={
                 "code": "purchase_already_bound",
                 "message": "This verified purchase belongs to another SVaultAI account.",
+            },
+        ) from exc
+    except StorageBillingOwnerConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_storage_billing_owner",
+                "message": (
+                    "Another verified provider currently owns storage billing. "
+                    "Provider migration is not available yet."
+                ),
+            },
+        ) from exc
+    except ConflictingActiveEntitlementError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "google_play_replacement_required",
+                "message": (
+                    "Use Google Play's subscription change flow to replace "
+                    "the current storage plan."
+                ),
+            },
+        ) from exc
+    except StaleProviderEventError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "google_play_purchase_superseded",
+                "message": "This Google Play purchase has already been replaced.",
             },
         ) from exc
     except GooglePlayConfigurationError as exc:
@@ -195,6 +267,73 @@ async def verify_google_play_purchase(
             result.current_period_end.isoformat()
             if result.current_period_end else None
         ),
+    }
+
+
+@router.post("/billing/google-play/reconcile")
+async def reconcile_google_play_purchases(
+    payload: GooglePlayReconcileRequest,
+    principal=Depends(verify_trusted_device),
+):
+    """Re-fetch current and server-bound purchases from Google Play.
+
+    An empty device list is meaningful: the server still checks any bound
+    non-terminal purchase before reporting the account's final entitlement.
+    """
+    from billing_entitlements import PurchaseAlreadyBoundError
+    from google_play_billing import (
+        GooglePlayConfigurationError,
+        GooglePlayTransientError,
+        GooglePlayVerificationError,
+        reconcile_google_subscriptions,
+    )
+
+    account_id = _account_id(principal)
+    try:
+        result = reconcile_google_subscriptions(
+            account_id=account_id,
+            current_purchase_tokens=payload.purchase_tokens,
+        )
+    except PurchaseAlreadyBoundError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "purchase_already_bound",
+                "message": "This verified purchase belongs to another SVaultAI account.",
+            },
+        ) from exc
+    except GooglePlayConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "google_play_verification_unavailable",
+                "message": "Google Play verification is temporarily unavailable.",
+            },
+        ) from exc
+    except GooglePlayTransientError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "google_play_verification_retry",
+                "message": "Google Play verification is temporarily unavailable.",
+            },
+        ) from exc
+    except GooglePlayVerificationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "google_play_purchase_invalid",
+                "message": "Google Play could not verify this purchase.",
+            },
+        ) from exc
+    return {
+        "reconciled": True,
+        "provider": "google_play",
+        "status": result.status,
+        "has_active_subscription": result.has_active_subscription,
+        "current_purchase_count": result.current_purchase_count,
+        "reconciled_count": result.reconciled_count,
+        "cleared_pending": result.cleared_pending,
     }
 
 
@@ -309,8 +448,8 @@ def _parse_voided_subscription(
         raise HTTPException(
             status_code=400, detail="invalid voided purchase notification",
         ) from exc
-    # This release has one subscription product. Quantity-based partial
-    # refunds apply to one-time products and must never alter this entitlement.
+    # Quantity-based partial refunds apply to one-time products and must never
+    # alter the mutually exclusive storage-subscription entitlement family.
     if (
         not purchase_token
         or len(purchase_token) > 4096
@@ -330,6 +469,7 @@ async def google_play_rtdn(request: Request):
     _verify_google_pubsub_request(request)
     event_id, notification = _decode_pubsub_message(await request.json())
     from billing_entitlements import (
+        ConflictingActiveEntitlementError,
         StaleProviderEventError,
         claim_provider_event,
         find_account_for_purchase,
@@ -337,10 +477,9 @@ async def google_play_rtdn(request: Request):
         revoke_verified_purchase_entitlement,
     )
     from google_play_billing import (
-        GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
         GOOGLE_PLAY_PACKAGE_NAME,
-        GOOGLE_PLAY_PRODUCT_50GB,
         GooglePlayConfigurationError,
+        GooglePlayPublisherClient,
         GooglePlayPurchaseNotFoundError,
         GooglePlayTransientError,
         GooglePlayVerificationError,
@@ -396,9 +535,10 @@ async def google_play_rtdn(request: Request):
             )
             return {"outcome": "ignored_unbound"}
         publisher_lookup = "verified"
+        verified_snapshot = None
         try:
             try:
-                verify_google_subscription_identity(
+                verified_snapshot = verify_google_subscription_identity(
                     account_id=account_id,
                     purchase_token=purchase_token,
                 )
@@ -414,8 +554,12 @@ async def google_play_rtdn(request: Request):
                 provider_status="VOIDED_PURCHASE_FULL_REFUND",
                 provider_event_at=event_time,
                 provider_event_id=event_id,
-                expected_product_id=GOOGLE_PLAY_PRODUCT_50GB,
-                expected_plan_id=GOOGLE_PLAY_BASE_PLAN_MONTHLY_AUTO,
+                expected_product_id=(
+                    verified_snapshot.product_id if verified_snapshot else None
+                ),
+                expected_plan_id=(
+                    verified_snapshot.plan_id if verified_snapshot else None
+                ),
                 metadata={
                     "voided_purchase": True,
                     "refund_type": "FULL_REFUND",
@@ -482,18 +626,36 @@ async def google_play_rtdn(request: Request):
     )
     if not inserted:
         return {"outcome": "duplicate"}
-    account_id = find_account_for_purchase("google_play", purchase_token)
-    if not account_id:
-        finish_provider_event(
-            source="google_play", event_id=event_id, outcome="ignored_unbound",
-        )
-        return {"outcome": "ignored_unbound"}
     try:
+        account_id = find_account_for_purchase("google_play", purchase_token)
+        publisher = None
+        authoritative_payload = None
+        if not account_id:
+            # Replacement RTDN can arrive before the app verifies the new
+            # token. Fetch authoritative state and bind only through Google's
+            # linkedPurchaseToken; the RTDN body itself never grants storage.
+            publisher = GooglePlayPublisherClient()
+            authoritative_payload = publisher.get_subscription(purchase_token)
+            linked_purchase_token = str(
+                authoritative_payload.get("linkedPurchaseToken") or ""
+            )
+            if linked_purchase_token:
+                account_id = find_account_for_purchase(
+                    "google_play", linked_purchase_token,
+                )
+        if not account_id:
+            finish_provider_event(
+                source="google_play", event_id=event_id,
+                outcome="ignored_unbound",
+            )
+            return {"outcome": "ignored_unbound"}
         result = verify_and_apply_google_subscription(
             account_id=account_id,
             purchase_token=purchase_token,
             event_id=event_id,
             event_time=event_time,
+            publisher=publisher,
+            authoritative_payload=authoritative_payload,
         )
         finish_provider_event(
             source="google_play", event_id=event_id, outcome="applied",
@@ -503,6 +665,22 @@ async def google_play_rtdn(request: Request):
             source="google_play", event_id=event_id, outcome="ignored_stale",
         )
         return {"outcome": "ignored_stale"}
+    except (GooglePlayVerificationError, ConflictingActiveEntitlementError) as exc:
+        finish_provider_event(
+            source="google_play", event_id=event_id, outcome="rejected",
+            error_text=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=400, detail="RTDN subscription verification failed",
+        ) from exc
+    except (GooglePlayConfigurationError, GooglePlayTransientError) as exc:
+        finish_provider_event(
+            source="google_play", event_id=event_id, outcome="error",
+            error_text=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503, detail="RTDN processing retry required",
+        ) from exc
     except Exception as exc:
         finish_provider_event(
             source="google_play", event_id=event_id, outcome="error",
@@ -522,6 +700,7 @@ async def verify_apple_transaction(
         AppleTransactionVerificationError,
         verify_and_apply_apple_transaction,
     )
+    from billing_entitlements import StorageBillingOwnerConflictError
     if payload.environment == "sandbox" and os.getenv(
         "VAULTAI_APPLE_ACCEPT_SANDBOX", "false",
     ).strip().lower() not in {"1", "true", "yes", "on"}:
@@ -536,6 +715,17 @@ async def verify_apple_transaction(
         raise HTTPException(
             status_code=503,
             detail={"code": "apple_billing_not_configured", "message": "Apple billing is not configured."},
+        ) from exc
+    except StorageBillingOwnerConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_storage_billing_owner",
+                "message": (
+                    "Another verified provider currently owns storage billing. "
+                    "Provider migration is not available yet."
+                ),
+            },
         ) from exc
     except AppleTransactionVerificationError as exc:
         raise HTTPException(

@@ -63,8 +63,10 @@ import 'package:vault_ai_frontend/main.dart'
         deriveAndInstallCryptoContext,
         encryptWithContext;
 
+
 String _mainDart() => File('lib/main.dart').readAsStringSync();
 String _apiClient() => File('lib/api_client.dart').readAsStringSync();
+
 
 VaultCryptoContext _makeCtx({
   required String vaultId,
@@ -87,6 +89,7 @@ VaultCryptoContext _makeCtx({
     source: source,
   );
 }
+
 
 void main() {
   setUp(() {
@@ -111,22 +114,14 @@ void main() {
         final saltA = base64.encode(Uint8List(16));
         final saltB = base64.encode(Uint8List(16)..[0] = 0x02);
         final ctxA = _makeCtx(
-          vaultId: 'v-1',
-          vaultName: 'Yola',
-          key: keyA,
-          saltBase64: saltA,
-          iterations: 1000,
-          generation: 1,
-          source: 'test.A',
+          vaultId: 'v-1', vaultName: 'Yola',
+          key: keyA, saltBase64: saltA,
+          iterations: 1000, generation: 1, source: 'test.A',
         );
         final ctxB = _makeCtx(
-          vaultId: 'v-1',
-          vaultName: 'Yola',
-          key: keyB,
-          saltBase64: saltB,
-          iterations: 1000,
-          generation: 2,
-          source: 'test.B',
+          vaultId: 'v-1', vaultName: 'Yola',
+          key: keyB, saltBase64: saltB,
+          iterations: 1000, generation: 2, source: 'test.B',
         );
 
         // Install B, then encrypt using A. The encrypt MUST use A's
@@ -138,17 +133,15 @@ void main() {
           context: ctxB,
         );
         final ctA = await encryptWithContext(
-          plaintext: 'hello',
-          context: ctxA,
+          plaintext: 'hello', context: ctxA,
         );
         final ctB = await encryptWithContext(
-          plaintext: 'hello',
-          context: ctxB,
+          plaintext: 'hello', context: ctxB,
         );
         // Two different keys must produce different ciphertexts.
         expect(ctA, isNot(equals(ctB)),
             reason: 'encryptWithContext must use the passed context\'s '
-                'key exclusively — not do a registry lookup');
+                    'key exclusively — not do a registry lookup');
 
         // Decrypt each ciphertext with its OWN key; both must
         // succeed and yield the original plaintext.
@@ -162,7 +155,6 @@ void main() {
           final pt = await aead.decrypt(box, secretKey: key);
           return utf8.decode(pt);
         }
-
         expect(await decryptWith(ctA, keyA), 'hello');
         expect(await decryptWith(ctB, keyB), 'hello');
       },
@@ -187,26 +179,27 @@ void main() {
         final snapIdx = fn.indexOf('final ctxSnapshot = VaultCryptoRegistry');
         expect(snapIdx, greaterThan(-1),
             reason: '_send() must snapshot VaultCryptoRegistry.current '
-                'into a named local variable ONCE');
+                    'into a named local variable ONCE');
 
         final encIdx = fn.indexOf('encryptWithContext(');
         expect(encIdx, greaterThan(-1),
             reason: '_send() must encrypt via encryptWithContext '
-                '(which pins the key from the passed context)');
+                    '(which pins the key from the passed context)');
         expect(encIdx, greaterThan(snapIdx),
             reason: 'the snapshot must be captured BEFORE the '
-                'encrypt call');
+                    'encrypt call');
 
         // Every kdf field on the outgoing chatStream call MUST
         // read from ctxSnapshot.* — not from any other source.
         final streamCallIdx = fn.indexOf('client.chatStream(');
-        final windowStream = fn.substring(
-            streamCallIdx, (streamCallIdx + 3000).clamp(0, fn.length));
+        final windowStream =
+            fn.substring(streamCallIdx, (streamCallIdx + 3000)
+                .clamp(0, fn.length));
         expect(
           windowStream.contains('kdfSaltUsed: ctxSnapshot.saltBase64'),
           isTrue,
           reason: 'chatStream must be passed ctxSnapshot.saltBase64 '
-              '(NOT a separate origin lookup)',
+                  '(NOT a separate origin lookup)',
         );
         expect(
           windowStream.contains('kdfIterationsUsed: ctxSnapshot.iterations'),
@@ -235,21 +228,17 @@ void main() {
 
         // B completes first, installs at generation 1.
         final ctxB = _makeCtx(
-          vaultId: 'v',
-          vaultName: 'Yola',
-          key: kB,
-          saltBase64: salt,
-          iterations: 1000,
-          generation: VaultCryptoRegistry.nextGeneration(),
+          vaultId: 'v', vaultName: 'Yola',
+          key: kB, saltBase64: salt,
+          iterations: 1000, generation: VaultCryptoRegistry.nextGeneration(),
           source: 'B',
         );
         final okB = VaultCryptoRegistry.install(
-          operationId: op2,
-          context: ctxB,
+          operationId: op2, context: ctxB,
         );
         expect(okB, isTrue,
             reason: 'B (op 2) must install cleanly — it holds the '
-                'operation-peak reservation');
+                    'operation-peak reservation');
         expect(VaultCryptoRegistry.current?.source, 'B');
 
         // A completes LATER but its op id is 1 (superseded). Also
@@ -257,24 +246,20 @@ void main() {
         // it's numerically greater — but the operation-id guard
         // still refuses it because op2 is the peak.
         final ctxA = _makeCtx(
-          vaultId: 'v',
-          vaultName: 'Yola',
-          key: kA,
-          saltBase64: salt,
-          iterations: 1000,
-          generation: VaultCryptoRegistry.nextGeneration(),
+          vaultId: 'v', vaultName: 'Yola',
+          key: kA, saltBase64: salt,
+          iterations: 1000, generation: VaultCryptoRegistry.nextGeneration(),
           source: 'A',
         );
         final okA = VaultCryptoRegistry.install(
-          operationId: op1,
-          context: ctxA,
+          operationId: op1, context: ctxA,
         );
         expect(okA, isFalse,
             reason: 'A (op 1) MUST be refused — a later reservation '
-                'has superseded it');
+                    'has superseded it');
         expect(VaultCryptoRegistry.current?.source, 'B',
             reason: 'stale install must NOT overwrite the current '
-                'context');
+                    'context');
       },
     );
 
@@ -293,13 +278,9 @@ void main() {
         VaultCryptoRegistry.install(
           operationId: VaultCryptoRegistry.nextOperationId(),
           context: _makeCtx(
-            vaultId: 'v',
-            vaultName: 'Yola',
-            key: k1,
-            saltBase64: salt,
-            iterations: 1000,
-            generation: 5,
-            source: 'seed',
+            vaultId: 'v', vaultName: 'Yola',
+            key: k1, saltBase64: salt,
+            iterations: 1000, generation: 5, source: 'seed',
           ),
         );
         expect(VaultCryptoRegistry.current?.generation, 5);
@@ -308,16 +289,13 @@ void main() {
         final ok = VaultCryptoRegistry.install(
           operationId: VaultCryptoRegistry.nextOperationId(),
           context: _makeCtx(
-            vaultId: 'v',
-            vaultName: 'Yola',
-            key: k2,
-            saltBase64: salt,
-            iterations: 1000,
-            generation: 5,
-            source: 'lower',
+            vaultId: 'v', vaultName: 'Yola',
+            key: k2, saltBase64: salt,
+            iterations: 1000, generation: 5, source: 'lower',
           ),
         );
-        expect(ok, isFalse, reason: 'generation must strictly increase');
+        expect(ok, isFalse,
+            reason: 'generation must strictly increase');
         expect(VaultCryptoRegistry.current?.source, 'seed');
       },
     );
@@ -327,32 +305,27 @@ void main() {
   // Test 3 (spec) — production serializer includes KDF fields
   // -------------------------------------------------------------
   group('Test 3 — production serializer includes KDF fields', () {
-    test(
-        'buildChatRequestBody serializes kdf_salt_used + '
-        'kdf_iterations_used + crypto_protocol_version = 2', () {
+    test('buildChatRequestBody serializes kdf_salt_used + '
+         'kdf_iterations_used + crypto_protocol_version = 2', () {
       // UPDATED 2026-07-22 (2): the wire body is now built by the
       // pure top-level helper `buildChatRequestBody`, exposed for
       // exactly this kind of end-to-end shape verification.
       // Behavioral check instead of source-scan:
       final body = buildChatRequestBody(
-        encryptedMessage: 'ct',
-        vaultName: 'v',
-        pin: '1',
-        kdfSaltUsed: 'salt-b64',
-        kdfIterationsUsed: 600000,
+        encryptedMessage: 'ct', vaultName: 'v', pin: '1',
+        kdfSaltUsed: 'salt-b64', kdfIterationsUsed: 600000,
       );
       expect(body['kdf_salt_used'], 'salt-b64');
       expect(body['kdf_iterations_used'], 600000);
       expect(body['crypto_protocol_version'], 2,
           reason: 'the protocol-version field must ride in every '
-              'request body so the backend can enforce KDF-field '
-              'presence without depending on a spoofable header');
+                  'request body so the backend can enforce KDF-field '
+                  'presence without depending on a spoofable header');
     });
 
-    test(
-        'every chat request declares crypto_protocol_version = 2 '
-        'in the REQUEST BODY (not a header) so backend enforcement '
-        'cannot be bypassed by a spoofable header', () {
+    test('every chat request declares crypto_protocol_version = 2 '
+         'in the REQUEST BODY (not a header) so backend enforcement '
+         'cannot be bypassed by a spoofable header', () {
       // UPDATED 2026-07-22 (2) after the review-gate rejected
       // X-App-Release as a security boundary. The header remains
       // in _defaultHeaders for diagnostics but is no longer the
@@ -363,16 +336,16 @@ void main() {
       final bodyIdx = src.indexOf('Map<String, dynamic> buildChatRequestBody');
       expect(bodyIdx, greaterThan(-1),
           reason: 'buildChatRequestBody helper must exist so tests '
-              'can inspect the wire body directly');
+                  'can inspect the wire body directly');
       final endIdx = src.indexOf('return <String, dynamic>{', bodyIdx);
       final mapEnd = src.indexOf('};', endIdx);
       final mapBody = src.substring(endIdx, mapEnd);
       expect(mapBody.contains("'crypto_protocol_version'"), isTrue,
           reason: 'chat body MUST include crypto_protocol_version — '
-              'that is the backend\'s enforcement boundary');
+                  'that is the backend\'s enforcement boundary');
       expect(mapBody.contains('kCryptoProtocolVersion'), isTrue,
           reason: 'must use the pinned constant so a value change '
-              'requires an explicit code edit');
+                  'requires an explicit code edit');
       // X-App-Release stays in _defaultHeaders for diagnostics —
       // but MUST NOT be described in the code as an enforcement
       // gate. This assertion just confirms the header emit stays
@@ -383,7 +356,7 @@ void main() {
       final defFn = src.substring(defIdx, defEnd);
       expect(defFn.contains("'X-App-Release'"), isTrue,
           reason: 'header is retained for diagnostic correlation '
-              '(NOT enforcement)');
+                  '(NOT enforcement)');
     });
   });
 
@@ -392,9 +365,9 @@ void main() {
   // "Incorrect PIN"
   // -------------------------------------------------------------
   group('Test 7 — 400 decrypt failure classification', () {
-    test(
-        'api_client._throwIfInvalidVaultUnlock throws '
-        'CryptoContextMismatchException, NOT InvalidVaultUnlockException', () {
+    test('api_client._throwIfInvalidVaultUnlock throws '
+         'CryptoContextMismatchException, NOT InvalidVaultUnlockException',
+         () {
       final src = _apiClient();
       final fnIdx = src.indexOf('void _throwIfInvalidVaultUnlock');
       expect(fnIdx, greaterThan(-1));
@@ -402,16 +375,15 @@ void main() {
       final fn = src.substring(fnIdx, endIdx);
       expect(fn.contains('CryptoContextMismatchException()'), isTrue,
           reason: '400 decrypt failure must throw the typed '
-              'CryptoContextMismatchException so the session '
-              'is preserved');
+                  'CryptoContextMismatchException so the session '
+                  'is preserved');
       expect(fn.contains('InvalidVaultUnlockException()'), isFalse,
           reason: 'the 400 decrypt path must NOT use the sign-out '
-              'InvalidVaultUnlockException type any more');
+                  'InvalidVaultUnlockException type any more');
     });
 
-    test(
-        'AppState.handleApiException(CryptoContextMismatchException) '
-        'does NOT call clearSession and does NOT navigate away', () {
+    test('AppState.handleApiException(CryptoContextMismatchException) '
+         'does NOT call clearSession and does NOT navigate away', () {
       final src = _mainDart();
       final fnIdx = src.indexOf('bool handleApiException(Object error)');
       expect(fnIdx, greaterThan(-1));
@@ -420,7 +392,7 @@ void main() {
       final branchIdx = fn.indexOf('error is CryptoContextMismatchException');
       expect(branchIdx, greaterThan(-1),
           reason: 'handleApiException must have an explicit branch '
-              'for the crypto-mismatch type');
+                  'for the crypto-mismatch type');
       // Slice the branch body.
       final branchEnd = fn.indexOf('return true;', branchIdx);
       final branch = fn.substring(branchIdx, branchEnd);
@@ -428,21 +400,22 @@ void main() {
           reason: 'CryptoContextMismatch must NOT clear the session');
       expect(branch.contains('pushNamedAndRemoveUntil'), isFalse,
           reason: 'CryptoContextMismatch must NOT navigate away — '
-              'the caller controls where the user goes');
+                  'the caller controls where the user goes');
       expect(branch.contains("authed = false"), isFalse,
           reason: 'CryptoContextMismatch must NOT tear down auth');
       expect(branch.contains("unlocked = false"), isFalse,
           reason: 'CryptoContextMismatch must NOT drop the unlock');
     });
 
-    test(
-        '_send() 400 handler preserves input, drops the failed '
-        'user bubble, and does NOT navigate', () {
+    test('_send() 400 handler preserves input, drops the failed '
+         'user bubble, and does NOT navigate', () {
       final src = _mainDart();
       final sendIdx = src.indexOf('Future<void> _send()');
-      // Attachment-analysis and document-extraction routing now occupy a
-      // larger portion of _send before its typed error handler.
-      final windowEnd = (sendIdx + 80000).clamp(0, src.length);
+      final nextMethodIdx = src.indexOf(
+        'Future<void> _pickAttachment()',
+        sendIdx,
+      );
+      final windowEnd = nextMethodIdx > sendIdx ? nextMethodIdx : src.length;
       final fn = src.substring(sendIdx, windowEnd);
       // Slice the branch body via brace-depth so nested
       // `if (!mounted) return;` bail-outs don't cut it short.
@@ -458,10 +431,7 @@ void main() {
         if (ch == '{') depth++;
         if (ch == '}') {
           depth--;
-          if (depth == 0) {
-            closeIdx = i;
-            break;
-          }
+          if (depth == 0) { closeIdx = i; break; }
         }
         i++;
       }
@@ -483,9 +453,8 @@ void main() {
           reason: 'must NOT auto-retry');
     });
 
-    test(
-        'PinInvalidException is defined and does NOT extend '
-        'AuthExpiredException', () {
+    test('PinInvalidException is defined and does NOT extend '
+         'AuthExpiredException', () {
       final src = _apiClient();
       expect(src.contains('class PinInvalidException'), isTrue);
       expect(src.contains('class CryptoContextMismatchException'), isTrue);
@@ -494,12 +463,11 @@ void main() {
       final pinIdx = src.indexOf('class PinInvalidException');
       final windowEnd = (pinIdx + 500).clamp(0, src.length);
       expect(
-        src
-            .substring(pinIdx, windowEnd)
-            .contains('extends AuthExpiredException'),
+        src.substring(pinIdx, windowEnd)
+          .contains('extends AuthExpiredException'),
         isFalse,
         reason: 'PinInvalidException must NOT extend the sign-out '
-            'exception type',
+                'exception type',
       );
     });
   });
@@ -509,9 +477,8 @@ void main() {
   // still terminate. See backend test file for the code-list guard.
   // -------------------------------------------------------------
   group('Test 8 — real session codes still sign out', () {
-    test(
-        'handleApiException(SessionTerminatedException) is '
-        'documented as clearing session', () {
+    test('handleApiException(SessionTerminatedException) is '
+         'documented as clearing session', () {
       final src = _mainDart();
       final fnIdx = src.indexOf('bool handleApiException(Object error)');
       final windowEnd = (fnIdx + 4000).clamp(0, src.length);
@@ -522,7 +489,7 @@ void main() {
       // uncoded 401s NOT reclassified to invalid_pin.
       expect(fn.contains('AuthExpiredException'), isTrue,
           reason: 'the AuthExpired branch must still exist as the '
-              'fallback for genuinely un-typed 401s');
+                  'fallback for genuinely un-typed 401s');
     });
   });
 
