@@ -222,6 +222,28 @@ void main() {
     await gateway.controller.close();
   });
 
+  test('canceled purchase preserves the loaded catalog and allows retry',
+      () async {
+    final gateway = _Gateway();
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async =>
+          {'verified': true},
+    );
+    await billing.initialize();
+    expect(billing.productFor(_productId), isNotNull);
+
+    gateway.controller.add([_purchase(PurchaseStatus.canceled)]);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(billing.state, 'canceled');
+    expect(billing.message, 'Purchase canceled. No storage change was made.');
+    expect(billing.productFor(_productId), isNotNull);
+    expect(billing.canBuy, isTrue);
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
   test('restore verifies and completes a restored transaction once', () async {
     final gateway = _Gateway();
     var verifications = 0;

@@ -1028,7 +1028,11 @@ class _StoragePageState extends State<StoragePage> {
       hasActiveSubscription: playOwnsSubscription,
     );
     final appleTierChoices = <StoreStorageTierChoice>[];
-    if (_usesAppleBilling && apple?.state == 'ready') {
+    // A canceled StoreKit sheet changes the controller's transient state to
+    // `canceled`, but it does not invalidate the ProductDetails catalog.
+    // `canBuy` is the authoritative readiness gate: it requires StoreKit to
+    // be available and at least one returned product to remain cached.
+    if (_usesAppleBilling && apple?.canBuy == true) {
       for (var index = 0; index < _applePlanCatalog.length; index++) {
         final plan = _applePlanCatalog[index];
         final product = apple!.productFor(plan.productId);
