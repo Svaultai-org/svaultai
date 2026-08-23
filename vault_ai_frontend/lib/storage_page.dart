@@ -3,6 +3,10 @@ import 'dart:async' show TimeoutException, unawaited;
 import 'package:flutter/foundation.dart'
     show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_storekit/in_app_purchase_storekit.dart';
+import 'package:in_app_purchase_storekit/store_kit_2_wrappers.dart';
+import 'package:in_app_purchase_storekit/store_kit_wrappers.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -91,14 +95,107 @@ class StoreStorageTierChoice {
   final String capacityLabel;
   final String localizedPrice;
   final int rank;
+  final String periodLabel;
 
   const StoreStorageTierChoice({
     required this.productId,
     required this.capacityLabel,
     required this.localizedPrice,
     required this.rank,
+    this.periodLabel = 'month',
   });
 }
+
+@immutable
+class AppleStoragePlanConfig {
+  final String productId;
+  final String capacityLabel;
+  final int entitlementBytes;
+  final String billingPeriod;
+
+  const AppleStoragePlanConfig({
+    required this.productId,
+    required this.capacityLabel,
+    required this.entitlementBytes,
+    required this.billingPeriod,
+  });
+}
+
+List<AppleStoragePlanConfig> parseAppleStorageCatalog(
+    Map<dynamic, dynamic> data) {
+  final rawProducts = data['products'];
+  final plans = <AppleStoragePlanConfig>[];
+  if (rawProducts is List) {
+    for (final raw in rawProducts) {
+      if (raw is! Map) continue;
+      final productId = raw['product_id']?.toString().trim() ?? '';
+      final capacity = raw['display_capacity']?.toString().trim() ?? '';
+      final bytes = (raw['storage_entitlement_bytes'] as num?)?.toInt() ?? 0;
+      final period = raw['billing_period']?.toString().trim() ?? '';
+      if (productId.isEmpty ||
+          capacity.isEmpty ||
+          bytes <= 0 ||
+          period.isEmpty) {
+        continue;
+      }
+      plans.add(AppleStoragePlanConfig(
+        productId: productId,
+        capacityLabel: capacity,
+        entitlementBytes: bytes,
+        billingPeriod: period,
+      ));
+    }
+  }
+  // Compatibility with the already-deployed one-product provider contract.
+  // It still supplies a backend-recognized product, period, and entitlement;
+  // no client-side tier is invented.
+  if (plans.isEmpty) {
+    final productId = data['product_id']?.toString().trim() ?? '';
+    final bytes = (data['storage_entitlement_bytes'] as num?)?.toInt() ?? 0;
+    final period = data['billing_period']?.toString().trim() ?? '';
+    if (productId.isNotEmpty && bytes > 0 && period.isNotEmpty) {
+      plans.add(AppleStoragePlanConfig(
+        productId: productId,
+        capacityLabel: formatBytes(bytes),
+        entitlementBytes: bytes,
+        billingPeriod: period,
+      ));
+    }
+  }
+  return List<AppleStoragePlanConfig>.unmodifiable(plans);
+}
+
+String? appleStoreKitPeriodLabel(ProductDetails product) {
+  if (product is AppStoreProduct2Details) {
+    final period = product.sk2Product.subscription?.subscriptionPeriod;
+    if (period == null || period.value != 1) return null;
+    return switch (period.unit) {
+      SK2SubscriptionPeriodUnit.day => 'day',
+      SK2SubscriptionPeriodUnit.week => 'week',
+      SK2SubscriptionPeriodUnit.month => 'month',
+      SK2SubscriptionPeriodUnit.year => 'year',
+    };
+  }
+  if (product is AppStoreProductDetails) {
+    final period = product.skProduct.subscriptionPeriod;
+    if (period == null || period.numberOfUnits != 1) return null;
+    return switch (period.unit) {
+      SKSubscriptionPeriodUnit.day => 'day',
+      SKSubscriptionPeriodUnit.week => 'week',
+      SKSubscriptionPeriodUnit.month => 'month',
+      SKSubscriptionPeriodUnit.year => 'year',
+    };
+  }
+  return null;
+}
+
+String recurringPeriodAdverb(String periodLabel) => switch (periodLabel) {
+      'day' => 'daily',
+      'week' => 'weekly',
+      'month' => 'monthly',
+      'year' => 'yearly',
+      _ => 'on its displayed subscription period',
+    };
 
 List<StoreStorageTierChoice> selectableGooglePlayStorageTiers(
   List<StoreStorageTierChoice> choices, {
@@ -193,6 +290,8 @@ class _StoragePageState extends State<StoragePage> {
   Map<String, dynamic>? _data;
   GooglePlayBillingController? _playBilling;
   AppleStoreKitBillingController? _appleBilling;
+  List<AppleStoragePlanConfig> _applePlanCatalog =
+      const <AppleStoragePlanConfig>[];
   String? _lastPlayBillingState;
   String? _lastAppleBillingState;
   String? _storeConnectionError;
@@ -241,14 +340,14 @@ class _StoragePageState extends State<StoragePage> {
       if (apple is! Map || apple['configured'] != true) {
         throw StateError('app_store_not_configured');
       }
-      final productId = apple['product_id']?.toString() ?? '';
+      final catalog = parseAppleStorageCatalog(apple);
       final appAccountToken = apple['app_account_token']?.toString() ?? '';
-      if (productId.isEmpty || appAccountToken.isEmpty || !mounted) {
+      if (catalog.isEmpty || appAccountToken.isEmpty || !mounted) {
         throw StateError('app_store_configuration_incomplete');
       }
       final controller = AppleStoreKitBillingController(
         gateway: FlutterAppleBillingGateway(),
-        productId: productId,
+        productIds: catalog.map((plan) => plan.productId).toList(),
         appAccountToken: appAccountToken,
         environment:
             kAppleStoreKitEnvironment == 'sandbox' ? 'sandbox' : 'production',
@@ -263,7 +362,10 @@ class _StoragePageState extends State<StoragePage> {
         ),
       );
       controller.addListener(_onAppleBillingChanged);
-      setState(() => _appleBilling = controller);
+      setState(() {
+        _applePlanCatalog = catalog;
+        _appleBilling = controller;
+      });
       await controller.initialize();
     } on TimeoutException {
       if (mounted) {
@@ -282,6 +384,24 @@ class _StoragePageState extends State<StoragePage> {
     } finally {
       if (mounted) setState(() => _storeConnectionInFlight = false);
     }
+  }
+
+  Future<void> _chooseAppleStorage(
+    List<StoreStorageTierChoice> choices,
+  ) async {
+    final selectedProductId = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: VaultColors.canvas,
+      isScrollControlled: true,
+      builder: (_) => AppleStoragePlanPicker(choices: choices),
+    );
+    if (selectedProductId == null || !mounted) return;
+    final controller = _appleBilling;
+    if (controller == null ||
+        controller.productFor(selectedProductId) == null) {
+      return;
+    }
+    await controller.buy(selectedProductId);
   }
 
   void _onAppleBillingChanged() {
@@ -907,6 +1027,25 @@ class _StoragePageState extends State<StoragePage> {
       currentTierRank: currentPlayTier?.rank,
       hasActiveSubscription: playOwnsSubscription,
     );
+    final appleTierChoices = <StoreStorageTierChoice>[];
+    if (_usesAppleBilling && apple?.state == 'ready') {
+      for (var index = 0; index < _applePlanCatalog.length; index++) {
+        final plan = _applePlanCatalog[index];
+        final product = apple!.productFor(plan.productId);
+        if (product == null) continue;
+        final periodLabel = appleStoreKitPeriodLabel(product);
+        // The backend mapping and StoreKit must independently agree that the
+        // product is monthly before it can be shown or purchased.
+        if (plan.billingPeriod != 'P1M' || periodLabel != 'month') continue;
+        appleTierChoices.add(StoreStorageTierChoice(
+          productId: plan.productId,
+          capacityLabel: plan.capacityLabel,
+          localizedPrice: product.price,
+          rank: index + 1,
+          periodLabel: periodLabel!,
+        ));
+      }
+    }
     final storeNeedsRetry = _usesGooglePlayBilling
         ? shouldShowStoreConnectionRetry(
             storeState: play?.state,
@@ -930,7 +1069,9 @@ class _StoragePageState extends State<StoragePage> {
       onBuyStorage: (_usesGooglePlayBilling || _usesAppleBilling) &&
               !activeSubscription &&
               storeCanBuy
-          ? (_usesAppleBilling ? apple!.buy : null)
+          ? (_usesAppleBilling && appleTierChoices.isNotEmpty
+              ? () => _chooseAppleStorage(appleTierChoices)
+              : null)
           : null,
       onManageSubscription: kIsWeb
           ? (providerManageUri != null
@@ -971,7 +1112,7 @@ class _StoragePageState extends State<StoragePage> {
               ? apple!.restore
               : null),
       onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
-      purchasablePlanLabel: _usesAppleBilling ? '50 GB' : null,
+      purchasablePlanLabel: _usesAppleBilling ? 'storage' : null,
       showStorePlanSummary: !kIsWeb && playOwnsSubscription,
       storeTierChoices: playTierChoices,
       onSelectStoreTier: _usesGooglePlayBilling &&
@@ -1264,10 +1405,11 @@ class StorageBody extends StatelessWidget {
           _BillingAvailabilityCard(
             message: showAppleSubscriptionDisclosure
                 ? 'SVaultAI 50 GB Storage — 1 month, $storePrice through '
-                    '$storeName. Adds 50 GB and renews automatically each '
-                    'month until canceled.'
-                : '$storePrice per month through $storeName. Adds 50 GB and '
-                    'renews automatically until canceled.',
+                    '$storeName. Provides 50 GB total storage and renews '
+                    'automatically each month until canceled.'
+                : '$storePrice per month through $storeName. Provides the '
+                    'selected total storage limit and renews automatically '
+                    'until canceled.',
             icon: Icons.shop_2_outlined,
           ),
         ],
@@ -1523,6 +1665,132 @@ class _StoreTierSelector extends StatelessWidget {
   }
 }
 
+class AppleStoragePlanPicker extends StatefulWidget {
+  final List<StoreStorageTierChoice> choices;
+
+  const AppleStoragePlanPicker({super.key, required this.choices});
+
+  @override
+  State<AppleStoragePlanPicker> createState() => _AppleStoragePlanPickerState();
+}
+
+class _AppleStoragePlanPickerState extends State<AppleStoragePlanPicker> {
+  String? _selectedProductId;
+
+  @override
+  Widget build(BuildContext context) {
+    StoreStorageTierChoice? selected;
+    for (final choice in widget.choices) {
+      if (choice.productId == _selectedProductId) selected = choice;
+    }
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(VaultSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Choose storage', style: VaultText.titleLg),
+            const SizedBox(height: VaultSpacing.sm),
+            Text(
+              'Free storage is 1 GB total. Select an App Store plan to review.',
+              style: VaultText.bodySm.copyWith(
+                color: VaultColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: VaultSpacing.lg),
+            for (final choice in widget.choices) ...[
+              Semantics(
+                selected: choice.productId == _selectedProductId,
+                button: true,
+                child: OutlinedButton(
+                  key: Key('apple_storage_plan_${choice.productId}'),
+                  onPressed: () =>
+                      setState(() => _selectedProductId = choice.productId),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: choice.productId == _selectedProductId
+                          ? VaultColors.accentBright
+                          : VaultColors.borderSubtle,
+                      width: choice.productId == _selectedProductId ? 2 : 1,
+                    ),
+                    foregroundColor: VaultColors.textPrimary,
+                    padding: const EdgeInsets.all(VaultSpacing.lg),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(choice.productId == _selectedProductId
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked),
+                      const SizedBox(width: VaultSpacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(choice.capacityLabel,
+                                style: VaultText.subtitle),
+                            const SizedBox(height: VaultSpacing.xs),
+                            Text(
+                              '${choice.localizedPrice} / '
+                              '${choice.periodLabel}',
+                              style: VaultText.body,
+                            ),
+                            const SizedBox(height: VaultSpacing.xs),
+                            Text(
+                              '${choice.capacityLabel} total storage — billed '
+                              '${recurringPeriodAdverb(choice.periodLabel)} '
+                              'through the App Store.',
+                              style: VaultText.bodySm.copyWith(
+                                color: VaultColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: VaultSpacing.sm),
+            ],
+            if (selected != null) ...[
+              const SizedBox(height: VaultSpacing.sm),
+              Text(
+                'Selected: ${selected.capacityLabel} total storage at '
+                '${selected.localizedPrice} / ${selected.periodLabel}.',
+                key: const Key('apple_storage_selected_review'),
+                style: VaultText.body,
+              ),
+            ],
+            const SizedBox(height: VaultSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('apple_storage_cancel'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: VaultSpacing.md),
+                Expanded(
+                  child: ElevatedButton(
+                    key: const Key('apple_storage_continue'),
+                    onPressed: selected == null
+                        ? null
+                        : () => Navigator.of(context).pop(selected!.productId),
+                    child: const Text('Continue / Subscribe'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ActiveStoreSubscriptionCard extends StatelessWidget {
   final String capacityLabel;
   final String? localizedPrice;
@@ -1655,7 +1923,9 @@ class _PurchaseActionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final primaryLabel = hasActiveSub
         ? 'Upgrade storage'
-        : (buyPlanLabel == null ? 'Buy storage' : 'Buy $buyPlanLabel');
+        : (buyPlanLabel == 'storage'
+            ? 'Choose storage'
+            : (buyPlanLabel == null ? 'Buy storage' : 'Buy $buyPlanLabel'));
     final primaryIcon = hasActiveSub ? Icons.upgrade : Icons.add;
     return Row(
       children: [

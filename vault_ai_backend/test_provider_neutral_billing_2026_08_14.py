@@ -958,6 +958,13 @@ async def test_apple_provider_catalog_returns_only_explicit_product_ids(monkeypa
     assert payload["apple"]["billing_period"] == "P1M"
     assert payload["apple"]["storage_entitlement_bytes"] == 53_687_091_200
     assert payload["apple"]["quantity"] == 1
+    assert payload["apple"]["products"] == [{
+        "product_id": "svaultai.storage.50gb.monthly",
+        "billing_period": "P1M",
+        "storage_entitlement_bytes": 53_687_091_200,
+        "quantity": 1,
+        "display_capacity": "50 GB",
+    }]
 
 
 @pytest.mark.asyncio

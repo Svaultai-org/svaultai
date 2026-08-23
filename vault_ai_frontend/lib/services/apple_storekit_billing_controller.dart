@@ -48,7 +48,7 @@ class FlutterAppleBillingGateway implements AppleBillingGateway {
 class AppleStoreKitBillingController extends ChangeNotifier {
   final AppleBillingGateway gateway;
   final ApplePurchaseVerifier verifyPurchase;
-  final String productId;
+  final List<String> productIds;
   final String appAccountToken;
   final String environment;
   final Duration connectionTimeout;
@@ -63,7 +63,10 @@ class AppleStoreKitBillingController extends ChangeNotifier {
   bool available = false;
   bool loading = false;
   bool restoring = false;
-  ProductDetails? product;
+  final Map<String, ProductDetails> _productsById = <String, ProductDetails>{};
+  ProductDetails? get product =>
+      productIds.length == 1 ? _productsById[productIds.single] : null;
+  ProductDetails? productFor(String productId) => _productsById[productId];
   String state = 'idle';
   String? message;
   Set<String> requestedProductIds = <String>{};
@@ -74,7 +77,7 @@ class AppleStoreKitBillingController extends ChangeNotifier {
 
   bool get canBuy =>
       available &&
-      product != null &&
+      _productsById.isNotEmpty &&
       !loading &&
       !restoring &&
       !const {'launching', 'pending', 'verifying'}.contains(state);
@@ -84,13 +87,16 @@ class AppleStoreKitBillingController extends ChangeNotifier {
   AppleStoreKitBillingController({
     required this.gateway,
     required this.verifyPurchase,
-    required this.productId,
+    String? productId,
+    List<String>? productIds,
     required this.appAccountToken,
     this.environment = 'production',
     this.connectionTimeout = const Duration(seconds: 12),
     this.actionTimeout = const Duration(seconds: 20),
     this.verificationTimeout = const Duration(seconds: 30),
-  });
+  }) : productIds = List<String>.unmodifiable(
+          productIds ?? (productId == null ? const <String>[] : [productId]),
+        );
 
   Future<void> initialize({bool forceRetry = false}) async {
     if ((initialized && !forceRetry) || loading) return;
@@ -105,8 +111,8 @@ class AppleStoreKitBillingController extends ChangeNotifier {
     );
     loading = true;
     available = false;
-    product = null;
-    requestedProductIds = <String>{productId};
+    _productsById.clear();
+    requestedProductIds = productIds.toSet();
     returnedProductIds = <String>[];
     notFoundProductIds = <String>[];
     storeKitErrorType = null;
@@ -122,7 +128,8 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         return;
       }
       final response = await gateway
-          .queryProductDetails({productId}).timeout(connectionTimeout);
+          .queryProductDetails(requestedProductIds)
+          .timeout(connectionTimeout);
       returnedProductIds = response.productDetails
           .map((candidate) => candidate.id)
           .toList(growable: false);
@@ -138,15 +145,21 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         'error_type=${storeKitErrorType ?? 'none'} '
         'error_reason=${storeKitErrorReason ?? 'none'}',
       );
-      final matches = response.productDetails
-          .where((candidate) => candidate.id == productId)
-          .toList(growable: false);
-      if (response.error != null || matches.length != 1) {
+      final returned = <String, ProductDetails>{};
+      for (final candidate in response.productDetails) {
+        if (requestedProductIds.contains(candidate.id)) {
+          returned[candidate.id] = candidate;
+        }
+      }
+      if (response.error != null ||
+          requestedProductIds.isEmpty ||
+          returned.length != requestedProductIds.length ||
+          notFoundProductIds.isNotEmpty) {
         state = 'unavailable';
-        message =
-            'The monthly storage subscription is unavailable in the App Store. Tap Retry.';
+        message = 'The configured storage subscriptions are unavailable in '
+            'the App Store. Tap Retry.';
       } else {
-        product = matches.single;
+        _productsById.addAll(returned);
         state = 'ready';
         message = null;
       }
@@ -171,8 +184,11 @@ class AppleStoreKitBillingController extends ChangeNotifier {
 
   Future<void> retry() => initialize(forceRetry: true);
 
-  Future<void> buy() async {
-    final currentProduct = product;
+  Future<void> buy([String? selectedProductId]) async {
+    final resolvedProductId = selectedProductId ??
+        (productIds.length == 1 ? productIds.single : null);
+    final currentProduct =
+        resolvedProductId == null ? null : _productsById[resolvedProductId];
     if (!canBuy || currentProduct == null) return;
     loading = true;
     state = 'launching';
@@ -226,7 +242,7 @@ class AppleStoreKitBillingController extends ChangeNotifier {
 
   Future<void> _handlePurchases(List<PurchaseDetails> purchases) async {
     for (final purchase in purchases) {
-      if (purchase.productID != productId) continue;
+      if (!productIds.contains(purchase.productID)) continue;
       switch (purchase.status) {
         case PurchaseStatus.pending:
           state = 'pending';
