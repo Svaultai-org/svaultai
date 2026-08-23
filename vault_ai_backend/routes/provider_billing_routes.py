@@ -48,7 +48,10 @@ def _account_id(principal: dict) -> str:
 @router.get("/billing/providers")
 async def billing_providers(principal=Depends(verify_trusted_device)):
     account_id = _account_id(principal)
-    from billing_entitlements import web_card_purchase_allowed_for_account
+    from billing_entitlements import (
+        canonical_storage_display_tier,
+        web_card_purchase_allowed_for_account,
+    )
     web_card_purchase_allowed = web_card_purchase_allowed_for_account(account_id)
     from apple_billing import (
         AppleBillingConfigurationError,
@@ -122,6 +125,22 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
                 else None
             ),
             "product_ids": apple_product_ids,
+            "products": [
+                {
+                    "product_id": product_id,
+                    "billing_period": str(
+                        apple_catalog[product_id]["billing_period"]
+                    ),
+                    "storage_entitlement_bytes": int(
+                        apple_catalog[product_id]["entitlement_bytes"]
+                    ),
+                    "quantity": int(apple_catalog[product_id]["quantity"]),
+                    "display_capacity": canonical_storage_display_tier(
+                        int(apple_catalog[product_id]["entitlement_bytes"])
+                    ),
+                }
+                for product_id in apple_product_ids
+            ],
             "billing_period": (
                 apple_product["billing_period"]
                 if apple_product is not None
