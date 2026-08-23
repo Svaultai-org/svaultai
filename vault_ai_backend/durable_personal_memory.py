@@ -78,10 +78,19 @@ _SUBJECT_ALIASES = {
     "dad": ("father", "dad", "father"),
     "father": ("father", "father", "father"),
     "papa": ("father", "papa", "father"),
+    "sister": ("sister", "sister", "sister"),
+    "brother": ("brother", "brother", "brother"),
+    "son": ("son", "son", "son"),
+    "daughter": ("daughter", "daughter", "daughter"),
+    "wife": ("wife", "wife", "wife"),
+    "husband": ("husband", "husband", "husband"),
 }
 
 _ATTR_RE = r"(?:birthday|birth\s+date|date\s+of\s+birth|dob)"
-_SUBJECT_RE = r"(?:mom|mum|mother|mama|dad|father|papa)"
+_SUBJECT_RE = (
+    r"(?:mom|mum|mother|mama|dad|father|papa|sister|brother|son|daughter|"
+    r"wife|husband)"
+)
 _APOSTROPHE_RE = r"(?:'|\u2019)"
 _SAVE_TRIGGER_RE = re.compile(
     r"^\s*(?:please\s+)?(?:remember(?:\s+that)?|save\s+this(?:\s+about\s+me)?|"
@@ -144,7 +153,30 @@ _RELATIONSHIP_NAME_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})"
     rf"(?:{_APOSTROPHE_RE}s)?\s+"
     r"(?P<attribute>(?:full\s+|first\s+|given\s+)?name)\s*"
-    r"(?:is|=|:)\s*(?P<value>.+?)\s*$",
+    r"(?:is|as|=|:)\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_RELATIONSHIP_NAMED_FACT_RE = re.compile(
+    rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})\s+is\s+named\s+"
+    r"(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_RELATIONSHIP_ATTRIBUTE_FACT_RE = re.compile(
+    rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
+    r"(?P<attribute>phone(?:\s+number)?|school|favorite\s+color)\s*"
+    r"(?:is|as|=|:)\s*(?P<value>.+?)\s*$",
+    re.IGNORECASE,
+)
+_RELATIONSHIP_ATTRIBUTE_RECALL_RE = re.compile(
+    rf"^\s*(?:what(?:'s|\s+is)|which\s+is)\s+(?:my\s+)?"
+    rf"(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
+    r"(?P<attribute>(?:full\s+|first\s+|given\s+)?name|birthday|"
+    r"phone(?:\s+number)?|school|favorite\s+color)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
+_EXPLICIT_RELATIONSHIP_SAVE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:save(?:\s+that)?|remember(?:\s+that)?)\s+"
+    r"(?P<fact>.+?)\s*$",
     re.IGNORECASE,
 )
 _TRAILING_SAVE_TRIGGER_RE = re.compile(
@@ -536,7 +568,10 @@ def _parse_fact_statement(
             is_correction=is_correction,
         )
 
-    m = _RELATIONSHIP_NAME_FACT_RE.match(text)
+    m = (
+        _RELATIONSHIP_NAME_FACT_RE.match(text)
+        or _RELATIONSHIP_NAMED_FACT_RE.match(text)
+    )
     if m:
         subject, display, relationship = _subject_parts(m.group("subject"))
         value = _display_name_value(m.group("value"))
@@ -552,6 +587,34 @@ def _parse_fact_statement(
             value=value,
             display_value=value,
             tags=("family", "identity", "name"),
+            is_correction=is_correction,
+            needs_clarification=not bool(value),
+        )
+
+    m = _RELATIONSHIP_ATTRIBUTE_FACT_RE.match(text)
+    if m:
+        subject, display, relationship = _subject_parts(m.group("subject"))
+        raw_attribute = re.sub(r"\s+", " ", m.group("attribute").lower())
+        attribute = {
+            "phone": "phone_number",
+            "phone number": "phone_number",
+            "school": "school",
+            "favorite color": "favorite_color",
+        }[raw_attribute]
+        value = _clip(m.group("value"))
+        title_attribute = raw_attribute.title()
+        return PersonalMemoryIntent(
+            action=action,
+            subject=subject,
+            subject_display=display,
+            relationship=relationship,
+            attribute=attribute,
+            title=f"{display.title()}'s {title_attribute}",
+            memory_type="identity" if attribute == "phone_number" else "note",
+            category="family",
+            value=value,
+            display_value=value,
+            tags=("family", attribute),
             is_correction=is_correction,
             needs_clarification=not bool(value),
         )
@@ -751,6 +814,22 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             title="Pending memory",
         )
 
+    # Explicit personal/family facts own the turn before broad credential or
+    # planner heuristics.  Keep this deliberately bounded to a recognized
+    # relationship + attribute so requests such as "save my Instagram login"
+    # remain credential commands.
+    relationship_save = _EXPLICIT_RELATIONSHIP_SAVE_RE.match(text)
+    if relationship_save is not None:
+        relationship_intent = _parse_fact_statement(
+            relationship_save.group("fact"),
+            action="save",
+        )
+        if relationship_intent is not None and (
+            relationship_intent.relationship != "self"
+            and relationship_intent.category == "family"
+        ):
+            return relationship_intent
+
     m = _FORGET_RE.match(text)
     if m:
         subject, display, relationship = _subject_parts(m.group("subject"))
@@ -842,6 +921,31 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             attribute="maiden_name",
             title=f"{display.title()}'s maiden name",
             memory_type="identity",
+            category="family",
+        )
+    m = _RELATIONSHIP_ATTRIBUTE_RECALL_RE.match(text)
+    if m:
+        subject, display, relationship = _subject_parts(m.group("subject"))
+        raw_attribute = re.sub(r"\s+", " ", m.group("attribute").lower())
+        attribute = {
+            "name": "name",
+            "full name": "name",
+            "first name": "name",
+            "given name": "name",
+            "birthday": "birthday",
+            "phone": "phone_number",
+            "phone number": "phone_number",
+            "school": "school",
+            "favorite color": "favorite_color",
+        }[raw_attribute]
+        return PersonalMemoryIntent(
+            action="recall",
+            subject=subject,
+            subject_display=display,
+            relationship=relationship,
+            attribute=attribute,
+            title=f"{display.title()}'s {raw_attribute.title()}",
+            memory_type="date" if attribute == "birthday" else "identity",
             category="family",
         )
     if _ANNIVERSARY_RECALL_RE.match(text):

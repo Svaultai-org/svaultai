@@ -13,6 +13,18 @@ DecryptedCredentialV2Record credential(String id, String service) =>
     );
 
 void main() {
+  test('personal mother-name memory is never a credential create or lookup', () {
+    const messages = <String>[
+      "save my mother's name as lodato kendra",
+      'save my mother’s name as lodato kendra',
+    ];
+    for (final message in messages) {
+      expect(parseCredentialV2CreateIntent(message), isNull);
+      expect(parseCredentialV2LookupIntent(message), isNull);
+      expect(looksLikePrivateCredentialQuery(message), isFalse);
+    }
+  });
+
   final facebook = credential('credential-facebook-synthetic', 'Facebook');
 
   group('credential natural-language lookup normalization', () {

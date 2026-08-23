@@ -288,6 +288,50 @@ def test_aliases_recall_the_same_structured_fact(memory_store):
     )
 
 
+@pytest.mark.parametrize("apostrophe", ["'", "\u2019"])
+def test_explicit_mother_name_save_precedes_credential_routing(
+    memory_store, apostrophe
+):
+    message = f"save my mother{apostrophe}s name as lodato kendra"
+    intent = dpm.parse_personal_memory_intent(message)
+    assert intent is not None
+    assert intent.action == "save"
+    assert intent.relationship == "mother"
+    assert intent.attribute == "name"
+    assert intent.value == "lodato kendra"
+
+    saved = _handle(memory_store, message)
+    assert "saved" in saved.lower()
+    assert "lodato kendra" in _handle(
+        memory_store, "what is my mother's name"
+    ).lower()
+    payload = _payload(memory_store.active_rows("vault-a")[0])
+    assert payload["relationship"] == "mother"
+    assert payload["attribute"] == "name"
+    assert payload["value"] == "lodato kendra"
+
+
+@pytest.mark.parametrize(
+    ("message", "relationship", "attribute", "value"),
+    [
+        ("save that my father is named John", "father", "name", "John"),
+        ("remember my father's birthday is June 3", "father", "birthday", "June 3"),
+        ("my sister's phone number is 5551234, remember it", "sister", "phone_number", "5551234"),
+        ("save my son's school as Lincoln High", "son", "school", "Lincoln High"),
+        ("my wife's favorite color is blue", "wife", "favorite_color", "blue"),
+    ],
+)
+def test_family_facts_are_structured_memory(
+    message, relationship, attribute, value
+):
+    intent = dpm.parse_personal_memory_intent(message)
+    assert intent is not None
+    assert intent.relationship == relationship
+    assert intent.attribute == attribute
+    assert intent.value == value
+    assert intent.action in {"save", "propose"}
+
+
 def test_birthday_without_year_is_complete_useful_memory(memory_store):
     proposal = dpm.handle_personal_memory_turn(
         vault_id="vault-a",
