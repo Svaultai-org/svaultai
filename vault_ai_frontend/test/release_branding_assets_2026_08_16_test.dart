@@ -58,4 +58,32 @@ void main() {
     expect(index.toLowerCase(), isNot(contains('flutter demo')));
     expect(index.toLowerCase(), isNot(contains('flutter logo')));
   });
+
+  test('iOS launch images use the canonical shield, not Flutter placeholders',
+      () async {
+    const root = 'ios/Runner/Assets.xcassets/LaunchImage.imageset';
+    final contents = jsonDecode(
+      await File('$root/Contents.json').readAsString(),
+    ) as Map<String, dynamic>;
+    final filenames = (contents['images'] as List)
+        .whereType<Map>()
+        .map((image) => image['filename'])
+        .whereType<String>()
+        .toSet();
+    for (final filename in <String>[
+      'LaunchImage.png',
+      'LaunchImage@2x.png',
+      'LaunchImage@3x.png',
+      'LaunchImageDark.png',
+      'LaunchImageDark@2x.png',
+      'LaunchImageDark@3x.png',
+    ]) {
+      expect(filenames, contains(filename));
+      final bytes = await File('$root/$filename').readAsBytes();
+      expect(bytes.take(8), [137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(bytes.length, greaterThan(20000), reason: filename);
+    }
+    final readme = await File('$root/README.md').readAsString();
+    expect(readme.toLowerCase(), isNot(contains('flutter logo')));
+  });
 }
