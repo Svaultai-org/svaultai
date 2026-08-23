@@ -28,6 +28,40 @@ void main() {
     expect(plans.single.billingPeriod, 'P1M');
   });
 
+  test('catalog preserves all recognized total-storage Apple tiers', () {
+    const capacities = <String, int>{
+      '50gb': 53687091200,
+      '100gb': 107374182400,
+      '150gb': 161061273600,
+      '200gb': 214748364800,
+      '250gb': 268435456000,
+      '300gb': 322122547200,
+      '500gb': 536870912000,
+      '1tb': 1073741824000,
+    };
+    final plans = parseAppleStorageCatalog({
+      'products': [
+        for (final entry in capacities.entries)
+          {
+            'product_id': 'svaultai.storage.${entry.key}.monthly',
+            'billing_period': 'P1M',
+            'storage_entitlement_bytes': entry.value,
+            'display_capacity': entry.key == '1tb'
+                ? '1 TB'
+                : '${entry.key.substring(0, entry.key.length - 2)} GB',
+          },
+      ],
+    });
+
+    expect(plans, hasLength(8));
+    expect(
+      plans.map((plan) => plan.capacityLabel),
+      ['50 GB', '100 GB', '150 GB', '200 GB', '250 GB', '300 GB',
+       '500 GB', '1 TB'],
+    );
+    expect(plans.every((plan) => plan.billingPeriod == 'P1M'), isTrue);
+  });
+
   testWidgets('selection and Continue are required before product is returned',
       (tester) async {
     String? selected;
