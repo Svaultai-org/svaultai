@@ -1044,6 +1044,22 @@ async def test_apple_provider_catalog_does_not_guess_among_multiple_tiers(monkey
         "synthetic.storage.100gb",
         "synthetic.storage.50gb",
     ]
+    assert payload["apple"]["products"] == [
+        {
+            "product_id": "synthetic.storage.100gb",
+            "billing_period": "P1M",
+            "storage_entitlement_bytes": 107_374_182_400,
+            "quantity": 2,
+            "display_capacity": "100 GB",
+        },
+        {
+            "product_id": "synthetic.storage.50gb",
+            "billing_period": "P1M",
+            "storage_entitlement_bytes": 53_687_091_200,
+            "quantity": 1,
+            "display_capacity": "50 GB",
+        },
+    ]
     assert payload["apple"]["billing_period"] is None
     assert payload["apple"]["storage_entitlement_bytes"] is None
     assert payload["apple"]["quantity"] is None
