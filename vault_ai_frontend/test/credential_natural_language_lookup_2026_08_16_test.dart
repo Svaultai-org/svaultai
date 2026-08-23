@@ -170,6 +170,58 @@ void main() {
       }
     });
 
+    test('partial supplied credential creation outranks lookup', () {
+      final cases = <String, ({String service, String? username, String? password})>{
+        'create me an AOL login with my username as beury123@aol.com': (
+          service: 'AOL',
+          username: 'beury123@aol.com',
+          password: null,
+        ),
+        'create an AOL login, username beury123@aol.com': (
+          service: 'AOL',
+          username: 'beury123@aol.com',
+          password: null,
+        ),
+        'make me an AOL login with username beury123@aol.com': (
+          service: 'AOL',
+          username: 'beury123@aol.com',
+          password: null,
+        ),
+        'generate an AOL login using beury123@aol.com as the username': (
+          service: 'AOL',
+          username: 'beury123@aol.com',
+          password: null,
+        ),
+        'create AOL credentials for username beury123@aol.com': (
+          service: 'AOL',
+          username: 'beury123@aol.com',
+          password: null,
+        ),
+        'make an AOL password for username beury123@aol.com': (
+          service: 'AOL',
+          username: 'beury123@aol.com',
+          password: null,
+        ),
+        'create a facebook login with password Test123!': (
+          service: 'facebook',
+          username: null,
+          password: 'Test123!',
+        ),
+      };
+
+      for (final entry in cases.entries) {
+        final intent = parseCredentialV2CreateIntent(entry.key);
+        expect(intent, isNotNull, reason: entry.key);
+        expect(intent!.service, entry.value.service, reason: entry.key);
+        expect(intent.username, entry.value.username, reason: entry.key);
+        expect(intent.password, entry.value.password, reason: entry.key);
+        expect(parseCredentialV2LookupIntent(entry.key), isNull,
+            reason: entry.key);
+        expect(shouldAttemptCredentialV2Lookup(entry.key), isFalse,
+            reason: entry.key);
+      }
+    });
+
     test('possessive give request is retrieval, not creation', () {
       const text = 'give me my facebook login';
       expect(parseCredentialV2CreateIntent(text), isNull);

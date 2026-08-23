@@ -988,6 +988,40 @@ class TryRouteBug4CredentialCreationTest(unittest.TestCase):
         self.assertEqual(data["actions"], ["save", "cancel"])
         self.assertTrue(len(data["draft_id"]) > 0)
 
+    def test_aol_with_my_username_as_is_create_not_lookup(self):
+        drafter_calls: list = []
+
+        def spy_drafter(**kwargs):
+            drafter_calls.append(dict(kwargs))
+            return _stub_drafter_ok(**kwargs)
+
+        outcome = try_route_deterministically(
+            vault_id=_VAULT_ID,
+            session_id=_SESSION_ID,
+            key=_KEY,
+            decrypted_message=(
+                "create me an AOL login with my username as "
+                "beury123@aol.com"
+            ),
+            files_lister=lambda: [],
+            credential_drafter=spy_drafter,
+            active_entity_getter=lambda vid, session_id=None: None,
+            active_entity_setter=lambda *a, **k: True,
+            chat_request_id=_REQ,
+        )
+
+        self.assertIsNotNone(outcome)
+        self.assertEqual(outcome.kind, KIND_CREDENTIAL_DRAFT)
+        self.assertEqual(len(drafter_calls), 1)
+        self.assertEqual(drafter_calls[0]["service_name"], "AOL")
+        self.assertEqual(drafter_calls[0]["username"], "beury123@aol.com")
+        self.assertIsNone(drafter_calls[0]["password"])
+        data = json.loads(outcome.envelope_json)["card"]["data"]
+        self.assertEqual(data["username"], "beury123@aol.com")
+        self.assertTrue(len(data["password"]) > 0)
+        self.assertEqual(data["explicit_fields"], ["username"])
+        self.assertEqual(data["actions"], ["save", "cancel"])
+
     def test_multi_login_request_creates_all_drafts(self):
         drafter_calls: list = []
 

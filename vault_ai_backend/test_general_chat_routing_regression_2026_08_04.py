@@ -80,10 +80,28 @@ def test_screenshot_cases_are_retrieval_free(message, intent, language):
     assert route is not None
     assert route.intent == intent
     assert route.language == language
-    assert route.model_response_required
-    assert route.response == ""
+    if route.response:
+        assert not route.model_response_required
+    else:
+        assert route.model_response_required
     assert "part of the search" not in route.response.lower()
     assert "didn't find" not in route.response.lower()
+
+
+@pytest.mark.parametrize("message,expected_fragment", (
+    ("hey", "ready to help"),
+    ("hello", "ready to help"),
+    ("what can you do", "encrypted vault"),
+    ("what are you capable of?", "encrypted vault"),
+))
+def test_obvious_small_talk_uses_existing_lightweight_response(
+    message, expected_fragment,
+):
+    route = route_general_chat(message)
+    assert route is not None
+    assert not route.model_response_required
+    assert expected_fragment in route.response
+    assert route.clauses == ()
 
 
 @pytest.mark.parametrize("message", (

@@ -190,6 +190,35 @@ void main() {
       await tester.pump();
       expect(find.text('Nova is thinking...'), findsOneWidget);
     });
+
+    testWidgets('empty streaming placeholder does not render an ellipsis bubble',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          locale: const Locale('en'),
+          home: Scaffold(
+            body: ChatMessageList(
+              messages: <ChatMessage>[
+                ChatMessage(
+                  'assistant',
+                  '',
+                  requestId: 'request-under-test',
+                ),
+              ],
+              thinking: true,
+              streaming: true,
+              isMobile: true,
+              vaultName: 'Nova',
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('...'), findsNothing);
+      expect(find.text('Nova is thinking...'), findsOneWidget);
+    });
   });
 
   group('Wire protocol carries vault_name for register + login backfill', () {

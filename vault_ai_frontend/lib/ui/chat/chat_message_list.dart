@@ -182,7 +182,18 @@ class _ChatMessageListState extends State<ChatMessageList> {
 
   @override
   Widget build(BuildContext context) {
-    final msgs = widget.messages;
+    // main.dart keeps an empty, correlated assistant message as the stable
+    // target for incoming SSE chunks. It is transport state, not content.
+    // While the named TypingPulse is visible, do not also render that empty
+    // placeholder as ChatBubble's fallback `...` assistant bubble.
+    final msgs = widget.messages
+        .where((message) =>
+            !(widget.thinking &&
+                message.isAssistant &&
+                message.kind == ChatMessage.kText &&
+                message.text.isEmpty &&
+                message.requestId?.isNotEmpty == true))
+        .toList(growable: false);
     final itemCount = msgs.length + (widget.thinking ? 1 : 0);
 
     return ListView.builder(

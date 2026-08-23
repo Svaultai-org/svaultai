@@ -62,7 +62,8 @@ class CredentialV2DeleteIntent {
 /// deliberately extracts arbitrary service labels instead of maintaining a
 /// list of brands. The caller generates and saves the secret locally.
 CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
-  var normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  final raw = text.trim();
+  var normalized = raw.replaceFirst(RegExp(r'[.?!]+$'), '').trim();
   if (normalized.isEmpty) return null;
   if (isCredentialExtractionReviewDecision(normalized)) return null;
 
@@ -139,13 +140,46 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
         passwordGroup: 3,
       );
   if (suppliedIntent != null) return suppliedIntent;
-  final usernameMatch = RegExp(
-    r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:the\s+)?(?:username|email)(?:\s+address)?$',
-    caseSensitive: false,
-  ).firstMatch(normalized);
-  final suppliedUsername = usernameMatch?.group(1)?.trim();
-  if (usernameMatch != null) {
-    normalized = normalized.substring(0, usernameMatch.start).trim();
+  // Partial, explicitly-labelled values belong to creation before broad
+  // credential-noun lookup. Capture from the unmodified input so a supplied
+  // password's trailing punctuation (for example `Test123!`) is preserved.
+  RegExpMatch? firstMatch(List<RegExp> patterns) {
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(raw);
+      if (match != null) return match;
+    }
+    return null;
+  }
+
+  final usernameMatch = firstMatch([
+    RegExp(
+      r'(?:\s*,\s*|\s+(?:with|using|for)\s+)(?:my\s+|the\s+)?(?:user\s*name|username|email(?:\s+address)?)\s+(?:as\s+|is\s+|to\s+be\s+)?(?<value>\S+)$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'\s+(?:with|using)\s+(?<value>\S+)\s+as\s+(?:my\s+|the\s+)?(?:user\s*name|username|email(?:\s+address)?)$',
+      caseSensitive: false,
+    ),
+  ]);
+  final passwordMatch = firstMatch([
+    RegExp(
+      r'(?:\s*,\s*|\s+(?:with|using|for)\s+)(?:my\s+|the\s+)?password\s+(?:as\s+|is\s+|to\s+be\s+)?(?<value>\S+)$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'\s+(?:with|using)\s+(?<value>\S+)\s+as\s+(?:my\s+|the\s+)?password$',
+      caseSensitive: false,
+    ),
+  ]);
+  final suppliedUsername = cleanValue(usernameMatch?.namedGroup('value'));
+  final suppliedPassword = cleanValue(passwordMatch?.namedGroup('value'));
+  final suffixStart = <int>[
+    if (usernameMatch != null) usernameMatch.start,
+    if (passwordMatch != null) passwordMatch.start,
+  ];
+  if (suffixStart.isNotEmpty) {
+    suffixStart.sort();
+    normalized = raw.substring(0, suffixStart.first).trim();
   }
   // "Give me my Facebook login" is a possessive retrieval request. Keep
   // "give me a/new Facebook login" available to the creation flow.
@@ -167,7 +201,7 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
       caseSensitive: false,
     ),
     RegExp(
-      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|logins|credential|credentials|account)(?:\s+for\s+me)?$',
+      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|logins|credential|credentials|account|password)(?:\s+for\s+me)?$',
       caseSensitive: false,
     ),
     RegExp(
@@ -185,9 +219,8 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
     final service = match.groupCount == 0 ? null : match.group(1)?.trim();
     return CredentialV2CreateIntent(
       service: service == null || service.isEmpty ? null : service,
-      username: suppliedUsername == null || suppliedUsername.isEmpty
-          ? null
-          : suppliedUsername,
+      username: suppliedUsername.isEmpty ? null : suppliedUsername,
+      password: suppliedPassword.isEmpty ? null : suppliedPassword,
       explicitlyAnother: explicitlyAnother,
     );
   }
