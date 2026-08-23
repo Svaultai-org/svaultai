@@ -958,6 +958,13 @@ async def test_apple_provider_catalog_returns_only_explicit_product_ids(monkeypa
     assert payload["apple"]["billing_period"] == "P1M"
     assert payload["apple"]["storage_entitlement_bytes"] == 53_687_091_200
     assert payload["apple"]["quantity"] == 1
+    assert payload["apple"]["products"] == [{
+        "product_id": "svaultai.storage.50gb.monthly",
+        "billing_period": "P1M",
+        "storage_entitlement_bytes": 53_687_091_200,
+        "quantity": 1,
+        "display_capacity": "50 GB",
+    }]
 
 
 @pytest.mark.asyncio
@@ -1036,6 +1043,22 @@ async def test_apple_provider_catalog_does_not_guess_among_multiple_tiers(monkey
     assert payload["apple"]["product_ids"] == [
         "synthetic.storage.100gb",
         "synthetic.storage.50gb",
+    ]
+    assert payload["apple"]["products"] == [
+        {
+            "product_id": "synthetic.storage.100gb",
+            "billing_period": "P1M",
+            "storage_entitlement_bytes": 107_374_182_400,
+            "quantity": 2,
+            "display_capacity": "100 GB",
+        },
+        {
+            "product_id": "synthetic.storage.50gb",
+            "billing_period": "P1M",
+            "storage_entitlement_bytes": 53_687_091_200,
+            "quantity": 1,
+            "display_capacity": "50 GB",
+        },
     ]
     assert payload["apple"]["billing_period"] is None
     assert payload["apple"]["storage_entitlement_bytes"] is None
