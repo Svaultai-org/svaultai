@@ -690,6 +690,26 @@ def extract_explicit_fields(message: Optional[str]) -> dict[str, str]:
     return out
 
 
+def _extract_create_service(message: str) -> Optional[str]:
+    """Extract only a service explicitly attached to a create-login phrase."""
+    without_fields = re.split(
+        r"\s+(?:with|using)\s+(?:(?:my\s+)?(?:username|email|password)|.+?\s+as\s+(?:the\s+)?(?:username|email|password))\b",
+        message.strip(),
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+    patterns = (
+        r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|credential|account)$",
+        r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(?:login|credential|account)\s+(?:for\s+)?(.+)$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, without_fields, re.IGNORECASE)
+        if match:
+            service = match.group(1).strip(" \t\r\n,;:\"'")
+            return service or None
+    return None
+
+
 def _detect_generate_hints(text: str) -> set[str]:
     hints: set[str] = set()
     for field_name, pat in _GENERATE_HINT_PATTERNS:
@@ -830,7 +850,11 @@ def extract_credential_command(
     if explicit or generate:
         return CredentialCommand(
             action=ACTION_CREATE,
-            service=assertion.get("service") if assertion else None,
+            service=(
+                assertion.get("service")
+                if assertion
+                else _extract_create_service(raw)
+            ),
             explicit_fields=dict(explicit),
             generate_fields=generate - set(explicit.keys()),
             preserve_fields=preserve - set(explicit.keys()),

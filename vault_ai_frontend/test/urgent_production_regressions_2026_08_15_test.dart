@@ -35,6 +35,52 @@ void main() {
       }
     });
 
+    test('family facts accept save/as/omitted-copula variants', () {
+      const cases = <String, List<String>>{
+        "save my mother's name lodato kendra": [
+          'mother:name',
+          'lodato kendra',
+        ],
+        "save my mother's name as Lodato Kendra": [
+          'mother:name',
+          'Lodato Kendra',
+        ],
+        "my wife's favorite color is blue": [
+          'wife:favorite_color',
+          'blue',
+        ],
+        'my father birthday is June 3': ['father:birthday', 'June 3'],
+        "remember my father's birthday is June 3": [
+          'father:birthday',
+          'June 3',
+        ],
+        "my sister's phone number is 5551234 remember it": [
+          'sister:phone',
+          '5551234',
+        ],
+        "my mother's name is lodato kendra remember that": [
+          'mother:name',
+          'lodato kendra',
+        ],
+      };
+      for (final entry in cases.entries) {
+        final fact = parseLocalMemoryFact(entry.key);
+        expect(fact, isNotNull, reason: entry.key);
+        expect(fact!.normalized, entry.value[0], reason: entry.key);
+        expect(fact.value, entry.value[1], reason: entry.key);
+      }
+    });
+
+    test('credential secrets never become generic memories', () {
+      for (final text in <String>[
+        'save my AOL password as super-secret',
+        'remember my username is beury123@aol.com',
+        'my account name is VLT-PRIVATE',
+      ]) {
+        expect(parseLocalMemoryFact(text), isNull, reason: text);
+      }
+    });
+
     test('explicit login creation honors the write rollout gate', () {
       final source = File('lib/main.dart').readAsStringSync();
       final method = source.substring(

@@ -709,12 +709,11 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       if (_memoryV2Enabled) {
         _qaMemoryCreateStage('repository_available');
-        final id = row?['memory_record_id']?.toString() ??
-            'memory-${DateTime.now().microsecondsSinceEpoch}';
+        final id = row?['memory_record_id']?.toString();
         final repository = MemoryV2Repository(
             baseUrl: widget.client.baseUrl, authToken: widget.authToken);
         _qaMemoryCreateStage('repository_create_entered');
-        await repository.create(
+        final result = await repository.create(
             memoryId: id,
             memoryType: (data['memory_type'] ?? 'note').toString(),
             plaintext: MemoryV2Plaintext(
@@ -724,7 +723,9 @@ class _MemoryPageState extends State<MemoryPage> {
                     .whereType<String>()
                     .toList()));
         if (!mounted) return;
-        _showSnack(row == null ? 'Memory saved' : 'Memory updated');
+        _showSnack(row == null
+            ? (result.duplicate ? 'Memory already saved' : 'Memory saved')
+            : 'Memory updated');
         await _load();
         return;
       }

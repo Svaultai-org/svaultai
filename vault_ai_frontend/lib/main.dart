@@ -177,7 +177,11 @@ class LocalMemoryFact {
 }
 
 LocalMemoryFact? parseLocalMemoryFact(String input) {
-  var text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  var text = input
+      .trim()
+      .replaceAll('\u2019', "'")
+      .replaceFirst(RegExp(r'[.?!]+$'), '')
+      .trim();
   text = text
       .replaceFirst(
         RegExp(
@@ -187,14 +191,54 @@ LocalMemoryFact? parseLocalMemoryFact(String input) {
         '',
       )
       .trim();
+  final familyMatch = RegExp(
+    r"^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+"
+    r"(mother|mom|mum|mommy|mama|father|dad|daddy|papa|sister|brother|wife|spouse|husband|daughter|son)"
+    r"(?:'s|\s+)\s*"
+    r"((?:(?:full|first|given)\s+)?name|birthday|birth\s+date|phone(?:\s+number)?|telephone(?:\s+number)?|favou?rite\s+colou?r)"
+    r"\s+(?:(?:is|was|as)\s+)?(.+)$",
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (familyMatch != null) {
+    final rawRelationship = familyMatch.group(1)!.toLowerCase();
+    final rawAttribute = familyMatch.group(2)!.toLowerCase();
+    final value = (familyMatch.group(3) ?? '').trim();
+    if (value.isEmpty || _memoryOtherDomainWords.hasMatch(value)) return null;
+    final relationship = switch (rawRelationship) {
+      'mom' || 'mum' || 'mommy' || 'mama' => 'mother',
+      'dad' || 'daddy' || 'papa' => 'father',
+      _ => rawRelationship,
+    };
+    final attribute = switch (rawAttribute) {
+      'birthday' || 'birth date' => 'birthday',
+      'phone' || 'phone number' || 'telephone' || 'telephone number' =>
+        'phone',
+      'favorite color' ||
+      'favourite color' ||
+      'favorite colour' ||
+      'favourite colour' => 'favorite_color',
+      _ => 'name',
+    };
+    final displayAttribute = attribute.replaceAll('_', ' ');
+    return LocalMemoryFact(
+      "$relationship's $displayAttribute",
+      value,
+      relationship: relationship,
+      attribute: attribute,
+      memoryType: attribute == 'name' ? 'identity' : 'personal',
+      tags: <String>['family', relationship, attribute],
+    );
+  }
   final match = RegExp(
-    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
+    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was|as)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(text);
   if (match == null) return null;
   final subject = (match.group(1) ?? '').trim();
   final value = (match.group(2) ?? '').trim();
-  if (subject.isEmpty || value.isEmpty) return null;
+  if (subject.isEmpty ||
+      value.isEmpty ||
+      _memoryOtherDomainWords.hasMatch(subject)) return null;
   final relationshipMatch = RegExp(
     r"^(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*(?:(?:full|first|given)\s+)?name$",
     caseSensitive: false,
@@ -250,7 +294,7 @@ String? parseLocalMemoryContextSaveSubject(String input) {
 }
 
 final _memoryOtherDomainWords = RegExp(
-  r'\b(?:login|password|credential|file|document|wallet|seed|private key|invoice|crypto|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20|balance|transaction)\b',
+  r'\b(?:login|password|passcode|pin|totp|username|account name|credential|file|document|wallet|seed|private key|invoice|crypto|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20|balance|transaction)\b',
   caseSensitive: false,
 );
 
@@ -5988,7 +6032,21 @@ class UnlockPage extends StatefulWidget {
   State<UnlockPage> createState() => _UnlockPageState();
 }
 
-class _UnlockPageState extends State<UnlockPage> {
+mixin _SingleLoginReplacement<T extends StatefulWidget> on State<T> {
+  bool _loginReplacementScheduled = false;
+
+  void _scheduleLoginReplacement() {
+    if (_loginReplacementScheduled || !mounted) return;
+    _loginReplacementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+    });
+  }
+}
+
+class _UnlockPageState extends State<UnlockPage>
+    with _SingleLoginReplacement<UnlockPage> {
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
@@ -6342,8 +6400,7 @@ class _UnlockPageState extends State<UnlockPage> {
   Future<void> _useAnotherVault() async {
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    _scheduleLoginReplacement();
   }
 
   @override
@@ -6351,9 +6408,7 @@ class _UnlockPageState extends State<UnlockPage> {
     final app = context.watch<AppState>();
 
     if (!app.hasRememberedVaultLogin) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.pushReplacementNamed(context, '/login');
-      });
+      _scheduleLoginReplacement();
       return const Scaffold();
     }
     final w = MediaQuery.of(context).size.width;
@@ -6447,7 +6502,8 @@ class PinGatePage extends StatefulWidget {
   State<PinGatePage> createState() => _PinGatePageState();
 }
 
-class _PinGatePageState extends State<PinGatePage> {
+class _PinGatePageState extends State<PinGatePage>
+    with _SingleLoginReplacement<PinGatePage> {
   final pinController = TextEditingController();
   String? err;
 
@@ -6557,8 +6613,7 @@ class _PinGatePageState extends State<PinGatePage> {
     if (_submitting) return;
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    _scheduleLoginReplacement();
   }
 
   Future<void> _submit() async {
@@ -7172,6 +7227,16 @@ class _CreateChoiceTile extends StatelessWidget {
     );
   }
 }
+
+enum _MemoryProposalFinalizeOutcome { saved, duplicate, failed }
+
+String _memoryProposalOutcomeMessage(_MemoryProposalFinalizeOutcome outcome) =>
+    switch (outcome) {
+      _MemoryProposalFinalizeOutcome.saved => 'Memory saved.',
+      _MemoryProposalFinalizeOutcome.duplicate => 'That memory is already saved.',
+      _MemoryProposalFinalizeOutcome.failed =>
+        'Could not save that memory securely. Your vault was not changed.',
+    };
 
 /// Scan `buffer` for the `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>`
 /// sentinel. If a full sentinel is found, returns the JSON payload
@@ -8311,13 +8376,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       const memoryV2Enabled = memoryV2WriteEnabled;
       if (memoryV2Enabled) {
-        final memoryId = 'memory-${DateTime.now().microsecondsSinceEpoch}';
         final repository = MemoryV2Repository(
           baseUrl: backendBaseUrl,
           authToken: token,
         );
-        await repository.create(
-          memoryId: memoryId,
+        final result = await repository.create(
           memoryType: (data['memory_type'] ?? 'note').toString(),
           plaintext: MemoryV2Plaintext(
             value: (data['value'] ?? data['body'] ?? '').toString(),
@@ -8328,7 +8391,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           ),
         );
         if (!mounted) return;
-        _showSnack('Memory saved');
+        _showSnack(result.duplicate ? 'Memory already saved' : 'Memory saved');
         setState(() => selectedSection = _DashboardSection.memory);
         unawaited(app.refreshVaultStats());
         return;
@@ -8665,6 +8728,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       int? assistantIndex;
       String buffer = '';
       bool memoryProposalFinalized = false;
+      String? memoryProposalOutcomeMessage;
 
       final stream = client.chatStream(
         encryptedMessage: encryptedMessage,
@@ -8693,10 +8757,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = _stripped.strippedBuffer;
             if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              unawaited(_finalizeMemoryProposalBestEffort(
+              final outcome = await _finalizeMemoryProposalBestEffort(
                 jsonPayload: _stripped.jsonPayload!,
                 authToken: token,
-              ));
+              );
+              memoryProposalOutcomeMessage =
+                  _memoryProposalOutcomeMessage(outcome);
+            }
+            if (memoryProposalOutcomeMessage != null) {
+              buffer = memoryProposalOutcomeMessage!;
             }
 
             // dart format off
@@ -13894,44 +13963,38 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// MVK-derived `memoryKey`, compute `memory_lookup_hash` via the
   /// derived `memoryLookupKey`, and POST to the ciphertext-first
   /// AI-memory endpoint. Fail-closed on any exception: no user-
-  /// visible error, no fallback plaintext write. The chat reply
-  /// already tells the user the memory was saved; a silent finalize
-  /// failure is the correct privacy failure mode (nothing saved),
-  /// and the user can re-issue the "remember this" instruction on
-  /// the next turn.
-  Future<void> _finalizeMemoryProposalBestEffort({
+  /// plaintext-bearing error. The caller renders only a generic outcome after
+  /// the authoritative write result is known, so a failed write never claims
+  /// that the memory was saved.
+  Future<_MemoryProposalFinalizeOutcome> _finalizeMemoryProposalBestEffort({
     required String jsonPayload,
     required String authToken,
   }) async {
     try {
       final decoded = jsonDecode(jsonPayload);
-      if (decoded is! Map) return;
+      if (decoded is! Map) return _MemoryProposalFinalizeOutcome.failed;
       final mt = decoded['memory_type'];
       final mk = decoded['memory_key'];
       final mv = decoded['memory_value'];
       final md = decoded['memory_event_date'];
-      if (mt is! String || mt.isEmpty) return;
-      if (mk is! String || mk.isEmpty) return;
-      if (mv is! String || mv.isEmpty) return;
+      if (mt is! String || mt.isEmpty) {
+        return _MemoryProposalFinalizeOutcome.failed;
+      }
+      if (mk is! String || mk.isEmpty) {
+        return _MemoryProposalFinalizeOutcome.failed;
+      }
+      if (mv is! String || mv.isEmpty) {
+        return _MemoryProposalFinalizeOutcome.failed;
+      }
       const memoryV2Enabled = memoryV2WriteEnabled;
       if (!memoryV2Enabled) {
-        final legacyClient = VaultAIClient(baseUrl: backendBaseUrl);
-        await legacyClient.tryZkFinalizeMemoryProposal(
-          baseUrl: backendBaseUrl,
-          authToken: authToken,
-          memoryType: mt,
-          memoryKey: mk,
-          memoryValue: mv,
-          memoryEventDate: md is String && md.isNotEmpty ? md : null,
-        );
-        return;
+        return _MemoryProposalFinalizeOutcome.failed;
       }
       final repository = MemoryV2Repository(
         baseUrl: backendBaseUrl,
         authToken: authToken,
       );
-      await repository.create(
-        memoryId: 'memory-${DateTime.now().microsecondsSinceEpoch}',
+      final result = await repository.create(
         memoryType: mt,
         plaintext: MemoryV2Plaintext(
           value: mv,
@@ -13939,10 +14002,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           summary: md is String && md.isNotEmpty ? md : null,
         ),
       );
+      return result.duplicate
+          ? _MemoryProposalFinalizeOutcome.duplicate
+          : _MemoryProposalFinalizeOutcome.saved;
     } catch (_) {
       // Fail privacy-safe: never surface the parsed plaintext memory
       // in an error banner. Silent no-op = memory not saved =
       // correct ZK failure mode.
+      return _MemoryProposalFinalizeOutcome.failed;
     }
   }
 
@@ -16283,15 +16350,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         final value =
             (payload['value'] ?? payload['body'] ?? '').toString().trim();
         if (value.isEmpty) throw StateError('memory_value_missing');
-        final proposalId = (payload['proposal_id'] ?? '').toString().trim();
-        final digest = sha256
-            .convert(utf8.encode(
-              proposalId.isEmpty ? '$title\u0000$value' : proposalId,
-            ))
-            .toString();
-        await MemoryV2Repository(baseUrl: backendBaseUrl, authToken: token)
+        final result = await MemoryV2Repository(
+          baseUrl: backendBaseUrl,
+          authToken: token,
+        )
             .create(
-          memoryId: 'memory-${digest.substring(0, 32)}',
           memoryType: (payload['memory_type'] ?? 'note').toString(),
           plaintext: MemoryV2Plaintext(
             value: value,
@@ -16302,7 +16365,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 .toList(growable: false),
           ),
         );
-        message = 'Saved: ${title.isEmpty ? 'Personal note' : title}.';
+        message = result.duplicate
+            ? 'Already saved: ${title.isEmpty ? 'Personal note' : title}.'
+            : 'Saved: ${title.isEmpty ? 'Personal note' : title}.';
       } else {
         final pin = await _VaultCrypto.currentPinOrThrow();
         final result =
@@ -17058,7 +17123,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!enabled || app.sessionToken == null) return false;
 
     final explicitSave = hasExplicitLocalMemorySaveDirective(text);
-    LocalMemoryFact? fact = explicitSave ? parseLocalMemoryFact(text) : null;
+    final parsedCurrent = parseLocalMemoryFact(text);
+    LocalMemoryFact? fact = explicitSave || parsedCurrent?.relationship != null
+        ? parsedCurrent
+        : null;
     final requestedSubject = parseLocalMemoryContextSaveSubject(text);
     if (fact == null && requestedSubject == null) return false;
     if (fact == null) {
@@ -17087,16 +17155,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     try {
-      final identity = sha256
-          .convert(utf8.encode(
-            '${fact.normalized.toLowerCase()}\u0000${fact.value}',
-          ))
-          .toString();
-      await MemoryV2Repository(
+      final result = await MemoryV2Repository(
         baseUrl: backendBaseUrl,
         authToken: app.sessionToken!,
       ).create(
-        memoryId: 'memory-${identity.substring(0, 32)}',
         memoryType: fact.memoryType,
         plaintext: MemoryV2Plaintext(
           value: fact.value,
@@ -17106,7 +17168,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               .toList(growable: false),
         ),
       );
-      _appendAssistantMessage('Saved: ${fact.subject}.');
+      _appendAssistantMessage(
+        result.duplicate
+            ? 'Already saved: ${fact.subject}.'
+            : 'Saved: ${fact.subject}.',
+      );
       unawaited(app.refreshVaultStats());
     } catch (e) {
       if (app.handleApiException(e)) return true;
@@ -17229,6 +17295,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
+      if (await _tryLocalMemoryV2ContextSave(text, app)) {
+        return;
+      }
+
       if (await _tryLocalCredentialV2CreateReply(text, app)) {
         return;
       }
@@ -17237,15 +17307,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
-      if (await _tryLocalMemoryV2ContextSave(text, app)) {
+      if (await _tryLocalMemoryV2LookupReply(text, app)) {
         return;
       }
 
       if (await _tryLocalPrivateDomainArbitration(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalMemoryV2LookupReply(text, app)) {
         return;
       }
 
@@ -17499,6 +17565,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // client finalize so we do not double-POST if the sentinel is
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
+      String? memoryProposalOutcomeMessage;
 
       // 2026-07-22 atomic crypto context snapshot. This is the ONE
       // place the /chat send path samples the vault's key + KDF
@@ -17610,10 +17677,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = stripped.strippedBuffer;
             if (stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              unawaited(_finalizeMemoryProposalBestEffort(
+              final outcome = await _finalizeMemoryProposalBestEffort(
                 jsonPayload: stripped.jsonPayload!,
                 authToken: authToken,
-              ));
+              );
+              memoryProposalOutcomeMessage =
+                  _memoryProposalOutcomeMessage(outcome);
+            }
+            if (memoryProposalOutcomeMessage != null) {
+              buffer = memoryProposalOutcomeMessage!;
             }
 
             // dart format off

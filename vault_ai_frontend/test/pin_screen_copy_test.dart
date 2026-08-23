@@ -171,9 +171,9 @@ void main() {
             'clearSession(keepLastVaultName: false) — never delete-vault.',
       );
       expect(
-        src.contains("Navigator.pushReplacementNamed(context, '/login');"),
+        src.contains('_scheduleLoginReplacement();'),
         isTrue,
-        reason: '_useAnotherVault must route to /login.',
+        reason: '_useAnotherVault must schedule the guarded /login route.',
       );
       
       

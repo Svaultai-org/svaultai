@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
@@ -7,6 +8,91 @@ typedef ApplePurchaseVerifier = Future<Map<String, dynamic>> Function({
   required String signedTransaction,
   required String environment,
 });
+
+@immutable
+class AppleStorageTier {
+  final String productId;
+  final String billingPeriod;
+  final String capacityLabel;
+  final int entitlementBytes;
+  final int quantity;
+
+  const AppleStorageTier({
+    required this.productId,
+    required this.billingPeriod,
+    required this.capacityLabel,
+    required this.entitlementBytes,
+    required this.quantity,
+  });
+}
+
+List<AppleStorageTier> parseAppleStorageCatalog(Map<dynamic, dynamic> provider) {
+  if (provider['configured'] != true) {
+    throw StateError('app_store_not_configured');
+  }
+  final rawIds = provider['product_ids'];
+  final rawProducts = provider['products'];
+  if (rawIds is! List || rawProducts is! List || rawIds.isEmpty) {
+    throw StateError('app_store_catalog_incomplete');
+  }
+  final ids = rawIds.map((value) => value.toString().trim()).toSet();
+  if (ids.length != rawIds.length || ids.any((id) => id.isEmpty)) {
+    throw StateError('app_store_catalog_invalid_ids');
+  }
+  final tiers = <AppleStorageTier>[];
+  for (final raw in rawProducts) {
+    if (raw is! Map) throw StateError('app_store_catalog_invalid_product');
+    final productId = raw['product_id']?.toString().trim() ?? '';
+    final billingPeriod = raw['billing_period']?.toString().trim() ?? '';
+    final capacityLabel = raw['display_capacity']?.toString().trim() ?? '';
+    final entitlementBytes =
+        (raw['storage_entitlement_bytes'] as num?)?.toInt() ?? 0;
+    final quantity = (raw['quantity'] as num?)?.toInt() ?? 0;
+    if (!ids.contains(productId) ||
+        billingPeriod != 'P1M' ||
+        capacityLabel.isEmpty ||
+        entitlementBytes < 1 ||
+        quantity < 1) {
+      throw StateError('app_store_catalog_tier_mismatch');
+    }
+    tiers.add(AppleStorageTier(
+      productId: productId,
+      billingPeriod: billingPeriod,
+      capacityLabel: capacityLabel,
+      entitlementBytes: entitlementBytes,
+      quantity: quantity,
+    ));
+  }
+  if (tiers.length != ids.length ||
+      tiers.map((tier) => tier.productId).toSet().length != ids.length) {
+    throw StateError('app_store_catalog_incomplete');
+  }
+  tiers.sort((a, b) => a.entitlementBytes.compareTo(b.entitlementBytes));
+  return List<AppleStorageTier>.unmodifiable(tiers);
+}
+
+String appleTransactionEnvironment(
+  String signedTransaction, {
+  String fallback = 'production',
+}) {
+  try {
+    final parts = signedTransaction.split('.');
+    if (parts.length < 2) throw const FormatException();
+    final normalized = base64Url.normalize(parts[1]);
+    final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+    final environment = payload is Map
+        ? payload['environment']?.toString().trim().toLowerCase()
+        : null;
+    if (environment == 'sandbox') return 'sandbox';
+    if (environment == 'production') return 'production';
+  } catch (_) {
+    // Environment only selects the server verification endpoint. The server
+    // still cryptographically verifies the signed transaction and product.
+  }
+  return fallback.trim().toLowerCase() == 'sandbox'
+      ? 'sandbox'
+      : 'production';
+}
 
 abstract class AppleBillingGateway {
   Stream<List<PurchaseDetails>> get purchaseStream;
@@ -48,7 +134,7 @@ class FlutterAppleBillingGateway implements AppleBillingGateway {
 class AppleStoreKitBillingController extends ChangeNotifier {
   final AppleBillingGateway gateway;
   final ApplePurchaseVerifier verifyPurchase;
-  final String productId;
+  final List<AppleStorageTier> catalog;
   final String appAccountToken;
   final String environment;
   final Duration connectionTimeout;
@@ -58,18 +144,42 @@ class AppleStoreKitBillingController extends ChangeNotifier {
   StreamSubscription<List<PurchaseDetails>>? _subscription;
   final Set<String> _verificationInFlight = <String>{};
   final Set<String> _completedTransactions = <String>{};
+  final Map<String, ProductDetails> _productsById = <String, ProductDetails>{};
+  int _operationGeneration = 0;
 
   bool initialized = false;
   bool available = false;
   bool loading = false;
   bool restoring = false;
-  ProductDetails? product;
   String state = 'idle';
   String? message;
 
+  Set<String> get productIds => catalog.map((tier) => tier.productId).toSet();
+  bool get catalogReady => _productsById.isNotEmpty;
+  List<ProductDetails> get products => catalog
+      .map((tier) => _productsById[tier.productId])
+      .whereType<ProductDetails>()
+      .toList(growable: false);
+  ProductDetails? get product => products.isEmpty ? null : products.first;
+  ProductDetails? productFor(String productId) => _productsById[productId];
+
+  AppleStorageTier? tierForProduct(String productId) {
+    for (final tier in catalog) {
+      if (tier.productId == productId) return tier;
+    }
+    return null;
+  }
+
+  AppleStorageTier? tierForQuantity(int quantity) {
+    for (final tier in catalog) {
+      if (tier.quantity == quantity) return tier;
+    }
+    return null;
+  }
+
   bool get canBuy =>
       available &&
-      product != null &&
+      catalogReady &&
       !loading &&
       !restoring &&
       !const {'launching', 'pending', 'verifying'}.contains(state);
@@ -79,69 +189,104 @@ class AppleStoreKitBillingController extends ChangeNotifier {
   AppleStoreKitBillingController({
     required this.gateway,
     required this.verifyPurchase,
-    required this.productId,
+    required List<AppleStorageTier> catalog,
     required this.appAccountToken,
     this.environment = 'production',
     this.connectionTimeout = const Duration(seconds: 12),
     this.actionTimeout = const Duration(seconds: 20),
     this.verificationTimeout = const Duration(seconds: 30),
-  });
+  }) : catalog = List<AppleStorageTier>.unmodifiable(catalog);
 
   Future<void> initialize({bool forceRetry = false}) async {
     if ((initialized && !forceRetry) || loading) return;
+    final operation = ++_operationGeneration;
     initialized = true;
     _subscription ??= gateway.purchaseStream.listen(
       _handlePurchases,
       onError: (_) {
+        _operationGeneration++;
+        loading = false;
+        restoring = false;
         state = 'unavailable';
         message = 'The App Store is temporarily unavailable. Tap Retry.';
         notifyListeners();
       },
     );
     loading = true;
-    available = false;
-    product = null;
     state = 'connecting';
     message = 'Connecting to the App Store…';
     notifyListeners();
     try {
-      available = await gateway.isAvailable().timeout(connectionTimeout);
-      if (!available) {
+      final storeAvailable =
+          await gateway.isAvailable().timeout(connectionTimeout);
+      if (operation != _operationGeneration) return;
+      available = storeAvailable;
+      if (!storeAvailable) {
         state = 'unavailable';
         message = 'App Store purchases are unavailable on this device.';
         return;
       }
       final response = await gateway
-          .queryProductDetails({productId}).timeout(connectionTimeout);
-      final matches = response.productDetails
-          .where((candidate) => candidate.id == productId)
-          .toList(growable: false);
-      if (response.error != null || matches.length != 1) {
-        state = 'unavailable';
-        message =
-            'The monthly storage subscription is unavailable in the App Store. Tap Retry.';
+          .queryProductDetails(productIds).timeout(connectionTimeout);
+      if (operation != _operationGeneration) return;
+      final matches = <String, ProductDetails>{};
+      for (final candidate in response.productDetails) {
+        if (productIds.contains(candidate.id) &&
+            candidate.price.trim().isNotEmpty &&
+            !matches.containsKey(candidate.id)) {
+          matches[candidate.id] = candidate;
+        }
+      }
+      if (matches.isEmpty) {
+        if (_productsById.isNotEmpty) {
+          state = 'ready';
+          message =
+              'Using the last available App Store plans. Tap Retry to refresh.';
+        } else {
+          state = 'unavailable';
+          message =
+              'Monthly storage plans are unavailable in the App Store. Tap Retry.';
+        }
       } else {
-        product = matches.single;
+        _productsById
+          ..clear()
+          ..addAll(matches);
         state = 'ready';
-        message = null;
+        final missing = productIds.length - matches.length;
+        message = missing > 0 || response.error != null
+            ? 'Some App Store plans are temporarily unavailable.'
+            : null;
       }
     } on TimeoutException {
-      state = 'timed_out';
-      message = 'The App Store took too long to respond. Tap Retry.';
+      if (operation == _operationGeneration) {
+        state = _productsById.isEmpty ? 'timed_out' : 'ready';
+        message = _productsById.isEmpty
+            ? 'The App Store took too long to respond. Tap Retry.'
+            : 'Using the last available App Store plans. Tap Retry to refresh.';
+      }
     } catch (_) {
-      state = 'unavailable';
-      message = 'The App Store is temporarily unavailable. Tap Retry.';
+      if (operation == _operationGeneration) {
+        state = _productsById.isEmpty ? 'unavailable' : 'ready';
+        message = _productsById.isEmpty
+            ? 'The App Store is temporarily unavailable. Tap Retry.'
+            : 'Using the last available App Store plans. Tap Retry to refresh.';
+      }
     } finally {
-      loading = false;
-      notifyListeners();
+      if (operation == _operationGeneration) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> retry() => initialize(forceRetry: true);
 
-  Future<void> buy() async {
-    final currentProduct = product;
+  Future<void> buy([String? targetProductId]) async {
+    final currentProduct = targetProductId == null
+        ? product
+        : productFor(targetProductId);
     if (!canBuy || currentProduct == null) return;
+    final operation = ++_operationGeneration;
     loading = true;
     state = 'launching';
     message = null;
@@ -153,6 +298,7 @@ class AppleStoreKitBillingController extends ChangeNotifier {
             applicationUserName: appAccountToken,
           ))
           .timeout(actionTimeout);
+      if (operation != _operationGeneration) return;
       if (!launched) {
         state = 'unavailable';
         message = 'The App Store could not start the purchase. Tap Retry.';
@@ -160,41 +306,61 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         message = 'Complete your purchase in the App Store.';
       }
     } on TimeoutException {
-      state = 'timed_out';
-      message = 'The App Store took too long to respond. Tap Retry.';
+      if (operation == _operationGeneration) {
+        state = 'timed_out';
+        message = 'The App Store took too long to respond. Tap Retry.';
+      }
     } catch (_) {
-      state = 'unavailable';
-      message = 'The App Store could not start the purchase. Tap Retry.';
+      if (operation == _operationGeneration) {
+        state = 'unavailable';
+        message = 'The App Store could not start the purchase. Tap Retry.';
+      }
     } finally {
-      loading = false;
-      notifyListeners();
+      if (operation == _operationGeneration) {
+        loading = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> restore() async {
     if (!available || restoring) return;
+    final operation = ++_operationGeneration;
     restoring = true;
     state = 'restoring';
     message = null;
     notifyListeners();
     try {
       await gateway.restorePurchases().timeout(actionTimeout);
+      if (operation != _operationGeneration) return;
       message = 'Checking your App Store subscriptions…';
     } on TimeoutException {
-      state = 'timed_out';
-      message = 'The App Store took too long to respond. Tap Retry.';
+      if (operation == _operationGeneration) {
+        state = 'timed_out';
+        message = 'The App Store took too long to respond. Tap Retry.';
+      }
     } catch (_) {
-      state = 'unavailable';
-      message = 'The App Store could not restore purchases. Tap Retry.';
+      if (operation == _operationGeneration) {
+        state = 'unavailable';
+        message = 'The App Store could not restore purchases. Tap Retry.';
+      }
     } finally {
-      restoring = false;
-      notifyListeners();
+      if (operation == _operationGeneration) {
+        restoring = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> _handlePurchases(List<PurchaseDetails> purchases) async {
-    for (final purchase in purchases) {
-      if (purchase.productID != productId) continue;
+    final configuredPurchases = purchases
+        .where((purchase) => productIds.contains(purchase.productID))
+        .toList(growable: false);
+    if (configuredPurchases.isEmpty) return;
+    final operation = ++_operationGeneration;
+    loading = false;
+    restoring = false;
+    for (final purchase in configuredPurchases) {
       switch (purchase.status) {
         case PurchaseStatus.pending:
           state = 'pending';
@@ -204,7 +370,7 @@ class AppleStoreKitBillingController extends ChangeNotifier {
           break;
         case PurchaseStatus.purchased:
         case PurchaseStatus.restored:
-          await _verifyThenComplete(purchase);
+          await _verifyThenComplete(purchase, operation);
           break;
         case PurchaseStatus.canceled:
           state = 'canceled';
@@ -220,7 +386,10 @@ class AppleStoreKitBillingController extends ChangeNotifier {
     }
   }
 
-  Future<void> _verifyThenComplete(PurchaseDetails purchase) async {
+  Future<void> _verifyThenComplete(
+    PurchaseDetails purchase,
+    int operation,
+  ) async {
     final signedTransaction = purchase.verificationData.serverVerificationData;
     if (signedTransaction.isEmpty ||
         _completedTransactions.contains(signedTransaction) ||
@@ -233,7 +402,10 @@ class AppleStoreKitBillingController extends ChangeNotifier {
     try {
       final result = await verifyPurchase(
         signedTransaction: signedTransaction,
-        environment: environment,
+        environment: appleTransactionEnvironment(
+          signedTransaction,
+          fallback: environment,
+        ),
       ).timeout(verificationTimeout);
       if (result['verified'] != true) {
         throw StateError('server verification rejected');
@@ -242,15 +414,19 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         await gateway.completePurchase(purchase).timeout(actionTimeout);
       }
       _completedTransactions.add(signedTransaction);
-      state = 'verified';
-      message = 'Subscription verified. Your storage limit is updated.';
+      if (operation == _operationGeneration) {
+        state = 'verified';
+        message = 'Subscription verified. Your storage limit is updated.';
+      }
     } catch (_) {
-      state = 'verification_failed';
-      message =
-          'Purchase verification is pending. Use Restore Purchases to retry.';
+      if (operation == _operationGeneration) {
+        state = 'verification_failed';
+        message =
+            'Purchase verification is pending. Use Restore Purchases to retry.';
+      }
     } finally {
       _verificationInFlight.remove(signedTransaction);
-      notifyListeners();
+      if (operation == _operationGeneration) notifyListeners();
     }
   }
 

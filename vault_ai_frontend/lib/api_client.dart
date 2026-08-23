@@ -4458,64 +4458,6 @@ class VaultAIClient {
   /// This function is intentionally file-scope (not a method on
   /// VaultAIClient) so it can be reused by any write path that
   /// converges on a `(item_type, service, payload_json)` triple.
-  /// ZK ciphertext-first AI-memory finalize.
-  ///
-  /// Called by the chat SSE handler when the backend emits a
-  /// `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>` sentinel. Derives
-  /// `memoryKey` + `memoryLookupKey` from the active MVK, encrypts
-  /// the full memory proposal payload, computes the keyed lookup
-  /// hash locally, and POSTs to /vault/ciphertext/vault-ai-memory.
-  /// The backend accepts only ciphertext + hash; the user's memory
-  /// key/value never touches server storage in readable form.
-  ///
-  /// Returns true iff the finalize POST succeeded. False (with the
-  /// exception swallowed by the caller) means the memory was NOT
-  /// saved — correct privacy tradeoff on network/crypto failure.
-  Future<bool> tryZkFinalizeMemoryProposal({
-    required String baseUrl,
-    required String authToken,
-    required String memoryType,
-    required String memoryKey,
-    required String memoryValue,
-    String? memoryEventDate,
-  }) async {
-    final mvk = zk_mvk_store.ZkActiveMvk.current();
-    if (mvk == null) return false;
-    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
-    final memoryK = await hierarchy.memoryKey();
-    final memoryLookup = await hierarchy.memoryLookupKey();
-
-    final payloadJson = jsonEncode(<String, dynamic>{
-      'memory_key': memoryKey,
-      'memory_value': memoryValue,
-      if (memoryEventDate != null && memoryEventDate.isNotEmpty)
-        'memory_event_date': memoryEventDate,
-    });
-    final payloadCt = await vault_key_hierarchy.aesGcmWrap(
-      memoryK,
-      utf8.encode(payloadJson),
-    );
-    final lookupHash = await vault_key_hierarchy.keyedLookupHash(
-      memoryLookup,
-      utf8.encode(memoryKey),
-    );
-
-    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-    final resp = await http.post(
-      uri,
-      headers: <String, String>{
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $authToken',
-      },
-      body: jsonEncode(<String, dynamic>{
-        'memory_type': memoryType,
-        'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
-        'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
-      }),
-    );
-    return resp.statusCode == 200;
-  }
-
   /// Reads only opaque MEMORY_V2 envelopes. Plaintext memory columns are
   /// never requested; callers must decrypt locally with the active MVK.
   Future<List<Map<String, dynamic>>> listZkMemoryEnvelopes({
@@ -4542,13 +4484,14 @@ class VaultAIClient {
         .toList(growable: false);
   }
 
-  Future<void> writeZkMemoryEnvelope({
+  Future<Map<String, dynamic>> writeZkMemoryEnvelope({
     required String baseUrl,
     required String authToken,
     required String memoryId,
     required String memoryType,
     required String payloadCiphertext,
     required String lookupHash,
+    bool replaceExisting = false,
   }) async {
     const qa = bool.fromEnvironment(
       'QA_CHAT_PRIVACY_DIAGNOSTICS',
@@ -4567,6 +4510,7 @@ class VaultAIClient {
       'memory_lookup_hash': lookupHash,
       'payload_ciphertext': payloadCiphertext,
       'memory_id': memoryId,
+      'replace_existing': replaceExisting,
     });
     if (qa) _vlog('QA_MEMORY_API_STAGE=body_build_succeeded', const {});
     if (qa) _vlog('QA_MEMORY_API_STAGE=auth_ready', const {});
@@ -4598,7 +4542,11 @@ class VaultAIClient {
         }
         throw Exception('memory_v2_write_failed_status_${resp.statusCode}');
       }
-      return;
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map) {
+        throw const FormatException('memory_v2_invalid_write_response');
+      }
+      return Map<String, dynamic>.from(decoded);
     } catch (e) {
       if (qa) {
         _vlog('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}', const {});
