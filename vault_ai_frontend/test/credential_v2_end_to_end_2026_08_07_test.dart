@@ -149,6 +149,11 @@ void main() {
         'create me a YouTube login with beraves123@aol.com as the username');
     expect(supplied?.service, 'YouTube');
     expect(supplied?.username, 'beraves123@aol.com');
+    final reverseSupplied = parseCredentialV2CreateIntent(
+      'create me an AOL login with my username as beury123@aol.com',
+    );
+    expect(reverseSupplied?.service, 'AOL');
+    expect(reverseSupplied?.username, 'beury123@aol.com');
     expect(
       parseCredentialV2CreateIntent('make me another Facebook login')
           ?.explicitlyAnother,

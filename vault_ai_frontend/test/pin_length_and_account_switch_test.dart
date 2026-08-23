@@ -193,9 +193,9 @@ void main() {
             'session + last-vault-name clear.',
       );
       expect(
-        helperBody.contains("pushReplacementNamed(context, '/login')"),
+        helperBody.contains('_scheduleLoginReplacement()'),
         isTrue,
-        reason: '_useAnotherVault must route to /login.',
+        reason: '_useAnotherVault must schedule the guarded /login route.',
       );
 
       for (final banned in const <String>[

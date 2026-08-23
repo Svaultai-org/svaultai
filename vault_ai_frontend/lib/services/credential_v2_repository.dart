@@ -140,9 +140,13 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
       );
   if (suppliedIntent != null) return suppliedIntent;
   final usernameMatch = RegExp(
-    r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:the\s+)?(?:username|email)(?:\s+address)?$',
-    caseSensitive: false,
-  ).firstMatch(normalized);
+        r'\s+(?:with|using)\s+(?:my\s+)?(?:username|email)(?:\s+address)?\s+as\s+(.+)$',
+        caseSensitive: false,
+      ).firstMatch(normalized) ??
+      RegExp(
+        r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:the\s+)?(?:username|email)(?:\s+address)?$',
+        caseSensitive: false,
+      ).firstMatch(normalized);
   final suppliedUsername = usernameMatch?.group(1)?.trim();
   if (usernameMatch != null) {
     normalized = normalized.substring(0, usernameMatch.start).trim();
