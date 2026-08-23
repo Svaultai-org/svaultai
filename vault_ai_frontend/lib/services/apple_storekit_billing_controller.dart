@@ -66,6 +66,11 @@ class AppleStoreKitBillingController extends ChangeNotifier {
   ProductDetails? product;
   String state = 'idle';
   String? message;
+  Set<String> requestedProductIds = <String>{};
+  List<String> returnedProductIds = <String>[];
+  List<String> notFoundProductIds = <String>[];
+  String? storeKitErrorType;
+  String? storeKitErrorReason;
 
   bool get canBuy =>
       available &&
@@ -101,6 +106,11 @@ class AppleStoreKitBillingController extends ChangeNotifier {
     loading = true;
     available = false;
     product = null;
+    requestedProductIds = <String>{productId};
+    returnedProductIds = <String>[];
+    notFoundProductIds = <String>[];
+    storeKitErrorType = null;
+    storeKitErrorReason = null;
     state = 'connecting';
     message = 'Connecting to the App Store…';
     notifyListeners();
@@ -113,6 +123,21 @@ class AppleStoreKitBillingController extends ChangeNotifier {
       }
       final response = await gateway
           .queryProductDetails({productId}).timeout(connectionTimeout);
+      returnedProductIds = response.productDetails
+          .map((candidate) => candidate.id)
+          .toList(growable: false);
+      notFoundProductIds = List<String>.unmodifiable(response.notFoundIDs);
+      final queryError = response.error;
+      if (queryError != null) {
+        storeKitErrorType = queryError.code;
+        storeKitErrorReason = queryError.message;
+      }
+      debugPrint(
+        '[APPLE-STOREKIT] query requested=${requestedProductIds.toList()} '
+        'returned=$returnedProductIds not_found=$notFoundProductIds '
+        'error_type=${storeKitErrorType ?? 'none'} '
+        'error_reason=${storeKitErrorReason ?? 'none'}',
+      );
       final matches = response.productDetails
           .where((candidate) => candidate.id == productId)
           .toList(growable: false);
@@ -126,9 +151,16 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         message = null;
       }
     } on TimeoutException {
+      storeKitErrorType = 'TimeoutException';
+      storeKitErrorReason = 'Product query exceeded the configured timeout.';
       state = 'timed_out';
       message = 'The App Store took too long to respond. Tap Retry.';
-    } catch (_) {
+    } catch (error) {
+      storeKitErrorType = error.runtimeType.toString();
+      storeKitErrorReason = 'StoreKit product query threw an exception.';
+      debugPrint(
+        '[APPLE-STOREKIT] query failed error_type=$storeKitErrorType',
+      );
       state = 'unavailable';
       message = 'The App Store is temporarily unavailable. Tap Retry.';
     } finally {

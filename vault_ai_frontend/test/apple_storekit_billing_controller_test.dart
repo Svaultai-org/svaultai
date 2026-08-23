@@ -23,6 +23,7 @@ class _Gateway implements AppleBillingGateway {
   int restoreCalls = 0;
   int completeCalls = 0;
   PurchaseParam? lastPurchaseParam;
+  ProductDetailsResponse? productResponse;
 
   @override
   Stream<List<PurchaseDetails>> get purchaseStream => controller.stream;
@@ -34,6 +35,7 @@ class _Gateway implements AppleBillingGateway {
 
   @override
   Future<ProductDetailsResponse> queryProductDetails(Set<String> ids) async =>
+      productResponse ??
       ProductDetailsResponse(
         productDetails: ids.contains(_productId) ? [_product()] : [],
         notFoundIDs: ids.contains(_productId) ? [] : ids.toList(),
@@ -116,6 +118,29 @@ void main() {
     await billing.retry();
     expect(billing.state, 'ready');
     expect(billing.product?.id, _productId);
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('records safe product-query diagnostics for a missing product',
+      () async {
+    final gateway = _Gateway()
+      ..productResponse = ProductDetailsResponse(
+        productDetails: const <ProductDetails>[],
+        notFoundIDs: const <String>[_productId],
+      );
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async =>
+          {'verified': true},
+    );
+
+    await billing.initialize();
+
+    expect(billing.requestedProductIds, {_productId});
+    expect(billing.returnedProductIds, isEmpty);
+    expect(billing.notFoundProductIds, [_productId]);
+    expect(billing.state, 'unavailable');
     billing.dispose();
     await gateway.controller.close();
   });

@@ -213,7 +213,7 @@ void main() {
         'are unavailable', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('class _UnlockPageState');
-      final endIdx = src.indexOf('_useAnotherVault', idx);
+      final endIdx = src.indexOf('Future<void> _useAnotherVault()', idx);
       final window = src.substring(idx, endIdx);
       // A friendly vault name is optional when a private vault handle is
       // available for rehydration. Only the absence of both identifiers must

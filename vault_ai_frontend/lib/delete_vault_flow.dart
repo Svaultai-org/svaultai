@@ -1,15 +1,15 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
 
-
-
-
 const String kDeleteVaultConfirmationPhrase = 'DELETE MY VAULT';
-
+const String kAppleSubscriptionsManagementUrl =
+    'https://apps.apple.com/account/subscriptions';
 
 class DeleteVaultFlow extends StatefulWidget {
   final VaultAIClient client;
@@ -27,7 +27,6 @@ class DeleteVaultFlow extends StatefulWidget {
   State<DeleteVaultFlow> createState() => _DeleteVaultFlowState();
 }
 
-
 class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
   final TextEditingController _phraseCtrl = TextEditingController();
   final TextEditingController _pinCtrl = TextEditingController();
@@ -42,12 +41,18 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
     super.dispose();
   }
 
-  bool get _phraseMatches =>
-      _phraseCtrl.text == kDeleteVaultConfirmationPhrase;
+  bool get _phraseMatches => _phraseCtrl.text == kDeleteVaultConfirmationPhrase;
 
   bool get _pinEntered => _pinCtrl.text.isNotEmpty;
 
   bool get _canDelete => _phraseMatches && _pinEntered && !_submitting;
+
+  Future<void> _openAppleSubscriptions() async {
+    await launchUrl(
+      Uri.parse(kAppleSubscriptionsManagementUrl),
+      mode: LaunchMode.externalApplication,
+    );
+  }
 
   Future<void> _performDelete(AppLocalizations l) async {
     setState(() {
@@ -102,16 +107,14 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
     final mq = MediaQuery.of(context);
     // Subtract AlertDialog's own inset (24 on each side by default) so the
     // content column never exceeds the visible viewport at 320dp.
-    final double contentWidth =
-        (mq.size.width - 48).clamp(240.0, 480.0);
+    final double contentWidth = (mq.size.width - 48).clamp(240.0, 480.0);
     return AlertDialog(
       key: const Key('delete_vault_dialog'),
       backgroundColor: const Color(0xFF2A2A2A),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: dangerColor, size: 26),
+          const Icon(Icons.warning_amber_rounded, color: dangerColor, size: 26),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -133,9 +136,33 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
               Text(
                 l.deleteVaultBody,
                 style: const TextStyle(
-                  color: Color(0xFFD5D5D5), height: 1.5,
+                  color: Color(0xFFD5D5D5),
+                  height: 1.5,
                 ),
               ),
+              if (defaultTargetPlatform == TargetPlatform.iOS) ...[
+                const SizedBox(height: 14),
+                const Text(
+                  'Your App Store subscription is managed separately by '
+                  'Apple. Deleting this vault does not cancel it. Manage or '
+                  'cancel it in Apple Subscriptions.',
+                  key: Key('delete_vault_apple_subscription_disclosure'),
+                  style: TextStyle(
+                    color: Color(0xFFD5D5D5),
+                    height: 1.45,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('delete_vault_manage_apple_subscription'),
+                    onPressed: _submitting ? null : _openAppleSubscriptions,
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('Manage Apple subscription'),
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               Container(
                 key: const Key('delete_vault_crypto_warning'),
@@ -176,8 +203,7 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
                 decoration: InputDecoration(
                   hintText: kDeleteVaultConfirmationPhrase,
                   border: const OutlineInputBorder(),
-                  errorText: _phraseCtrl.text.isEmpty ||
-                          _phraseMatches
+                  errorText: _phraseCtrl.text.isEmpty || _phraseMatches
                       ? null
                       : l.deleteVaultPhraseMustMatch,
                 ),
@@ -224,9 +250,8 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
       actions: [
         TextButton(
           key: const Key('delete_vault_cancel_button'),
-          onPressed: _submitting
-              ? null
-              : () => Navigator.of(context).pop(false),
+          onPressed:
+              _submitting ? null : () => Navigator.of(context).pop(false),
           child: Text(l.commonCancel),
         ),
         ElevatedButton(
@@ -238,11 +263,11 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
           ),
           child: _submitting
               ? const SizedBox(
-                  width: 16, height: 16,
+                  width: 16,
+                  height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(Colors.white),
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                   ),
                 )
               : Text(l.deleteVaultConfirmButton),
@@ -251,7 +276,6 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
     );
   }
 }
-
 
 Future<bool> showDeleteVaultDialog(
   BuildContext context, {

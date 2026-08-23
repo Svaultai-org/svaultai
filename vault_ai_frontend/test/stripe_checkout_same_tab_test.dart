@@ -135,7 +135,7 @@ void main() {
       );
       expect(
         storagePageSrc,
-        contains("cancelUrl:  buildCheckoutRedirectUrl('cancel'),"),
+        contains("cancelUrl: buildCheckoutRedirectUrl('cancel'),"),
         reason: '_startCheckout must forward the origin-anchored '
             'cancel URL too.',
       );
