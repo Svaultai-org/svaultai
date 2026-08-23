@@ -235,17 +235,17 @@ class _StoragePageState extends State<StoragePage> {
           .getBillingProviders(authToken: authToken)
           .timeout(kStoreConnectionTimeout);
       final apple = providers['apple'];
-      if (apple is! Map || apple['configured'] != true) {
+      if (apple is! Map) {
         throw StateError('app_store_not_configured');
       }
-      final productId = apple['product_id']?.toString() ?? '';
+      final catalog = parseAppleStorageCatalog(apple);
       final appAccountToken = apple['app_account_token']?.toString() ?? '';
-      if (productId.isEmpty || appAccountToken.isEmpty || !mounted) {
+      if (appAccountToken.isEmpty || !mounted) {
         throw StateError('app_store_configuration_incomplete');
       }
       final controller = AppleStoreKitBillingController(
         gateway: FlutterAppleBillingGateway(),
-        productId: productId,
+        catalog: catalog,
         appAccountToken: appAccountToken,
         environment: kAppleStoreKitEnvironment == 'sandbox'
             ? 'sandbox'
@@ -416,6 +416,10 @@ class _StoragePageState extends State<StoragePage> {
         : null;
     if (ownsPlaySubscription && currentTier == null) return;
     await play.buy(targetProductId, currentProductId: currentTier?.productId);
+  }
+
+  Future<void> _buyAppleTier(String targetProductId) async {
+    await _appleBilling?.buy(targetProductId);
   }
 
   void _onGooglePlayBillingChanged() {
@@ -847,6 +851,9 @@ class _StoragePageState extends State<StoragePage> {
     final currentPlayTier = playOwnsSubscription
         ? play?.tierForQuantity((data['block_count'] as num?)?.toInt() ?? 0)
         : null;
+    final currentAppleTier = appleOwnsSubscription
+        ? apple?.tierForQuantity((data['block_count'] as num?)?.toInt() ?? 0)
+        : null;
     final playCatalogReady = play?.catalogReady ?? false;
     final showPlayOperationalMessage = const <String>{
       'launching',
@@ -905,6 +912,30 @@ class _StoragePageState extends State<StoragePage> {
       currentTierRank: currentPlayTier?.rank,
       hasActiveSubscription: playOwnsSubscription,
     );
+    final allAppleTierChoices = <StoreStorageTierChoice>[];
+    if (_usesAppleBilling && (apple?.catalogReady ?? false)) {
+      for (var index = 0; index < apple!.catalog.length; index++) {
+        final tier = apple.catalog[index];
+        final product = apple.productFor(tier.productId);
+        if (product == null) continue;
+        allAppleTierChoices.add(StoreStorageTierChoice(
+          productId: tier.productId,
+          capacityLabel: tier.capacityLabel,
+          localizedPrice: product.price,
+          rank: index + 1,
+        ));
+      }
+    }
+    final appleTierChoices = selectableGooglePlayStorageTiers(
+      allAppleTierChoices,
+      currentTierRank: currentAppleTier == null
+          ? null
+          : apple!.catalog.indexOf(currentAppleTier) + 1,
+      hasActiveSubscription: appleOwnsSubscription,
+    );
+    final storeTierChoices = _usesAppleBilling
+        ? appleTierChoices
+        : playTierChoices;
     final storeNeedsRetry = _usesGooglePlayBilling
         ? shouldShowStoreConnectionRetry(
             storeState: play?.state,
@@ -930,7 +961,7 @@ class _StoragePageState extends State<StoragePage> {
           (_usesGooglePlayBilling || _usesAppleBilling) &&
               !activeSubscription &&
               storeCanBuy
-          ? (_usesAppleBilling ? apple!.buy : null)
+          ? null
           : null,
       onManageSubscription: kIsWeb
           ? (providerManageUri != null
@@ -961,8 +992,11 @@ class _StoragePageState extends State<StoragePage> {
           ? (currentPlayTier == null
                 ? null
                 : play?.productFor(currentPlayTier.productId)?.price)
-          : (_usesAppleBilling ? apple?.product?.price : null),
-      activeStorePlanLabel: currentPlayTier?.capacityLabel,
+          : (_usesAppleBilling && currentAppleTier != null
+                ? apple?.productFor(currentAppleTier.productId)?.price
+                : null),
+      activeStorePlanLabel:
+          currentPlayTier?.capacityLabel ?? currentAppleTier?.capacityLabel,
       storeName: _usesAppleBilling ? 'the App Store' : 'Google Play',
       onRestorePurchases: _usesGooglePlayBilling && play?.available == true
           ? play!.restore
@@ -970,15 +1004,17 @@ class _StoragePageState extends State<StoragePage> {
                 ? apple!.restore
                 : null),
       onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
-      purchasablePlanLabel: _usesAppleBilling ? '50 GB' : null,
-      showStorePlanSummary: !kIsWeb && playOwnsSubscription,
-      storeTierChoices: playTierChoices,
+      showStorePlanSummary:
+          !kIsWeb && (playOwnsSubscription || appleOwnsSubscription),
+      storeTierChoices: storeTierChoices,
       onSelectStoreTier:
           _usesGooglePlayBilling &&
               storeCanBuy &&
               (!playOwnsSubscription || currentPlayTier != null)
           ? _buyGooglePlayTier
-          : null,
+          : (_usesAppleBilling && storeCanBuy
+                ? _buyAppleTier
+                : null),
       // Only ProductDetails-backed native tiers are rendered above. Stripe-era
       // examples are not store products and must not be advertised.
       showPricingExamples: false,
