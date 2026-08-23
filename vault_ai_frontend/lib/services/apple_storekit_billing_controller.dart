@@ -211,8 +211,15 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         message = 'Complete your purchase in the App Store.';
       }
     } on TimeoutException {
-      state = 'timed_out';
-      message = 'The App Store took too long to respond. Tap Retry.';
+      // StoreKit can deliver the transaction on purchaseStream while the
+      // launch Future is still pending (this occurs on physical TestFlight
+      // devices). Never overwrite the authoritative transaction/verification
+      // state with a misleading launch timeout.
+      if (state == 'launching') {
+        state = 'pending';
+        message = 'Your App Store purchase is still being confirmed. No new '
+            'purchase is needed.';
+      }
     } catch (_) {
       state = 'unavailable';
       message = 'The App Store could not start the purchase. Tap Retry.';
@@ -232,8 +239,14 @@ class AppleStoreKitBillingController extends ChangeNotifier {
       await gateway.restorePurchases().timeout(actionTimeout);
       message = 'Checking your App Store subscriptions…';
     } on TimeoutException {
-      state = 'timed_out';
-      message = 'The App Store took too long to respond. Tap Retry.';
+      // A restored transaction may already be flowing through verification
+      // even when StoreKit's restore Future has not returned. Preserve that
+      // newer state and do not imply that the purchase itself failed.
+      if (state == 'restoring') {
+        state = 'restore_pending';
+        message = 'Still checking your App Store subscriptions. No new '
+            'purchase is needed.';
+      }
     } catch (_) {
       state = 'unavailable';
       message = 'The App Store could not restore purchases. Tap Retry.';

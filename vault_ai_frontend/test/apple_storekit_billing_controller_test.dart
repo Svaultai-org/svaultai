@@ -19,6 +19,8 @@ class _Gateway implements AppleBillingGateway {
   final controller = StreamController<List<PurchaseDetails>>.broadcast();
   bool available = true;
   bool hangAvailability = false;
+  bool hangBuy = false;
+  bool hangRestore = false;
   int buyCalls = 0;
   int restoreCalls = 0;
   int completeCalls = 0;
@@ -45,11 +47,15 @@ class _Gateway implements AppleBillingGateway {
   Future<bool> buySubscription(PurchaseParam purchaseParam) async {
     buyCalls++;
     lastPurchaseParam = purchaseParam;
+    if (hangBuy) return Completer<bool>().future;
     return true;
   }
 
   @override
-  Future<void> restorePurchases() async => restoreCalls++;
+  Future<void> restorePurchases() async {
+    restoreCalls++;
+    if (hangRestore) return Completer<void>().future;
+  }
 
   @override
   Future<void> completePurchase(PurchaseDetails purchase) async =>
@@ -240,6 +246,51 @@ void main() {
     expect(billing.message, 'Purchase canceled. No storage change was made.');
     expect(billing.productFor(_productId), isNotNull);
     expect(billing.canBuy, isTrue);
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('purchase-stream verification is not overwritten by launch timeout',
+      () async {
+    final gateway = _Gateway()..hangBuy = true;
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async =>
+          {'verified': false},
+    );
+    await billing.initialize();
+
+    final launch = billing.buy();
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    gateway.controller.add([_purchase(PurchaseStatus.purchased)]);
+    await launch;
+
+    expect(billing.state, 'verification_failed');
+    expect(
+      billing.message,
+      'Purchase verification is pending. Use Restore Purchases to retry.',
+    );
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('restore-stream verification is not overwritten by restore timeout',
+      () async {
+    final gateway = _Gateway()..hangRestore = true;
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async =>
+          {'verified': true},
+    );
+    await billing.initialize();
+
+    final restore = billing.restore();
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await restore;
+
+    expect(billing.state, 'verified');
+    expect(gateway.completeCalls, 1);
     billing.dispose();
     await gateway.controller.close();
   });
