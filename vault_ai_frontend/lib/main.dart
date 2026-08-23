@@ -187,6 +187,37 @@ LocalMemoryFact? parseLocalMemoryFact(String input) {
         '',
       )
       .trim();
+  // A clearly bounded family-name fact does not require an explicit copula:
+  // "save my mother's name Lodato Kendra" is ordinary memory language, not
+  // a credential or generic-chat command.
+  final relationshipNameMatch = RegExp(
+    r"^(?:please\s+)?(?:remember|save)\s+(?:that\s+)?my\s+"
+    r"(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*"
+    r"(?:(?:full|first|given)\s+)?name\s+(?:(?:is|was|as)\s+)?(.+)$",
+    caseSensitive: false,
+  ).firstMatch(text);
+  if (relationshipNameMatch != null) {
+    final rawRelationship = relationshipNameMatch.group(1)!.toLowerCase();
+    final relationship = <String>{
+      'mother',
+      'mom',
+      'mum',
+      'mommy',
+      'mama',
+    }.contains(rawRelationship)
+        ? 'mother'
+        : 'father';
+    final value = (relationshipNameMatch.group(2) ?? '').trim();
+    if (value.isEmpty) return null;
+    return LocalMemoryFact(
+      "$relationship's name",
+      value,
+      relationship: relationship,
+      attribute: 'name',
+      memoryType: 'identity',
+      tags: <String>['family', relationship, 'name'],
+    );
+  }
   final match = RegExp(
     r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
     caseSensitive: false,
@@ -277,7 +308,8 @@ LocalMemoryLookupIntent? parseLocalMemoryLookupIntent(String input) {
     RegExp(r'^do\s+you\s+remember\s+(?:my\s+)?(.+)$', caseSensitive: false),
     RegExp(r'^what\s+was\s+(?:the\s+)?(.+?)\s+i\s+saved$',
         caseSensitive: false),
-    RegExp(r'^what\s+(?:is|was)\s+my\s+(.+)$', caseSensitive: false),
+    RegExp(r"^what(?:'s|\s+(?:is|was))\s+my\s+(.+)$",
+        caseSensitive: false),
     RegExp(
       r'^what\s+(?:is|was)\s+(?:the\s+)?(.+?\b(?:codeword|code|note|fact))$',
       caseSensitive: false,
@@ -17260,11 +17292,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
-      if (await _tryLocalPrivateDomainArbitration(text, app)) {
+      // Explicit personal-memory recall owns the turn before generic private
+      // inventory/file arbitration. All reads still come from the locally
+      // decrypted Memory V2 inventory for the current authenticated vault.
+      if (await _tryLocalMemoryV2LookupReply(text, app)) {
         return;
       }
 
-      if (await _tryLocalMemoryV2LookupReply(text, app)) {
+      if (await _tryLocalPrivateDomainArbitration(text, app)) {
         return;
       }
 
