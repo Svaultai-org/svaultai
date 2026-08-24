@@ -3,17 +3,12 @@ import 'dart:async' show TimeoutException, unawaited;
 import 'package:flutter/foundation.dart'
     show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:in_app_purchase/in_app_purchase.dart';
-import 'package:in_app_purchase_storekit/in_app_purchase_storekit.dart';
-import 'package:in_app_purchase_storekit/store_kit_2_wrappers.dart';
-import 'package:in_app_purchase_storekit/store_kit_wrappers.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'l10n/app_localizations.dart';
 import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes, vlog;
-import 'privacy_policy_page.dart' show kVaultAiPrivacyUrl;
 import 'services/apple_storekit_billing_controller.dart';
 import 'services/google_play_billing_controller.dart';
 import 'ui/tokens.dart';
@@ -27,9 +22,6 @@ const Duration kStoreConnectionTimeout = Duration(seconds: 12);
 const String kGooglePlayPackageName = 'com.svaultai.app';
 const String kAppleManageSubscriptionsUrl =
     'https://apps.apple.com/account/subscriptions';
-
-const String kAppleStandardEulaUrl =
-    'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
 
 String? buildCheckoutRedirectUrl(String queryFlag) {
   if (!kIsWeb) return null;
@@ -95,107 +87,14 @@ class StoreStorageTierChoice {
   final String capacityLabel;
   final String localizedPrice;
   final int rank;
-  final String periodLabel;
 
   const StoreStorageTierChoice({
     required this.productId,
     required this.capacityLabel,
     required this.localizedPrice,
     required this.rank,
-    this.periodLabel = 'month',
   });
 }
-
-@immutable
-class AppleStoragePlanConfig {
-  final String productId;
-  final String capacityLabel;
-  final int entitlementBytes;
-  final String billingPeriod;
-
-  const AppleStoragePlanConfig({
-    required this.productId,
-    required this.capacityLabel,
-    required this.entitlementBytes,
-    required this.billingPeriod,
-  });
-}
-
-List<AppleStoragePlanConfig> parseAppleStorageCatalog(
-    Map<dynamic, dynamic> data) {
-  final rawProducts = data['products'];
-  final plans = <AppleStoragePlanConfig>[];
-  if (rawProducts is List) {
-    for (final raw in rawProducts) {
-      if (raw is! Map) continue;
-      final productId = raw['product_id']?.toString().trim() ?? '';
-      final capacity = raw['display_capacity']?.toString().trim() ?? '';
-      final bytes = (raw['storage_entitlement_bytes'] as num?)?.toInt() ?? 0;
-      final period = raw['billing_period']?.toString().trim() ?? '';
-      if (productId.isEmpty ||
-          capacity.isEmpty ||
-          bytes <= 0 ||
-          period.isEmpty) {
-        continue;
-      }
-      plans.add(AppleStoragePlanConfig(
-        productId: productId,
-        capacityLabel: capacity,
-        entitlementBytes: bytes,
-        billingPeriod: period,
-      ));
-    }
-  }
-  // Compatibility with the already-deployed one-product provider contract.
-  // It still supplies a backend-recognized product, period, and entitlement;
-  // no client-side tier is invented.
-  if (plans.isEmpty) {
-    final productId = data['product_id']?.toString().trim() ?? '';
-    final bytes = (data['storage_entitlement_bytes'] as num?)?.toInt() ?? 0;
-    final period = data['billing_period']?.toString().trim() ?? '';
-    if (productId.isNotEmpty && bytes > 0 && period.isNotEmpty) {
-      plans.add(AppleStoragePlanConfig(
-        productId: productId,
-        capacityLabel: formatBytes(bytes),
-        entitlementBytes: bytes,
-        billingPeriod: period,
-      ));
-    }
-  }
-  return List<AppleStoragePlanConfig>.unmodifiable(plans);
-}
-
-String? appleStoreKitPeriodLabel(ProductDetails product) {
-  if (product is AppStoreProduct2Details) {
-    final period = product.sk2Product.subscription?.subscriptionPeriod;
-    if (period == null || period.value != 1) return null;
-    return switch (period.unit) {
-      SK2SubscriptionPeriodUnit.day => 'day',
-      SK2SubscriptionPeriodUnit.week => 'week',
-      SK2SubscriptionPeriodUnit.month => 'month',
-      SK2SubscriptionPeriodUnit.year => 'year',
-    };
-  }
-  if (product is AppStoreProductDetails) {
-    final period = product.skProduct.subscriptionPeriod;
-    if (period == null || period.numberOfUnits != 1) return null;
-    return switch (period.unit) {
-      SKSubscriptionPeriodUnit.day => 'day',
-      SKSubscriptionPeriodUnit.week => 'week',
-      SKSubscriptionPeriodUnit.month => 'month',
-      SKSubscriptionPeriodUnit.year => 'year',
-    };
-  }
-  return null;
-}
-
-String recurringPeriodAdverb(String periodLabel) => switch (periodLabel) {
-      'day' => 'daily',
-      'week' => 'weekly',
-      'month' => 'monthly',
-      'year' => 'yearly',
-      _ => 'on its displayed subscription period',
-    };
 
 List<StoreStorageTierChoice> selectableGooglePlayStorageTiers(
   List<StoreStorageTierChoice> choices, {
@@ -229,7 +128,8 @@ String billingDisplayTier(Map<String, dynamic> data) {
   if (explicit != null && explicit.isNotEmpty) return explicit;
   final productId = data['product_id']?.toString().toLowerCase() ?? '';
   if (productId.endsWith('1tb') || productId.contains('1tb')) return '1 TB';
-  final bytes = (data['storage_bytes'] as num?)?.toInt() ??
+  final bytes =
+      (data['storage_bytes'] as num?)?.toInt() ??
       (data['effective_limit_bytes'] as num?)?.toInt() ??
       0;
   if (bytes == 1073741824000) return '1 TB';
@@ -290,8 +190,6 @@ class _StoragePageState extends State<StoragePage> {
   Map<String, dynamic>? _data;
   GooglePlayBillingController? _playBilling;
   AppleStoreKitBillingController? _appleBilling;
-  List<AppleStoragePlanConfig> _applePlanCatalog =
-      const <AppleStoragePlanConfig>[];
   String? _lastPlayBillingState;
   String? _lastAppleBillingState;
   String? _storeConnectionError;
@@ -337,35 +235,33 @@ class _StoragePageState extends State<StoragePage> {
           .getBillingProviders(authToken: authToken)
           .timeout(kStoreConnectionTimeout);
       final apple = providers['apple'];
-      if (apple is! Map || apple['configured'] != true) {
+      if (apple is! Map) {
         throw StateError('app_store_not_configured');
       }
       final catalog = parseAppleStorageCatalog(apple);
       final appAccountToken = apple['app_account_token']?.toString() ?? '';
-      if (catalog.isEmpty || appAccountToken.isEmpty || !mounted) {
+      if (appAccountToken.isEmpty || !mounted) {
         throw StateError('app_store_configuration_incomplete');
       }
       final controller = AppleStoreKitBillingController(
         gateway: FlutterAppleBillingGateway(),
-        productIds: catalog.map((plan) => plan.productId).toList(),
+        catalog: catalog,
         appAccountToken: appAccountToken,
-        environment:
-            kAppleStoreKitEnvironment == 'sandbox' ? 'sandbox' : 'production',
-        verifyPurchase: ({
-          required String signedTransaction,
-          required String environment,
-        }) =>
-            _client.verifyAppleTransaction(
-          authToken: authToken,
-          signedTransaction: signedTransaction,
-          environment: environment,
-        ),
+        environment: kAppleStoreKitEnvironment == 'sandbox'
+            ? 'sandbox'
+            : 'production',
+        verifyPurchase:
+            ({
+              required String signedTransaction,
+              required String environment,
+            }) => _client.verifyAppleTransaction(
+              authToken: authToken,
+              signedTransaction: signedTransaction,
+              environment: environment,
+            ),
       );
       controller.addListener(_onAppleBillingChanged);
-      setState(() {
-        _applePlanCatalog = catalog;
-        _appleBilling = controller;
-      });
+      setState(() => _appleBilling = controller);
       await controller.initialize();
     } on TimeoutException {
       if (mounted) {
@@ -384,24 +280,6 @@ class _StoragePageState extends State<StoragePage> {
     } finally {
       if (mounted) setState(() => _storeConnectionInFlight = false);
     }
-  }
-
-  Future<void> _chooseAppleStorage(
-    List<StoreStorageTierChoice> choices,
-  ) async {
-    final selectedProductId = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: VaultColors.canvas,
-      isScrollControlled: true,
-      builder: (_) => AppleStoragePlanPicker(choices: choices),
-    );
-    if (selectedProductId == null || !mounted) return;
-    final controller = _appleBilling;
-    if (controller == null ||
-        controller.productFor(selectedProductId) == null) {
-      return;
-    }
-    await controller.buy(selectedProductId);
   }
 
   void _onAppleBillingChanged() {
@@ -491,18 +369,18 @@ class _StoragePageState extends State<StoragePage> {
         gateway: FlutterPlayBillingGateway(),
         catalog: catalog,
         accountToken: accountToken,
-        verifyPurchase: (
-                {required String productId, required String purchaseToken}) =>
-            _client.verifyGooglePlayPurchase(
-          authToken: authToken,
-          productId: productId,
-          purchaseToken: purchaseToken,
-        ),
+        verifyPurchase:
+            ({required String productId, required String purchaseToken}) =>
+                _client.verifyGooglePlayPurchase(
+                  authToken: authToken,
+                  productId: productId,
+                  purchaseToken: purchaseToken,
+                ),
         reconcilePurchases: ({required List<String> purchaseTokens}) =>
             _client.reconcileGooglePlayPurchases(
-          authToken: authToken,
-          purchaseTokens: purchaseTokens,
-        ),
+              authToken: authToken,
+              purchaseTokens: purchaseTokens,
+            ),
       );
       controller.addListener(_onGooglePlayBillingChanged);
       setState(() => _playBilling = controller);
@@ -538,6 +416,10 @@ class _StoragePageState extends State<StoragePage> {
         : null;
     if (ownsPlaySubscription && currentTier == null) return;
     await play.buy(targetProductId, currentProductId: currentTier?.productId);
+  }
+
+  Future<void> _buyAppleTier(String targetProductId) async {
+    await _appleBilling?.buy(targetProductId);
   }
 
   void _onGooglePlayBillingChanged() {
@@ -969,6 +851,9 @@ class _StoragePageState extends State<StoragePage> {
     final currentPlayTier = playOwnsSubscription
         ? play?.tierForQuantity((data['block_count'] as num?)?.toInt() ?? 0)
         : null;
+    final currentAppleTier = appleOwnsSubscription
+        ? apple?.tierForQuantity((data['block_count'] as num?)?.toInt() ?? 0)
+        : null;
     final playCatalogReady = play?.catalogReady ?? false;
     final showPlayOperationalMessage = const <String>{
       'launching',
@@ -982,28 +867,28 @@ class _StoragePageState extends State<StoragePage> {
     }.contains(play?.state);
     final playMessage = playOwnsSubscription
         ? (currentPlayTier == null
-            ? 'The active Google Play storage tier could not be matched. '
-                'Use Restore purchases / Refresh.'
-            : (!playCatalogReady
-                ? (_storeConnectionError ?? play?.message)
-                : (showPlayOperationalMessage ? play?.message : null)))
+              ? 'The active Google Play storage tier could not be matched. '
+                    'Use Restore purchases / Refresh.'
+              : (!playCatalogReady
+                    ? (_storeConnectionError ?? play?.message)
+                    : (showPlayOperationalMessage ? play?.message : null)))
         : activeSubscription
-            ? 'Your storage entitlement is active through $activeProvider. '
-                'It is not a Google Play subscription.'
-            : (_storeConnectionError ??
-                play?.message ??
-                (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
+        ? 'Your storage entitlement is active through $activeProvider. '
+              'It is not a Google Play subscription.'
+        : (_storeConnectionError ??
+              play?.message ??
+              (play?.state == 'ready' ? null : 'Connecting to Google Play…'));
     final appleMessage = appleOwnsSubscription
         ? 'Your App Store storage subscription is active. Billing and '
-            'cancellation are managed by Apple.'
+              'cancellation are managed by Apple.'
         : activeSubscription
-            ? 'Your storage entitlement is active through $activeProvider. '
-                'It is not an App Store subscription.'
-            : (_storeConnectionError ??
-                apple?.message ??
-                (apple?.state == 'ready'
-                    ? null
-                    : 'Connecting to the App Store…'));
+        ? 'Your storage entitlement is active through $activeProvider. '
+              'It is not an App Store subscription.'
+        : (_storeConnectionError ??
+              apple?.message ??
+              (apple?.state == 'ready'
+                  ? null
+                  : 'Connecting to the App Store…'));
     final storeCanBuy = _usesGooglePlayBilling
         ? (play?.canBuy ?? false)
         : (_usesAppleBilling && (apple?.canBuy ?? false));
@@ -1027,29 +912,30 @@ class _StoragePageState extends State<StoragePage> {
       currentTierRank: currentPlayTier?.rank,
       hasActiveSubscription: playOwnsSubscription,
     );
-    final appleTierChoices = <StoreStorageTierChoice>[];
-    // A canceled StoreKit sheet changes the controller's transient state to
-    // `canceled`, but it does not invalidate the ProductDetails catalog.
-    // `canBuy` is the authoritative readiness gate: it requires StoreKit to
-    // be available and at least one returned product to remain cached.
-    if (_usesAppleBilling && apple?.canBuy == true) {
-      for (var index = 0; index < _applePlanCatalog.length; index++) {
-        final plan = _applePlanCatalog[index];
-        final product = apple!.productFor(plan.productId);
+    final allAppleTierChoices = <StoreStorageTierChoice>[];
+    if (_usesAppleBilling && (apple?.catalogReady ?? false)) {
+      for (var index = 0; index < apple!.catalog.length; index++) {
+        final tier = apple.catalog[index];
+        final product = apple.productFor(tier.productId);
         if (product == null) continue;
-        final periodLabel = appleStoreKitPeriodLabel(product);
-        // The backend mapping and StoreKit must independently agree that the
-        // product is monthly before it can be shown or purchased.
-        if (plan.billingPeriod != 'P1M' || periodLabel != 'month') continue;
-        appleTierChoices.add(StoreStorageTierChoice(
-          productId: plan.productId,
-          capacityLabel: plan.capacityLabel,
+        allAppleTierChoices.add(StoreStorageTierChoice(
+          productId: tier.productId,
+          capacityLabel: tier.capacityLabel,
           localizedPrice: product.price,
           rank: index + 1,
-          periodLabel: periodLabel!,
         ));
       }
     }
+    final appleTierChoices = selectableGooglePlayStorageTiers(
+      allAppleTierChoices,
+      currentTierRank: currentAppleTier == null
+          ? null
+          : apple!.catalog.indexOf(currentAppleTier) + 1,
+      hasActiveSubscription: appleOwnsSubscription,
+    );
+    final storeTierChoices = _usesAppleBilling
+        ? appleTierChoices
+        : playTierChoices;
     final storeNeedsRetry = _usesGooglePlayBilling
         ? shouldShowStoreConnectionRetry(
             storeState: play?.state,
@@ -1058,72 +944,77 @@ class _StoragePageState extends State<StoragePage> {
             connectionError: _storeConnectionError,
           )
         : (_usesAppleBilling &&
-            shouldShowStoreConnectionRetry(
-              storeState: apple?.state,
-              loading: apple?.loading ?? false,
-              connectionInFlight: _storeConnectionInFlight,
-              connectionError: _storeConnectionError,
-            ));
+              shouldShowStoreConnectionRetry(
+                storeState: apple?.state,
+                loading: apple?.loading ?? false,
+                connectionInFlight: _storeConnectionInFlight,
+                connectionError: _storeConnectionError,
+              ));
     return StorageBody(
       data: data,
-      busy: _busyPurchase ||
+      busy:
+          _busyPurchase ||
           (play?.loading ?? false) ||
           (apple?.loading ?? false) ||
           _storeConnectionInFlight,
-      onBuyStorage: (_usesGooglePlayBilling || _usesAppleBilling) &&
+      onBuyStorage:
+          (_usesGooglePlayBilling || _usesAppleBilling) &&
               !activeSubscription &&
               storeCanBuy
-          ? (_usesAppleBilling && appleTierChoices.isNotEmpty
-              ? () => _chooseAppleStorage(appleTierChoices)
-              : null)
+          ? null
           : null,
       onManageSubscription: kIsWeb
           ? (providerManageUri != null
-              ? () => _onManageProviderSubscription(data)
-              : (provider == 'web_card' && activeSubscription
-                  ? _onManageSubscription
-                  : null))
+                ? () => _onManageProviderSubscription(data)
+                : (provider == 'web_card' && activeSubscription
+                      ? _onManageSubscription
+                      : null))
           : (playOwnsSubscription && currentPlayTier != null
-              ? () => _manageGooglePlaySubscription(
+                ? () => _manageGooglePlaySubscription(
                     productId: currentPlayTier.productId,
                   )
-              : (appleOwnsSubscription && providerManageUri != null
-                  ? () => _onManageProviderSubscription(data)
-                  : null)),
+                : (appleOwnsSubscription && providerManageUri != null
+                      ? () => _onManageProviderSubscription(data)
+                      : null)),
       unavailableMessage: kIsWeb
           ? (activeSubscription && {'google_play', 'apple'}.contains(provider)
-              ? 'Storage changes are managed through '
-                  '${provider == 'google_play' ? 'Google Play' : 'Apple'}. '
-                  'Web purchase is disabled while this subscription is active.'
-              : 'Storage upgrades are temporarily unavailable while we update '
-                  'our payment provider.')
+                ? 'Storage changes are managed through '
+                      '${provider == 'google_play' ? 'Google Play' : 'Apple'}. '
+                      'Web purchase is disabled while this subscription is active.'
+                : 'Storage upgrades are temporarily unavailable while we update '
+                      'our payment provider.')
           : (_usesGooglePlayBilling
-              ? playMessage
-              : (_usesAppleBilling
-                  ? appleMessage
-                  : 'Storage upgrades are not available on this platform.')),
+                ? playMessage
+                : (_usesAppleBilling
+                      ? appleMessage
+                      : 'Storage upgrades are not available on this platform.')),
       storePrice: _usesGooglePlayBilling
           ? (currentPlayTier == null
-              ? null
-              : play?.productFor(currentPlayTier.productId)?.price)
-          : (_usesAppleBilling ? apple?.product?.price : null),
-      activeStorePlanLabel: currentPlayTier?.capacityLabel,
+                ? null
+                : play?.productFor(currentPlayTier.productId)?.price)
+          : (_usesAppleBilling && currentAppleTier != null
+                ? apple?.productFor(currentAppleTier.productId)?.price
+                : null),
+      activeStorePlanLabel:
+          currentPlayTier?.capacityLabel ?? currentAppleTier?.capacityLabel,
       storeName: _usesAppleBilling ? 'the App Store' : 'Google Play',
-      showAppleSubscriptionDisclosure: _usesAppleBilling,
       onRestorePurchases: _usesGooglePlayBilling && play?.available == true
           ? play!.restore
           : (_usesAppleBilling && apple?.available == true
-              ? apple!.restore
-              : null),
+                ? apple!.restore
+                : null),
       onRetryStore: storeNeedsRetry ? _retryStoreBilling : null,
-      purchasablePlanLabel: _usesAppleBilling ? 'storage' : null,
-      showStorePlanSummary: !kIsWeb && playOwnsSubscription,
-      storeTierChoices: playTierChoices,
-      onSelectStoreTier: _usesGooglePlayBilling &&
+      showStorePlanSummary:
+          !kIsWeb && (playOwnsSubscription || appleOwnsSubscription),
+      storeTierChoices: storeTierChoices,
+      onSelectStoreTier:
+          _usesGooglePlayBilling &&
               storeCanBuy &&
               (!playOwnsSubscription || currentPlayTier != null)
           ? _buyGooglePlayTier
-          : null,
+          : (_usesAppleBilling && storeCanBuy
+                ? _buyAppleTier
+                : null),
       // Only ProductDetails-backed native tiers are rendered above. Stripe-era
       // examples are not store products and must not be advertised.
       showPricingExamples: false,
@@ -1201,7 +1092,8 @@ bool hasActiveSubscription(Map<String, dynamic> data) {
   if (flag is bool) return flag;
 
   final provider = billingProvider(data);
-  final status = data['subscription_status']?.toString() ??
+  final status =
+      data['subscription_status']?.toString() ??
       data['status']?.toString() ??
       'none';
   if (!{'google_play', 'apple', 'web_card'}.contains(provider)) return false;
@@ -1263,7 +1155,6 @@ class StorageBody extends StatelessWidget {
   final String? storePrice;
   final String? activeStorePlanLabel;
   final String storeName;
-  final bool showAppleSubscriptionDisclosure;
   final VoidCallback? onRestorePurchases;
   final VoidCallback? onRetryStore;
   final String? purchasablePlanLabel;
@@ -1282,7 +1173,6 @@ class StorageBody extends StatelessWidget {
     this.storePrice,
     this.activeStorePlanLabel,
     this.storeName = 'Google Play',
-    this.showAppleSubscriptionDisclosure = false,
     this.onRestorePurchases,
     this.onRetryStore,
     this.purchasablePlanLabel,
@@ -1296,20 +1186,23 @@ class StorageBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final used = (data['used_bytes'] as num?)?.toInt() ?? 0;
 
-    final limit = (data['effective_limit_bytes'] as num?)?.toInt() ??
+    final limit =
+        (data['effective_limit_bytes'] as num?)?.toInt() ??
         kVaultStorageLimitBytes;
     final percent = (data['percent_used'] as num?)?.toDouble() ?? 0.0;
     final accountType = (data['account_type'] as String?) ?? 'individual';
     final includedBytes =
         (data['included_bytes'] as num?)?.toInt() ?? kVaultStorageLimitBytes;
 
-    final storeBilled = hasActiveSubscription(data) &&
+    final storeBilled =
+        hasActiveSubscription(data) &&
         {'google_play', 'apple'}.contains(billingProvider(data));
     final canBuy =
         onBuyStorage != null && webCardPurchaseAllowed(data) && !busy;
     final canManage =
         onManageSubscription != null && hasActiveSubscription(data) && !busy;
-    final showPurchaseActions = !storeBilled &&
+    final showPurchaseActions =
+        !storeBilled &&
         webCardPurchaseAllowed(data) &&
         (onBuyStorage != null || unavailableMessage == null);
 
@@ -1333,7 +1226,8 @@ class StorageBody extends StatelessWidget {
           const _WarningBanner(
             severity: 'critical',
             icon: Icons.error_outline,
-            message: 'Storage limit reached. Upgrade storage to continue '
+            message:
+                'Storage limit reached. Upgrade storage to continue '
                 'uploading files.',
           )
         else if (nearsLimitWarning(percent))
@@ -1407,19 +1301,11 @@ class StorageBody extends StatelessWidget {
             storeTierChoices.isEmpty) ...[
           const SizedBox(height: VaultSpacing.md),
           _BillingAvailabilityCard(
-            message: showAppleSubscriptionDisclosure
-                ? 'SVaultAI 50 GB Storage — 1 month, $storePrice through '
-                    '$storeName. Provides 50 GB total storage and renews '
-                    'automatically each month until canceled.'
-                : '$storePrice per month through $storeName. Provides the '
-                    'selected total storage limit and renews automatically '
-                    'until canceled.',
+            message:
+                '$storePrice per month through $storeName. '
+                'Adds 50 GB and renews automatically until canceled.',
             icon: Icons.shop_2_outlined,
           ),
-        ],
-        if (showAppleSubscriptionDisclosure) ...[
-          const SizedBox(height: VaultSpacing.sm),
-          const _AppleSubscriptionLegalLinks(),
         ],
         if (unavailableMessage != null) ...[
           const SizedBox(height: VaultSpacing.md),
@@ -1449,32 +1335,6 @@ class StorageBody extends StatelessWidget {
   }
 }
 
-class _AppleSubscriptionLegalLinks extends StatelessWidget {
-  const _AppleSubscriptionLegalLinks();
-
-  Future<void> _open(String url) async {
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: VaultSpacing.sm,
-      runSpacing: VaultSpacing.sm,
-      children: [
-        TextButton(
-          onPressed: () => _open(kVaultAiPrivacyUrl),
-          child: const Text('Privacy Policy'),
-        ),
-        TextButton(
-          onPressed: () => _open(kAppleStandardEulaUrl),
-          child: const Text('Terms of Use (EULA)'),
-        ),
-      ],
-    );
-  }
-}
-
 class _CurrentBillingPlanCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final bool busy;
@@ -1490,7 +1350,8 @@ class _CurrentBillingPlanCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = billingProvider(data);
     final active = hasActiveSubscription(data);
-    final conflict = data['conflict_reason_code'] != null ||
+    final conflict =
+        data['conflict_reason_code'] != null ||
         data['ownership_status'] == 'conflict';
     final tier = billingDisplayTier(data);
     final freeLabel = provider == 'free' && !active;
@@ -1669,132 +1530,6 @@ class _StoreTierSelector extends StatelessWidget {
   }
 }
 
-class AppleStoragePlanPicker extends StatefulWidget {
-  final List<StoreStorageTierChoice> choices;
-
-  const AppleStoragePlanPicker({super.key, required this.choices});
-
-  @override
-  State<AppleStoragePlanPicker> createState() => _AppleStoragePlanPickerState();
-}
-
-class _AppleStoragePlanPickerState extends State<AppleStoragePlanPicker> {
-  String? _selectedProductId;
-
-  @override
-  Widget build(BuildContext context) {
-    StoreStorageTierChoice? selected;
-    for (final choice in widget.choices) {
-      if (choice.productId == _selectedProductId) selected = choice;
-    }
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(VaultSpacing.xl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Choose storage', style: VaultText.titleLg),
-            const SizedBox(height: VaultSpacing.sm),
-            Text(
-              'Free storage is 1 GB total. Select an App Store plan to review.',
-              style: VaultText.bodySm.copyWith(
-                color: VaultColors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: VaultSpacing.lg),
-            for (final choice in widget.choices) ...[
-              Semantics(
-                selected: choice.productId == _selectedProductId,
-                button: true,
-                child: OutlinedButton(
-                  key: Key('apple_storage_plan_${choice.productId}'),
-                  onPressed: () =>
-                      setState(() => _selectedProductId = choice.productId),
-                  style: OutlinedButton.styleFrom(
-                    side: BorderSide(
-                      color: choice.productId == _selectedProductId
-                          ? VaultColors.accentBright
-                          : VaultColors.borderSubtle,
-                      width: choice.productId == _selectedProductId ? 2 : 1,
-                    ),
-                    foregroundColor: VaultColors.textPrimary,
-                    padding: const EdgeInsets.all(VaultSpacing.lg),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(choice.productId == _selectedProductId
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_unchecked),
-                      const SizedBox(width: VaultSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(choice.capacityLabel,
-                                style: VaultText.subtitle),
-                            const SizedBox(height: VaultSpacing.xs),
-                            Text(
-                              '${choice.localizedPrice} / '
-                              '${choice.periodLabel}',
-                              style: VaultText.body,
-                            ),
-                            const SizedBox(height: VaultSpacing.xs),
-                            Text(
-                              '${choice.capacityLabel} total storage — billed '
-                              '${recurringPeriodAdverb(choice.periodLabel)} '
-                              'through the App Store.',
-                              style: VaultText.bodySm.copyWith(
-                                color: VaultColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: VaultSpacing.sm),
-            ],
-            if (selected != null) ...[
-              const SizedBox(height: VaultSpacing.sm),
-              Text(
-                'Selected: ${selected.capacityLabel} total storage at '
-                '${selected.localizedPrice} / ${selected.periodLabel}.',
-                key: const Key('apple_storage_selected_review'),
-                style: VaultText.body,
-              ),
-            ],
-            const SizedBox(height: VaultSpacing.lg),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('apple_storage_cancel'),
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: VaultSpacing.md),
-                Expanded(
-                  child: ElevatedButton(
-                    key: const Key('apple_storage_continue'),
-                    onPressed: selected == null
-                        ? null
-                        : () => Navigator.of(context).pop(selected!.productId),
-                    child: const Text('Continue / Subscribe'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ActiveStoreSubscriptionCard extends StatelessWidget {
   final String capacityLabel;
   final String? localizedPrice;
@@ -1927,9 +1662,7 @@ class _PurchaseActionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final primaryLabel = hasActiveSub
         ? 'Upgrade storage'
-        : (buyPlanLabel == 'storage'
-            ? 'Choose storage'
-            : (buyPlanLabel == null ? 'Buy storage' : 'Buy $buyPlanLabel'));
+        : (buyPlanLabel == null ? 'Buy storage' : 'Buy $buyPlanLabel');
     final primaryIcon = hasActiveSub ? Icons.upgrade : Icons.add;
     return Row(
       children: [
@@ -1983,8 +1716,8 @@ class _UsageCard extends StatelessWidget {
     final barColor = limitReachedWarning(percentUsed)
         ? VaultColors.severityCrit
         : nearsLimitWarning(percentUsed)
-            ? VaultColors.severityWarn
-            : VaultColors.accent;
+        ? VaultColors.severityWarn
+        : VaultColors.accent;
 
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.xl),
@@ -2093,8 +1826,9 @@ class _AccountFactsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final prettyType =
-        accountType == 'organization' ? 'Organization' : 'Individual';
+    final prettyType = accountType == 'organization'
+        ? 'Organization'
+        : 'Individual';
     return Container(
       padding: const EdgeInsets.all(VaultSpacing.xl),
       decoration: BoxDecoration(
@@ -2310,9 +2044,9 @@ class StoragePlanPicker extends StatelessWidget {
   }
 
   String _capacityLabel(int blocks) => formatCapacityFromBlocks(
-        blocks,
-        gbPerBlock: blockBytes ~/ (1024 * 1024 * 1024),
-      );
+    blocks,
+    gbPerBlock: blockBytes ~/ (1024 * 1024 * 1024),
+  );
 
   String _newLimitLabel(int blocks) {
     final totalBytes = blocks * blockBytes;
@@ -2325,14 +2059,15 @@ class StoragePlanPicker extends StatelessWidget {
         .where((b) => b <= selfServiceMaxBlocks)
         .toList();
 
-    final title =
-        hasActiveSubscription ? 'Upgrade Storage' : 'Buy More Storage';
+    final title = hasActiveSubscription
+        ? 'Upgrade Storage'
+        : 'Buy More Storage';
     final intro = hasActiveSubscription
         ? 'Pick a higher tier to bump your existing subscription. You '
-            'will not be sent to Stripe Checkout — the change happens in '
-            'place and the prorated upgrade charge runs immediately.'
+              'will not be sent to Stripe Checkout — the change happens in '
+              'place and the prorated upgrade charge runs immediately.'
         : 'Each block adds 50 GB to your account for \$25/month. '
-            'Checkout opens Stripe in a new tab.';
+              'Checkout opens Stripe in a new tab.';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -2377,11 +2112,13 @@ class StoragePlanPicker extends StatelessWidget {
                 itemBuilder: (_, i) {
                   final blocks = ladder[i];
                   final isCurrent = blocks == currentBlockCount;
-                  final isUpgradeTile = hasActiveSubscription &&
+                  final isUpgradeTile =
+                      hasActiveSubscription &&
                       !isCurrent &&
                       blocks > currentBlockCount;
 
-                  final isLowerTile = hasActiveSubscription &&
+                  final isLowerTile =
+                      hasActiveSubscription &&
                       !isCurrent &&
                       blocks < currentBlockCount;
                   final addedBlocks = blocks - currentBlockCount;
@@ -2389,10 +2126,12 @@ class StoragePlanPicker extends StatelessWidget {
                     additionalLabel: _capacityLabel(blocks),
                     monthlyLabel: _priceLabel(blocks),
                     newLimitLabel: _newLimitLabel(blocks),
-                    addedCapacityLabel:
-                        isUpgradeTile ? _capacityLabel(addedBlocks) : null,
-                    addedMonthlyLabel:
-                        isUpgradeTile ? _priceLabel(addedBlocks) : null,
+                    addedCapacityLabel: isUpgradeTile
+                        ? _capacityLabel(addedBlocks)
+                        : null,
+                    addedMonthlyLabel: isUpgradeTile
+                        ? _priceLabel(addedBlocks)
+                        : null,
                     showProrationNote: isUpgradeTile,
                     isCurrent: isCurrent,
                     isLowerThanCurrent: isLowerTile,
@@ -2583,17 +2322,19 @@ class CheckoutReturnBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSuccess = kind == 'success';
-    final color =
-        isSuccess ? VaultColors.severityOk : VaultColors.textSecondary;
-    final soft =
-        isSuccess ? VaultColors.severityOkSoft : VaultColors.surfaceMuted;
+    final color = isSuccess
+        ? VaultColors.severityOk
+        : VaultColors.textSecondary;
+    final soft = isSuccess
+        ? VaultColors.severityOkSoft
+        : VaultColors.surfaceMuted;
     final icon = isSuccess ? Icons.check_circle_outline : Icons.info_outline;
     final title = isSuccess ? 'Payment confirmed' : 'Checkout cancelled';
     final body = isSuccess
         ? 'Your new storage will appear here in a moment. '
-            'If it does not, tap refresh.'
+              'If it does not, tap refresh.'
         : 'No changes were made. You can try again whenever you are '
-            'ready.';
+              'ready.';
 
     return Container(
       margin: const EdgeInsets.fromLTRB(

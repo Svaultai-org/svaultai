@@ -6524,7 +6524,7 @@ class VaultBrainAnswerCard extends StatelessWidget {
                 : Icons.psychology_outlined,
             iconColor:
                 noEvidence ? VaultColors.textSecondary : VaultColors.accent,
-            title: 'Vault intelligence',
+            title: 'Vault search',
             subtitle: subtitle,
           ),
           if (body.trim().isNotEmpty) ...[
@@ -6612,8 +6612,8 @@ class _BrainCoverageStrip extends StatelessWidget {
     final label = totalFiles == 0
         ? 'Vault is empty'
         : isComplete
-            ? 'Vault intelligence fully indexed ($indexedFiles/$totalFiles, $pctLabel)'
-            : 'Vault intelligence indexed $indexedFiles/$totalFiles files ($pctLabel)';
+            ? 'Vault fully indexed ($indexedFiles/$totalFiles, $pctLabel)'
+            : 'Vault indexed $indexedFiles/$totalFiles files ($pctLabel)';
 
     return Row(
       children: [

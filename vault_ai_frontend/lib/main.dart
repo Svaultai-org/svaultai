@@ -93,6 +93,7 @@ import 'ui/chat/ask_brain_handoff.dart';
 import 'ui/chat/chat_message_list.dart';
 import 'ui/chat/chat_models.dart';
 import 'ui/chat/chat_failure_localization.dart';
+import 'ui/chat/chat_operation_queue.dart';
 import 'ui/chat/chat_request_lifecycle.dart';
 import 'ui/secure_item_detail.dart';
 
@@ -177,7 +178,11 @@ class LocalMemoryFact {
 }
 
 LocalMemoryFact? parseLocalMemoryFact(String input) {
-  var text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  var text = input
+      .trim()
+      .replaceAll('\u2019', "'")
+      .replaceFirst(RegExp(r'[.?!]+$'), '')
+      .trim();
   text = text
       .replaceFirst(
         RegExp(
@@ -187,45 +192,54 @@ LocalMemoryFact? parseLocalMemoryFact(String input) {
         '',
       )
       .trim();
-  // A clearly bounded family-name fact does not require an explicit copula:
-  // "save my mother's name Lodato Kendra" is ordinary memory language, not
-  // a credential or generic-chat command.
-  final relationshipNameMatch = RegExp(
-    r"^(?:please\s+)?(?:remember|save)\s+(?:that\s+)?my\s+"
-    r"(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*"
-    r"(?:(?:full|first|given)\s+)?name\s+(?:(?:is|was|as)\s+)?(.+)$",
+  final familyMatch = RegExp(
+    r"^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+"
+    r"(mother|mom|mum|mommy|mama|father|dad|daddy|papa|sister|brother|wife|spouse|husband|daughter|son)"
+    r"(?:'s|\s+)\s*"
+    r"((?:(?:full|first|given)\s+)?name|birthday|birth\s+date|phone(?:\s+number)?|telephone(?:\s+number)?|favou?rite\s+colou?r)"
+    r"\s+(?:(?:is|was|as)\s+)?(.+)$",
     caseSensitive: false,
   ).firstMatch(text);
-  if (relationshipNameMatch != null) {
-    final rawRelationship = relationshipNameMatch.group(1)!.toLowerCase();
-    final relationship = <String>{
-      'mother',
-      'mom',
-      'mum',
-      'mommy',
-      'mama',
-    }.contains(rawRelationship)
-        ? 'mother'
-        : 'father';
-    final value = (relationshipNameMatch.group(2) ?? '').trim();
-    if (value.isEmpty) return null;
+  if (familyMatch != null) {
+    final rawRelationship = familyMatch.group(1)!.toLowerCase();
+    final rawAttribute = familyMatch.group(2)!.toLowerCase();
+    final value = (familyMatch.group(3) ?? '').trim();
+    if (value.isEmpty || _memoryOtherDomainWords.hasMatch(value)) return null;
+    final relationship = switch (rawRelationship) {
+      'mom' || 'mum' || 'mommy' || 'mama' => 'mother',
+      'dad' || 'daddy' || 'papa' => 'father',
+      _ => rawRelationship,
+    };
+    final attribute = switch (rawAttribute) {
+      'birthday' || 'birth date' => 'birthday',
+      'phone' || 'phone number' || 'telephone' || 'telephone number' =>
+        'phone',
+      'favorite color' ||
+      'favourite color' ||
+      'favorite colour' ||
+      'favourite colour' => 'favorite_color',
+      _ => 'name',
+    };
+    final displayAttribute = attribute.replaceAll('_', ' ');
     return LocalMemoryFact(
-      "$relationship's name",
+      "$relationship's $displayAttribute",
       value,
       relationship: relationship,
-      attribute: 'name',
-      memoryType: 'identity',
-      tags: <String>['family', relationship, 'name'],
+      attribute: attribute,
+      memoryType: attribute == 'name' ? 'identity' : 'personal',
+      tags: <String>['family', relationship, attribute],
     );
   }
   final match = RegExp(
-    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was)\s+(.+)$',
+    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was|as)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(text);
   if (match == null) return null;
   final subject = (match.group(1) ?? '').trim();
   final value = (match.group(2) ?? '').trim();
-  if (subject.isEmpty || value.isEmpty) return null;
+  if (subject.isEmpty ||
+      value.isEmpty ||
+      _memoryOtherDomainWords.hasMatch(subject)) return null;
   final relationshipMatch = RegExp(
     r"^(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*(?:(?:full|first|given)\s+)?name$",
     caseSensitive: false,
@@ -281,7 +295,7 @@ String? parseLocalMemoryContextSaveSubject(String input) {
 }
 
 final _memoryOtherDomainWords = RegExp(
-  r'\b(?:login|password|credential|file|document|wallet|seed|private key|invoice|crypto|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20|balance|transaction)\b',
+  r'\b(?:login|password|passcode|pin|totp|username|account name|credential|file|document|wallet|seed|private key|invoice|crypto|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20|balance|transaction)\b',
   caseSensitive: false,
 );
 
@@ -308,8 +322,7 @@ LocalMemoryLookupIntent? parseLocalMemoryLookupIntent(String input) {
     RegExp(r'^do\s+you\s+remember\s+(?:my\s+)?(.+)$', caseSensitive: false),
     RegExp(r'^what\s+was\s+(?:the\s+)?(.+?)\s+i\s+saved$',
         caseSensitive: false),
-    RegExp(r"^what(?:'s|\s+(?:is|was))\s+my\s+(.+)$",
-        caseSensitive: false),
+    RegExp(r'^what\s+(?:is|was)\s+my\s+(.+)$', caseSensitive: false),
     RegExp(
       r'^what\s+(?:is|was)\s+(?:the\s+)?(.+?\b(?:codeword|code|note|fact))$',
       caseSensitive: false,
@@ -6020,30 +6033,24 @@ class UnlockPage extends StatefulWidget {
   State<UnlockPage> createState() => _UnlockPageState();
 }
 
-class _UnlockPageState extends State<UnlockPage> {
-  final pinCtrl = TextEditingController();
-  bool loading = false;
-  String? err;
+mixin _SingleLoginReplacement<T extends StatefulWidget> on State<T> {
   bool _loginReplacementScheduled = false;
 
-  /// Own the remembered-vault -> full-login route replacement in one place.
-  ///
-  /// `clearSession(keepLastVaultName: false)` notifies AppState listeners. That
-  /// notification rebuilds this page before `_useAnotherVault` resumes. The
-  /// old implementation scheduled a replacement from `build` *and* pushed a
-  /// second replacement from the tap handler, leaving two iOS route
-  /// transitions composited over the same outgoing frame. On a physical
-  /// device that could briefly present the outgoing page in repeated vertical
-  /// strips. Guarding the post-frame replacement gives both callers the same
-  /// single route operation without adding a timing delay or visual overlay.
-  void _replaceWithLoginOnce() {
-    if (_loginReplacementScheduled) return;
+  void _scheduleLoginReplacement() {
+    if (_loginReplacementScheduled || !mounted) return;
     _loginReplacementScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/login');
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
     });
   }
+}
+
+class _UnlockPageState extends State<UnlockPage>
+    with _SingleLoginReplacement<UnlockPage> {
+  final pinCtrl = TextEditingController();
+  bool loading = false;
+  String? err;
 
   Future<void> _submit() async {
     final app = context.read<AppState>();
@@ -6392,11 +6399,9 @@ class _UnlockPageState extends State<UnlockPage> {
   }
 
   Future<void> _useAnotherVault() async {
-    if (_loginReplacementScheduled) return;
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
-    if (!mounted) return;
-    _replaceWithLoginOnce();
+    _scheduleLoginReplacement();
   }
 
   @override
@@ -6404,7 +6409,7 @@ class _UnlockPageState extends State<UnlockPage> {
     final app = context.watch<AppState>();
 
     if (!app.hasRememberedVaultLogin) {
-      _replaceWithLoginOnce();
+      _scheduleLoginReplacement();
       return const Scaffold();
     }
     final w = MediaQuery.of(context).size.width;
@@ -6498,7 +6503,8 @@ class PinGatePage extends StatefulWidget {
   State<PinGatePage> createState() => _PinGatePageState();
 }
 
-class _PinGatePageState extends State<PinGatePage> {
+class _PinGatePageState extends State<PinGatePage>
+    with _SingleLoginReplacement<PinGatePage> {
   final pinController = TextEditingController();
   String? err;
 
@@ -6608,8 +6614,7 @@ class _PinGatePageState extends State<PinGatePage> {
     if (_submitting) return;
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/login');
+    _scheduleLoginReplacement();
   }
 
   Future<void> _submit() async {
@@ -7224,6 +7229,16 @@ class _CreateChoiceTile extends StatelessWidget {
   }
 }
 
+enum _MemoryProposalFinalizeOutcome { saved, duplicate, failed }
+
+String _memoryProposalOutcomeMessage(_MemoryProposalFinalizeOutcome outcome) =>
+    switch (outcome) {
+      _MemoryProposalFinalizeOutcome.saved => 'Memory saved.',
+      _MemoryProposalFinalizeOutcome.duplicate => 'That memory is already saved.',
+      _MemoryProposalFinalizeOutcome.failed =>
+        'Could not save that memory securely. Your vault was not changed.',
+    };
+
 /// Scan `buffer` for the `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>`
 /// sentinel. If a full sentinel is found, returns the JSON payload
 /// and a buffer with the sentinel + one trailing blank line
@@ -7602,48 +7617,53 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           _showSnack(app.billingWriteBlockedMessage);
           return false;
         }
-        try {
-          final recordId = item?.recordId ?? createRecordId!;
-          final credential = CredentialV2Plaintext(
-            service: newTitle,
-            username: fields['username'] ?? '',
-            password: fields['password'] ?? '',
-            url: fields['url'],
-            notes: fields['note'],
-            totpSecret: existing?.totpSecret,
-            customFields: existing?.customFields ?? const {},
-          );
-          if (item == null) {
-            await repository.create(
-              recordId: recordId,
-              credential: credential,
-              serviceForLookup: newTitle,
-            );
-          } else {
-            final operationId = credentialV2MigrationOperationId(recordId);
-            await repository.edit(
-              recordId: recordId,
-              credential: credential,
-              serviceForLookup: newTitle,
-              migrationOperationId: operationId,
-            );
-            final readBack = await repository.reveal(recordId);
-            if (!readBack.semanticallyEquals(credential)) {
-              throw StateError('credential v2 edit verification failed');
+        return _enqueueChatOperation<bool>(
+          kind: ChatOperationKind.mutation,
+          operation: () async {
+            try {
+              final recordId = item?.recordId ?? createRecordId!;
+              final credential = CredentialV2Plaintext(
+                service: newTitle,
+                username: fields['username'] ?? '',
+                password: fields['password'] ?? '',
+                url: fields['url'],
+                notes: fields['note'],
+                totpSecret: existing?.totpSecret,
+                customFields: existing?.customFields ?? const {},
+              );
+              if (item == null) {
+                await repository.create(
+                  recordId: recordId,
+                  credential: credential,
+                  serviceForLookup: newTitle,
+                );
+              } else {
+                final operationId = credentialV2MigrationOperationId(recordId);
+                await repository.edit(
+                  recordId: recordId,
+                  credential: credential,
+                  serviceForLookup: newTitle,
+                  migrationOperationId: operationId,
+                );
+                final readBack = await repository.reveal(recordId);
+                if (!readBack.semanticallyEquals(credential)) {
+                  throw StateError('credential v2 edit verification failed');
+                }
+                await repository.api.verify(recordId, operationId);
+              }
+              CredentialV2QaDiagnostics.remember(recordId, credential);
+              _showSnack(item == null ? 'Login saved' : 'Updated login');
+              await _loadVaultLogins();
+              if (mounted && item == null) {
+                setState(() => selectedSection = _DashboardSection.logins);
+              }
+              return true;
+            } catch (_) {
+              _showSnack('Could not save this credential.');
+              return false;
             }
-            await repository.api.verify(recordId, operationId);
-          }
-          CredentialV2QaDiagnostics.remember(recordId, credential);
-          _showSnack(item == null ? 'Login saved' : 'Updated login');
-          unawaited(_loadVaultLogins());
-          if (mounted && item == null) {
-            setState(() => selectedSection = _DashboardSection.logins);
-          }
-          return true;
-        } catch (_) {
-          _showSnack('Could not save this credential.');
-          return false;
-        }
+          },
+        );
       },
     );
   }
@@ -7801,7 +7821,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (intent?.listAll == true) {
       input.clear();
       setState(() => selectedSection = _DashboardSection.logins);
-      unawaited(_loadVaultLogins());
+      await _loadVaultLogins();
       return true;
     }
     final repository = _credentialV2Repository(app);
@@ -8035,7 +8055,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ));
       });
       _scrollToBottom();
-      unawaited(_loadVaultLogins());
+      await _loadVaultLogins();
     } catch (_) {
       _appendAssistantMessage(
         'I could not securely save that generated login. Your vault stayed unchanged.',
@@ -8104,7 +8124,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() => msgs.add(_Msg('assistant',
               'Deleted the ${match.plaintext.service} login from your vault.')));
           _scrollToBottom();
-          unawaited(_loadVaultLogins());
+          await _loadVaultLogins();
         }
       } catch (_) {
         _appendAssistantMessage(
@@ -8228,14 +8248,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       ),
     );
     if (confirmed != true) return;
-    try {
-      await repository.delete(item.recordId!);
-      CredentialV2QaDiagnostics.forget(item.recordId!);
-      unawaited(_loadVaultLogins());
-      _showSnack('Login deleted');
-    } catch (_) {
-      _showSnack('Could not delete this credential.');
-    }
+    await _enqueueChatOperation<void>(
+      kind: ChatOperationKind.mutation,
+      operation: () async {
+        try {
+          await repository.delete(item.recordId!);
+          CredentialV2QaDiagnostics.forget(item.recordId!);
+          await _loadVaultLogins();
+          _showSnack('Login deleted');
+        } catch (_) {
+          _showSnack('Could not delete this credential.');
+        }
+      },
+    );
   }
 
   Future<void> _deleteInlineCredentialByService(String service) async {
@@ -8359,47 +8384,51 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final data = await showMemoryEditorDialog(context);
     if (data == null) return;
-    try {
-      const memoryV2Enabled = memoryV2WriteEnabled;
-      if (memoryV2Enabled) {
-        final memoryId = 'memory-${DateTime.now().microsecondsSinceEpoch}';
-        final repository = MemoryV2Repository(
-          baseUrl: backendBaseUrl,
-          authToken: token,
-        );
-        await repository.create(
-          memoryId: memoryId,
-          memoryType: (data['memory_type'] ?? 'note').toString(),
-          plaintext: MemoryV2Plaintext(
-            value: (data['value'] ?? data['body'] ?? '').toString(),
-            normalized: (data['title'] ?? '').toString(),
-            tags: (data['tags'] as List? ?? const [])
-                .whereType<String>()
-                .toList(),
-          ),
-        );
-        if (!mounted) return;
-        _showSnack('Memory saved');
-        setState(() => selectedSection = _DashboardSection.memory);
-        unawaited(app.refreshVaultStats());
-        return;
-      }
-      final pin = await _VaultCrypto.currentPinOrThrow();
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
-      await client.createMemory(
-        authToken: token,
-        vaultName: vaultName,
-        pin: pin,
-        data: data,
-      );
-      if (!mounted) return;
-      _showSnack('Memory saved');
-      setState(() => selectedSection = _DashboardSection.memory);
-      unawaited(app.refreshVaultStats());
-    } catch (e) {
-      if (app.handleApiException(e)) return;
-      _showSnack('Could not save memory: $e');
-    }
+    await _enqueueChatOperation<void>(
+      kind: ChatOperationKind.mutation,
+      operation: () async {
+        try {
+          const memoryV2Enabled = memoryV2WriteEnabled;
+          if (memoryV2Enabled) {
+            final repository = MemoryV2Repository(
+              baseUrl: backendBaseUrl,
+              authToken: token,
+            );
+            final result = await repository.create(
+              memoryType: (data['memory_type'] ?? 'note').toString(),
+              plaintext: MemoryV2Plaintext(
+                value: (data['value'] ?? data['body'] ?? '').toString(),
+                normalized: (data['title'] ?? '').toString(),
+                tags: (data['tags'] as List? ?? const [])
+                    .whereType<String>()
+                    .toList(),
+              ),
+            );
+            if (!mounted) return;
+            _showSnack(
+                result.duplicate ? 'Memory already saved' : 'Memory saved');
+            setState(() => selectedSection = _DashboardSection.memory);
+            unawaited(app.refreshVaultStats());
+            return;
+          }
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          await client.createMemory(
+            authToken: token,
+            vaultName: vaultName,
+            pin: pin,
+            data: data,
+          );
+          if (!mounted) return;
+          _showSnack('Memory saved');
+          setState(() => selectedSection = _DashboardSection.memory);
+          unawaited(app.refreshVaultStats());
+        } catch (e) {
+          if (app.handleApiException(e)) return;
+          _showSnack('Could not save memory: $e');
+        }
+      },
+    );
   }
 
   Future<void> _openSecureItemEditDialog(String service, String itemType,
@@ -8471,37 +8500,43 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           _showSnack('Session expired.');
           return false;
         }
-        try {
-          final pin = await _VaultCrypto.currentPinOrThrow();
-          final client = VaultAIClient(baseUrl: backendBaseUrl);
-          final oldServiceForRequest =
-              oldTitle.trim().isEmpty ? newTitle : oldTitle;
-          await client.updateVaultSecureItem(
-            vaultName: app.vaultName!,
-            oldService: oldServiceForRequest,
-            itemType: itemType,
-            newService: newTitle == oldServiceForRequest ? null : newTitle,
-            fields: fields.isEmpty ? null : fields,
-            pin: pin,
-            authToken: token,
-            forceLegacyTransport: forceLegacyTransport,
-          );
+        return _enqueueChatOperation<bool>(
+          kind: ChatOperationKind.mutation,
+          operation: () async {
+            try {
+              final pin = await _VaultCrypto.currentPinOrThrow();
+              final client = VaultAIClient(baseUrl: backendBaseUrl);
+              final oldServiceForRequest =
+                  oldTitle.trim().isEmpty ? newTitle : oldTitle;
+              await client.updateVaultSecureItem(
+                vaultName: app.vaultName!,
+                oldService: oldServiceForRequest,
+                itemType: itemType,
+                newService: newTitle == oldServiceForRequest ? null : newTitle,
+                fields: fields.isEmpty ? null : fields,
+                pin: pin,
+                authToken: token,
+                forceLegacyTransport: forceLegacyTransport,
+              );
 
-          final isLogin = itemType == 'login' || itemType == 'credential';
-          _showSnack(createMode
-              ? (isLogin ? 'Login saved' : 'Saved item')
-              : (isLogin ? 'Updated login' : 'Updated saved item'));
-          unawaited(_loadVaultLogins());
-          unawaited(app.refreshVaultStats());
-          if (createMode && isLogin) {
-            setState(() => selectedSection = _DashboardSection.logins);
-          }
-          return true;
-        } catch (e) {
-          if (app.handleApiException(e)) return false;
-          _showSnack('Could not update saved item: $e');
-          return false;
-        }
+              final isLogin =
+                  itemType == 'login' || itemType == 'credential';
+              _showSnack(createMode
+                  ? (isLogin ? 'Login saved' : 'Saved item')
+                  : (isLogin ? 'Updated login' : 'Updated saved item'));
+              await _loadVaultLogins();
+              await app.refreshVaultStats();
+              if (createMode && isLogin) {
+                setState(() => selectedSection = _DashboardSection.logins);
+              }
+              return true;
+            } catch (e) {
+              if (app.handleApiException(e)) return false;
+              _showSnack('Could not update saved item: $e');
+              return false;
+            }
+          },
+        );
       },
     );
   }
@@ -8641,6 +8676,17 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _startSecureItemDeleteConfirmation(
+      String service, String itemType) {
+    return _enqueueChatOperation<void>(
+      kind: ChatOperationKind.mutation,
+      operation: () => _startSecureItemDeleteConfirmationNow(
+        service,
+        itemType,
+      ),
+    );
+  }
+
+  Future<void> _startSecureItemDeleteConfirmationNow(
       String service, String itemType) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -8669,12 +8715,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ? 'Delete this saved item from my vault'
             : 'Delete $safeService from my vault');
     final sentinel = '__delete_item:$itemType:$safeService';
+    final chatTicket = _beginChatRequest();
+    final chatRequestId = chatTicket.requestId;
+    final userMessageId = chatTicket.userMessageId;
+    final assistantMessageId = chatTicket.assistantMessageId;
+    final assistantCorrelation = _Msg(
+      'assistant',
+      '',
+      messageId: assistantMessageId,
+      requestId: chatRequestId,
+      replyToMessageId: userMessageId,
+    );
 
     setState(() {
       selectedSection = _DashboardSection.chat;
       sending = true;
       thinking = true;
-      msgs.add(_Msg('user', visibleBubble));
+      msgs.add(_Msg(
+        'user',
+        visibleBubble,
+        messageId: userMessageId,
+        requestId: chatRequestId,
+      ));
     });
     _scrollToBottom();
 
@@ -8694,9 +8756,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() {
           sending = false;
           thinking = false;
-          if (msgs.isNotEmpty && msgs.last.role == 'user') {
-            msgs.removeLast();
-          }
+          msgs.removeWhere((message) => message.requestId == chatRequestId);
         });
         rootScaffoldMessengerKey.currentState?.showSnackBar(
           const SnackBar(
@@ -8716,12 +8776,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       int? assistantIndex;
       String buffer = '';
       bool memoryProposalFinalized = false;
+      String? memoryProposalOutcomeMessage;
 
       final stream = client.chatStream(
         encryptedMessage: encryptedMessage,
         vaultName: vaultName,
         pin: pin,
         authToken: token,
+        requestId: chatRequestId,
         uploadedFileIds: const <String>[],
         appLocale: context.read<AppState>().chatReplyLanguageCode,
         kdfSaltUsed: ctxSnapshot.saltBase64,
@@ -8729,9 +8791,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       try {
         await for (final encryptedChunk in stream) {
+          if (!_chatRequests.acceptsEvents(chatRequestId)) break;
           try {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
-            if (!mounted) return;
+            if (!mounted || !_chatRequests.acceptsEvents(chatRequestId)) {
+              return;
+            }
             buffer += decryptedChunk;
 
             // ZK memory-proposal sentinel: strip it BEFORE any
@@ -8744,23 +8809,30 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = _stripped.strippedBuffer;
             if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              unawaited(_finalizeMemoryProposalBestEffort(
+              final outcome = await _finalizeMemoryProposalBestEffort(
                 jsonPayload: _stripped.jsonPayload!,
                 authToken: token,
-              ));
+              );
+              memoryProposalOutcomeMessage =
+                  _memoryProposalOutcomeMessage(outcome);
+            }
+            if (memoryProposalOutcomeMessage != null) {
+              buffer = memoryProposalOutcomeMessage!;
             }
 
             // dart format off
             final structuredNow = _tryParseAssistantStructuredMessage(buffer);
             final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
+            final correlatedReplacement =
+                replacement.withCorrelationFrom(assistantCorrelation);
             // dart format on
             setState(() {
               if (assistantIndex == null) {
-                msgs.add(replacement);
+                msgs.add(correlatedReplacement);
                 assistantIndex = msgs.length - 1;
                 thinking = false;
               } else {
-                msgs[assistantIndex!] = replacement;
+                msgs[assistantIndex!] = correlatedReplacement;
               }
             });
             _scrollToBottom();
@@ -8770,10 +8842,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             setState(() {
               thinking = false;
               if (assistantIndex == null) {
-                msgs.add(_Msg('assistant', 'Decrypt error: $e'));
+                msgs.add(_Msg('assistant', 'Decrypt error: $e')
+                    .withCorrelationFrom(assistantCorrelation));
                 assistantIndex = msgs.length - 1;
               } else {
-                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e');
+                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e')
+                    .withCorrelationFrom(assistantCorrelation);
               }
             });
           }
@@ -8786,9 +8860,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             thinking = false;
             sending = false;
-            if (msgs.isNotEmpty && msgs.last.role == 'user') {
-              msgs.removeLast();
-            }
+            msgs.removeWhere((message) => message.requestId == chatRequestId);
           });
           rootScaffoldMessengerKey.currentState?.clearSnackBars();
           rootScaffoldMessengerKey.currentState?.showSnackBar(
@@ -8819,9 +8891,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             thinking = false;
             sending = false;
-            if (msgs.isNotEmpty && msgs.last.role == 'user') {
-              msgs.removeLast();
-            }
+            msgs.removeWhere((message) => message.requestId == chatRequestId);
           });
           rootScaffoldMessengerKey.currentState?.clearSnackBars();
           if (rederived) {
@@ -8859,10 +8929,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() {
           thinking = false;
           if (assistantIndex == null) {
-            msgs.add(_Msg('assistant', 'Error: $err'));
+            msgs.add(_Msg('assistant', 'Error: $err')
+                .withCorrelationFrom(assistantCorrelation));
             assistantIndex = msgs.length - 1;
           } else {
-            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
+            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err')
+                .withCorrelationFrom(assistantCorrelation);
           }
         });
       }
@@ -8870,7 +8942,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (assistantIndex != null && buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
         if (structured != null && mounted) {
-          setState(() => msgs[assistantIndex!] = structured);
+          setState(() => msgs[assistantIndex!] =
+              structured.withCorrelationFrom(assistantCorrelation));
         }
       }
       if (mounted && thinking) setState(() => thinking = false);
@@ -8881,9 +8954,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!mounted) return;
       setState(() {
         thinking = false;
-        msgs.add(_Msg('assistant', 'Could not start delete: $e'));
+        msgs.add(_Msg('assistant', 'Could not start delete: $e')
+            .withCorrelationFrom(assistantCorrelation));
       });
     } finally {
+      _completeChatRequest(chatRequestId);
       if (mounted) setState(() => sending = false);
     }
   }
@@ -8921,24 +8996,30 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _restoreComposerFocus();
       return;
     }
-    try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
-      await VaultAIClient(baseUrl: backendBaseUrl).deleteVaultSecureItem(
-        vaultName: vaultName,
-        service: safeService,
-        itemType: itemType,
-        pin: pin,
-        authToken: token,
-      );
-      await _loadVaultLogins();
-      unawaited(app.refreshVaultStats());
-      _showSnack('Login deleted');
-    } catch (error) {
-      if (app.handleApiException(error)) return;
-      _showSnack('Could not delete this login. Your vault stayed unchanged.');
-    } finally {
-      _restoreComposerFocus();
-    }
+    await _enqueueChatOperation<void>(
+      kind: ChatOperationKind.mutation,
+      operation: () async {
+        try {
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          await VaultAIClient(baseUrl: backendBaseUrl).deleteVaultSecureItem(
+            vaultName: vaultName,
+            service: safeService,
+            itemType: itemType,
+            pin: pin,
+            authToken: token,
+          );
+          await _loadVaultLogins();
+          unawaited(app.refreshVaultStats());
+          _showSnack('Login deleted');
+        } catch (error) {
+          if (app.handleApiException(error)) return;
+          _showSnack(
+              'Could not delete this login. Your vault stayed unchanged.');
+        } finally {
+          _restoreComposerFocus();
+        }
+      },
+    );
   }
 
   void _restoreComposerFocus() {
@@ -8959,13 +9040,57 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   bool sending = false;
   bool thinking = false;
+  final ChatOperationQueue _chatOperationQueue = ChatOperationQueue(
+    onTrace: (trace) => debugPrint(
+      'CHAT_OPERATION phase=${trace.phase.name} '
+      'operation_id=${trace.operationId} kind=${trace.kind.name} '
+      'at_us=${trace.timestampMicros}',
+    ),
+  );
   final ChatRequestRuntime _chatRequests = ChatRequestRuntime();
   final Set<String> _cancelledChatRequestIds = <String>{};
+
+  ChatRequestTicket _beginChatRequest() {
+    final ticket = _chatRequests.begin();
+    debugPrint(
+      'CHAT_REQUEST phase=started request_id=${ticket.requestId} '
+      'at_us=${DateTime.now().microsecondsSinceEpoch}',
+    );
+    return ticket;
+  }
+
+  void _completeChatRequest(String requestId) {
+    _chatRequests.complete(requestId);
+    debugPrint(
+      'CHAT_REQUEST phase=terminal request_id=$requestId '
+      'at_us=${DateTime.now().microsecondsSinceEpoch}',
+    );
+  }
+
+  bool get _chatOperationBusy => sending || _chatOperationQueue.isBusy;
+
+  Future<T> _enqueueChatOperation<T>({
+    required ChatOperationKind kind,
+    required Future<T> Function() operation,
+  }) {
+    final queued = _chatOperationQueue.enqueue<T>(
+      kind: kind,
+      operation: operation,
+    );
+    if (mounted) setState(() {});
+    return queued.whenComplete(() {
+      if (mounted) setState(() {});
+    });
+  }
 
   Future<void> _cancelActiveChatRequest() async {
     final requestId = _chatRequests.activeRequestId;
     if (requestId == null) return;
     _chatRequests.cancel(requestId);
+    debugPrint(
+      'CHAT_REQUEST phase=cancelled request_id=$requestId '
+      'at_us=${DateTime.now().microsecondsSinceEpoch}',
+    );
     _cancelledChatRequestIds.add(requestId);
     await _chatRequests.cancelActiveIterator();
     if (!mounted) return;
@@ -13612,7 +13737,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           maxWidth: 320,
           maxHeight: maxMenuHeight,
         ),
-        enabled: !sending,
+        enabled: !_chatOperationBusy,
         onSelected: (value) async {
           try {
             switch (value) {
@@ -13945,44 +14070,38 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// MVK-derived `memoryKey`, compute `memory_lookup_hash` via the
   /// derived `memoryLookupKey`, and POST to the ciphertext-first
   /// AI-memory endpoint. Fail-closed on any exception: no user-
-  /// visible error, no fallback plaintext write. The chat reply
-  /// already tells the user the memory was saved; a silent finalize
-  /// failure is the correct privacy failure mode (nothing saved),
-  /// and the user can re-issue the "remember this" instruction on
-  /// the next turn.
-  Future<void> _finalizeMemoryProposalBestEffort({
+  /// plaintext-bearing error. The caller renders only a generic outcome after
+  /// the authoritative write result is known, so a failed write never claims
+  /// that the memory was saved.
+  Future<_MemoryProposalFinalizeOutcome> _finalizeMemoryProposalBestEffort({
     required String jsonPayload,
     required String authToken,
   }) async {
     try {
       final decoded = jsonDecode(jsonPayload);
-      if (decoded is! Map) return;
+      if (decoded is! Map) return _MemoryProposalFinalizeOutcome.failed;
       final mt = decoded['memory_type'];
       final mk = decoded['memory_key'];
       final mv = decoded['memory_value'];
       final md = decoded['memory_event_date'];
-      if (mt is! String || mt.isEmpty) return;
-      if (mk is! String || mk.isEmpty) return;
-      if (mv is! String || mv.isEmpty) return;
+      if (mt is! String || mt.isEmpty) {
+        return _MemoryProposalFinalizeOutcome.failed;
+      }
+      if (mk is! String || mk.isEmpty) {
+        return _MemoryProposalFinalizeOutcome.failed;
+      }
+      if (mv is! String || mv.isEmpty) {
+        return _MemoryProposalFinalizeOutcome.failed;
+      }
       const memoryV2Enabled = memoryV2WriteEnabled;
       if (!memoryV2Enabled) {
-        final legacyClient = VaultAIClient(baseUrl: backendBaseUrl);
-        await legacyClient.tryZkFinalizeMemoryProposal(
-          baseUrl: backendBaseUrl,
-          authToken: authToken,
-          memoryType: mt,
-          memoryKey: mk,
-          memoryValue: mv,
-          memoryEventDate: md is String && md.isNotEmpty ? md : null,
-        );
-        return;
+        return _MemoryProposalFinalizeOutcome.failed;
       }
       final repository = MemoryV2Repository(
         baseUrl: backendBaseUrl,
         authToken: authToken,
       );
-      await repository.create(
-        memoryId: 'memory-${DateTime.now().microsecondsSinceEpoch}',
+      final result = await repository.create(
         memoryType: mt,
         plaintext: MemoryV2Plaintext(
           value: mv,
@@ -13990,10 +14109,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           summary: md is String && md.isNotEmpty ? md : null,
         ),
       );
+      return result.duplicate
+          ? _MemoryProposalFinalizeOutcome.duplicate
+          : _MemoryProposalFinalizeOutcome.saved;
     } catch (_) {
       // Fail privacy-safe: never surface the parsed plaintext memory
       // in an error banner. Silent no-op = memory not saved =
       // correct ZK failure mode.
+      return _MemoryProposalFinalizeOutcome.failed;
     }
   }
 
@@ -16059,14 +16182,31 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _sendQuickPrompt(
     String text, {
     String? encryptedBackendCommand,
-  }) async {
-    setState(() {
-      selectedSection = _DashboardSection.chat;
-      input.text = text;
-      _nextEncryptedBackendCommand = encryptedBackendCommand;
-    });
-    await Future.delayed(const Duration(milliseconds: 50));
-    await _send();
+    Map<String, String>? selectionHint,
+    ChatOperationKind? kind,
+  }) {
+    final operationKind = kind ??
+        (isAuthoritativeVaultMutationCommand(
+          text,
+          hasPrivateBackendCommand:
+              encryptedBackendCommand?.isNotEmpty == true,
+        )
+            ? ChatOperationKind.mutation
+            : ChatOperationKind.read);
+    return _enqueueChatOperation<void>(
+      kind: operationKind,
+      operation: () async {
+        if (!mounted) return;
+        setState(() {
+          selectedSection = _DashboardSection.chat;
+          input.text = text;
+          _nextSelectionHint = selectionHint;
+          _nextEncryptedBackendCommand = encryptedBackendCommand;
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+        await _send();
+      },
+    );
   }
 
   /// Dispatcher for structured card actions surfaced through the
@@ -16107,32 +16247,30 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final id = (data?['id'] as String?)?.trim() ?? '';
       final title = (data?['title'] as String?)?.trim() ?? '';
       if (id.isEmpty) return;
-      _nextSelectionHint = {
-        'kind': 'login',
-        'id': id,
-      };
       final prompt =
           title.isEmpty ? 'Show my selected login' : 'Show my $title login';
-      _sendQuickPrompt(prompt);
+      await _sendQuickPrompt(
+        prompt,
+        selectionHint: {'kind': 'login', 'id': id},
+      );
       return;
     }
     if (action == 'choose_login') {
       final title = (data?['query'] as String?)?.trim() ?? '';
       if (title.isEmpty) return;
-      _sendQuickPrompt('Show my $title login');
+      await _sendQuickPrompt('Show my $title login');
       return;
     }
     if (action == 'select_file_by_id') {
       final id = (data?['id'] as String?)?.trim() ?? '';
       final title = (data?['title'] as String?)?.trim() ?? '';
       if (id.isEmpty) return;
-      _nextSelectionHint = {
-        'kind': 'file',
-        'id': id,
-      };
       final prompt =
           title.isEmpty ? 'Show my selected file' : 'Show my $title file';
-      _sendQuickPrompt(prompt);
+      await _sendQuickPrompt(
+        prompt,
+        selectionHint: {'kind': 'file', 'id': id},
+      );
       return;
     }
     if (action == 'credential_extraction_save' ||
@@ -16220,50 +16358,58 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           url: data?['url']?.toString(),
           notes: data?['notes']?.toString(),
         );
-        try {
-          await repository.create(
-            recordId: recordId,
-            credential: credential,
-            serviceForLookup: service,
-            migrationOperationId: operationId,
-          );
-          _qaV2CreateTrace('readback_entered');
-          final readBack = await repository.reveal(recordId);
-          _qaV2CreateTrace('readback_succeeded');
-          if (!readBack.semanticallyEquals(credential)) {
-            throw StateError('generated credential verification failed');
-          }
-          _qaV2CreateTrace('readback_equality_ok');
-          CredentialV2QaDiagnostics.remember(recordId, credential);
-          // The server must not consider the envelope available until the
-          // client has proved local readback equality through the existing
-          // v2 verification protocol.
-          _qaV2CreateTrace('verify_entered');
-          await repository.api.verify(recordId, operationId);
-          _qaV2CreateTrace('verify_succeeded');
-          _qaV2CreateTrace('finalize_entered');
-          await repository.api.finalizeGeneratedDraft(
-            recordId: recordId,
-            draftId: draftId,
-          );
-          _qaV2CreateTrace('finalize_succeeded');
-          _appendAssistantMessage('Saved your ${service.trim()} login.');
-          unawaited(_loadVaultLogins());
-        } catch (_) {
-          _showSnack(
-              'Could not securely save this generated login. Retry is safe.');
-          rethrow;
-        }
+        await _enqueueChatOperation<void>(
+          kind: ChatOperationKind.mutation,
+          operation: () async {
+            try {
+              await repository.create(
+                recordId: recordId,
+                credential: credential,
+                serviceForLookup: service,
+                migrationOperationId: operationId,
+              );
+              _qaV2CreateTrace('readback_entered');
+              final readBack = await repository.reveal(recordId);
+              _qaV2CreateTrace('readback_succeeded');
+              if (!readBack.semanticallyEquals(credential)) {
+                throw StateError('generated credential verification failed');
+              }
+              _qaV2CreateTrace('readback_equality_ok');
+              CredentialV2QaDiagnostics.remember(recordId, credential);
+              // The server must not consider the envelope available until the
+              // client has proved local readback equality through the existing
+              // v2 verification protocol.
+              _qaV2CreateTrace('verify_entered');
+              await repository.api.verify(recordId, operationId);
+              _qaV2CreateTrace('verify_succeeded');
+              _qaV2CreateTrace('finalize_entered');
+              await repository.api.finalizeGeneratedDraft(
+                recordId: recordId,
+                draftId: draftId,
+              );
+              _qaV2CreateTrace('finalize_succeeded');
+              _appendAssistantMessage('Saved your ${service.trim()} login.');
+              await _loadVaultLogins();
+            } catch (_) {
+              _showSnack(
+                  'Could not securely save this generated login. Retry is safe.');
+              rethrow;
+            }
+          },
+        );
         return;
       }
-      if (draftId.isNotEmpty) {
-        _nextSelectionHint = {
-          'kind': 'generated_login_draft',
-          'id': draftId,
-          if (service.isNotEmpty) 'service': service,
-        };
-      }
-      _sendQuickPrompt('save it');
+      await _sendQuickPrompt(
+        'save it',
+        selectionHint: draftId.isEmpty
+            ? null
+            : {
+                'kind': 'generated_login_draft',
+                'id': draftId,
+                if (service.isNotEmpty) 'service': service,
+              },
+        kind: ChatOperationKind.mutation,
+      );
       return;
     }
     if (action == 'generated_login_cancel') {
@@ -16275,29 +16421,40 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           _showSnack('Could not cancel this generated login.');
           return;
         }
-        try {
-          await repository.api.cancelGeneratedDraft(draftId);
-          _appendAssistantMessage('Generated login cancelled.');
-        } catch (_) {
-          _showSnack('Could not cancel this generated login.');
-          rethrow;
-        }
+        await _enqueueChatOperation<void>(
+          kind: ChatOperationKind.mutation,
+          operation: () async {
+            try {
+              await repository.api.cancelGeneratedDraft(draftId);
+              _appendAssistantMessage('Generated login cancelled.');
+            } catch (_) {
+              _showSnack('Could not cancel this generated login.');
+              rethrow;
+            }
+          },
+        );
         return;
       }
-      if (draftId.isNotEmpty) {
-        _nextSelectionHint = {
-          'kind': 'generated_login_draft',
-          'id': draftId,
-          if (service.isNotEmpty) 'service': service,
-        };
-      }
-      _sendQuickPrompt('cancel');
+      await _sendQuickPrompt(
+        'cancel',
+        selectionHint: draftId.isEmpty
+            ? null
+            : {
+                'kind': 'generated_login_draft',
+                'id': draftId,
+                if (service.isNotEmpty) 'service': service,
+              },
+        kind: ChatOperationKind.mutation,
+      );
       return;
     }
     if (action == 'memory_proposal_save') {
       final payload =
           data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
-      await _saveMemoryProposalFromCard(payload);
+      await _enqueueChatOperation<void>(
+        kind: ChatOperationKind.mutation,
+        operation: () => _saveMemoryProposalFromCard(payload),
+      );
       return;
     }
     if (action == 'memory_proposal_cancel') {
@@ -16334,15 +16491,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         final value =
             (payload['value'] ?? payload['body'] ?? '').toString().trim();
         if (value.isEmpty) throw StateError('memory_value_missing');
-        final proposalId = (payload['proposal_id'] ?? '').toString().trim();
-        final digest = sha256
-            .convert(utf8.encode(
-              proposalId.isEmpty ? '$title\u0000$value' : proposalId,
-            ))
-            .toString();
-        await MemoryV2Repository(baseUrl: backendBaseUrl, authToken: token)
+        final result = await MemoryV2Repository(
+          baseUrl: backendBaseUrl,
+          authToken: token,
+        )
             .create(
-          memoryId: 'memory-${digest.substring(0, 32)}',
           memoryType: (payload['memory_type'] ?? 'note').toString(),
           plaintext: MemoryV2Plaintext(
             value: value,
@@ -16353,7 +16506,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 .toList(growable: false),
           ),
         );
-        message = 'Saved: ${title.isEmpty ? 'Personal note' : title}.';
+        message = result.duplicate
+            ? 'Already saved: ${title.isEmpty ? 'Personal note' : title}.'
+            : 'Saved: ${title.isEmpty ? 'Personal note' : title}.';
       } else {
         final pin = await _VaultCrypto.currentPinOrThrow();
         final result =
@@ -17109,7 +17264,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!enabled || app.sessionToken == null) return false;
 
     final explicitSave = hasExplicitLocalMemorySaveDirective(text);
-    LocalMemoryFact? fact = explicitSave ? parseLocalMemoryFact(text) : null;
+    final parsedCurrent = parseLocalMemoryFact(text);
+    LocalMemoryFact? fact = explicitSave || parsedCurrent?.relationship != null
+        ? parsedCurrent
+        : null;
     final requestedSubject = parseLocalMemoryContextSaveSubject(text);
     if (fact == null && requestedSubject == null) return false;
     if (fact == null) {
@@ -17138,16 +17296,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     try {
-      final identity = sha256
-          .convert(utf8.encode(
-            '${fact.normalized.toLowerCase()}\u0000${fact.value}',
-          ))
-          .toString();
-      await MemoryV2Repository(
+      final result = await MemoryV2Repository(
         baseUrl: backendBaseUrl,
         authToken: app.sessionToken!,
       ).create(
-        memoryId: 'memory-${identity.substring(0, 32)}',
         memoryType: fact.memoryType,
         plaintext: MemoryV2Plaintext(
           value: fact.value,
@@ -17157,7 +17309,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               .toList(growable: false),
         ),
       );
-      _appendAssistantMessage('Saved: ${fact.subject}.');
+      _appendAssistantMessage(
+        result.duplicate
+            ? 'Already saved: ${fact.subject}.'
+            : 'Saved: ${fact.subject}.',
+      );
       unawaited(app.refreshVaultStats());
     } catch (e) {
       if (app.handleApiException(e)) return true;
@@ -17166,10 +17322,35 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  Future<void> _enqueueComposerSend() {
+    final text = input.text.trim();
+    if (text.isEmpty && attachments.isEmpty) return Future<void>.value();
+    final kind = isAuthoritativeVaultMutationCommand(
+      text,
+      hasAttachments: attachments.isNotEmpty,
+      hasPrivateBackendCommand:
+          _nextEncryptedBackendCommand?.isNotEmpty == true,
+    )
+        ? ChatOperationKind.mutation
+        : ChatOperationKind.read;
+    return _enqueueChatOperation<void>(
+      kind: kind,
+      operation: _send,
+    );
+  }
+
   Future<void> _send() async {
     debugPrint('SEND_HANDLER_ENTERED_AT=${DateTime.now().toIso8601String()}');
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
+    final operationKind = isAuthoritativeVaultMutationCommand(
+      text,
+      hasAttachments: attachments.isNotEmpty,
+      hasPrivateBackendCommand:
+          _nextEncryptedBackendCommand?.isNotEmpty == true,
+    )
+        ? ChatOperationKind.mutation
+        : ChatOperationKind.read;
 
     // Structured card actions must reach the backend verbatim after message
     // encryption. Consume the one-shot command before any local natural-
@@ -17280,6 +17461,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
+      if (await _tryLocalMemoryV2ContextSave(text, app)) {
+        return;
+      }
+
       if (await _tryLocalCredentialV2CreateReply(text, app)) {
         return;
       }
@@ -17288,13 +17473,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return;
       }
 
-      if (await _tryLocalMemoryV2ContextSave(text, app)) {
-        return;
-      }
-
-      // Explicit personal-memory recall owns the turn before generic private
-      // inventory/file arbitration. All reads still come from the locally
-      // decrypted Memory V2 inventory for the current authenticated vault.
       if (await _tryLocalMemoryV2LookupReply(text, app)) {
         return;
       }
@@ -17387,7 +17565,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               size: a.size,
             ))
         .toList(growable: false);
-    final chatTicket = _chatRequests.begin();
+    final chatTicket = _beginChatRequest();
     final chatRequestId = chatTicket.requestId;
     final userMessageId = chatTicket.userMessageId;
     final assistantMessageId = chatTicket.assistantMessageId;
@@ -17474,7 +17652,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (hadAttachments && uploadedFileIds.isEmpty) {
         if (!mounted) return;
-        _chatRequests.complete(chatRequestId);
+        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -17483,7 +17661,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (text.isEmpty && uploadedFileIds.isNotEmpty) {
         if (!mounted) return;
-        _chatRequests.complete(chatRequestId);
+        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -17492,7 +17670,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (hadAttachments && attachmentTitle != null) {
         if (!mounted) return;
-        _chatRequests.complete(chatRequestId);
+        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -17501,7 +17679,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (uploadOutcome.autoNamedAny && !isCurrentAttachmentCredentialReview) {
         if (!mounted) return;
-        _chatRequests.complete(chatRequestId);
+        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -17521,7 +17699,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ? 'Saved the file securely in your vault.'
             : 'Saved all ${uploadedFileIds.length} files securely in your vault.');
         if (!mounted) return;
-        _chatRequests.complete(chatRequestId);
+        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -17553,6 +17731,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // client finalize so we do not double-POST if the sentinel is
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
+      String? memoryProposalOutcomeMessage;
 
       // 2026-07-22 atomic crypto context snapshot. This is the ONE
       // place the /chat send path samples the vault's key + KDF
@@ -17664,10 +17843,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = stripped.strippedBuffer;
             if (stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              unawaited(_finalizeMemoryProposalBestEffort(
+              final outcome = await _finalizeMemoryProposalBestEffort(
                 jsonPayload: stripped.jsonPayload!,
                 authToken: authToken,
-              ));
+              );
+              memoryProposalOutcomeMessage =
+                  _memoryProposalOutcomeMessage(outcome);
+            }
+            if (memoryProposalOutcomeMessage != null) {
+              buffer = memoryProposalOutcomeMessage!;
             }
 
             // dart format off
@@ -17809,7 +17993,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
 
       if (_cancelledChatRequestIds.remove(chatRequestId)) return;
-      _chatRequests.complete(chatRequestId);
+      _completeChatRequest(chatRequestId);
 
       if (buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
@@ -17840,9 +18024,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() => thinking = false);
       }
 
-      unawaited(app.refreshVaultStats());
-      unawaited(_loadVaultFiles());
-      unawaited(_loadVaultLogins());
+      if (operationKind == ChatOperationKind.mutation) {
+        await app.refreshVaultStats();
+        await _reloadVaultFilesAfterMutation();
+        await _loadVaultLogins();
+      } else {
+        unawaited(app.refreshVaultStats());
+        unawaited(_loadVaultFiles());
+        unawaited(_loadVaultLogins());
+      }
 
       if (!mounted) return;
       setState(() {
@@ -17860,7 +18050,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         });
         return;
       }
-      _chatRequests.complete(chatRequestId);
+      _completeChatRequest(chatRequestId);
       setState(() {
         thinking = false;
         final failure = _Msg(
@@ -17901,7 +18091,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       isMobile: isMobile,
       count: attachments.length,
       itemBuilder: (context, index) => _buildAttachmentRow(attachments[index]),
-      onClear: sending ? null : _clearAttachments,
+      onClear: _chatOperationBusy ? null : _clearAttachments,
     );
   }
 
@@ -17969,7 +18159,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             IconButton(
               key: ValueKey('attachment_rename_${a.id}'),
               tooltip: 'Rename before saving',
-              onPressed: sending ? null : () => _renameLocalAttachment(a),
+              onPressed:
+                  _chatOperationBusy ? null : () => _renameLocalAttachment(a),
               icon: const Icon(Icons.edit_outlined, size: 18),
             ),
             const Icon(Icons.info_outline, size: 18),
@@ -17985,11 +18176,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _submitComposer() async {
-    if (_composerSubmitStarting || sending || _composerIsComposing) return;
+    if (_composerSubmitStarting || sending || _composerIsComposing ||
+        _chatOperationQueue.isBusy) {
+      return;
+    }
     if (input.text.trim().isEmpty && attachments.isEmpty) return;
     _composerSubmitStarting = true;
     try {
-      await _send();
+      await _enqueueComposerSend();
     } finally {
       _composerSubmitStarting = false;
     }
@@ -18009,7 +18203,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vr = VaultResponsive.of(context);
 
     final canSend =
-        !sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty);
+        !sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty) &&
+        !_chatOperationQueue.isBusy;
 
     Widget _attachmentIcon() => SizedBox(
           key: const Key('composer_attachment_button'),
@@ -18028,7 +18223,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
             color: _isListening ? const Color(0xFF10A37F) : null,
             tooltip: _isListening ? 'Stop listening' : 'Speak',
-            onPressed: sending ? null : _toggleListening,
+            onPressed: _chatOperationBusy ? null : _toggleListening,
           ),
         );
 
@@ -18042,7 +18237,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             icon: const Icon(Icons.stop_circle),
             color: Colors.redAccent,
             tooltip: 'Stop recording',
-            onPressed: sending
+            onPressed: _chatOperationBusy
                 ? null
                 : (_isVideoRecording
                     ? _toggleVideoRecording
@@ -18067,7 +18262,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             customBorder: const CircleBorder(),
             onTap: sending
                 ? _cancelActiveChatRequest
-                : (canSend ? _submitComposer : null),
+                : (_chatOperationBusy
+                    ? null
+                    : (canSend ? _submitComposer : null)),
             child: SizedBox(
               width: size,
               height: size,
@@ -18086,7 +18283,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       key: const Key('chat_composer_field'),
       controller: input,
       focusNode: _composerFocusNode,
-      enabled: !sending,
+      enabled: !_chatOperationBusy,
       decoration: InputDecoration(
         hintText: isMobile
             ? 'Ask SVaultAI…'
@@ -18668,19 +18865,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _restoreComposerFocus();
       return;
     }
-    try {
-      await VaultAIClient(baseUrl: backendBaseUrl).deleteFileV2(
-        authToken: token,
-        fileId: file.id,
-      );
-      if (!mounted) return;
-      setState(() => vaultFiles.removeWhere((f) => f.id == file.id));
-      _showSnack('File deleted');
-    } catch (e) {
-      _showSnack('Could not delete file.');
-    } finally {
-      _restoreComposerFocus();
-    }
+    await _enqueueChatOperation<void>(
+      kind: ChatOperationKind.mutation,
+      operation: () async {
+        try {
+          await VaultAIClient(baseUrl: backendBaseUrl).deleteFileV2(
+            authToken: token,
+            fileId: file.id,
+          );
+          if (!mounted) return;
+          setState(() => vaultFiles.removeWhere((f) => f.id == file.id));
+          _showSnack('File deleted');
+        } catch (e) {
+          _showSnack('Could not delete file.');
+        } finally {
+          _restoreComposerFocus();
+        }
+      },
+    );
   }
 
   Widget _buildDashboardHome(bool isMobile) {
@@ -19421,6 +19623,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       vaultName: vaultName,
       isMobile: isMobile,
       pinProvider: _VaultCrypto.currentPinOrThrow,
+      mutationRunner: (operation) => _enqueueChatOperation<void>(
+        kind: ChatOperationKind.mutation,
+        operation: operation,
+      ),
       onAskVaultAI: (prompt) async {
         setState(() => selectedSection = _DashboardSection.chat);
         await _sendQuickPrompt(prompt);

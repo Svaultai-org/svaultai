@@ -169,6 +169,195 @@ class TestLookupDecoderRejectsBadInput:
             _decode_lookup_v1_or_400("!!!not base64!!!")
 
 
+class TestLegacyRandomHandleLookupRecovery:
+    """Username login must reach OPAQUE for pre-index adopted vaults."""
+
+    @staticmethod
+    def _row(vault_id: str, vault_name: str) -> dict:
+        return {
+            "vault_id": vault_id,
+            "vault_name": vault_name,
+            "vault_handle": b"random-handle",
+            "opaque_registration_record": b"opaque-record",
+            "username_lookup_v1": None,
+        }
+
+    def test_unique_stored_name_match_recovers_legacy_random_handle(self):
+        from routes.auth_zk_routes import (
+            _match_legacy_username_lookup_candidate,
+        )
+        from vault_handle import derive_username_lookup_v1
+
+        expected = self._row("vault-expected", "Synthetic Legacy Vault")
+        other = self._row("vault-other", "Different Synthetic Vault")
+        row, count = _match_legacy_username_lookup_candidate(
+            [other, expected],
+            derive_username_lookup_v1(" synthetic legacy vault "),
+        )
+
+        assert count == 1
+        assert row is expected
+
+    def test_nonmatching_lookup_does_not_select_a_vault(self):
+        from routes.auth_zk_routes import (
+            _match_legacy_username_lookup_candidate,
+        )
+        from vault_handle import derive_username_lookup_v1
+
+        row, count = _match_legacy_username_lookup_candidate(
+            [self._row("vault-other", "Different Synthetic Vault")],
+            derive_username_lookup_v1("Synthetic Legacy Vault"),
+        )
+
+        assert count == 0
+        assert row is None
+
+    def test_canonical_name_collision_fails_closed(self):
+        from routes.auth_zk_routes import (
+            _match_legacy_username_lookup_candidate,
+        )
+        from vault_handle import derive_username_lookup_v1
+
+        row, count = _match_legacy_username_lookup_candidate(
+            [
+                self._row("vault-a", "Synthetic Legacy Vault"),
+                self._row("vault-b", "  SYNTHETIC LEGACY VAULT  "),
+            ],
+            derive_username_lookup_v1("synthetic legacy vault"),
+        )
+
+        assert count == 2
+        assert row is None
+
+    def test_invalid_stored_name_is_ignored(self):
+        from routes.auth_zk_routes import (
+            _match_legacy_username_lookup_candidate,
+        )
+        from vault_handle import derive_username_lookup_v1
+
+        row, count = _match_legacy_username_lookup_candidate(
+            [self._row("vault-invalid", "bad\u0000name")],
+            derive_username_lookup_v1("Synthetic Legacy Vault"),
+        )
+
+        assert count == 0
+        assert row is None
+
+    def test_login_init_recovers_then_backfills_before_opaque(self, monkeypatch):
+        """Exercise the endpoint order that failed in production.
+
+        The deterministic handle and direct blind-index lookups miss, the
+        stored-name compatibility scan finds exactly one complete ZK row, and
+        the existing conflict gate backfills the opaque lookup before OPAQUE
+        starts with the row's stored random handle.
+        """
+        import asyncio
+
+        from routes import auth_zk_routes as zk
+        from vault_handle import derive_username_lookup_v1, to_display
+
+        lookup = derive_username_lookup_v1("Synthetic Legacy Vault")
+        stored_handle = b"\x02" * 15
+        stored_record = b"synthetic-opaque-record"
+        candidate = {
+            "vault_id": "vault-legacy-random-handle",
+            "vault_name": "Synthetic Legacy Vault",
+            "vault_handle": stored_handle,
+            "opaque_registration_record": stored_record,
+            "username_lookup_v1": None,
+        }
+
+        class FakeCursor:
+            def __init__(self, *, lookup_phase: bool):
+                self.lookup_phase = lookup_phase
+                self.one = None
+                self.many = []
+                self.backfill_params = None
+                self.slot_params = None
+
+            def execute(self, sql, params=None):
+                compact = " ".join(sql.split())
+                self.one = None
+                self.many = []
+                if "WHERE vault_handle = %s" in compact:
+                    return
+                if (
+                    "WHERE username_lookup_v1 = %s" in compact
+                    and "vault_id <> %s" not in compact
+                ):
+                    return
+                if "WHERE username_lookup_v1 IS NULL" in compact:
+                    self.many = [candidate]
+                    return
+                if "SELECT vault_id FROM vaults" in compact:
+                    return
+                if "SET username_lookup_v1 = %s" in compact:
+                    self.backfill_params = params
+                    return
+                if "INSERT INTO vault_zk_login_slots" in compact:
+                    self.slot_params = params
+                    return
+                raise AssertionError(f"unexpected SQL: {compact}")
+
+            def fetchone(self):
+                return self.one
+
+            def fetchall(self):
+                return self.many
+
+        class FakeConnection:
+            def __init__(self, cursor):
+                self.fake_cursor = cursor
+                self.commits = 0
+                self.closed = False
+
+            def cursor(self, *args, **kwargs):
+                return self.fake_cursor
+
+            def commit(self):
+                self.commits += 1
+
+            def close(self):
+                self.closed = True
+
+        lookup_cursor = FakeCursor(lookup_phase=True)
+        slot_cursor = FakeCursor(lookup_phase=False)
+        connections = iter(
+            [FakeConnection(lookup_cursor), FakeConnection(slot_cursor)],
+        )
+        monkeypatch.setattr(zk, "get_db", lambda: next(connections))
+        monkeypatch.setattr(zk, "enforce_login_rate_limit", lambda request: None)
+        monkeypatch.setattr(zk.secrets, "token_urlsafe", lambda size: "slot-id")
+
+        opaque_call = {}
+
+        def fake_opaque_login_start(record, ke1, credential_id):
+            opaque_call.update(
+                record=record,
+                ke1=ke1,
+                credential_id=credential_id,
+            )
+            return b"ke2", b"server-state"
+
+        monkeypatch.setattr(zk, "opaque_login_start", fake_opaque_login_start)
+
+        request = zk.ZkLoginInitRequest(
+            vault_handle=to_display(b"\x01" * 15),
+            ke1=base64.urlsafe_b64encode(b"ke1").decode().rstrip("="),
+            username_lookup=base64.urlsafe_b64encode(lookup).decode().rstrip("="),
+        )
+        response = asyncio.run(zk.zk_login_init(request, object()))
+
+        assert response.slot_id == "slot-id"
+        assert lookup_cursor.backfill_params == (
+            lookup,
+            "vault-legacy-random-handle",
+        )
+        assert opaque_call["record"] == stored_record
+        assert opaque_call["ke1"] == b"ke1"
+        assert slot_cursor.slot_params[1] == "vault-legacy-random-handle"
+
+
 class TestCopyInvariants:
     def test_duplicate_username_error(self):
         from routes.auth_zk_routes import DUPLICATE_USERNAME_ERROR

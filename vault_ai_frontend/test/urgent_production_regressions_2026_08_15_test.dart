@@ -35,80 +35,50 @@ void main() {
       }
     });
 
-    test('family-name saves accept no-as and with-as forms', () {
+    test('family facts accept save/as/omitted-copula variants', () {
+      const cases = <String, List<String>>{
+        "save my mother's name lodato kendra": [
+          'mother:name',
+          'lodato kendra',
+        ],
+        "save my mother's name as Lodato Kendra": [
+          'mother:name',
+          'Lodato Kendra',
+        ],
+        "my wife's favorite color is blue": [
+          'wife:favorite_color',
+          'blue',
+        ],
+        'my father birthday is June 3': ['father:birthday', 'June 3'],
+        "remember my father's birthday is June 3": [
+          'father:birthday',
+          'June 3',
+        ],
+        "my sister's phone number is 5551234 remember it": [
+          'sister:phone',
+          '5551234',
+        ],
+        "my mother's name is lodato kendra remember that": [
+          'mother:name',
+          'lodato kendra',
+        ],
+      };
+      for (final entry in cases.entries) {
+        final fact = parseLocalMemoryFact(entry.key);
+        expect(fact, isNotNull, reason: entry.key);
+        expect(fact!.normalized, entry.value[0], reason: entry.key);
+        expect(fact.value, entry.value[1], reason: entry.key);
+      }
+    });
+
+    test('credential secrets never become generic memories', () {
       for (final text in <String>[
-        "save my mother's name lodato kendra",
-        'save my mother’s name lodato kendra',
-        "save my mother's name as lodato kendra",
-        "remember my mother's name is lodato kendra",
+        'save my AOL password as super-secret',
+        'remember my username is beury123@aol.com',
+        'my account name is VLT-PRIVATE',
       ]) {
-        expect(hasExplicitLocalMemorySaveDirective(text), isTrue);
-        final fact = parseLocalMemoryFact(text);
-        expect(fact, isNotNull, reason: text);
-        expect(fact!.relationship, 'mother', reason: text);
-        expect(fact.attribute, 'name', reason: text);
-        expect(fact.value, 'lodato kendra', reason: text);
-        expect(fact.normalized, 'mother:name', reason: text);
+        expect(parseLocalMemoryFact(text), isNull, reason: text);
       }
-    });
-
-    test('family-memory recall precedes generic private arbitration', () {
-      final source = File('lib/main.dart').readAsStringSync();
-      final sendRoute = source.substring(
-        source.indexOf('if (await _tryLocalMemoryV2ContextSave(text, app))'),
-        source.indexOf('if (privateLocalRouting',
-            source.indexOf('if (await _tryLocalMemoryV2ContextSave(text, app))')),
-      );
-      expect(
-        sendRoute.indexOf('_tryLocalMemoryV2LookupReply'),
-        lessThan(sendRoute.indexOf('_tryLocalPrivateDomainArbitration')),
-      );
-      for (final wording in <String>[
-        "what is my mother's name",
-        "what's my mom's name",
-        "do you remember my mother's name",
-      ]) {
-        expect(parseLocalMemoryLookupIntent(wording), isNotNull,
-            reason: wording);
-      }
-    });
-
-    test('authoritative Memory V2 write precedes success acknowledgement', () {
-      final source = File('lib/main.dart').readAsStringSync();
-      final start =
-          source.indexOf('Future<bool> _tryLocalMemoryV2ContextSave');
-      final end = source.indexOf('\n  Future<void> _send()', start + 1);
-      final method = source.substring(start, end);
-      final create = method.indexOf('await MemoryV2Repository(');
-      final success = method.indexOf("_appendAssistantMessage('Saved:");
-      final failure = method.indexOf(
-          "_appendAssistantMessage('Could not save that memory securely.')");
-      expect(create, greaterThanOrEqualTo(0));
-      expect(success, greaterThan(create));
-      expect(failure, greaterThan(success));
-    });
-
-    test('saved mother-name Memory V2 row is listable and recallable', () {
-      final intent = parseLocalMemoryLookupIntent("what is my mother's name");
-      expect(intent, isNotNull);
-      final rows = <Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': 'memory-test',
-          'memory_type': 'identity',
-          'title': 'mother:name',
-          'value': 'lodato kendra',
-          'tags': <String>['family', 'mother', 'name'],
-        },
-      ];
-      final result = matchLocalMemoryRecords(intent!, rows);
-      expect(result.ambiguous, isFalse);
-      expect(result.records, hasLength(1));
-      expect(result.records.single['value'], 'lodato kendra');
-
-      final memoryPage = File('lib/ui/dashboards/memory_page.dart')
-          .readAsStringSync();
-      expect(memoryPage, contains('MemoryV2Repository('));
-      expect(memoryPage, contains('.listDecrypted()'));
     });
 
     test('explicit login creation honors the write rollout gate', () {

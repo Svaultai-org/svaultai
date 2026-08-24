@@ -18,7 +18,7 @@ DecryptedCredentialV2Record _credential(String service) =>
 void main() {
   test('contextual memory fact extraction is topic-agnostic', () {
     const cases = <String, List<String>>{
-      'my mother name is Lodato': ['mother name', 'Lodato'],
+      'my mother name is Lodato': ["mother's name", 'Lodato'],
       'my favorite color is ultraviolet': ['favorite color', 'ultraviolet'],
       'my project nickname is Blue Comet': ['project nickname', 'Blue Comet'],
       'my launch date is 2041-09-18': ['launch date', '2041-09-18'],
@@ -32,17 +32,13 @@ void main() {
       'my dog name is Pixel': ['dog name', 'Pixel'],
       'my anniversary is April 7': ['anniversary', 'April 7'],
       'my tax note is keep the paper copy': ['tax note', 'keep the paper copy'],
-      'my demo password hint is violet bird': [
-        'demo password hint',
-        'violet bird'
-      ],
       'my book preference is science fiction': [
         'book preference',
         'science fiction'
       ],
       'my travel code is Q7-MAP': ['travel code', 'Q7-MAP'],
       'my team nickname is Lantern': ['team nickname', 'Lantern'],
-      'my father birthday is June 3': ['father birthday', 'June 3'],
+      'my father birthday is June 3': ["father's birthday", 'June 3'],
       'my aunt phone label is Red Phone': ['aunt phone label', 'Red Phone'],
       'my garden note is water on Tuesday': ['garden note', 'water on Tuesday'],
       'my client alias is Northstar': ['client alias', 'Northstar'],
@@ -56,6 +52,7 @@ void main() {
       expect(fact?.subject, entry.value[0], reason: entry.key);
       expect(fact?.value, entry.value[1], reason: entry.key);
     }
+    expect(parseLocalMemoryFact('my demo password hint is violet bird'), isNull);
     expect(parseLocalMemoryContextSaveSubject('remember that'), '');
     expect(parseLocalMemoryContextSaveSubject('remember my mother name'),
         'mother name');

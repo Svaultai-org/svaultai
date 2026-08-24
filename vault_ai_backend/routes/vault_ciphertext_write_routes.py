@@ -380,6 +380,7 @@ class AiMemoryCiphertextRequest(BaseModel):
                     "memory key (32 bytes).",
     )
     payload_ciphertext: str = Field(..., min_length=1)
+    replace_existing: bool = False
     # Legacy plaintext guardrail.
     memory_key: Optional[str] = None
     memory_value: Optional[str] = None
@@ -396,6 +397,7 @@ class AiMemoryCiphertextRequest(BaseModel):
 class AiMemoryCiphertextResponse(BaseModel):
     memory_id: str
     superseded_id: Optional[int] = None
+    duplicate: bool = False
 
 
 class AiMemoryCiphertextReadResponse(BaseModel):
@@ -445,13 +447,26 @@ def ai_memory_ciphertext_upsert(
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(
-                """SELECT id FROM vault_ai_memory
+                """SELECT id, memory_record_id FROM vault_ai_memory
                    WHERE vault_id = %s AND memory_lookup_hash = %s
                      AND superseded_at IS NULL LIMIT 1""",
                 (principal["vault_id"], lookup_hash),
             )
             prev = cur.fetchone()
             superseded_id: Optional[int] = None
+            if (
+                prev is not None
+                and str(prev["memory_record_id"]) == payload.memory_id
+                and not payload.replace_existing
+            ):
+                # The vault-scoped keyed record id represents the same
+                # normalized fact and value. Do not rewrite its ciphertext or
+                # pretend that an identical retry created another memory.
+                return AiMemoryCiphertextResponse(
+                    memory_id=str(prev["id"]),
+                    superseded_id=int(prev["id"]),
+                    duplicate=True,
+                )
             # An editor keeps the stable client memory_record_id but may
             # change the title/normalized key, which intentionally changes
             # memory_lookup_hash. Update that stable record first; otherwise
@@ -514,7 +529,11 @@ def ai_memory_ciphertext_upsert(
             print("BACKEND_MEMORY_V2_WRITE_DB_OPERATION_SUCCEEDED=true", flush=True)
             print("BACKEND_MEMORY_V2_WRITE_RESPONSE_STATUS=200", flush=True)
             print("BACKEND_MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=none", flush=True)
-        return AiMemoryCiphertextResponse(memory_id=str(new_id), superseded_id=superseded_id)
+        return AiMemoryCiphertextResponse(
+            memory_id=str(new_id),
+            superseded_id=superseded_id,
+            duplicate=False,
+        )
     except HTTPException as exc:
         if qa:
             print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)

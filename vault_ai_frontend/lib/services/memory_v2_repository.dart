@@ -37,6 +37,18 @@ class MemoryV2Plaintext {
       );
 }
 
+class MemoryV2WriteResult {
+  final String memoryId;
+  final bool duplicate;
+  final int? supersededId;
+
+  const MemoryV2WriteResult({
+    required this.memoryId,
+    required this.duplicate,
+    this.supersededId,
+  });
+}
+
 class MemoryV2Repository {
   static const _qaDiagnostics =
       bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS', defaultValue: false);
@@ -91,19 +103,39 @@ class MemoryV2Repository {
     }
   }
 
-  Future<void> create(
-      {required String memoryId,
+  Future<String> _newRecordId(
+    String memoryType,
+    MemoryV2Plaintext plaintext,
+  ) async {
+    final active = mvk_store.ZkActiveMvk.current();
+    if (active == null) throw StateError('memory_v2_mvk_unavailable');
+    final key = await keys.VaultKeyHierarchy(active).memoryLookupKey();
+    final canonical = <String>[
+      'memory-record-v2',
+      memoryType.trim().toLowerCase(),
+      (plaintext.normalized ?? plaintext.value).trim().toLowerCase(),
+      plaintext.value.trim().toLowerCase(),
+    ].join('\u0000');
+    final digest = await keys.keyedLookupHash(key, utf8.encode(canonical));
+    return 'memory-${keys.b64urlEncode(digest)}';
+  }
+
+  Future<MemoryV2WriteResult> create(
+      {String? memoryId,
       required String memoryType,
       required MemoryV2Plaintext plaintext}) async {
     if (_qaDiagnostics) print('QA_MEMORY_STAGE=repository_create_entered');
+    final resolvedMemoryId =
+        memoryId ?? await _newRecordId(memoryType, plaintext);
     final envelope = await keys.aesGcmWrapWithAad(
-        await _recordKey(memoryId), utf8.encode(jsonEncode(plaintext.toJson())),
-        aad: _aad(memoryId));
+        await _recordKey(resolvedMemoryId),
+        utf8.encode(jsonEncode(plaintext.toJson())),
+        aad: _aad(resolvedMemoryId));
     if (_qaDiagnostics) print('QA_MEMORY_STAGE=encryption_succeeded');
     try {
       final lookupHash = await _lookup(plaintext.normalized ?? plaintext.value);
       if (_qaDiagnostics) print('QA_MEMORY_STAGE=blind_index_created');
-      final requestMemoryId = memoryId;
+      final requestMemoryId = resolvedMemoryId;
       final requestMemoryType = memoryType;
       if (_qaDiagnostics) print('QA_MEMORY_REQUEST_STAGE=fields_ready');
       if (_qaDiagnostics)
@@ -112,13 +144,20 @@ class MemoryV2Repository {
       if (_qaDiagnostics)
         print('QA_MEMORY_REQUEST_STAGE=envelope_encoding_succeeded');
       if (_qaDiagnostics) print('QA_MEMORY_REQUEST_STAGE=lookup_hash_ready');
-      await client.writeZkMemoryEnvelope(
+      final response = await client.writeZkMemoryEnvelope(
         baseUrl: baseUrl,
         authToken: authToken,
         memoryId: requestMemoryId,
         memoryType: requestMemoryType,
         payloadCiphertext: encodedEnvelope,
         lookupHash: lookupHash,
+        replaceExisting: memoryId != null,
+      );
+      if (_qaDiagnostics) print('QA_MEMORY_STAGE=api_write_status_ok');
+      return MemoryV2WriteResult(
+        memoryId: resolvedMemoryId,
+        duplicate: response['duplicate'] == true,
+        supersededId: (response['superseded_id'] as num?)?.toInt(),
       );
     } catch (e, st) {
       if (_qaDiagnostics) {
@@ -128,7 +167,6 @@ class MemoryV2Repository {
       }
       rethrow;
     }
-    if (_qaDiagnostics) print('QA_MEMORY_STAGE=api_write_status_ok');
   }
 
   Future<List<MemoryV2Plaintext>> exactRecall(String query) async {

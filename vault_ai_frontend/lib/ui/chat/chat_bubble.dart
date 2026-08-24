@@ -197,6 +197,9 @@ class _TextBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = msg.isUser;
+    if (!isUser && isStreaming && msg.text.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
     final maxFraction = isMobile ? 0.86 : 0.62;
 
     final radius = _bubbleRadius(
@@ -255,7 +258,7 @@ class _TextBubble extends StatelessWidget {
               const SizedBox(height: VaultSpacing.sm),
             if (!(renderAttachments && textIsBlank))
               SelectableText(
-                msg.text.isEmpty && isStreaming ? '...' : msg.text,
+                msg.text,
                 style: VaultText.bodyLg.copyWith(color: textColor),
               ),
             if (isStreaming && !isUser)

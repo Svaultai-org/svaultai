@@ -77,6 +77,36 @@ def test_save_failure_keeps_persistent_draft_for_retry():
     assert get_draft(vault_id="vault-confirm-a", draft_id=draft.draft_id)
 
 
+def test_terminal_save_result_follows_authoritative_persistence_completion():
+    draft = store_draft(
+        vault_id="vault-confirm-order",
+        service_name="Nord VPN",
+        username="user-order",
+        password="password-order",
+    )
+    events = []
+
+    def save_secret_tool(*args, **kwargs):
+        events.append("persistence_started")
+        events.append("persistence_committed")
+
+    result = save_pending_credential(
+        vault_id="vault-confirm-order",
+        key=b"0" * 32,
+        memory={},
+        save_secret_tool=save_secret_tool,
+        selection_hint={"kind": "generated_login_draft", "id": draft.draft_id},
+    )
+    events.append("terminal_result_returned")
+
+    assert result is not None
+    assert events == [
+        "persistence_started",
+        "persistence_committed",
+        "terminal_result_returned",
+    ]
+
+
 def test_cancel_consumes_selected_persistent_draft_only():
     first = store_draft(
         vault_id="vault-confirm-a",

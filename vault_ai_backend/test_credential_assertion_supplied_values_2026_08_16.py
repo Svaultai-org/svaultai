@@ -43,6 +43,16 @@ def test_lookup_and_incomplete_values_do_not_bypass_fast_path():
     )
 
 
+def test_partial_create_keeps_explicit_service_and_username():
+    command = extract_credential_command(
+        "create me an AOL login with my username as beury123@aol.com"
+    )
+
+    assert command.action == ACTION_CREATE
+    assert command.service == "AOL"
+    assert command.explicit_fields == {"username": "beury123@aol.com"}
+
+
 def test_supplied_values_survive_draft_confirmation_save_without_generation():
     command = extract_credential_command(
         "save my instagram login synthetic-user and pass synthetic-password"

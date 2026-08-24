@@ -36,11 +36,11 @@ COPY_UNSUPPORTED_HINT = (
 
                                                                  
 COPY_BRAIN_STILL_INDEXING = (
-    "Your vault brain is still indexing files — "
+    "Your vault is still indexing files — "
     "I answered from what's already indexed."
 )
 COPY_BRAIN_FULLY_INDEXED = (
-    "Your vault brain is fully indexed."
+    "Your vault is fully indexed."
 )
 COPY_BRAIN_HAS_FAILURES = (
     "Some files failed indexing — "

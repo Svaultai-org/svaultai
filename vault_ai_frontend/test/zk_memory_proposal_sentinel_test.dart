@@ -137,16 +137,18 @@ void main() {
     });
 
     test(
-        'main.dart uses tryZkFinalizeMemoryProposal to POST '
+        'main.dart uses MemoryV2Repository to POST '
         'ciphertext (never plaintext) to the AI-memory endpoint', () {
       final src = _readMain();
       expect(
         src,
-        contains('tryZkFinalizeMemoryProposal('),
-        reason: 'main.dart must dispatch through '
-            'tryZkFinalizeMemoryProposal — that is the helper '
-            'that encrypts under memoryKey and POSTs the '
-            'ciphertext to /vault/ciphertext/vault-ai-memory',
+        contains('final result = await repository.create('),
+        reason: 'main.dart must dispatch through the authoritative '
+            'MemoryV2Repository ciphertext write path',
+      );
+      expect(
+        src,
+        isNot(contains('unawaited(_finalizeMemoryProposalBestEffort(')),
       );
     });
 
@@ -157,19 +159,7 @@ void main() {
       final idx = src.indexOf('_finalizeMemoryProposalBestEffort({');
       expect(idx, greaterThan(-1),
           reason: 'The finalize helper must be declared in main.dart');
-      // Locate the method body's closing brace. Match both LF and
-      // CRLF line endings so the assertion is portable across Git
-      // autocrlf checkouts on Windows and Unix.
-      final lfEnd = src.indexOf('\n  }\n', idx);
-      final crlfEnd = src.indexOf('\r\n  }\r\n', idx);
-      final int bodyEnd;
-      if (lfEnd == -1) {
-        bodyEnd = crlfEnd;
-      } else if (crlfEnd == -1) {
-        bodyEnd = lfEnd;
-      } else {
-        bodyEnd = lfEnd < crlfEnd ? lfEnd : crlfEnd;
-      }
+      final bodyEnd = src.indexOf('  void _askBrainAboutFile(', idx);
       expect(bodyEnd, greaterThan(idx));
       final body = src.substring(idx, bodyEnd);
       expect(

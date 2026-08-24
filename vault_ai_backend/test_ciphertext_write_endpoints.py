@@ -171,6 +171,18 @@ def test_ai_memory_edit_updates_stable_record_id_before_hash_upsert() -> None:
     assert "memory_lookup_hash = %s" in src
 
 
+def test_ai_memory_identical_retry_is_reported_without_rewrite() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    src = inspect.getsource(mod.ai_memory_ciphertext_upsert)
+    duplicate_pos = src.index('str(prev["memory_record_id"]) == payload.memory_id')
+    update_pos = src.index("UPDATE vault_ai_memory")
+    assert duplicate_pos < update_pos
+    assert "duplicate=True" in src
+    assert "not payload.replace_existing" in src
+
+
 def test_all_ciphertext_write_endpoints_require_auth() -> None:
     """None of the ciphertext-write endpoints may be reachable
     without a valid session token. Verified by checking each route's

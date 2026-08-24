@@ -116,9 +116,8 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         },
         "apple": {
             "configured": bool(apple_product_ids),
-            # The current iOS controller can purchase one configured product.
-            # With zero or multiple IDs, omit the singular selection so the
-            # client fails closed instead of inventing a tier.
+            # Retain the singular field only for older clients. Current iOS
+            # clients consume the authoritative products/product_ids catalog.
             "product_id": (
                 apple_product_ids[0]
                 if len(apple_product_ids) == 1
