@@ -197,6 +197,94 @@ void main() {
     expect(generated.password, matches(RegExp(r'[!@#%*\-_+=]')));
   });
 
+  test('shared create variants preserve username and preempt lookup', () {
+    final cases = <String, ({String service, String username})>{
+      'create me a nord vpn login with my username berayb2@gmail.com': (
+        service: 'nord vpn',
+        username: 'berayb2@gmail.com',
+      ),
+      'create me a nord vpn login with username berayb2@gmail.com': (
+        service: 'nord vpn',
+        username: 'berayb2@gmail.com',
+      ),
+      'make me a nord vpn login using berayb2@gmail.com': (
+        service: 'nord vpn',
+        username: 'berayb2@gmail.com',
+      ),
+      'generate a nord vpn login for username berayb2@gmail.com': (
+        service: 'nord vpn',
+        username: 'berayb2@gmail.com',
+      ),
+      'create me an AOL login with my username as beury123@aol.com': (
+        service: 'AOL',
+        username: 'beury123@aol.com',
+      ),
+      'create my ebay login username bob': (service: 'ebay', username: 'bob'),
+    };
+
+    for (final entry in cases.entries) {
+      final intent = parseCredentialV2CreateIntent(entry.key);
+      expect(intent, isNotNull, reason: entry.key);
+      expect(intent!.service, entry.value.service, reason: entry.key);
+      expect(intent.username, entry.value.username, reason: entry.key);
+      expect(parseCredentialV2LookupIntent(entry.key), isNull,
+          reason: entry.key);
+      expect(shouldAttemptCredentialV2Lookup(entry.key), isFalse,
+          reason: entry.key);
+    }
+  });
+
+  test('credential generation fills only fields the user did not supply', () {
+    final usernameOnlyIntent = parseCredentialV2CreateIntent(
+      'create an Instagram login with username Exact.User@Example.COM',
+    )!;
+    final usernameOnly = generateCredentialV2Plaintext(
+      usernameOnlyIntent.service!,
+      username: usernameOnlyIntent.username,
+      password: usernameOnlyIntent.password,
+      random: Random(31),
+    );
+    expect(usernameOnly.username, 'Exact.User@Example.COM');
+    expect(usernameOnly.password, hasLength(20));
+
+    final passwordOnlyIntent = parseCredentialV2CreateIntent(
+      'create an Instagram login with password Supplied-Pass_42',
+    )!;
+    final passwordOnly = generateCredentialV2Plaintext(
+      passwordOnlyIntent.service!,
+      username: passwordOnlyIntent.username,
+      password: passwordOnlyIntent.password,
+      random: Random(32),
+    );
+    expect(passwordOnly.username, startsWith('instagram_'));
+    expect(passwordOnly.password, 'Supplied-Pass_42');
+
+    final bothIntent = parseCredentialV2CreateIntent(
+      'create an Instagram login with username ExactUser and password ExactPass_42',
+    )!;
+    final both = generateCredentialV2Plaintext(
+      bothIntent.service!,
+      username: bothIntent.username,
+      password: bothIntent.password,
+      random: Random(33),
+    );
+    expect(both.username, 'ExactUser');
+    expect(both.password, 'ExactPass_42');
+  });
+
+  test('credential lookup verbs remain lookup after create precedence fix', () {
+    for (final text in <String>[
+      'what is my nord vpn login',
+      'show me my nord vpn login',
+      'find my nord vpn login',
+    ]) {
+      expect(parseCredentialV2CreateIntent(text), isNull, reason: text);
+      expect(parseCredentialV2LookupIntent(text)?.service, 'nord vpn',
+          reason: text);
+      expect(shouldAttemptCredentialV2Lookup(text), isTrue, reason: text);
+    }
+  });
+
   test('explicit v2 miss retains exact legacy local fallback', () {
     final source = File('lib/main.dart').readAsStringSync();
     expect(source, contains('legacyMatches.length == 1'));

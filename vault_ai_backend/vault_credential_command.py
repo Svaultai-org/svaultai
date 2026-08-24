@@ -269,6 +269,15 @@ _CREDENTIAL_ASSERTION_PATTERNS = (
 
 def _extract_credential_assertion(message: str) -> Optional[dict[str, str]]:
     text = (message or "").strip()
+    # Explicit create verbs own their service grammar. Without this guard the
+    # permissive assertion form could treat "create an Instagram login with"
+    # as the service when both username and password were supplied.
+    if re.match(
+        r"^(?:please\s+)?(?:create|generate|make|add|set\s*up|give)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return None
     for pattern in _CREDENTIAL_ASSERTION_PATTERNS:
         match = pattern.fullmatch(text)
         if match is None:
@@ -335,6 +344,36 @@ _FIELD_VALUE_PATTERNS = (
             r"\btitle\s*"
             r"(?:[:=]\s*|(?:is|should\s+be|to\s+be|to)\s+)"
             r"(?P<value>\"[^\"]+\"|'[^']+'|`[^`]+`|[^,;.\n]+)",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+# Labeled values without a connector: "with my username alice",
+# "login username alice", "for username alice", and their password
+# equivalents. These stay field-labeled and deterministic; a bare value is
+# never claimed from ordinary chat. Generic "login" is intentionally not a
+# username label here because it is also the credential item noun.
+_BARE_LABELED_FIELD_PATTERNS = (
+    (
+        FIELD_USERNAME,
+        re.compile(
+            r"\b(?:(?:with|using|for)\s+)?"
+            r"(?:my\s+|the\s+|our\s+)?"
+            r"(?:user\s*name|username|user\s*id|user\s*handle|"
+            r"login\s*(?:name|id)|account\s*(?:name|id)|"
+            r"sign[\s-]*in\s*(?:name|id))\s+"
+            r"(?:as\s+)?(?P<value>[^\s,;]+)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        FIELD_PASSWORD,
+        re.compile(
+            r"\b(?:(?:with|using|for)\s+)?"
+            r"(?:my\s+|the\s+|our\s+)?(?:password|pass|pwd)\s+"
+            r"(?:as\s+)?(?P<value>[^\s,;]+)",
             re.IGNORECASE,
         ),
     ),
@@ -657,7 +696,29 @@ def extract_explicit_fields(message: Optional[str]) -> dict[str, str]:
             if val and not _is_rejection_value(val):
                 out[field_name] = val
 
-    # Priority 3: "use X as (my) username" style.
+    # Priority 3: labeled values without "is/as/:". This must precede the
+    # reverse "use X as username" forms so a complete email address in
+    # "for username person@example.com" cannot be truncated at its dot.
+    bare_labeled_create = re.match(
+        r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)\b",
+        text,
+        re.IGNORECASE,
+    ) and re.search(
+        r"\b(?:login|credential|account)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if bare_labeled_create:
+        for field_name, pat in _BARE_LABELED_FIELD_PATTERNS:
+            if field_name in out:
+                continue
+            m = pat.search(text)
+            if m:
+                val = _clean_captured_value(m.group("value"))
+                if val and not _is_rejection_value(val):
+                    out[field_name] = val
+
+    # Priority 4: "use X as (my) username" style.
     for field_name, pat in _ASSIGN_AS_PATTERNS:
         if field_name in out:
             continue
@@ -692,14 +753,37 @@ def extract_explicit_fields(message: Optional[str]) -> dict[str, str]:
 
 def _extract_create_service(message: str) -> Optional[str]:
     """Extract only a service explicitly attached to a create-login phrase."""
+    # Service-first create commands are unambiguous once the caller has
+    # already found an explicit supplied field. Match the credential noun
+    # before its trailing field clause so labels such as "username" can
+    # never leak into the service value.
+    service_first = re.match(
+        r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)"
+        r"(?:\s+me)?\s+(?:(?:a|an|the|my)\s+)?(?:new\s+)?"
+        r"(?P<service>.+?)\s+(?:account\s+)?"
+        r"(?:login|credential|account)\b(?:\s+.*)?$",
+        message.strip(),
+        re.IGNORECASE,
+    )
+    if service_first:
+        service = service_first.group("service").strip(" \t\r\n,;:\"'")
+        if service:
+            return service
+
     without_fields = re.split(
-        r"\s+(?:with|using)\s+(?:(?:my\s+)?(?:username|email|password)|.+?\s+as\s+(?:the\s+)?(?:username|email|password))\b",
+        r"\s+(?:"
+        r"(?:(?:with|using|for)\s+)?(?:my\s+|the\s+|our\s+)?"
+        r"(?:user\s*name|username|email(?:\s+address)?|password|pass|pwd)\b"
+        r"|(?:with|using)\s+.+?\s+as\s+(?:my\s+|the\s+)?"
+        r"(?:username|email|password)\b"
+        r"|using\s+\S+\s*$"
+        r")",
         message.strip(),
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0].strip()
     patterns = (
-        r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|credential|account)$",
+        r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?\s+(?:(?:a|an|the|my)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|credential|account)$",
         r"^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(?:login|credential|account)\s+(?:for\s+)?(.+)$",
     )
     for pattern in patterns:

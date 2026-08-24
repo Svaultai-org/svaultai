@@ -988,6 +988,132 @@ class TryRouteBug4CredentialCreationTest(unittest.TestCase):
         self.assertEqual(data["actions"], ["save", "cancel"])
         self.assertTrue(len(data["draft_id"]) > 0)
 
+    def test_shared_create_variants_reach_draft_before_lookup(self):
+        cases = (
+            (
+                "create me a nord vpn login with my username "
+                "berayb2@gmail.com",
+                "nord vpn",
+                "berayb2@gmail.com",
+            ),
+            (
+                "create me a nord vpn login with username "
+                "berayb2@gmail.com",
+                "nord vpn",
+                "berayb2@gmail.com",
+            ),
+            (
+                "make me a nord vpn login using berayb2@gmail.com",
+                "nord vpn",
+                "berayb2@gmail.com",
+            ),
+            (
+                "generate a nord vpn login for username "
+                "berayb2@gmail.com",
+                "nord vpn",
+                "berayb2@gmail.com",
+            ),
+            (
+                "create me an AOL login with my username as "
+                "beury123@aol.com",
+                "AOL",
+                "beury123@aol.com",
+            ),
+            ("create my ebay login username bob", "ebay", "bob"),
+        )
+
+        for message, expected_service, expected_username in cases:
+            with self.subTest(message=message):
+                drafter_calls: list[dict] = []
+
+                def spy_drafter(**kwargs):
+                    drafter_calls.append(dict(kwargs))
+                    return _stub_drafter_ok(**kwargs)
+
+                outcome = try_route_deterministically(
+                    vault_id=_VAULT_ID,
+                    session_id=_SESSION_ID,
+                    key=_KEY,
+                    decrypted_message=message,
+                    files_lister=lambda: [],
+                    credential_drafter=spy_drafter,
+                    active_entity_getter=lambda vid, session_id=None: None,
+                    active_entity_setter=lambda *a, **k: True,
+                    chat_request_id=_REQ,
+                )
+
+                self.assertIsNotNone(outcome)
+                self.assertEqual(outcome.kind, KIND_CREDENTIAL_DRAFT)
+                self.assertEqual(len(drafter_calls), 1)
+                call = drafter_calls[0]
+                self.assertEqual(call["service_name"], expected_service)
+                self.assertEqual(call["username"], expected_username)
+                self.assertIsNone(call["password"])
+                card_data = json.loads(outcome.envelope_json)["card"]["data"]
+                self.assertEqual(card_data["username"], expected_username)
+                self.assertIn("username", card_data["explicit_fields"])
+                self.assertNotIn("password", card_data["explicit_fields"])
+                self.assertEqual(card_data["actions"], ["save", "cancel"])
+
+    def test_only_missing_draft_fields_are_generated(self):
+        cases = (
+            (
+                "create an instagram login with username ExactUser",
+                "ExactUser",
+                None,
+            ),
+            (
+                "create an instagram login with password ExactPass_42",
+                None,
+                "ExactPass_42",
+            ),
+            (
+                "create an instagram login with username ExactUser and "
+                "password ExactPass_42",
+                "ExactUser",
+                "ExactPass_42",
+            ),
+        )
+        for message, supplied_username, supplied_password in cases:
+            with self.subTest(message=message):
+                drafter_calls: list[dict] = []
+
+                def spy_drafter(**kwargs):
+                    drafter_calls.append(dict(kwargs))
+                    return _stub_drafter_ok(**kwargs)
+
+                outcome = try_route_deterministically(
+                    vault_id=_VAULT_ID,
+                    session_id=_SESSION_ID,
+                    key=_KEY,
+                    decrypted_message=message,
+                    files_lister=lambda: [],
+                    credential_drafter=spy_drafter,
+                    active_entity_getter=lambda vid, session_id=None: None,
+                    active_entity_setter=lambda *a, **k: True,
+                    chat_request_id=_REQ,
+                )
+                self.assertIsNotNone(outcome)
+                self.assertEqual(outcome.kind, KIND_CREDENTIAL_DRAFT)
+                call = drafter_calls[0]
+                self.assertEqual(call["username"], supplied_username)
+                self.assertEqual(call["password"], supplied_password)
+                card_data = json.loads(outcome.envelope_json)["card"]["data"]
+                if supplied_username is None:
+                    self.assertNotIn("username", card_data["explicit_fields"])
+                    self.assertEqual(card_data["username"], "generated-user")
+                else:
+                    self.assertIn("username", card_data["explicit_fields"])
+                    self.assertEqual(card_data["username"], supplied_username)
+                if supplied_password is None:
+                    self.assertNotIn("password", card_data["explicit_fields"])
+                    self.assertEqual(
+                        card_data["password"], "GeneratedPassword12345!",
+                    )
+                else:
+                    self.assertIn("password", card_data["explicit_fields"])
+                    self.assertEqual(card_data["password"], supplied_password)
+
     def test_multi_login_request_creates_all_drafts(self):
         drafter_calls: list = []
 

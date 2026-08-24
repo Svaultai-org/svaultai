@@ -139,17 +139,65 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
         passwordGroup: 3,
       );
   if (suppliedIntent != null) return suppliedIntent;
-  final usernameMatch = RegExp(
-        r'\s+(?:with|using)\s+(?:my\s+)?(?:username|email)(?:\s+address)?\s+as\s+(.+)$',
-        caseSensitive: false,
-      ).firstMatch(normalized) ??
-      RegExp(
-        r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:the\s+)?(?:username|email)(?:\s+address)?$',
-        caseSensitive: false,
-      ).firstMatch(normalized);
-  final suppliedUsername = usernameMatch?.group(1)?.trim();
-  if (usernameMatch != null) {
-    normalized = normalized.substring(0, usernameMatch.start).trim();
+  String? suppliedUsername;
+  String? suppliedPassword;
+
+  // Parse explicit field values from the tail of a create command before
+  // matching the service-bearing command itself. These forms are shared by
+  // web, Android, and iOS. Keeping them anchored to the end of an explicit
+  // create command prevents lookup language from being reclassified.
+  final usernameThenPassword = RegExp(
+    r'\s+(?:(?:with|using|for)\s+)?(?:my\s+|the\s+)?(?:username|email)(?:\s+address)?(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)\s+(?:and\s+)?(?:my\s+|the\s+)?(?:password|pass|pwd)(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)$',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  final passwordThenUsername = usernameThenPassword == null
+      ? RegExp(
+          r'\s+(?:(?:with|using|for)\s+)?(?:my\s+|the\s+)?(?:password|pass|pwd)(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)\s+(?:and\s+)?(?:my\s+|the\s+)?(?:username|email)(?:\s+address)?(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)$',
+          caseSensitive: false,
+        ).firstMatch(normalized)
+      : null;
+  final pairedFieldMatch = usernameThenPassword ?? passwordThenUsername;
+  if (pairedFieldMatch != null) {
+    suppliedUsername = cleanValue(
+      pairedFieldMatch.group(usernameThenPassword != null ? 1 : 2),
+    );
+    suppliedPassword = cleanValue(
+      pairedFieldMatch.group(usernameThenPassword != null ? 2 : 1),
+    );
+    normalized = normalized.substring(0, pairedFieldMatch.start).trim();
+  } else {
+    final usernameMatch = RegExp(
+          r'\s+(?:(?:with|using|for)\s+)?(?:my\s+|the\s+)?(?:username|email)(?:\s+address)?(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)$',
+          caseSensitive: false,
+        ).firstMatch(normalized) ??
+        RegExp(
+          r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:my\s+|the\s+)?(?:username|email)(?:\s+address)?$',
+          caseSensitive: false,
+        ).firstMatch(normalized);
+    final passwordMatch = usernameMatch == null
+        ? (RegExp(
+                r'\s+(?:(?:with|using|for)\s+)?(?:my\s+|the\s+)?(?:password|pass|pwd)(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)$',
+                caseSensitive: false,
+              ).firstMatch(normalized) ??
+              RegExp(
+                r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:my\s+|the\s+)?(?:password|pass|pwd)$',
+                caseSensitive: false,
+              ).firstMatch(normalized))
+        : null;
+    final bareUsingMatch = usernameMatch == null && passwordMatch == null
+        ? RegExp(r'\s+using\s+(\S+)$', caseSensitive: false)
+            .firstMatch(normalized)
+        : null;
+    final fieldMatch = usernameMatch ?? passwordMatch ?? bareUsingMatch;
+    if (fieldMatch != null) {
+      final value = cleanValue(fieldMatch.group(1));
+      if (usernameMatch != null || bareUsingMatch != null) {
+        suppliedUsername = value;
+      } else {
+        suppliedPassword = value;
+      }
+      normalized = normalized.substring(0, fieldMatch.start).trim();
+    }
   }
   // "Give me my Facebook login" is a possessive retrieval request. Keep
   // "give me a/new Facebook login" available to the creation flow.
@@ -192,6 +240,9 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
       username: suppliedUsername == null || suppliedUsername.isEmpty
           ? null
           : suppliedUsername,
+      password: suppliedPassword == null || suppliedPassword.isEmpty
+          ? null
+          : suppliedPassword,
       explicitlyAnother: explicitlyAnother,
     );
   }

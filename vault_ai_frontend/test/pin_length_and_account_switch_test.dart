@@ -218,7 +218,30 @@ void main() {
     });
   });
 
-  
+  group('shared switch-vault route', () {
+    test('vault selector delegates through one AppState transition', () {
+      final switcher = _classBody(src, '_VaultSwitcher');
+      expect(
+        RegExp(r'app\.requestSwitchVault\(').allMatches(switcher).length,
+        1,
+      );
+      expect(switcher, isNot(contains('Navigator.')));
+
+      final appState = _classBody(src, 'AppState');
+      final start = appState.indexOf('Future<void> requestSwitchVault(');
+      final end = appState.indexOf('bool handleApiException(', start);
+      expect(start, greaterThan(-1));
+      expect(end, greaterThan(start));
+      final transition = appState.substring(start, end);
+      expect(transition, contains('userFacingVaultNameOrNull(newVaultName)'));
+      expect(transition, contains('_VaultCrypto.clearCache(currentVaultId)'));
+      expect(transition, contains("pushNamedAndRemoveUntil(context, '/pin'"));
+      expect(transition, isNot(contains('VaultAIClient(')));
+      expect(transition, isNot(contains('deleteVault')));
+    });
+  });
+
+
   group('PIN validator predicate (mirrors _PinGatePageState._submit)', () {
     String? validate(String pin) {
       final digitsOnly = RegExp(r'^\d+$');
