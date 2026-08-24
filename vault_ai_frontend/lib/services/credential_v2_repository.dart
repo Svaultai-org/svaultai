@@ -62,7 +62,7 @@ class CredentialV2DeleteIntent {
 /// deliberately extracts arbitrary service labels instead of maintaining a
 /// list of brands. The caller generates and saves the secret locally.
 CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
-  var normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
+  var normalized = text.trim();
   if (normalized.isEmpty) return null;
   if (isCredentialExtractionReviewDecision(normalized)) return null;
 
@@ -139,6 +139,17 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
         passwordGroup: 3,
       );
   if (suppliedIntent != null) return suppliedIntent;
+
+  final servicePasswordWithUsername = RegExp(
+    r'^(?:please\s+)?(?:create|generate|make)(?:\s+me)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+password\s+for\s+(?:my\s+|the\s+)?username(?:\s+is|\s+as|\s*[:=])?\s+(\S+)$',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (servicePasswordWithUsername != null) {
+    return CredentialV2CreateIntent(
+      service: cleanValue(servicePasswordWithUsername.group(1)),
+      username: cleanValue(servicePasswordWithUsername.group(2)),
+    );
+  }
   String? suppliedUsername;
   String? suppliedPassword;
 
@@ -176,13 +187,13 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
         ).firstMatch(normalized);
     final passwordMatch = usernameMatch == null
         ? (RegExp(
-                r'\s+(?:(?:with|using|for)\s+)?(?:my\s+|the\s+)?(?:password|pass|pwd)(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)$',
-                caseSensitive: false,
-              ).firstMatch(normalized) ??
-              RegExp(
-                r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:my\s+|the\s+)?(?:password|pass|pwd)$',
-                caseSensitive: false,
-              ).firstMatch(normalized))
+              r'\s+(?:(?:with|using|for)\s+)?(?:my\s+|the\s+)?(?:password|pass|pwd)(?:\s*[:=]\s*|\s+(?:is|as)\s+|\s+)(\S+)$',
+              caseSensitive: false,
+            ).firstMatch(normalized) ??
+            RegExp(
+              r'\s+(?:with|using)\s+(.+?)\s+as\s+(?:my\s+|the\s+)?(?:password|pass|pwd)$',
+              caseSensitive: false,
+            ).firstMatch(normalized))
         : null;
     final bareUsingMatch = usernameMatch == null && passwordMatch == null
         ? RegExp(r'\s+using\s+(\S+)$', caseSensitive: false)
@@ -198,6 +209,13 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
       }
       normalized = normalized.substring(0, fieldMatch.start).trim();
     }
+  }
+  // Field tails are commonly introduced with a comma (for example,
+  // "create an AOL login, username …"). Remove only separator punctuation
+  // left at the end of the creation command after extracting those values.
+  normalized = normalized.replaceFirst(RegExp(r'[,;:]+$'), '').trim();
+  if (suppliedUsername == null && suppliedPassword == null) {
+    normalized = normalized.replaceFirst(RegExp(r'[.?!]+$'), '').trim();
   }
   // "Give me my Facebook login" is a possessive retrieval request. Keep
   // "give me a/new Facebook login" available to the creation flow.
@@ -219,7 +237,7 @@ CredentialV2CreateIntent? parseCredentialV2CreateIntent(String text) {
       caseSensitive: false,
     ),
     RegExp(
-      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|logins|credential|credentials|account)(?:\s+for\s+me)?$',
+      r'^(?:please\s+)?(?:create|generate|make|add|save|set\s*up|give)(?:\s+me)?(?:\s+my)?\s+(?:(?:a|an)\s+)?(?:new\s+)?(.+?)\s+(?:account\s+)?(?:login|logins|credential|credentials|account|password)(?:\s+for(?:\s+me)?)?$',
       caseSensitive: false,
     ),
     RegExp(
