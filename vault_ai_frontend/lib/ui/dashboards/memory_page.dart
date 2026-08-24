@@ -459,6 +459,8 @@ class MemoryPage extends StatefulWidget {
   final bool isMobile;
   final void Function(String prompt)? onAskVaultAI;
   final Future<String> Function()? pinProvider;
+  final Future<void> Function(Future<void> Function() operation)?
+      mutationRunner;
 
   const MemoryPage({
     super.key,
@@ -468,6 +470,7 @@ class MemoryPage extends StatefulWidget {
     required this.isMobile,
     this.onAskVaultAI,
     this.pinProvider,
+    this.mutationRunner,
   });
 
   @override
@@ -700,6 +703,14 @@ class _MemoryPageState extends State<MemoryPage> {
   Future<void> _persistMemoryDialog({
     required Map<String, dynamic>? row,
     required Map<String, dynamic> data,
+  }) {
+    Future<void> operation() => _persistMemoryDialogNow(row: row, data: data);
+    return widget.mutationRunner?.call(operation) ?? operation();
+  }
+
+  Future<void> _persistMemoryDialogNow({
+    required Map<String, dynamic>? row,
+    required Map<String, dynamic> data,
   }) async {
     final pinProvider = widget.pinProvider;
     if (pinProvider == null) {
@@ -787,34 +798,39 @@ class _MemoryPageState extends State<MemoryPage> {
       ),
     );
     if (confirmed != true) return;
-    try {
-      if (_memoryV2Enabled) {
-        final id = row['memory_record_id']?.toString() ?? row['id']?.toString();
-        if (id == null || id.isEmpty) throw Exception('Missing memory id');
-        await MemoryV2Repository(
-                baseUrl: widget.client.baseUrl, authToken: widget.authToken)
-            .delete(id);
+    Future<void> operation() async {
+      try {
+        if (_memoryV2Enabled) {
+          final id =
+              row['memory_record_id']?.toString() ?? row['id']?.toString();
+          if (id == null || id.isEmpty) throw Exception('Missing memory id');
+          await MemoryV2Repository(
+                  baseUrl: widget.client.baseUrl, authToken: widget.authToken)
+              .delete(id);
+          if (!mounted) return;
+          _showSnack('Memory deleted');
+          await _load();
+          return;
+        }
+        final id = int.tryParse('${row['id']}');
+        if (id == null) throw Exception('Missing memory id');
+        final pin = await pinProvider();
+        await widget.client.deleteMemory(
+          authToken: widget.authToken,
+          vaultName: widget.vaultName,
+          pin: pin,
+          id: id,
+        );
         if (!mounted) return;
         _showSnack('Memory deleted');
         await _load();
-        return;
+      } catch (e) {
+        if (!mounted) return;
+        _showSnack('Could not delete memory');
       }
-      final id = int.tryParse('${row['id']}');
-      if (id == null) throw Exception('Missing memory id');
-      final pin = await pinProvider();
-      await widget.client.deleteMemory(
-        authToken: widget.authToken,
-        vaultName: widget.vaultName,
-        pin: pin,
-        id: id,
-      );
-      if (!mounted) return;
-      _showSnack('Memory deleted');
-      await _load();
-    } catch (e) {
-      if (!mounted) return;
-      _showSnack('Could not delete memory');
     }
+
+    await (widget.mutationRunner?.call(operation) ?? operation());
   }
 
   Future<void> _copyMemoryValue(Map<String, dynamic> row) async {
