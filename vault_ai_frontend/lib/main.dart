@@ -106,6 +106,7 @@ import 'ui/dashboards/memory_page.dart';
 import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
 import 'services/file_v2_repository.dart';
+import 'services/file_inventory_view_state.dart';
 import 'services/wallet_backup_v2_repository.dart';
 import 'services/wallet_v2_repository.dart';
 import 'services/qa_file_picker_override.dart';
@@ -9152,6 +9153,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   bool loadingFiles = false;
+  bool hasLoadedFiles = false;
+  String? filesLoadError;
   bool loadingLogins = false;
 
   bool hasLoadedSecureItems = false;
@@ -13346,7 +13349,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
         rethrow;
       }
-      return UploadResult(fileId: fileId, message: 'Uploaded ${job.name}.');
+      final confirmationName = uploadConfirmationName(
+        originalFilename: job.name,
+        chosenTitle: job.displayName,
+      );
+      return UploadResult(
+        fileId: fileId,
+        message: 'Uploaded $confirmationName.',
+      );
     }
 
     Map<String, dynamic> result;
@@ -13642,6 +13652,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     setState(() {
       loadingFiles = true;
+      filesLoadError = null;
     });
 
     try {
@@ -13679,6 +13690,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
       }
       final parsed = <_VaultStoredFile>[];
+      var authoritativeInventorySucceeded = false;
 
       // Legacy and File V2 are independent authoritative inventories. A
       // failure in the legacy PBKDF2 endpoint must not prevent a private
@@ -13689,6 +13701,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           pin: pin,
           authToken: token,
         );
+        authoritativeInventorySucceeded = true;
         final rawFiles = result['files'];
         if (rawFiles is List) {
           for (final item in rawFiles) {
@@ -13711,6 +13724,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         if (repo != null) {
           try {
             final v2 = await client.listFileV2(authToken: token);
+            authoritativeInventorySucceeded = true;
             final v2Rows = v2['files'];
             if (v2Rows is List) {
               for (final raw in v2Rows) {
@@ -13750,6 +13764,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
 
+      if (!authoritativeInventorySucceeded) {
+        throw StateError('file_inventory_unavailable');
+      }
+
       if (!mounted) return;
       if (!app.ownsSessionLoad(
         epoch: loadEpoch,
@@ -13769,13 +13787,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       });
       setState(() {
         vaultFiles = parsed;
+        hasLoadedFiles = true;
+        filesLoadError = null;
       });
     } catch (e) {
       if (app.handleApiException(e)) return;
       vlog('files.load.failed', {'error_type': e.runtimeType});
       // Transport bodies can be HTML gateway pages. Keep them out of the
       // product UI; diagnostics retain only the safe runtime type above.
-      _showSnack('Could not load files. Check your connection and try again.');
+      setState(() {
+        filesLoadError =
+            'Could not load files. Check your connection and try again.';
+      });
     } finally {
       if (mounted) {
         setState(() {
@@ -18690,13 +18713,37 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Widget _buildFilesSection(bool isMobile) {
-    if (loadingFiles) {
+    final inventoryState = resolveFileInventoryViewState(
+      loading: loadingFiles,
+      authoritativeLoadCompleted: hasLoadedFiles,
+      fileCount: vaultFiles.length,
+      hasError: filesLoadError != null,
+    );
+    if (inventoryState == FileInventoryViewState.loading) {
       return const Center(
         child: CircularProgressIndicator(),
       );
     }
 
-    if (vaultFiles.isEmpty) {
+    if (inventoryState == FileInventoryViewState.error) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(filesLoadError!),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const Key('files_retry_button'),
+              onPressed: _loadVaultFiles,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (inventoryState == FileInventoryViewState.readyEmpty) {
       return SingleChildScrollView(
         padding: EdgeInsets.all(isMobile ? 12 : 20),
         child: Center(
@@ -19409,6 +19456,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       case _DashboardSection.chat:
         return _buildChatView(isMobile);
       case _DashboardSection.files:
+        if (!hasLoadedFiles && !loadingFiles && filesLoadError == null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted &&
+                selectedSection == _DashboardSection.files &&
+                !hasLoadedFiles &&
+                !loadingFiles) {
+              _loadVaultFiles();
+            }
+          });
+        }
         return _buildFilesSection(isMobile);
 
       case _DashboardSection.logins:
