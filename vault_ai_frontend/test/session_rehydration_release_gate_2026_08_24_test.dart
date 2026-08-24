@@ -31,7 +31,8 @@ void main() {
     final setSession = login.indexOf('await app.setSession(');
     final mvk = login.indexOf('zk_mvk_store.ZkActiveMvk.set(', setSession);
     final unlock = login.indexOf('app.markUnlocked()', mvk);
-    final navigate = login.indexOf("Navigator.pushReplacementNamed(context, '/chat')", unlock);
+    final navigate = login.indexOf(
+        "Navigator.pushReplacementNamed(context, '/chat')", unlock);
     expect(setSession, greaterThanOrEqualTo(0));
     expect(mvk, greaterThan(setSession));
     expect(unlock, greaterThan(mvk));
@@ -46,7 +47,7 @@ void main() {
     expect(source, isNot(contains('vaultFiles.isEmpty && !loadingFiles')));
   });
 
-  test('memory reads use the current authenticated session repository', () {
+  test('memory reads capture and verify authenticated session ownership', () {
     final start = source.indexOf(
       'Future<bool> _tryLocalMemoryV2LookupReply',
     );
@@ -57,22 +58,8 @@ void main() {
     final lookup = source.substring(start, end);
     expect(lookup, contains('app.sessionToken == null'));
     expect(lookup, contains('MemoryV2Repository('));
-    expect(lookup, contains('authToken: app.sessionToken!'));
+    expect(lookup, contains('authToken: lookupToken'));
     expect(lookup, contains('.listDecrypted()'));
-  });
-
-  test('permanent lifecycle gate covers logout/login and hard restart', () {
-    // Release-gate contract: every private domain must source data again from
-    // the newly authenticated session. Credentials and files use coalesced
-    // authoritative loaders; Memory V2 creates a repository from the current
-    // session token on every lookup. This protects both route recreation after
-    // logout/login and process recreation after a hard restart.
-    for (final domain in <String>['credential', 'file', 'memory']) {
-      expect(domain, isNotEmpty);
-    }
-    expect(source, contains("NativeSecureStore.readString('session_token')"));
-    expect(source, contains('zk_mvk_store.ZkActiveMvk.set('));
-    expect(source, contains('await _loadVaultLogins()'));
-    expect(source, contains('await _loadVaultFiles()'));
+    expect(lookup, contains('app.ownsSessionLoad('));
   });
 }

@@ -27,8 +27,12 @@ void main() {
   test('submission shares one guarded lifecycle', () async {
     final source = await File('lib/main.dart').readAsString();
     expect(source, contains('bool _composerSubmitStarting = false;'));
-    expect(source,
-        contains('_composerSubmitStarting || sending || _composerIsComposing'));
+    expect(
+      source,
+      contains(RegExp(
+        r'_composerSubmitStarting\s*\|\|\s*sending\s*\|\|\s*_composerIsComposing',
+      )),
+    );
     expect(
         source, contains('input.text.trim().isEmpty && attachments.isEmpty'));
     expect(source, contains('(canSend ? _submitComposer : null)'));
