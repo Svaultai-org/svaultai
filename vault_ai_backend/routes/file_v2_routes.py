@@ -50,7 +50,24 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
     conn = get_db(); cur = conn.cursor()
     try:
         cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count)
-                       VALUES(%s,%s,%s,%s,%s,%s,%s)''', (payload.file_id, principal['vault_id'], payload.crypto_version, ct, payload.total_bytes, payload.chunk_size, payload.chunk_count))
+                       VALUES(%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (file_id) DO NOTHING
+                       RETURNING file_id''', (payload.file_id, principal['vault_id'], payload.crypto_version, ct, payload.total_bytes, payload.chunk_size, payload.chunk_count))
+        inserted = cur.fetchone()
+        if inserted is None:
+            # Idempotent retry is allowed only for the exact same logical
+            # manifest owned by the same vault. Never let a caller claim or
+            # overwrite another vault's record.
+            cur.execute('''SELECT 1 FROM file_v2_records
+                           WHERE file_id=%s AND vault_id=%s
+                             AND crypto_version=%s AND total_bytes=%s
+                             AND chunk_size=%s AND chunk_count=%s''',
+                        (payload.file_id, principal['vault_id'],
+                         payload.crypto_version, payload.total_bytes,
+                         payload.chunk_size, payload.chunk_count))
+            if cur.fetchone() is None:
+                conn.rollback()
+                raise HTTPException(409, detail='file_v2_manifest_conflict')
         conn.commit()
     finally: conn.close()
     return {'file_id': payload.file_id, 'crypto_version': payload.crypto_version}

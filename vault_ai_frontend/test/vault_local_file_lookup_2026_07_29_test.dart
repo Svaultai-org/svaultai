@@ -74,7 +74,9 @@ void main() {
     );
   });
 
-  test('ambiguous equal matches fall through to backend search', () {
+  test(
+      'duplicate exact names resolve deterministically without semantic fallthrough',
+      () {
     final match = resolveLocalVaultFileLookup(
       query: 'passport',
       files: const [
@@ -93,13 +95,33 @@ void main() {
       ],
     );
 
-    expect(match, isNull);
+    expect(match, isNotNull);
+    expect(match!.entry.id, 'a');
     expect(
       shouldDeferLocalFileMissToSemanticSearch(
         query: 'passport',
         match: match,
       ),
-      isTrue,
+      isFalse,
+    );
+  });
+
+  test('any number of exact-name matches stays local and deterministic', () {
+    final entries = List<VaultLocalFileLookupEntry>.generate(
+      5,
+      (index) => VaultLocalFileLookupEntry(
+        id: 'juli-$index',
+        fileName: 'capture-$index.jpg',
+        savedName: 'juli',
+        sizeBytes: 400000 + index,
+      ),
+    );
+    final match = resolveLocalVaultFileLookup(query: 'juli', files: entries);
+    expect(match, isNotNull);
+    expect(match!.entry.id, 'juli-0');
+    expect(
+      shouldDeferLocalFileMissToSemanticSearch(query: 'juli', match: match),
+      isFalse,
     );
   });
 

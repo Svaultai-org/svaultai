@@ -212,12 +212,12 @@ LocalMemoryFact? parseLocalMemoryFact(String input) {
     };
     final attribute = switch (rawAttribute) {
       'birthday' || 'birth date' => 'birthday',
-      'phone' || 'phone number' || 'telephone' || 'telephone number' =>
-        'phone',
+      'phone' || 'phone number' || 'telephone' || 'telephone number' => 'phone',
       'favorite color' ||
       'favourite color' ||
       'favorite colour' ||
-      'favourite colour' => 'favorite_color',
+      'favourite colour' =>
+        'favorite_color',
       _ => 'name',
     };
     final displayAttribute = attribute.replaceAll('_', ' ');
@@ -1341,6 +1341,21 @@ const String _kAppLocaleStorageKeyV1 = 'app_locale';
 const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
 
 class AppState extends ChangeNotifier {
+  int _sessionEpoch = 0;
+
+  /// Monotonic ownership generation for asynchronous private inventory work.
+  /// A response may update UI state only when it belongs to this generation.
+  int get sessionEpoch => _sessionEpoch;
+
+  bool ownsSessionLoad({
+    required int epoch,
+    required String vaultIdValue,
+    required String tokenValue,
+  }) =>
+      _sessionEpoch == epoch &&
+      vaultId == vaultIdValue &&
+      sessionToken == tokenValue &&
+      authed;
   bool authed = false;
 
   // Per-file in-flight state. The chat card widgets watch AppState so
@@ -1769,6 +1784,9 @@ class AppState extends ChangeNotifier {
 
     perf_cache.clearCacheOnVaultSwitch(currentVaultId, null);
 
+    _sessionEpoch += 1;
+    zk_mvk_store.ZkActiveMvk.clear();
+    FileV2Repository.clear();
     _VaultCrypto.clearCache(currentVaultId);
     vaultName = displaySafeVaultName;
     unlocked = false;
@@ -2176,6 +2194,7 @@ class AppState extends ChangeNotifier {
     // the pre-termination session still evaluate as stale to any
     // caller comparing generations.
     st.SessionTermination.instance.reset();
+    _sessionEpoch += 1;
     sessionToken = token;
     vaultId = vaultIdValue;
     final displayVaultName = vh.userFacingVaultNameOrNull(vaultNameValue);
@@ -2220,6 +2239,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> clearSession({bool keepLastVaultName = true}) async {
     final rememberedVaultHandle = keepLastVaultName ? vaultHandle : null;
+    _sessionEpoch += 1;
     _runShutdownHooks();
 
     perf_cache.clearCacheOnLogout();
@@ -2233,6 +2253,7 @@ class AppState extends ChangeNotifier {
     // == null and fall through to legacy plaintext-refuse behavior.
     try {
       zk_mvk_store.ZkActiveMvk.clear();
+      FileV2Repository.clear();
       WalletBackupV2Repository.clear();
       WalletV2Repository.clear();
       QaRuntimeAccess.clear();
@@ -7234,7 +7255,8 @@ enum _MemoryProposalFinalizeOutcome { saved, duplicate, failed }
 String _memoryProposalOutcomeMessage(_MemoryProposalFinalizeOutcome outcome) =>
     switch (outcome) {
       _MemoryProposalFinalizeOutcome.saved => 'Memory saved.',
-      _MemoryProposalFinalizeOutcome.duplicate => 'That memory is already saved.',
+      _MemoryProposalFinalizeOutcome.duplicate =>
+        'That memory is already saved.',
       _MemoryProposalFinalizeOutcome.failed =>
         'Could not save that memory securely. Your vault was not changed.',
     };
@@ -7826,6 +7848,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final repository = _credentialV2Repository(app);
     if (repository == null) return false;
+    final lookupEpoch = app.sessionEpoch;
+    final lookupVaultId = app.vaultId!;
+    final lookupToken = app.sessionToken!;
+    bool stillOwned() => app.ownsSessionLoad(
+          epoch: lookupEpoch,
+          vaultIdValue: lookupVaultId,
+          tokenValue: lookupToken,
+        );
     _credentialLookupInFlight = true;
     try {
       // Exact labels win. Natural parent labels (Facebook -> Facebook
@@ -7837,6 +7867,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               text,
               await repository.listDecrypted(),
             );
+      if (!stillOwned()) {
+        vlog('credential.lookup.stale_completion_dropped', const {});
+        return true;
+      }
       vlog('credential.lookup.match', {
         'route': 'credential_v2',
         'service': intent?.service ?? '',
@@ -7855,6 +7889,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         // as a real miss.
         if (vaultLogins.isEmpty) {
           await _loadVaultLogins();
+        }
+        if (!stillOwned()) {
+          vlog('credential.lookup.stale_completion_dropped', const {});
+          return true;
         }
         legacyMatches = matchCredentialServiceCandidates(
           intent!.service!,
@@ -8526,8 +8564,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 forceLegacyTransport: forceLegacyTransport,
               );
 
-              final isLogin =
-                  itemType == 'login' || itemType == 'credential';
+              final isLogin = itemType == 'login' || itemType == 'credential';
               _showSnack(createMode
                   ? (isLogin ? 'Login saved' : 'Saved item')
                   : (isLogin ? 'Updated login' : 'Updated saved item'));
@@ -13257,8 +13294,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (fileV2Write && !needsServerCredentialReview) {
       final repo = FileV2Repository.current();
       if (repo == null) throw StateError('file_v2_requires_active_mvk');
-      final fileId =
-          '${DateTime.now().microsecondsSinceEpoch}-${math.Random.secure().nextInt(0x100000000)}';
+      final fileId = job.fileV2Id ??= 'file-${job.id}';
+      final operationHash = sha256.convert(utf8.encode(job.id)).toString();
+      vlog('file_v2.upload.operation', {
+        'operation_present': true,
+        'operation_hash12': operationHash.substring(0, 12),
+        'attempt': job.attempts,
+      });
       const chunkSize = kFileV2ChunkBytes;
       final chunks = (bytes.length / chunkSize).ceil();
       final manifest = await repo.encryptMetadata(
@@ -13480,8 +13522,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _loadVaultLoginsOnce() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
+    final loadEpoch = app.sessionEpoch;
+    final loadVaultId = app.vaultId;
 
-    if (token == null || app.vaultName == null) return;
+    if (token == null || loadVaultId == null || app.vaultName == null) return;
 
     setState(() {
       loadingLogins = true;
@@ -13532,6 +13576,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
 
       if (!mounted) return;
+      if (!app.ownsSessionLoad(
+        epoch: loadEpoch,
+        vaultIdValue: loadVaultId,
+        tokenValue: token,
+      )) {
+        vlog('secure_items.load.stale_completion_dropped', const {});
+        return;
+      }
       setState(() {
         vaultLogins = parsed;
         hasLoadedSecureItems = true;
@@ -13583,8 +13635,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _loadVaultFilesOnce() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
+    final loadEpoch = app.sessionEpoch;
+    final loadVaultId = app.vaultId;
 
-    if (token == null || app.vaultId == null || app.vaultName == null) return;
+    if (token == null || loadVaultId == null || app.vaultName == null) return;
 
     setState(() {
       loadingFiles = true;
@@ -13624,59 +13678,90 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           },
         );
       }
-      final result = await client.listVaultFiles(
-        vaultName: app.vaultName!,
-        pin: pin,
-        authToken: token,
-      );
-
-      final rawFiles = result['files'];
       final parsed = <_VaultStoredFile>[];
 
-      if (rawFiles is List) {
-        for (final item in rawFiles) {
-          if (item is Map<String, dynamic>) {
-            parsed.add(_VaultStoredFile.fromJson(item));
-          } else if (item is Map) {
-            parsed.add(
-                _VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
+      // Legacy and File V2 are independent authoritative inventories. A
+      // failure in the legacy PBKDF2 endpoint must not prevent a private
+      // File V2 vault from rehydrating after login.
+      try {
+        final result = await client.listVaultFiles(
+          vaultName: app.vaultName!,
+          pin: pin,
+          authToken: token,
+        );
+        final rawFiles = result['files'];
+        if (rawFiles is List) {
+          for (final item in rawFiles) {
+            if (item is Map<String, dynamic>) {
+              parsed.add(_VaultStoredFile.fromJson(item));
+            } else if (item is Map) {
+              parsed.add(
+                  _VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
+            }
           }
         }
+      } catch (e) {
+        if (app.handleApiException(e)) return;
+        vlog('files.load.legacy.failed', {'error_type': e.runtimeType});
       }
 
       const fileV2Read = fileV2ReadEnabled;
       if (fileV2Read) {
         final repo = FileV2Repository.current();
         if (repo != null) {
-          final v2 = await client.listFileV2(authToken: token);
-          final v2Rows = v2['files'];
-          if (v2Rows is List) {
-            for (final raw in v2Rows) {
-              if (raw is! Map) continue;
-              final id = raw['file_id']?.toString();
-              if (id == null || id.isEmpty) continue;
-              final manifest =
-                  await client.getFileV2Manifest(authToken: token, fileId: id);
-              final ct = vk_hier
-                  .b64urlDecode(manifest['manifest_ciphertext'] as String);
-              final meta = await repo.decryptMetadata(id, ct);
-              parsed.add(_VaultStoredFile.fromJson({
-                'id': id,
-                'file_name': meta.filename,
-                if (meta.label?.trim().isNotEmpty == true)
-                  'saved_name': meta.label!.trim(),
-                'content_type': meta.contentType,
-                'file_size': raw['total_bytes'],
-                'storage_mode': 'file_v2',
-                'crypto_version': 'client_mvk_v2',
-                'needs_naming': false,
-              }));
+          try {
+            final v2 = await client.listFileV2(authToken: token);
+            final v2Rows = v2['files'];
+            if (v2Rows is List) {
+              for (final raw in v2Rows) {
+                if (raw is! Map) continue;
+                final id = raw['file_id']?.toString();
+                if (id == null || id.isEmpty) continue;
+                try {
+                  final manifest = await client.getFileV2Manifest(
+                      authToken: token, fileId: id);
+                  final ct = vk_hier
+                      .b64urlDecode(manifest['manifest_ciphertext'] as String);
+                  final meta = await repo.decryptMetadata(id, ct);
+                  parsed.add(_VaultStoredFile.fromJson({
+                    'id': id,
+                    'file_name': meta.filename,
+                    if (meta.label?.trim().isNotEmpty == true)
+                      'saved_name': meta.label!.trim(),
+                    'content_type': meta.contentType,
+                    'file_size': raw['total_bytes'],
+                    'storage_mode': 'file_v2',
+                    'crypto_version': 'client_mvk_v2',
+                    'needs_naming': false,
+                  }));
+                } catch (e) {
+                  // One damaged/incompatible record must not hide every other
+                  // valid file in the vault. Keep diagnostics metadata-only.
+                  vlog('files.load.file_v2_record.failed', {
+                    'error_type': e.runtimeType,
+                  });
+                }
+              }
             }
+          } catch (e) {
+            if (app.handleApiException(e)) return;
+            vlog('files.load.file_v2.failed', {'error_type': e.runtimeType});
           }
         }
       }
 
       if (!mounted) return;
+      if (!app.ownsSessionLoad(
+        epoch: loadEpoch,
+        vaultIdValue: loadVaultId,
+        tokenValue: token,
+      )) {
+        vlog('files.load.stale_completion_dropped', {
+          'epoch_changed': app.sessionEpoch != loadEpoch,
+          'vault_changed': app.vaultId != loadVaultId,
+        });
+        return;
+      }
       vlog('files.load.composed', {
         'total_count': parsed.length,
         'file_v2_count': parsed.where((file) => file.isFileV2).length,
@@ -16208,8 +16293,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final operationKind = kind ??
         (isAuthoritativeVaultMutationCommand(
           text,
-          hasPrivateBackendCommand:
-              encryptedBackendCommand?.isNotEmpty == true,
+          hasPrivateBackendCommand: encryptedBackendCommand?.isNotEmpty == true,
         )
             ? ChatOperationKind.mutation
             : ChatOperationKind.read);
@@ -16514,8 +16598,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         final result = await MemoryV2Repository(
           baseUrl: backendBaseUrl,
           authToken: token,
-        )
-            .create(
+        ).create(
           memoryType: (payload['memory_type'] ?? 'note').toString(),
           plaintext: MemoryV2Plaintext(
             value: value,
@@ -17250,13 +17333,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         defaultValue: false);
     if (diagnostics) print('QA_MEMORY_CHAT_INTENT_LOCAL=true');
     const enabled = memoryV2ReadEnabled;
-    if (!enabled || app.sessionToken == null) return true;
+    if (!enabled || app.sessionToken == null || app.vaultId == null)
+      return true;
+    final lookupToken = app.sessionToken!;
+    final lookupVaultId = app.vaultId!;
+    final lookupEpoch = app.sessionEpoch;
     try {
       final repo = MemoryV2Repository(
         baseUrl: backendBaseUrl,
-        authToken: app.sessionToken!,
+        authToken: lookupToken,
       );
       final records = await repo.listDecrypted();
+      if (!app.ownsSessionLoad(
+        epoch: lookupEpoch,
+        vaultIdValue: lookupVaultId,
+        tokenValue: lookupToken,
+      )) {
+        vlog('memory.load.stale_completion_dropped', const {});
+        return true;
+      }
       final matches = matchLocalMemoryRecords(intent, records);
       if (diagnostics) {
         print('QA_MEMORY_CHAT_DECRYPTED_COUNT=${records.length}');
@@ -18201,7 +18296,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _submitComposer() async {
-    if (_composerSubmitStarting || sending || _composerIsComposing ||
+    if (_composerSubmitStarting ||
+        sending ||
+        _composerIsComposing ||
         _chatOperationQueue.isBusy) {
       return;
     }
@@ -18227,8 +18324,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Widget _buildComposer(bool isMobile) {
     final vr = VaultResponsive.of(context);
 
-    final canSend =
-        !sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty) &&
+    final canSend = !sending &&
+        (input.text.trim().isNotEmpty || attachments.isNotEmpty) &&
         !_chatOperationQueue.isBusy;
 
     Widget _attachmentIcon() => SizedBox(
