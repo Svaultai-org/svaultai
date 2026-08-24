@@ -715,6 +715,7 @@ async def verify_apple_transaction(
 ):
     from apple_billing import (
         AppleBillingConfigurationError,
+        AppleTransactionOwnershipError,
         AppleTransactionVerificationError,
         verify_and_apply_apple_transaction,
     )
@@ -753,6 +754,8 @@ async def verify_apple_transaction(
                     environment,
                 )
                 return result
+            except AppleTransactionOwnershipError:
+                raise
             except AppleTransactionVerificationError as exc:
                 last_verification_error = exc
         if last_verification_error is not None:
@@ -773,6 +776,17 @@ async def verify_apple_transaction(
                 "message": (
                     "Another verified provider currently owns storage billing. "
                     "Provider migration is not available yet."
+                ),
+            },
+        ) from exc
+    except AppleTransactionOwnershipError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "subscription_bound_to_another_active_account",
+                "message": (
+                    "This App Store subscription is already linked to "
+                    "another SVaultAI account."
                 ),
             },
         ) from exc
@@ -858,6 +872,7 @@ async def apple_notifications_v2(request: Request):
         return {"outcome": "duplicate"}
     data = _attr(notification, "data")
     signed_transaction = str(_attr(data, "signedTransactionInfo") or "")
+    signed_renewal_info = str(_attr(data, "signedRenewalInfo") or "")
     if not signed_transaction:
         finish_provider_event(source="apple", event_id=event_id, outcome="verified_no_transaction")
         logger.info(
@@ -869,6 +884,10 @@ async def apple_notifications_v2(request: Request):
         return {"outcome": "verified_no_transaction"}
     try:
         transaction = verifier.verify_transaction(signed_transaction)
+        renewal_info = (
+            verifier.verify_renewal_info(signed_renewal_info)
+            if signed_renewal_info else None
+        )
         transaction_id = str(_attr(transaction, "transactionId") or "")
         original_id = str(_attr(transaction, "originalTransactionId") or "")
         account_id = (
@@ -884,6 +903,7 @@ async def apple_notifications_v2(request: Request):
             notification_type=event_type,
             subtype=subtype,
             event_id=event_id,
+            renewal_info=renewal_info,
         )
         _entitlement_id, transition = upsert_verified_entitlement(account_id, update)
         finish_provider_event(source="apple", event_id=event_id, outcome="applied")

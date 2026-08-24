@@ -32,7 +32,19 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
   final TextEditingController _pinCtrl = TextEditingController();
 
   bool _submitting = false;
+  bool _checkingSubscription = false;
+  bool _deletionAllowed = true;
+  String _appleSubscriptionState = 'unknown';
   String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      _deletionAllowed = false;
+      _refreshDeletionStatus();
+    }
+  }
 
   @override
   void dispose() {
@@ -45,7 +57,35 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
 
   bool get _pinEntered => _pinCtrl.text.isNotEmpty;
 
-  bool get _canDelete => _phraseMatches && _pinEntered && !_submitting;
+  bool get _canDelete => _phraseMatches && _pinEntered && !_submitting &&
+      !_checkingSubscription && _deletionAllowed;
+
+  Future<void> _refreshDeletionStatus() async {
+    if (!mounted) return;
+    setState(() {
+      _checkingSubscription = true;
+      _errorText = null;
+    });
+    try {
+      final status = await widget.client.getDeleteStatus(
+        authToken: widget.authToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _appleSubscriptionState =
+            (status['apple_subscription_state'] ?? 'unknown').toString();
+        _deletionAllowed = status['deletion_allowed'] == true;
+        _checkingSubscription = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _appleSubscriptionState = 'temporarily_unavailable';
+        _deletionAllowed = false;
+        _checkingSubscription = false;
+      });
+    }
+  }
 
   Future<void> _openAppleSubscriptions() async {
     await launchUrl(
@@ -96,6 +136,19 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
     }
     if (s.contains('device_not_trusted') || s.contains('trusted')) {
       return l.deleteVaultErrorNotTrusted;
+    }
+    if (s.contains(
+        'active_apple_subscription_must_be_canceled_before_final_deletion')) {
+      _appleSubscriptionState = 'active_auto_renewing';
+      _deletionAllowed = false;
+      return 'Cancel your active App Store subscription before deleting your '
+          'final SVaultAI vault. After cancellation, tap Check again.';
+    }
+    if (s.contains('apple_subscription_status_temporarily_unavailable')) {
+      _appleSubscriptionState = 'temporarily_unavailable';
+      _deletionAllowed = false;
+      return 'Apple subscription status is temporarily unavailable. Your '
+          'vault was not deleted. Please tap Check again.';
     }
     return l.deleteVaultErrorGeneric;
   }
@@ -162,6 +215,42 @@ class _DeleteVaultFlowState extends State<DeleteVaultFlow> {
                     label: const Text('Manage Apple subscription'),
                   ),
                 ),
+                if (_checkingSubscription)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: LinearProgressIndicator(
+                      key: Key('delete_vault_apple_status_loading'),
+                    ),
+                  ),
+                if (!_checkingSubscription &&
+                    _appleSubscriptionState == 'active_auto_renewing')
+                  const Text(
+                    'Final vault deletion is blocked while this verified App '
+                    'Store subscription is set to renew. Cancel it with Apple, '
+                    'then check again. You can delete immediately once Apple '
+                    'confirms auto-renewal is off.',
+                    key: Key('delete_vault_apple_active_block'),
+                    style: TextStyle(color: dangerColor, height: 1.4),
+                  ),
+                if (!_checkingSubscription &&
+                    _appleSubscriptionState == 'temporarily_unavailable')
+                  const Text(
+                    'We cannot verify your Apple subscription status right '
+                    'now. Your vault will not be deleted until verification '
+                    'succeeds.',
+                    key: Key('delete_vault_apple_status_unavailable'),
+                    style: TextStyle(color: dangerColor, height: 1.4),
+                  ),
+                if (!_checkingSubscription && !_deletionAllowed)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const Key('delete_vault_check_again'),
+                      onPressed: _submitting ? null : _refreshDeletionStatus,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Check again'),
+                    ),
+                  ),
               ],
               const SizedBox(height: 14),
               Container(

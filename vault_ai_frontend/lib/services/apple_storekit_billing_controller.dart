@@ -418,11 +418,22 @@ class AppleStoreKitBillingController extends ChangeNotifier {
         state = 'verified';
         message = 'Subscription verified. Your storage limit is updated.';
       }
-    } catch (_) {
+    } catch (error) {
       if (operation == _operationGeneration) {
         state = 'verification_failed';
-        message =
-            'Purchase verification is pending. Use Restore Purchases to retry.';
+        final text = error.toString();
+        if (text.contains('subscription_bound_to_another_active_account')) {
+          message = 'This App Store subscription is already linked to another '
+              'SVaultAI account. Sign in to that account or manage the '
+              'subscription with Apple.';
+        } else if (text.contains(
+            'apple_subscription_status_temporarily_unavailable')) {
+          message = 'Apple subscription status is temporarily unavailable. '
+              'Use Restore Purchases to retry.';
+        } else {
+          message = 'Purchase verification is pending. Use Restore Purchases '
+              'to retry.';
+        }
       }
     } finally {
       _verificationInFlight.remove(signedTransaction);

@@ -330,4 +330,40 @@ void main() {
     billing.dispose();
     await gateway.controller.close();
   });
+
+  test('ownership conflict has distinct safe copy', () async {
+    final gateway = _Gateway();
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async {
+        throw Exception(
+          'subscription_bound_to_another_active_account',
+        );
+      },
+    );
+    await billing.initialize();
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(billing.state, 'verification_failed');
+    expect(billing.message, contains('already linked to another'));
+    expect(billing.message, isNot(contains('pending')));
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
+  test('ordinary verification failure retains pending retry copy', () async {
+    final gateway = _Gateway();
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async {
+        throw Exception('temporary verifier failure');
+      },
+    );
+    await billing.initialize();
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(billing.message, contains('verification is pending'));
+    billing.dispose();
+    await gateway.controller.close();
+  });
 }
