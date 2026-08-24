@@ -7849,7 +7849,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       });
       var legacyMatches = <VaultLoginItem>[];
       if (matches.length <= 1 && intent?.service?.trim().isNotEmpty == true) {
-        if (vaultLogins.isEmpty && !loadingLogins) {
+        // The dashboard can already be hydrating the legacy inventory when a
+        // user submits an immediate lookup. Await that same authoritative
+        // request instead of treating its still-empty pre-response snapshot
+        // as a real miss.
+        if (vaultLogins.isEmpty) {
           await _loadVaultLogins();
         }
         legacyMatches = matchCredentialServiceCandidates(
@@ -9171,6 +9175,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   FolderTreeData? _folderTreeData;
   String _folderSearchQuery = '';
   List<VaultLoginItem> vaultLogins = [];
+  Future<void>? _vaultLoginsLoadFuture;
 
   _DashboardSection selectedSection = _DashboardSection.chat;
   final CryptoWalletMainnetSendApprovalSession _chatMainnetSendApprovalSession =
@@ -13457,7 +13462,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
-  Future<void> _loadVaultLogins() async {
+  Future<void> _loadVaultLogins() {
+    final active = _vaultLoginsLoadFuture;
+    if (active != null) return active;
+    final next = _loadVaultLoginsOnce();
+    _vaultLoginsLoadFuture = next;
+    return next.whenComplete(() {
+      if (identical(_vaultLoginsLoadFuture, next)) {
+        _vaultLoginsLoadFuture = null;
+      }
+    });
+  }
+
+  Future<void> _loadVaultLoginsOnce() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
 
