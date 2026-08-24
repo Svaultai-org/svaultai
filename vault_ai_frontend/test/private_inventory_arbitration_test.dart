@@ -223,6 +223,41 @@ void main() {
     expect(arbitrationLoad, contains('if (vaultFiles.isEmpty)'));
     expect(arbitrationLoad,
         isNot(contains('vaultFiles.isEmpty && !loadingFiles')));
+
+    final lookupStart = source.indexOf(
+      'Future<bool> _tryLocalVaultFileLookupReply',
+    );
+    final lookupEnd = source.indexOf(
+      'Future<bool> _tryLocalMemoryV2ContextSave',
+      lookupStart,
+    );
+    final lookup = source.substring(lookupStart, lookupEnd);
+    expect(lookup, contains('if (vaultFiles.isEmpty)'));
+    expect(lookup, contains('await _loadVaultFiles()'));
+    expect(
+      lookup,
+      isNot(contains('vaultFiles.isEmpty && !loadingFiles')),
+      reason: 'a post-login lookup must await the active authoritative load',
+    );
+  });
+
+  test('legacy arbitration awaits active post-login inventory hydration', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf(
+      'Future<bool> _tryLocalPrivateDomainArbitration',
+    );
+    final end = source.indexOf(
+      'Future<bool> _tryLocalVaultFileLookupReply',
+      start,
+    );
+    final arbitration = source.substring(start, end);
+    expect(arbitration, contains('if (vaultLogins.isEmpty)'));
+    expect(arbitration, contains('await _loadVaultLogins()'));
+    expect(
+      arbitration,
+      isNot(contains('vaultLogins.isEmpty && !loadingLogins')),
+      reason: 'loading is not the same thing as an authoritative empty list',
+    );
   });
 
   test('ambiguous credential chat lookup stays inline', () {
