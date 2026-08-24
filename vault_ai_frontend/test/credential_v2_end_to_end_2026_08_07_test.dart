@@ -7,6 +7,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:vault_ai_frontend/logins_page.dart';
 import 'package:vault_ai_frontend/services/credential_v2.dart';
 import 'package:vault_ai_frontend/services/credential_v2_api.dart';
 import 'package:vault_ai_frontend/services/credential_v2_migration.dart';
@@ -290,6 +291,90 @@ void main() {
     expect(source, contains('legacyMatches.length == 1'));
     expect(source, contains('_openLegacySecureItemDirect'));
     expect(source, contains('item.cryptoVersion == credentialV2CryptoVersion'));
+  });
+
+  test('legacy fallback waits for an in-flight authoritative inventory', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final lookupStart = source.indexOf(
+      'Future<bool> _tryLocalCredentialV2LookupReply',
+    );
+    final lookupEnd = source.indexOf(
+      'Future<bool> _tryLocalCredentialV2CreateReply',
+      lookupStart,
+    );
+    final lookupSource = source.substring(lookupStart, lookupEnd);
+    expect(source, contains('Future<void>? _vaultLoginsLoadFuture'));
+    expect(source, contains('final active = _vaultLoginsLoadFuture'));
+    expect(source, contains('if (active != null) return active'));
+    expect(
+      lookupSource,
+      isNot(contains('vaultLogins.isEmpty && !loadingLogins')),
+      reason: 'an in-flight legacy list is not an authoritative empty result',
+    );
+  });
+
+  test('sanitized persisted legacy login remains lookup-compatible', () {
+    final persisted = VaultLoginItem.fromJson(<String, dynamic>{
+      'service': 'Example Social',
+      'item_type': 'login',
+      'created_at': '2026-01-01T00:00:00Z',
+      // Persisted pre-CredentialV2 rows do not carry crypto_version.
+    });
+    expect(persisted.cryptoVersion, 'legacy_v1');
+    expect(
+      matchCredentialServiceCandidates(
+        'example social',
+        <VaultLoginItem>[persisted],
+        (item) => item.service,
+      ),
+      <VaultLoginItem>[persisted],
+    );
+  });
+
+  test('mixed v2 and persisted legacy inventories retain both sources', () {
+    final legacy = VaultLoginItem.fromJson(<String, dynamic>{
+      'service': 'Example Legacy',
+      'item_type': 'login',
+    });
+    final modern = DecryptedCredentialV2Record(
+      'credential-example-modern',
+      const CredentialV2Plaintext(
+        service: 'Example Modern',
+        username: 'synthetic-user',
+        password: 'synthetic-password',
+      ),
+    );
+    expect(
+      matchCredentialServiceCandidates(
+        'example legacy',
+        <VaultLoginItem>[legacy],
+        (item) => item.service,
+      ),
+      <VaultLoginItem>[legacy],
+    );
+    expect(
+      matchCredentialV2RecordsForService(
+          'example modern', <DecryptedCredentialV2Record>[modern]),
+      <DecryptedCredentialV2Record>[modern],
+    );
+  });
+
+  test('empty credential inventories remain an authoritative miss', () {
+    expect(
+      matchCredentialServiceCandidates<VaultLoginItem>(
+        'example absent',
+        const <VaultLoginItem>[],
+        (item) => item.service,
+      ),
+      isEmpty,
+    );
+    expect(
+      matchCredentialV2RecordsForService(
+        'example absent',
+        const <DecryptedCredentialV2Record>[],
+      ),
+      isEmpty,
+    );
   });
 
   test('local credential matching is driven by decrypted vault services', () {
