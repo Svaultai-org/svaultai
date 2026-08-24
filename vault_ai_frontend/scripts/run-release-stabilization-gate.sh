@@ -34,14 +34,28 @@ if ! command -v "$flutter_bin" >/dev/null 2>&1; then
     exit 127
   fi
 fi
-"$flutter_bin" test \
+frontend_tests=( \
   test/zk_auth_login_legacy_retry_2026_07_27_test.dart \
   test/vault_handle_ui_leak_2026_08_16_test.dart \
   test/memory_page_mask_and_editor_test.dart \
   test/credential_v2_end_to_end_2026_08_07_test.dart \
   test/credential_natural_language_lookup_2026_08_16_test.dart \
+  test/private_inventory_arbitration_test.dart \
+  test/session_rehydration_release_gate_2026_08_24_test.dart \
   test/document_extraction_field_fidelity_2026_08_19_test.dart \
   test/vault_local_file_lookup_2026_07_29_test.dart \
-  test/chat_operation_queue_test.dart \
+  test/chat_operation_queue_test.dart
+)
+
+# Apple release worktrees carry additional iOS-only regression suites. Keep
+# the shared-main gate runnable while automatically including those suites
+# whenever the Apple files are present.
+for apple_test in \
   test/apple_storekit_billing_controller_test.dart \
-  test/apple_storage_plan_selector_test.dart
+  test/apple_storage_plan_selector_test.dart; do
+  if [[ -f "$apple_test" ]]; then
+    frontend_tests+=("$apple_test")
+  fi
+done
+
+"$flutter_bin" test "${frontend_tests[@]}"

@@ -8193,7 +8193,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     ).firstMatch(text.trim());
     final query = fileMatch?.group(1)?.trim();
     if (query == null || query.isEmpty) return false;
-    if (vaultFiles.isEmpty && !loadingFiles) await _loadVaultFiles();
+    // Empty while loading is not an authoritative empty inventory. The
+    // loader is single-flight, so this also awaits a request started by a
+    // newly recreated post-login session before resolving the delete target.
+    if (vaultFiles.isEmpty) await _loadVaultFiles();
     final resolved = resolveLocalVaultFileLookup(
       query: query,
       files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
@@ -16832,7 +16835,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
 
       Future<void> loadLegacyCredentials() async {
-        if (vaultLogins.isEmpty && !loadingLogins) {
+        // A session-recreated dashboard may already have started this load.
+        // Always join the single-flight before treating the inventory as
+        // empty; `loadingLogins` describes progress, not an empty result.
+        if (vaultLogins.isEmpty) {
           try {
             await _loadVaultLogins();
           } catch (_) {
@@ -17155,7 +17161,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final query = extractLocalFileLookupQuery(text);
     if (query == null) return false;
 
-    if (vaultFiles.isEmpty && !loadingFiles) {
+    // Join an active post-login inventory request before deciding that the
+    // requested file is absent. `_loadVaultFiles` coalesces concurrent calls.
+    if (vaultFiles.isEmpty) {
       await _loadVaultFiles();
     }
     if (!mounted) return true;
