@@ -49,6 +49,21 @@ String filenameWithChosenTitle({
   return '$title$extension';
 }
 
+/// Selects the normal user-facing name for an upload confirmation. A chosen
+/// vault label is authoritative; the transient device filename is only a
+/// fallback when the user did not provide one.
+String uploadConfirmationName({
+  required String originalFilename,
+  String? chosenTitle,
+}) {
+  final title = chosenTitle?.trim();
+  if (title != null && title.isNotEmpty) return title;
+  return filenameWithChosenTitle(
+    originalFilename: originalFilename,
+    chosenTitle: chosenTitle,
+  );
+}
+
 String? _stripExplicitNamingCommand(String text) {
   final patterns = <RegExp>[
     RegExp(
