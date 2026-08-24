@@ -124,15 +124,16 @@ VaultLocalFileLookupMatch? resolveLocalVaultFileLookup({
   scored.sort((a, b) {
     final byScore = b.score.compareTo(a.score);
     if (byScore != 0) return byScore;
-    return a.entry.displayName
+    final byName = a.entry.displayName
         .toLowerCase()
         .compareTo(b.entry.displayName.toLowerCase());
+    if (byName != 0) return byName;
+    return a.entry.id.compareTo(b.entry.id);
   });
-  if (scored.length > 1 &&
-      scored[0].score == scored[1].score &&
-      scored[0].entry.id != scored[1].entry.id) {
-    return null;
-  }
+  // Equal exact filename matches are still authoritative filename evidence.
+  // Pick one stably instead of misreporting a local miss and falling through
+  // to semantic search (which is intentionally unavailable in private
+  // filename-only vaults).
   return scored.first;
 }
 

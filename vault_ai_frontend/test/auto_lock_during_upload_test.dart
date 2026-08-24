@@ -376,10 +376,9 @@ void main() {
       expect(clearSessionStart, greaterThan(-1),
           reason: 'clearSession must exist in main.dart');
       
-      final scope = src.substring(
-        clearSessionStart,
-        (clearSessionStart + 2000).clamp(0, src.length),
-      );
+      final clearSessionEnd = src.indexOf('void markUnlocked()', clearSessionStart);
+      expect(clearSessionEnd, greaterThan(clearSessionStart));
+      final scope = src.substring(clearSessionStart, clearSessionEnd);
       final hooksIdx = scope.indexOf('_runShutdownHooks();');
       final tokenIdx = scope.indexOf('sessionToken = null;');
       expect(hooksIdx, greaterThan(-1),

@@ -99,9 +99,9 @@ void main() {
       expect(src, contains('name: a.displayName ?? a.name'));
       expect(
         src,
-        contains(
-          '!sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty)',
-        ),
+        contains(RegExp(
+          r'!sending\s*&&\s*\(input\.text\.trim\(\)\.isNotEmpty\s*\|\|\s*attachments\.isNotEmpty',
+        )),
       );
       expect(src, contains('uploadCommitted && hadAttachments'));
       expect(
