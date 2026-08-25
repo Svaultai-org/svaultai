@@ -316,7 +316,8 @@ def upsert_verified_entitlement(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT entitlement_id, account_id, status, last_provider_event_at
+            SELECT entitlement_id, account_id, status, last_provider_event_at,
+                   metadata_jsonb, auto_renewing, cancel_at_period_end
               FROM billing_entitlements
              WHERE provider = %s
                AND (
@@ -347,6 +348,28 @@ def upsert_verified_entitlement(
 
         previous = str(existing["status"]) if existing else "none"
         metadata = json.loads(json.dumps(dict(update.metadata or {}), default=str))
+        if existing and update.provider == "apple":
+            prior_metadata = existing.get("metadata_jsonb") or {}
+            if isinstance(prior_metadata, Mapping):
+                # A client transaction JWS contains no renewal state. Never let
+                # it erase newer authority established by signedRenewalInfo.
+                if metadata.get("apple_auto_renew_state") == "unknown":
+                    for key in (
+                        "apple_auto_renew_state", "renewal_product_id",
+                        "renewal_info_verified",
+                    ):
+                        if key in prior_metadata:
+                            metadata[key] = prior_metadata[key]
+                    update = VerifiedEntitlementUpdate(
+                        **{
+                            **update.__dict__,
+                            "auto_renewing": bool(existing["auto_renewing"]),
+                            "cancel_at_period_end": bool(
+                                existing["cancel_at_period_end"]
+                            ),
+                            "metadata": metadata,
+                        }
+                    )
         if existing:
             entitlement_id = str(existing["entitlement_id"])
             cur.execute(

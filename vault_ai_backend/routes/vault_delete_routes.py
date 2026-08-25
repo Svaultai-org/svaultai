@@ -36,6 +36,7 @@ import base64
 import hmac
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -78,6 +79,10 @@ class DeleteStatusResponse(BaseModel):
     requires_trusted_device:  bool
     has_active_subscription:  bool
     subscription_status:      str
+    is_final_vault:           bool
+    deletion_allowed:         bool
+    apple_subscription_state: str
+    retryable:                bool = False
 
 
 class DeleteRequestResponse(BaseModel):
@@ -174,35 +179,154 @@ def _verify_challenge(
     return tok_expires_ts > now
 
 
-def _get_subscription_state(vault_id: str) -> tuple[bool, str]:
+def _get_deletion_billing_state(vault_id: str) -> dict[str, object]:
+    """Return the authoritative final-vault Apple deletion decision.
 
-    try:
-        from billing import (
-            _STATUSES_THAT_GRANT_STORAGE,
-            get_account_id_for_vault,
-        )
-        account_id = get_account_id_for_vault(vault_id)
-    except Exception:
-        return (False, "unknown")
-    if not account_id:
-        return (False, "none")
+    No local StoreKit state and no legacy account_subscriptions row participates
+    in this decision. An indeterminate authoritative state fails closed.
+    """
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT COALESCE(status, 'none') AS status
-            FROM account_subscriptions
-            WHERE account_id = %s
+            SELECT account_id FROM vaults WHERE vault_id = %s LIMIT 1
+            """,
+            (vault_id,),
+        )
+        vault = cur.fetchone()
+        if not vault or not vault.get("account_id"):
+            return {
+                "is_final_vault": True, "deletion_allowed": False,
+                "has_active_subscription": False,
+                "subscription_status": "unknown",
+                "apple_subscription_state": "temporarily_unavailable",
+                "retryable": True,
+            }
+        account_id = str(vault["account_id"])
+        cur.execute(
+            "SELECT COUNT(*) AS count FROM vaults WHERE account_id = %s",
+            (account_id,),
+        )
+        count_row = cur.fetchone() or {}
+        is_final = int(count_row.get("count") or 0) <= 1
+        if not is_final:
+            return {
+                "is_final_vault": False, "deletion_allowed": True,
+                "has_active_subscription": False,
+                "subscription_status": "not_applicable",
+                "apple_subscription_state": "not_final_vault",
+                "retryable": False,
+            }
+        cur.execute(
+            """
+            SELECT status, current_period_end, auto_renewing,
+                   cancel_at_period_end, metadata_jsonb
+              FROM billing_entitlements
+             WHERE account_id = %s AND provider = 'apple'
+               AND verification_state = 'verified'
+             ORDER BY last_verified_at DESC NULLS LAST, updated_at DESC
             """,
             (account_id,),
         )
-        row = cur.fetchone()
+        rows = cur.fetchall() or []
     finally:
         conn.close()
-    subscription_status = str(row["status"]) if row else "none"
-    has_active = subscription_status in _STATUSES_THAT_GRANT_STORAGE
-    return (has_active, subscription_status)
+    if not rows:
+        return {
+            "is_final_vault": True, "deletion_allowed": True,
+            "has_active_subscription": False, "subscription_status": "none",
+            "apple_subscription_state": "none", "retryable": False,
+        }
+    now = datetime.now(timezone.utc)
+    granting = []
+    for row in rows:
+        period_end = row.get("current_period_end")
+        if period_end and period_end.tzinfo is None:
+            period_end = period_end.replace(tzinfo=timezone.utc)
+        if str(row.get("status") or "") in {
+            "active", "reactivated", "grace_period",
+        } and (period_end is None or period_end > now):
+            granting.append(row)
+    if not granting:
+        return {
+            "is_final_vault": True, "deletion_allowed": True,
+            "has_active_subscription": False,
+            "subscription_status": str(rows[0].get("status") or "expired"),
+            "apple_subscription_state": "resolved", "retryable": False,
+        }
+    if len(granting) != 1:
+        return {
+            "is_final_vault": True, "deletion_allowed": False,
+            "has_active_subscription": True, "subscription_status": "conflict",
+            "apple_subscription_state": "temporarily_unavailable",
+            "retryable": True,
+        }
+    row = granting[0]
+    metadata = row.get("metadata_jsonb") or {}
+    renewal_state = (
+        str(metadata.get("apple_auto_renew_state") or "unknown").lower()
+        if isinstance(metadata, dict) else "unknown"
+    )
+    if renewal_state == "disabled" and bool(row.get("cancel_at_period_end")):
+        return {
+            "is_final_vault": True, "deletion_allowed": True,
+            "has_active_subscription": True,
+            "subscription_status": str(row.get("status") or "active"),
+            "apple_subscription_state": "canceled_pending_expiration",
+            "retryable": False,
+        }
+    if renewal_state == "enabled" and bool(row.get("auto_renewing")):
+        return {
+            "is_final_vault": True, "deletion_allowed": False,
+            "has_active_subscription": True,
+            "subscription_status": str(row.get("status") or "active"),
+            "apple_subscription_state": "active_auto_renewing",
+            "retryable": False,
+        }
+    return {
+        "is_final_vault": True, "deletion_allowed": False,
+        "has_active_subscription": True, "subscription_status": "unknown",
+        "apple_subscription_state": "temporarily_unavailable",
+        "retryable": True,
+    }
+
+
+def _require_authoritative_final_vault_deletion_allowed(vault_id: str) -> None:
+    try:
+        decision = _get_deletion_billing_state(vault_id)
+    except Exception as exc:
+        logger.warning("[VAULT-DELETE] Apple entitlement check unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "apple_subscription_status_temporarily_unavailable",
+                "message": "Apple subscription status is temporarily unavailable. Please try again.",
+                "retryable": True,
+            },
+        ) from exc
+    if bool(decision["deletion_allowed"]):
+        return
+    if decision["apple_subscription_state"] == "active_auto_renewing":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "active_apple_subscription_must_be_canceled_before_final_deletion",
+                "message": (
+                    "Cancel the active App Store subscription before deleting "
+                    "your final SVaultAI vault."
+                ),
+                "retryable": False,
+            },
+        )
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "apple_subscription_status_temporarily_unavailable",
+            "message": "Apple subscription status is temporarily unavailable. Please try again.",
+            "retryable": True,
+        },
+    )
 
 
 def _load_pin_material(vault_id: str) -> tuple[str, str, int]:
@@ -267,15 +391,25 @@ def get_delete_status(
             subject=sec_log.short_hash(principal["vault_id"]),
         )
         raise
-    has_active, sub_status = _get_subscription_state(
-        principal["vault_id"],
-    )
+    try:
+        decision = _get_deletion_billing_state(principal["vault_id"])
+    except Exception:
+        decision = {
+            "is_final_vault": True, "deletion_allowed": False,
+            "has_active_subscription": False, "subscription_status": "unknown",
+            "apple_subscription_state": "temporarily_unavailable",
+            "retryable": True,
+        }
     return DeleteStatusResponse(
         confirmation_phrase=CONFIRMATION_PHRASE,
         requires_pin=True,
         requires_trusted_device=True,
-        has_active_subscription=bool(has_active),
-        subscription_status=sub_status,
+        has_active_subscription=bool(decision["has_active_subscription"]),
+        subscription_status=str(decision["subscription_status"]),
+        is_final_vault=bool(decision["is_final_vault"]),
+        deletion_allowed=bool(decision["deletion_allowed"]),
+        apple_subscription_state=str(decision["apple_subscription_state"]),
+        retryable=bool(decision["retryable"]),
     )
 
 
@@ -366,6 +500,11 @@ def confirm_delete(
                 "message": "PIN is incorrect.",
             },
         )
+
+    # Deliberately re-read authoritative billing state after every user gate
+    # and immediately before the destructive operation. This closes the
+    # request/confirmation time-of-check gap without trusting client state.
+    _require_authoritative_final_vault_deletion_allowed(vault_id)
 
     try:
         delete_vault_and_all_data(

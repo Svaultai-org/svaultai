@@ -927,6 +927,59 @@ def test_apple_catalog_is_explicit_and_transaction_mapping_is_verified(monkeypat
     assert update.status == "active"
     assert update.original_transaction_id == "otx-1"
     assert update.entitlement_bytes == 53_687_091_200
+    assert update.metadata["apple_auto_renew_state"] == "unknown"
+    assert update.auto_renewing is False
+
+
+def test_apple_signed_renewal_info_is_authoritative(monkeypatch):
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "svaultai.storage.50gb.monthly": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "plan_id": "monthly",
+                "billing_period": "P1M",
+            },
+        }),
+    )
+    transaction = SimpleNamespace(
+        productId="svaultai.storage.50gb.monthly",
+        transactionId="tx-renewal",
+        originalTransactionId="otx-renewal",
+        purchaseDate=1_786_000_000_000,
+        expiresDate=4_102_444_800_000,
+        revocationDate=None,
+        signedDate=1_786_000_001_000,
+    )
+    update = apple_billing._transaction_update(
+        transaction,
+        environment="sandbox",
+        notification_type="DID_CHANGE_RENEWAL_STATUS",
+        subtype="AUTO_RENEW_DISABLED",
+        renewal_info=SimpleNamespace(
+            autoRenewStatus=0,
+            autoRenewProductId="svaultai.storage.50gb.monthly",
+        ),
+    )
+    assert update.status == "active"
+    assert update.auto_renewing is False
+    assert update.cancel_at_period_end is True
+    assert update.metadata["apple_auto_renew_state"] == "disabled"
+    assert update.metadata["renewal_info_verified"] is True
+
+
+def test_apple_account_token_mismatch_has_typed_ownership_error(monkeypatch):
+    verifier = SimpleNamespace(verify_transaction=lambda _signed: SimpleNamespace(
+        appAccountToken="00000000-0000-0000-0000-000000000000",
+    ))
+    with pytest.raises(apple_billing.AppleTransactionOwnershipError):
+        apple_billing.verify_and_apply_apple_transaction(
+            account_id="account-a",
+            signed_transaction="signed",
+            environment="sandbox",
+            verifier=verifier,
+        )
 
 
 @pytest.mark.asyncio
@@ -1155,6 +1208,81 @@ async def test_apple_sandbox_notification_is_verified_logged_and_idempotent(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("event_type", "subtype", "auto_renew_status", "expected_state"),
+    [
+        ("DID_RENEW", "", 1, "enabled"),
+        ("DID_CHANGE_RENEWAL_STATUS", "AUTO_RENEW_DISABLED", 0, "disabled"),
+        ("DID_CHANGE_RENEWAL_PREF", "UPGRADE", 1, "enabled"),
+        ("EXPIRED", "VOLUNTARY", 0, "disabled"),
+        ("REFUND", "", 0, "disabled"),
+        ("REVOKE", "", 0, "disabled"),
+    ],
+)
+async def test_apple_notification_persists_signed_renewal_state(
+    monkeypatch, event_type, subtype, auto_renew_status, expected_state,
+):
+    product_id = "svaultai.storage.50gb.monthly"
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({product_id: {
+            "quantity": 1,
+            "entitlement_bytes": 53_687_091_200,
+            "plan_id": "monthly",
+            "billing_period": "P1M",
+        }}),
+    )
+    transaction = SimpleNamespace(
+        productId=product_id, transactionId="tx-event",
+        originalTransactionId="otx-event",
+        purchaseDate=1_786_000_000_000,
+        expiresDate=4_102_444_800_000,
+        revocationDate=(1_786_000_002_000 if event_type == "REVOKE" else None),
+        signedDate=1_786_000_001_000,
+    )
+    renewal = SimpleNamespace(
+        autoRenewStatus=auto_renew_status, autoRenewProductId=product_id,
+    )
+    notification = SimpleNamespace(
+        notificationUUID=f"event-{event_type}",
+        notificationType=event_type,
+        subtype=subtype,
+        data=SimpleNamespace(
+            signedTransactionInfo="signed-transaction",
+            signedRenewalInfo="signed-renewal",
+        ),
+    )
+    verifier = SimpleNamespace(
+        verify_transaction=lambda value: transaction,
+        verify_renewal_info=lambda value: renewal,
+    )
+    monkeypatch.setattr(
+        apple_billing, "decode_verified_apple_notification",
+        lambda _payload: ("sandbox", verifier, notification),
+    )
+    monkeypatch.setattr(ent, "claim_provider_event", lambda **_kwargs: True)
+    monkeypatch.setattr(ent, "finish_provider_event", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        ent, "find_account_for_original_transaction",
+        lambda *_args: "account-1",
+    )
+    monkeypatch.setattr(ent, "find_account_for_purchase", lambda *_args: None)
+    captured = []
+    monkeypatch.setattr(
+        ent, "upsert_verified_entitlement",
+        lambda account_id, update: captured.append(update) or ("e1", "updated"),
+    )
+
+    result = await provider_routes.apple_notifications_v2(
+        _AppleJSONRequest({"signedPayload": "signed-notification"}),
+    )
+
+    assert result["outcome"] == "applied"
+    assert captured[0].metadata["apple_auto_renew_state"] == expected_state
+    assert captured[0].auto_renewing is (auto_renew_status == 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("payload", "error", "expected_status"),
     [
         ({}, None, 400),
@@ -1278,6 +1406,73 @@ def test_apple_notification_verifier_rejects_sandbox_when_disabled(monkeypatch):
     assert calls == ["production"]
 
 
+@pytest.mark.asyncio
+async def test_apple_client_transaction_falls_back_to_sandbox_for_testflight(
+    monkeypatch,
+):
+    calls = []
+
+    def _verify(**kwargs):
+        calls.append(kwargs["environment"])
+        if kwargs["environment"] == "production":
+            raise apple_billing.AppleTransactionVerificationError(
+                "wrong environment"
+            )
+        return {
+            "verified": True,
+            "provider": "apple",
+            "product_id": "svaultai.storage.50gb.monthly",
+            "status": "active",
+        }
+
+    monkeypatch.setenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "true")
+    monkeypatch.setattr(
+        apple_billing, "verify_and_apply_apple_transaction", _verify,
+    )
+    monkeypatch.setattr(provider_routes, "_account_id", lambda _principal: "account")
+
+    result = await provider_routes.verify_apple_transaction(
+        provider_routes.AppleTransactionRequest(
+            signed_transaction="synthetic-sandbox-jws",
+            environment="production",
+        ),
+        principal={"vault_id": "synthetic-vault"},
+    )
+
+    assert calls == ["production", "sandbox"]
+    assert result["verified"] is True
+    assert result["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_apple_client_transaction_never_tries_sandbox_when_disabled(
+    monkeypatch,
+):
+    calls = []
+
+    def _verify(**kwargs):
+        calls.append(kwargs["environment"])
+        raise apple_billing.AppleTransactionVerificationError("invalid")
+
+    monkeypatch.setenv("VAULTAI_APPLE_ACCEPT_SANDBOX", "false")
+    monkeypatch.setattr(
+        apple_billing, "verify_and_apply_apple_transaction", _verify,
+    )
+    monkeypatch.setattr(provider_routes, "_account_id", lambda _principal: "account")
+
+    with pytest.raises(HTTPException) as rejected:
+        await provider_routes.verify_apple_transaction(
+            provider_routes.AppleTransactionRequest(
+                signed_transaction="synthetic-invalid-jws",
+                environment="production",
+            ),
+            principal={"vault_id": "synthetic-vault"},
+        )
+
+    assert rejected.value.status_code == 400
+    assert calls == ["production"]
+
+
 def test_apple_refund_and_revocation_remove_grant():
     future = datetime(2099, 1, 1, tzinfo=timezone.utc)
     assert ent.normalize_apple_transaction_state(
@@ -1286,6 +1481,42 @@ def test_apple_refund_and_revocation_remove_grant():
     assert ent.normalize_apple_transaction_state(
         notification_type="REVOKE", expires_at=future, revoked=True,
     ) == "revoked"
+
+
+def test_apple_transaction_requires_app_account_token(monkeypatch):
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "svaultai.storage.50gb.monthly": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "plan_id": "monthly",
+            },
+        }),
+    )
+    transaction = SimpleNamespace(
+        productId="svaultai.storage.50gb.monthly",
+        transactionId="tx-1",
+        originalTransactionId="otx-1",
+        appAccountToken=None,
+        purchaseDate=1_786_000_000_000,
+        expiresDate=4_102_444_800_000,
+        revocationDate=None,
+        signedDate=1_786_000_001_000,
+    )
+    verifier = SimpleNamespace(verify_transaction=lambda _jws: transaction)
+    monkeypatch.setattr(
+        apple_billing,
+        "upsert_verified_entitlement",
+        lambda *_args, **_kwargs: pytest.fail("unbound purchase must not grant"),
+    )
+    with pytest.raises(apple_billing.AppleTransactionVerificationError):
+        apple_billing.verify_and_apply_apple_transaction(
+            account_id="account-1",
+            signed_transaction="signed-jws",
+            environment="production",
+            verifier=verifier,
+        )
 
 
 def test_apple_library_enums_use_wire_values():

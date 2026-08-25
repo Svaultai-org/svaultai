@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from billing_entitlements import (
+    PurchaseAlreadyBoundError,
     VerifiedEntitlementUpdate,
     canonical_storage_display_tier,
     normalize_apple_transaction_state,
@@ -29,6 +30,10 @@ class AppleBillingConfigurationError(RuntimeError):
 
 class AppleTransactionVerificationError(RuntimeError):
     pass
+
+
+class AppleTransactionOwnershipError(AppleTransactionVerificationError):
+    """A valid Apple purchase is bound to a different SVaultAI account."""
 
 
 def apple_app_account_token(account_id: str) -> str:
@@ -161,6 +166,29 @@ class AppleSignedDataVerifier:
                 "Apple notification signature verification failed"
             ) from exc
 
+    def verify_renewal_info(self, signed_renewal_info: str):
+        try:
+            return self._delegate.verify_and_decode_renewal_info(
+                signed_renewal_info,
+            )
+        except Exception as exc:
+            raise AppleTransactionVerificationError(
+                "Apple renewal signature verification failed"
+            ) from exc
+
+
+def _apple_auto_renew_state(renewal_info: Any) -> str:
+    if renewal_info is None:
+        return "unknown"
+    status = _attr(renewal_info, "autoRenewStatus")
+    raw = getattr(status, "value", status)
+    text = str("" if raw is None else raw).strip().upper()
+    if text in {"1", "ON", "AUTO_RENEW_ENABLED", "TRUE"}:
+        return "enabled"
+    if text in {"0", "OFF", "AUTO_RENEW_DISABLED", "FALSE"}:
+        return "disabled"
+    return "unknown"
+
 
 def _transaction_update(
     transaction: Any,
@@ -169,6 +197,7 @@ def _transaction_update(
     notification_type: str,
     subtype: str = "",
     event_id: Optional[str] = None,
+    renewal_info: Any = None,
 ) -> VerifiedEntitlementUpdate:
     notification_type = enum_text(notification_type)
     subtype = enum_text(subtype)
@@ -192,6 +221,14 @@ def _transaction_update(
         expires_at=expires,
         revoked=revoked,
     )
+    renewal_state = _apple_auto_renew_state(renewal_info)
+    renewal_product_id = str(
+        _attr(renewal_info, "autoRenewProductId") or ""
+    )
+    if renewal_product_id and renewal_product_id not in catalog:
+        raise AppleBillingConfigurationError(
+            "Apple renewal product is not configured"
+        )
     return VerifiedEntitlementUpdate(
         provider="apple",
         external_purchase_id=transaction_id,
@@ -203,7 +240,8 @@ def _transaction_update(
         status=normalized,
         provider_status=(notification_type or "TRANSACTION_VERIFIED").upper(),
         environment=environment,
-        auto_renewing=normalized in {"active", "reactivated", "grace_period"},
+        auto_renewing=renewal_state == "enabled",
+        cancel_at_period_end=renewal_state == "disabled",
         current_period_start=purchased,
         current_period_end=expires,
         provider_event_at=(
@@ -218,6 +256,9 @@ def _transaction_update(
             "display_capacity": canonical_storage_display_tier(
                 int(config["entitlement_bytes"]),
             ),
+            "apple_auto_renew_state": renewal_state,
+            "renewal_product_id": renewal_product_id or None,
+            "renewal_info_verified": renewal_info is not None,
         },
     )
 
@@ -234,16 +275,23 @@ def verify_and_apply_apple_transaction(
     verifier = verifier or AppleSignedDataVerifier(environment)
     transaction = verifier.verify_transaction(signed_transaction)
     supplied_account = str(_attr(transaction, "appAccountToken") or "")
-    if supplied_account and supplied_account.lower() != apple_app_account_token(account_id):
-        raise AppleTransactionVerificationError(
-            "Apple purchase is associated with a different SVaultAI account"
+    if supplied_account.lower() != apple_app_account_token(account_id):
+        raise AppleTransactionOwnershipError(
+            "Apple purchase is not associated with this SVaultAI account"
         )
     update = _transaction_update(
         transaction,
         environment=environment,
         notification_type="TRANSACTION_VERIFIED",
     )
-    entitlement_id, transition = upsert_verified_entitlement(account_id, update)
+    try:
+        entitlement_id, transition = upsert_verified_entitlement(
+            account_id, update,
+        )
+    except PurchaseAlreadyBoundError as exc:
+        raise AppleTransactionOwnershipError(
+            "Apple purchase is already bound to another SVaultAI account"
+        ) from exc
     return {
         "verified": True,
         "provider": "apple",

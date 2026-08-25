@@ -205,6 +205,9 @@ class TestPart3_FinalConfirmationCascades(unittest.TestCase):
             "routes.vault_delete_routes._verify_pin",
             return_value=True,
         ), mock.patch(
+            "routes.vault_delete_routes."
+            "_require_authoritative_final_vault_deletion_allowed",
+        ), mock.patch(
             "routes.vault_delete_routes.delete_vault_and_all_data"
         ) as mock_delete, mock.patch(
             "routes.vault_delete_routes.revoke_all_sessions_for_vault"
