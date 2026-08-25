@@ -7370,6 +7370,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _openCiphertextSecureItemDirect(VaultLoginItem item) async {
+    final fields = item.localFields ?? const <String, dynamic>{};
+    String first(Iterable<String> keys) {
+      for (final key in keys) {
+        final value = fields[key]?.toString() ?? '';
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    if (!mounted) return;
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      msgs.add(_Msg(
+        'assistant',
+        'Here is your ${item.service} login.',
+        kind: ChatMessage.kInlineCredential,
+        payload: <String, dynamic>{
+          'service': item.service,
+          'username': first(const ['username', 'email', 'login_id']),
+          'password': first(const ['password', 'secure_value', 'value']),
+          'fields': fields,
+        },
+      ));
+    });
+    _scrollToBottom();
+  }
+
   CredentialV2Repository? _credentialV2Repository(AppState app) {
     const qaDiagnostics =
         bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
@@ -7918,7 +7946,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         });
         if (matches.isEmpty && legacyMatches.length == 1) {
           final legacy = legacyMatches.single;
-          await _openLegacySecureItemDirect(legacy.service, legacy.itemType);
+          if (legacy.cryptoVersion == credentialMetadataCryptoVersion) {
+            await _openCiphertextSecureItemDirect(legacy);
+          } else {
+            await _openLegacySecureItemDirect(legacy.service, legacy.itemType);
+          }
           return true;
         }
         if (matches.length + legacyMatches.length > 1) {
@@ -13589,6 +13621,54 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       } catch (error) {
         legacyLoadError = error;
+      }
+
+      // New ZK vaults persist vault_items with opaque metadata columns only.
+      // Hydrate those durable rows locally under the active MVK; the legacy
+      // plaintext list endpoint intentionally cannot see them.
+      try {
+        final mvk = zk_mvk_store.ZkActiveMvk.current();
+        if (mvk != null) {
+          final metadataKey =
+              await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
+          final opaqueRows = await client.listZkVaultItemCiphertexts(
+            authToken: token,
+          );
+          for (final row in opaqueRows) {
+            try {
+              Future<String> decryptText(String key) async => utf8.decode(
+                    await vk_hier.aesGcmUnwrap(
+                      metadataKey,
+                      vk_hier.b64urlDecode(row[key]?.toString() ?? ''),
+                    ),
+                  );
+              final itemType = await decryptText('item_type_ciphertext');
+              if (isSystemHiddenItemType(itemType)) continue;
+              final service = await decryptText('service_ciphertext');
+              final payload =
+                  jsonDecode(await decryptText('payload_ciphertext'));
+              if (payload is! Map || service.trim().isEmpty) continue;
+              final payloadMap = Map<String, dynamic>.from(payload);
+              final rawFields = payloadMap['fields'];
+              parsed.add(VaultLoginItem(
+                service: service,
+                itemType: itemType,
+                createdAt:
+                    DateTime.tryParse(row['created_at']?.toString() ?? ''),
+                recordId: 'vault-item-${row['item_id']}',
+                cryptoVersion: credentialMetadataCryptoVersion,
+                localFields: rawFields is Map
+                    ? Map<String, dynamic>.from(rawFields)
+                    : payloadMap,
+              ));
+            } on Object {
+              // One malformed or foreign-version row must not blank siblings.
+            }
+          }
+        }
+      } catch (error) {
+        legacyLoadError = error;
+        legacyLoadCompleted = false;
       }
 
       final v2Repository = _credentialV2Repository(app);
@@ -19621,6 +19701,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           onViewItem: (item) {
             if (item.cryptoVersion == credentialV2CryptoVersion) {
               unawaited(_revealCredentialV2(item));
+            } else if (item.cryptoVersion == credentialMetadataCryptoVersion) {
+              unawaited(_openCiphertextSecureItemDirect(item));
             } else {
               _openSecureItemView(item.service, item.itemType);
             }

@@ -4681,6 +4681,29 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<List<Map<String, dynamic>>> listZkVaultItemCiphertexts({
+    required String authToken,
+  }) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/vault/ciphertext/vault-items'),
+      headers: _defaultHeaders(authToken: authToken),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      throw Exception(
+        'ZK ciphertext vault-item list failed (${response.statusCode})',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) {
+      throw const FormatException('Invalid ciphertext vault-item list');
+    }
+    return decoded
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList(growable: false);
+  }
+
   Future<Map<String, dynamic>> deleteVaultSecureItem({
     required String vaultName,
     required String service,

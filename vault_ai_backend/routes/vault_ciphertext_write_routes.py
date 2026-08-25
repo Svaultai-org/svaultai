@@ -133,6 +133,14 @@ class VaultItemUpsertResponse(BaseModel):
     created: bool
 
 
+class VaultItemCiphertextResponse(BaseModel):
+    item_id: int
+    item_type_ciphertext: str
+    service_ciphertext: str
+    payload_ciphertext: str
+    created_at: str
+
+
 @router.post(
     "/vault/ciphertext/vault-items",
     response_model=VaultItemUpsertResponse,
@@ -204,6 +212,50 @@ def vault_item_upsert_ciphertext(
             raise HTTPException(status_code=404, detail="item not found")
         conn.commit()
         return VaultItemUpsertResponse(item_id=payload.item_id, created=False)
+    finally:
+        conn.close()
+
+
+@router.get(
+    "/vault/ciphertext/vault-items",
+    response_model=list[VaultItemCiphertextResponse],
+)
+def list_vault_item_ciphertexts(
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> list[VaultItemCiphertextResponse]:
+    """Return only opaque, vault-scoped rows for client-side MVK hydration."""
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, item_type_ciphertext, service_ciphertext,
+                   payload_ciphertext, created_at
+              FROM vault_items
+             WHERE vault_id = %s
+               AND item_type_ciphertext IS NOT NULL
+               AND service_ciphertext IS NOT NULL
+               AND payload_ciphertext IS NOT NULL
+             ORDER BY created_at DESC, id DESC
+            """,
+            (principal["vault_id"],),
+        )
+        return [
+            VaultItemCiphertextResponse(
+                item_id=int(row["id"]),
+                item_type_ciphertext=base64.urlsafe_b64encode(
+                    bytes(row["item_type_ciphertext"]),
+                ).decode().rstrip("="),
+                service_ciphertext=base64.urlsafe_b64encode(
+                    bytes(row["service_ciphertext"]),
+                ).decode().rstrip("="),
+                payload_ciphertext=base64.urlsafe_b64encode(
+                    bytes(row["payload_ciphertext"]),
+                ).decode().rstrip("="),
+                created_at=row["created_at"].isoformat(),
+            )
+            for row in (cur.fetchall() or [])
+        ]
     finally:
         conn.close()
 

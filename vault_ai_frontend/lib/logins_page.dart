@@ -11,6 +11,7 @@ const bool qaCredentialV2TargetingEnabled = bool.fromEnvironment(
   defaultValue: false,
 );
 const String _credentialV2CryptoVersion = 'client_mvk_v2';
+const String credentialMetadataCryptoVersion = 'client_mvk_metadata_v1';
 
 class VaultLoginItem {
   final String service;
@@ -20,6 +21,7 @@ class VaultLoginItem {
   final String cryptoVersion;
   final String? migrationState;
   final String? verificationState;
+  final Map<String, dynamic>? localFields;
 
   const VaultLoginItem({
     required this.service,
@@ -29,6 +31,7 @@ class VaultLoginItem {
     this.cryptoVersion = 'legacy_v1',
     this.migrationState,
     this.verificationState,
+    this.localFields,
   });
 
   factory VaultLoginItem.fromJson(Map<String, dynamic> json) {
