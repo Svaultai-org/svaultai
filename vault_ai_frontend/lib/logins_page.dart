@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'services/credential_inventory_view_state.dart';
 import 'l10n/app_localizations.dart';
 import 'services/credential_v2_repository.dart';
 import 'services/credential_v2_qa_diagnostics.dart';
@@ -369,7 +371,13 @@ class _LoginsPageState extends State<LoginsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.error != null) {
+    final inventoryState = resolveCredentialInventoryViewState(
+      loading: widget.isLoading,
+      authoritativeLoadCompleted: widget.hasLoaded,
+      itemCount: widget.logins.length,
+      hasError: widget.error != null,
+    );
+    if (inventoryState == CredentialInventoryViewState.error) {
       return _Shell(
         child: _LoadingErrorEmptyState(
           key: const Key('logins_page_error_state'),
@@ -379,7 +387,7 @@ class _LoginsPageState extends State<LoginsPage> {
         ),
       );
     }
-    if (widget.isLoading || !widget.hasLoaded) {
+    if (inventoryState == CredentialInventoryViewState.loading) {
       return _Shell(
         child: _LoadingState(
           key: const Key('logins_page_loading_state'),
@@ -390,7 +398,8 @@ class _LoginsPageState extends State<LoginsPage> {
     final userVisibleLogins = widget.logins
         .where((i) => !isSystemHiddenItemType(i.itemType))
         .toList(growable: false);
-    if (userVisibleLogins.isEmpty) {
+    if (inventoryState == CredentialInventoryViewState.readyEmpty ||
+        userVisibleLogins.isEmpty) {
       return _Shell(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

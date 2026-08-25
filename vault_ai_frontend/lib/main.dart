@@ -107,6 +107,7 @@ import 'services/crypto_chat_live_cache.dart';
 import 'services/memory_v2_repository.dart';
 import 'services/file_v2_repository.dart';
 import 'services/file_inventory_view_state.dart';
+import 'services/credential_inventory_view_state.dart';
 import 'services/wallet_backup_v2_repository.dart';
 import 'services/wallet_v2_repository.dart';
 import 'services/qa_file_picker_override.dart';
@@ -7281,6 +7282,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool _privateDomainArbitrationInFlight = false;
   bool _credentialLookupInFlight = false;
   Future<void>? _vaultFilesLoadFuture;
+  Future<void>? _vaultLoginsLoadFuture;
+  final CredentialInventorySessionBinding _credentialInventorySession =
+      CredentialInventorySessionBinding();
   BillingLoadState? _cryptoBillingBannerLastState;
 
   void _qaV2CreateTrace(String stage) {
@@ -9218,7 +9222,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   FolderTreeData? _folderTreeData;
   String _folderSearchQuery = '';
   List<VaultLoginItem> vaultLogins = [];
-  Future<void>? _vaultLoginsLoadFuture;
 
   _DashboardSection selectedSection = _DashboardSection.chat;
   final CryptoWalletMainnetSendApprovalSession _chatMainnetSendApprovalSession =
@@ -13517,7 +13520,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
+  void _bindCredentialInventoryToCurrentSession(AppState app) {
+    if (!_credentialInventorySession.bind(app.sessionEpoch)) return;
+    _vaultLoginsLoadFuture = null;
+    vaultLogins = <VaultLoginItem>[];
+    loadingLogins = false;
+    hasLoadedSecureItems = false;
+    secureItemsError = null;
+  }
+
   Future<void> _loadVaultLogins() {
+    final app = context.read<AppState>();
+    _bindCredentialInventoryToCurrentSession(app);
     final active = _vaultLoginsLoadFuture;
     if (active != null) return active;
     final next = _loadVaultLoginsOnce();
@@ -13548,6 +13562,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
       final parsed = <VaultLoginItem>[];
+      var legacyLoadCompleted = false;
+      var v2LoadCompleted = false;
+      Object? legacyLoadError;
+      Object? v2LoadError;
 
       // Legacy and v2 are independent sources. A v2-only vault must remain
       // listable even when the legacy endpoint has no corresponding row.
@@ -13557,6 +13575,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           pin: pin,
           authToken: token,
         );
+        legacyLoadCompleted = true;
         final rawItems = result['items'];
         if (rawItems is List) {
           for (final item in rawItems) {
@@ -13568,21 +13587,41 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             }
           }
         }
-      } catch (_) {
-        // Preserve v2 discovery below; legacy absence is not a fatal error.
+      } catch (error) {
+        legacyLoadError = error;
       }
 
       final v2Repository = _credentialV2Repository(app);
       if (v2Repository != null) {
-        final v2Records = await v2Repository.listDecrypted();
-        parsed.addAll(v2Records.map((record) => VaultLoginItem(
-              service: record.plaintext.service,
-              itemType: 'login',
-              recordId: record.recordId,
-              cryptoVersion: credentialV2CryptoVersion,
-              migrationState: record.migrationState,
-              verificationState: record.verificationState,
-            )));
+        try {
+          final v2Records = await v2Repository.listDecrypted();
+          v2LoadCompleted = true;
+          parsed.addAll(v2Records.map((record) => VaultLoginItem(
+                service: record.plaintext.service,
+                itemType: 'login',
+                recordId: record.recordId,
+                cryptoVersion: credentialV2CryptoVersion,
+                migrationState: record.migrationState,
+                verificationState: record.verificationState,
+              )));
+        } catch (error) {
+          v2LoadError = error;
+        }
+      } else {
+        v2LoadCompleted = true;
+      }
+
+      // The page is a merged legacy + V2 inventory. Publishing READY_EMPTY
+      // while either configured source failed turns a transport/session race
+      // into the false claim that the vault has no saved credentials.
+      if (!legacyLoadCompleted || !v2LoadCompleted) {
+        vlog('secure_items.load.incomplete', {
+          'legacy_complete': legacyLoadCompleted,
+          'v2_complete': v2LoadCompleted,
+          'legacy_error_type': legacyLoadError?.runtimeType.toString(),
+          'v2_error_type': v2LoadError?.runtimeType.toString(),
+        });
+        throw StateError('credential_inventory_incomplete');
       }
 
       if (!mounted) return;
@@ -19450,6 +19489,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Widget _buildBody(bool isMobile) {
+    // AppState can recreate a session while this dashboard route remains
+    // mounted. Reset credential-only inventory state before route rendering,
+    // otherwise a completed empty/old list suppresses the new authoritative
+    // Logins-page hydration trigger.
+    _bindCredentialInventoryToCurrentSession(context.read<AppState>());
     switch (selectedSection) {
       case _DashboardSection.dashboard:
         return _buildDashboardHome(isMobile);
