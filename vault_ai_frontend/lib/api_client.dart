@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
+import 'services/credential_lifecycle_diagnostics.dart';
+
 import 'services/session_termination.dart' as st;
 import 'services/release_feature_contract.dart';
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
@@ -3105,6 +3107,8 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    final diag = CredentialLifecycleDiagnostics.instance;
+    diag.boolean('LEGACY_LOAD_STARTED', true);
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
     final response = await http.post(
@@ -3115,6 +3119,7 @@ class VaultAIClient {
         'pin': pin,
       }),
     );
+    diag.integer('LEGACY_LOAD_HTTP_STATUS', response.statusCode);
 
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -3131,6 +3136,9 @@ class VaultAIClient {
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid list secure items response format');
     }
+
+    final rawItems = decoded['items'];
+    diag.integer('LEGACY_RECORD_COUNT', rawItems is List ? rawItems.length : 0);
 
     return decoded;
   }
