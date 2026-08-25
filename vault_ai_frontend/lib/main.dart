@@ -49,6 +49,7 @@ import 'services/credential_v2_qa_diagnostics.dart';
 import 'services/credential_v2_api.dart';
 import 'services/credential_v2_migration.dart';
 import 'services/credential_v2_repository.dart';
+import 'services/credential_lifecycle_diagnostics.dart';
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
@@ -3495,6 +3496,20 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                           ],
                         ),
                       ),
+                      if (credentialLifecycleDiagnosticsEnabled) ...[
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          key: Key('copy_credential_diagnostics'),
+                          value: 'copy_credential_diagnostics',
+                          child: Row(
+                            children: [
+                              Icon(Icons.content_copy, size: 16),
+                              SizedBox(width: 8),
+                              Text('Copy Credential Diagnostics'),
+                            ],
+                          ),
+                        ),
+                      ],
                       const PopupMenuDivider(),
                       PopupMenuItem(
                         value: 'sign_out',
@@ -3504,6 +3519,19 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       ),
                     ],
                     onSelected: (v) async {
+                      if (v == 'copy_credential_diagnostics') {
+                        await Clipboard.setData(ClipboardData(
+                          text: CredentialLifecycleDiagnostics.instance.report(),
+                        ));
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Credential diagnostics copied.'),
+                            ),
+                          );
+                        }
+                        return;
+                      }
                       if (v == 'help_and_faq') {
                         await openHelpCenter(
                           context,
@@ -7839,6 +7867,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (_credentialLookupInFlight) return true;
     final intent = parseCredentialV2LookupIntent(text);
     if (!shouldAttemptCredentialV2Lookup(text)) return false;
+    final diag = CredentialLifecycleDiagnostics.instance;
+    diag.integer('SESSION_EPOCH_AT_CHAT_LOOKUP', app.sessionEpoch);
+    diag.integer('CHAT_LOOKUP_RECORD_COUNT', vaultLogins.length);
+    diag.text(
+      'CHAT_LOOKUP_INVENTORY_STATE',
+      loadingLogins || (!hasLoadedSecureItems && secureItemsError == null)
+          ? 'LOADING'
+          : secureItemsError != null
+              ? 'ERROR'
+              : vaultLogins.isEmpty
+                  ? 'READY_EMPTY'
+                  : 'READY_WITH_ITEMS',
+    );
     vlog('credential.lookup.route', {
       'route': 'local_credential_retrieval',
       'normalized_intent': intent == null ? 'broad_private_lookup' : 'lookup',
@@ -13522,6 +13563,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   void _bindCredentialInventoryToCurrentSession(AppState app) {
     if (!_credentialInventorySession.bind(app.sessionEpoch)) return;
+    final diag = CredentialLifecycleDiagnostics.instance;
+    diag.beginSession(
+      epoch: app.sessionEpoch,
+      vaultScopePresent: app.vaultId != null,
+    );
     _vaultLoginsLoadFuture = null;
     vaultLogins = <VaultLoginItem>[];
     loadingLogins = false;
@@ -13548,6 +13594,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final token = app.sessionToken;
     final loadEpoch = app.sessionEpoch;
     final loadVaultId = app.vaultId;
+    final diag = CredentialLifecycleDiagnostics.instance;
+    diag.integer('SESSION_EPOCH_AT_LOAD_START', loadEpoch);
+    diag.boolean('CURRENT_VAULT_SCOPE_PRESENT', loadVaultId != null);
 
     if (token == null || loadVaultId == null || app.vaultName == null) return;
 
@@ -13576,6 +13625,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           authToken: token,
         );
         legacyLoadCompleted = true;
+        diag.integer('SESSION_EPOCH_AT_LEGACY_COMPLETE', app.sessionEpoch);
         final rawItems = result['items'];
         if (rawItems is List) {
           for (final item in rawItems) {
@@ -13596,6 +13646,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         try {
           final v2Records = await v2Repository.listDecrypted();
           v2LoadCompleted = true;
+          diag.integer('SESSION_EPOCH_AT_V2_COMPLETE', app.sessionEpoch);
           parsed.addAll(v2Records.map((record) => VaultLoginItem(
                 service: record.plaintext.service,
                 itemType: 'login',
@@ -13609,6 +13660,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       } else {
         v2LoadCompleted = true;
+        diag.boolean('V2_LOAD_STARTED', false);
+        diag.integer('V2_LOAD_HTTP_STATUS', 0);
+        diag.integer('V2_RECORD_COUNT', 0);
+        diag.integer('SESSION_EPOCH_AT_V2_COMPLETE', app.sessionEpoch);
       }
 
       // The page is a merged legacy + V2 inventory. Publishing READY_EMPTY
@@ -13624,20 +13679,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         throw StateError('credential_inventory_incomplete');
       }
 
+      diag.boolean('MERGE_STARTED', true);
+      diag.integer('SESSION_EPOCH_AT_MERGE', app.sessionEpoch);
+      diag.integer('MERGED_RECORD_COUNT', parsed.length);
+
       if (!mounted) return;
-      if (!app.ownsSessionLoad(
+      diag.boolean('STALE_CHECK_PERFORMED', true);
+      final ownsLoad = app.ownsSessionLoad(
         epoch: loadEpoch,
         vaultIdValue: loadVaultId,
         tokenValue: token,
-      )) {
+      );
+      diag.text('STALE_CHECK_RESULT', ownsLoad ? 'PASS' : 'FAIL');
+      if (!ownsLoad) {
+        diag.text('STALE_DROP_REASON', 'STALE_COMPLETION');
         vlog('secure_items.load.stale_completion_dropped', const {});
         return;
       }
+      diag.text('STALE_DROP_REASON', 'NONE');
+      diag.boolean('INVENTORY_PUBLICATION_ATTEMPTED', true);
       setState(() {
         vaultLogins = parsed;
         hasLoadedSecureItems = true;
         secureItemsError = null;
       });
+      diag.integer('SESSION_EPOCH_AT_PUBLICATION', app.sessionEpoch);
+      diag.boolean('INVENTORY_PUBLICATION_SUCCEEDED', true);
+      diag.integer('PUBLISHED_RECORD_COUNT', vaultLogins.length);
+      diag.markPublished(true);
     } catch (e) {
       if (app.handleApiException(e)) return;
 
@@ -13650,6 +13719,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         _showSnack(recovery);
       }
       vlog('secure_items.load.failed', {'error_type': e.runtimeType});
+      diag.text('CREDENTIAL_STATE_RESET_REASON', 'ERROR');
     } finally {
       if (mounted) {
         setState(() {
@@ -16634,6 +16704,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     String? url,
     String? notes,
   }) async {
+    final diag = CredentialLifecycleDiagnostics.instance;
+    diag.boolean('SAVE_REQUEST_STARTED', true);
     if (service.trim().isEmpty || username.trim().isEmpty || password.isEmpty) {
       throw StateError('generated_legacy_preflight_failed');
     }
@@ -16651,8 +16723,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             },
       kind: ChatOperationKind.mutation,
     );
+    diag.integer('SAVE_HTTP_STATUS', 200);
     await _loadVaultLogins();
-    if (_legacyCredentialInventoryContains(service)) return;
+    if (_legacyCredentialInventoryContains(service)) {
+      _recordAuthoritativeSaveDiagnostics(diag);
+      return;
+    }
 
     // A card can become interactive while its originating chat request is
     // still settling. In that narrow race the queued "save it" turn may
@@ -16684,8 +16760,31 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
     await _loadVaultLogins();
     if (!_legacyCredentialInventoryContains(service)) {
+      diag.boolean('AUTHORITATIVE_ROW_CONFIRMED', false);
+      diag.boolean('SAVE_ACK_AFTER_CONFIRMATION', false);
       throw StateError('generated_legacy_readback_failed');
     }
+    _recordAuthoritativeSaveDiagnostics(diag);
+  }
+
+  void _recordAuthoritativeSaveDiagnostics(
+    CredentialLifecycleDiagnostics diag,
+  ) {
+    diag.boolean('AUTHORITATIVE_ROW_CONFIRMED', true);
+    diag.integer(
+      'POST_SAVE_LEGACY_COUNT',
+      vaultLogins
+          .where((item) => item.cryptoVersion != credentialV2CryptoVersion)
+          .length,
+    );
+    diag.integer(
+      'POST_SAVE_V2_COUNT',
+      vaultLogins
+          .where((item) => item.cryptoVersion == credentialV2CryptoVersion)
+          .length,
+    );
+    diag.integer('POST_SAVE_MERGED_COUNT', vaultLogins.length);
+    diag.boolean('SAVE_ACK_AFTER_CONFIRMATION', true);
   }
 
   bool _legacyCredentialInventoryContains(String service) {
@@ -19596,6 +19695,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (mounted) _loadVaultLogins();
           });
         }
+
+        final diag = CredentialLifecycleDiagnostics.instance;
+        diag.integer(
+          'SESSION_EPOCH_AT_PAGE_RENDER',
+          context.read<AppState>().sessionEpoch,
+        );
+        diag.integer('LOGINS_PAGE_RECORD_COUNT', vaultLogins.length);
+        diag.text(
+          'LOGINS_PAGE_STATE',
+          loadingLogins || (!hasLoadedSecureItems && secureItemsError == null)
+              ? 'LOADING'
+              : secureItemsError != null
+                  ? 'ERROR'
+                  : vaultLogins.isEmpty
+                      ? 'READY_EMPTY'
+                      : 'READY_WITH_ITEMS',
+        );
 
         return LoginsPage(
           isLoading: loadingLogins,

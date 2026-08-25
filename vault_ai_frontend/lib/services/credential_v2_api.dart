@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import 'credential_v2.dart';
 import 'credential_v2_qa_diagnostics.dart';
+import 'credential_lifecycle_diagnostics.dart';
 export 'release_feature_contract.dart'
     show
         zkV2CredentialReadEnabled,
@@ -106,6 +107,8 @@ class CredentialV2Api {
     String? blindIndexName,
     String? blindIndexToken,
   }) async {
+    final diag = CredentialLifecycleDiagnostics.instance;
+    diag.boolean('V2_LOAD_STARTED', true);
     if ((blindIndexName == null) != (blindIndexToken == null)) {
       throw ArgumentError('both blind-index arguments are required');
     }
@@ -118,6 +121,7 @@ class CredentialV2Api {
             },
     );
     final response = await client.get(uri, headers: _headers);
+    diag.integer('V2_LOAD_HTTP_STATUS', response.statusCode);
     if (response.statusCode != 200) {
       throw _failure(response);
     }
@@ -148,6 +152,7 @@ class CredentialV2Api {
         // Quarantine a malformed sibling instead of blanking the whole list.
       }
     }
+    diag.integer('V2_RECORD_COUNT', envelopes.length);
     return envelopes;
   }
 
