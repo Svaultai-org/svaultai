@@ -17706,40 +17706,46 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Map<String, dynamic>? _latestGeneratedLoginDraft() {
     if (msgs.isEmpty) return null;
-    // Only intercept an immediate reply to a generated-login card. Never
-    // reach backwards across later turns and accidentally reuse an old draft.
-    final message = msgs.last;
-    if (message.role != 'assistant' ||
-        message.kind != ChatMessage.kVaultChatCard) {
-      return null;
+    // The streaming renderer can append assistant-only status/replacement
+    // messages after the generated card. Walk those messages, but never cross
+    // a later user turn: that boundary prevents an old draft from being
+    // reused by an unrelated future "save it" command.
+    for (var index = msgs.length - 1; index >= 0; index--) {
+      final message = msgs[index];
+      if (message.role == 'user') return null;
+      if (message.role != 'assistant' ||
+          message.kind != ChatMessage.kVaultChatCard) {
+        continue;
+      }
+      final payload = message.payload;
+      if (payload?['intent'] != 'vault_generated_login_create_draft') {
+        continue;
+      }
+      final rawCard = payload?['card'];
+      if (rawCard is! Map) return null;
+      final rawData = rawCard['data'];
+      if (rawData is! Map) return null;
+      final data = Map<String, dynamic>.from(rawData);
+      final draftId = data['draft_id']?.toString().trim() ?? '';
+      final service =
+          (data['service'] ?? data['service_name'])?.toString().trim() ?? '';
+      final username = data['username']?.toString().trim() ?? '';
+      final password = data['password']?.toString() ?? '';
+      if (draftId.isEmpty ||
+          service.isEmpty ||
+          username.isEmpty ||
+          password.isEmpty) {
+        return null;
+      }
+      return <String, dynamic>{
+        ...data,
+        'draft_id': draftId,
+        'service': service,
+        'username': username,
+        'password': password,
+      };
     }
-    final payload = message.payload;
-    if (payload?['intent'] != 'vault_generated_login_create_draft') {
-      return null;
-    }
-    final rawCard = payload?['card'];
-    if (rawCard is! Map) return null;
-    final rawData = rawCard['data'];
-    if (rawData is! Map) return null;
-    final data = Map<String, dynamic>.from(rawData);
-    final draftId = data['draft_id']?.toString().trim() ?? '';
-    final service =
-        (data['service'] ?? data['service_name'])?.toString().trim() ?? '';
-    final username = data['username']?.toString().trim() ?? '';
-    final password = data['password']?.toString() ?? '';
-    if (draftId.isEmpty ||
-        service.isEmpty ||
-        username.isEmpty ||
-        password.isEmpty) {
-      return null;
-    }
-    return <String, dynamic>{
-      ...data,
-      'draft_id': draftId,
-      'service': service,
-      'username': username,
-      'password': password,
-    };
+    return null;
   }
 
   Future<void> _send() async {
