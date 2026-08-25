@@ -248,9 +248,8 @@ void main() {
     expect(source, contains('await _send();'));
     expect(
       source,
-      contains('await _saveGeneratedLoginLegacyAuthoritatively('),
+      contains('await _saveGeneratedLoginAuthoritatively('),
     );
-    expect(source, contains("await _sendQuickPrompt(\n      'save it'"));
     expect(source, contains('enabled: !_chatOperationBusy'));
     expect(source, contains('operation: () => _saveMemoryProposalFromCard'));
     expect(source, contains('requestId: chatRequestId'));

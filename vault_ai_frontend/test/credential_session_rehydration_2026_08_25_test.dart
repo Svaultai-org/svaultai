@@ -7,10 +7,10 @@ import 'package:vault_ai_frontend/services/credential_inventory_view_state.dart'
 import 'package:vault_ai_frontend/services/native_secure_store.dart';
 
 void main() {
-  test('legacy generated-login save requires authoritative list readback', () {
+  test('generated-login save uses ZK transport and authoritative readback', () {
     final source = File('lib/main.dart').readAsStringSync();
     final start = source.indexOf(
-      'Future<void> _saveGeneratedLoginLegacyAuthoritatively',
+      'Future<void> _saveGeneratedLoginAuthoritatively',
     );
     final end = source.indexOf(
       'Future<void> _saveMemoryProposalFromCard',
@@ -21,8 +21,11 @@ void main() {
     final method = source.substring(start, end);
     expect(method, isNot(contains("await _sendQuickPrompt(\n      'save it'")));
     expect(method, contains('await _loadVaultLogins();'));
-    expect(method, contains('forceLegacyTransport: true'));
-    expect(method, contains("StateError('generated_legacy_readback_failed')"));
+    expect(method, contains('forceLegacyTransport: false'));
+    expect(
+      method,
+      contains("StateError('generated_credential_readback_failed')"),
+    );
     final write = method.indexOf('updateVaultSecureItem(');
     final readback = method.indexOf('await _loadVaultLogins();');
     final acknowledgement = method.indexOf(
@@ -33,7 +36,7 @@ void main() {
     expect(acknowledgement, greaterThan(readback));
   });
 
-  test('legacy generated-login card awaits authoritative save helper', () {
+  test('generated-login card awaits authoritative save helper', () {
     final source = File('lib/main.dart').readAsStringSync();
     final start = source.indexOf("if (action == 'generated_login_save')");
     final end = source.indexOf(
@@ -43,7 +46,7 @@ void main() {
     final handler = source.substring(start, end);
     expect(
       handler,
-      contains('await _saveGeneratedLoginLegacyAuthoritatively('),
+      contains('await _saveGeneratedLoginAuthoritatively('),
     );
     expect(
       handler,
@@ -109,7 +112,7 @@ void main() {
     );
     expect(
       composerDispatch,
-      contains('await _saveGeneratedLoginLegacyAuthoritatively('),
+      contains('await _saveGeneratedLoginAuthoritatively('),
     );
 
     final cardStart = source.indexOf("if (action == 'generated_login_save')");
@@ -120,14 +123,14 @@ void main() {
     final cardDispatch = source.substring(cardStart, cardEnd);
     expect(
       cardDispatch,
-      contains('await _saveGeneratedLoginLegacyAuthoritatively('),
+      contains('await _saveGeneratedLoginAuthoritatively('),
     );
   });
 
   test('credential confirmation is vault scoped and fails closed', () {
     final source = File('lib/main.dart').readAsStringSync();
     final saveStart = source.indexOf(
-      'Future<void> _saveGeneratedLoginLegacyAuthoritatively',
+      'Future<void> _saveGeneratedLoginAuthoritatively',
     );
     final saveEnd = source.indexOf(
       'Future<void> _saveMemoryProposalFromCard',
@@ -136,10 +139,13 @@ void main() {
     final save = source.substring(saveStart, saveEnd);
     expect(
       save,
-      contains("StateError('generated_legacy_vault_scope_missing')"),
+      contains("StateError('generated_credential_vault_scope_missing')"),
     );
     expect(save, contains('app.vaultId != initialVaultId'));
-    expect(save, contains("StateError('generated_legacy_readback_failed')"));
+    expect(
+      save,
+      contains("StateError('generated_credential_readback_failed')"),
+    );
 
     final dispatchStart = source.indexOf('Future<void> _enqueueComposerSend()');
     final dispatchEnd =
