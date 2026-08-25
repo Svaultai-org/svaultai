@@ -236,9 +236,16 @@ LocalMemoryFact? parseLocalMemoryFact(String input) {
     r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was|as)\s+(.+)$',
     caseSensitive: false,
   ).firstMatch(text);
-  if (match == null) return null;
-  final subject = (match.group(1) ?? '').trim();
-  final value = (match.group(2) ?? '').trim();
+  final explicitFactMatch = match == null
+      ? RegExp(
+          r'^(?:please\s+)?(?:remember|save)\s+(?:that\s+)?(?:the\s+)?(.+?)\s+(?:is|was|as)\s+(.+)$',
+          caseSensitive: false,
+        ).firstMatch(text)
+      : null;
+  if (match == null && explicitFactMatch == null) return null;
+  final factMatch = match ?? explicitFactMatch!;
+  final subject = (factMatch.group(1) ?? '').trim();
+  final value = (factMatch.group(2) ?? '').trim();
   if (subject.isEmpty ||
       value.isEmpty ||
       _memoryOtherDomainWords.hasMatch(subject)) return null;

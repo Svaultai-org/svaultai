@@ -46,6 +46,14 @@ void main() {
         'free form note',
         'bring the blue folder'
       ],
+      'remember that the release-candidate family codeword is cedar comet': [
+        'release-candidate family codeword',
+        'cedar comet'
+      ],
+      'save that the release-candidate meeting room is Cedar': [
+        'release-candidate meeting room',
+        'Cedar'
+      ],
     };
     for (final entry in cases.entries) {
       final fact = parseLocalMemoryFact(entry.key);
@@ -53,6 +61,14 @@ void main() {
       expect(fact?.value, entry.value[1], reason: entry.key);
     }
     expect(parseLocalMemoryFact('my demo password hint is violet bird'), isNull);
+    expect(
+        parseLocalMemoryFact(
+            'remember that the nord vpn password is synthetic-secret'),
+        isNull);
+    expect(
+        parseLocalMemoryFact(
+            'save that the passport file is synthetic-document'),
+        isNull);
     expect(parseLocalMemoryContextSaveSubject('remember that'), '');
     expect(parseLocalMemoryContextSaveSubject('remember my mother name'),
         'mother name');
