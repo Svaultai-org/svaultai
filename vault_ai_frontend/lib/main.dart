@@ -16565,16 +16565,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         return;
       }
-      await _sendQuickPrompt(
-        'save it',
-        selectionHint: draftId.isEmpty
-            ? null
-            : {
-                'kind': 'generated_login_draft',
-                'id': draftId,
-                if (service.isNotEmpty) 'service': service,
-              },
-        kind: ChatOperationKind.mutation,
+      await _saveGeneratedLoginLegacyAuthoritatively(
+        draftId: draftId,
+        service: service,
+        username: data?['username']?.toString() ?? '',
+        password: data?['password']?.toString() ?? '',
+        url: data?['url']?.toString(),
+        notes: data?['notes']?.toString(),
       );
       return;
     }
@@ -16627,6 +16624,77 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _appendAssistantMessage('Memory proposal cancelled.');
       return;
     }
+  }
+
+  Future<void> _saveGeneratedLoginLegacyAuthoritatively({
+    required String draftId,
+    required String service,
+    required String username,
+    required String password,
+    String? url,
+    String? notes,
+  }) async {
+    if (service.trim().isEmpty || username.trim().isEmpty || password.isEmpty) {
+      throw StateError('generated_legacy_preflight_failed');
+    }
+
+    // Keep the established draft-confirmation route as the primary write. It
+    // consumes the server-side draft and persists to legacy vault_items.
+    await _sendQuickPrompt(
+      'save it',
+      selectionHint: draftId.isEmpty
+          ? null
+          : {
+              'kind': 'generated_login_draft',
+              'id': draftId,
+              'service': service,
+            },
+      kind: ChatOperationKind.mutation,
+    );
+    await _loadVaultLogins();
+    if (_legacyCredentialInventoryContains(service)) return;
+
+    // A card can become interactive while its originating chat request is
+    // still settling. In that narrow race the queued "save it" turn may
+    // complete without an authoritative write. Never let the card publish
+    // Saved from that transient chat state: use the existing credential-only
+    // upsert endpoint, then require list readback before returning success.
+    if (!mounted) throw StateError('generated_legacy_view_unmounted');
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null) {
+      throw StateError('generated_legacy_session_missing');
+    }
+    final fields = <String, dynamic>{
+      'username': username,
+      'password': password,
+      if (url != null && url.trim().isNotEmpty) 'url': url.trim(),
+      if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+    };
+    final pin = await _VaultCrypto.currentPinOrThrow();
+    await VaultAIClient(baseUrl: backendBaseUrl).updateVaultSecureItem(
+      vaultName: vaultName,
+      oldService: service,
+      itemType: 'login',
+      fields: fields,
+      pin: pin,
+      authToken: token,
+      forceLegacyTransport: true,
+    );
+    await _loadVaultLogins();
+    if (!_legacyCredentialInventoryContains(service)) {
+      throw StateError('generated_legacy_readback_failed');
+    }
+  }
+
+  bool _legacyCredentialInventoryContains(String service) {
+    final normalized = service.trim().toLowerCase();
+    return normalized.isNotEmpty &&
+        vaultLogins.any((item) =>
+            item.cryptoVersion != credentialV2CryptoVersion &&
+            item.itemType.toLowerCase() == 'login' &&
+            item.service.trim().toLowerCase() == normalized);
   }
 
   Future<void> _saveMemoryProposalFromCard(
