@@ -17655,6 +17655,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _enqueueComposerSend() {
     final text = input.text.trim();
     if (text.isEmpty && attachments.isEmpty) return Future<void>.value();
+    final generatedDraft = attachments.isEmpty &&
+            _nextEncryptedBackendCommand?.isNotEmpty != true &&
+            _isGeneratedLoginSaveConfirmation(text)
+        ? _latestGeneratedLoginDraft()
+        : null;
+    if (generatedDraft != null) {
+      // Typed "save it" and the generated-login card must share the same
+      // authoritative persistence function. Sending the text straight to
+      // /chat can land on a worker that does not own the in-memory draft and
+      // return HTTP 200 without committing a credential row.
+      return _saveGeneratedLoginLegacyAuthoritatively(
+        draftId: generatedDraft['draft_id']!.toString(),
+        service: generatedDraft['service']!.toString(),
+        username: generatedDraft['username']!.toString(),
+        password: generatedDraft['password']!.toString(),
+        url: generatedDraft['url']?.toString(),
+        notes: generatedDraft['notes']?.toString(),
+      );
+    }
     final kind = isAuthoritativeVaultMutationCommand(
       text,
       hasAttachments: attachments.isNotEmpty,
@@ -17667,6 +17686,60 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       kind: kind,
       operation: _send,
     );
+  }
+
+  bool _isGeneratedLoginSaveConfirmation(String text) {
+    final normalized = text
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[.!]+$'), '')
+        .trim();
+    return const <String>{
+      'save it',
+      'save this',
+      'save',
+      'yes save it',
+      'yes, save it',
+      'confirm save',
+    }.contains(normalized);
+  }
+
+  Map<String, dynamic>? _latestGeneratedLoginDraft() {
+    if (msgs.isEmpty) return null;
+    // Only intercept an immediate reply to a generated-login card. Never
+    // reach backwards across later turns and accidentally reuse an old draft.
+    final message = msgs.last;
+    if (message.role != 'assistant' ||
+        message.kind != ChatMessage.kVaultChatCard) {
+      return null;
+    }
+    final payload = message.payload;
+    if (payload?['intent'] != 'vault_generated_login_create_draft') {
+      return null;
+    }
+    final rawCard = payload?['card'];
+    if (rawCard is! Map) return null;
+    final rawData = rawCard['data'];
+    if (rawData is! Map) return null;
+    final data = Map<String, dynamic>.from(rawData);
+    final draftId = data['draft_id']?.toString().trim() ?? '';
+    final service =
+        (data['service'] ?? data['service_name'])?.toString().trim() ?? '';
+    final username = data['username']?.toString().trim() ?? '';
+    final password = data['password']?.toString() ?? '';
+    if (draftId.isEmpty ||
+        service.isEmpty ||
+        username.isEmpty ||
+        password.isEmpty) {
+      return null;
+    }
+    return <String, dynamic>{
+      ...data,
+      'draft_id': draftId,
+      'service': service,
+      'username': username,
+      'password': password,
+    };
   }
 
   Future<void> _send() async {

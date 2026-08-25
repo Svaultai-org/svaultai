@@ -79,6 +79,35 @@ void main() {
     },
   );
 
+  test('typed save and card save share authoritative persistence helper', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf('Future<void> _enqueueComposerSend()');
+    final end = source.indexOf('Future<void> _send() async', start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final composerDispatch = source.substring(start, end);
+    expect(
+      composerDispatch,
+      contains('_isGeneratedLoginSaveConfirmation(text)'),
+    );
+    expect(composerDispatch, contains('_latestGeneratedLoginDraft()'));
+    expect(
+      composerDispatch,
+      contains('return _saveGeneratedLoginLegacyAuthoritatively('),
+    );
+
+    final cardStart = source.indexOf("if (action == 'generated_login_save')");
+    final cardEnd = source.indexOf(
+      "if (action == 'generated_login_cancel')",
+      cardStart,
+    );
+    final cardDispatch = source.substring(cardStart, cardEnd);
+    expect(
+      cardDispatch,
+      contains('await _saveGeneratedLoginLegacyAuthoritatively('),
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
