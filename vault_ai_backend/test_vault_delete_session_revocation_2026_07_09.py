@@ -93,6 +93,9 @@ class TestSuccessRevokesSessions(unittest.TestCase):
         with mock.patch(
             "routes.vault_delete_routes._verify_pin", return_value=True,
         ), mock.patch(
+            "routes.vault_delete_routes."
+            "_require_authoritative_final_vault_deletion_allowed",
+        ), mock.patch(
             "routes.vault_delete_routes.delete_vault_and_all_data",
             side_effect=lambda *a, **k: call_order.append("delete"),
         ), mock.patch(
@@ -116,6 +119,9 @@ class TestSuccessRevokesSessions(unittest.TestCase):
         seen_vault_ids: list = []
         with mock.patch(
             "routes.vault_delete_routes._verify_pin", return_value=True,
+        ), mock.patch(
+            "routes.vault_delete_routes."
+            "_require_authoritative_final_vault_deletion_allowed",
         ), mock.patch(
             "routes.vault_delete_routes.delete_vault_and_all_data",
         ), mock.patch(
@@ -309,6 +315,9 @@ class TestDeletionServiceRaiseSurfaces500(unittest.TestCase):
         with mock.patch(
             "routes.vault_delete_routes._verify_pin", return_value=True,
         ), mock.patch(
+            "routes.vault_delete_routes."
+            "_require_authoritative_final_vault_deletion_allowed",
+        ), mock.patch(
             "routes.vault_delete_routes.delete_vault_and_all_data",
             side_effect=RuntimeError("simulated cascade failure"),
         ), mock.patch(
@@ -331,6 +340,9 @@ class TestDeletionServiceRaiseSurfaces500(unittest.TestCase):
         client = _mk_client_with_principal()
         with mock.patch(
             "routes.vault_delete_routes._verify_pin", return_value=True,
+        ), mock.patch(
+            "routes.vault_delete_routes."
+            "_require_authoritative_final_vault_deletion_allowed",
         ), mock.patch(
             "routes.vault_delete_routes.delete_vault_and_all_data",
             side_effect=RuntimeError(
