@@ -37,6 +37,25 @@ def test_router_registers_all_ciphertext_write_paths() -> None:
     assert not missing, f"missing ciphertext-write routes: {sorted(missing)}"
 
 
+def test_vault_item_ciphertext_inventory_is_vault_scoped_and_opaque() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    route = next(
+        r for r in router.routes
+        if getattr(r, "path", None) == "/vault/ciphertext/vault-items"
+        and "GET" in getattr(r, "methods", set())
+    )
+    assert route is not None
+    src = inspect.getsource(mod.list_vault_item_ciphertexts)
+    assert 'WHERE vault_id = %s' in src
+    assert 'principal["vault_id"]' in src
+    assert "item_type_ciphertext IS NOT NULL" in src
+    assert "service_ciphertext IS NOT NULL" in src
+    assert "payload_ciphertext IS NOT NULL" in src
+    assert "encrypted_data" not in src
+
+
 def test_crypto_ciphertext_endpoints_reject_wrong_hash_length() -> None:
     from routes.vault_ciphertext_write_routes import (
         _b64url_decode,

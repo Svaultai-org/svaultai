@@ -43,6 +43,42 @@ void main() {
     );
   });
 
+  test('fresh session hydrates ciphertext-only vault items under the MVK', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf(
+      '// New ZK vaults persist vault_items with opaque metadata columns only.',
+    );
+    final end = source.indexOf(
+      'final v2Repository = _credentialV2Repository(app);',
+      start,
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final hydration = source.substring(start, end);
+    expect(hydration, contains('listZkVaultItemCiphertexts'));
+    expect(hydration, contains('VaultKeyHierarchy(mvk).metadataKey()'));
+    expect(hydration, contains("decryptText('item_type_ciphertext')"));
+    expect(hydration, contains("decryptText('service_ciphertext')"));
+    expect(hydration, contains("decryptText('payload_ciphertext')"));
+    expect(hydration, contains('credentialMetadataCryptoVersion'));
+    expect(hydration, contains('localFields:'));
+  });
+
+  test(
+    'ciphertext-only credential chat reveal never calls plaintext backend',
+    () {
+      final source = File('lib/main.dart').readAsStringSync();
+      expect(
+        source,
+        contains('legacy.cryptoVersion == credentialMetadataCryptoVersion'),
+      );
+      expect(
+        source,
+        contains('await _openCiphertextSecureItemDirect(legacy);'),
+      );
+    },
+  );
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
