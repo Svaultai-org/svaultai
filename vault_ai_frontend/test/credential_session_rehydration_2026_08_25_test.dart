@@ -93,6 +93,14 @@ void main() {
     expect(composerDispatch, contains('_latestGeneratedLoginDraft()'));
     expect(
       composerDispatch,
+      contains("if (message.role == 'user') return null;"),
+    );
+    expect(
+      composerDispatch,
+      contains('message.kind != ChatMessage.kVaultChatCard'),
+    );
+    expect(
+      composerDispatch,
       contains('return _saveGeneratedLoginLegacyAuthoritatively('),
     );
 
