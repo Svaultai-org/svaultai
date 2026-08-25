@@ -16675,7 +16675,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         return;
       }
-      await _saveGeneratedLoginLegacyAuthoritatively(
+      await _saveGeneratedLoginAuthoritatively(
         draftId: draftId,
         service: service,
         username: data?['username']?.toString() ?? '',
@@ -16736,7 +16736,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _saveGeneratedLoginLegacyAuthoritatively({
+  Future<void> _saveGeneratedLoginAuthoritatively({
     required String draftId,
     required String service,
     required String username,
@@ -16749,10 +16749,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         service.trim().isEmpty ||
         username.trim().isEmpty ||
         password.isEmpty) {
-      throw StateError('generated_legacy_preflight_failed');
+      throw StateError('generated_credential_preflight_failed');
     }
 
-    if (!mounted) throw StateError('generated_legacy_view_unmounted');
+    if (!mounted) throw StateError('generated_credential_view_unmounted');
     final initialApp = context.read<AppState>();
     final initialVaultId = initialApp.vaultId;
     if (!initialApp.unlocked ||
@@ -16760,7 +16760,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         initialApp.vaultName == null ||
         initialVaultId == null ||
         (expectedVaultId != null && expectedVaultId != initialVaultId)) {
-      throw StateError('generated_legacy_vault_scope_missing');
+      throw StateError('generated_credential_vault_scope_missing');
     }
 
     // The chat route may acknowledge natural-language intent without proving
@@ -16773,7 +16773,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultName == null ||
         app.vaultId != initialVaultId ||
         !app.unlocked) {
-      throw StateError('generated_legacy_session_missing');
+      throw StateError('generated_credential_session_missing');
     }
     final fields = <String, dynamic>{
       'username': username,
@@ -16789,11 +16789,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       fields: fields,
       pin: pin,
       authToken: token,
-      forceLegacyTransport: true,
+      // A ZK vault must use the existing MVK ciphertext transport. Legacy
+      // rows are label-migrated after unlock but have no payload ciphertext,
+      // so they cannot participate in authoritative session rehydration.
+      forceLegacyTransport: false,
     );
     await _loadVaultLogins();
     if (!_legacyCredentialInventoryContains(service)) {
-      throw StateError('generated_legacy_readback_failed');
+      throw StateError('generated_credential_readback_failed');
     }
     _clearPendingGeneratedLoginDraft(initialVaultId);
     _appendAssistantMessage('Saved your ${service.trim()} login.');
@@ -17731,7 +17734,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           });
           _scrollToBottom();
           try {
-            await _saveGeneratedLoginLegacyAuthoritatively(
+            await _saveGeneratedLoginAuthoritatively(
               draftId: draft['draft_id']!.toString(),
               service: draft['service']!.toString(),
               username: draft['username']!.toString(),
