@@ -19,6 +19,7 @@ export CORS_ALLOWED_ORIGIN_REGEX="${CORS_ALLOWED_ORIGIN_REGEX:-https://app\\.exa
   test_existing_credential_release_blocker_2026_08_17.py \
   test_list_secure_items_route_2026_06_28.py \
   test_file_v2_contract.py \
+  test_file_v2_manifest_idempotency_2026_08_24.py \
   test_document_extraction_field_fidelity_2026_08_19.py \
   test_general_chat_routing_regression_2026_08_04.py \
   test_provider_neutral_billing_2026_08_14.py
@@ -42,6 +43,11 @@ frontend_tests=( \
   test/credential_natural_language_lookup_2026_08_16_test.dart \
   test/private_inventory_arbitration_test.dart \
   test/session_rehydration_release_gate_2026_08_24_test.dart \
+  test/real_private_domain_session_lifecycle_2026_08_24_test.dart \
+  test/credential_session_rehydration_2026_08_25_test.dart \
+  test/file_v2_session_and_idempotency_2026_08_24_test.dart \
+  test/file_page_direct_hydration_2026_08_24_test.dart \
+  test/attachment_title_binding_test.dart \
   test/document_extraction_field_fidelity_2026_08_19_test.dart \
   test/vault_local_file_lookup_2026_07_29_test.dart \
   test/chat_operation_queue_test.dart
