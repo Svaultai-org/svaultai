@@ -19,10 +19,18 @@ void main() {
     expect(start, greaterThanOrEqualTo(0));
     expect(end, greaterThan(start));
     final method = source.substring(start, end);
-    expect(method, contains("await _sendQuickPrompt(\n      'save it'"));
+    expect(method, isNot(contains("await _sendQuickPrompt(\n      'save it'")));
     expect(method, contains('await _loadVaultLogins();'));
     expect(method, contains('forceLegacyTransport: true'));
     expect(method, contains("StateError('generated_legacy_readback_failed')"));
+    final write = method.indexOf('updateVaultSecureItem(');
+    final readback = method.indexOf('await _loadVaultLogins();');
+    final acknowledgement = method.indexOf(
+      "_appendAssistantMessage('Saved your \${service.trim()} login.');",
+    );
+    expect(write, greaterThanOrEqualTo(0));
+    expect(readback, greaterThan(write));
+    expect(acknowledgement, greaterThan(readback));
   });
 
   test('legacy generated-login card awaits authoritative save helper', () {
@@ -101,7 +109,7 @@ void main() {
     );
     expect(
       composerDispatch,
-      contains('return _saveGeneratedLoginLegacyAuthoritatively('),
+      contains('await _saveGeneratedLoginLegacyAuthoritatively('),
     );
 
     final cardStart = source.indexOf("if (action == 'generated_login_save')");
@@ -114,6 +122,46 @@ void main() {
       cardDispatch,
       contains('await _saveGeneratedLoginLegacyAuthoritatively('),
     );
+  });
+
+  test('credential confirmation is vault scoped and fails closed', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final saveStart = source.indexOf(
+      'Future<void> _saveGeneratedLoginLegacyAuthoritatively',
+    );
+    final saveEnd = source.indexOf(
+      'Future<void> _saveMemoryProposalFromCard',
+      saveStart,
+    );
+    final save = source.substring(saveStart, saveEnd);
+    expect(
+      save,
+      contains("StateError('generated_legacy_vault_scope_missing')"),
+    );
+    expect(save, contains('app.vaultId != initialVaultId'));
+    expect(save, contains("StateError('generated_legacy_readback_failed')"));
+
+    final dispatchStart = source.indexOf('Future<void> _enqueueComposerSend()');
+    final dispatchEnd =
+        source.indexOf('Future<void> _send() async', dispatchStart);
+    final dispatch = source.substring(dispatchStart, dispatchEnd);
+    expect(
+      dispatch,
+      contains('_pendingGeneratedLoginDraftVaultId == app.vaultId'),
+    );
+    expect(
+      dispatch,
+      contains(
+        'Could not confirm that credential draft. Nothing was saved.',
+      ),
+    );
+    expect(
+      dispatch,
+      contains(
+        'Could not save that credential securely. Nothing was saved.',
+      ),
+    );
+    expect(dispatch, contains('return Future<void>.value();'));
   });
 
   TestWidgetsFlutterBinding.ensureInitialized();

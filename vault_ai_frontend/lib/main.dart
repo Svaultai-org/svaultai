@@ -7276,6 +7276,38 @@ String _memoryProposalOutcomeMessage(_MemoryProposalFinalizeOutcome outcome) =>
 ///
 /// File-scope function (not a method) so the sentinel-strip logic
 /// can be tested in isolation without a widget harness.
+Map<String, dynamic>? _generatedLoginDraftFromMessage(ChatMessage message) {
+  if (message.role != 'assistant' ||
+      message.kind != ChatMessage.kVaultChatCard) {
+    return null;
+  }
+  final payload = message.payload;
+  if (payload?['intent'] != 'vault_generated_login_create_draft') return null;
+  final rawCard = payload?['card'];
+  if (rawCard is! Map) return null;
+  final rawData = rawCard['data'];
+  if (rawData is! Map) return null;
+  final data = Map<String, dynamic>.from(rawData);
+  final draftId = data['draft_id']?.toString().trim() ?? '';
+  final service =
+      (data['service'] ?? data['service_name'])?.toString().trim() ?? '';
+  final username = data['username']?.toString().trim() ?? '';
+  final password = data['password']?.toString() ?? '';
+  if (draftId.isEmpty ||
+      service.isEmpty ||
+      username.isEmpty ||
+      password.isEmpty) {
+    return null;
+  }
+  return <String, dynamic>{
+    ...data,
+    'draft_id': draftId,
+    'service': service,
+    'username': username,
+    'password': password,
+  };
+}
+
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final Map<String, String> _credentialV2MigrationOperationIds = {};
   bool _cryptoBillingBannerDismissed = false;
@@ -7286,6 +7318,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final CredentialInventorySessionBinding _credentialInventorySession =
       CredentialInventorySessionBinding();
   BillingLoadState? _cryptoBillingBannerLastState;
+  Map<String, dynamic>? _pendingGeneratedLoginDraft;
+  String? _pendingGeneratedLoginDraftVaultId;
 
   void _qaV2CreateTrace(String stage) {
     const enabled =
@@ -14798,6 +14832,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final maybeCard = vcs_parser.parseVaultChatCardMessage(text);
     if (maybeCard != null) {
+      _rememberGeneratedLoginDraft(maybeCard);
       return maybeCard;
     }
 
@@ -16566,14 +16601,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       return;
     }
-    // 2026-08-01 generated-login draft Save / Cancel from the card
-    // button row. Both re-enter the /chat endpoint as a natural-
-    // language message the backend state machine already knows how
-    // to consume:
-    //   "save it"  -> state machine calls consume_draft(...) +
-    //                  save_secret_tool(...) — persists the draft.
-    //   "cancel"   -> state machine ACTION_CANCEL branch — clears
-    //                  the pending draft + the active entity pin.
+    // Generated-login Save uses the same authoritative credential write and
+    // readback contract as a typed "save it". Cancel remains a chat action so
+    // the server can discard its pending draft.
     if (action == 'generated_login_save') {
       final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
       final service = (data?['service'] as String?)?.trim() ?? '';
@@ -16713,37 +16743,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String password,
     String? url,
     String? notes,
+    String? expectedVaultId,
   }) async {
-    if (service.trim().isEmpty || username.trim().isEmpty || password.isEmpty) {
+    if (draftId.trim().isEmpty ||
+        service.trim().isEmpty ||
+        username.trim().isEmpty ||
+        password.isEmpty) {
       throw StateError('generated_legacy_preflight_failed');
     }
 
-    // Keep the established draft-confirmation route as the primary write. It
-    // consumes the server-side draft and persists to legacy vault_items.
-    await _sendQuickPrompt(
-      'save it',
-      selectionHint: draftId.isEmpty
-          ? null
-          : {
-              'kind': 'generated_login_draft',
-              'id': draftId,
-              'service': service,
-            },
-      kind: ChatOperationKind.mutation,
-    );
-    await _loadVaultLogins();
-    if (_legacyCredentialInventoryContains(service)) return;
-
-    // A card can become interactive while its originating chat request is
-    // still settling. In that narrow race the queued "save it" turn may
-    // complete without an authoritative write. Never let the card publish
-    // Saved from that transient chat state: use the existing credential-only
-    // upsert endpoint, then require list readback before returning success.
     if (!mounted) throw StateError('generated_legacy_view_unmounted');
+    final initialApp = context.read<AppState>();
+    final initialVaultId = initialApp.vaultId;
+    if (!initialApp.unlocked ||
+        initialApp.sessionToken == null ||
+        initialApp.vaultName == null ||
+        initialVaultId == null ||
+        (expectedVaultId != null && expectedVaultId != initialVaultId)) {
+      throw StateError('generated_legacy_vault_scope_missing');
+    }
+
+    // The chat route may acknowledge natural-language intent without proving
+    // a database write. Credential confirmation therefore writes only through
+    // the credential endpoint and publishes success only after list readback.
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
-    if (token == null || vaultName == null) {
+    if (token == null ||
+        vaultName == null ||
+        app.vaultId != initialVaultId ||
+        !app.unlocked) {
       throw StateError('generated_legacy_session_missing');
     }
     final fields = <String, dynamic>{
@@ -16766,6 +16795,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (!_legacyCredentialInventoryContains(service)) {
       throw StateError('generated_legacy_readback_failed');
     }
+    _clearPendingGeneratedLoginDraft(initialVaultId);
+    _appendAssistantMessage('Saved your ${service.trim()} login.');
+  }
+
+  void _rememberGeneratedLoginDraft(_Msg message) {
+    final draft = _generatedLoginDraftFromMessage(message);
+    if (draft == null || !mounted) return;
+    final app = context.read<AppState>();
+    final vaultId = app.vaultId;
+    if (!app.unlocked || vaultId == null || app.sessionToken == null) return;
+    _pendingGeneratedLoginDraft = draft;
+    _pendingGeneratedLoginDraftVaultId = vaultId;
+  }
+
+  void _clearPendingGeneratedLoginDraft(String vaultId) {
+    if (_pendingGeneratedLoginDraftVaultId != vaultId) return;
+    _pendingGeneratedLoginDraft = null;
+    _pendingGeneratedLoginDraftVaultId = null;
   }
 
   bool _legacyCredentialInventoryContains(String service) {
@@ -17655,24 +17702,61 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _enqueueComposerSend() {
     final text = input.text.trim();
     if (text.isEmpty && attachments.isEmpty) return Future<void>.value();
-    final generatedDraft = attachments.isEmpty &&
+    final app = context.read<AppState>();
+    final isGeneratedSaveConfirmation = attachments.isEmpty &&
             _nextEncryptedBackendCommand?.isNotEmpty != true &&
-            _isGeneratedLoginSaveConfirmation(text)
-        ? _latestGeneratedLoginDraft()
-        : null;
+            _isGeneratedLoginSaveConfirmation(text);
+    Map<String, dynamic>? generatedDraft;
+    if (isGeneratedSaveConfirmation) {
+      if (_pendingGeneratedLoginDraftVaultId == app.vaultId) {
+        generatedDraft = _pendingGeneratedLoginDraft;
+      }
+      generatedDraft ??= _latestGeneratedLoginDraft();
+    }
     if (generatedDraft != null) {
       // Typed "save it" and the generated-login card must share the same
       // authoritative persistence function. Sending the text straight to
       // /chat can land on a worker that does not own the in-memory draft and
       // return HTTP 200 without committing a credential row.
-      return _saveGeneratedLoginLegacyAuthoritatively(
-        draftId: generatedDraft['draft_id']!.toString(),
-        service: generatedDraft['service']!.toString(),
-        username: generatedDraft['username']!.toString(),
-        password: generatedDraft['password']!.toString(),
-        url: generatedDraft['url']?.toString(),
-        notes: generatedDraft['notes']?.toString(),
+      final draft = generatedDraft;
+      final expectedVaultId = app.vaultId;
+      return _enqueueChatOperation<void>(
+        kind: ChatOperationKind.mutation,
+        operation: () async {
+          if (!mounted) return;
+          setState(() {
+            selectedSection = _DashboardSection.chat;
+            msgs.add(_Msg('user', text));
+            input.clear();
+          });
+          _scrollToBottom();
+          try {
+            await _saveGeneratedLoginLegacyAuthoritatively(
+              draftId: draft['draft_id']!.toString(),
+              service: draft['service']!.toString(),
+              username: draft['username']!.toString(),
+              password: draft['password']!.toString(),
+              url: draft['url']?.toString(),
+              notes: draft['notes']?.toString(),
+              expectedVaultId: expectedVaultId,
+            );
+          } catch (_) {
+            _appendAssistantMessage(
+              'Could not save that credential securely. Nothing was saved.',
+            );
+          }
+        },
       );
+    }
+    if (isGeneratedSaveConfirmation) {
+      // A credential confirmation must never fall through to general chat.
+      // General chat can return friendly success prose without executing a
+      // credential write, which caused the production false acknowledgement.
+      input.clear();
+      _appendAssistantMessage(
+        'Could not confirm that credential draft. Nothing was saved.',
+      );
+      return Future<void>.value();
     }
     final kind = isAuthoritativeVaultMutationCommand(
       text,
@@ -17717,33 +17801,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           message.kind != ChatMessage.kVaultChatCard) {
         continue;
       }
-      final payload = message.payload;
-      if (payload?['intent'] != 'vault_generated_login_create_draft') {
-        continue;
-      }
-      final rawCard = payload?['card'];
-      if (rawCard is! Map) return null;
-      final rawData = rawCard['data'];
-      if (rawData is! Map) return null;
-      final data = Map<String, dynamic>.from(rawData);
-      final draftId = data['draft_id']?.toString().trim() ?? '';
-      final service =
-          (data['service'] ?? data['service_name'])?.toString().trim() ?? '';
-      final username = data['username']?.toString().trim() ?? '';
-      final password = data['password']?.toString() ?? '';
-      if (draftId.isEmpty ||
-          service.isEmpty ||
-          username.isEmpty ||
-          password.isEmpty) {
-        return null;
-      }
-      return <String, dynamic>{
-        ...data,
-        'draft_id': draftId,
-        'service': service,
-        'username': username,
-        'password': password,
-      };
+      final draft = _generatedLoginDraftFromMessage(message);
+      if (draft != null) return draft;
     }
     return null;
   }
