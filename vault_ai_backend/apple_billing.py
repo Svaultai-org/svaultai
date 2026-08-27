@@ -275,7 +275,16 @@ def verify_and_apply_apple_transaction(
     verifier = verifier or AppleSignedDataVerifier(environment)
     transaction = verifier.verify_transaction(signed_transaction)
     supplied_account = str(_attr(transaction, "appAccountToken") or "")
-    if supplied_account.lower() != apple_app_account_token(account_id):
+    # Restored StoreKit transactions created before an appAccountToken was
+    # attached legitimately decode with no token.  Permit that transaction to
+    # establish its first authenticated SVaultAI binding; the provider-wide
+    # purchase/original-transaction uniqueness checks in
+    # upsert_verified_entitlement still prevent rebinding or transfer.  A
+    # present token remains mandatory authority and must match exactly.
+    if (
+        supplied_account
+        and supplied_account.lower() != apple_app_account_token(account_id)
+    ):
         raise AppleTransactionOwnershipError(
             "Apple purchase is not associated with this SVaultAI account"
         )

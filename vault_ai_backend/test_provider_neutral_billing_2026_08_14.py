@@ -1483,7 +1483,7 @@ def test_apple_refund_and_revocation_remove_grant():
     ) == "revoked"
 
 
-def test_apple_transaction_requires_app_account_token(monkeypatch):
+def test_apple_unbound_restore_without_app_account_token_binds_once(monkeypatch):
     monkeypatch.setenv(
         "VAULTAI_APPLE_PRODUCT_MAP_JSON",
         json.dumps({
@@ -1491,6 +1491,7 @@ def test_apple_transaction_requires_app_account_token(monkeypatch):
                 "quantity": 1,
                 "entitlement_bytes": 53_687_091_200,
                 "plan_id": "monthly",
+                "billing_period": "P1M",
             },
         }),
     )
@@ -1505,14 +1506,61 @@ def test_apple_transaction_requires_app_account_token(monkeypatch):
         signedDate=1_786_000_001_000,
     )
     verifier = SimpleNamespace(verify_transaction=lambda _jws: transaction)
-    monkeypatch.setattr(
-        apple_billing,
-        "upsert_verified_entitlement",
-        lambda *_args, **_kwargs: pytest.fail("unbound purchase must not grant"),
+    captured = {}
+
+    def _upsert(account_id, update):
+        captured["account_id"] = account_id
+        captured["product_id"] = update.product_id
+        return "entitlement-1", "none_to_active"
+
+    monkeypatch.setattr(apple_billing, "upsert_verified_entitlement", _upsert)
+    result = apple_billing.verify_and_apply_apple_transaction(
+        account_id="account-1",
+        signed_transaction="signed-jws",
+        environment="production",
+        verifier=verifier,
     )
-    with pytest.raises(apple_billing.AppleTransactionVerificationError):
+
+    assert result["verified"] is True
+    assert captured == {
+        "account_id": "account-1",
+        "product_id": "svaultai.storage.50gb.monthly",
+    }
+
+
+def test_apple_unbound_restore_cannot_transfer_existing_purchase(monkeypatch):
+    monkeypatch.setenv(
+        "VAULTAI_APPLE_PRODUCT_MAP_JSON",
+        json.dumps({
+            "svaultai.storage.50gb.monthly": {
+                "quantity": 1,
+                "entitlement_bytes": 53_687_091_200,
+                "plan_id": "monthly",
+                "billing_period": "P1M",
+            },
+        }),
+    )
+    transaction = SimpleNamespace(
+        productId="svaultai.storage.50gb.monthly",
+        transactionId="tx-bound",
+        originalTransactionId="otx-bound",
+        appAccountToken=None,
+        purchaseDate=1_786_000_000_000,
+        expiresDate=4_102_444_800_000,
+        revocationDate=None,
+        signedDate=1_786_000_001_000,
+    )
+    verifier = SimpleNamespace(verify_transaction=lambda _jws: transaction)
+
+    def _already_bound(*_args, **_kwargs):
+        raise ent.PurchaseAlreadyBoundError("already bound")
+
+    monkeypatch.setattr(
+        apple_billing, "upsert_verified_entitlement", _already_bound,
+    )
+    with pytest.raises(apple_billing.AppleTransactionOwnershipError):
         apple_billing.verify_and_apply_apple_transaction(
-            account_id="account-1",
+            account_id="account-2",
             signed_transaction="signed-jws",
             environment="production",
             verifier=verifier,
