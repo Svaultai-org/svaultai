@@ -422,7 +422,11 @@ class AppleStoreKitBillingController extends ChangeNotifier {
       if (operation == _operationGeneration) {
         state = 'verification_failed';
         final text = error.toString();
-        if (text.contains('subscription_bound_to_another_active_account')) {
+        if (text.contains('subscription_bound_to_another_active_account') ||
+            text.contains(
+              'This App Store subscription is already linked to another '
+              'SVaultAI account.',
+            )) {
           message = 'This App Store subscription is already linked to another '
               'SVaultAI account. Sign in to that account or manage the '
               'subscription with Apple.';

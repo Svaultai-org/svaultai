@@ -351,6 +351,27 @@ void main() {
     await gateway.controller.close();
   });
 
+  test('ownership conflict safe backend message has distinct copy', () async {
+    final gateway = _Gateway();
+    final billing = _billing(
+      gateway,
+      verifier: ({required signedTransaction, required environment}) async {
+        throw Exception(
+          'App Store verification failed: 409 - This App Store subscription '
+          'is already linked to another SVaultAI account.',
+        );
+      },
+    );
+    await billing.initialize();
+    gateway.controller.add([_purchase(PurchaseStatus.restored)]);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(billing.state, 'verification_failed');
+    expect(billing.message, contains('already linked to another'));
+    expect(billing.message, isNot(contains('pending')));
+    billing.dispose();
+    await gateway.controller.close();
+  });
+
   test('ordinary verification failure retains pending retry copy', () async {
     final gateway = _Gateway();
     final billing = _billing(
