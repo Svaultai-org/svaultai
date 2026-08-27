@@ -5,10 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('generated v2 save verifies before finalizing the draft', () {
     final source = File('lib/main.dart').readAsStringSync();
-    final saveStart = source.indexOf("if (action == 'generated_login_save')");
+    final saveStart = source.indexOf(
+      'Future<void> _saveGeneratedLoginDraftOnce',
+    );
     expect(saveStart, greaterThanOrEqualTo(0));
     final saveEnd = source.indexOf(
-      "if (action == 'generated_login_cancel')",
+      'Future<void> _saveGeneratedLoginAuthoritatively',
       saveStart,
     );
     expect(saveEnd, greaterThan(saveStart));
@@ -25,13 +27,15 @@ void main() {
 
   test('generated v2 preflight failure is retryable, not successful', () {
     final source = File('lib/main.dart').readAsStringSync();
-    final start = source.indexOf("if (action == 'generated_login_save')");
+    final start = source.indexOf(
+      'Future<void> _saveGeneratedLoginDraftOnce',
+    );
     final end = source.indexOf(
-      "if (action == 'generated_login_cancel')",
+      'Future<void> _saveGeneratedLoginAuthoritatively',
       start,
     );
     final save = source.substring(start, end);
-    final guard = save.indexOf('repository == null ||');
+    final guard = save.indexOf('repository == null');
     expect(guard, greaterThanOrEqualTo(0));
     final guardEnd = save.indexOf('}', guard);
     final preflight = save.substring(guard, guardEnd + 1);

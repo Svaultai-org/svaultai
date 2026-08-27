@@ -46,7 +46,7 @@ void main() {
     final handler = source.substring(start, end);
     expect(
       handler,
-      contains('await _saveGeneratedLoginAuthoritatively('),
+      contains('await _saveGeneratedLoginDraftOnce('),
     );
     expect(
       handler,
@@ -112,7 +112,7 @@ void main() {
     );
     expect(
       composerDispatch,
-      contains('await _saveGeneratedLoginAuthoritatively('),
+      contains('await _saveGeneratedLoginDraftOnce('),
     );
 
     final cardStart = source.indexOf("if (action == 'generated_login_save')");
@@ -123,7 +123,7 @@ void main() {
     final cardDispatch = source.substring(cardStart, cardEnd);
     expect(
       cardDispatch,
-      contains('await _saveGeneratedLoginAuthoritatively('),
+      contains('await _saveGeneratedLoginDraftOnce('),
     );
   });
 

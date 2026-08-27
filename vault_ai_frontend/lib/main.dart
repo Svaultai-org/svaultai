@@ -49,6 +49,7 @@ import 'services/credential_v2_qa_diagnostics.dart';
 import 'services/credential_v2_api.dart';
 import 'services/credential_v2_migration.dart';
 import 'services/credential_v2_repository.dart';
+import 'services/generated_credential_draft_finalizer.dart';
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
@@ -7316,6 +7317,8 @@ Map<String, dynamic>? _generatedLoginDraftFromMessage(ChatMessage message) {
 }
 
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
+  final GeneratedCredentialDraftFinalizer _generatedCredentialFinalizer =
+      GeneratedCredentialDraftFinalizer();
   final Map<String, String> _credentialV2MigrationOperationIds = {};
   bool _cryptoBillingBannerDismissed = false;
   bool _privateDomainArbitrationInFlight = false;
@@ -16612,91 +16615,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // readback contract as a typed "save it". Cancel remains a chat action so
     // the server can discard its pending draft.
     if (action == 'generated_login_save') {
-      final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
-      final service = (data?['service'] as String?)?.trim() ?? '';
-      if (zkV2CredentialWriteEnabled && draftId.isNotEmpty) {
-        final repository = _credentialV2Repository(context.read<AppState>());
-        final username = data?['username']?.toString() ?? '';
-        final password = data?['password']?.toString() ?? '';
-        if (repository == null ||
-            service.isEmpty ||
-            username.isEmpty ||
-            password.isEmpty) {
-          _showSnack('This generated login cannot be saved securely yet.');
-          // Signal a retryable preflight failure to the card.  Returning
-          // normally would make the card mark itself Saved even though no
-          // v2 lifecycle request was attempted.
-          throw StateError('generated_v2_preflight_failed');
-        }
-        final recordDigest = sha256.convert(utf8.encode(draftId)).toString();
-        final recordId = 'generated-${recordDigest.substring(0, 32)}';
-        // Generated credentials use the same stable, vault-scoped operation
-        // ID convention as ordinary v2 migration.  This makes retries
-        // idempotent and lets verification complete before draft finalization.
-        final operationId = credentialV2MigrationOperationId(recordId);
-        final credential = CredentialV2Plaintext(
-          service: service,
-          username: username,
-          password: password,
-          url: data?['url']?.toString(),
-          notes: data?['notes']?.toString(),
-        );
-        await _enqueueChatOperation<void>(
-          kind: ChatOperationKind.mutation,
-          operation: () async {
-            try {
-              await repository.create(
-                recordId: recordId,
-                credential: credential,
-                serviceForLookup: service,
-                migrationOperationId: operationId,
-              );
-              _qaV2CreateTrace('readback_entered');
-              final readBack = await repository.reveal(recordId);
-              _qaV2CreateTrace('readback_succeeded');
-              if (!readBack.semanticallyEquals(credential)) {
-                throw StateError('generated credential verification failed');
-              }
-              _qaV2CreateTrace('readback_equality_ok');
-              CredentialV2QaDiagnostics.remember(recordId, credential);
-              // The server must not consider the envelope available until the
-              // client has proved local readback equality through the existing
-              // v2 verification protocol.
-              _qaV2CreateTrace('verify_entered');
-              await repository.api.verify(recordId, operationId);
-              _qaV2CreateTrace('verify_succeeded');
-              _qaV2CreateTrace('finalize_entered');
-              await repository.api.finalizeGeneratedDraft(
-                recordId: recordId,
-                draftId: draftId,
-              );
-              _qaV2CreateTrace('finalize_succeeded');
-              _appendAssistantMessage('Saved your ${service.trim()} login.');
-              await _loadVaultLogins();
-            } catch (_) {
-              _showSnack(
-                  'Could not securely save this generated login. Retry is safe.');
-              rethrow;
-            }
-          },
-        );
-        return;
-      }
-      await _saveGeneratedLoginAuthoritatively(
-        draftId: draftId,
-        service: service,
-        username: data?['username']?.toString() ?? '',
-        password: data?['password']?.toString() ?? '',
-        url: data?['url']?.toString(),
-        notes: data?['notes']?.toString(),
+      await _saveGeneratedLoginDraftOnce(
+        data ?? const <String, dynamic>{},
       );
       return;
     }
     if (action == 'generated_login_cancel') {
       final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
       final service = (data?['service'] as String?)?.trim() ?? '';
+      if (!mounted) return;
+      final app = context.read<AppState>();
+      final vaultId = app.vaultId;
+      if (draftId.isEmpty || vaultId == null) {
+        _showSnack('Could not cancel this generated login.');
+        return;
+      }
+      final draftKey = '$vaultId:$draftId';
+      _generatedCredentialFinalizer.remember(draftKey);
       if (zkV2CredentialWriteEnabled && draftId.isNotEmpty) {
-        final repository = _credentialV2Repository(context.read<AppState>());
+        final repository = _credentialV2Repository(app);
         if (repository == null) {
           _showSnack('Could not cancel this generated login.');
           return;
@@ -16705,8 +16642,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           kind: ChatOperationKind.mutation,
           operation: () async {
             try {
-              await repository.api.cancelGeneratedDraft(draftId);
-              _appendAssistantMessage('Generated login cancelled.');
+              final canceled = await _generatedCredentialFinalizer.cancel(
+                draftKey,
+                () => repository.api.cancelGeneratedDraft(draftId),
+              );
+              if (canceled) {
+                _clearPendingGeneratedLoginDraft(vaultId);
+                _appendAssistantMessage('Generated login cancelled.');
+              }
             } catch (_) {
               _showSnack('Could not cancel this generated login.');
               rethrow;
@@ -16715,17 +16658,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         return;
       }
-      await _sendQuickPrompt(
-        'cancel',
-        selectionHint: draftId.isEmpty
-            ? null
-            : {
-                'kind': 'generated_login_draft',
-                'id': draftId,
-                if (service.isNotEmpty) 'service': service,
-              },
-        kind: ChatOperationKind.mutation,
+      final canceled = await _generatedCredentialFinalizer.cancel(
+        draftKey,
+        () => _sendQuickPrompt(
+          'cancel',
+          selectionHint: {
+            'kind': 'generated_login_draft',
+            'id': draftId,
+            if (service.isNotEmpty) 'service': service,
+          },
+          kind: ChatOperationKind.mutation,
+        ),
       );
+      if (canceled) {
+        _clearPendingGeneratedLoginDraft(vaultId);
+      }
       return;
     }
     if (action == 'memory_proposal_save') {
@@ -16741,6 +16688,88 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _appendAssistantMessage('Memory proposal cancelled.');
       return;
     }
+  }
+
+  Future<void> _saveGeneratedLoginDraftOnce(
+    Map<String, dynamic> draft, {
+    String? expectedVaultId,
+  }) async {
+    final draftId = draft['draft_id']?.toString().trim() ?? '';
+    final service = draft['service']?.toString().trim() ?? '';
+    final username = draft['username']?.toString() ?? '';
+    final password = draft['password']?.toString() ?? '';
+    if (draftId.isEmpty || service.isEmpty || username.isEmpty || password.isEmpty) {
+      throw StateError('generated_credential_preflight_failed');
+    }
+    if (!mounted) throw StateError('generated_credential_view_unmounted');
+    final app = context.read<AppState>();
+    final vaultId = app.vaultId;
+    if (!app.unlocked ||
+        app.sessionToken == null ||
+        vaultId == null ||
+        (expectedVaultId != null && expectedVaultId != vaultId)) {
+      throw StateError('generated_credential_vault_scope_missing');
+    }
+    final draftKey = '$vaultId:$draftId';
+    _generatedCredentialFinalizer.remember(draftKey);
+    await _generatedCredentialFinalizer.save(draftKey, () async {
+      if (!zkV2CredentialWriteEnabled) {
+        await _saveGeneratedLoginAuthoritatively(
+          draftId: draftId,
+          service: service,
+          username: username,
+          password: password,
+          url: draft['url']?.toString(),
+          notes: draft['notes']?.toString(),
+          expectedVaultId: expectedVaultId,
+        );
+        return;
+      }
+
+      final repository = _credentialV2Repository(app);
+      if (repository == null) throw StateError('generated_v2_preflight_failed');
+      final recordDigest = sha256.convert(utf8.encode(draftId)).toString();
+      final recordId = 'generated-${recordDigest.substring(0, 32)}';
+      final operationId = credentialV2MigrationOperationId(recordId);
+      final credential = CredentialV2Plaintext(
+        service: service,
+        username: username,
+        password: password,
+        url: draft['url']?.toString(),
+        notes: draft['notes']?.toString(),
+      );
+      try {
+        await repository.create(
+          recordId: recordId,
+          credential: credential,
+          serviceForLookup: service,
+          migrationOperationId: operationId,
+        );
+        _qaV2CreateTrace('readback_entered');
+        final readBack = await repository.reveal(recordId);
+        _qaV2CreateTrace('readback_succeeded');
+        if (!readBack.semanticallyEquals(credential)) {
+          throw StateError('generated credential verification failed');
+        }
+        _qaV2CreateTrace('readback_equality_ok');
+        CredentialV2QaDiagnostics.remember(recordId, credential);
+        _qaV2CreateTrace('verify_entered');
+        await repository.api.verify(recordId, operationId);
+        _qaV2CreateTrace('verify_succeeded');
+        _qaV2CreateTrace('finalize_entered');
+        await repository.api.finalizeGeneratedDraft(
+          recordId: recordId,
+          draftId: draftId,
+        );
+        _qaV2CreateTrace('finalize_succeeded');
+        _clearPendingGeneratedLoginDraft(vaultId);
+        _appendAssistantMessage('Saved your ${service.trim()} login.');
+        await _loadVaultLogins();
+      } catch (_) {
+        _showSnack('Could not securely save this generated login. Retry is safe.');
+        rethrow;
+      }
+    });
   }
 
   Future<void> _saveGeneratedLoginAuthoritatively({
@@ -16815,6 +16844,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final vaultId = app.vaultId;
     if (!app.unlocked || vaultId == null || app.sessionToken == null) return;
+    final draftId = draft['draft_id']?.toString().trim() ?? '';
+    if (draftId.isEmpty) return;
+    _generatedCredentialFinalizer.remember('$vaultId:$draftId');
     _pendingGeneratedLoginDraft = draft;
     _pendingGeneratedLoginDraftVaultId = vaultId;
   }
@@ -17741,13 +17773,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           });
           _scrollToBottom();
           try {
-            await _saveGeneratedLoginAuthoritatively(
-              draftId: draft['draft_id']!.toString(),
-              service: draft['service']!.toString(),
-              username: draft['username']!.toString(),
-              password: draft['password']!.toString(),
-              url: draft['url']?.toString(),
-              notes: draft['notes']?.toString(),
+            await _saveGeneratedLoginDraftOnce(
+              draft,
               expectedVaultId: expectedVaultId,
             );
           } catch (_) {
