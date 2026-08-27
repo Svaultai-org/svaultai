@@ -4,7 +4,7 @@ publish_to: 'none'
 # Store-facing marketing version + build number. Bump the +N build
 # number for EVERY submission (App Store Connect + Play Console
 # reject a duplicate build number for the same marketing version).
-version: 1.0.19+23
+version: 1.0.15+41
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -103,6 +103,12 @@ dev_dependencies:
   flutter_native_splash:  ^2.4.7
 
 flutter:
+  config:
+    # file_picker 8's SwiftPM package pulls in DKCamera, including an unused
+    # GPS-metadata implementation. CocoaPods uses its PhotoGallery subspec,
+    # which preserves image/video picking without compiling location requests.
+    enable-swift-package-manager: false
+
   uses-material-design: true
   # UX1.5 - enables `flutter gen-l10n` generation from lib/l10n/*.arb.
   generate: true

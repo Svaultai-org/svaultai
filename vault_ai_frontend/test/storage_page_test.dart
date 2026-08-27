@@ -1022,6 +1022,27 @@ void main() {
   });
 
   group('StorageBody purchase action button', () {
+    testWidgets(
+        'Apple subscription disclosure uses App Store wording and legal links',
+        (tester) async {
+      await _enlargeSurface(tester);
+      await tester.pumpWidget(_wrap(StorageBody(
+        data: _entitlement(),
+        storePrice: r'$25.00',
+        storeName: 'the App Store',
+        showAppleSubscriptionDisclosure: true,
+      )));
+
+      expect(
+        find.textContaining(r'SVaultAI 50 GB Storage — 1 month, $25.00'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('through the App Store'), findsOneWidget);
+      expect(find.textContaining('through Google Play'), findsNothing);
+      expect(find.text('Privacy Policy'), findsOneWidget);
+      expect(find.text('Terms of Use (EULA)'), findsOneWidget);
+    });
+
     testWidgets('native single-product surface hides unsupported tier prices',
         (tester) async {
       await _enlargeSurface(tester);
