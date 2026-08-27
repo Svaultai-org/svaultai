@@ -1,5 +1,3 @@
-
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -9,7 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vault_ai_frontend/main.dart';
-
+import 'package:vault_ai_frontend/services/native_secure_store.dart';
 
 const String _sentinelVaultName = 'zzz-private-brain-vault-xyzq-9876';
 
@@ -17,6 +15,7 @@ Future<void> _pumpUnlockShell(
   WidgetTester tester,
   AppState state, {
   Size? viewport,
+  List<NavigatorObserver> navigatorObservers = const [],
 }) async {
   if (viewport != null) {
     tester.view.physicalSize = viewport;
@@ -28,8 +27,10 @@ Future<void> _pumpUnlockShell(
     ChangeNotifierProvider<AppState>.value(
       value: state,
       child: MaterialApp(
-      localizationsDelegates: _testL10nDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
+        key: ValueKey<AppState>(state),
+        localizationsDelegates: _testL10nDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        navigatorObservers: navigatorObservers,
         routes: {
           '/login': (_) => const Scaffold(body: Text('LOGIN_PAGE_SENTINEL')),
         },
@@ -37,21 +38,35 @@ Future<void> _pumpUnlockShell(
       ),
     ),
   );
-  
-  
+
   await tester.pump();
 }
 
+class _LoginRouteObserver extends NavigatorObserver {
+  int loginRouteCreations = 0;
+
+  void _record(Route<dynamic>? route) {
+    if (route?.settings.name == '/login') loginRouteCreations += 1;
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _record(route);
+    super.didPush(route, previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    _record(newRoute);
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+  }
+}
+
 AppState _stateWithRememberedVault(String? vaultName) {
-  
-  
   final s = AppState();
   s.lastVaultName = vaultName;
   return s;
 }
-
-
-
 
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   AppLocalizations.delegate,
@@ -60,10 +75,14 @@ const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   GlobalCupertinoLocalizations.delegate,
 ];
 
-
 void main() {
   setUp(() {
+    NativeSecureStore.useSharedPreferencesForTesting = true;
     SharedPreferences.setMockInitialValues({});
+  });
+
+  tearDown(() {
+    NativeSecureStore.useSharedPreferencesForTesting = false;
   });
 
   group('UnlockPage runtime privacy', () {
@@ -78,7 +97,6 @@ void main() {
       final state = _stateWithRememberedVault(_sentinelVaultName);
       await _pumpUnlockShell(tester, state);
 
-      
       final textWidgets = tester.widgetList<Text>(find.byType(Text));
       for (final t in textWidgets) {
         final data = t.data ?? t.textSpan?.toPlainText() ?? '';
@@ -86,11 +104,10 @@ void main() {
           data.contains(_sentinelVaultName),
           isFalse,
           reason: 'UnlockPage must never display vault_name. Leaked '
-                  'string: "$data"',
+              'string: "$data"',
         );
       }
-      
-      
+
       expect(find.textContaining('Welcome back to'), findsNothing);
     });
 
@@ -102,36 +119,52 @@ void main() {
 
     testWidgets('exposes the PIN field but no vault_name field',
         (tester) async {
-      
-      
       final state = _stateWithRememberedVault(_sentinelVaultName);
       await _pumpUnlockShell(tester, state);
       expect(find.byType(TextField), findsOneWidget);
-      
-      
+
       expect(find.text('Enter your 6–64 digit PIN.'), findsOneWidget);
     });
 
     testWidgets('mobile viewport renders without showing vault_name',
         (tester) async {
-      
-      
       final state = _stateWithRememberedVault(_sentinelVaultName);
       await _pumpUnlockShell(tester, state, viewport: const Size(400, 1200));
       expect(find.text('Welcome back'), findsOneWidget);
       expect(find.textContaining(_sentinelVaultName), findsNothing);
     });
 
-    testWidgets('redirects to /login when no remembered vault',
-        (tester) async {
-      
-      
+    testWidgets('redirects to /login when no remembered vault', (tester) async {
       final state = _stateWithRememberedVault(null);
       await _pumpUnlockShell(tester, state);
-      
-      
+
       await tester.pumpAndSettle();
       expect(find.text('LOGIN_PAGE_SENTINEL'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Use another vault creates one replacement route per transition',
+        (tester) async {
+      // Exercise the physical-device reproduction sequence repeatedly. A
+      // second replacement in any cycle is the route race that produced the
+      // sliced intermediate frame on iOS.
+      for (var cycle = 0; cycle < 20; cycle += 1) {
+        final state = _stateWithRememberedVault(_sentinelVaultName);
+        final observer = _LoginRouteObserver();
+        await _pumpUnlockShell(
+          tester,
+          state,
+          navigatorObservers: [observer],
+        );
+
+        await tester.tap(find.text('Use another vault'));
+        await tester.pumpAndSettle();
+
+        expect(observer.loginRouteCreations, 1, reason: 'cycle $cycle');
+        expect(find.text('LOGIN_PAGE_SENTINEL'), findsOneWidget);
+        expect(state.hasRememberedVaultLogin, isFalse);
+        expect(tester.takeException(), isNull);
+      }
     });
   });
 }

@@ -1,0 +1,44 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('vault deletion clearly preserves Apple subscription management', () {
+    final source = File('lib/delete_vault_flow.dart').readAsStringSync();
+
+    expect(source, contains('Deleting this vault does not cancel it.'));
+    expect(source, contains('Manage Apple subscription'));
+    expect(source, contains('Check again'));
+    expect(source, contains('active_auto_renewing'));
+    expect(
+      source,
+      contains('active_apple_subscription_must_be_canceled_before_final_deletion'),
+    );
+    expect(
+      source,
+      contains('apple_subscription_status_temporarily_unavailable'),
+    );
+    expect(
+      source,
+      contains('https://apps.apple.com/account/subscriptions'),
+    );
+  });
+
+  test('final deletion authority is fetched from the server and fails closed', () {
+    final source = File('lib/delete_vault_flow.dart').readAsStringSync();
+    expect(source, contains('getDeleteStatus'));
+    expect(source, contains("_deletionAllowed = false"));
+    expect(source, contains("'deletion_allowed'"));
+  });
+
+  test('help center does not claim vault deletion closes subscriptions', () {
+    final source =
+        File('lib/help_center_content_i18n.dart').readAsStringSync();
+
+    expect(source, isNot(contains('Any active storage subscription is closed.')));
+    expect(
+      source,
+      contains('App Store subscriptions are managed separately by Apple'),
+    );
+  });
+}

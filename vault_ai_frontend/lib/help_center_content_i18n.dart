@@ -111,7 +111,7 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
       category: 'security',
       question: 'What happens when I delete my vault?',
       answer:
-          'Deleting your vault permanently deletes your SVaultAI vault data, including files, secure items, logins, ID documents, Crypto Vault encrypted wallet records, and related vault metadata. Any active storage subscription is closed. Deletion does not move or delete crypto assets on the blockchain — those remain wherever the corresponding wallets exist. If you have not backed up your wallet outside SVaultAI, deleting your encrypted wallet records may cause loss of access to those funds.',
+          'Deleting your vault permanently deletes your SVaultAI vault data, including files, secure items, logins, ID documents, Crypto Vault encrypted wallet records, and related vault metadata. App Store subscriptions are managed separately by Apple and are not canceled when you delete a vault; manage or cancel them in Apple Subscriptions. Deletion does not move or delete crypto assets on the blockchain — those remain wherever the corresponding wallets exist. If you have not backed up your wallet outside SVaultAI, deleting your encrypted wallet records may cause loss of access to those funds.',
     ),
     'can-i-recover-deleted-vault': FaqEntry(
       id: 'can-i-recover-deleted-vault',

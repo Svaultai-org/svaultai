@@ -1,4 +1,13 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include "Generated.xcconfig"
-OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) -force_load "$(PROJECT_DIR)/VaultAIOpaque.xcframework/ios-arm64-simulator/libvaultai_opaque_client.a"
-OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) -force_load "$(PROJECT_DIR)/VaultAIOpaque.xcframework/ios-arm64/libvaultai_opaque_client.a"
+// Xcode 26 otherwise links native FFI archives into Runner.debug.dylib. That
+// dylib is absent from App Store exports, so DynamicLibrary.process() cannot
+// resolve the OPAQUE C ABI on physical devices. Release/Profile must link the
+// forced static archive directly into the shipping Runner executable.
+ENABLE_DEBUG_DYLIB = NO
+DEAD_CODE_STRIPPING = NO
+STRIP_INSTALLED_PRODUCT = NO
+GCC_SYMBOLS_PRIVATE_EXTERN = NO
+OPAQUE_FFI_EXPORTS = -Wl,-export_dynamic -Wl,-u,_vaultai_opaque_client_start_registration -Wl,-u,_vaultai_opaque_client_finish_registration -Wl,-u,_vaultai_opaque_client_start_login -Wl,-u,_vaultai_opaque_client_finish_login -Wl,-u,_vaultai_pbkdf2_hmac_sha256 -Wl,-u,_vaultai_opaque_client_free_string -Wl,-exported_symbol,_vaultai_opaque_client_start_registration -Wl,-exported_symbol,_vaultai_opaque_client_finish_registration -Wl,-exported_symbol,_vaultai_opaque_client_start_login -Wl,-exported_symbol,_vaultai_opaque_client_finish_login -Wl,-exported_symbol,_vaultai_pbkdf2_hmac_sha256 -Wl,-exported_symbol,_vaultai_opaque_client_free_string
+OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) -force_load "$(PROJECT_DIR)/VaultAIOpaque.xcframework/ios-arm64-simulator/libvaultai_opaque_client.a" $(OPAQUE_FFI_EXPORTS)
+OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) -force_load "$(PROJECT_DIR)/VaultAIOpaque.xcframework/ios-arm64/libvaultai_opaque_client.a" $(OPAQUE_FFI_EXPORTS)
