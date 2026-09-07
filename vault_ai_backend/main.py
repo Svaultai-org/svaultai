@@ -491,6 +491,9 @@ app.include_router(billing_router)
 from routes.stripe_routes import router as stripe_router
 app.include_router(stripe_router)
 
+from routes.apple_iap_routes import router as apple_iap_router
+app.include_router(apple_iap_router)
+
                                                                        
 from routes.chunked_download_routes import (              
     router as chunked_download_router,

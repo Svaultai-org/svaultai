@@ -20,6 +20,9 @@ openpyxl
 alembic
 sqlalchemy
 stripe>=7.0
+# Official Apple verifier for StoreKit 2 signed transactions and server
+# notifications. Keep current major for security fixes.
+app-store-server-library>=3.1.2,<4
 # Slice 2B — image OCR. Optional at runtime; the OCR module
 # detects pytesseract + Pillow at import and falls back to a
 # clean "OCR engine unavailable" error if either is missing.
