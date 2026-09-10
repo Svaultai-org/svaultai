@@ -1151,6 +1151,41 @@ class VaultAIClient {
     return decoded;
   }
 
+  /// Sends StoreKit 2's signed transaction JWS to the backend. Storage is
+  /// granted only after Apple signature, bundle, environment, product, expiry,
+  /// and app-account binding checks pass server-side.
+  Future<Map<String, dynamic>> verifyAppleStoragePurchase({
+    required String authToken,
+    required String signedTransaction,
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/apple/transactions');
+    final headers = _defaultHeaders(authToken: authToken, json: true);
+    _vlogRequest('billing.apple.verify', uri, headers);
+    final response = await _runWithNetLog(
+      'billing.apple.verify',
+      uri,
+      () => http.post(
+        uri,
+        headers: headers,
+        body: jsonEncode({'signed_transaction': signedTransaction}),
+      ),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'App Store purchase verification failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid App Store verification response format');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> getSecurityCenterSummary({
     required String authToken,
   }) async {
@@ -2860,6 +2895,9 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      return _listZkVaultItems(authToken: authToken);
+    }
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
     final response = await http.post(
@@ -2890,6 +2928,72 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> _listZkVaultItems({
+    required String authToken,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items/list');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{'limit': 500}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'List secure items failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid ciphertext secure-items response format');
+    }
+    final metaKey =
+        await vault_key_hierarchy.VaultKeyHierarchy(mvk).metadataKey();
+    Future<String> decryptRequired(Object? encoded) async {
+      if (encoded is! String || encoded.isEmpty) {
+        throw const FormatException('Missing encrypted saved-item field');
+      }
+      final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
+        metaKey,
+        vault_key_hierarchy.b64urlDecode(encoded),
+      );
+      return utf8.decode(plaintext);
+    }
+
+    final items = <Map<String, dynamic>>[];
+    for (final raw in (decoded['items'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      try {
+        final type = await decryptRequired(raw['item_type_ciphertext']);
+        final service = await decryptRequired(raw['service_ciphertext']);
+        final payloadText = await decryptRequired(raw['payload_ciphertext']);
+        final payloadDecoded = jsonDecode(payloadText);
+        final payload = payloadDecoded is Map
+            ? Map<String, dynamic>.from(payloadDecoded)
+            : <String, dynamic>{};
+        final rawFields = payload['fields'];
+        items.add(<String, dynamic>{
+          'id': raw['id'],
+          'service': service,
+          'item_type': type,
+          'fields': rawFields is Map
+              ? Map<String, dynamic>.from(rawFields)
+              : <String, dynamic>{},
+          'notes': payload['notes'],
+          'created_at': raw['created_at'],
+        });
+      } catch (_) {
+        // A single corrupt envelope must not hide other saved items.
+      }
+    }
+    return <String, dynamic>{'items': items, 'engine': 'ciphertext'};
+  }
+
   Future<Map<String, dynamic>> getVaultSecureItem({
     required String vaultName,
     required String service,
@@ -2897,6 +3001,17 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final listed = await _listZkVaultItems(authToken: authToken);
+      for (final raw in (listed['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        if ('${raw['item_type']}' == itemType &&
+            '${raw['service']}'.toLowerCase() == service.toLowerCase()) {
+          return Map<String, dynamic>.from(raw);
+        }
+      }
+      throw Exception('Saved item not found');
+    }
     final uri = Uri.parse('$baseUrl/get-secure-item');
 
     final response = await http.post(
@@ -4117,9 +4232,20 @@ class VaultAIClient {
     // /vault/ciphertext/vault-items instead of /update-secure-item —
     // no readable item_type / service / payload leaves the client.
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      int? existingItemId;
+      final listed = await _listZkVaultItems(authToken: authToken);
+      for (final raw in (listed['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        if ('${raw['item_type']}' == itemType &&
+            '${raw['service']}'.toLowerCase() == oldService.toLowerCase()) {
+          existingItemId = (raw['id'] as num?)?.toInt();
+          break;
+        }
+      }
       final zkResp = await tryZkVaultItemCiphertextUpsert(
         baseUrl: baseUrl,
         authToken: authToken,
+        existingItemId: existingItemId,
         itemType: itemType,
         service: (newService != null && newService.trim().isNotEmpty)
             ? newService.trim()
@@ -4236,6 +4362,130 @@ class VaultAIClient {
       }),
     );
     return resp.statusCode == 200;
+  }
+
+  /// Fetches opaque ZK memory envelopes and decrypts them only on the client.
+  Future<Map<String, dynamic>> listZkMemories({
+    required String authToken,
+    int limit = 200,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/list');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{'limit': limit}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory list failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid memory list response format');
+    }
+    final memoryKey =
+        await vault_key_hierarchy.VaultKeyHierarchy(mvk).memoryKey();
+    final items = <Map<String, dynamic>>[];
+    final counts = <String, int>{};
+    for (final raw in (decoded['items'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      final envelope = raw['payload_ciphertext'];
+      if (envelope is! String || envelope.isEmpty) continue;
+      try {
+        final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
+          memoryKey,
+          vault_key_hierarchy.b64urlDecode(envelope),
+        );
+        final payload = jsonDecode(utf8.decode(plaintext));
+        if (payload is! Map) continue;
+        final type =
+            '${raw['memory_type'] ?? payload['memory_type'] ?? 'note'}';
+        items.add(<String, dynamic>{
+          ...Map<String, dynamic>.from(payload),
+          'id': raw['id'],
+          'memory_type': type,
+          'created_at': raw['created_at'],
+          'updated_at': raw['updated_at'],
+        });
+        counts[type] = (counts[type] ?? 0) + 1;
+      } catch (_) {
+        // One corrupt/legacy envelope must not hide the user's other memories.
+      }
+    }
+    return <String, dynamic>{
+      'items': items,
+      'counts': counts,
+      'engine': 'ciphertext',
+    };
+  }
+
+  Future<void> deleteZkMemory({
+    required String authToken,
+    required int memoryId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/delete');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{'memory_id': memoryId}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory delete failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+  }
+
+  Future<void> upsertZkMemory({
+    required String authToken,
+    required Map<String, dynamic> data,
+    int? memoryId,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final memoryKey = await hierarchy.memoryKey();
+    final lookupKey = await hierarchy.memoryLookupKey();
+    final lookupText = '${data['title'] ?? data['memory_key'] ?? 'memory'}';
+    final envelope = await vault_key_hierarchy.aesGcmWrap(
+      memoryKey,
+      utf8.encode(jsonEncode(data)),
+    );
+    final lookupHash = await vault_key_hierarchy.keyedLookupHash(
+      lookupKey,
+      utf8.encode(lookupText.trim().toLowerCase()),
+    );
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{
+        if (memoryId != null) 'memory_id': memoryId,
+        'memory_type': '${data['memory_type'] ?? 'note'}',
+        'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
+        'payload_ciphertext': vault_key_hierarchy.b64urlEncode(envelope),
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory save failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
   }
 
   /// ZK ciphertext-first uploaded_files metadata write. Called right
@@ -4359,6 +4609,35 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final listed = await _listZkVaultItems(authToken: authToken);
+      int? itemId;
+      for (final raw in (listed['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        if ('${raw['item_type']}' == itemType &&
+            '${raw['service']}'.toLowerCase() == service.toLowerCase()) {
+          itemId = (raw['id'] as num?)?.toInt();
+          break;
+        }
+      }
+      if (itemId == null) throw Exception('Saved item not found');
+      final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items/delete');
+      final response = await http.post(
+        uri,
+        headers: _defaultHeaders(authToken: authToken, json: true),
+        body: jsonEncode(<String, dynamic>{'item_id': itemId}),
+      );
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw Exception(_formatBackendError(
+          prefix: 'Could not delete saved item',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        ));
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
     final uri = Uri.parse('$baseUrl/delete-secure-item');
 
     final response = await http.post(

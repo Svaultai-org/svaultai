@@ -1,23 +1,16 @@
-
-
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../primitives.dart';
 import '../tokens.dart';
 
-
 enum StorageLimitDialogChoice { upgrade, cancel }
 
 class NotEnoughStorageDialog extends StatelessWidget {
-  
-  
   final int plannedBytes;
 
-  
   final int availableBytes;
 
-  
   final String? folderName;
 
   const NotEnoughStorageDialog({
@@ -27,7 +20,6 @@ class NotEnoughStorageDialog extends StatelessWidget {
     this.folderName,
   });
 
-  
   static Future<StorageLimitDialogChoice> show(
     BuildContext context, {
     required int plannedBytes,
@@ -63,8 +55,8 @@ class NotEnoughStorageDialog extends StatelessWidget {
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: dialogMax),
         child: Padding(
-          padding: EdgeInsets.all(
-              screenW < 400 ? VaultSpacing.md : VaultSpacing.lg),
+          padding:
+              EdgeInsets.all(screenW < 400 ? VaultSpacing.md : VaultSpacing.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -126,7 +118,6 @@ class NotEnoughStorageDialog extends StatelessWidget {
     );
   }
 }
-
 
 String formatStorageBytes(int bytes) {
   if (bytes <= 0) return '0 B';

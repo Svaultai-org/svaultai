@@ -31,6 +31,10 @@ def _is_enabled() -> bool:
     ).lower() == "true"
 
 
+def _legacy_memory_allowed() -> bool:
+    return os.getenv("MEMORY_V2_WRITE_ENABLED", "false").lower() != "true"
+
+
 def _rate_limit(vault_id: str) -> None:
     now = time.monotonic()
     window = 60.0
@@ -192,6 +196,8 @@ async def memory_list_endpoint(
     payload: MemoryListRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     if not _is_enabled():
@@ -225,6 +231,8 @@ async def memory_create_endpoint(
     payload: MemoryCreateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     if not _is_enabled():
@@ -264,6 +272,8 @@ async def memory_update_endpoint(
     payload: MemoryUpdateRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     try:
@@ -301,6 +311,8 @@ async def memory_delete_endpoint(
     payload: MemoryDeleteRequest,
     principal=Depends(verify_trusted_device),
 ):
+    if not _legacy_memory_allowed():
+        raise HTTPException(status_code=404, detail="memory_v2_required")
     vault_id, key = _verified_vault_key(principal, payload.pin)
     _rate_limit(vault_id)
     try:

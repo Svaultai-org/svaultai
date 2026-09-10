@@ -38,6 +38,7 @@ import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/native_secure_store.dart';
 import 'services/session_termination.dart' as st;
+import 'services/apple_iap_service.dart';
 import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
 import 'services/vault_handle.dart' as vh;
@@ -49,6 +50,7 @@ import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
 import 'services/attachment_title_binding.dart';
 import 'services/native_media_capture.dart';
+import 'services/native_video_viewer.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
@@ -65,6 +67,7 @@ import 'devices_page.dart';
 import 'security_center_page.dart';
 import 'help_center_page.dart' as hc;
 import 'privacy_policy_page.dart';
+import 'public_download_badges.dart';
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
 import 'storage_page.dart';
@@ -739,6 +742,7 @@ Future<void> main() async {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      AppleIapService.instance.initialize();
 
       String? webOrigin;
       try {
@@ -2800,6 +2804,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
               ),
             ),
           Container(
+            key: const Key('svaultai_brand_logo'),
             width: 42,
             height: 42,
             decoration: BoxDecoration(
@@ -2808,8 +2813,12 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
               border: Border.all(
                   color: const Color(0xFF10A37F).withValues(alpha: 0.18)),
             ),
-            child: const Icon(Icons.shield_rounded,
-                color: Color(0xFF10A37F), size: 22),
+            clipBehavior: Clip.antiAlias,
+            child: Image.asset(
+              'assets/branding/vaultai-icon-1024.png',
+              fit: BoxFit.cover,
+              semanticLabel: 'SVaultAI logo',
+            ),
           ),
           // 2026-07-21 (c2f917e follow-up): on phone-width viewports
           // (< 600 CSS px) hide the wordmark entirely and show only
@@ -3685,26 +3694,55 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
 
     return Scaffold(
       appBar: TopNavBar(isMobile: w < 760),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-                horizontal: isMobile ? 18 : 28, vertical: isMobile ? 18 : 30),
-            child: isMobile
-                ? const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [_HeroText(), SizedBox(height: 20), _HeroCard()],
-                  )
-                : const Row(
-                    children: [
-                      Expanded(child: _HeroText()),
-                      SizedBox(width: 40),
-                      Expanded(child: _HeroCard())
-                    ],
-                  ),
+      body: ListView(
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 18 : 28,
+                  vertical: isMobile ? 24 : 52,
+                ),
+                child: isMobile
+                    ? const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _HeroText(),
+                          SizedBox(height: 24),
+                          _HeroCard(),
+                        ],
+                      )
+                    : const Row(children: [
+                        Expanded(child: _HeroText()),
+                        SizedBox(width: 40),
+                        Expanded(child: _HeroCard()),
+                      ]),
+              ),
+            ),
           ),
-        ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 18 : 28,
+                  vertical: 24,
+                ),
+                child: const PublicMobileAppsSection(),
+              ),
+            ),
+          ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: isMobile ? 18 : 28),
+                child: const PublicLandingFooter(),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3745,6 +3783,8 @@ class _HeroText extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 20),
+        const PlatformDownloadBadges(compact: true),
       ],
     );
   }
@@ -4289,9 +4329,10 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   Future<void> _autofillCachedHandle() async {
     // Prefer the persisted vault name (last_vault_name) — that's
     // what the user actually types to sign in. Fall back to the
-    // cached VLT handle only if we don't have a vault name yet
-    // (e.g. an adopted-legacy account whose signup happened before
-    // we started persisting it). We never overwrite whatever the
+    // Never fall back to the internal VLT handle. That identifier is
+    // protocol metadata, not a user-facing vault name. Showing it in
+    // this field makes a locally generated value look like a vault
+    // name returned by the backend. We never overwrite whatever the
     // user has already started typing.
     //
     // Back-compat: read the legacy pre-2026-07-20 keys
@@ -4311,12 +4352,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         vaultNameCtrl.text = persistedName;
         _maybeMarkZkHandle();
         return;
-      }
-      final cached = await legacy_adopt.readCachedVaultHandle();
-      if (!mounted) return;
-      if (cached != null && cached.isNotEmpty && vaultNameCtrl.text.isEmpty) {
-        vaultNameCtrl.text = cached;
-        _maybeMarkZkHandle();
       }
     } catch (_) {}
   }
@@ -4370,6 +4405,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
+    vaultNameCtrl.removeListener(_maybeMarkZkHandle);
+    vaultNameCtrl.dispose();
+    pinCtrl.dispose();
     super.dispose();
   }
 
@@ -5356,6 +5394,7 @@ class _UnlockPageState extends State<UnlockPage> {
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
+  bool _leavingForLogin = false;
 
   Future<void> _submit() async {
     final app = context.read<AppState>();
@@ -5704,6 +5743,8 @@ class _UnlockPageState extends State<UnlockPage> {
   }
 
   Future<void> _useAnotherVault() async {
+    if (_leavingForLogin) return;
+    setState(() => _leavingForLogin = true);
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
     if (!mounted) return;
@@ -5711,15 +5752,25 @@ class _UnlockPageState extends State<UnlockPage> {
   }
 
   @override
+  void dispose() {
+    pinCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
 
-    if (app.lastVaultName == null) {
+    if (app.lastVaultName == null && !_leavingForLogin) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.pushReplacementNamed(context, '/login');
+        if (mounted && !_leavingForLogin) {
+          _leavingForLogin = true;
+          Navigator.pushReplacementNamed(context, '/login');
+        }
       });
       return const Scaffold();
     }
+    if (_leavingForLogin) return const Scaffold();
     final w = MediaQuery.of(context).size.width;
     final isMobile = w < 760;
     return Scaffold(
@@ -6701,7 +6752,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
 
     Map<String, String> resolved = initialFields ?? const {};
-    if (resolved.isEmpty) {
+    // A create dialog has no existing item to fetch. Calling the read endpoint
+    // with an empty service produced a misleading "Could not load" banner on
+    // both web and iOS before the user had entered anything.
+    if (resolved.isEmpty && !createMode) {
       final token = app.sessionToken;
       if (token != null && app.vaultName != null) {
         try {
@@ -13819,12 +13873,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required bool isVideo,
   }) async {
     if (!kIsWeb) {
+      if (isVideo) {
+        try {
+          final opened = await showNativeVideoViewer(
+            context,
+            fileName: fileName,
+            bytes: bytes,
+          );
+          if (opened) return;
+        } catch (_) {
+          // Fall through to the safe metadata view for unsupported codecs.
+        }
+      }
       await _openMediaMetadataDialog(
         fileName: fileName,
         bytes: bytes,
         mimeType: mimeType,
         isVideo: isVideo,
-        reason: 'In-app playback is currently web-only.',
+        reason: isVideo
+            ? 'This video format could not be played on this device.'
+            : 'In-app audio playback is not available on this device.',
       );
       return;
     }
@@ -14859,6 +14927,32 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         }
       } catch (err) {
+        final networkText = err.toString().toLowerCase();
+        final isTransportDrop = networkText.contains('clientexception') ||
+            networkText.contains('connection closed before full header') ||
+            networkText.contains('connection reset') ||
+            networkText.contains('socketexception');
+        if (isTransportDrop) {
+          if (!mounted) return;
+          setState(() {
+            thinking = false;
+            sending = false;
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
+            input.text = text;
+            input.selection = TextSelection.collapsed(offset: text.length);
+          });
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          rootScaffoldMessengerKey.currentState?.showSnackBar(
+            const SnackBar(
+              content: Text(
+                'The connection was interrupted. Your request was kept—tap send to retry.',
+              ),
+            ),
+          );
+          return;
+        }
         // 2026-07-22: server 400 "Invalid PIN or corrupted data" is
         // NOT a session-expired condition and NOT an incorrect PIN
         // — it's a client-side crypto-context mismatch. Preserve
@@ -15365,7 +15459,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             },
             onOpenBillingPage: () {
               if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.settings);
+              Navigator.of(context).pushNamed(
+                '/storage',
+                arguments: const {'autoOpenPicker': true},
+              );
             },
             onOpenStoragePage: () {
               if (!mounted) return;
@@ -15425,7 +15522,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
             onOpenCryptoUpgrade: () {
               if (!mounted) return;
-              setState(() => selectedSection = _DashboardSection.settings);
+              Navigator.of(context).pushNamed(
+                '/storage',
+                arguments: const {'autoOpenPicker': true},
+              );
             },
           ),
         ),

@@ -17,12 +17,8 @@ class _MemoryFakeClient extends VaultAIClient {
   _MemoryFakeClient() : super(baseUrl: 'http://localhost.invalid');
 
   @override
-  Future<Map<String, dynamic>> listMemories({
+  Future<Map<String, dynamic>> listZkMemories({
     required String authToken,
-    required String vaultName,
-    required String pin,
-    String? query,
-    String? memoryType,
     int limit = 200,
   }) async {
     return {

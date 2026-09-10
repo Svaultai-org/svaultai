@@ -513,17 +513,9 @@ class _MemoryPageState extends State<MemoryPage> {
       _revealedMemoryIds.clear();
     });
     try {
-      final pinProvider = widget.pinProvider;
-      final res = pinProvider == null
-          ? await widget.client.getMemoryTimeline(
-              authToken: widget.authToken,
-              vaultName: widget.vaultName,
-            )
-          : await widget.client.listMemories(
-              authToken: widget.authToken,
-              vaultName: widget.vaultName,
-              pin: await pinProvider(),
-            );
+      final res = await widget.client.listZkMemories(
+        authToken: widget.authToken,
+      );
       if (!mounted) return;
       final raw = (res['items'] as List?) ?? const [];
       final counts = (res['counts'] is Map)
@@ -677,31 +669,14 @@ class _MemoryPageState extends State<MemoryPage> {
     required Map<String, dynamic>? row,
     required Map<String, dynamic> data,
   }) async {
-    final pinProvider = widget.pinProvider;
-    if (pinProvider == null) {
-      _showSnack('Unlock your vault to save memories');
-      return;
-    }
     try {
-      final pin = await pinProvider();
-      if (row == null) {
-        await widget.client.createMemory(
-          authToken: widget.authToken,
-          vaultName: widget.vaultName,
-          pin: pin,
-          data: data,
-        );
-      } else {
-        final id = int.tryParse('${row['id']}');
-        if (id == null) throw Exception('Missing memory id');
-        await widget.client.updateMemory(
-          authToken: widget.authToken,
-          vaultName: widget.vaultName,
-          pin: pin,
-          id: id,
-          data: data,
-        );
-      }
+      final id = row == null ? null : int.tryParse('${row['id']}');
+      if (row != null && id == null) throw Exception('Missing memory id');
+      await widget.client.upsertZkMemory(
+        authToken: widget.authToken,
+        data: data,
+        memoryId: id,
+      );
       if (!mounted) return;
       _showSnack(row == null ? 'Memory saved' : 'Memory updated');
       await _load();
@@ -740,12 +715,9 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       final id = int.tryParse('${row['id']}');
       if (id == null) throw Exception('Missing memory id');
-      final pin = await pinProvider();
-      await widget.client.deleteMemory(
+      await widget.client.deleteZkMemory(
         authToken: widget.authToken,
-        vaultName: widget.vaultName,
-        pin: pin,
-        id: id,
+        memoryId: id,
       );
       if (!mounted) return;
       _showSnack('Memory deleted');

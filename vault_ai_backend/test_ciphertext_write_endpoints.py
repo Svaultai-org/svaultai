@@ -25,9 +25,13 @@ def test_router_registers_all_ciphertext_write_paths() -> None:
     paths = {getattr(r, "path", None) for r in router.routes}
     expected = {
         "/vault/ciphertext/vault-items",
+        "/vault/ciphertext/vault-items/list",
+        "/vault/ciphertext/vault-items/delete",
         "/vault/ciphertext/uploaded-files",
         "/vault/ciphertext/notifications",
         "/vault/ciphertext/vault-ai-memory",
+        "/vault/ciphertext/vault-ai-memory/list",
+        "/vault/ciphertext/vault-ai-memory/delete",
         "/vault/ciphertext/beneficiary-links",
         "/vault/ciphertext/semantic-index",
         "/vault/ciphertext/crypto-drafts",
@@ -145,6 +149,36 @@ def test_ai_memory_ciphertext_rejects_plaintext_leak() -> None:
         _reject_plaintext_leak(
             req, ("memory_key", "memory_value", "memory_normalized_key"),
         )
+
+
+def test_vault_item_ciphertext_read_contract_is_scoped_and_opaque() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    list_src = inspect.getsource(mod.vault_item_list_ciphertext)
+    assert 'principal["vault_id"]' in list_src
+    assert "item_type_ciphertext" in list_src
+    assert "service_ciphertext" in list_src
+    assert "payload_ciphertext" in list_src
+    assert "encrypted_data" not in list_src
+
+    delete_src = inspect.getsource(mod.vault_item_delete_ciphertext)
+    assert 'principal["vault_id"]' in delete_src
+    assert "payload.item_id" in delete_src
+
+
+def test_memory_dashboard_uses_ciphertext_only_contract() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    list_src = inspect.getsource(mod.ai_memory_ciphertext_list)
+    assert "payload_ciphertext" in list_src
+    assert "memory_value" not in list_src
+    assert "memory_key" not in list_src
+    assert 'principal["vault_id"]' in list_src
+
+    delete_src = inspect.getsource(mod.ai_memory_ciphertext_delete)
+    assert 'principal["vault_id"]' in delete_src
 
 
 def test_all_ciphertext_write_endpoints_require_auth() -> None:

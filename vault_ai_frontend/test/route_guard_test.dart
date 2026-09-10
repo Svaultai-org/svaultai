@@ -135,6 +135,7 @@ void main() {
     test('"/" routes to LandingPage and "/login" to LoginPage', () {
       final src = _readLib('main.dart');
       expect(src, contains("'/': (_) => const LandingPage()"));
+      expect(src, contains("initialRoute: '/login'"));
       expect(src, contains("'/login': (_) => const LoginPage()"));
       expect(src, contains("'/signup': (_) => const SignupPage()"));
       expect(src, contains("'/unlock': (_) => const UnlockPage()"));

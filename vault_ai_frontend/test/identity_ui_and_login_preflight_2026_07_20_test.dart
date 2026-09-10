@@ -178,6 +178,21 @@ void main() {
             'username so the previous badge does not carry over',
       );
     });
+
+    test('login autofill never exposes the internal VLT handle as a name', () {
+      final src = _readLib('main.dart');
+      final start = src.indexOf('Future<void> _autofillCachedHandle()');
+      final end =
+          src.indexOf('\n  @override\n  void didChangeDependencies()', start);
+      expect(start, greaterThan(-1));
+      expect(end, greaterThan(start));
+      final window = src.substring(start, end);
+      expect(window.contains('readCachedVaultHandle'), isFalse,
+          reason: 'VLT protocol handles must not be painted in the '
+              'user-facing vault-name field');
+      expect(window.contains("readString('last_vault_name')"), isTrue,
+          reason: 'a real remembered vault name may still be prefilled');
+    });
   });
 
   group('LoginPage preflight validates before touching the network', () {
@@ -223,19 +238,19 @@ void main() {
             'visible error message; use a controlled copy so a '
             'bang null does not leak to the user',
       );
-      // The controlled copy carries the diagnostic tag so operators
-      // can see WHICH step threw.
+      // Native release builds use a device-safe constant. Diagnostics are
+      // written only to the redacted diagnostic channel and never displayed
+      // to the user.
       expect(
-        window.contains("'Login failed. '"),
+        window.contains('err = kAuthDeviceSafeError;'),
         isTrue,
         reason: 'controlled login-failed copy is missing',
       );
       expect(
-        window.contains(r'[diagnostic: step=$loginLastStep, type=$typeName]'),
+        window.contains(r'last_step=$loginLastStep type=$typeName'),
         isTrue,
-        reason: 'ZK catch must surface the step + exception class '
-            'in the user-visible error so an operator reading '
-            'a screenshot can identify the failing step',
+        reason: 'ZK catch must retain a redacted step + exception-class '
+            'diagnostic without exposing it in user-visible copy',
       );
     });
 
@@ -317,16 +332,14 @@ void main() {
             'the user-visible error message',
       );
       expect(
-        window.contains("'Wrong username or PIN. '"),
+        window.contains('err = kUnlockDeviceSafeError;'),
         isTrue,
         reason: 'controlled unlock-failed copy is missing',
       );
-      // Same diagnostic contract as LoginPage — the UnlockPage error
-      // string must expose the step + exception class so a wrong-
-      // PIN attempt and a bang-null crash look different in a
-      // screenshot.
+      // Same diagnostic contract as LoginPage: keep the classification in
+      // redacted diagnostics, not in the screenshot-visible error.
       expect(
-        window.contains(r'[diagnostic: step=$unlockLastStep, type=$typeName]'),
+        window.contains(r'last_step=$unlockLastStep type=$typeName'),
         isTrue,
         reason: 'UnlockPage error must carry the diagnostic step + '
             'exception class tag',
@@ -409,7 +422,7 @@ void main() {
   });
 
   group('LoginPage prefills the friendly username, not the handle', () {
-    test('_autofillCachedHandle reads last_display_username first', () {
+    test('_autofillCachedHandle never reads the cached VLT handle', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('_autofillCachedHandle');
       expect(idx, greaterThan(-1));
@@ -420,9 +433,9 @@ void main() {
           reason: 'autofill must prefer the persisted friendly '
               'username so returning users do not see a VLT '
               'handle in their login form');
-      expect(usernameIdx, lessThan(handleIdx),
-          reason: 'username must be checked BEFORE the legacy '
-              'cached handle');
+      expect(handleIdx, equals(-1),
+          reason: 'the internal VLT handle must never be shown as '
+              'though it were the user-facing vault name');
     });
   });
 }

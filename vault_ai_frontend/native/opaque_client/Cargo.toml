@@ -3,10 +3,10 @@ name = "vaultai_opaque_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Android C-ABI OPAQUE client for VaultAI."
+description = "Android and iOS C-ABI OPAQUE client for VaultAI."
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 opaque-ke = { version = "4.0", features = ["argon2"] }
@@ -18,3 +18,9 @@ hmac = "0.12"
 pbkdf2 = "0.12"
 serde_json = "1"
 zeroize = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = "debuginfo"

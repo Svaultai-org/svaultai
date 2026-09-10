@@ -53,15 +53,13 @@
 		strings to the app's actual behavior.
 	-->
 		<key>NSCameraUsageDescription</key>
-		<string>Svaultai uses the camera to scan crypto-recipient QR codes so you can send funds without typing long addresses.</string>
+		<string>Svaultai uses the camera to capture photos and videos you choose to save in your private vault and to scan recipient QR codes.</string>
 		<key>NSMicrophoneUsageDescription</key>
-		<string>Svaultai uses the microphone for voice dictation into Svaultai Chat and voice notes. Audio never leaves your device unless you explicitly send it.</string>
+		<string>Svaultai uses the microphone to record voice notes and videos you choose to save in your private vault.</string>
 		<key>NSSpeechRecognitionUsageDescription</key>
 		<string>Svaultai converts your dictation to text on-device so you can talk to Svaultai Chat without typing.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
-		<string>Svaultai needs photo-library access when you choose to upload existing images into your encrypted vault.</string>
-		<key>NSFaceIDUsageDescription</key>
-		<string>Svaultai can use Face ID to unlock biometric-protected vault entries instead of asking for your PIN each time.</string>
+		<string>Svaultai accesses your photo library only when you choose media to save in your private vault.</string>
 		<!--
 		App Transport Security. Left as system default (HTTPS-only,
 		strict TLS). No exception domains — the mobile production

@@ -1,26 +1,50 @@
-# VaultAI
+# SvaultAI
 
-**Your private digital vault with an assistant that speaks your language.**
+**A private, encrypted home for your digital life—with an assistant that speaks your language.**
 
-VaultAI is an end-to-end-encrypted personal vault for the things that
+[![Flutter](https://img.shields.io/badge/Flutter-Web%20%7C%20Mobile-02569B?logo=flutter)](https://flutter.dev/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql)](https://www.postgresql.org/)
+[![Status](https://img.shields.io/badge/status-pre--launch-orange)](#project-status)
+
+SvaultAI is an end-to-end-encrypted personal vault for the things that
 usually live scattered across your inbox, notes app, camera roll, and
 password manager: passports and IDs, logins, secure notes, files and
 photos, and crypto wallet records. A vault-native chat assistant sits
-on top so you can retrieve, summarise, and manage all of it in plain
+on top so you can retrieve, summarize, and manage all of it in plain
 language.
 
 The vault is opened by a **PIN you never send to the backend in
 plaintext**. The vault contents are decrypted **on-device**, with a
-key that only exists in memory while you are unlocked. VaultAI Chat
+key that only exists in memory while you are unlocked. SvaultAI Chat
 runs against **masked, safe projections** of your vault — the AI
 never sees your raw records.
+
+> [!IMPORTANT]
+> SvaultAI is currently pre-launch software. Do not use development
+> builds for irreplaceable secrets or production funds.
+
+## Why SvaultAI
+
+- **Private by design.** Encryption and decryption happen on the user's
+  device; the backend stores ciphertext and only the metadata required
+  to serve requests.
+- **Useful without exposing secrets.** The assistant works from masked
+  projections and structured actions instead of receiving raw vault
+  contents.
+- **One vault, many record types.** Keep credentials, documents, notes,
+  files, and receive-side crypto records in one organized place.
+- **Built-in safety boundaries.** Sensitive and destructive operations
+  require explicit checks, confirmations, and rate limits.
+- **Multilingual from the start.** The application shell is fully
+  localized in seven languages, with broader multilingual chat routing.
 
 ---
 
 ## Contents
 
 - [What you can put in it](#what-you-can-put-in-it)
-- [VaultAI Chat](#vaultai-chat)
+- [SvaultAI Chat](#svaultai-chat)
 - [Crypto Vault](#crypto-vault) — non-custodial, receive-first
 - [Trust model](#trust-model) — what we guarantee, what we don't
 - [Cryptography summary](#cryptography-summary)
@@ -31,8 +55,10 @@ never sees your raw records.
 - [Getting started (development)](#getting-started-development)
 - [Testing](#testing)
 - [Production deployment](#production-deployment)
-- [What VaultAI is not](#what-vaultai-is-not)
-- [Status](#status)
+- [Repository layout](#repository-layout)
+- [What SvaultAI is not](#what-svaultai-is-not)
+- [Contributing and security reports](#contributing-and-security-reports)
+- [Project status](#project-status)
 
 ---
 
@@ -53,9 +79,9 @@ never the plaintext.
 
 ---
 
-## VaultAI Chat
+## SvaultAI Chat
 
-VaultAI Chat is the in-app assistant. It's built around one rule:
+SvaultAI Chat is the in-app assistant. It's built around one rule:
 **deterministic routing wins, AI is a fallback.**
 
 - **Deterministic router first.** Common intents ("show my saved
@@ -124,7 +150,7 @@ anything.**
 - **Encryption is on your device.** Vault items are decrypted after
   you unlock, using a key derived from your PIN + a per-vault salt.
   The backend stores only ciphertext + routing metadata.
-- **The assistant runs against masked data.** VaultAI Chat sees
+- **The assistant runs against masked data.** SvaultAI Chat sees
   file names, categories, sizes, and structured "safe projections" —
   never the encrypted content.
 - **Sessions are short and revocable.** Every session is signed with
@@ -137,14 +163,14 @@ anything.**
   chat, upload burst, delete burst, and export all have quotas —
   in-memory in dev, Redis-clustered in production.
 
-**What VaultAI does not promise:**
+**What SvaultAI does not promise:**
 
 - Perfect security. No software can promise that. If your device is
   compromised, your unlocked vault is compromised.
 - Recovery of a lost PIN. Losing the PIN means losing the vault.
   There is no server-side backdoor; there is no reset link.
-- Custody of your crypto. VaultAI does not hold your funds. If your
-  private key is compromised, VaultAI cannot stop the loss.
+- Custody of your crypto. SvaultAI does not hold your funds. If your
+  private key is compromised, SvaultAI cannot stop the loss.
 
 More detail:
 [docs/security_threat_model.md](docs/security_threat_model.md),
@@ -175,7 +201,7 @@ account.
 
 ## Inheritance
 
-VaultAI supports **beneficiary pairing** so a vault can be passed
+SvaultAI supports **beneficiary pairing** so a vault can be passed
 to a named person on a defined schedule.
 
 1. The vault owner shares a **pairing code** with a beneficiary.
@@ -228,7 +254,7 @@ billing and activity. Paid subscribers are never auto-deleted.
 
 ## Languages
 
-VaultAI ships **seven fully-localised languages** across the app
+SvaultAI ships **seven fully localized languages** across the app
 shell, help/FAQ content, and chat replies:
 
 - English
@@ -268,7 +294,7 @@ message and replies in it — a user with a French shell who types
 │                            │        │                            │
 │  • PIN entry               │        │  • Session HMAC            │
 │  • On-device AES-GCM       │        │  • Trusted-device gate     │
-│  • VaultAI Chat UI         │        │  • Rate limiting           │
+│  • SvaultAI Chat UI        │        │  • Rate limiting           │
 │  • Crypto Vault UI         │        │  • Security headers        │
 │  • Multi-locale shell      │        │  • Vault deletion service  │
 │                            │        │  • Chat orchestrator       │
@@ -304,6 +330,17 @@ message and replies in it — a user with a French shell who types
 
 ## Getting started (development)
 
+### Prerequisites
+
+- Python 3.11 or newer
+- PostgreSQL
+- Flutter SDK
+- A supported browser or mobile/desktop target
+
+Optional integrations such as OpenAI, Stripe, Redis, and chain RPC
+providers require their own credentials. Start from the checked-in
+environment examples; never commit a populated `.env` file.
+
 ### Backend
 
 ```bash
@@ -323,10 +360,10 @@ cp .env.example .env
 #   OPENAI_API_KEY=sk-...   (optional in dev)
 
 # Run migrations.
-alembic upgrade head
+python -m alembic upgrade head
 
 # Start.
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The backend refuses to boot in `VAULTAI_ENV=production` without a
@@ -440,12 +477,29 @@ Related runbooks:
 
 ---
 
-## What VaultAI is not
+## Repository layout
+
+```text
+svaultai/
+├── vault_ai_frontend/   # Flutter application for web, mobile, and desktop
+├── vault_ai_backend/    # FastAPI service, migrations, and backend tests
+├── docs/                # Security, deployment, operations, and product notes
+├── deploy/              # Deployment and web-server configuration
+└── README.md            # Project overview and development entry point
+```
+
+The internal directory names and `VAULTAI_*` environment variables are
+retained for compatibility. The product and repository are branded
+**SvaultAI**.
+
+---
+
+## What SvaultAI is not
 
 - **Not an exchange or brokerage.** No buy, sell, trade, swap,
   bridge, staking, or fiat on-ramp. The Crypto Vault is a
   receive-first, storage-and-context product.
-- **Not a custodian.** VaultAI does not hold your funds. It stores
+- **Not a custodian.** SvaultAI does not hold your funds. It stores
   encrypted labels and receive-side addresses next to your other
   vault data.
 - **Not a password sync service.** Logins live in your vault. They
@@ -461,9 +515,26 @@ Related runbooks:
 
 ---
 
-## Status
+## Contributing and security reports
 
-Pre-launch. Zero real users at time of writing. The repository
+Issues and pull requests are welcome. Before submitting a change:
+
+1. Keep changes focused and explain the user-facing effect.
+2. Run the relevant backend or frontend test suite.
+3. Include regression tests for behavior changes.
+4. Never attach real secrets, credentials, wallet material, personal
+   documents, session tokens, or production ciphertext.
+
+For a suspected vulnerability, avoid opening a public issue containing
+exploit details or sensitive data. Contact the maintainers privately
+through the repository's security reporting channel when available,
+and consult the [incident-response guide](docs/incident_response.md).
+
+---
+
+## Project status
+
+SvaultAI is pre-launch. The repository
 carries a full backend + frontend suite, a production runbook, a
 threat model, and the incident-response guide. The delete-vault
 flow, session/state clearing, CORS handshake, localisation

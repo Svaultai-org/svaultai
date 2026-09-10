@@ -1,4 +1,4 @@
-// Native Android OPAQUE client wrapper.
+// Native Android/iOS OPAQUE client wrapper.
 //
 // This file calls libvaultai_opaque_client.so, a small Rust FFI shim
 // over the same opaque-ke ciphersuite used by the backend and web
@@ -144,15 +144,20 @@ class _NativeOpaqueBindings {
   static _NativeOpaqueBindings get instance {
     final cached = _instance;
     if (cached != null) return cached;
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
       throw OpaqueUnavailable(
-        'native OPAQUE client is currently packaged for Android only',
+        'native OPAQUE client is supported only on Android and iOS',
       );
     }
     try {
-      final loaded = _NativeOpaqueBindings._(
-        DynamicLibrary.open('libvaultai_opaque_client.so'),
-      );
+      // Android ships a regular ELF shared object. iOS statically links the
+      // selected XCFramework slice into Runner; its exported C symbols are
+      // therefore resolved from the process image. This avoids runtime dylib
+      // loading, which is not permitted by App Store policy.
+      final library = Platform.isIOS
+          ? DynamicLibrary.process()
+          : DynamicLibrary.open('libvaultai_opaque_client.so');
+      final loaded = _NativeOpaqueBindings._(library);
       _instance = loaded;
       return loaded;
     } on Object {

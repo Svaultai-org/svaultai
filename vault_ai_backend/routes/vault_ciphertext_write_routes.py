@@ -129,6 +129,83 @@ class VaultItemUpsertResponse(BaseModel):
     created: bool
 
 
+class VaultItemListRequest(BaseModel):
+    limit: int = Field(default=500, ge=1, le=1000)
+
+
+class VaultItemDeleteRequest(BaseModel):
+    item_id: int = Field(..., ge=1)
+
+
+@router.post("/vault/ciphertext/vault-items/list")
+def vault_item_list_ciphertext(
+    payload: VaultItemListRequest,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict[str, Any]:
+    """Return opaque item envelopes for client-side decryption only."""
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, item_type_ciphertext, service_ciphertext,
+                   payload_ciphertext, created_at
+              FROM vault_items
+             WHERE vault_id = %s
+               AND item_type_ciphertext IS NOT NULL
+               AND service_ciphertext IS NOT NULL
+               AND payload_ciphertext IS NOT NULL
+             ORDER BY created_at DESC, id DESC
+             LIMIT %s
+            """,
+            (principal["vault_id"], payload.limit),
+        )
+        rows = cur.fetchall() or []
+    finally:
+        conn.close()
+
+    def encoded(value: Any) -> str:
+        return base64.urlsafe_b64encode(bytes(value)).rstrip(b"=").decode("ascii")
+
+    return {
+        "items": [
+            {
+                "id": int(row["id"]),
+                "item_type_ciphertext": encoded(row["item_type_ciphertext"]),
+                "service_ciphertext": encoded(row["service_ciphertext"]),
+                "payload_ciphertext": encoded(row["payload_ciphertext"]),
+                "created_at": (
+                    row["created_at"].isoformat()
+                    if row.get("created_at") else None
+                ),
+            }
+            for row in rows
+        ],
+        "engine": "ciphertext",
+    }
+
+
+@router.post("/vault/ciphertext/vault-items/delete")
+def vault_item_delete_ciphertext(
+    payload: VaultItemDeleteRequest,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict[str, bool]:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM vault_items WHERE id = %s AND vault_id = %s",
+            (payload.item_id, principal["vault_id"]),
+        )
+        deleted = cur.rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Saved item not found")
+    return {"ok": True}
+
+
 @router.post(
     "/vault/ciphertext/vault-items",
     response_model=VaultItemUpsertResponse,
@@ -364,6 +441,7 @@ def notification_ciphertext_create(
 
 
 class AiMemoryCiphertextRequest(BaseModel):
+    memory_id: Optional[int] = Field(default=None, ge=1)
     memory_type: str = Field(..., min_length=1, max_length=64)
     memory_lookup_hash: str = Field(
         ..., min_length=1,
@@ -380,6 +458,86 @@ class AiMemoryCiphertextRequest(BaseModel):
 class AiMemoryCiphertextResponse(BaseModel):
     memory_id: int
     superseded_id: Optional[int] = None
+
+
+class AiMemoryCiphertextListRequest(BaseModel):
+    limit: int = Field(default=200, ge=1, le=500)
+
+
+class AiMemoryCiphertextDeleteRequest(BaseModel):
+    memory_id: int = Field(..., ge=1)
+
+
+@router.post("/vault/ciphertext/vault-ai-memory/list")
+def ai_memory_ciphertext_list(
+    payload: AiMemoryCiphertextListRequest,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict[str, Any]:
+    """Return only client-decryptable memory envelopes for this vault."""
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT id, memory_type, payload_ciphertext, created_at, updated_at
+              FROM vault_ai_memory
+             WHERE vault_id = %s
+               AND superseded_at IS NULL
+               AND payload_ciphertext IS NOT NULL
+             ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+             LIMIT %s
+            """,
+            (principal["vault_id"], payload.limit),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    return {
+        "items": [
+            {
+                "id": int(row["id"]),
+                "memory_type": row.get("memory_type") or "note",
+                "payload_ciphertext": base64.urlsafe_b64encode(
+                    bytes(row["payload_ciphertext"]),
+                ).rstrip(b"=").decode("ascii"),
+                "created_at": (
+                    row["created_at"].isoformat()
+                    if row.get("created_at") else None
+                ),
+                "updated_at": (
+                    row["updated_at"].isoformat()
+                    if row.get("updated_at") else None
+                ),
+            }
+            for row in rows
+        ],
+        "engine": "ciphertext",
+    }
+
+
+@router.post("/vault/ciphertext/vault-ai-memory/delete")
+def ai_memory_ciphertext_delete(
+    payload: AiMemoryCiphertextDeleteRequest,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict[str, bool]:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE vault_ai_memory
+               SET superseded_at = NOW()
+             WHERE id = %s AND vault_id = %s AND superseded_at IS NULL
+            """,
+            (payload.memory_id, principal["vault_id"]),
+        )
+        deleted = cur.rowcount == 1
+        conn.commit()
+    finally:
+        conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"ok": True}
 
 
 @router.post(
@@ -411,16 +569,26 @@ def ai_memory_ciphertext_upsert(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            SELECT id FROM vault_ai_memory
-             WHERE vault_id = %s
-               AND memory_lookup_hash = %s
-               AND superseded_at IS NULL
-             LIMIT 1
-            """,
-            (principal["vault_id"], lookup_hash),
-        )
+        if payload.memory_id is not None:
+            cur.execute(
+                """
+                SELECT id FROM vault_ai_memory
+                 WHERE vault_id = %s AND id = %s AND superseded_at IS NULL
+                 LIMIT 1
+                """,
+                (principal["vault_id"], payload.memory_id),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id FROM vault_ai_memory
+                 WHERE vault_id = %s
+                   AND memory_lookup_hash = %s
+                   AND superseded_at IS NULL
+                 LIMIT 1
+                """,
+                (principal["vault_id"], lookup_hash),
+            )
         prev = cur.fetchone()
         superseded_id: Optional[int] = None
 

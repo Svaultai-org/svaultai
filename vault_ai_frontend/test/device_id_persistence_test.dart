@@ -52,8 +52,9 @@ void main() {
         }
         const allowList = {
           'lib/device_id.dart',
-          
-          
+          // iOS Keychain records survive uninstall. The install guard must
+          // delete the old device identifier before trusted-device hydrate.
+          'lib/services/native_secure_store.dart',
         };
         final offenders = <String>[];
         for (final ent in libDir.listSync(recursive: true)) {
