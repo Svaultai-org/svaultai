@@ -6637,15 +6637,66 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
 
-  void _openSecureItemView(String service, String itemType) {
+  Future<void> _openSecureItemView(String service, String itemType) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
     final safeTitle = service.trim();
-    setState(() {
-      selectedSection = _DashboardSection.chat;
-    });
-    if (safeTitle.isEmpty) {
-      _sendQuickPrompt('show me');
-    } else {
-      _sendQuickPrompt('show me $safeTitle');
+    if (token == null || vaultName == null || safeTitle.isEmpty) {
+      _showSnack('Session expired.');
+      return;
+    }
+
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final fetched = await client.getVaultSecureItem(
+        vaultName: vaultName,
+        service: safeTitle,
+        itemType: itemType,
+        pin: pin,
+        authToken: token,
+      );
+      final rawFields = fetched['fields'];
+      final fields = <String, String>{
+        if (rawFields is Map)
+          for (final entry in rawFields.entries)
+            if (entry.value is String)
+              entry.key.toString(): entry.value as String,
+      };
+      if (!mounted) return;
+
+      final readableValue = secureItemViewTextFor(itemType, fields);
+      await showSecureItemDetailSheet(
+        context,
+        title: safeTitle,
+        itemType: itemType,
+        username: fields['username'],
+        revealedValue: readableValue.isEmpty ? null : readableValue,
+        onCopyUsername: (value) {
+          Clipboard.setData(ClipboardData(text: value));
+          _showSnack('Username copied');
+        },
+        onCopyValue: (value) {
+          Clipboard.setData(ClipboardData(text: value));
+          _showSnack('Value copied');
+        },
+        onEdit: (title, type) {
+          Navigator.of(context).pop();
+          _openSecureItemEditDialog(
+            title,
+            type,
+            initialFields: fields,
+          );
+        },
+        onDelete: (title, type) {
+          Navigator.of(context).pop();
+          _startSecureItemDeleteConfirmation(title, type);
+        },
+      );
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not open saved item: $e');
     }
   }
 
