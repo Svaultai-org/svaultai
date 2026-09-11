@@ -42,8 +42,12 @@ class _MemoryFakeClient extends VaultAIClient {
   }
 }
 
-Future<void> _pump(WidgetTester tester, Widget child) async {
-  await tester.binding.setSurfaceSize(const Size(900, 800));
+Future<void> _pump(
+  WidgetTester tester,
+  Widget child, {
+  Size size = const Size(900, 800),
+}) async {
+  await tester.binding.setSurfaceSize(size);
   await tester.pumpWidget(MaterialApp(
     localizationsDelegates: _testL10nDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
@@ -53,6 +57,30 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
 }
 
 void main() {
+  testWidgets('MemoryPage saved row does not overflow on narrow iPhones',
+      (tester) async {
+    await _pump(
+      tester,
+      MemoryPage(
+        client: _MemoryFakeClient(),
+        authToken: 'tok',
+        vaultName: 'vault',
+        isMobile: true,
+        pinProvider: () async => '1234',
+      ),
+      size: const Size(402, 874),
+    );
+
+    expect(find.text('OpenAI API key'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('memory_row_reveal_1')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('sk-memory-marker-123'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('MemoryPage masks row values until row-scoped reveal',
       (tester) async {
     await _pump(

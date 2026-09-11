@@ -1053,6 +1053,79 @@ class _MemoryRowCard extends StatelessWidget {
     final typeLabel = _memoryTypeLabel(l, type);
     final icon = _memoryTypeIcons[type] ?? Icons.bookmark_border;
 
+    Widget buildSummary() => Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            IconBadge(icon: icon, color: accent, size: 40),
+            const SizedBox(width: VaultSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    key.isNotEmpty ? key : l.memoryUnnamed,
+                    style: VaultText.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    revealed
+                        ? (visibleValue.isEmpty
+                            ? 'No saved value'
+                            : 'Memory value revealed below')
+                        : 'Memory value hidden',
+                    style: VaultText.bodySm.copyWith(
+                      color: VaultColors.textSecondary,
+                    ),
+                    maxLines: revealed ? 6 : 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+
+    List<Widget> buildActions() => [
+          MetaPill(label: typeLabel, icon: icon, tint: accent),
+          OutlinedButton.icon(
+            key: Key(
+              revealed
+                  ? 'memory_row_hide_${_memoryRowRevealId(row)}'
+                  : 'memory_row_reveal_${_memoryRowRevealId(row)}',
+            ),
+            onPressed: revealed ? onHide : onReveal,
+            icon: Icon(
+              revealed
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+              size: 16,
+            ),
+            label: Text(revealed ? 'Hide' : 'Reveal'),
+          ),
+          if (revealed)
+            IconButton(
+              key: Key('memory_row_copy_${_memoryRowRevealId(row)}'),
+              tooltip: 'Copy',
+              onPressed: onCopy,
+              icon: const Icon(Icons.copy_outlined, size: 18),
+            ),
+          if (onEdit != null)
+            IconButton(
+              tooltip: 'Edit',
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+            ),
+          if (onDelete != null)
+            IconButton(
+              tooltip: 'Delete',
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline, size: 18),
+            ),
+        ];
+
     return VaultCard(
       color: VaultColors.surfaceElevated,
       accentSide: BorderSide(color: accent, width: 3),
@@ -1063,85 +1136,38 @@ class _MemoryRowCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              IconBadge(icon: icon, color: accent, size: 40),
-              const SizedBox(width: VaultSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 600;
+              if (compact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      key.isNotEmpty ? key : l.memoryUnnamed,
-                      style: VaultText.subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      revealed
-                          ? (visibleValue.isEmpty
-                              ? 'No saved value'
-                              : 'Memory value revealed below')
-                          : 'Memory value hidden',
-                      style: VaultText.bodySm.copyWith(
-                        color: VaultColors.textSecondary,
-                      ),
-                      maxLines: revealed ? 6 : 1,
-                      overflow: TextOverflow.ellipsis,
+                    buildSummary(),
+                    const SizedBox(height: VaultSpacing.sm),
+                    Wrap(
+                      alignment: WrapAlignment.start,
+                      spacing: VaultSpacing.xs,
+                      runSpacing: VaultSpacing.xs,
+                      children: buildActions(),
                     ),
                   ],
-                ),
-              ),
-              const SizedBox(width: VaultSpacing.md),
-              Row(
-                mainAxisSize: MainAxisSize.min,
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  MetaPill(label: typeLabel, icon: icon, tint: accent),
-                  const SizedBox(width: VaultSpacing.xs),
-                  OutlinedButton.icon(
-                    key: Key(
-                      revealed
-                          ? 'memory_row_hide_${_memoryRowRevealId(row)}'
-                          : 'memory_row_reveal_${_memoryRowRevealId(row)}',
-                    ),
-                    onPressed: revealed ? onHide : onReveal,
-                    icon: Icon(
-                      revealed
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      size: 16,
-                    ),
-                    label: Text(revealed ? 'Hide' : 'Reveal'),
+                  Expanded(child: buildSummary()),
+                  const SizedBox(width: VaultSpacing.md),
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: VaultSpacing.xs,
+                    runSpacing: VaultSpacing.xs,
+                    children: buildActions(),
                   ),
-                  if (revealed) ...[
-                    const SizedBox(width: VaultSpacing.xs),
-                    IconButton(
-                      key: Key('memory_row_copy_${_memoryRowRevealId(row)}'),
-                      tooltip: 'Copy',
-                      onPressed: onCopy,
-                      icon: const Icon(Icons.copy_outlined, size: 18),
-                    ),
-                  ],
-                  if (onEdit != null) ...[
-                    const SizedBox(width: VaultSpacing.xs),
-                    IconButton(
-                      tooltip: 'Edit',
-                      onPressed: onEdit,
-                      icon: const Icon(Icons.edit_outlined, size: 18),
-                    ),
-                  ],
-                  if (onDelete != null)
-                    IconButton(
-                      tooltip: 'Delete',
-                      onPressed: onDelete,
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                    ),
                 ],
-              ),
-            ],
+              );
+            },
           ),
           if (revealed && visibleValue.isNotEmpty) ...[
             const SizedBox(height: VaultSpacing.sm),

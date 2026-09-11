@@ -1047,6 +1047,13 @@ class AppState extends ChangeNotifier {
 
   final List<bool Function()> _keepAliveProbes = [];
 
+  // Native document/photo/camera pickers temporarily hand control to an
+  // Apple-owned view controller. A user can legitimately spend longer than
+  // the inactivity timeout choosing a file. Keep the unlock context alive
+  // only for the lifetime of that trusted picker future; normal app
+  // backgrounding remains subject to the existing inactivity lock.
+  int _activeNativePickerCount = 0;
+
   final List<void Function()> _shutdownHooks = [];
 
   String? sessionToken;
@@ -1420,6 +1427,17 @@ class AppState extends ChangeNotifier {
     _keepAliveProbes.remove(probe);
   }
 
+  Future<T> runWithNativePickerKeepAlive<T>(Future<T> Function() action) async {
+    _activeNativePickerCount += 1;
+    resetInactivityTimer();
+    try {
+      return await action();
+    } finally {
+      _activeNativePickerCount = math.max(0, _activeNativePickerCount - 1);
+      resetInactivityTimer();
+    }
+  }
+
   void registerShutdownHook(void Function() hook) {
     if (_shutdownHooks.contains(hook)) return;
     _shutdownHooks.add(hook);
@@ -1430,6 +1448,7 @@ class AppState extends ChangeNotifier {
   }
 
   bool _hasActiveKeepAlive() {
+    if (_activeNativePickerCount > 0) return true;
     for (final probe in _keepAliveProbes) {
       try {
         if (probe()) return true;
@@ -2781,8 +2800,14 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
     // the chip cap on the narrowest phones so the wordmark keeps
     // some space to render.
     final screenWidth = MediaQuery.of(context).size.width;
-    final double accountChipMaxWidth =
-        !isMobile ? 260.0 : (screenWidth < 380 ? 120.0 : 180.0);
+    final double accountChipMaxWidth = !isMobile
+        ? 260.0
+        : screenWidth < 360
+            ? 42.0
+            : screenWidth < 430
+                ? 140.0
+                : 180.0;
+    final compactAccountChip = isMobile && screenWidth < 360;
 
     return AppBar(
       toolbarHeight: 72,
@@ -2973,8 +2998,10 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                     child: Container(
                       constraints:
                           BoxConstraints(maxWidth: accountChipMaxWidth),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compactAccountChip ? 8 : 14,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFF262626),
                         borderRadius: BorderRadius.circular(28),
@@ -2985,19 +3012,21 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         children: [
                           const Icon(Icons.account_circle_outlined,
                               size: 22, color: Color(0xFFB4B4B4)),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              app.displayName ?? 'Account',
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
+                          if (!compactAccountChip) ...[
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                app.displayName ?? 'Account',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.expand_more_rounded, size: 18),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.expand_more_rounded, size: 18),
+                          ],
                         ],
                       ),
                     ),
@@ -11027,7 +11056,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     CapturedMedia? captured;
     try {
-      captured = await _nativeMediaCapture.capturePhoto();
+      final app = context.read<AppState>();
+      captured = await app.runWithNativePickerKeepAlive(
+        _nativeMediaCapture.capturePhoto,
+      );
     } catch (_) {
       _showSnack('Could not take a photo.');
       return;
@@ -11054,7 +11086,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     CapturedMedia? captured;
     try {
-      captured = await _nativeMediaCapture.captureVideo();
+      final app = context.read<AppState>();
+      captured = await app.runWithNativePickerKeepAlive(
+        _nativeMediaCapture.captureVideo,
+      );
     } catch (_) {
       _showSnack('Could not record a video.');
       return;
@@ -12003,11 +12038,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: false,
-      withReadStream: true,
-      allowMultiple: true,
-      type: FileType.any,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.any,
+      ),
     );
 
     if (result == null || result.files.isEmpty) return;
@@ -12015,34 +12053,43 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _pickImage() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: false,
-      withReadStream: true,
-      allowMultiple: true,
-      type: FileType.image,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.image,
+      ),
     );
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'image');
   }
 
   Future<void> _pickVideo() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: false,
-      withReadStream: true,
-      allowMultiple: true,
-      type: FileType.video,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.video,
+      ),
     );
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'video');
   }
 
   Future<void> _pickAudio() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: false,
-      withReadStream: true,
-      allowMultiple: true,
-      type: FileType.custom,
-      allowedExtensions: kAcceptedAudioExtensions,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: kAcceptedAudioExtensions,
+      ),
     );
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'audio');
@@ -12056,7 +12103,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     FolderPickResult? result;
     try {
-      result = await _folderPicker.pickFolder();
+      final app = context.read<AppState>();
+      result = await app.runWithNativePickerKeepAlive(
+        _folderPicker.pickFolder,
+      );
     } catch (e) {
       _showSnack('Could not open the folder picker: $e');
       return;
