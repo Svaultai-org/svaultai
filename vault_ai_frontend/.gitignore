@@ -36,6 +36,10 @@ migrate_working_dir/
 # Local QA/runtime-only acceptance settings.
 .qa/
 
+# Local runtime configuration. Public endpoints may be present, but this
+# directory must never be committed because local builds can add secrets.
+.config/
+
 # Symbolication related
 app.*.symbols
 

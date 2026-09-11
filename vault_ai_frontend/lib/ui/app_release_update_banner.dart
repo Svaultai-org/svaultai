@@ -23,9 +23,13 @@ import 'package:flutter/material.dart';
 import '../services/app_release_controller.dart';
 import '../services/app_release_controller_scope.dart';
 
-const String kAppReleaseUpdateBannerKey = 'vaultai_app_release_update_banner';
-const String kAppReleaseUpdateBannerCopy = 'SVaultAI was updated.';
+
+const String kAppReleaseUpdateBannerKey =
+    'vaultai_app_release_update_banner';
+const String kAppReleaseUpdateBannerCopy =
+    'Svaultai was updated.';
 const String kAppReleaseUpdateBannerActionLabel = 'Update now';
+
 
 class AppReleaseUpdateBanner extends StatelessWidget {
   const AppReleaseUpdateBanner({
@@ -48,11 +52,9 @@ class AppReleaseUpdateBanner extends StatelessWidget {
     return Stack(children: [
       child,
       Positioned(
-        // Keep the update action below the 72px app bar. The old top overlay
-        // intercepted the hamburger/account hit targets while pending.
-        top: 72,
-        left: 12,
-        right: 12,
+        top: 0,
+        left: 0,
+        right: 0,
         child: SafeArea(
           child: ValueListenableBuilder<bool>(
             valueListenable: ctl.updateAvailableNotifier,
@@ -70,6 +72,7 @@ class AppReleaseUpdateBanner extends StatelessWidget {
   }
 }
 
+
 class _BannerBody extends StatelessWidget {
   const _BannerBody({
     required this.controller,
@@ -83,13 +86,7 @@ class _BannerBody extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       key: const Key(kAppReleaseUpdateBannerKey),
-      decoration: BoxDecoration(
-        color: const Color(0xFF10A37F),
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: const [
-          BoxShadow(color: Color(0x33000000), blurRadius: 12),
-        ],
-      ),
+      color: const Color(0xFF10A37F),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [

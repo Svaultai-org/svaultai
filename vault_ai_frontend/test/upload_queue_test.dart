@@ -377,35 +377,6 @@ void main() {
       c.dispose();
     });
 
-    test('retry reuses cached bytes when the picker stream is one-shot',
-        () async {
-      var reads = 0;
-      var attempts = 0;
-      final job = _makeJob(
-        id: 'one-shot',
-        readBytes: () async {
-          reads += 1;
-          if (reads > 1) throw StateError('stream already consumed');
-          return Uint8List.fromList(const [1, 2, 3]);
-        },
-      );
-      final c = UploadQueueController(
-        action: (j, b, p) async {
-          attempts += 1;
-          if (attempts == 1) throw Exception('temporary failure');
-          return const UploadResult(fileId: 'f1');
-        },
-      );
-      c.enqueue(job);
-      await c.waitForIdle();
-      expect(job.status, UploadJobStatus.failed);
-      c.retry(job.id);
-      await c.waitForIdle();
-      expect(job.status, UploadJobStatus.uploaded);
-      expect(reads, 1);
-      c.dispose();
-    });
-
     test('retryAllFailed re-pends every failed job at once', () async {
       var calls = 0;
       final c = UploadQueueController(

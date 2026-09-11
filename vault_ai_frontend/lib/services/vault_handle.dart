@@ -255,61 +255,6 @@ bool isValidVaultHandleDisplay(String text) {
   }
 }
 
-/// True only for the unambiguous user-facing handle form.
-///
-/// [vaultHandleFromDisplay] deliberately accepts compact legacy inputs, but a
-/// 24-character vault *name* can also consist entirely of Crockford characters.
-/// Login routing must therefore require the `VLT-` prefix before interpreting
-/// user input as a handle; otherwise valid names are silently sent down the
-/// wrong lookup path.
-bool isExplicitVaultHandleDisplay(String text) {
-  final trimmed = text.trimLeft();
-  if (!trimmed.toUpperCase().startsWith(vaultHandlePrefix)) return false;
-  return isValidVaultHandleDisplay(text);
-}
-
-/// Whether [text] looks like an internal vault handle and therefore must not
-/// be rendered in a user-facing vault-name control.
-///
-/// This check is intentionally broader than [isExplicitVaultHandleDisplay]:
-/// display code must also suppress malformed `VLT-...` values and the compact
-/// legacy handle forms accepted by [vaultHandleFromDisplay]. Authentication
-/// routing remains strict and continues to use
-/// [isExplicitVaultHandleDisplay] for user-entered identifiers.
-bool isInternalVaultHandleLike(String? text) {
-  final trimmed = text?.trim();
-  if (trimmed == null || trimmed.isEmpty) return false;
-  final upper = trimmed.toUpperCase();
-  if (upper.startsWith(vaultHandlePrefix)) return true;
-
-  final grouped = RegExp(r'^[0-9A-Z]{4}(?:-[0-9A-Z]{4}){5}$');
-  final compact = RegExp(r'^[0-9A-Z]{24}$');
-  if (!grouped.hasMatch(upper) && !compact.hasMatch(upper)) return false;
-  return isValidVaultHandleDisplay(trimmed);
-}
-
-/// Returns a trimmed, user-facing vault name or `null` when the value is
-/// empty/internal. This is the only conversion that should feed a sign-in
-/// vault-name controller or other display-only identity surface.
-String? userFacingVaultNameOrNull(String? value) {
-  final trimmed = value?.trim();
-  if (trimmed == null || trimmed.isEmpty) return null;
-  if (isInternalVaultHandleLike(trimmed)) return null;
-  return trimmed;
-}
-
-/// Canonicalize an internal handle candidate for private auth/session use.
-/// Malformed `VLT-...` strings are suppressed from UI by
-/// [isInternalVaultHandleLike] but are not accepted here for authentication.
-String? canonicalInternalVaultHandleOrNull(String? value) {
-  if (!isInternalVaultHandleLike(value)) return null;
-  try {
-    return vaultHandleToDisplay(vaultHandleFromDisplay(value!));
-  } on InvalidVaultHandle {
-    return null;
-  }
-}
-
 /// Base64url-encode without padding (matches Python's b64url helper).
 String vaultHandleB64Url(Uint8List raw) {
   const alphabet =

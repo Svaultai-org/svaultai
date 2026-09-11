@@ -1,6 +1,4 @@
 
-import 'dart:io' show Platform;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -308,10 +306,5 @@ String goldenPath(String screenName, DeviceProfile device) {
       .replaceAll(' ', '_')
       .replaceAll('/', '_')
       .replaceAll(RegExp(r'[^a-z0-9_]'), '');
-  // Flutter's Skia raster output is not byte-identical between macOS and
-  // Windows, even with the deterministic Ahem test font. Keep the original
-  // macOS baselines and compare Windows against its own reviewed pixels.
-  final platformDirectory = Platform.isWindows ? 'windows/' : '';
-  return 'goldens/$platformDirectory'
-      '${safeName}_${safeDevice}_${device.width.toInt()}.png';
+  return 'goldens/${safeName}_${safeDevice}_${device.width.toInt()}.png';
 }

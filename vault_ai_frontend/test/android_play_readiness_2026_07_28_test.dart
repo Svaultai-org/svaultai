@@ -24,12 +24,8 @@ void main() {
       expect(
         manifest,
         contains(
-          'android:networkSecurityConfig="\${vaultaiNetworkSecurityConfig}"',
-        ),
+            'android:networkSecurityConfig="@xml/network_security_config"'),
       );
-      final gradle = _read('android/app/build.gradle.kts');
-      expect(gradle, contains('"@xml/network_security_config"'));
-      expect(gradle, contains('"@xml/network_security_config_qa"'));
       expect(
         manifest,
         contains('android:dataExtractionRules="@xml/data_extraction_rules"'),
@@ -38,7 +34,7 @@ void main() {
           manifest, contains('android:fullBackupContent="@xml/backup_rules"'));
     });
 
-    test('network security config is HTTPS-only for SVaultAI domains', () {
+    test('network security config is HTTPS-only for Svaultai domains', () {
       final config =
           _read('android/app/src/main/res/xml/network_security_config.xml');
 
@@ -93,8 +89,7 @@ void main() {
       expect(gradle, contains('releaseSigningFailureMessage'));
       expect(
         gradle,
-        contains(
-            'Release APK/AAB builds must never fall back to debug signing'),
+        contains('Release APK/AAB builds must never fall back to debug signing'),
       );
       expect(gradle, isNot(contains('signingConfigs.getByName("debug")')));
       expect(gradle, isNot(contains('DEBUG-SIGNED')));

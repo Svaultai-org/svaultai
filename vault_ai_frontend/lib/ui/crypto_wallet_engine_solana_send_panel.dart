@@ -1,3 +1,5 @@
+
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -9,16 +11,17 @@ import '../api_client.dart';
 import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
 import '../services/zk_active_mvk.dart' as zk_mvk_store;
-import '../services/zk_outgoing_history_helper.dart' as zk_history_helper;
+import '../services/zk_outgoing_history_helper.dart'
+    as zk_history_helper;
 import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/crypto_wallet_features.dart';
 import '../services/recipient_qr_parser.dart';
 import '../services/solana_transaction.dart';
 import '../services/solana_wallet.dart';
-import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
+
 
 const String kSolanaSendPanelTitle = 'Send SOL';
 const String kSolanaSendReviewHeading = 'Review Solana send';
@@ -26,10 +29,12 @@ const String kSolanaSendConfirmationWarning =
     'Review carefully. Solana transactions cannot be reversed.';
 const String kSolanaSendNotEnabledMessage =
     'Solana sending is not enabled yet.';
-const String kSolanaSendPausedMessage = 'Solana sending is temporarily paused.';
-const String kSolanaSendPinDialogTitle = 'Enter your PIN to sign locally';
+const String kSolanaSendPausedMessage =
+    'Solana sending is temporarily paused.';
+const String kSolanaSendPinDialogTitle =
+    'Enter your PIN to sign locally';
 const String kSolanaSendPinDialogBody =
-    'Your Solana secret is decrypted on this device only. SVaultAI '
+    'Your Solana secret is decrypted on this device only. Svaultai '
     'never sees the plaintext key.';
 const String kSolanaSendSubmittedHeading = 'Broadcast submitted';
 const String kSolanaSendSubmittedBody =
@@ -39,7 +44,8 @@ const String kSolanaSendDestinationLabel = 'Destination address';
 const String kSolanaSendAmountLabel = 'Amount (SOL)';
 const String kSolanaSendReviewButtonLabel = 'Review';
 const String kSolanaSendConfirmButtonLabel = 'Confirm and enter PIN';
-const String kSolanaSendBroadcastFailedCopy = 'Could not submit transaction.';
+const String kSolanaSendBroadcastFailedCopy =
+    'Could not submit transaction.';
 const String kSolanaSendInvalidDestinationCopy =
     'Destination must be a valid Solana base58 address.';
 const String kSolanaSendInvalidAmountCopy =
@@ -60,14 +66,17 @@ const String kSolanaSendDraftExpiredError =
     'The Solana blockhash for this draft has expired. Return to '
     'form to obtain a fresh draft; recipient and amount are '
     'preserved.';
-const String kSolanaSendResultHeadingSubmitted = 'Transaction submitted';
+const String kSolanaSendResultHeadingSubmitted =
+    'Transaction submitted';
 const String kSolanaSendResultHeadingUncertain =
     'Transaction status is uncertain';
-const String kSolanaSendResultHeadingRejected = 'Transaction rejected';
-const String kSolanaSendResultHeadingExpired = 'Draft expired before broadcast';
+const String kSolanaSendResultHeadingRejected =
+    'Transaction rejected';
+const String kSolanaSendResultHeadingExpired =
+    'Draft expired before broadcast';
 const String kSolanaSendResultBodyUncertain =
     'The Solana RPC did not confirm inclusion in the visibility '
-    'window. SVaultAI will keep checking. Do not re-sign with a new '
+    'window. Svaultai will keep checking. Do not re-sign with a new '
     'blockhash until the status resolves.';
 const String kSolanaSendResultBodyRejected =
     'The Solana RPC explicitly rejected this transaction. The '
@@ -83,7 +92,7 @@ const String kSolanaSendAvailableBalancePrefix = 'Available:';
 // yet, we fail closed with a clear next-step message rather than
 // invent a client-side fee estimate.
 const String kSolanaSendUpdatePendingError =
-    'SVaultAI was updated. Refresh before starting a new send.';
+    'Svaultai was updated. Refresh before starting a new send.';
 // 2026-07-14 (Round 10 — Max UX): SOL Max no longer requires a
 // persisted draft. It calls the fee-estimate endpoint with the
 // destination the user has entered.
@@ -99,42 +108,54 @@ const String kSolanaSendMaxBalanceUnverifiedError =
     'Your SOL balance is not verified. Try again after the balance '
     'refreshes.';
 
+
 const String kSolanaSendPanelKey = 'solana_send_panel';
 const String kSolanaSendDestinationInputKey =
     'solana_send_panel_destination_input';
-const String kSolanaSendAmountInputKey = 'solana_send_panel_amount_input';
-const String kSolanaSendReviewButtonKey = 'solana_send_panel_review_btn';
-const String kSolanaSendReviewCardKey = 'solana_send_panel_review_card';
-const String kSolanaSendConfirmButtonKey = 'solana_send_panel_confirm_btn';
-const String kSolanaSendSubmittedCardKey = 'solana_send_panel_submitted_card';
-const String kSolanaSendPausedBannerKey = 'solana_send_panel_paused_banner';
-const String kSolanaSendDisabledBannerKey = 'solana_send_panel_disabled_banner';
-const String kSolanaSendWarningKey = 'solana_send_panel_warning';
-const String kSolanaSendPinInputKey = 'solana_send_panel_pin_input';
-const String kSolanaSendPinConfirmBtnKey = 'solana_send_panel_pin_confirm_btn';
+const String kSolanaSendAmountInputKey =
+    'solana_send_panel_amount_input';
+const String kSolanaSendReviewButtonKey =
+    'solana_send_panel_review_btn';
+const String kSolanaSendReviewCardKey =
+    'solana_send_panel_review_card';
+const String kSolanaSendConfirmButtonKey =
+    'solana_send_panel_confirm_btn';
+const String kSolanaSendSubmittedCardKey =
+    'solana_send_panel_submitted_card';
+const String kSolanaSendPausedBannerKey =
+    'solana_send_panel_paused_banner';
+const String kSolanaSendDisabledBannerKey =
+    'solana_send_panel_disabled_banner';
+const String kSolanaSendWarningKey =
+    'solana_send_panel_warning';
+const String kSolanaSendPinInputKey =
+    'solana_send_panel_pin_input';
+const String kSolanaSendPinConfirmBtnKey =
+    'solana_send_panel_pin_confirm_btn';
+
 
 // 2026-07-14 (Round 7 hardening): terminal-result outcomes and
 // the expired result state.
 enum _SolanaSendStage {
-  input,
-  review,
-  submitting,
-  submitted,
-  expired,
-  rejected,
-  uncertain,
+  input, review, submitting, submitted, expired, rejected, uncertain,
 }
+
 
 const String kSolanaSendFeeEstimatedLabel = 'Estimated network fee';
 const String kSolanaSendFeeRealLabel = 'Network fee';
 const String kSolanaSendFeeUnavailableLabel =
     'Network fee estimate unavailable';
-const String kSolanaSendStatusPollingCopy = 'Checking Solana status…';
-const String kSolanaSendStatusPendingCopy = 'Status: pending';
-const String kSolanaSendStatusConfirmedCopy = 'Status: confirmed';
-const String kSolanaSendStatusFailedCopy = 'Status: failed';
+const String kSolanaSendStatusPollingCopy =
+    'Checking Solana status…';
+const String kSolanaSendStatusPendingCopy =
+    'Status: pending';
+const String kSolanaSendStatusConfirmedCopy =
+    'Status: confirmed';
+const String kSolanaSendStatusFailedCopy =
+    'Status: failed';
 const String kSolanaSendStatusUnavailableCopy =
     'Status temporarily unavailable';
+
 
 String solanaSendFeeLabelFor(String? feeSource) {
   switch (feeSource) {
@@ -146,19 +167,18 @@ String solanaSendFeeLabelFor(String? feeSource) {
   return kSolanaSendFeeEstimatedLabel;
 }
 
+
 String solanaSendStatusCopyFor(String? statusCode) {
   switch (statusCode) {
-    case 'confirmed':
-      return kSolanaSendStatusConfirmedCopy;
-    case 'failed':
-      return kSolanaSendStatusFailedCopy;
-    case 'pending':
-      return kSolanaSendStatusPendingCopy;
+    case 'confirmed': return kSolanaSendStatusConfirmedCopy;
+    case 'failed':    return kSolanaSendStatusFailedCopy;
+    case 'pending':   return kSolanaSendStatusPendingCopy;
     case 'unavailable':
       return kSolanaSendStatusUnavailableCopy;
   }
   return kSolanaSendStatusPollingCopy;
 }
+
 
 class CryptoWalletEngineSolanaSendPanel extends StatefulWidget {
   final String authToken;
@@ -224,10 +244,13 @@ class CryptoWalletEngineSolanaSendPanel extends StatefulWidget {
       _CryptoWalletEngineSolanaSendPanelState();
 }
 
+
 class _CryptoWalletEngineSolanaSendPanelState
     extends State<CryptoWalletEngineSolanaSendPanel> {
-  final TextEditingController _destinationController = TextEditingController();
-  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _destinationController =
+      TextEditingController();
+  final TextEditingController _amountController =
+      TextEditingController();
 
   // 2026-07-13 mobile-keyboard fix: shared scroll controller +
   // FocusNodes so tapping / Next-key-hopping to a field slides it
@@ -299,9 +322,11 @@ class _CryptoWalletEngineSolanaSendPanelState
     });
   }
 
-  bool get _sendEnabled => widget.features?.solanaSendEnabled ?? false;
+  bool get _sendEnabled =>
+      widget.features?.solanaSendEnabled ?? false;
 
-  bool get _sendPaused => widget.features?.solanaSendPaused ?? false;
+  bool get _sendPaused =>
+      widget.features?.solanaSendPaused ?? false;
 
   Future<void> _onReview() async {
     // 2026-07-14 (Round 11 — release wiring): block a NEW Send if
@@ -357,7 +382,8 @@ class _CryptoWalletEngineSolanaSendPanelState
           asset: kSolanaAssetTicker,
           amountSol: _amountController.text.trim(),
         );
-        final draft = await widget.client.createCryptoWalletSendDraftNetwork(
+        final draft = await widget.client
+            .createCryptoWalletSendDraftNetwork(
           network: kSolanaNetworkId,
           asset: kSolanaAssetTicker,
           authToken: widget.authToken,
@@ -370,7 +396,8 @@ class _CryptoWalletEngineSolanaSendPanelState
         final status = (draft['status'] ?? '').toString();
         if (status != 'draft_ready') {
           setState(() {
-            _error = (draft['message'] ?? 'Solana draft not ready.').toString();
+            _error = (draft['message'] ??
+                'Solana draft not ready.').toString();
           });
           return;
         }
@@ -393,10 +420,10 @@ class _CryptoWalletEngineSolanaSendPanelState
     // idempotent. Duplicate Review/PIN/broadcast taps or a browser
     // back+forward that re-runs this handler MUST be a no-op.
     if (_broadcastInFlight) return;
-    if (_stage == _SolanaSendStage.submitted ||
-        _stage == _SolanaSendStage.expired ||
-        _stage == _SolanaSendStage.rejected ||
-        _stage == _SolanaSendStage.uncertain) {
+    if (_stage == _SolanaSendStage.submitted
+        || _stage == _SolanaSendStage.expired
+        || _stage == _SolanaSendStage.rejected
+        || _stage == _SolanaSendStage.uncertain) {
       return;
     }
     if (!widget.isVaultKeyAvailable()) {
@@ -464,38 +491,38 @@ class _CryptoWalletEngineSolanaSendPanelState
         ? widget.idempotencyKeyGenerator!()
         : _defaultIdempotencyKey();
 
+    Map<String, dynamic>? secretResp;
     Uint8List? plaintextSeed;
     Uint8List? plaintextSecret64;
     try {
-      Map<String, dynamic> parsed;
-      const walletV2Read =
-          bool.fromEnvironment('WALLET_V2_READ_ENABLED', defaultValue: false);
-      if (walletV2Read) {
-        final repo = WalletV2Repository.current(
-            api: widget.client, authToken: widget.authToken);
-        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
-        final envelope =
-            await repo.find(chain: 'solana', publicAddress: widget.fromAddress);
-        if (envelope == null) throw StateError('wallet_v2_not_found');
-        parsed = await repo.decrypt(envelope);
-      } else {
-        final secretResp = await widget.client
-            .getCryptoWalletEncryptedSecretNetwork(
-                network: kSolanaNetworkId,
-                asset: kSolanaAssetTicker,
-                authToken: widget.authToken);
-        if ((secretResp['wallet_engine'] ?? '').toString() !=
-            'encrypted_secret_ready') {
-          throw StateError('legacy_wallet_secret_unavailable');
-        }
-        final ct = (secretResp['encryptedWalletSecret'] ?? '').toString();
-        if (ct.isEmpty) throw StateError('legacy_wallet_ciphertext_missing');
-        final decodedPayload = jsonDecode(await widget.decryptForVault(ct));
-        if (decodedPayload is! Map<String, dynamic>)
-          throw StateError('legacy_wallet_secret_invalid');
-        parsed = decodedPayload;
+      secretResp = await widget.client
+          .getCryptoWalletEncryptedSecretNetwork(
+        network: kSolanaNetworkId,
+        asset: kSolanaAssetTicker,
+        authToken: widget.authToken,
+      );
+      final status = (secretResp['wallet_engine'] ?? '').toString();
+      if (status != 'encrypted_secret_ready') {
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _SolanaSendStage.input;
+          _error = 'Wallet secret not available for signing.';
+        });
+        return;
       }
-      if (parsed.isEmpty) {
+      final ct = (secretResp['encryptedWalletSecret'] ?? '')
+          .toString();
+      if (ct.isEmpty) {
+        setState(() {
+          _broadcastInFlight = false;
+          _stage = _SolanaSendStage.input;
+          _error = 'Missing ciphertext.';
+        });
+        return;
+      }
+      final decrypted = await widget.decryptForVault(ct);
+      final parsed = jsonDecode(decrypted);
+      if (parsed is! Map<String, dynamic>) {
         setState(() {
           _broadcastInFlight = false;
           _stage = _SolanaSendStage.input;
@@ -522,12 +549,13 @@ class _CryptoWalletEngineSolanaSendPanelState
         (draft['lamports'] ?? '0').toString(),
       );
       final signed = await signSolanaTransfer(
-        fromAddressBase58: widget.fromAddress,
-        destinationAddressBase58:
-            (draft['destinationAddress'] ?? '').toString(),
-        lamports: lamports,
-        recentBlockhashBase58: (draft['recentBlockhash'] ?? '').toString(),
-        ed25519Seed32: plaintextSeed,
+        fromAddressBase58:        widget.fromAddress,
+        destinationAddressBase58: (draft['destinationAddress'] ?? '')
+            .toString(),
+        lamports:                  lamports,
+        recentBlockhashBase58:      (draft['recentBlockhash'] ?? '')
+            .toString(),
+        ed25519Seed32:             plaintextSeed,
       );
 
       wipeSecretKey(plaintextSecret64);
@@ -558,23 +586,24 @@ class _CryptoWalletEngineSolanaSendPanelState
       // backend so the SOL state machine can enforce single-attempt
       // + record broadcast_outcome per draft.
       final draftIdEcho = (draft['draftId'] ?? '').toString();
-      final broadcastResp =
-          await widget.client.broadcastCryptoWalletSignedTransactionNetwork(
-        network: kSolanaNetworkId,
-        asset: kSolanaAssetTicker,
-        authToken: widget.authToken,
+      final broadcastResp = await widget.client
+          .broadcastCryptoWalletSignedTransactionNetwork(
+        network:           kSolanaNetworkId,
+        asset:             kSolanaAssetTicker,
+        authToken:         widget.authToken,
         signedTransaction: signed.wireTransaction.base64,
-        idempotencyKey: _idempotencyKey,
-        draftId: draftIdEcho.isEmpty ? null : draftIdEcho,
+        idempotencyKey:    _idempotencyKey,
+        draftId:           draftIdEcho.isEmpty ? null : draftIdEcho,
       );
-      final broadcastStatus = (broadcastResp['status'] ?? '').toString();
+      final broadcastStatus =
+          (broadcastResp['status'] ?? '').toString();
       // Honest outcome classification. Round-6 backend returns:
       //   submitted / already_submitted            → success
       //   submission_uncertain                     → uncertain
       //   broadcast_rejected / broadcast_failed    → rejected
       //   draft_expired                            → expired
-      if (broadcastStatus == 'submitted' ||
-          broadcastStatus == 'already_submitted') {
+      if (broadcastStatus == 'submitted'
+          || broadcastStatus == 'already_submitted') {
         _notifyOptimisticDebit(
           signature: (broadcastResp['signature'] ?? '').toString(),
           draft: draft,
@@ -600,8 +629,8 @@ class _CryptoWalletEngineSolanaSendPanelState
           _stage = _SolanaSendStage.uncertain;
           _submitted = broadcastResp;
         });
-      } else if (broadcastStatus == 'broadcast_rejected' ||
-          broadcastStatus == 'broadcast_failed') {
+      } else if (broadcastStatus == 'broadcast_rejected'
+          || broadcastStatus == 'broadcast_failed') {
         setState(() {
           _broadcastInFlight = false;
           _stage = _SolanaSendStage.rejected;
@@ -617,8 +646,8 @@ class _CryptoWalletEngineSolanaSendPanelState
         setState(() {
           _broadcastInFlight = false;
           _stage = _SolanaSendStage.review;
-          _error = (broadcastResp['message'] ?? kSolanaSendBroadcastFailedCopy)
-              .toString();
+          _error = (broadcastResp['message']
+              ?? kSolanaSendBroadcastFailedCopy).toString();
         });
       }
     } catch (e) {
@@ -669,10 +698,8 @@ class _CryptoWalletEngineSolanaSendPanelState
     }
     final BigInt? valueLamports = BigInt.tryParse(rawValue);
     final BigInt? feeLamports = BigInt.tryParse(rawFee);
-    if (valueLamports == null ||
-        feeLamports == null ||
-        valueLamports < BigInt.zero ||
-        feeLamports < BigInt.zero) {
+    if (valueLamports == null || feeLamports == null
+        || valueLamports < BigInt.zero || feeLamports < BigInt.zero) {
       return kSolanaSendExactFeeUnverifiedError;
     }
     BigInt? available;
@@ -762,7 +789,8 @@ class _CryptoWalletEngineSolanaSendPanelState
   }) async {
     Map<String, dynamic>? resp;
     try {
-      resp = await widget.client.postCryptoWalletSendFeeEstimateNetwork(
+      resp = await widget.client
+          .postCryptoWalletSendFeeEstimateNetwork(
         network: kSolanaNetworkId,
         fromAddress: widget.fromAddress,
         destinationAddress: destination,
@@ -836,13 +864,11 @@ class _CryptoWalletEngineSolanaSendPanelState
     final cb = widget.onSuccessfulBroadcast;
     if (cb == null) return;
     final BigInt valueLamports = BigInt.tryParse(
-          (draft['lamports'] ?? '0').toString(),
-        ) ??
-        BigInt.zero;
+      (draft['lamports'] ?? '0').toString(),
+    ) ?? BigInt.zero;
     final BigInt feeLamports = BigInt.tryParse(
-          (draft['feeLamports'] ?? '0').toString(),
-        ) ??
-        BigInt.zero;
+      (draft['feeLamports'] ?? '0').toString(),
+    ) ?? BigInt.zero;
     cb(signature: signature, debitLamports: valueLamports + feeLamports);
   }
 
@@ -857,7 +883,8 @@ class _CryptoWalletEngineSolanaSendPanelState
         activeMvk: zk_mvk_store.ZkActiveMvk.current(),
         signature: signature,
         senderAddress: widget.fromAddress,
-        destinationAddress: (draft['destinationAddress'] ?? '').toString(),
+        destinationAddress:
+            (draft['destinationAddress'] ?? '').toString(),
         asset: kSolanaAssetTicker,
         amount: (draft['amountSol'] ?? draft['lamports'] ?? '').toString(),
         outcome: outcome,
@@ -900,11 +927,11 @@ class _CryptoWalletEngineSolanaSendPanelState
       if (!mounted || !_statusPollActive) return;
       _statusPollCount++;
       try {
-        final resp =
-            await widget.client.getCryptoWalletTransactionStatusNetwork(
-          network: kSolanaNetworkId,
-          asset: kSolanaAssetTicker,
-          txHash: sig,
+        final resp = await widget.client
+            .getCryptoWalletTransactionStatusNetwork(
+          network:  kSolanaNetworkId,
+          asset:    kSolanaAssetTicker,
+          txHash:   sig,
           authToken: widget.authToken,
         );
         if (!mounted) return;
@@ -1256,9 +1283,7 @@ class _CryptoWalletEngineSolanaSendPanelState
         walletSendSectionHeading(kSolanaSendReviewHeading),
         WalletSendKvRow(label: 'Network', value: 'Solana'),
         WalletSendKvRow(
-          label: 'From',
-          value: widget.fromAddress,
-          mono: true,
+          label: 'From', value: widget.fromAddress, mono: true,
         ),
         WalletSendKvRow(
           label: 'Destination',
@@ -1266,8 +1291,7 @@ class _CryptoWalletEngineSolanaSendPanelState
           mono: true,
         ),
         WalletSendKvRow(
-          label: 'Amount',
-          value: '${draft['amountSol']} SOL',
+          label: 'Amount', value: '${draft['amountSol']} SOL',
         ),
         if (draft['feeSol'] != null)
           WalletSendKvRow(
@@ -1295,12 +1319,15 @@ class _CryptoWalletEngineSolanaSendPanelState
   Widget _buildReviewFooter() {
     return ElevatedButton(
       key: const Key(kSolanaSendConfirmButtonKey),
-      onPressed: _broadcastInFlight ? null : _onConfirmAndSign,
+      onPressed:
+          _broadcastInFlight ? null : _onConfirmAndSign,
       style: walletPrimaryButtonStyle().copyWith(
         minimumSize: WidgetStatePropertyAll(const Size.fromHeight(46)),
       ),
       child: Text(
-        _broadcastInFlight ? 'Submitting…' : kSolanaSendConfirmButtonLabel,
+        _broadcastInFlight
+            ? 'Submitting…'
+            : kSolanaSendConfirmButtonLabel,
       ),
     );
   }
@@ -1340,13 +1367,17 @@ class _CryptoWalletEngineSolanaSendPanelState
     final isUncertain = _stage == _SolanaSendStage.uncertain;
     final headingColor = isSuccess
         ? kWalletAccentSuccess
-        : (isUncertain ? kWalletAccentWarning : kWalletAccentDanger);
+        : (isUncertain
+            ? kWalletAccentWarning
+            : kWalletAccentDanger);
     return Container(
       key: const Key(kSolanaSendSubmittedCardKey),
       padding: const EdgeInsets.all(14),
       decoration: isSuccess
           ? walletSuccessPanel()
-          : (isUncertain ? walletWarningPanel() : walletDangerPanel()),
+          : (isUncertain
+              ? walletWarningPanel()
+              : walletDangerPanel()),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1396,8 +1427,8 @@ class _CryptoWalletEngineSolanaSendPanelState
             OutlinedButton.icon(
               key: const Key('solana_send_panel_copy_sig_btn'),
               onPressed: () async {
-                final copiedLabel =
-                    AppLocalizations.of(context).cryptoSignatureCopied;
+                final copiedLabel = AppLocalizations.of(context)
+                    .cryptoSignatureCopied;
                 await Clipboard.setData(
                   ClipboardData(text: signature),
                 );
@@ -1454,4 +1485,5 @@ class _CryptoWalletEngineSolanaSendPanelState
       ),
     );
   }
+
 }

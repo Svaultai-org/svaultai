@@ -283,7 +283,7 @@ void main() {
       client.nextReceiveResponse = {
         'wallet_engine': 'receive_ready',
         'publicAddress': 'So11111111111111111111111111111111111111112',
-        'walletLabel':   'SVaultAI SOL wallet',
+        'walletLabel':   'Svaultai SOL wallet',
         'warning':       'Only send SOL on Solana to this address.',
       };
 
@@ -323,7 +323,7 @@ void main() {
       client.nextReceiveResponse = {
         'wallet_engine': 'receive_ready',
         'publicAddress': 'So11111111111111111111111111111111111111112',
-        'walletLabel':   'SVaultAI SOL wallet',
+        'walletLabel':   'Svaultai SOL wallet',
         'warning':       'Only send SOL on Solana to this address.',
       };
       await _pumpSolanaPanel(tester, client: client, features: _features());
@@ -352,7 +352,7 @@ void main() {
       client.nextReceiveResponse = {
         'wallet_engine': 'receive_ready',
         'publicAddress': 'So11111111111111111111111111111111111111112',
-        'walletLabel':   'SVaultAI SOL wallet',
+        'walletLabel':   'Svaultai SOL wallet',
         'warning':       'Only send SOL on Solana to this address.',
       };
       await _pumpSolanaPanel(tester, client: client, features: _features());

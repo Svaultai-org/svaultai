@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,16 +15,12 @@ import 'package:vault_ai_frontend/ui/secure_item_detail.dart';
 
 import '_helpers/responsive_harness.dart';
 
-
-
-
 final List<DeviceProfile> _extraDevices = const [
   DeviceProfiles.ipad,
   DeviceProfiles.desktop,
   DeviceProfiles.iphoneSELandscape,
   DeviceProfiles.iphone12Landscape,
 ];
-
 
 Future<void> _captureGolden(
   WidgetTester tester,
@@ -34,14 +29,20 @@ Future<void> _captureGolden(
   DeviceProfile device, {
   double keyboardHeight = 0,
 }) async {
-  await pumpAtDevice(tester, widget, device: device,
-      keyboardHeight: keyboardHeight);
+  // Some production pages own periodic polling timers. Explicitly unmount the
+  // page after capture so those timers are deterministically disposed even
+  // when a golden comparison fails.
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+  await pumpAtDevice(tester, widget,
+      device: device, keyboardHeight: keyboardHeight);
   await expectLater(
     find.byType(MaterialApp),
     matchesGoldenFile(goldenPath(name, device)),
   );
 }
-
 
 Future<void> _openDialogAndCapture(
   WidgetTester tester,
@@ -94,7 +95,6 @@ Future<void> _openDialogAndCapture(
   );
 }
 
-
 Future<void> _openBottomSheetAndCapture(
   WidgetTester tester,
   Widget sheet,
@@ -144,10 +144,9 @@ Future<void> _openBottomSheetAndCapture(
 }
 
 void main() {
-
-
   for (final device in _extraDevices) {
-    group('Extra viewport goldens @ ${device.name} '
+    group(
+        'Extra viewport goldens @ ${device.name} '
         '(${device.width.toInt()}x${device.height.toInt()})', () {
       testWidgets('logins_empty', (t) async {
         await _captureGolden(
@@ -298,11 +297,9 @@ void main() {
     });
   }
 
-
   // Bottom-sheet golden: SecureItemDetailSheet on all phones.
   for (final device in DeviceProfiles.allPhones) {
-    testWidgets(
-        'BottomSheet: secure_item_detail_sheet_login @ ${device.name}',
+    testWidgets('BottomSheet: secure_item_detail_sheet_login @ ${device.name}',
         (t) async {
       await _openBottomSheetAndCapture(
         t,
@@ -316,7 +313,6 @@ void main() {
       );
     });
   }
-
 
   // Keyboard-open golden: DeleteVaultFlow with a keyboard on iPhone SE + 12
   for (final device in const [
@@ -337,7 +333,6 @@ void main() {
       );
     });
   }
-
 
   // Device-pending page across viewports — proves the countdown metric scales.
   for (final device in const [

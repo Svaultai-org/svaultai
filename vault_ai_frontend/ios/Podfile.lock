@@ -2,21 +2,26 @@ PODS:
   - Flutter (1.0.0)
   - flutter_secure_storage (6.0.0):
     - Flutter
+  - VaultAIOpaque (0.1.0)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
+  - VaultAIOpaque (from `../native/opaque_client/ios`)
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
   flutter_secure_storage:
     :path: ".symlinks/plugins/flutter_secure_storage/ios"
+  VaultAIOpaque:
+    :path: "../native/opaque_client/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_secure_storage: d33dac7ae2ea08509be337e775f6b59f1ff45f12
+  VaultAIOpaque: 4defede5240beab11baf8b103547e1806eef265b
 
-PODFILE CHECKSUM: 6682fe8c87d4f733a685cbdb1385401a660b5bac
+PODFILE CHECKSUM: 04057e4ebecf1fdd1826139553b62ba18851fd0c
 
 COCOAPODS: 1.17.0

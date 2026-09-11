@@ -78,7 +78,7 @@ void main() {
       
       final executable = _stripDartComments(storagePageSrc);
       expect(
-        RegExp(r'\b1073741824\b').hasMatch(executable),
+        executable.contains('1073741824'),
         isFalse,
         reason:
             'storage_page.dart must NOT carry a hardcoded 1073741824 '

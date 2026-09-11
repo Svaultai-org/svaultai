@@ -266,7 +266,7 @@ void main() {
     test('honesty line is short + preserved', () {
       expect(
         kCryptoWalletEngineActivityHonestSubcopy,
-        'SVaultAI never invents transaction history.',
+        'Svaultai never invents transaction history.',
       );
     });
 

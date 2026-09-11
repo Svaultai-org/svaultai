@@ -49,10 +49,6 @@ for arg in "$@"; do
         --allow-dev-release)
             allow_dev=1
             ;;
-        --dart-define=ZK_V2_*|--dart-define=MEMORY_V2_*|--dart-define=FILE_V2_*|--dart-define=WALLET_BACKUP_V2_*|--dart-define=WALLET_V2_*|--dart-define=PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=*)
-            echo "[vault-release] ERROR: production privacy flags are pinned by this script." >&2
-            exit 2
-            ;;
         *)
             flutter_extra_args+=("$arg")
             ;;
@@ -90,23 +86,11 @@ built_at="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
 echo "[vault-release] APP_RELEASE=$sha_full"
 echo "[vault-release] (display-only short: $sha_short)"
 
-if [ "$allow_dev" -ne 1 ]; then
-    "$script_dir/verify-release-baseline.sh" "$sha_full"
-fi
-
-python3 scripts/verify-release-contract.py \
-    --backend-url https://api.svaultai.com/release-contract
-
 # 2. Build. --pwa-strategy=none writes an empty SW stub; we
 #    overwrite it in step 3 with the migration SW body.
 flutter build web --release \
     --pwa-strategy=none \
     --dart-define=APP_RELEASE="$sha_full" \
-    --dart-define-from-file=config/release-contract.production.json \
-    --dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet \
-    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true \
-    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true \
-    --dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true \
     "${flutter_extra_args[@]}"
 
 # 3. Migration SW.
@@ -157,7 +141,7 @@ fi
 
 # 5. release.json.
 release_path="$project_root/build/web/release.json"
-printf '{"commit":"%s","commitShort":"%s","builtAt":"%s","apiContract":"svaultai-core-v2-2026-08-16","features":{"credentialV2Read":true,"credentialV2Write":false,"credentialV2Migration":false,"memoryV2Read":true,"memoryV2Write":true,"memoryV2Migration":false,"fileV2Read":true,"fileV2Write":true,"fileV2Migration":false,"walletBackupV2Read":false,"walletBackupV2Write":false,"walletBackupV2Migration":false,"walletV2Read":false,"walletV2Write":false,"walletV2Migration":false,"privateVaultLocalRouting":false}}\n' \
+printf '{"commit":"%s","commitShort":"%s","builtAt":"%s"}\n' \
     "$sha_full" "$sha_short" "$built_at" > "$release_path"
 
 echo "[vault-release] wrote $release_path"

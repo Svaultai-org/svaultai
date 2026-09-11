@@ -198,13 +198,12 @@ void main() {
       // would only expose the same PIN to a timing oracle. The
       // catch must ``return`` immediately.
       final src = _readLib('main.dart');
-      final loginPageIdx = src.indexOf('class _LoginPageState');
-      final idx = src.indexOf(
-        'on OpaqueAuthenticationFailed catch',
-        loginPageIdx,
-      );
+      final loginPage = src.indexOf('class _LoginPageState');
+      final idx = src.indexOf('on OpaqueAuthenticationFailed catch', loginPage);
       expect(idx, greaterThan(-1));
-      final window = src.substring(idx, (idx + 1000).clamp(0, src.length));
+      final catchEnd = src.indexOf('on RateLimitedException catch', idx);
+      expect(catchEnd, greaterThan(idx));
+      final window = src.substring(idx, catchEnd);
       // Look for the return statement inside the block.
       final returnIdx = window.indexOf('return;');
       final legacyIdx = window.indexOf('client.authLogin(');

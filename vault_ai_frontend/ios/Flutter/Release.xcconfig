@@ -1,4 +1,8 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include "Generated.xcconfig"
-OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) -force_load "$(PROJECT_DIR)/VaultAIOpaque.xcframework/ios-arm64-simulator/libvaultai_opaque_client.a"
-OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) -force_load "$(PROJECT_DIR)/VaultAIOpaque.xcframework/ios-arm64/libvaultai_opaque_client.a"
+// Dart FFI resolves these C ABI entry points dynamically. Keep every entry
+// point in the final Mach-O even though the native linker sees no static call.
+OTHER_LDFLAGS=$(inherited) -Wl,-u,_vaultai_opaque_client_start_registration -Wl,-exported_symbol,_vaultai_opaque_client_start_registration -Wl,-u,_vaultai_opaque_client_finish_registration -Wl,-exported_symbol,_vaultai_opaque_client_finish_registration -Wl,-u,_vaultai_opaque_client_start_login -Wl,-exported_symbol,_vaultai_opaque_client_start_login -Wl,-u,_vaultai_opaque_client_finish_login -Wl,-exported_symbol,_vaultai_opaque_client_finish_login -Wl,-u,_vaultai_opaque_client_free_string -Wl,-exported_symbol,_vaultai_opaque_client_free_string -Wl,-u,_vaultai_pbkdf2_hmac_sha256 -Wl,-exported_symbol,_vaultai_pbkdf2_hmac_sha256
+// Xcode's archive install action otherwise strips the dynamic symbol table
+// after linking. Dart FFI requires these exported names at runtime.
+STRIP_INSTALLED_PRODUCT=NO

@@ -44,23 +44,6 @@ void main() {
       );
     });
 
-    test('chosen FileV2 title keeps the media extension once', () {
-      expect(
-        filenameWithChosenTitle(
-          originalFilename: 'video_1786488704915.webm',
-          chosenTitle: 'beef video',
-        ),
-        'beef video.webm',
-      );
-      expect(
-        filenameWithChosenTitle(
-          originalFilename: 'recording.m4a',
-          chosenTitle: 'interview.m4a',
-        ),
-        'interview.m4a',
-      );
-    });
-
     test('does not capture questions, instructions, or multi-file text', () {
       expect(
         attachmentTitleFromComposerText(
@@ -99,9 +82,9 @@ void main() {
       expect(src, contains('name: a.displayName ?? a.name'));
       expect(
         src,
-        contains(RegExp(
-          r'!sending\s*&&\s*\(input\.text\.trim\(\)\.isNotEmpty\s*\|\|\s*attachments\.isNotEmpty',
-        )),
+        contains(
+          '!sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty)',
+        ),
       );
       expect(src, contains('uploadCommitted && hadAttachments'));
       expect(
@@ -129,7 +112,8 @@ void main() {
           api, contains("await fill('saved_name', 'saved_name_ciphertext')"));
       expect(api, contains("map['needs_naming'] = false"));
 
-      final folderIdx = api.indexOf("Future<Map<String, dynamic>> listFolder(");
+      final folderIdx =
+          api.indexOf("Future<Map<String, dynamic>> listFolder(");
       expect(folderIdx, greaterThan(-1));
       final folderBody = api.substring(
         folderIdx,

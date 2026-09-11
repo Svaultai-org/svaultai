@@ -1,37 +1,16 @@
 import 'package:flutter/material.dart';
-
-import 'services/credential_inventory_view_state.dart';
 import 'l10n/app_localizations.dart';
-import 'services/credential_v2_repository.dart';
-import 'services/credential_v2_qa_diagnostics.dart';
 import 'ui/responsive.dart';
-
-const bool qaCredentialV2TargetingEnabled = bool.fromEnvironment(
-  'QA_CREDENTIAL_V2_TARGETING',
-  defaultValue: false,
-);
-const String _credentialV2CryptoVersion = 'client_mvk_v2';
-const String credentialMetadataCryptoVersion = 'client_mvk_metadata_v1';
 
 class VaultLoginItem {
   final String service;
   final String itemType;
   final DateTime? createdAt;
-  final String? recordId;
-  final String cryptoVersion;
-  final String? migrationState;
-  final String? verificationState;
-  final Map<String, dynamic>? localFields;
 
   const VaultLoginItem({
     required this.service,
     this.itemType = 'login',
     this.createdAt,
-    this.recordId,
-    this.cryptoVersion = 'legacy_v1',
-    this.migrationState,
-    this.verificationState,
-    this.localFields,
   });
 
   factory VaultLoginItem.fromJson(Map<String, dynamic> json) {
@@ -44,22 +23,9 @@ class VaultLoginItem {
       service: (json['service'] ?? '').toString(),
       itemType: (json['item_type'] ?? 'login').toString(),
       createdAt: created,
-      recordId: json['record_id']?.toString(),
-      cryptoVersion: json['crypto_version']?.toString() ?? 'legacy_v1',
-      migrationState: json['migration_state']?.toString(),
-      verificationState: json['verification_state']?.toString(),
     );
   }
 }
-
-bool isCredentialV2RollbackEligible(VaultLoginItem item) =>
-    item.cryptoVersion == 'client_mvk_v2' &&
-    const {
-      'migration_pending',
-      'v2_verified',
-      'migrated',
-      'rollback_pending',
-    }.contains(item.migrationState);
 
 const Map<String, String> kSecureItemTypeLabels = <String, String>{
   'login': 'Login',
@@ -304,11 +270,6 @@ class LoginsPage extends StatefulWidget {
   final void Function(String service, String itemType)? onView;
   final void Function(String service, String itemType)? onEdit;
   final void Function(String service, String itemType)? onDelete;
-  final void Function(VaultLoginItem item)? onViewItem;
-  final void Function(VaultLoginItem item)? onEditItem;
-  final void Function(VaultLoginItem item)? onDeleteItem;
-  final void Function(VaultLoginItem item)? onMigrateItem;
-  final void Function(VaultLoginItem item)? onRollbackItem;
   final String vaultLabel;
 
   const LoginsPage({
@@ -323,11 +284,6 @@ class LoginsPage extends StatefulWidget {
     this.onView,
     this.onEdit,
     this.onDelete,
-    this.onViewItem,
-    this.onEditItem,
-    this.onDeleteItem,
-    this.onMigrateItem,
-    this.onRollbackItem,
   });
 
   @override
@@ -374,13 +330,7 @@ class _LoginsPageState extends State<LoginsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final inventoryState = resolveCredentialInventoryViewState(
-      loading: widget.isLoading,
-      authoritativeLoadCompleted: widget.hasLoaded,
-      itemCount: widget.logins.length,
-      hasError: widget.error != null,
-    );
-    if (inventoryState == CredentialInventoryViewState.error) {
+    if (widget.error != null) {
       return _Shell(
         child: _LoadingErrorEmptyState(
           key: const Key('logins_page_error_state'),
@@ -390,7 +340,7 @@ class _LoginsPageState extends State<LoginsPage> {
         ),
       );
     }
-    if (inventoryState == CredentialInventoryViewState.loading) {
+    if (widget.isLoading || !widget.hasLoaded) {
       return _Shell(
         child: _LoadingState(
           key: const Key('logins_page_loading_state'),
@@ -401,8 +351,7 @@ class _LoginsPageState extends State<LoginsPage> {
     final userVisibleLogins = widget.logins
         .where((i) => !isSystemHiddenItemType(i.itemType))
         .toList(growable: false);
-    if (inventoryState == CredentialInventoryViewState.readyEmpty ||
-        userVisibleLogins.isEmpty) {
+    if (userVisibleLogins.isEmpty) {
       return _Shell(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -460,18 +409,6 @@ class _LoginsPageState extends State<LoginsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ValueListenableBuilder<String>(
-                valueListenable: qaV2HydrationDiagnostic,
-                builder: (context, value, _) => value.isEmpty
-                    ? const SizedBox.shrink()
-                    : Semantics(
-                        container: true,
-                        identifier:
-                            'qa_v2_hydration_diag_generated-1d1c9d799b70b2c919d2cb558bec682f',
-                        label: value,
-                        child: const SizedBox.shrink(),
-                      ),
-              ),
               _Header(
                 vaultLabel: widget.vaultLabel,
                 onRefresh: widget.onRefresh,
@@ -498,24 +435,11 @@ class _LoginsPageState extends State<LoginsPage> {
                   final cleanService =
                       service.isEmpty ? 'Unnamed item' : _titleize(service);
                   final itemType = login.itemType;
-                  final label =
-                      login.cryptoVersion == _credentialV2CryptoVersion &&
-                              login.verificationState != 'client_verified'
-                          ? 'Credential (verification pending)'
-                          : kSecureItemTypeLabels[itemType] ?? 'Saved item';
+                  final label = kSecureItemTypeLabels[itemType] ?? 'Saved item';
                   final icon = kSecureItemTypeIcons[itemType] ??
                       Icons.inventory_2_outlined;
-                  final safeIdentity = login.recordId?.trim();
                   return _SecureItemCard(
-                    // Record IDs are opaque, stable, and unique across
-                    // duplicate services. Service names remain only the
-                    // compatibility fallback for legacy items without an
-                    // identity field.
-                    key: Key(safeIdentity != null && safeIdentity.isNotEmpty
-                        ? 'secure_item_card_$itemType-$safeIdentity'
-                        : 'secure_item_card_$itemType-$cleanService'),
-                    qaRecordId:
-                        qaCredentialV2TargetingEnabled ? login.recordId : null,
+                    key: Key('secure_item_card_$itemType-$cleanService'),
                     cleanService: cleanService,
                     rawService: service,
                     label: label,
@@ -523,24 +447,9 @@ class _LoginsPageState extends State<LoginsPage> {
                     itemType: itemType,
                     vaultLabel: widget.vaultLabel,
                     onAskVault: widget.onAskVault,
-                    onView: widget.onViewItem == null
-                        ? widget.onView
-                        : (_, __) => widget.onViewItem!(login),
-                    onEdit: widget.onEditItem == null
-                        ? widget.onEdit
-                        : (_, __) => widget.onEditItem!(login),
-                    onDelete: widget.onDeleteItem == null
-                        ? widget.onDelete
-                        : (_, __) => widget.onDeleteItem!(login),
-                    onMigrate: widget.onMigrateItem == null ||
-                            login.cryptoVersion != 'legacy_v1' ||
-                            !isLoginLikeType(login.itemType)
-                        ? null
-                        : () => widget.onMigrateItem!(login),
-                    onRollback: widget.onRollbackItem == null ||
-                            !isCredentialV2RollbackEligible(login)
-                        ? null
-                        : () => widget.onRollbackItem!(login),
+                    onView: widget.onView,
+                    onEdit: widget.onEdit,
+                    onDelete: widget.onDelete,
                   );
                 }),
             ],
@@ -560,7 +469,6 @@ class _LoginsPageState extends State<LoginsPage> {
 }
 
 class _SecureItemCard extends StatelessWidget {
-  final String? qaRecordId;
   final String cleanService;
   final String rawService;
   final String label;
@@ -572,12 +480,9 @@ class _SecureItemCard extends StatelessWidget {
   final void Function(String service, String itemType)? onView;
   final void Function(String service, String itemType)? onEdit;
   final void Function(String service, String itemType)? onDelete;
-  final VoidCallback? onMigrate;
-  final VoidCallback? onRollback;
 
   const _SecureItemCard({
     super.key,
-    required this.qaRecordId,
     required this.cleanService,
     required this.rawService,
     required this.label,
@@ -588,68 +493,33 @@ class _SecureItemCard extends StatelessWidget {
     required this.onView,
     required this.onEdit,
     required this.onDelete,
-    required this.onMigrate,
-    required this.onRollback,
   });
 
   @override
   Widget build(BuildContext context) {
     final blurb = previewBlurbForType(itemType);
-    Widget targeted(String action, Widget child) {
-      final recordId = qaRecordId;
-      if (recordId == null || recordId.isEmpty) return child;
-      return Semantics(
-        container: true,
-        identifier: 'credential-$action-$recordId',
-        label: 'credential-$action-$recordId',
-        child: child,
-      );
-    }
-
     final buttons = <Widget>[
-      targeted(
-          'reveal',
-          OutlinedButton.icon(
-            onPressed:
-                onView == null ? null : () => onView!(rawService, itemType),
-            icon: const Icon(Icons.visibility_outlined, size: 18),
-            label: const Text('View'),
-          )),
-      targeted(
-          'edit',
-          OutlinedButton.icon(
-            onPressed:
-                onEdit == null ? null : () => onEdit!(rawService, itemType),
-            icon: const Icon(Icons.edit_outlined, size: 18),
-            label: const Text('Edit'),
-          )),
-      targeted(
-          'delete',
-          OutlinedButton.icon(
-            onPressed:
-                onDelete == null ? null : () => onDelete!(rawService, itemType),
-            icon: const Icon(Icons.delete_outline, size: 18),
-            label: Text(AppLocalizations.of(context).commonDelete),
-          )),
+      OutlinedButton.icon(
+        onPressed: onView == null ? null : () => onView!(rawService, itemType),
+        icon: const Icon(Icons.visibility_outlined, size: 18),
+        label: const Text('View'),
+      ),
+      OutlinedButton.icon(
+        onPressed: onEdit == null ? null : () => onEdit!(rawService, itemType),
+        icon: const Icon(Icons.edit_outlined, size: 18),
+        label: const Text('Edit'),
+      ),
+      OutlinedButton.icon(
+        onPressed:
+            onDelete == null ? null : () => onDelete!(rawService, itemType),
+        icon: const Icon(Icons.delete_outline, size: 18),
+        label: Text(AppLocalizations.of(context).commonDelete),
+      ),
       OutlinedButton.icon(
         onPressed: onAskVault == null ? null : () => onAskVault!(rawService),
         icon: const Icon(Icons.smart_toy_outlined, size: 18),
         label: Text('Ask $vaultLabel'),
       ),
-      if (onMigrate != null)
-        OutlinedButton.icon(
-          key: Key('credential_v2_migrate_$itemType-$rawService'),
-          onPressed: onMigrate,
-          icon: const Icon(Icons.upgrade_outlined, size: 18),
-          label: const Text('Migrate to v2 (QA)'),
-        ),
-      if (onRollback != null)
-        OutlinedButton.icon(
-          key: Key('credential_v2_rollback_$itemType-$rawService'),
-          onPressed: onRollback,
-          icon: const Icon(Icons.undo_outlined, size: 18),
-          label: const Text('Rollback v2 (QA)'),
-        ),
     ];
 
     final headerRow = Row(
@@ -679,42 +549,49 @@ class _SecureItemCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF10A37F).withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      label,
-                      style: const TextStyle(
-                        color: Color(0xFF10A37F),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
+              LayoutBuilder(
+                builder: (context, metadataConstraints) => Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Container(
+                      constraints: BoxConstraints(
+                        maxWidth: metadataConstraints.maxWidth,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10A37F).withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          color: Color(0xFF10A37F),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: Text(
-                      blurb,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF8E8E8E),
-                        fontSize: 12,
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: metadataConstraints.maxWidth.clamp(0, 360),
+                      ),
+                      child: Text(
+                        blurb,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF8E8E8E),
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -722,7 +599,7 @@ class _SecureItemCard extends StatelessWidget {
       ],
     );
 
-    final card = Container(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -732,12 +609,11 @@ class _SecureItemCard extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // The four standard actions need substantially more than 640px.
-          // At tablet/narrow-desktop widths the old horizontal branch left
-          // the title/badge area only a few pixels wide and overflowed.
-          final stackVertically = constraints.maxWidth < 900 ||
-              onMigrate != null ||
-              onRollback != null;
+          // Four localized action buttons need substantially more room than
+          // the old 640px cutoff allowed. At tablet/narrow-desktop widths the
+          // horizontal layout could squeeze the metadata header below its
+          // 68px icon-and-gap minimum and overflow.
+          final stackVertically = constraints.maxWidth < 900;
           if (stackVertically) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -765,14 +641,6 @@ class _SecureItemCard extends StatelessWidget {
           );
         },
       ),
-    );
-    final recordId = qaRecordId;
-    if (recordId == null || recordId.isEmpty) return card;
-    return Semantics(
-      container: true,
-      identifier: 'credential-card-$recordId',
-      label: 'credential-card-$recordId',
-      child: card,
     );
   }
 }

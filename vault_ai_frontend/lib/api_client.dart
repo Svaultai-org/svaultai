@@ -6,74 +6,8 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import 'services/session_termination.dart' as st;
-import 'services/release_feature_contract.dart';
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
-import 'services/wallet_backup_v2_repository.dart';
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
-
-enum ChatResponseTimeoutPhase { connect, firstEvent, idle, total }
-
-class ChatResponseTimeoutException implements Exception {
-  final ChatResponseTimeoutPhase phase;
-
-  const ChatResponseTimeoutException(this.phase);
-
-  @override
-  String toString() => 'ChatResponseTimeoutException(phase: ${phase.name})';
-}
-
-const Duration chatConnectTimeout = Duration(seconds: 30);
-const Duration chatFirstEventTimeout = Duration(seconds: 120);
-const Duration chatIdleTimeout = Duration(seconds: 60);
-const Duration chatTotalTimeout = Duration(minutes: 5);
-
-/// Applies bounded first-event, idle, and total deadlines to a chat stream.
-///
-/// The idle deadline resets after each event, so a legitimate long response
-/// can continue while it is making progress. Timeout errors contain no
-/// response bodies, request content, tokens, or decrypted data.
-Stream<T> boundedChatResponseStream<T>(
-  Stream<T> source, {
-  Duration firstEventTimeout = chatFirstEventTimeout,
-  Duration idleTimeout = chatIdleTimeout,
-  Duration totalTimeout = chatTotalTimeout,
-}) async* {
-  final iterator = StreamIterator<T>(source);
-  final elapsed = Stopwatch()..start();
-  var receivedEvent = false;
-  try {
-    while (true) {
-      final totalRemaining = totalTimeout - elapsed.elapsed;
-      if (totalRemaining <= Duration.zero) {
-        throw const ChatResponseTimeoutException(
-          ChatResponseTimeoutPhase.total,
-        );
-      }
-      final phaseTimeout = receivedEvent ? idleTimeout : firstEventTimeout;
-      final wait =
-          totalRemaining < phaseTimeout ? totalRemaining : phaseTimeout;
-      final totalDeadlineWins = totalRemaining <= phaseTimeout;
-      late final bool hasNext;
-      try {
-        hasNext = await iterator.moveNext().timeout(wait);
-      } on TimeoutException {
-        throw ChatResponseTimeoutException(
-          totalDeadlineWins
-              ? ChatResponseTimeoutPhase.total
-              : receivedEvent
-                  ? ChatResponseTimeoutPhase.idle
-                  : ChatResponseTimeoutPhase.firstEvent,
-        );
-      }
-      if (!hasNext) break;
-      receivedEvent = true;
-      yield iterator.current;
-    }
-  } finally {
-    elapsed.stop();
-    await iterator.cancel();
-  }
-}
 
 void _vlog(String tag, [Map<String, Object?>? data]) {
   if (kReleaseMode) return;
@@ -170,24 +104,6 @@ Future<http.Response> _runWithNetLog(
     });
     rethrow;
   }
-}
-
-/// A checkout failure whose string representation is safe to display.
-///
-/// Stripe response details and backend diagnostics must never cross this UI
-/// boundary. [code] is retained only for known product flows such as the
-/// supported lower-plan dialog.
-class BillingCheckoutException implements Exception {
-  final String code;
-  final String message;
-
-  const BillingCheckoutException({
-    required this.code,
-    required this.message,
-  });
-
-  @override
-  String toString() => message;
 }
 
 class OrphanDataException implements Exception {
@@ -1161,44 +1077,17 @@ class VaultAIClient {
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw _safeBillingCheckoutError(response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Checkout session failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid checkout-session response format');
     }
     return decoded;
-  }
-
-  BillingCheckoutException _safeBillingCheckoutError(String responseBody) {
-    const fallback = "We couldn't start checkout. Please try again.";
-    var code = 'checkout_failed';
-    var message = fallback;
-
-    try {
-      final decoded = jsonDecode(responseBody);
-      final detail = decoded is Map<String, dynamic> ? decoded['detail'] : null;
-      if (detail is Map) {
-        final parsedCode = detail['code']?.toString() ?? '';
-        code = parsedCode.isEmpty ? code : parsedCode;
-
-        // These are product-policy messages authored by SVaultAI. All
-        // Stripe/configuration/internal failures deliberately use fallback.
-        const safeProductCodes = {
-          'no_change',
-          'downgrade_not_supported',
-          'enterprise_required',
-        };
-        if (safeProductCodes.contains(parsedCode)) {
-          final parsedMessage = detail['message']?.toString().trim() ?? '';
-          if (parsedMessage.isNotEmpty) message = parsedMessage;
-        }
-      }
-    } catch (_) {
-      // Malformed and non-JSON responses use the same safe fallback.
-    }
-
-    return BillingCheckoutException(code: code, message: message);
   }
 
   Future<Map<String, dynamic>> createStripePortalSession({
@@ -1262,114 +1151,37 @@ class VaultAIClient {
     return decoded;
   }
 
-  Future<Map<String, dynamic>> getBillingProviders({
-    required String authToken,
-  }) async {
-    final uri = Uri.parse('$baseUrl/billing/providers');
-    final response = await http.get(
-      uri,
-      headers: _defaultHeaders(authToken: authToken),
-    );
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Billing providers failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid billing-providers response format');
-    }
-    return decoded;
-  }
-
-  Future<Map<String, dynamic>> verifyGooglePlayPurchase({
-    required String authToken,
-    required String productId,
-    required String purchaseToken,
-  }) async {
-    final uri = Uri.parse('$baseUrl/billing/google-play/verify');
-    final response = await http.post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'product_id': productId,
-        'purchase_token': purchaseToken,
-      }),
-    );
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Google Play verification failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid Google Play verification response');
-    }
-    return decoded;
-  }
-
-  Future<Map<String, dynamic>> reconcileGooglePlayPurchases({
-    required String authToken,
-    required List<String> purchaseTokens,
-  }) async {
-    final uri = Uri.parse('$baseUrl/billing/google-play/reconcile');
-    final response = await http.post(
-      uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'purchase_tokens': purchaseTokens,
-      }),
-    );
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Google Play reconciliation failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid Google Play reconciliation response');
-    }
-    return decoded;
-  }
-
-  Future<Map<String, dynamic>> verifyAppleTransaction({
+  /// Sends StoreKit 2's signed transaction JWS to the backend. Storage is
+  /// granted only after Apple signature, bundle, environment, product, expiry,
+  /// and app-account binding checks pass server-side.
+  Future<Map<String, dynamic>> verifyAppleStoragePurchase({
     required String authToken,
     required String signedTransaction,
-    String environment = 'production',
   }) async {
-    final uri = Uri.parse('$baseUrl/billing/apple/verify-transaction');
-    final response = await http.post(
+    final uri = Uri.parse('$baseUrl/billing/apple/transactions');
+    final headers = _defaultHeaders(authToken: authToken, json: true);
+    _vlogRequest('billing.apple.verify', uri, headers);
+    final response = await _runWithNetLog(
+      'billing.apple.verify',
       uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({
-        'signed_transaction': signedTransaction,
-        'environment': environment,
-      }),
+      () => http.post(
+        uri,
+        headers: headers,
+        body: jsonEncode({'signed_transaction': signedTransaction}),
+      ),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       throw Exception(_formatBackendError(
-        prefix: 'App Store verification failed',
+        prefix: 'App Store purchase verification failed',
         statusCode: response.statusCode,
         responseBody: response.body,
       ));
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid App Store verification response');
+      throw Exception('Invalid App Store verification response format');
     }
     return decoded;
   }
@@ -1785,7 +1597,6 @@ class VaultAIClient {
     required String vaultName,
     required String pin,
     required String authToken,
-    String? requestId,
     List<String>? uploadedFileIds,
     String? appLocale,
     Map<String, String>? selectionHint,
@@ -1821,13 +1632,6 @@ class VaultAIClient {
     }
 
     request.headers.addAll(headers);
-    final safeRequestId = (requestId ?? '').replaceAll(
-      RegExp(r'[^a-zA-Z0-9_.:-]'),
-      '',
-    );
-    if (safeRequestId.isNotEmpty && safeRequestId.length <= 64) {
-      request.headers['X-Chat-Request-Id'] = safeRequestId;
-    }
     _vlogRequest('chat.stream', uri, headers);
     _vlog('chat.body', {
       'vault_name': vaultName,
@@ -1848,58 +1652,44 @@ class VaultAIClient {
       kdfIterationsUsed: kdfIterationsUsed,
     ));
 
-    final requestClient = http.Client();
-    try {
-      late final http.StreamedResponse response;
-      try {
-        response =
-            await requestClient.send(request).timeout(chatConnectTimeout);
-      } on TimeoutException {
-        throw const ChatResponseTimeoutException(
-          ChatResponseTimeoutPhase.connect,
-        );
-      }
-      _vlog('chat.response', {
+    final response = await request.send();
+    _vlog('chat.response', {
+      'status': response.statusCode,
+      'content_type': response.headers['content-type'] ?? '-',
+    });
+
+    if (response.statusCode != 200) {
+      final errorBody = await response.stream.bytesToString();
+
+      _vlog('chat.error', {
         'status': response.statusCode,
-        'content_type': response.headers['content-type'] ?? '-',
+        'body': errorBody,
       });
+      _throwIfAuthExpired(response.statusCode, errorBody);
+      _throwIfDeviceNotTrusted(response.statusCode, errorBody);
+      _throwIfLockOrFrozen(response.statusCode, errorBody);
+      // 2026-07-21: 409 kdf_generation_stale MUST throw its
+      // typed exception BEFORE the generic 400 InvalidVaultUnlock
+      // check — a stale-generation request is a specific,
+      // recoverable state (client re-derives from response salt +
+      // user taps send), NOT a session-expired condition.
+      _throwIfKdfGenerationStale(response.statusCode, errorBody);
+      _throwIfInvalidVaultUnlock(response.statusCode, errorBody);
+      throw Exception(_formatBackendError(
+        prefix: 'Chat failed',
+        statusCode: response.statusCode,
+        responseBody: errorBody,
+      ));
+    }
 
-      if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString();
+    final lineStream =
+        response.stream.transform(utf8.decoder).transform(const LineSplitter());
 
-        _vlog('chat.error', {
-          'status': response.statusCode,
-          'body': errorBody,
-        });
-        _throwIfAuthExpired(response.statusCode, errorBody);
-        _throwIfDeviceNotTrusted(response.statusCode, errorBody);
-        _throwIfLockOrFrozen(response.statusCode, errorBody);
-        // 2026-07-21: 409 kdf_generation_stale MUST throw its
-        // typed exception BEFORE the generic 400 InvalidVaultUnlock
-        // check — a stale-generation request is a specific,
-        // recoverable state (client re-derives from response salt +
-        // user taps send), NOT a session-expired condition.
-        _throwIfKdfGenerationStale(response.statusCode, errorBody);
-        _throwIfInvalidVaultUnlock(response.statusCode, errorBody);
-        throw Exception(_formatBackendError(
-          prefix: 'Chat failed',
-          statusCode: response.statusCode,
-          responseBody: errorBody,
-        ));
+    await for (final line in lineStream) {
+      final cleaned = _cleanSseLine(line);
+      if (cleaned != null && cleaned.isNotEmpty) {
+        yield cleaned;
       }
-
-      final lineStream = response.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter());
-
-      await for (final line in boundedChatResponseStream(lineStream)) {
-        final cleaned = _cleanSseLine(line);
-        if (cleaned != null && cleaned.isNotEmpty) {
-          yield cleaned;
-        }
-      }
-    } finally {
-      requestClient.close();
     }
   }
 
@@ -3105,6 +2895,9 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      return _listZkVaultItems(authToken: authToken);
+    }
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
     final response = await http.post(
@@ -3135,6 +2928,72 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> _listZkVaultItems({
+    required String authToken,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items/list');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{'limit': 500}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'List secure items failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid ciphertext secure-items response format');
+    }
+    final metaKey =
+        await vault_key_hierarchy.VaultKeyHierarchy(mvk).metadataKey();
+    Future<String> decryptRequired(Object? encoded) async {
+      if (encoded is! String || encoded.isEmpty) {
+        throw const FormatException('Missing encrypted saved-item field');
+      }
+      final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
+        metaKey,
+        vault_key_hierarchy.b64urlDecode(encoded),
+      );
+      return utf8.decode(plaintext);
+    }
+
+    final items = <Map<String, dynamic>>[];
+    for (final raw in (decoded['items'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      try {
+        final type = await decryptRequired(raw['item_type_ciphertext']);
+        final service = await decryptRequired(raw['service_ciphertext']);
+        final payloadText = await decryptRequired(raw['payload_ciphertext']);
+        final payloadDecoded = jsonDecode(payloadText);
+        final payload = payloadDecoded is Map
+            ? Map<String, dynamic>.from(payloadDecoded)
+            : <String, dynamic>{};
+        final rawFields = payload['fields'];
+        items.add(<String, dynamic>{
+          'id': raw['id'],
+          'service': service,
+          'item_type': type,
+          'fields': rawFields is Map
+              ? Map<String, dynamic>.from(rawFields)
+              : <String, dynamic>{},
+          'notes': payload['notes'],
+          'created_at': raw['created_at'],
+        });
+      } catch (_) {
+        // A single corrupt envelope must not hide other saved items.
+      }
+    }
+    return <String, dynamic>{'items': items, 'engine': 'ciphertext'};
+  }
+
   Future<Map<String, dynamic>> getVaultSecureItem({
     required String vaultName,
     required String service,
@@ -3142,6 +3001,17 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final listed = await _listZkVaultItems(authToken: authToken);
+      for (final raw in (listed['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        if ('${raw['item_type']}' == itemType &&
+            '${raw['service']}'.toLowerCase() == service.toLowerCase()) {
+          return Map<String, dynamic>.from(raw);
+        }
+      }
+      throw Exception('Saved item not found');
+    }
     final uri = Uri.parse('$baseUrl/get-secure-item');
 
     final response = await http.post(
@@ -3248,21 +3118,6 @@ class VaultAIClient {
     String? note,
     String? title,
   }) async {
-    if (walletBackupV2WriteEnabled) {
-      final repository =
-          WalletBackupV2Repository.current(api: this, authToken: authToken);
-      if (repository == null) {
-        throw StateError('wallet_backup_v2_requires_active_mvk');
-      }
-      final backupRecordId = await repository.create(
-          secretType: secretType, secretPlaintext: secretValue);
-      return <String, dynamic>{
-        'status': 'saved',
-        'schema': 'wallet_backup_v2',
-        'backup_record_id': backupRecordId,
-        'category': secretType,
-      };
-    }
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
       final zkResp = await tryZkVaultItemCiphertextUpsert(
         baseUrl: baseUrl,
@@ -3400,23 +3255,6 @@ class VaultAIClient {
     required String service,
     required String itemType,
   }) async {
-    if (walletBackupV2ReadEnabled) {
-      final repository =
-          WalletBackupV2Repository.current(api: this, authToken: authToken);
-      if (repository == null) {
-        throw StateError('wallet_backup_v2_requires_active_mvk');
-      }
-      // In V2 the service field carries only the opaque record identity.
-      // A malformed V2 envelope throws locally and never falls back to V1.
-      final envelope = await repository.read(service);
-      final secretValue = await repository.decrypt(envelope);
-      return <String, dynamic>{
-        'status': 'ok',
-        'schema': 'wallet_backup_v2',
-        'secretType': envelope.secretType,
-        'secretValue': secretValue,
-      };
-    }
     final uri = Uri.parse(
       '$baseUrl/crypto/reveal-sensitive-backup',
     );
@@ -4386,7 +4224,6 @@ class VaultAIClient {
     required String itemType,
     required String pin,
     required String authToken,
-    bool forceLegacyTransport = false,
     String? newService,
     Map<String, dynamic>? fields,
   }) async {
@@ -4394,10 +4231,21 @@ class VaultAIClient {
     // (i.e. this is a ZK/adopted vault), the item is written to
     // /vault/ciphertext/vault-items instead of /update-secure-item —
     // no readable item_type / service / payload leaves the client.
-    if (!forceLegacyTransport && zk_mvk_store.ZkActiveMvk.current() != null) {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      int? existingItemId;
+      final listed = await _listZkVaultItems(authToken: authToken);
+      for (final raw in (listed['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        if ('${raw['item_type']}' == itemType &&
+            '${raw['service']}'.toLowerCase() == oldService.toLowerCase()) {
+          existingItemId = (raw['id'] as num?)?.toInt();
+          break;
+        }
+      }
       final zkResp = await tryZkVaultItemCiphertextUpsert(
         baseUrl: baseUrl,
         authToken: authToken,
+        existingItemId: existingItemId,
         itemType: itemType,
         service: (newService != null && newService.trim().isNotEmpty)
             ? newService.trim()
@@ -4458,113 +4306,186 @@ class VaultAIClient {
   /// This function is intentionally file-scope (not a method on
   /// VaultAIClient) so it can be reused by any write path that
   /// converges on a `(item_type, service, payload_json)` triple.
-  /// Reads only opaque MEMORY_V2 envelopes. Plaintext memory columns are
-  /// never requested; callers must decrypt locally with the active MVK.
-  Future<List<Map<String, dynamic>>> listZkMemoryEnvelopes({
+  /// ZK ciphertext-first AI-memory finalize.
+  ///
+  /// Called by the chat SSE handler when the backend emits a
+  /// `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>` sentinel. Derives
+  /// `memoryKey` + `memoryLookupKey` from the active MVK, encrypts
+  /// the full memory proposal payload, computes the keyed lookup
+  /// hash locally, and POSTs to /vault/ciphertext/vault-ai-memory.
+  /// The backend accepts only ciphertext + hash; the user's memory
+  /// key/value never touches server storage in readable form.
+  ///
+  /// Returns true iff the finalize POST succeeded. False (with the
+  /// exception swallowed by the caller) means the memory was NOT
+  /// saved — correct privacy tradeoff on network/crypto failure.
+  Future<bool> tryZkFinalizeMemoryProposal({
     required String baseUrl,
     required String authToken,
-    String? lookupHash,
-  }) async {
-    final query = lookupHash == null
-        ? ''
-        : '?memory_lookup_hash=${Uri.encodeQueryComponent(lookupHash)}';
-    final resp = await http.get(
-      Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory$query'),
-      headers: <String, String>{'Authorization': 'Bearer $authToken'},
-    );
-    if (resp.statusCode != 200) {
-      throw Exception('memory_v2_read_failed');
-    }
-    final decoded = jsonDecode(resp.body);
-    if (decoded is! List)
-      throw const FormatException('memory_v2_invalid_response');
-    return decoded
-        .whereType<Map>()
-        .map((row) => Map<String, dynamic>.from(row))
-        .toList(growable: false);
-  }
-
-  Future<Map<String, dynamic>> writeZkMemoryEnvelope({
-    required String baseUrl,
-    required String authToken,
-    required String memoryId,
     required String memoryType,
-    required String payloadCiphertext,
-    required String lookupHash,
-    bool replaceExisting = false,
+    required String memoryKey,
+    required String memoryValue,
+    String? memoryEventDate,
   }) async {
-    const qa = bool.fromEnvironment(
-      'QA_CHAT_PRIVACY_DIAGNOSTICS',
-      defaultValue: false,
-    );
-    if (qa) _vlog('QA_MEMORY_API_STAGE=method_body_entered', const {});
-    if (qa) _vlog('QA_MEMORY_API_STAGE=base_url_ready', const {});
-    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-    if (qa) _vlog('QA_MEMORY_API_STAGE=uri_parse_succeeded', const {});
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $authToken'
-    };
-    final body = jsonEncode(<String, dynamic>{
-      'memory_type': memoryType,
-      'memory_lookup_hash': lookupHash,
-      'payload_ciphertext': payloadCiphertext,
-      'memory_id': memoryId,
-      'replace_existing': replaceExisting,
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) return false;
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final memoryK = await hierarchy.memoryKey();
+    final memoryLookup = await hierarchy.memoryLookupKey();
+
+    final payloadJson = jsonEncode(<String, dynamic>{
+      'memory_key': memoryKey,
+      'memory_value': memoryValue,
+      if (memoryEventDate != null && memoryEventDate.isNotEmpty)
+        'memory_event_date': memoryEventDate,
     });
-    if (qa) _vlog('QA_MEMORY_API_STAGE=body_build_succeeded', const {});
-    if (qa) _vlog('QA_MEMORY_API_STAGE=auth_ready', const {});
-    try {
-      if (qa) _vlog('QA_MEMORY_API_STAGE=http_client_ready', const {});
-      if (qa) _vlog('QA_MEMORY_API_STAGE=http_call_entered', const {});
-      final resp = await http.post(uri, headers: headers, body: body);
-      if (qa) _vlog('QA_MEMORY_API_STAGE=http_call_returned', const {});
-      if (qa) _vlog('QA_MEMORY_API_STAGE=response_status_present', const {});
-      if (qa) {
-        _vlog('MEMORY_V2_WRITE_HTTP_STATUS=${resp.statusCode}', const {});
-        _vlog(
-          'MEMORY_V2_WRITE_HTTP_2XX=${resp.statusCode >= 200 && resp.statusCode < 300}',
-          const {},
+    final payloadCt = await vault_key_hierarchy.aesGcmWrap(
+      memoryK,
+      utf8.encode(payloadJson),
+    );
+    final lookupHash = await vault_key_hierarchy.keyedLookupHash(
+      memoryLookup,
+      utf8.encode(memoryKey),
+    );
+
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    final resp = await http.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'memory_type': memoryType,
+        'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
+        'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
+      }),
+    );
+    return resp.statusCode == 200;
+  }
+
+  /// Fetches opaque ZK memory envelopes and decrypts them only on the client.
+  Future<Map<String, dynamic>> listZkMemories({
+    required String authToken,
+    int limit = 200,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/list');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{'limit': limit}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory list failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid memory list response format');
+    }
+    final memoryKey =
+        await vault_key_hierarchy.VaultKeyHierarchy(mvk).memoryKey();
+    final items = <Map<String, dynamic>>[];
+    final counts = <String, int>{};
+    for (final raw in (decoded['items'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      final envelope = raw['payload_ciphertext'];
+      if (envelope is! String || envelope.isEmpty) continue;
+      try {
+        final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
+          memoryKey,
+          vault_key_hierarchy.b64urlDecode(envelope),
         );
-      }
-      if (resp.statusCode != 200) {
-        // Status-only diagnostics are safe: never log the encrypted request,
-        // response body, lookup hash, token, or memory identifier.
-        _vlog('memory-v2.write.response', {
-          'status': resp.statusCode,
-          'reason': resp.reasonPhrase ?? '-',
+        final payload = jsonDecode(utf8.decode(plaintext));
+        if (payload is! Map) continue;
+        final type =
+            '${raw['memory_type'] ?? payload['memory_type'] ?? 'note'}';
+        items.add(<String, dynamic>{
+          ...Map<String, dynamic>.from(payload),
+          'id': raw['id'],
+          'memory_type': type,
+          'created_at': raw['created_at'],
+          'updated_at': raw['updated_at'],
         });
-        if (qa) {
-          _vlog(
-            'MEMORY_V2_WRITE_SAFE_ERROR_CATEGORY=${resp.statusCode == 401 ? 'unauthorized' : resp.statusCode == 403 ? 'forbidden' : resp.statusCode == 404 ? 'route_or_feature_disabled' : resp.statusCode == 409 ? 'duplicate_or_state_conflict' : resp.statusCode == 422 ? 'request_model_validation' : resp.statusCode >= 500 ? 'backend_server_error' : 'validation_error'}',
-            const {},
-          );
-        }
-        throw Exception('memory_v2_write_failed_status_${resp.statusCode}');
+        counts[type] = (counts[type] ?? 0) + 1;
+      } catch (_) {
+        // One corrupt/legacy envelope must not hide the user's other memories.
       }
-      final decoded = jsonDecode(resp.body);
-      if (decoded is! Map) {
-        throw const FormatException('memory_v2_invalid_write_response');
-      }
-      return Map<String, dynamic>.from(decoded);
-    } catch (e) {
-      if (qa) {
-        _vlog('QA_MEMORY_WRITE_EXCEPTION_TYPE=${e.runtimeType}', const {});
-      }
-      rethrow;
+    }
+    return <String, dynamic>{
+      'items': items,
+      'counts': counts,
+      'engine': 'ciphertext',
+    };
+  }
+
+  Future<void> deleteZkMemory({
+    required String authToken,
+    required int memoryId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/delete');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{'memory_id': memoryId}),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory delete failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
     }
   }
 
-  Future<void> deleteZkMemoryEnvelope({
-    required String baseUrl,
+  Future<void> upsertZkMemory({
     required String authToken,
-    required String memoryId,
+    required Map<String, dynamic> data,
+    int? memoryId,
   }) async {
-    final resp = await http.delete(
-      Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/$memoryId'),
-      headers: <String, String>{'Authorization': 'Bearer $authToken'},
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
+    final memoryKey = await hierarchy.memoryKey();
+    final lookupKey = await hierarchy.memoryLookupKey();
+    final lookupText = '${data['title'] ?? data['memory_key'] ?? 'memory'}';
+    final envelope = await vault_key_hierarchy.aesGcmWrap(
+      memoryKey,
+      utf8.encode(jsonEncode(data)),
     );
-    if (resp.statusCode != 200) throw Exception('memory_v2_delete_failed');
+    final lookupHash = await vault_key_hierarchy.keyedLookupHash(
+      lookupKey,
+      utf8.encode(lookupText.trim().toLowerCase()),
+    );
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    final response = await http.post(
+      uri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{
+        if (memoryId != null) 'memory_id': memoryId,
+        'memory_type': '${data['memory_type'] ?? 'note'}',
+        'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
+        'payload_ciphertext': vault_key_hierarchy.b64urlEncode(envelope),
+      }),
+    );
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Memory save failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
   }
 
   /// ZK ciphertext-first uploaded_files metadata write. Called right
@@ -4681,29 +4602,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  Future<List<Map<String, dynamic>>> listZkVaultItemCiphertexts({
-    required String authToken,
-  }) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/vault/ciphertext/vault-items'),
-      headers: _defaultHeaders(authToken: authToken),
-    );
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      throw Exception(
-        'ZK ciphertext vault-item list failed (${response.statusCode})',
-      );
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! List) {
-      throw const FormatException('Invalid ciphertext vault-item list');
-    }
-    return decoded
-        .whereType<Map>()
-        .map((row) => Map<String, dynamic>.from(row))
-        .toList(growable: false);
-  }
-
   Future<Map<String, dynamic>> deleteVaultSecureItem({
     required String vaultName,
     required String service,
@@ -4711,6 +4609,35 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
+    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final listed = await _listZkVaultItems(authToken: authToken);
+      int? itemId;
+      for (final raw in (listed['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        if ('${raw['item_type']}' == itemType &&
+            '${raw['service']}'.toLowerCase() == service.toLowerCase()) {
+          itemId = (raw['id'] as num?)?.toInt();
+          break;
+        }
+      }
+      if (itemId == null) throw Exception('Saved item not found');
+      final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items/delete');
+      final response = await http.post(
+        uri,
+        headers: _defaultHeaders(authToken: authToken, json: true),
+        body: jsonEncode(<String, dynamic>{'item_id': itemId}),
+      );
+      if (response.statusCode != 200) {
+        _throwIfAuthExpired(response.statusCode, response.body);
+        _throwIfDeviceNotTrusted(response.statusCode, response.body);
+        throw Exception(_formatBackendError(
+          prefix: 'Could not delete saved item',
+          statusCode: response.statusCode,
+          responseBody: response.body,
+        ));
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
     final uri = Uri.parse('$baseUrl/delete-secure-item');
 
     final response = await http.post(
@@ -5793,182 +5720,5 @@ class VaultAIClient {
       throw Exception('Invalid draft expiry response');
     }
     return decoded;
-  }
-
-  Future<void> createFileV2Manifest(
-      {required String authToken,
-      required String fileId,
-      required Uint8List manifestCiphertext,
-      required int totalBytes,
-      required int chunkSize,
-      required int chunkCount}) async {
-    final r = await http.post(Uri.parse('$baseUrl/vault/file-v2/manifest'),
-        headers: _defaultHeaders(authToken: authToken, json: true),
-        body: jsonEncode({
-          'file_id': fileId,
-          'crypto_version': 'client_mvk_v2',
-          'manifest_ciphertext':
-              vault_key_hierarchy.b64urlEncode(manifestCiphertext),
-          'total_bytes': totalBytes,
-          'chunk_size': chunkSize,
-          'chunk_count': chunkCount,
-        }));
-    if (r.statusCode != 200) throw Exception('file_v2_manifest_failed');
-  }
-
-  Future<void> putFileV2Chunk(
-      {required String authToken,
-      required String fileId,
-      required int chunkIndex,
-      required Uint8List ciphertext}) async {
-    final r = await http.put(Uri.parse('$baseUrl/vault/file-v2/chunk'),
-        headers: _defaultHeaders(authToken: authToken, json: true),
-        body: jsonEncode({
-          'file_id': fileId,
-          'chunk_index': chunkIndex,
-          'ciphertext': vault_key_hierarchy.b64urlEncode(ciphertext),
-        }));
-    if (r.statusCode != 200) throw Exception('file_v2_chunk_failed');
-  }
-
-  Future<Map<String, dynamic>> listFileV2({required String authToken}) async {
-    final r = await http.get(Uri.parse('$baseUrl/vault/file-v2'),
-        headers: _defaultHeaders(authToken: authToken));
-    _vlog('file-v2.list.response', {
-      'status': r.statusCode,
-      'reason': r.reasonPhrase ?? '-',
-      'body_len': r.bodyBytes.length,
-    });
-    if (r.statusCode != 200) throw Exception('file_v2_list_failed');
-    return jsonDecode(r.body) as Map<String, dynamic>;
-  }
-
-  Future<Map<String, dynamic>> getFileV2Manifest(
-      {required String authToken, required String fileId}) async {
-    final r = await http.get(
-        Uri.parse('$baseUrl/vault/file-v2/$fileId/manifest'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('file_v2_manifest_read_failed');
-    return jsonDecode(r.body) as Map<String, dynamic>;
-  }
-
-  Future<Uint8List> getFileV2Chunk(
-      {required String authToken,
-      required String fileId,
-      required int chunkIndex}) async {
-    final r = await http.get(
-        Uri.parse('$baseUrl/vault/file-v2/$fileId/chunk/$chunkIndex'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('file_v2_chunk_read_failed');
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return vault_key_hierarchy.b64urlDecode(m['ciphertext'] as String);
-  }
-
-  Future<void> deleteFileV2(
-      {required String authToken, required String fileId}) async {
-    final r = await http.delete(Uri.parse('$baseUrl/vault/file-v2/$fileId'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('file_v2_delete_failed');
-  }
-
-  Future<void> createWalletBackupV2({
-    required String authToken,
-    required String backupRecordId,
-    required String secretType,
-    required Uint8List payloadCiphertext,
-  }) async {
-    final r = await http.post(Uri.parse('$baseUrl/vault/wallet-backup-v2'),
-        headers: _defaultHeaders(authToken: authToken, json: true),
-        body: jsonEncode({
-          'backup_record_id': backupRecordId,
-          'secret_type': secretType,
-          'payload_ciphertext':
-              vault_key_hierarchy.b64urlEncode(payloadCiphertext),
-          'envelope_version': 'client_mvk_v2',
-        }));
-    if (r.statusCode != 200) throw Exception('wallet_backup_v2_create_failed');
-  }
-
-  Future<List<Map<String, dynamic>>> listWalletBackupV2(
-      {required String authToken}) async {
-    final r = await http.get(Uri.parse('$baseUrl/vault/wallet-backup-v2'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('wallet_backup_v2_list_failed');
-    final body = jsonDecode(r.body) as Map<String, dynamic>;
-    return (body['backups'] as List<dynamic>).cast<Map<String, dynamic>>();
-  }
-
-  Future<Map<String, dynamic>> readWalletBackupV2({
-    required String authToken,
-    required String backupRecordId,
-  }) async {
-    final r = await http.get(
-        Uri.parse('$baseUrl/vault/wallet-backup-v2/$backupRecordId'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('wallet_backup_v2_read_failed');
-    return jsonDecode(r.body) as Map<String, dynamic>;
-  }
-
-  Future<void> deleteWalletBackupV2({
-    required String authToken,
-    required String backupRecordId,
-  }) async {
-    final r = await http.delete(
-        Uri.parse('$baseUrl/vault/wallet-backup-v2/$backupRecordId'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('wallet_backup_v2_delete_failed');
-  }
-
-  Future<void> createWalletV2(
-      {required String authToken,
-      required String walletRecordId,
-      required String chain,
-      required String network,
-      required String asset,
-      required String publicAddress,
-      required String walletLabel,
-      required Uint8List payloadCiphertext,
-      String migrationState = 'v2_verified'}) async {
-    final r = await http.post(Uri.parse('$baseUrl/vault/wallet-v2'),
-        headers: _defaultHeaders(authToken: authToken, json: true),
-        body: jsonEncode({
-          'wallet_record_id': walletRecordId,
-          'chain': chain,
-          'network': network,
-          'asset': asset,
-          'public_address': publicAddress,
-          'wallet_label': walletLabel,
-          'payload_ciphertext':
-              vault_key_hierarchy.b64urlEncode(payloadCiphertext),
-          'envelope_version': 'v2',
-          'migration_state': migrationState
-        }));
-    if (r.statusCode != 200) throw Exception('wallet_v2_create_failed');
-  }
-
-  Future<List<Map<String, dynamic>>> listWalletV2(
-      {required String authToken}) async {
-    final r = await http.get(Uri.parse('$baseUrl/vault/wallet-v2'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('wallet_v2_list_failed');
-    return ((jsonDecode(r.body) as Map<String, dynamic>)['wallets'] as List)
-        .cast<Map<String, dynamic>>();
-  }
-
-  Future<Map<String, dynamic>> readWalletV2(
-      {required String authToken, required String walletRecordId}) async {
-    final r = await http.get(
-        Uri.parse('$baseUrl/vault/wallet-v2/$walletRecordId'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('wallet_v2_read_failed');
-    return jsonDecode(r.body) as Map<String, dynamic>;
-  }
-
-  Future<void> deleteWalletV2(
-      {required String authToken, required String walletRecordId}) async {
-    final r = await http.delete(
-        Uri.parse('$baseUrl/vault/wallet-v2/$walletRecordId'),
-        headers: _defaultHeaders(authToken: authToken));
-    if (r.statusCode != 200) throw Exception('wallet_v2_delete_failed');
   }
 }

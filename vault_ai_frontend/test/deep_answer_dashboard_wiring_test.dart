@@ -1,3 +1,5 @@
+
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -9,6 +11,7 @@ import 'package:vault_ai_frontend/ui/chat/chat_cards.dart'
     show setDeepScanDebugUiEnabled;
 import 'package:vault_ai_frontend/ui/chat/chat_message_list.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
+
 
 ChatMessage _credentialMsg({int notScanned = 100}) {
   return ChatMessage(
@@ -51,6 +54,7 @@ ChatMessage _credentialMsg({int notScanned = 100}) {
   );
 }
 
+
 ChatMessage _progressMsg({
   required Map<String, dynamic> snapshot,
   String message = '',
@@ -62,6 +66,7 @@ ChatMessage _progressMsg({
     payload: snapshot,
   );
 }
+
 
 Future<void> _pumpMessageList(
   WidgetTester tester, {
@@ -105,11 +110,13 @@ Future<void> _pumpMessageList(
   await tester.pumpAndSettle();
 }
 
+
 void main() {
   group('Scan-remaining → ChatMessageList → host wiring', () {
-    testWidgets(
-        'tap on Scan remaining invokes host callback with the '
+    testWidgets('tap on Scan remaining invokes host callback with the '
         'exact credential message (debug-toggle ON)', (tester) async {
+      
+      
       setDeepScanDebugUiEnabled(true);
       addTearDown(() => setDeepScanDebugUiEnabled(false));
 
@@ -125,8 +132,7 @@ void main() {
         },
       );
       final btn = find.widgetWithText(
-        OutlinedButton,
-        'Scan remaining files (231)',
+        OutlinedButton, 'Scan remaining files (231)',
       );
       await tester.ensureVisible(btn);
       await tester.pumpAndSettle();
@@ -140,28 +146,25 @@ void main() {
 
     testWidgets('callback is not invoked without an unscanned hint',
         (tester) async {
+      
+      
       var calls = 0;
       final msg = ChatMessage(
-        'assistant',
-        '',
+        'assistant', '',
         kind: ChatMessage.kCredentialFiles,
         payload: <String, dynamic>{
           'files': [
             {
-              'file_id': 'a',
-              'file_name': 'dump.txt',
-              'tier': 'confirmed',
-              'confidence': 'strong',
+              'file_id': 'a', 'file_name': 'dump.txt',
+              'tier': 'confirmed', 'confidence': 'strong',
               'reasons': ['content contains ...'],
             },
           ],
           'sections': {
             'confirmed': [
               {
-                'file_id': 'a',
-                'file_name': 'dump.txt',
-                'tier': 'confirmed',
-                'confidence': 'strong',
+                'file_id': 'a', 'file_name': 'dump.txt',
+                'tier': 'confirmed', 'confidence': 'strong',
                 'reasons': ['content contains ...'],
               },
             ],
@@ -187,8 +190,7 @@ void main() {
   });
 
   group('Progress card → poll + ready wiring', () {
-    testWidgets(
-        'progress card invokes host poll on the configured '
+    testWidgets('progress card invokes host poll on the configured '
         'interval', (tester) async {
       final pollCalls = <String>[];
       final snap = {
@@ -197,13 +199,9 @@ void main() {
         'status': 'scanning',
         'progress': {
           'coverage': {
-            'total': 256,
-            'scanned': 42,
-            'pending': 200,
-            'processing': 14,
-            'unsupported': 0,
-            'failed': 0,
-            'scan_complete': false,
+            'total': 256, 'scanned': 42,
+            'pending': 200, 'processing': 14,
+            'unsupported': 0, 'failed': 0, 'scan_complete': false,
           },
           'stage_label': 'Reading documents',
         },
@@ -213,23 +211,25 @@ void main() {
         messages: [_progressMsg(snapshot: snap, message: 'scanning')],
         onDeepAnswerPoll: (jobId) async {
           pollCalls.add(jobId);
-
+          
+          
           return Map<String, dynamic>.from(snap);
         },
       );
-
+      
+      
       expect(find.text('Scanning your vault'), findsNothing);
       expect(find.text('Deep Answer Mode'), findsNothing);
       expect(find.text('42 of 256 checked'), findsNothing);
-
+      
+      
       await tester.pump(const Duration(seconds: 2));
       expect(pollCalls, isNotEmpty,
           reason: 'list must thread onDeepAnswerPoll to the card');
       expect(pollCalls.first, 'job-w');
     });
 
-    testWidgets(
-        'progress card with terminal snapshot fires onReady '
+    testWidgets('progress card with terminal snapshot fires onReady '
         'with the snapshot', (tester) async {
       Map<String, dynamic>? captured;
       final readySnap = {
@@ -238,13 +238,9 @@ void main() {
         'status': 'ready',
         'progress': {
           'coverage': {
-            'total': 10,
-            'scanned': 10,
-            'pending': 0,
-            'processing': 0,
-            'unsupported': 0,
-            'failed': 0,
-            'scan_complete': true,
+            'total': 10, 'scanned': 10,
+            'pending': 0, 'processing': 0,
+            'unsupported': 0, 'failed': 0, 'scan_complete': true,
           },
         },
         'results': {
@@ -267,7 +263,8 @@ void main() {
         messages: [_progressMsg(snapshot: readySnap, message: 'done')],
         onDeepAnswerReady: (snap) => captured = snap,
       );
-
+      
+      
       await tester.pump();
       expect(captured, isNotNull);
       expect(captured!['status'], 'ready');
@@ -276,8 +273,7 @@ void main() {
   });
 
   group('Source guards — dashboard helpers exist + are wired', () {
-    test(
-        '_ChatDashboardPageState declares _handleScanRemaining + '
+    test('_ChatDashboardPageState declares _handleScanRemaining + '
         '_pollDeepAnswerJob + _promoteDeepAnswerResult', () async {
       final src = await File('lib/main.dart').readAsString();
       expect(src, contains('void _handleScanRemaining'),
@@ -288,11 +284,11 @@ void main() {
           reason: 'host must declare the ready promoter');
     });
 
-    test(
-        '_kickOffDeepAnswerScan calls api_client.startDeepAnswer + '
+    test('_kickOffDeepAnswerScan calls api_client.startDeepAnswer + '
         'appends DeepAnswerProgressCard message', () async {
       final src = await File('lib/main.dart').readAsString();
-
+      
+      
       expect(src, contains('client.startDeepAnswer'),
           reason: 'host must POST /vault-analysis/deep-answer');
       expect(
@@ -302,7 +298,8 @@ void main() {
       );
     });
 
-    test('_pollDeepAnswerJob calls api_client.pollDeepAnswerJob', () async {
+    test('_pollDeepAnswerJob calls api_client.pollDeepAnswerJob',
+        () async {
       final src = await File('lib/main.dart').readAsString();
       expect(src, contains('client.pollDeepAnswerJob'));
     });
@@ -312,7 +309,7 @@ void main() {
       final src = await File('lib/main.dart').readAsString();
       final idx = src.indexOf('void _promoteDeepAnswerResult');
       expect(idx, greaterThan(-1));
-
+      
       final endIdx = src.indexOf('\n  }\n', idx);
       final body = src.substring(idx, endIdx == -1 ? src.length : endIdx);
       expect(body, contains('kind: ChatMessage.kCredentialFiles'),
@@ -321,11 +318,11 @@ void main() {
           reason: 'promoter reads the final files list');
     });
 
-    test(
-        'ChatMessageList wires onScanRemaining + onDeepAnswerPoll + '
+    test('ChatMessageList wires onScanRemaining + onDeepAnswerPoll + '
         'onDeepAnswerReady from the dashboard', () async {
       final src = await File('lib/main.dart').readAsString();
-
+      
+      
       final cmIdx = src.indexOf('ChatMessageList(');
       expect(cmIdx, greaterThan(-1));
       final end = src.indexOf('),\n        ),\n', cmIdx);
@@ -334,17 +331,19 @@ void main() {
           reason: 'list must receive the host scan-remaining handler');
       expect(block, contains('onDeepAnswerPoll: _pollDeepAnswerJob'),
           reason: 'list must receive the host poll wrapper');
-      expect(block, contains('onDeepAnswerReady: _promoteDeepAnswerResult'),
+      expect(block,
+          contains('onDeepAnswerReady: _promoteDeepAnswerResult'),
           reason: 'list must receive the host ready promoter');
     });
 
     test('handler short-circuits when session token / vault id is null',
         () async {
+      
+      
       final src = await File('lib/main.dart').readAsString();
       final idx = src.indexOf('Future<void> _kickOffDeepAnswerScan');
       expect(idx, greaterThan(-1));
-      final endIdx =
-          src.indexOf('Future<Map<String, dynamic>?> _pollDeepAnswerJob', idx);
+      final endIdx = src.indexOf('Future<Map<String, dynamic>?> _pollDeepAnswerJob', idx);
       final body = src.substring(idx, endIdx == -1 ? src.length : endIdx);
       expect(body, contains('Session expired'),
           reason: 'host must surface a safe error when session is null');
@@ -352,17 +351,16 @@ void main() {
           reason: 'host must surface a safe error when PIN is missing');
     });
 
-    test(
-        'chat_bubble.dart threads onScanRemaining → '
+    test('chat_bubble.dart threads onScanRemaining → '
         'CredentialFileSearchCard', () async {
-      final src = await File('lib/ui/chat/chat_bubble.dart').readAsString();
-
-      expect(
-        RegExp(r'onScanRemaining:\s*onScanRemaining == null\s*\? null\s*:\s*\(\) => onScanRemaining!\(msg\)')
-            .hasMatch(src),
-        isTrue,
-        reason: 'bubble must safely invoke the host callback with the message',
-      );
+      final src =
+          await File('lib/ui/chat/chat_bubble.dart').readAsString();
+      
+      
+      expect(src, contains('onScanRemaining: onScanRemaining == null'),
+          reason: 'bubble must pass through host callback');
+      expect(src, contains('=> onScanRemaining!(msg)'),
+          reason: 'bubble must invoke with the credential ChatMessage');
     });
   });
 }

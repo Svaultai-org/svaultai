@@ -1,6 +1,6 @@
 // 2026-07-18 (release-URL fix): the AppReleaseController used to
 // build its `/release.json` URL against `backendBaseUrl`, which on
-// the deployed SVaultAI web app resolves to https://api.svaultai.com
+// the deployed Svaultai web app resolves to https://api.svaultai.com
 // — the FastAPI backend host. That host does NOT serve
 // `/release.json`; the manifest is emitted into `build/web/` by the
 // canonical release-build script and served from the frontend origin

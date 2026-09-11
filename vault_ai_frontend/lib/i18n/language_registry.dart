@@ -1,9 +1,9 @@
-// Canonical list of languages SVaultAI supports across the UI and
-// SVaultAI Chat. This is the single source of truth for:
+// Canonical list of languages Svaultai supports across the UI and
+// Svaultai Chat. This is the single source of truth for:
 //
 //   * the Settings language selector (native + English names,
 //     search index, RTL flag)
-//   * what locale codes we pass to SVaultAI Chat backend so the AI
+//   * what locale codes we pass to Svaultai Chat backend so the AI
 //     replies in the right language even when the app shell is
 //     not yet fully translated
 //   * which locales AppState.setAppLocale accepts

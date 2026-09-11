@@ -390,7 +390,7 @@ void main() {
               extra: {
                 'refusalReason': 'secret_material_request',
                 'message':
-                    'SVaultAI never surfaces your seed, mnemonic, '
+                    'Svaultai never surfaces your seed, mnemonic, '
                     'private keys, encrypted wallet secret, auth '
                     'token, or API key through chat.',
               },
@@ -427,7 +427,7 @@ void main() {
                 'categoryLabel': 'Crypto Vault',
                 'question': 'Why does USDT have ERC20 and TRC20?',
                 'answer': 'USDT exists on multiple networks. '
-                    'SVaultAI supports USDT ERC20 on Ethereum and '
+                    'Svaultai supports USDT ERC20 on Ethereum and '
                     'USDT TRC20 on TRON. You must pick the '
                     'correct network — addresses, fees, and '
                     'transfers are network-specific.',

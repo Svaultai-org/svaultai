@@ -35,63 +35,26 @@ class VaultLocalFileLookupMatch {
   });
 }
 
-const String localFileListAllQuery = '__vaultai_list_all_files__';
-
-/// Filename metadata can prove a unique local hit, but it cannot prove that a
-/// vault has no content-level match.  A metadata miss therefore falls through
-/// to the shared semantic/OCR/vision retrieval path instead of producing a
-/// terminal "not found" response on the client.
-bool shouldDeferLocalFileMissToSemanticSearch({
-  required String query,
-  required VaultLocalFileLookupMatch? match,
-}) =>
-    query != localFileListAllQuery && match == null;
-
 String? extractLocalFileLookupQuery(String message) {
   final text = message.trim();
   if (text.isEmpty) return null;
   final lower = text.toLowerCase();
-  if (RegExp(
-    r'^(?:what\s+(?:files|documents|docs)\s+do\s+i\s+have|show\s+(?:me\s+)?all\s+(?:my\s+)?(?:files|documents|docs))\s*[.!?]*$',
-    caseSensitive: false,
-  ).hasMatch(text)) {
-    return localFileListAllQuery;
-  }
   if (lower.startsWith('when ') ||
+      lower.startsWith('what ') ||
       lower.startsWith('who ') ||
       lower.startsWith('why ') ||
       lower.startsWith('how ')) {
     return null;
   }
-  final aboutMatch = RegExp(
-    r'^\s*(?:show(?:\s+me)?|open|view|find|get|download)\s+'
-    r'(?:(?:me\s+)?(?:the|my)\s+)?'
-    r'(?:file|document|doc|attachment|record)\s+about\s+(?:my\s+)?'
-    r'(.+?)\s*[.!?]*\s*$',
-    caseSensitive: false,
-  ).firstMatch(text);
-  if (aboutMatch != null) return aboutMatch.group(1)?.trim();
-  final forMatch = RegExp(
-    r'^\s*(?:show|find|get)(?:\s+me)?\s+for\s+(?:my\s+)?(.+?)\s*[.!?]*\s*$',
-    caseSensitive: false,
-  ).firstMatch(text);
-  if (forMatch != null) return forMatch.group(1)?.trim();
   final match = RegExp(
-    r'^\s*(?:show|open|view|find|get|download)(?:\s+me)?\s+'
+    r'^\s*(?:show(?:\s+me)?|open|view|find|download)\s+'
     r'(?:(?:the|my)\s+)?'
     r'(?:(?:file|document|doc|image|photo|picture|video|audio)\s+)?'
     r'(.+?)\s*[.!?]*\s*$',
     caseSensitive: false,
   ).firstMatch(text);
   if (match == null) return null;
-  final query = (match.group(1) ?? '')
-      .replaceFirst(
-        RegExp(
-            r'\s+(?:file|files|document|documents|doc|docs|attachment|record)$',
-            caseSensitive: false),
-        '',
-      )
-      .trim();
+  final query = (match.group(1) ?? '').trim();
   if (query.isEmpty) return null;
   final generic = normalizeLocalFileLookupText(query);
   if (generic.isEmpty ||
@@ -124,16 +87,15 @@ VaultLocalFileLookupMatch? resolveLocalVaultFileLookup({
   scored.sort((a, b) {
     final byScore = b.score.compareTo(a.score);
     if (byScore != 0) return byScore;
-    final byName = a.entry.displayName
+    return a.entry.displayName
         .toLowerCase()
         .compareTo(b.entry.displayName.toLowerCase());
-    if (byName != 0) return byName;
-    return a.entry.id.compareTo(b.entry.id);
   });
-  // Equal exact filename matches are still authoritative filename evidence.
-  // Pick one stably instead of misreporting a local miss and falling through
-  // to semantic search (which is intentionally unavailable in private
-  // filename-only vaults).
+  if (scored.length > 1 &&
+      scored[0].score == scored[1].score &&
+      scored[0].entry.id != scored[1].entry.id) {
+    return null;
+  }
   return scored.first;
 }
 
@@ -146,14 +108,7 @@ String normalizeLocalFileLookupText(String value) {
   return cleaned
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim()
-      .replaceFirst(RegExp(r'^(?:the|my|about|for)\s+'), '')
-      .replaceFirst(
-        RegExp(
-            r'\s+(?:file|files|document|documents|doc|docs|attachment|record)$'),
-        '',
-      )
-      .replaceFirst(RegExp(r'\s+qa$'), '')
-      .trim();
+      .replaceFirst(RegExp(r'^(?:the|my)\s+'), '');
 }
 
 int _scoreFile({

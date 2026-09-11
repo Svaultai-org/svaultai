@@ -1,22 +1,18 @@
-
-
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vault_ai_frontend/main.dart' show AppState;
 import 'package:vault_ai_frontend/services/upload_queue.dart';
 
-
 class _UnlockedAppState extends AppState {
   _UnlockedAppState() {
     unlocked = true;
   }
 }
-
 
 UploadJob _makeJob({
   required String id,
@@ -31,11 +27,8 @@ UploadJob _makeJob({
   );
 }
 
-
 void main() {
   setUp(() {
-    
-    
     TestWidgetsFlutterBinding.ensureInitialized();
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
@@ -83,28 +76,27 @@ void main() {
       final app = _UnlockedAppState();
       app.registerKeepAliveProbe(() => false);
       app.registerKeepAliveProbe(() => false);
-      app.registerKeepAliveProbe(() => true); 
+      app.registerKeepAliveProbe(() => true);
       app.registerKeepAliveProbe(() => false);
       expect(app.shouldLockOnInactivityExpiry(), isFalse);
     });
 
-    test('a throwing probe is treated as not active (safe default)',
-        () {
+    test('a throwing probe is treated as not active (safe default)', () {
       final app = _UnlockedAppState();
       app.registerKeepAliveProbe(() => throw StateError('boom'));
-      
-      
+
       expect(app.shouldLockOnInactivityExpiry(), isTrue,
           reason: 'throwing probe must default to "not active"');
     });
 
-    test('registerKeepAliveProbe is idempotent — same closure twice '
+    test(
+        'registerKeepAliveProbe is idempotent — same closure twice '
         'still removable in one call', () {
       final app = _UnlockedAppState();
       bool active = true;
       bool probe() => active;
       app.registerKeepAliveProbe(probe);
-      app.registerKeepAliveProbe(probe); 
+      app.registerKeepAliveProbe(probe);
       expect(app.shouldLockOnInactivityExpiry(), isFalse);
 
       app.unregisterKeepAliveProbe(probe);
@@ -125,6 +117,43 @@ void main() {
         isTrue,
         reason: 'after removing the only active probe, lock can fire',
       );
+    });
+  });
+
+  group('AppState native picker keep-alive', () {
+    test('defers inactivity lock only while the native picker is open',
+        () async {
+      final app = _UnlockedAppState();
+      final picker = Completer<String?>();
+
+      final resultFuture = app.runWithNativePickerKeepAlive(
+        () => picker.future,
+      );
+      expect(
+        app.shouldLockOnInactivityExpiry(),
+        isFalse,
+        reason: 'Apple picker must be allowed to return its selected file',
+      );
+
+      picker.complete('selected-file');
+      expect(await resultFuture, 'selected-file');
+      expect(
+        app.shouldLockOnInactivityExpiry(),
+        isTrue,
+        reason: 'normal inactivity locking must resume after picker closes',
+      );
+    });
+
+    test('picker exception always releases the keep-alive', () async {
+      final app = _UnlockedAppState();
+
+      await expectLater(
+        app.runWithNativePickerKeepAlive<String>(
+          () async => throw StateError('picker failed'),
+        ),
+        throwsStateError,
+      );
+      expect(app.shouldLockOnInactivityExpiry(), isTrue);
     });
   });
 
@@ -161,7 +190,8 @@ void main() {
       expect(fired, ['b']);
     });
 
-    test('shutdown hooks run BEFORE session token is cleared so '
+    test(
+        'shutdown hooks run BEFORE session token is cleared so '
         'cancelAll sees a still-valid identity', () async {
       // 2026-07-20: this test previously asserted app.unlocked was
       // true at hook time, but the strict AppState.unlocked getter
@@ -198,10 +228,9 @@ void main() {
         action: (j, b, p) => never.future,
       );
       c.enqueueAll([_makeJob(id: 'a'), _makeJob(id: 'b')]);
-      
+
       expect(c.isBusy, isTrue);
-      
-      
+
       c.cancelAll();
       never.complete(const UploadResult(fileId: 'fx'));
       await c.waitForIdle();
@@ -209,8 +238,6 @@ void main() {
     });
 
     test('a reading/uploading job counts as busy', () async {
-      
-      
       final never = Completer<UploadResult>();
       final c = UploadQueueController(
         action: (j, b, p) => never.future,
@@ -243,11 +270,11 @@ void main() {
         },
       );
       c.enqueue(_makeJob(id: 'a'));
-      
+
       await Future.delayed(const Duration(milliseconds: 40));
       expect(c.isBusy, isTrue,
           reason: 'a job awaiting its retry must keep the queue busy');
-      
+
       await secondAttemptStarted.future;
       secondAttemptRelease.complete(const UploadResult(fileId: 'fx'));
       await c.waitForIdle();
@@ -274,8 +301,7 @@ void main() {
       c.enqueueAll([_makeJob(id: 'a'), _makeJob(id: 'b')]);
       await Future.delayed(const Duration(milliseconds: 30));
       c.cancelAll();
-      
-      
+
       never.complete(const UploadResult(fileId: 'fx'));
       await c.waitForIdle();
       expect(c.isBusy, isFalse,
@@ -283,8 +309,7 @@ void main() {
       c.dispose();
     });
 
-    test('failed terminal job is NOT busy (no infinite retry loop)',
-        () async {
+    test('failed terminal job is NOT busy (no infinite retry loop)', () async {
       final c = UploadQueueController(
         maxAttempts: 1,
         action: (j, b, p) async => throw Exception('hard fail'),
@@ -292,8 +317,10 @@ void main() {
       c.enqueue(_makeJob(id: 'a'));
       await c.waitForIdle();
       expect(c.failedCount, 1);
-      expect(c.isBusy, isFalse,
-          reason: 'a job that exhausted retries must release the keep-alive',
+      expect(
+        c.isBusy,
+        isFalse,
+        reason: 'a job that exhausted retries must release the keep-alive',
       );
       c.dispose();
     });
@@ -306,8 +333,7 @@ void main() {
       return file.readAsStringSync();
     }
 
-    test('dashboard registers _uploadQueue.isBusy as a keep-alive probe',
-        () {
+    test('dashboard registers _uploadQueue.isBusy as a keep-alive probe', () {
       final src = readMain();
       expect(
         src,
@@ -348,11 +374,9 @@ void main() {
       );
     });
 
-    test('queue listener resets idle timer on busy → idle transition',
-        () {
+    test('queue listener resets idle timer on busy → idle transition', () {
       final src = readMain();
-      
-      
+
       expect(
         src,
         contains('_wasUploadQueueBusy && !nowBusy'),
@@ -365,27 +389,28 @@ void main() {
       );
     });
 
-    test('clearSession calls _runShutdownHooks BEFORE clearing token',
-        () {
+    test('clearSession calls _runShutdownHooks BEFORE clearing token', () {
       final src = readMain();
-      
-      
+
       final clearSessionStart = src.indexOf(
         'Future<void> clearSession(',
       );
       expect(clearSessionStart, greaterThan(-1),
           reason: 'clearSession must exist in main.dart');
-      
-      final clearSessionEnd = src.indexOf('void markUnlocked()', clearSessionStart);
-      expect(clearSessionEnd, greaterThan(clearSessionStart));
-      final scope = src.substring(clearSessionStart, clearSessionEnd);
+
+      final scope = src.substring(
+        clearSessionStart,
+        (clearSessionStart + 2000).clamp(0, src.length),
+      );
       final hooksIdx = scope.indexOf('_runShutdownHooks();');
       final tokenIdx = scope.indexOf('sessionToken = null;');
       expect(hooksIdx, greaterThan(-1),
           reason: '_runShutdownHooks must be called inside clearSession');
       expect(tokenIdx, greaterThan(-1));
-      expect(hooksIdx, lessThan(tokenIdx),
-          reason: 'shutdown hooks must run BEFORE session token wipe',
+      expect(
+        hooksIdx,
+        lessThan(tokenIdx),
+        reason: 'shutdown hooks must run BEFORE session token wipe',
       );
     });
 
@@ -395,14 +420,8 @@ void main() {
         src,
         contains('_hasActiveKeepAlive()'),
         reason: '_onInactivityExpired must consult the keep-alive '
-                'registry before locking',
+            'registry before locking',
       );
     });
   });
-}
-
-
-void _keepImports() {
-  debugPrint('');
-  Directory.systemTemp.path;
 }

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../tokens.dart';
 import '../../services/vault_chat_router.dart' as vcr;
 import '../vault_chat_cards.dart' as vcr_ui;
@@ -197,9 +196,6 @@ class _TextBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = msg.isUser;
-    if (!isUser && isStreaming && msg.text.trim().isEmpty) {
-      return const SizedBox.shrink();
-    }
     final maxFraction = isMobile ? 0.86 : 0.62;
 
     final radius = _bubbleRadius(
@@ -258,7 +254,7 @@ class _TextBubble extends StatelessWidget {
               const SizedBox(height: VaultSpacing.sm),
             if (!(renderAttachments && textIsBlank))
               SelectableText(
-                msg.text,
+                msg.text.isEmpty && isStreaming ? '...' : msg.text,
                 style: VaultText.bodyLg.copyWith(color: textColor),
               ),
             if (isStreaming && !isUser)
@@ -414,25 +410,6 @@ class _CardBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     Widget body;
     switch (msg.kind) {
-      case ChatMessage.kInlineCredential:
-        body = _InlineCredentialCard(
-          msg: msg,
-          onEdit: onCardAction == null
-              ? null
-              : () => onCardAction!(
-                    msg,
-                    'credential_v2_edit',
-                    msg.payload,
-                  ),
-          onDelete: onCardAction == null
-              ? null
-              : () => onCardAction!(
-                    msg,
-                    'credential_v2_delete',
-                    msg.payload,
-                  ),
-        );
-        break;
       case ChatMessage.kVaultFile:
         body = VaultFileCard(
           msg: msg,
@@ -510,9 +487,6 @@ class _CardBubble extends StatelessWidget {
         body = CredentialExtractionReviewCard(
           msg: msg,
           onOpen: (fileMsg) => onOpenVaultFile?.call(fileMsg),
-          onAction: onCardAction == null
-              ? null
-              : (action, data) => onCardAction!(msg, action, data),
         );
         break;
       case ChatMessage.kDeepAnswerProgress:
@@ -657,30 +631,19 @@ class _CardBubble extends StatelessWidget {
       // controller turns into a "save it" / "cancel" chat message,
       // which the backend state machine consumes to persist or
       // discard the draft.
-      onGeneratedLoginSave: (draftId, service) async {
+      onGeneratedLoginSave: (draftId, service) {
         if (onCardAction != null) {
-          // Use the already-sanitized parsed card as the single source of
-          // lifecycle identity.  The raw envelope can differ in shape from
-          // the card model (and previously dropped draft_id at this
-          // boundary), causing an opaque v2 card to fall back to legacy.
-          final parsed = vcr.GeneratedLoginPayload.tryParse(response.card);
-          final localDraft = response.card.data ?? const <String, dynamic>{};
-          await onCardAction!(msg, 'generated_login_save', {
-            'draft_id': parsed?.draftId ?? draftId,
-            'service': parsed?.service ?? service,
-            'username': parsed?.username ?? localDraft['username'],
-            'password': parsed?.password ?? localDraft['password'],
-            'url': parsed?.url ?? localDraft['url'],
-            'notes': localDraft['notes'],
+          onCardAction!(msg, 'generated_login_save', {
+            'draft_id': draftId,
+            'service': service,
           });
         }
       },
-      onGeneratedLoginCancel: (draftId, service) async {
+      onGeneratedLoginCancel: (draftId, service) {
         if (onCardAction != null) {
-          final parsed = vcr.GeneratedLoginPayload.tryParse(response.card);
-          await onCardAction!(msg, 'generated_login_cancel', {
-            'draft_id': parsed?.draftId ?? draftId,
-            'service': parsed?.service ?? service,
+          onCardAction!(msg, 'generated_login_cancel', {
+            'draft_id': draftId,
+            'service': service,
           });
         }
       },
@@ -727,200 +690,6 @@ class _CardBubble extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _InlineCredentialCard extends StatefulWidget {
-  final ChatMessage msg;
-  final VoidCallback? onEdit;
-  final VoidCallback? onDelete;
-
-  const _InlineCredentialCard({
-    required this.msg,
-    this.onEdit,
-    this.onDelete,
-  });
-
-  @override
-  State<_InlineCredentialCard> createState() => _InlineCredentialCardState();
-}
-
-class _InlineCredentialCardState extends State<_InlineCredentialCard> {
-  bool _revealed = false;
-
-  static const Map<String, String> _fieldLabels = <String, String>{
-    'username': 'Username',
-    'email': 'Email',
-    'user_id': 'User ID',
-    'login_id': 'Login ID',
-    'account_id': 'Account ID',
-    'account_number': 'Account number',
-    'password': 'Password',
-    'pin': 'PIN',
-    'url': 'Website or URL',
-    'secure_identifier': 'Secure identifier',
-    'access_code': 'Access code',
-    'secure_value': 'Secure value',
-    'secret_value': 'Secure value',
-    'value': 'Secure value',
-    'notes': 'Notes',
-    'note': 'Notes',
-  };
-
-  static const Set<String> _publicFieldNames = <String>{
-    'username',
-    'email',
-    'user_id',
-    'login_id',
-    'account_id',
-    'url',
-  };
-
-  String _labelFor(String name) => _fieldLabels[name] ?? name
-      .split('_')
-      .where((part) => part.isNotEmpty)
-      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-      .join(' ');
-
-  @override
-  Widget build(BuildContext context) {
-    final payload = widget.msg.payload ?? const <String, dynamic>{};
-    final service = payload['service']?.toString() ?? '';
-    final username = payload['username']?.toString() ?? '';
-    final password = payload['password']?.toString() ?? '';
-    final rawFields = payload['fields'];
-    final fields = <String, String>{};
-    if (rawFields is Map) {
-      for (final entry in rawFields.entries) {
-        final name = entry.key.toString().trim().toLowerCase();
-        final value = entry.value?.toString() ?? '';
-        if (name.isNotEmpty && value.isNotEmpty) fields[name] = value;
-      }
-    }
-    if (fields.isEmpty) {
-      if (username.isNotEmpty) fields['username'] = username;
-      if (password.isNotEmpty) fields['password'] = password;
-      final url = payload['url']?.toString() ?? '';
-      if (url.isNotEmpty) fields['url'] = url;
-    } else if (!fields.containsKey('password') && password.isNotEmpty) {
-      fields['password'] = password;
-    }
-    final publicFields = fields.entries
-        .where((entry) => _publicFieldNames.contains(entry.key))
-        .toList(growable: false);
-    final sensitiveFields = fields.entries
-        .where((entry) => !_publicFieldNames.contains(entry.key))
-        .toList(growable: false);
-
-    Future<void> copy(String value, String label) async {
-      await Clipboard.setData(ClipboardData(text: value));
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$label copied')),
-      );
-    }
-
-    Widget fieldRow(
-      MapEntry<String, String> entry, {
-      required bool obscure,
-    }) {
-      final label = _labelFor(entry.key);
-      final isUsername = entry.key == 'username';
-      final isPassword = entry.key == 'password';
-      final valueKey = isUsername
-          ? const Key('chat_inline_credential_username')
-          : isPassword
-              ? const Key('chat_inline_credential_password')
-              : ValueKey('chat_inline_credential_${entry.key}');
-      final copyKey = isUsername
-          ? const Key('chat_inline_copy_username')
-          : isPassword
-              ? const Key('chat_inline_copy_password')
-              : ValueKey('chat_inline_copy_${entry.key}');
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: const TextStyle(color: Color(0xFFB4B4B4))),
-            Row(children: [
-              Expanded(
-                child: SelectableText(
-                  obscure ? '••••••••••••' : entry.value,
-                  key: valueKey,
-                ),
-              ),
-              if (!obscure || isPassword)
-                IconButton(
-                  key: copyKey,
-                  tooltip: 'Copy ${label.toLowerCase()}',
-                  onPressed: () => copy(entry.value, label),
-                  icon: const Icon(Icons.copy_outlined),
-                ),
-            ]),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      key: const Key('chat_inline_credential_card'),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF252525),
-        borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: const Color(0xFF10A37F).withValues(alpha: .45)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(service,
-              key: const Key('chat_inline_credential_service'),
-              style:
-                  const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 14),
-          for (final entry in publicFields)
-            fieldRow(entry, obscure: false),
-          for (final entry in sensitiveFields)
-            fieldRow(entry, obscure: !_revealed),
-          if (sensitiveFields.isNotEmpty)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                key: const Key('chat_inline_toggle_password'),
-                onPressed: () => setState(() => _revealed = !_revealed),
-                icon: Icon(_revealed
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined),
-                label: Text(_revealed ? 'Hide values' : 'Reveal values'),
-              ),
-            ),
-          if (widget.onEdit != null || widget.onDelete != null) ...[
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (widget.onEdit != null)
-                  TextButton.icon(
-                    key: const Key('chat_inline_credential_edit'),
-                    onPressed: widget.onEdit,
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Edit'),
-                  ),
-                if (widget.onDelete != null)
-                  TextButton.icon(
-                    key: const Key('chat_inline_credential_delete'),
-                    onPressed: widget.onDelete,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete'),
-                  ),
-              ],
-            ),
-          ],
-        ],
       ),
     );
   }

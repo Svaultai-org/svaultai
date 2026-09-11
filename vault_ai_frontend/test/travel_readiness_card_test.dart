@@ -254,9 +254,9 @@ void main() {
       expect(ChatMessage.kTravelReadiness, equals('travel_readiness'));
     });
 
-    test('main.dart no longer activates travel_readiness responses', () async {
+    test('main.dart parser handles travel_readiness type', () async {
       final src = await File('lib/main.dart').readAsString();
-      expect(src, isNot(contains("type == 'travel_readiness'")));
+      expect(src, contains("type == 'travel_readiness'"));
     });
 
     test('chat_bubble.dart routes kTravelReadiness to TravelReadinessCard',

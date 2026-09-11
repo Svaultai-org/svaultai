@@ -19,13 +19,13 @@ Future<void> _pump(WidgetTester tester, {Size size = const Size(1200, 2400)}) as
 
 void main() {
   group('crypto wallet engine visible-page fix', () {
-    testWidgets('VP1: main page is SVaultAI Crypto Wallet, tagline pinned',
+    testWidgets('VP1: main page is Svaultai Crypto Wallet, tagline pinned',
         (tester) async {
       await _pump(tester);
-      expect(find.text('SVaultAI Crypto Wallet'), findsOneWidget);
+      expect(find.text('Svaultai Crypto Wallet'), findsOneWidget);
       expect(
         find.text(
-          'Your keys. Your crypto. SVaultAI cannot move funds without your '
+          'Your keys. Your crypto. Svaultai cannot move funds without your '
           'approval.',
         ),
         findsOneWidget,
@@ -338,7 +338,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('SVaultAI never invents transaction history.'),
+        find.text('Svaultai never invents transaction history.'),
         findsOneWidget,
       );
     });

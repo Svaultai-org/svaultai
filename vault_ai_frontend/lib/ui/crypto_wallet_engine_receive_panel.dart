@@ -1,3 +1,5 @@
+
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -5,8 +7,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../api_client.dart';
 import '../services/ethereum_wallet.dart';
 import '../services/evm_networks.dart';
-import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
+
 
 const String kEthReceivePanelTitle = 'Receive Ethereum';
 const String kEthReceiveNetworkBadge = 'Ethereum Sepolia testnet';
@@ -15,7 +17,7 @@ const String kEthReceiveCreateButtonLabel = 'Create my Ethereum wallet';
 const String kEthReceiveCopyButtonLabel = 'Copy address';
 const String kEthReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kEthReceiveNonCustodialAttestation =
-    'Non-custodial: SVaultAI never sees your private key. Your wallet is '
+    'Non-custodial: Svaultai never sees your private key. Your wallet is '
     'encrypted with your PIN and stored as ciphertext only.';
 const String kEthReceiveAssetWarning =
     'Only send Ethereum (Sepolia testnet) to this address. Sending the '
@@ -32,6 +34,7 @@ const String kEthReceiveCreateBlockedNoVaultKey =
     'private key is encrypted with your vault key locally.';
 const String kEthReceiveLoadingLabel = 'Loading wallet…';
 
+
 const String kTokenReceiveSharedAddressBanner =
     'This token uses your existing Ethereum Sepolia wallet address. '
     'The same address holds USDT and USDC on Sepolia.';
@@ -43,16 +46,19 @@ const String kTokenReceiveCreateEthFirstBanner =
     'Sepolia address — open the ETH card and tap Receive to create '
     'one first.';
 
+
 const String _kEthNetworkLabel = 'Ethereum Sepolia';
 const String _kEthNetworkLabelMainnet = 'Ethereum Mainnet';
 const String _kEthAsset = 'ETH';
-const String _kDefaultWalletLabel = 'SVaultAI ETH wallet';
+const String _kDefaultWalletLabel = 'Svaultai ETH wallet';
+
 
 String receivePanelNetworkBadgeFor(String network) {
   return network == kEvmNetworkEthereumMainnet
       ? kEthReceiveNetworkBadgeMainnet
       : kEthReceiveNetworkBadge;
 }
+
 
 String receivePanelAssetWarningFor(String network, String asset) {
   if (network == kEvmNetworkEthereumMainnet) {
@@ -62,11 +68,13 @@ String receivePanelAssetWarningFor(String network, String asset) {
   return kEthReceiveAssetWarning;
 }
 
+
 String receivePanelTokenSharedBannerFor(String network) {
   return network == kEvmNetworkEthereumMainnet
       ? kTokenReceiveSharedAddressBannerMainnet
       : kTokenReceiveSharedAddressBanner;
 }
+
 
 String receivePanelNetworkLabelFor(String network) {
   return network == kEvmNetworkEthereumMainnet
@@ -74,13 +82,16 @@ String receivePanelNetworkLabelFor(String network) {
       : _kEthNetworkLabel;
 }
 
+
 const Set<String> kReceivePanelTokenAssets = {'USDT_ERC20', 'USDC_ERC20'};
+
 
 class CryptoWalletEngineReceivePanel extends StatefulWidget {
   final String authToken;
   final VaultAIClient client;
   final Future<String> Function(String plaintext) encryptForVault;
   final bool Function() isVaultKeyAvailable;
+
 
   final String asset;
   final String? network;
@@ -95,7 +106,8 @@ class CryptoWalletEngineReceivePanel extends StatefulWidget {
     this.network,
   });
 
-  String get effectiveNetwork => network ?? resolveCompileTimeDefaultNetwork();
+  String get effectiveNetwork =>
+      network ?? resolveCompileTimeDefaultNetwork();
 
   @override
   State<CryptoWalletEngineReceivePanel> createState() =>
@@ -104,6 +116,8 @@ class CryptoWalletEngineReceivePanel extends StatefulWidget {
 
 class _CryptoWalletEngineReceivePanelState
     extends State<CryptoWalletEngineReceivePanel> {
+  
+  
   Map<String, dynamic>? _state;
   bool _loading = true;
   String? _error;
@@ -115,7 +129,8 @@ class _CryptoWalletEngineReceivePanelState
     _load();
   }
 
-  bool get _isToken => kReceivePanelTokenAssets.contains(widget.asset);
+  bool get _isToken =>
+      kReceivePanelTokenAssets.contains(widget.asset);
 
   Future<void> _load() async {
     setState(() {
@@ -161,39 +176,11 @@ class _CryptoWalletEngineReceivePanelState
       _creating = true;
       _error = null;
     });
-
+    
+    
     GeneratedEthereumWallet? wallet = generateEthereumWallet();
     final pkLocal = wallet.privateKeyHex;
     final publicAddress = wallet.publicAddress;
-    const walletV2Write =
-        bool.fromEnvironment('WALLET_V2_WRITE_ENABLED', defaultValue: false);
-    if (walletV2Write) {
-      try {
-        final repo = WalletV2Repository.current(
-            api: widget.client, authToken: widget.authToken);
-        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
-        await repo.create(
-            chain: 'evm',
-            network: widget.effectiveNetwork,
-            asset: _kEthAsset,
-            publicAddress: publicAddress,
-            walletLabel: _kDefaultWalletLabel,
-            secretPayload: {'privateKeyHex': pkLocal});
-        wallet = null;
-        if (!mounted) return;
-        setState(() => _creating = false);
-        await _load();
-        return;
-      } catch (e) {
-        wallet = null;
-        if (!mounted) return;
-        setState(() {
-          _creating = false;
-          _error = 'Create wallet failed: $e';
-        });
-        return;
-      }
-    }
     String? encryptedSecret;
     try {
       encryptedSecret = await widget.encryptForVault(pkLocal);
@@ -203,11 +190,12 @@ class _CryptoWalletEngineReceivePanelState
         _creating = false;
         _error = 'Encryption failed: $e';
       });
-
+      
       wallet = null;
       return;
     }
-
+    
+    
     wallet = null;
     try {
       if (widget.network != null) {
@@ -237,7 +225,7 @@ class _CryptoWalletEngineReceivePanelState
       });
       return;
     }
-
+    
     encryptedSecret = null;
     if (!mounted) return;
     setState(() {
@@ -271,14 +259,13 @@ class _CryptoWalletEngineReceivePanelState
     if (_loading) {
       return Padding(
         key: const Key('eth_receive_panel_loading'),
-        padding:
-            EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
+        padding: EdgeInsets.all(
+            MediaQuery.of(context).size.width < 600 ? 16 : 24),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 18,
-              height: 18,
+              width: 18, height: 18,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -337,6 +324,8 @@ class _CryptoWalletEngineReceivePanelState
       );
     }
     if (status == 'no_account') {
+      
+      
       if (_isToken) {
         return _buildCreateEthFirstState(context);
       }
@@ -348,7 +337,8 @@ class _CryptoWalletEngineReceivePanelState
     if (status == 'receive_ready') {
       return _buildReadyState(context, body);
     }
-
+    
+    
     return Padding(
       key: const Key('eth_receive_panel_unknown_state'),
       padding: const EdgeInsets.all(16),
@@ -413,8 +403,8 @@ class _CryptoWalletEngineReceivePanelState
             decoration: walletSuccessPanel(),
             child: const Row(
               children: [
-                Icon(Icons.shield_outlined,
-                    size: 16, color: kWalletAccentSuccess),
+                Icon(Icons.shield_outlined, size: 16,
+                    color: kWalletAccentSuccess),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -434,8 +424,7 @@ class _CryptoWalletEngineReceivePanelState
             onPressed: _creating ? null : _createWallet,
             icon: _creating
                 ? const SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 14, height: 14,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation<Color>(
@@ -526,8 +515,8 @@ class _CryptoWalletEngineReceivePanelState
               decoration: walletSuccessPanel(),
               child: Row(
                 children: [
-                  const Icon(Icons.link_rounded,
-                      size: 16, color: kWalletAccentSuccess),
+                  const Icon(Icons.link_rounded, size: 16,
+                      color: kWalletAccentSuccess),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -543,7 +532,8 @@ class _CryptoWalletEngineReceivePanelState
                 ],
               ),
             ),
-            if (widget.effectiveNetwork == kEvmNetworkEthereumMainnet) ...[
+            if (widget.effectiveNetwork
+                == kEvmNetworkEthereumMainnet) ...[
               const SizedBox(height: 8),
               Container(
                 key: const Key(
@@ -553,8 +543,8 @@ class _CryptoWalletEngineReceivePanelState
                 decoration: walletWarningPanel(),
                 child: Row(
                   children: const [
-                    Icon(Icons.local_gas_station_rounded,
-                        size: 16, color: kWalletAccentWarning),
+                    Icon(Icons.local_gas_station_rounded, size: 16,
+                        color: kWalletAccentWarning),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -576,17 +566,16 @@ class _CryptoWalletEngineReceivePanelState
             decoration: walletWarningPanel(),
             child: Row(
               children: [
-                const Icon(Icons.warning_amber_rounded,
-                    size: 16, color: kWalletAccentWarning),
+                const Icon(Icons.warning_amber_rounded, size: 16,
+                    color: kWalletAccentWarning),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    (body['warning'] ??
-                            receivePanelAssetWarningFor(
-                              widget.effectiveNetwork,
-                              widget.asset,
-                            ))
-                        .toString(),
+                    (body['warning']
+                        ?? receivePanelAssetWarningFor(
+                          widget.effectiveNetwork,
+                          widget.asset,
+                        )).toString(),
                     key: const Key('eth_receive_panel_asset_warning'),
                     style: const TextStyle(
                       color: kWalletAccentWarning,

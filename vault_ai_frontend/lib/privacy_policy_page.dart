@@ -17,7 +17,7 @@ class PrivacyPolicyPage extends StatelessWidget {
       backgroundColor: const Color(0xFF0F1115),
       appBar: AppBar(
         backgroundColor: const Color(0xFF141414),
-        title: const Text('SVaultAI Privacy Policy'),
+        title: const Text('Svaultai Privacy Policy'),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -46,7 +46,7 @@ class _PrivacyPolicyContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'SVaultAI Privacy Policy',
+          'Svaultai Privacy Policy',
           style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800),
         ),
         SizedBox(height: 8),
@@ -56,7 +56,7 @@ class _PrivacyPolicyContent extends StatelessWidget {
         ),
         SizedBox(height: 20),
         _PolicyParagraph(
-          'SVaultAI, operated by SVaultAI, provides encrypted vault, AI '
+          'Svaultai, operated by Svaultai, provides encrypted vault, AI '
           'assistant, inheritance, and wallet tools. This policy explains '
           'what information we collect, how we use it, and the choices you '
           'have. Contact us at $kVaultAiPrivacyContactEmail.',
@@ -82,7 +82,7 @@ class _PrivacyPolicyContent extends StatelessWidget {
                 'requests, transaction hashes, network identifiers, gas or fee '
                 'estimates, and broadcast status. Public blockchain activity '
                 'is visible on the relevant network and cannot be deleted by '
-                'SVaultAI.',
+                'Svaultai.',
             'Camera, microphone, and uploads: camera or QR input, selected '
                 'files, photos, audio, video, and speech input are processed '
                 'only when you choose to use those features or grant the '
@@ -92,7 +92,7 @@ class _PrivacyPolicyContent extends StatelessWidget {
         _PolicySection(
           title: 'Encrypted Vault Data and Keys',
           paragraphs: [
-            'SVaultAI is designed to protect vault content with encryption and '
+            'Svaultai is designed to protect vault content with encryption and '
                 'PIN-based access controls. The backend may store encrypted '
                 'vault files, encrypted records, encrypted key material, '
                 'metadata needed to operate the service, and authorized search '
@@ -101,7 +101,7 @@ class _PrivacyPolicyContent extends StatelessWidget {
                 'collected by the backend as account data. We do not intend to '
                 'log passwords, tokens, private keys, PINs, raw vault keys, or '
                 'plaintext credentials. Some content you choose to upload or '
-                'ask SVaultAI to analyze may be processed transiently or stored '
+                'ask Svaultai to analyze may be processed transiently or stored '
                 'in encrypted/indexed form so the service can answer your '
                 'vault questions.',
           ],
@@ -127,11 +127,11 @@ class _PrivacyPolicyContent extends StatelessWidget {
                 'email or support tooling, AI/ML processing, OCR or media '
                 'processing, app distribution, and blockchain RPC or network '
                 'services. These providers process information only as needed '
-                'to operate SVaultAI, comply with law, or provide requested '
+                'to operate Svaultai, comply with law, or provide requested '
                 'features.',
-            'Payment information is handled by approved payment processors '
-                'or mobile app store billing providers. SVaultAI does not '
-                'intentionally store full payment card numbers.',
+            'Payment information is handled by payment processors such as '
+                'Stripe or mobile app store billing providers. Svaultai does '
+                'not intentionally store full payment card numbers.',
           ],
         ),
         _PolicySection(
@@ -141,7 +141,7 @@ class _PrivacyPolicyContent extends StatelessWidget {
                 'for as long as needed to provide the service, maintain '
                 'security, resolve disputes, comply with law, and support '
                 'backup and recovery processes.',
-            'To delete your vault and associated account data, open SVaultAI, go '
+            'To delete your vault and associated account data, open Svaultai, go '
                 'to Settings, choose Delete vault, and complete the required '
                 'PIN, trusted-device, and confirmation steps. You may also '
                 'request help by emailing $kVaultAiPrivacyContactEmail from an '
@@ -164,19 +164,19 @@ class _PrivacyPolicyContent extends StatelessWidget {
         _PolicySection(
           title: 'Children',
           paragraphs: [
-            'SVaultAI is not intended for children under 13 or for users below '
+            'Svaultai is not intended for children under 13 or for users below '
                 'the age required by local law to use online services without '
                 'parental consent. If you believe a child provided personal '
-                'information to SVaultAI, contact us so we can review and delete '
+                'information to Svaultai, contact us so we can review and delete '
                 'it where appropriate.',
           ],
         ),
         _PolicySection(
           title: 'Policy Updates',
           paragraphs: [
-            'We may update this policy as SVaultAI changes. We will change the '
+            'We may update this policy as Svaultai changes. We will change the '
                 'effective date above and may provide additional notice in the '
-                'app or by other reasonable means. Continued use of SVaultAI '
+                'app or by other reasonable means. Continued use of Svaultai '
                 'after an update means the updated policy applies.',
           ],
         ),

@@ -124,12 +124,12 @@ void main() {
         card: {
           'cardType':      'crypto_vault_refusal_card',
           'refusalReason': 'secret_material_request',
-          'message':       'SVaultAI never surfaces your seed.',
+          'message':       'Svaultai never surfaces your seed.',
         },
       ));
       expect(r.isRefusal, isTrue);
       expect(r.card.refusalReason, 'secret_material_request');
-      expect(r.card.message, contains('SVaultAI'));
+      expect(r.card.message, contains('Svaultai'));
     });
 
 
@@ -164,7 +164,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key(kCvcCardKeyRefusal)),
           findsOneWidget);
-      expect(find.textContaining('SVaultAI never surfaces'),
+      expect(find.textContaining('Svaultai never surfaces'),
           findsOneWidget);
     });
 
@@ -281,7 +281,7 @@ void main() {
 
 
     testWidgets(
-        'activity card renders "SVaultAI never invents activity."',
+        'activity card renders "Svaultai never invents activity."',
         (tester) async {
       await tester.pumpWidget(_wrap(
         CryptoVaultChatCardView(
@@ -294,7 +294,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key(kCvcCardKeyActivity)),
           findsOneWidget);
-      expect(find.textContaining('SVaultAI never invents activity'),
+      expect(find.textContaining('Svaultai never invents activity'),
           findsOneWidget);
     });
 

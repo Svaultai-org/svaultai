@@ -72,35 +72,6 @@ if (-not (Test-Path $releaseJsonPath -PathType Leaf)) {
             Write-Error "[verify-web-release] FAIL: release.json commit field is not a 40-char hex SHA. Got: $($releaseJson.commit)"
             $fail++
         }
-        if ($releaseJson.apiContract -ne 'svaultai-core-v2-2026-08-16') {
-            Write-Error "[verify-web-release] FAIL: release.json API contract is missing or unexpected. Got: $($releaseJson.apiContract)"
-            $fail++
-        }
-        $expectedFeatures = [ordered]@{
-            credentialV2Read  = $true
-            credentialV2Write = $false
-            credentialV2Migration = $false
-            memoryV2Read      = $true
-            memoryV2Write     = $true
-            memoryV2Migration = $false
-            fileV2Read        = $true
-            fileV2Write       = $true
-            fileV2Migration   = $false
-            walletBackupV2Read = $false
-            walletBackupV2Write = $false
-            walletBackupV2Migration = $false
-            walletV2Read = $false
-            walletV2Write = $false
-            walletV2Migration = $false
-            privateVaultLocalRouting = $false
-        }
-        foreach ($featureName in $expectedFeatures.Keys) {
-            $property = $releaseJson.features.PSObject.Properties[$featureName]
-            if ($null -eq $property -or [bool]$property.Value -ne $expectedFeatures[$featureName]) {
-                Write-Error "[verify-web-release] FAIL: release.json feature '$featureName' is missing or does not match the production contract."
-                $fail++
-            }
-        }
     } catch {
         Write-Error "[verify-web-release] FAIL: release.json is not valid JSON: $_"
         $fail++

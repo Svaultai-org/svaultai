@@ -187,7 +187,7 @@ void main() {
           card: {
             'cardType':      'vault_refusal_card',
             'refusalReason': 'secret_material_request',
-            'message':       'SVaultAI never surfaces your seed.',
+            'message':       'Svaultai never surfaces your seed.',
           },
         );
         await tester.pumpWidget(_wrap(
@@ -455,7 +455,7 @@ void main() {
       (tester) async {
         await _pumpNoOverflow(tester, 'vault_refusal_card', {
           'refusalReason': 'secret_material_request',
-          'message': 'SVaultAI never surfaces your seed, mnemonic, '
+          'message': 'Svaultai never surfaces your seed, mnemonic, '
                      'private keys, encrypted wallet secret, auth '
                      'token, or API key through chat. Use the '
                      'gated Security page instead.',

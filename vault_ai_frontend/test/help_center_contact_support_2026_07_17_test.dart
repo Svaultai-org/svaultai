@@ -76,7 +76,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('Need help with SVaultAI? Contact our support team.'),
+        find.text('Need help with Svaultai? Contact our support team.'),
         findsOneWidget,
       );
 
@@ -117,7 +117,7 @@ void main() {
 
 
       final decoded = Uri.decodeComponent(captured!.query);
-      expect(decoded, contains('subject=SVaultAI Support'));
+      expect(decoded, contains('subject=Svaultai Support'));
       expect(decoded, contains('body=Please describe your issue below.'));
       expect(decoded, contains('Device:'));
       expect(decoded, contains('Platform: Android/iPhone/Web/Desktop'));
@@ -198,7 +198,7 @@ void main() {
       expect(
         kHelpContactSupportMailtoUrl,
         'mailto:vaultai@svaultai.com'
-        '?subject=SVaultAI%20Support'
+        '?subject=Svaultai%20Support'
         '&body=Please%20describe%20your%20issue%20below.'
         '%0A%0ADevice:%20'
         '%0APlatform:%20Android/iPhone/Web/Desktop'

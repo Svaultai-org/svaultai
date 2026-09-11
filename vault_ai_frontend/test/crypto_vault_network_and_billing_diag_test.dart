@@ -236,7 +236,7 @@ void main() {
 
       expect(
         src.contains(
-          'Live balances shown for connected test networks. SVaultAI never',
+          'Live balances shown for connected test networks. Svaultai never',
         ),
         isFalse,
         reason: 'the network-neutral hard-coded test-networks copy '

@@ -63,7 +63,7 @@ const String kAssetDetailActivityNotConnected =
 const String kAssetDetailBackupHeaderLabel = 'Backup status';
 const String kAssetDetailBackupSaved =
     'Encrypted backup saved. Your wallet ciphertext is stored under '
-    'your vault key — SVaultAI cannot decrypt it.';
+    'your vault key — Svaultai cannot decrypt it.';
 const String kAssetDetailBackupMissing =
     'No backup saved yet. Your wallet backup is created automatically '
     'when you create the wallet.';

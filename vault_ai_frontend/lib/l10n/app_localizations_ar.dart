@@ -9,7 +9,7 @@ class AppLocalizationsAr extends AppLocalizations {
   AppLocalizationsAr([String locale = 'ar']) : super(locale);
 
   @override
-  String get appTitle => 'SVaultAI';
+  String get appTitle => 'Svaultai';
 
   @override
   String get commonRetry => 'إعادة المحاولة';
@@ -42,7 +42,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get commonDownload => 'تنزيل';
 
   @override
-  String get commonAskVaultAI => 'اسأل SVaultAI';
+  String get commonAskVaultAI => 'اسأل Svaultai';
 
   @override
   String get commonClose => 'إغلاق';
@@ -159,7 +159,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get chatComposerHint => 'اسأل عن خزينتك أو ارفع ملفًا...';
 
   @override
-  String get chatThinking => 'SVaultAI يفكر...';
+  String get chatThinking => 'Svaultai يفكر...';
 
   @override
   String chatThinkingWithName(String name) {
@@ -178,7 +178,7 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get chatErrorGeneric => 'تعذّر على SVaultAI الرد الآن. حاول مرة أخرى.';
+  String get chatErrorGeneric => 'تعذّر على Svaultai الرد الآن. حاول مرة أخرى.';
 
   @override
   String get chatRetryButton => 'إعادة المحاولة';
@@ -227,7 +227,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conciergeTitle => 'المساعد الذكي';
 
   @override
-  String get conciergeSubtitle => 'ما يقترحه SVaultAI أن تنظر إليه الآن';
+  String get conciergeSubtitle => 'ما يقترحه Svaultai أن تنظر إليه الآن';
 
   @override
   String get conciergeLoading => 'جارٍ جمع المعلومات...';
@@ -277,7 +277,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get conciergeAllClearSub =>
-      'لا شيء عاجل اليوم. SVaultAI يراقب مستنداتك وسيظهر أي جديد هنا.';
+      'لا شيء عاجل اليوم. Svaultai يراقب مستنداتك وسيظهر أي جديد هنا.';
 
   @override
   String get conciergePostureSecurity => 'الأمان';
@@ -369,7 +369,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get expiryEmptySub =>
-      'ارفع جواز سفر، تأشيرة، بوليصة تأمين، أو عقدًا وسيتتبع SVaultAI تاريخ انتهائها تلقائيًا.';
+      'ارفع جواز سفر، تأشيرة، بوليصة تأمين، أو عقدًا وسيتتبع Svaultai تاريخ انتهائها تلقائيًا.';
 
   @override
   String get expiryNoneInWindow => 'لا شيء في هذه الفترة.';
@@ -454,7 +454,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get memoryTitle => 'الذاكرة';
 
   @override
-  String get memorySubtitle => 'جدول زمني لما يتذكّره SVaultAI عن حياتك';
+  String get memorySubtitle => 'جدول زمني لما يتذكّره Svaultai عن حياتك';
 
   @override
   String get memoryLoading => 'جارٍ تحميل ذكرياتك...';
@@ -467,7 +467,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get memoryEmptySub =>
-      'أخبر SVaultAI بأشياء ليتذكّرها: \'تذكّر أن عيد ميلاد أمي 14 فبراير\'. ستظهر هنا مجمّعة حسب النوع والتاريخ.';
+      'أخبر Svaultai بأشياء ليتذكّرها: \'تذكّر أن عيد ميلاد أمي 14 فبراير\'. ستظهر هنا مجمّعة حسب النوع والتاريخ.';
 
   @override
   String get memoryNoMatchTitle => 'لا توجد نتائج.';
@@ -536,7 +536,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settingsLanguageHint =>
-      'اختر كيف يخاطبك SVaultAI. يؤثر على تسميات التطبيق وردود المحادثة.';
+      'اختر كيف يخاطبك Svaultai. يؤثر على تسميات التطبيق وردود المحادثة.';
 
   @override
   String get settingsLanguageAuto => 'تلقائي (النظام)';
@@ -576,7 +576,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String settingsLanguagePartialNotice(String name) {
-    return 'سيرد SVaultAI Chat بلغة $name. لا تزال واجهة التطبيق تعرض بالإنجليزية بينما يجري إتمام الترجمة.';
+    return 'سيرد Svaultai Chat بلغة $name. لا تزال واجهة التطبيق تعرض بالإنجليزية بينما يجري إتمام الترجمة.';
   }
 
   @override
@@ -649,7 +649,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get helpCenterSubtitle =>
-      'إجابات على الأسئلة الشائعة حول SVaultAI. ابحث أدناه أو تصفّح حسب الفئة — يجيب المساعد الذكي من المجموعة نفسها.';
+      'إجابات على الأسئلة الشائعة حول Svaultai. ابحث أدناه أو تصفّح حسب الفئة — يجيب المساعد الذكي من المجموعة نفسها.';
 
   @override
   String get helpCenterEmpty => 'لا توجد نتائج مطابقة';
@@ -660,18 +660,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get helpCenterSupportNote =>
-      'الدعم البشري المباشر غير متاح بعد. استخدم مركز المساعدة أو اسأل SVaultAI Chat.';
+      'الدعم البشري المباشر غير متاح بعد. استخدم مركز المساعدة أو اسأل Svaultai Chat.';
 
   @override
   String get helpContactSupportTitle => 'التواصل مع الدعم';
 
   @override
   String get helpContactSupportBody =>
-      'هل تحتاج مساعدة في SVaultAI؟ تواصل مع فريق الدعم.';
+      'هل تحتاج مساعدة في Svaultai؟ تواصل مع فريق الدعم.';
 
   @override
   String helpContactSupportEmailA11yLabel(String email) {
-    return 'أرسل بريدًا إلى دعم SVaultAI على $email';
+    return 'أرسل بريدًا إلى دعم Svaultai على $email';
   }
 
   @override
@@ -684,7 +684,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String helpContactSupportCopyEmailA11yLabel(String email) {
-    return 'نسخ بريد دعم SVaultAI $email إلى الحافظة';
+    return 'نسخ بريد دعم Svaultai $email إلى الحافظة';
   }
 
   @override
@@ -692,7 +692,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get helpCenterPublicHint =>
-      'أنت في مركز المساعدة العام. سجّل الدخول لسؤال SVaultAI ورؤية تفاصيل الحساب.';
+      'أنت في مركز المساعدة العام. سجّل الدخول لسؤال Svaultai ورؤية تفاصيل الحساب.';
 
   @override
   String get helpCenterSearchHint =>
@@ -702,7 +702,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get helpCenterClearSearch => 'مسح البحث';
 
   @override
-  String get helpCenterSignInToAsk => 'سجّل الدخول لسؤال SVaultAI';
+  String get helpCenterSignInToAsk => 'سجّل الدخول لسؤال Svaultai';
 
   @override
   String get helpCategoryGettingStarted => 'البدء';
@@ -733,11 +733,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get deleteVaultBody =>
-      'سيحذف حذف الخزينة نهائيًا بيانات SVaultAI الخاصة بك، بما في ذلك الملفات، والعناصر الآمنة، وتسجيلات الدخول، ومستندات الهوية، وسجلات محفظة Crypto Vault المشفّرة، والبيانات المرتبطة بالخزينة.';
+      'سيحذف حذف الخزينة نهائيًا بيانات Svaultai الخاصة بك، بما في ذلك الملفات، والعناصر الآمنة، وتسجيلات الدخول، ومستندات الهوية، وسجلات محفظة Crypto Vault المشفّرة، والبيانات المرتبطة بالخزينة.';
 
   @override
   String get deleteVaultCryptoWarning =>
-      'حذف خزينتك لا يُحرّك ولا يحذف أصول العملات المشفّرة على البلوكشين. إذا لم تحتفظ بنسخة احتياطية من محفظتك خارج SVaultAI، فقد يؤدي حذف سجلات المحفظة المشفّرة إلى فقدان الوصول إلى تلك الأموال.';
+      'حذف خزينتك لا يُحرّك ولا يحذف أصول العملات المشفّرة على البلوكشين. إذا لم تحتفظ بنسخة احتياطية من محفظتك خارج Svaultai، فقد يؤدي حذف سجلات المحفظة المشفّرة إلى فقدان الوصول إلى تلك الأموال.';
 
   @override
   String get deleteVaultPhraseInstruction =>

@@ -38,36 +38,25 @@ import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/native_secure_store.dart';
 import 'services/session_termination.dart' as st;
+import 'services/apple_iap_service.dart';
 import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
-import 'services/qa_http_trust_stub.dart'
-    if (dart.library.io) 'services/qa_http_trust_io.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
-import 'services/credential_v2.dart';
-import 'services/credential_v2_qa_diagnostics.dart';
-import 'services/credential_v2_api.dart';
-import 'services/credential_v2_migration.dart';
-import 'services/credential_v2_repository.dart';
-import 'services/generated_credential_draft_finalizer.dart';
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
 import 'services/attachment_title_binding.dart';
-import 'services/attachment_credential_review.dart';
 import 'services/native_media_capture.dart';
+import 'services/native_video_viewer.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
-import 'services/release_feature_contract.dart';
 import 'services/vault_local_file_lookup.dart';
-import 'services/web_pbkdf2_stub.dart'
-    if (dart.library.js_interop) 'services/web_pbkdf2.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
-import 'services/chat_protocol_contracts.dart';
 import 'ui/chat/duplicate_dialog.dart';
 import 'ui/chat/storage_limit_dialog.dart';
 import 'services/folder_picker.dart';
@@ -86,33 +75,21 @@ import 'media_player.dart';
 import 'pdf_preview.dart';
 import 'file_downloader.dart';
 import 'video_recorder.dart';
-import 'web_video_recorder_dialog.dart';
 
 import 'ui/theme.dart';
 import 'ui/responsive.dart';
 import 'ui/chat/ask_brain_handoff.dart';
 import 'ui/chat/chat_message_list.dart';
 import 'ui/chat/chat_models.dart';
-import 'ui/chat/chat_failure_localization.dart';
-import 'ui/chat/chat_operation_queue.dart';
-import 'ui/chat/chat_request_lifecycle.dart';
 import 'ui/secure_item_detail.dart';
-
 import 'ui/chat/vault_file_view_messages.dart';
 
+import 'ui/dashboards/concierge_page.dart';
 import 'ui/dashboards/expiry_page.dart';
 
 import 'ui/dashboards/memory_page.dart';
 
 import 'services/crypto_chat_live_cache.dart';
-import 'services/memory_v2_repository.dart';
-import 'services/file_v2_repository.dart';
-import 'services/file_inventory_view_state.dart';
-import 'services/credential_inventory_view_state.dart';
-import 'services/wallet_backup_v2_repository.dart';
-import 'services/wallet_v2_repository.dart';
-import 'services/qa_file_picker_override.dart';
-import 'services/qa_runtime_access.dart';
 import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
@@ -127,377 +104,6 @@ import 'ui/crypto_receive_panel.dart';
 
 import 'l10n/app_localizations.dart';
 import 'i18n/language_registry.dart';
-
-Object? _qaSemanticsHandle;
-
-String safeCredentialInventoryRecoveryMessage(Object error) {
-  if (error is CredentialV2RequestException && error.statusCode == 404) {
-    return 'This app and vault service are temporarily out of sync. Tap '
-        'Retry. No saved login was changed.';
-  }
-  return 'Saved logins are temporarily unavailable. Tap Retry. No saved '
-      'login was changed.';
-}
-
-class LocalMemoryLookupIntent {
-  final String subject;
-  final bool listAll;
-  final bool needsClarification;
-
-  const LocalMemoryLookupIntent({
-    required this.subject,
-    this.listAll = false,
-    this.needsClarification = false,
-  });
-}
-
-class LocalMemoryMatchResult {
-  final List<Map<String, dynamic>> records;
-  final bool ambiguous;
-
-  const LocalMemoryMatchResult(this.records, {this.ambiguous = false});
-}
-
-class LocalMemoryFact {
-  final String subject;
-  final String value;
-  final String? relationship;
-  final String? attribute;
-  final String memoryType;
-  final List<String> tags;
-
-  const LocalMemoryFact(
-    this.subject,
-    this.value, {
-    this.relationship,
-    this.attribute,
-    this.memoryType = 'note',
-    this.tags = const <String>[],
-  });
-
-  String get normalized => relationship != null && attribute != null
-      ? '$relationship:$attribute'
-      : subject;
-}
-
-LocalMemoryFact? parseLocalMemoryFact(String input) {
-  var text = input
-      .trim()
-      .replaceAll('\u2019', "'")
-      .replaceFirst(RegExp(r'[.?!]+$'), '')
-      .trim();
-  text = text
-      .replaceFirst(
-        RegExp(
-          r'(?:\s*,\s*|\s+)(?:please\s+)?(?:save|remember)\s+(?:it|this|that)$',
-          caseSensitive: false,
-        ),
-        '',
-      )
-      .trim();
-  final familyMatch = RegExp(
-    r"^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+"
-    r"(mother|mom|mum|mommy|mama|father|dad|daddy|papa|sister|brother|wife|spouse|husband|daughter|son)"
-    r"(?:'s|\s+)\s*"
-    r"((?:(?:full|first|given)\s+)?name|birthday|birth\s+date|phone(?:\s+number)?|telephone(?:\s+number)?|favou?rite\s+colou?r)"
-    r"\s+(?:(?:is|was|as)\s+)?(.+)$",
-    caseSensitive: false,
-  ).firstMatch(text);
-  if (familyMatch != null) {
-    final rawRelationship = familyMatch.group(1)!.toLowerCase();
-    final rawAttribute = familyMatch.group(2)!.toLowerCase();
-    final value = (familyMatch.group(3) ?? '').trim();
-    if (value.isEmpty || _memoryOtherDomainWords.hasMatch(value)) return null;
-    final relationship = switch (rawRelationship) {
-      'mom' || 'mum' || 'mommy' || 'mama' => 'mother',
-      'dad' || 'daddy' || 'papa' => 'father',
-      _ => rawRelationship,
-    };
-    final attribute = switch (rawAttribute) {
-      'birthday' || 'birth date' => 'birthday',
-      'phone' || 'phone number' || 'telephone' || 'telephone number' => 'phone',
-      'favorite color' ||
-      'favourite color' ||
-      'favorite colour' ||
-      'favourite colour' =>
-        'favorite_color',
-      _ => 'name',
-    };
-    final displayAttribute = attribute.replaceAll('_', ' ');
-    return LocalMemoryFact(
-      "$relationship's $displayAttribute",
-      value,
-      relationship: relationship,
-      attribute: attribute,
-      memoryType: attribute == 'name' ? 'identity' : 'personal',
-      tags: <String>['family', relationship, attribute],
-    );
-  }
-  final match = RegExp(
-    r'^(?:(?:please\s+)?(?:remember|save)\s+(?:that\s+)?)?my\s+(.+?)\s+(?:is|was|as)\s+(.+)$',
-    caseSensitive: false,
-  ).firstMatch(text);
-  final explicitFactMatch = match == null
-      ? RegExp(
-          r'^(?:please\s+)?(?:remember|save)\s+(?:that\s+)?(?:the\s+)?(.+?)\s+(?:is|was|as)\s+(.+)$',
-          caseSensitive: false,
-        ).firstMatch(text)
-      : null;
-  if (match == null && explicitFactMatch == null) return null;
-  final factMatch = match ?? explicitFactMatch!;
-  final subject = (factMatch.group(1) ?? '').trim();
-  final value = (factMatch.group(2) ?? '').trim();
-  if (subject.isEmpty ||
-      value.isEmpty ||
-      _memoryOtherDomainWords.hasMatch(subject)) return null;
-  final relationshipMatch = RegExp(
-    r"^(mother|mom|mum|mommy|mama|father|dad|daddy|papa)(?:['’]s|\s+)?\s*(?:(?:full|first|given)\s+)?name$",
-    caseSensitive: false,
-  ).firstMatch(subject);
-  if (relationshipMatch != null) {
-    final rawRelationship = relationshipMatch.group(1)!.toLowerCase();
-    final relationship = <String>{
-      'mother',
-      'mom',
-      'mum',
-      'mommy',
-      'mama',
-    }.contains(rawRelationship)
-        ? 'mother'
-        : 'father';
-    return LocalMemoryFact(
-      subject,
-      value,
-      relationship: relationship,
-      attribute: 'name',
-      memoryType: 'identity',
-      tags: <String>['family', relationship, 'name'],
-    );
-  }
-  return LocalMemoryFact(subject, value);
-}
-
-bool hasExplicitLocalMemorySaveDirective(String input) {
-  final text = input.trim();
-  return RegExp(r'^(?:please\s+)?(?:remember|save)\b', caseSensitive: false)
-          .hasMatch(text) ||
-      RegExp(
-        r'(?:\s*,\s*|\s+)(?:please\s+)?(?:save|remember)\s+(?:it|this|that)[.?!]*$',
-        caseSensitive: false,
-      ).hasMatch(text);
-}
-
-String? parseLocalMemoryContextSaveSubject(String input) {
-  final text = input.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
-  if (RegExp(r'^(?:remember|save)\s+that$', caseSensitive: false)
-      .hasMatch(text)) {
-    return '';
-  }
-  final match = RegExp(
-    r'^(?:remember|save)\s+(?:my\s+)?(.+)$',
-    caseSensitive: false,
-  ).firstMatch(text);
-  if (match == null ||
-      RegExp(r'\s+(?:is|was)\s+', caseSensitive: false).hasMatch(text)) {
-    return null;
-  }
-  return (match.group(1) ?? '').trim();
-}
-
-final _memoryOtherDomainWords = RegExp(
-  r'\b(?:login|password|passcode|pin|totp|username|account name|credential|file|document|wallet|seed|private key|invoice|crypto|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20|balance|transaction)\b',
-  caseSensitive: false,
-);
-
-LocalMemoryLookupIntent? parseLocalMemoryLookupIntent(String input) {
-  final text = input.trim().replaceAll(RegExp(r'[.?!]+$'), '').trim();
-  if (text.isEmpty || _memoryOtherDomainWords.hasMatch(text)) return null;
-
-  String? subject;
-  var listAll = false;
-  var matchedIntent = false;
-  final savedFor = RegExp(
-    r'^what\s+(.+?)\s+did\s+i\s+save\s+for\s+(?:my\s+)?(.+)$',
-    caseSensitive: false,
-  ).firstMatch(text);
-  if (savedFor != null) {
-    subject = '${savedFor.group(2)} ${savedFor.group(1)}';
-    matchedIntent = true;
-  }
-  for (final pattern in <RegExp>[
-    RegExp(r'^what\s+did\s+i\s+tell\s+you\s+(?:my\s+)?(.+?)\s+was$',
-        caseSensitive: false),
-    RegExp(r'^what\s+(.+?)\s+did\s+i\s+save$', caseSensitive: false),
-    RegExp(r'^what\s+did\s+i\s+save\s+about\s+(.+)$', caseSensitive: false),
-    RegExp(r'^do\s+you\s+remember\s+(?:my\s+)?(.+)$', caseSensitive: false),
-    RegExp(r'^what\s+was\s+(?:the\s+)?(.+?)\s+i\s+saved$',
-        caseSensitive: false),
-    RegExp(r'^what\s+(?:is|was)\s+my\s+(.+)$', caseSensitive: false),
-    RegExp(
-      r'^what\s+(?:is|was)\s+(?:the\s+)?(.+?\b(?:codeword|code|note|fact))$',
-      caseSensitive: false,
-    ),
-    RegExp(
-        r'^(?:show|find)(?:\s+me)?\s+my\s+(?:saved\s+)?memor(?:y|ies)(?:\s+(.+))?$',
-        caseSensitive: false),
-    RegExp(r'^show\s+my\s+saved\s+(.+?)\s+memories$', caseSensitive: false),
-  ]) {
-    if (matchedIntent) break;
-    final match = pattern.firstMatch(text);
-    if (match != null) {
-      matchedIntent = true;
-      subject = match.groupCount == 0 ? null : match.group(1)?.trim();
-      listAll = RegExp(r'\bmemories\b', caseSensitive: false).hasMatch(text) &&
-          (subject?.isNotEmpty ?? false);
-      break;
-    }
-  }
-
-  if (subject == null &&
-      RegExp(r'^(?:what\s+did\s+i\s+save|remember\s+that\s+thing)$',
-              caseSensitive: false)
-          .hasMatch(text)) {
-    return const LocalMemoryLookupIntent(
-      subject: '',
-      needsClarification: true,
-    );
-  }
-  if (!matchedIntent) return null;
-  final cleaned = (subject ?? '')
-      .replaceFirst(
-          RegExp(r'^(?:saved\s+)?memory\s+', caseSensitive: false), '')
-      .trim();
-  return LocalMemoryLookupIntent(
-    subject: cleaned,
-    listAll: listAll,
-    needsClarification: cleaned.isEmpty,
-  );
-}
-
-Set<String> _memoryTerms(String value) {
-  const ignored = <String>{
-    'a',
-    'an',
-    'the',
-    'my',
-    'me',
-    'i',
-    'about',
-    'saved',
-    'save',
-    'memory',
-    'memories',
-    'what',
-    'which',
-    'is',
-    'was',
-    'did',
-    'do',
-    'you',
-    'show',
-    'find',
-    'remember',
-    'that',
-    'thing',
-    'qa',
-  };
-  return value
-      .toLowerCase()
-      .split(RegExp(r'[^a-z0-9]+'))
-      .where((term) => term.length > 1 && !ignored.contains(term))
-      .map((term) => term.endsWith('s') && term.length > 3
-          ? term.substring(0, term.length - 1)
-          : term)
-      .toSet();
-}
-
-LocalMemoryMatchResult matchLocalMemoryRecords(
-  LocalMemoryLookupIntent intent,
-  List<Map<String, dynamic>> records,
-) {
-  if (intent.needsClarification) {
-    return const LocalMemoryMatchResult([], ambiguous: true);
-  }
-  final queryTerms = _memoryTerms(intent.subject);
-  if (intent.listAll && queryTerms.isEmpty) {
-    return LocalMemoryMatchResult(records);
-  }
-  final scored = <({Map<String, dynamic> row, int score})>[];
-  for (final row in records) {
-    final searchable = [
-      row['title'],
-      row['memory_type'],
-      ...(row['tags'] is List ? row['tags'] as List : const []),
-    ].whereType<Object>().map((value) => value.toString()).join(' ');
-    final terms = _memoryTerms(searchable);
-    final score = queryTerms.intersection(terms).length;
-    final minimumScore = queryTerms.length >= 3 ? 2 : 1;
-    if (score >= minimumScore) scored.add((row: row, score: score));
-  }
-  if (scored.isEmpty) return const LocalMemoryMatchResult([]);
-  scored.sort((a, b) => b.score.compareTo(a.score));
-  final best = scored.first.score;
-  final winners = scored.where((item) => item.score == best).toList();
-  if (!intent.listAll && winners.length > 1) {
-    return const LocalMemoryMatchResult([], ambiguous: true);
-  }
-  return LocalMemoryMatchResult(
-    (intent.listAll ? scored : winners).map((item) => item.row).toList(),
-  );
-}
-
-/// Extracts the object/topic from natural private lookup wording before a
-/// domain is chosen. Domain vocabulary and service names intentionally do not
-/// appear here: the locally decrypted inventories decide what the topic means.
-String? extractInventoryPrivateLookupTopic(String text) {
-  final normalized = text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
-  if (normalized.isEmpty) return null;
-  // Explicit wallet/asset requests belong to the entitlement-aware crypto
-  // router. They must never be treated as a fuzzy credential, memory, or file
-  // lookup merely because they use a private-looking form such as
-  // "what is my ETH balance?".
-  if (RegExp(
-        r'\b(?:crypto|wallet|bitcoin|btc|ethereum|eth|usdt|usdc|solana|sol|monero|xmr|tron|trx|trc20|erc20)\b',
-        caseSensitive: false,
-      ).hasMatch(normalized) &&
-      RegExp(
-        r'\b(?:balance|wallet|address|receive|send|transaction|history|gas|fee)\b',
-        caseSensitive: false,
-      ).hasMatch(normalized)) {
-    return null;
-  }
-  final patterns = <RegExp>[
-    RegExp(
-      r'^(?:show|find|open|get)(?:\s+me)?(?:\s+my)?\s+(.+)$',
-      caseSensitive: false,
-    ),
-    RegExp(
-      r"^(?:what\s+is|what\s+was|what's)\s+my\s+(.+)$",
-      caseSensitive: false,
-    ),
-    RegExp(
-      r'^(?:what\s+is|what\s+was)\s+(?:the\s+)?(.+?\b(?:codeword|code|note|fact))$',
-      caseSensitive: false,
-    ),
-  ];
-  String? topic;
-  for (final pattern in patterns) {
-    topic = pattern.firstMatch(normalized)?.group(1)?.trim();
-    if (topic != null && topic.isNotEmpty) break;
-  }
-  // A short bare label can still resolve when it exactly matches local
-  // inventory. The arbitration caller lets it continue as general chat if no
-  // private object matches.
-  topic ??= normalized.split(RegExp(r'\s+')).length <= 5 ? normalized : null;
-  if (topic == null || topic.isEmpty) return null;
-  if (RegExp(
-    r'\b(?:login|logins|password|credential|credentials|memory|memories|file|files|document|documents|doc|docs)\b',
-    caseSensitive: false,
-  ).hasMatch(topic)) {
-    return null;
-  }
-  return topic;
-}
 
 // Whether the build was invoked with an explicit
 //   --dart-define=BACKEND_BASE_URL=...
@@ -530,10 +136,6 @@ const String _kBackendBaseUrlFromEnv = String.fromEnvironment(
 // startup HTTPS guard and crashes app.svaultai.com with a black
 // screen.
 const String _kProductionApiBaseUrl = 'https://api.svaultai.com';
-const bool _kIsolatedQaBuild = bool.fromEnvironment(
-  'QA_ISOLATED_BUILD',
-  defaultValue: false,
-);
 
 /// Resolves at first access; called from every network path.
 ///
@@ -553,10 +155,6 @@ String get backendBaseUrl {
 }
 
 const int kVaultStorageLimitBytes = 1024 * 1024 * 1024;
-// FILE_V2 chunks are JSON/base64 wrapped. Keep the encrypted request well
-// below common reverse-proxy body limits instead of letting a 4 MiB plaintext
-// chunk expand past them.
-const int kFileV2ChunkBytes = 512 * 1024;
 
 enum BillingLoadState { initial, loading, loaded, error }
 
@@ -605,32 +203,6 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
 
-const String kCanonicalBrandLogoAsset = 'assets/branding/vaultai-icon-1024.png';
-
-class _SVaultAIBrandLogo extends StatelessWidget {
-  final double size;
-
-  const _SVaultAIBrandLogo({super.key, required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      image: true,
-      label: 'SVaultAI logo',
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(size * 0.24),
-        child: Image.asset(
-          kCanonicalBrandLogoAsset,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.high,
-        ),
-      ),
-    );
-  }
-}
-
 Future<void> openHelpCenter(
   BuildContext context, {
   required hc.HelpCenterMode mode,
@@ -650,16 +222,7 @@ Future<void> openHelpCenter(
           backgroundColor: const Color(0xFF181818),
           appBar: AppBar(
             backgroundColor: const Color(0xFF181818),
-            title: const Row(
-              children: [
-                _SVaultAIBrandLogo(
-                  key: Key('help_center_canonical_logo'),
-                  size: 32,
-                ),
-                SizedBox(width: 10),
-                Flexible(child: Text(hc.kHelpCenterTitle)),
-              ],
-            ),
+            title: const Text(hc.kHelpCenterTitle),
             leading: IconButton(
               key: const Key('help_center_route_back'),
               icon: const Icon(Icons.arrow_back),
@@ -679,67 +242,6 @@ Future<void> openHelpCenter(
       },
     ),
   );
-}
-
-class _PublicHelpCenterRoute extends StatelessWidget {
-  const _PublicHelpCenterRoute();
-
-  @override
-  Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 760;
-    return Scaffold(
-      key: const Key('help_center_route_public_direct'),
-      backgroundColor: const Color(0xFF181818),
-      appBar: TopNavBar(isMobile: isMobile),
-      body: hc.HelpCenterPage(
-        mode: hc.HelpCenterMode.public,
-        onRequireSignIn: () =>
-            Navigator.of(context).pushReplacementNamed('/login'),
-      ),
-    );
-  }
-}
-
-class _PublicNotFoundPage extends StatelessWidget {
-  const _PublicNotFoundPage();
-
-  @override
-  Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 760;
-    return Scaffold(
-      key: const Key('public_not_found_page'),
-      appBar: TopNavBar(isMobile: isMobile),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const _SVaultAIBrandLogo(
-                key: Key('not_found_canonical_logo'),
-                size: 72,
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                'Page not found',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              const Text('The page you requested is not available.'),
-              const SizedBox(height: 18),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pushNamedAndRemoveUntil(
-                  '/',
-                  (route) => false,
-                ),
-                child: const Text('Go to SVaultAI'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 String? _guessMimeTypeFromName(String name) {
@@ -880,6 +382,7 @@ enum _DashboardSection {
   logins,
 
   cryptoVault,
+  concierge,
   expiry,
   memory,
   inheritance,
@@ -1093,7 +596,6 @@ class _VaultStoredFile {
   final String? assetType;
   final int fileSize;
   final bool needsNaming;
-  final bool isFileV2;
 
   final String? relativePath;
 
@@ -1105,7 +607,6 @@ class _VaultStoredFile {
     this.contentType,
     this.assetType,
     this.needsNaming = false,
-    this.isFileV2 = false,
     this.relativePath,
   });
 
@@ -1118,8 +619,6 @@ class _VaultStoredFile {
       assetType: json['asset_type']?.toString(),
       fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
       needsNaming: json['needs_naming'] == true,
-      isFileV2: json['crypto_version'] == 'client_mvk_v2' ||
-          json['storage_mode'] == 'file_v2',
       relativePath: json['relative_path']?.toString(),
     );
   }
@@ -1170,13 +669,8 @@ String _safeVlogValue(String tag, String key, Object? value) {
   return text;
 }
 
-const bool kQaAuthDiagnosticsEnabled = bool.fromEnvironment(
-  'VAULTAI_QA_AUTH_DIAGNOSTICS',
-  defaultValue: false,
-);
-
 void releaseWebDiagnosticPrint(String message) {
-  if (kReleaseMode && !kIsWeb && !kQaAuthDiagnosticsEnabled) return;
+  if (kReleaseMode && !kIsWeb) return;
   // ignore: avoid_print
   print(message);
 }
@@ -1237,11 +731,6 @@ Future<void> main() async {
       '--dart-define=BACKEND_BASE_URL=https://your-api.example.com',
     );
   }
-  if (_kIsolatedQaBuild && backendBaseUrl == _kProductionApiBaseUrl) {
-    throw StateError(
-      'An isolated QA build must declare its QA backend explicitly.',
-    );
-  }
 
   if (kIsWeb) {
     web_plugins.setUrlStrategy(web_plugins.PathUrlStrategy());
@@ -1253,16 +742,7 @@ Future<void> main() async {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      if (const bool.fromEnvironment('QA_FORCE_SEMANTICS')) {
-        // Browser acceptance must exercise the same visible controls users
-        // operate. CanvasKit normally waits for an assistive-technology
-        // handshake before publishing its semantic tree, which makes an
-        // isolated automated QA browser unable to target those controls.
-        // Keep the handle alive for this QA build so controls remain fully
-        // accessible without changing product behavior or security.
-        _qaSemanticsHandle = WidgetsBinding.instance.ensureSemantics();
-      }
-      await configureQaHttpTrust();
+      AppleIapService.instance.initialize();
 
       String? webOrigin;
       try {
@@ -1312,7 +792,7 @@ Future<void> main() async {
         } catch (_) {}
         try {
           rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-            appState.hasRememberedVaultLogin ? '/unlock' : '/login',
+            appState.lastVaultName != null ? '/unlock' : '/login',
             (_) => false,
           );
         } catch (_) {}
@@ -1351,21 +831,6 @@ const String _kAppLocaleStorageKeyV1 = 'app_locale';
 const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
 
 class AppState extends ChangeNotifier {
-  int _sessionEpoch = 0;
-
-  /// Monotonic ownership generation for asynchronous private inventory work.
-  /// A response may update UI state only when it belongs to this generation.
-  int get sessionEpoch => _sessionEpoch;
-
-  bool ownsSessionLoad({
-    required int epoch,
-    required String vaultIdValue,
-    required String tokenValue,
-  }) =>
-      _sessionEpoch == epoch &&
-      vaultId == vaultIdValue &&
-      sessionToken == tokenValue &&
-      authed;
   bool authed = false;
 
   // Per-file in-flight state. The chat card widgets watch AppState so
@@ -1489,7 +954,11 @@ class AppState extends ChangeNotifier {
   }
 
   String get chatReplyLanguageCode {
-    return effectiveLanguageCode;
+    final manual = _appLocale?.languageCode;
+    if (manual != null && isSupportedLanguageCode(manual)) {
+      return manual;
+    }
+    return 'en';
   }
 
   Future<void> setAppLocale(Locale? value) async {
@@ -1578,6 +1047,13 @@ class AppState extends ChangeNotifier {
 
   final List<bool Function()> _keepAliveProbes = [];
 
+  // Native document/photo/camera pickers temporarily hand control to an
+  // Apple-owned view controller. A user can legitimately spend longer than
+  // the inactivity timeout choosing a file. Keep the unlock context alive
+  // only for the lifetime of that trusted picker future; normal app
+  // backgrounding remains subject to the existing inactivity lock.
+  int _activeNativePickerCount = 0;
+
   final List<void Function()> _shutdownHooks = [];
 
   String? sessionToken;
@@ -1610,47 +1086,32 @@ class AppState extends ChangeNotifier {
   /// product-facing identity.
   String? vaultHandle;
 
-  String? _lastVaultName;
-  String? get lastVaultName => _lastVaultName;
-  set lastVaultName(String? value) {
-    _lastVaultName = vh.userFacingVaultNameOrNull(value);
-  }
-
-  /// A returning session may be rehydrated with either a friendly vault name
-  /// or a private vault handle. The latter is an authentication input only and
-  /// must never be copied into a text controller.
-  bool get hasRememberedVaultLogin =>
-      _lastVaultName != null ||
-      vh.canonicalInternalVaultHandleOrNull(vaultHandle) != null;
+  String? lastVaultName;
 
   String? _vaultName;
   String? get vaultName => _vaultName;
   set vaultName(String? value) {
     final prev = _vaultName;
-    final displayValue = vh.userFacingVaultNameOrNull(value);
-    _vaultName = displayValue;
+    _vaultName = value;
     final currentVaultId = vaultId;
 
     vlog('appstate.vaultName.set', {
       'prev': prev,
-      'next': displayValue,
-      'rebind': prev != displayValue,
+      'next': value,
+      'rebind': prev != value,
       'vault_id': currentVaultId,
     });
     if (currentVaultId == null) return;
-    if (prev != null && prev != displayValue) {
+    if (prev != null && prev != value) {
       vlog('appstate.vaultName.rebind-clears-cache', {
         'vault_id': currentVaultId,
         'prev': prev,
-        'next': displayValue,
+        'next': value,
       });
       _VaultCrypto.clearCache(currentVaultId);
     }
-    if (displayValue != null) {
-      _VaultCrypto.setActiveVault(
-        vaultId: currentVaultId,
-        vaultName: displayValue,
-      );
+    if (value != null) {
+      _VaultCrypto.setActiveVault(vaultId: currentVaultId, vaultName: value);
     }
   }
 
@@ -1672,15 +1133,6 @@ class AppState extends ChangeNotifier {
   int billingBlockCount = 0;
   int billingPurchasedBytes = 0;
   int billingIncludedBytes = 0;
-  String billingStatus = 'none';
-  bool billingIsDelinquent = false;
-  bool billingWritesAllowed = true;
-  String get billingWriteBlockedMessage =>
-      'Saving is paused until your plan is reactivated. Your existing data is preserved.';
-  bool billingLargeFilesAllowed = true;
-  bool billingCryptoAllowed = false;
-  int billingPlanLimitBytes = 0;
-  int billingLargeFileThresholdBytes = 100 * 1024 * 1024;
 
   BillingLoadState billingLoadState = BillingLoadState.initial;
 
@@ -1704,9 +1156,6 @@ class AppState extends ChangeNotifier {
   }
 
   String get planLabel {
-    if (billingIsDelinquent) {
-      return 'Plan paused — 1 GB entitlement';
-    }
     if (billingBlockCount > 0 && billingPurchasedBytes > 0) {
       return '${formatBytes(billingPurchasedBytes)} Storage Plan';
     }
@@ -1719,10 +1168,8 @@ class AppState extends ChangeNotifier {
   /// the destination page (`_buildCryptoVaultSection.isKnownNotUpgraded`).
   /// Chat cards, follow-up dispatch, and the direct route all consult
   /// this getter to keep the entitlement enforcement in one place.
-  bool get isCryptoEntitled => billingCryptoAllowed && !billingIsDelinquent;
-
-  bool canOpenFileBytes(int sizeBytes) =>
-      !billingIsDelinquent || sizeBytes <= billingLargeFileThresholdBytes;
+  bool get isCryptoEntitled =>
+      billingBlockCount > 0 && billingPurchasedBytes > 0;
 
   int uploadSafetyCapBytes = 100 * 1024 * 1024;
 
@@ -1786,19 +1233,13 @@ class AppState extends ChangeNotifier {
   Future<void> requestSwitchVault(
       String newVaultName, BuildContext context) async {
     final currentVaultId = vaultId;
-    final displaySafeVaultName = vh.userFacingVaultNameOrNull(newVaultName);
     if (currentVaultId == null) return;
-    if (displaySafeVaultName == null || displaySafeVaultName == vaultName) {
-      return;
-    }
+    if (newVaultName == vaultName) return;
 
     perf_cache.clearCacheOnVaultSwitch(currentVaultId, null);
 
-    _sessionEpoch += 1;
-    zk_mvk_store.ZkActiveMvk.clear();
-    FileV2Repository.clear();
     _VaultCrypto.clearCache(currentVaultId);
-    vaultName = displaySafeVaultName;
+    vaultName = newVaultName;
     unlocked = false;
     pinAttempts = 0;
     lockoutUntil = null;
@@ -1904,7 +1345,7 @@ class AppState extends ChangeNotifier {
         SnackBar(content: Text(error.message)),
       );
       rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-        hasRememberedVaultLogin ? '/unlock' : '/login',
+        lastVaultName != null ? '/unlock' : '/login',
         (_) => false,
       );
       return true;
@@ -1986,6 +1427,17 @@ class AppState extends ChangeNotifier {
     _keepAliveProbes.remove(probe);
   }
 
+  Future<T> runWithNativePickerKeepAlive<T>(Future<T> Function() action) async {
+    _activeNativePickerCount += 1;
+    resetInactivityTimer();
+    try {
+      return await action();
+    } finally {
+      _activeNativePickerCount = math.max(0, _activeNativePickerCount - 1);
+      resetInactivityTimer();
+    }
+  }
+
   void registerShutdownHook(void Function() hook) {
     if (_shutdownHooks.contains(hook)) return;
     _shutdownHooks.add(hook);
@@ -1996,6 +1448,7 @@ class AppState extends ChangeNotifier {
   }
 
   bool _hasActiveKeepAlive() {
+    if (_activeNativePickerCount > 0) return true;
     for (final probe in _keepAliveProbes) {
       try {
         if (probe()) return true;
@@ -2068,6 +1521,7 @@ class AppState extends ChangeNotifier {
   Future<void> hydrate() async {
     final sp = await SharedPreferences.getInstance();
     sessionToken = await NativeSecureStore.readString('session_token');
+    lastVaultName = await NativeSecureStore.readString('last_vault_name');
     // Restore the friendly identity fields FIRST so any UI that
     // paints before /auth/me returns (or if /auth/me never returns)
     // shows the user's chosen name and their display name rather
@@ -2088,29 +1542,13 @@ class AppState extends ChangeNotifier {
         persistedDisplay,
       );
     }
-    final storedLastVaultName =
-        await NativeSecureStore.readString('last_vault_name');
-    final persistedNameCandidates = <String?>[
-      storedLastVaultName,
-      sp.getString('last_canonical_username'),
-      sp.getString('last_vault_ai_name'),
-    ];
-    String? persistedName;
-    String? handleRecoveredFromNameSlot;
-    for (final candidate in persistedNameCandidates) {
-      persistedName ??= vh.userFacingVaultNameOrNull(candidate);
-      handleRecoveredFromNameSlot ??=
-          vh.canonicalInternalVaultHandleOrNull(candidate);
-    }
-    lastVaultName = persistedName;
-    if (persistedName != null) {
+    final persistedName =
+        await NativeSecureStore.readString('last_vault_name') ??
+            sp.getString('last_canonical_username') ??
+            sp.getString('last_vault_ai_name');
+    if (persistedName != null && persistedName.isNotEmpty) {
       vaultName = persistedName;
       await NativeSecureStore.writeString('last_vault_name', persistedName);
-    } else if (storedLastVaultName != null) {
-      // A previous build could persist a VLT handle in the display-name slot.
-      // It is migrated to last_vault_handle below (when valid), then removed
-      // only from this UI-facing slot so a hard restart cannot paint it.
-      await NativeSecureStore.deleteString('last_vault_name');
     }
     // Drop the retired keys once we've migrated their values so
     // subsequent hydrates go straight to the new ones. Best-effort;
@@ -2125,12 +1563,6 @@ class AppState extends ChangeNotifier {
         await NativeSecureStore.readString('last_vault_handle');
     if (persistedHandle != null && persistedHandle.isNotEmpty) {
       vaultHandle = persistedHandle;
-    } else if (handleRecoveredFromNameSlot != null) {
-      vaultHandle = handleRecoveredFromNameSlot;
-      await NativeSecureStore.writeString(
-        'last_vault_handle',
-        handleRecoveredFromNameSlot,
-      );
     } else {
       final adoptedHandle = await legacy_adopt.readCachedVaultHandle();
       if (adoptedHandle != null && adoptedHandle.isNotEmpty) {
@@ -2156,8 +1588,8 @@ class AppState extends ChangeNotifier {
         // user's typed name is safe on-device) rather than clobber it.
         final rawName = me['vault_name'];
         if (rawName != null) {
-          final name = vh.userFacingVaultNameOrNull(rawName.toString());
-          if (name != null) {
+          final name = rawName.toString().trim();
+          if (name.isNotEmpty) {
             vaultName = name;
             lastVaultName = name;
             await NativeSecureStore.writeString('last_vault_name', name);
@@ -2204,52 +1636,33 @@ class AppState extends ChangeNotifier {
     // the pre-termination session still evaluate as stale to any
     // caller comparing generations.
     st.SessionTermination.instance.reset();
-    _sessionEpoch += 1;
     sessionToken = token;
     vaultId = vaultIdValue;
-    final displayVaultName = vh.userFacingVaultNameOrNull(vaultNameValue);
-    final handleFromNameSlot =
-        vh.canonicalInternalVaultHandleOrNull(vaultNameValue);
-    vaultName = displayVaultName;
-    lastVaultName = displayVaultName;
-    final persistenceWrites = <Future<void>>[];
-    final privateVaultHandle =
-        vaultHandleValue != null && vaultHandleValue.isNotEmpty
-            ? vaultHandleValue
-            : handleFromNameSlot;
-    if (privateVaultHandle != null && privateVaultHandle.isNotEmpty) {
-      vaultHandle = privateVaultHandle;
-      persistenceWrites.add(NativeSecureStore.writeString(
+    vaultName = vaultNameValue;
+    lastVaultName = vaultNameValue;
+    if (vaultHandleValue != null && vaultHandleValue.isNotEmpty) {
+      vaultHandle = vaultHandleValue;
+      await NativeSecureStore.writeString(
         'last_vault_handle',
-        privateVaultHandle,
-      ));
+        vaultHandleValue,
+      );
     }
     if (displayNameValue != null && displayNameValue.isNotEmpty) {
       displayName = displayNameValue;
       // Persist the friendly name so the next launch's hydrate() can
       // paint it BEFORE /auth/me returns (or if it fails).
-      persistenceWrites.add(NativeSecureStore.writeString(
+      await NativeSecureStore.writeString(
         'last_display_name',
         displayNameValue,
-      ));
+      );
     }
     authed = true;
-    persistenceWrites
-        .add(NativeSecureStore.writeString('session_token', token));
-    if (displayVaultName != null) {
-      persistenceWrites.add(
-        NativeSecureStore.writeString('last_vault_name', displayVaultName),
-      );
-    } else {
-      persistenceWrites.add(NativeSecureStore.deleteString('last_vault_name'));
-    }
-    await Future.wait(persistenceWrites);
+    await NativeSecureStore.writeString('session_token', token);
+    await NativeSecureStore.writeString('last_vault_name', vaultNameValue);
     notifyListeners();
   }
 
   Future<void> clearSession({bool keepLastVaultName = true}) async {
-    final rememberedVaultHandle = keepLastVaultName ? vaultHandle : null;
-    _sessionEpoch += 1;
     _runShutdownHooks();
 
     perf_cache.clearCacheOnLogout();
@@ -2263,12 +1676,7 @@ class AppState extends ChangeNotifier {
     // == null and fall through to legacy plaintext-refuse behavior.
     try {
       zk_mvk_store.ZkActiveMvk.clear();
-      FileV2Repository.clear();
-      WalletBackupV2Repository.clear();
-      WalletV2Repository.clear();
-      QaRuntimeAccess.clear();
       zk_sk_store.ZkActiveSkVault.clear();
-      CredentialV2QaDiagnostics.clear();
     } catch (_) {}
     // Wipe the _VaultCrypto key cache slot for the vault we are
     // leaving. This drops both the derived key and the cached PIN
@@ -2298,10 +1706,7 @@ class AppState extends ChangeNotifier {
     sessionToken = null;
     vaultId = null;
     vaultName = null;
-    // Retain only the opaque identifier needed for a returning user's
-    // PIN-only ZK rehydration. It remains private and is never copied into the
-    // sign-in controller. "Use another vault" passes false and clears it.
-    vaultHandle = rememberedVaultHandle;
+    vaultHandle = null;
     displayName = null;
     authed = false;
     unlocked = false;
@@ -2335,7 +1740,7 @@ class AppState extends ChangeNotifier {
   Future<LoginResult?> _restoreZkSessionKeysAfterPin({
     required String pin,
     required String expectedVaultId,
-    String? vaultNameHint,
+    required String vaultNameHint,
     String? vaultHandleHint,
     required String reason,
   }) async {
@@ -2380,21 +1785,13 @@ class AppState extends ChangeNotifier {
         return null;
       }
 
-      final resolvedVaultName =
-          vh.userFacingVaultNameOrNull(result.vaultName) ??
-              vh.userFacingVaultNameOrNull(loginId.vaultName) ??
-              vh.userFacingVaultNameOrNull(vaultNameHint) ??
-              vh.userFacingVaultNameOrNull(vaultName) ??
-              vh.userFacingVaultNameOrNull(lastVaultName) ??
-              vh.userFacingVaultNameOrNull(result.displayName);
-      if (resolvedVaultName == null) {
-        inheritanceRevealDiag('${reason}_zk_restore_no_display_name', {
-          'expected_vault_fpr': inheritanceRevealIdFingerprint(expectedVaultId),
-          'id_source': loginId.source,
-          'internal_handle_suppressed': true,
-        });
-        return null;
-      }
+      final resolvedVaultName = _nonEmptyTrimmed(result.vaultName) ??
+          loginId.vaultName ??
+          _nonEmptyTrimmed(vaultNameHint) ??
+          _nonEmptyTrimmed(vaultName) ??
+          _nonEmptyTrimmed(lastVaultName) ??
+          _nonEmptyTrimmed(result.displayName) ??
+          result.vaultHandle;
 
       _VaultCrypto
               ._keyCache[_VaultCrypto._ck(result.vaultId, resolvedVaultName)] =
@@ -2472,14 +1869,12 @@ class AppState extends ChangeNotifier {
     String pin, {
     bool restoreZkSessionKeys = false,
   }) async {
-    final knownVaultName = vh.userFacingVaultNameOrNull(vaultName) ??
-        vh.userFacingVaultNameOrNull(lastVaultName);
-    final knownVaultHandle = vh.canonicalInternalVaultHandleOrNull(vaultHandle);
-    if (knownVaultName == null && knownVaultHandle == null) return false;
+    final knownVaultName = vaultName ?? lastVaultName;
+    if (knownVaultName == null) return false;
 
     vlog('pin.verify.start', {
-      'display_source': knownVaultName == null ? 'empty' : 'vault_name',
-      'internal_handle_available': knownVaultHandle != null,
+      'vaultName': knownVaultName,
+      'vaultNameLen': knownVaultName.length,
       'pinLen': pin.length,
     });
 
@@ -2499,73 +1894,72 @@ class AppState extends ChangeNotifier {
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
-      String activeToken;
-      String activeVaultId;
-      String activeVaultName;
-      String? activeDisplay;
-      String? activeVaultHandle;
-      LoginResult? zkRestore;
-
-      // A refreshed ZK session already knows the expected vault id locally.
-      // Going through the legacy /auth/login route first duplicated the most
-      // expensive part of unlock, then immediately replaced its token with a
-      // ZK token. On a tunneled QA origin that made the PIN screen appear to
-      // hang even though the ZK exchange itself had succeeded. Restore the ZK
-      // session directly and reserve legacy login for legacy vaults only.
-      if (restoreZkSessionKeys && vaultId != null && vaultId!.isNotEmpty) {
-        zkRestore = await _restoreZkSessionKeysAfterPin(
+      final Map<String, dynamic> loginResult;
+      try {
+        loginResult = await client.authLogin(
+          vaultName: knownVaultName,
           pin: pin,
-          expectedVaultId: vaultId!,
-          vaultNameHint: knownVaultName,
-          vaultHandleHint: knownVaultHandle,
-          reason: 'verify_pin',
         );
+      } on InvalidCredentialsException catch (e) {
+        lockMessage = e.message;
+        pinAttempts++;
+        vlog('pin.verify.result', {
+          'result': 'failure',
+          'code': 'invalid_credentials',
+        });
+        notifyListeners();
+        return false;
+      }
+      vlog('pin.timing.auth_login', {'elapsed_ms': tick()});
+
+      final newToken = loginResult['session_token']?.toString();
+      final newVaultId = loginResult['vault_id']?.toString();
+      final newVaultName =
+          loginResult['vault_name']?.toString() ?? knownVaultName;
+      final newDisplay = loginResult['display_username']?.toString();
+      final newVaultHandle = loginResult['vault_handle']?.toString();
+      if (newToken == null || newToken.isEmpty || newVaultId == null) {
+        throw Exception('Login response missing session_token or vault_id');
       }
 
-      if (zkRestore != null) {
-        activeToken = zkRestore.sessionToken;
-        activeVaultId = zkRestore.vaultId;
-        final restoredDisplayName =
-            vh.userFacingVaultNameOrNull(zkRestore.vaultName) ??
-                knownVaultName ??
-                vh.userFacingVaultNameOrNull(zkRestore.displayName);
-        if (restoredDisplayName == null) return false;
-        activeVaultName = restoredDisplayName;
-        activeDisplay = zkRestore.displayName;
-        activeVaultHandle = zkRestore.vaultHandle;
-        vlog('pin.timing.zk_login', {'elapsed_ms': tick()});
-      } else {
-        if (knownVaultName == null) return false;
-        final Map<String, dynamic> loginResult;
-        try {
-          loginResult = await client.authLogin(
-            vaultName: knownVaultName,
-            pin: pin,
-          );
-        } on InvalidCredentialsException catch (e) {
-          lockMessage = e.message;
-          pinAttempts++;
-          vlog('pin.verify.result', {
-            'result': 'failure',
-            'code': 'invalid_credentials',
-          });
+      var activeToken = newToken;
+      var activeVaultId = newVaultId;
+      var activeVaultName = newVaultName;
+      var activeDisplay = newDisplay;
+      var activeVaultHandle = newVaultHandle;
+      LoginResult? zkRestore;
+      if (restoreZkSessionKeys &&
+          newVaultHandle != null &&
+          newVaultHandle.isNotEmpty) {
+        zkRestore = await _restoreZkSessionKeysAfterPin(
+          pin: pin,
+          expectedVaultId: newVaultId,
+          vaultNameHint: newVaultName,
+          vaultHandleHint: newVaultHandle,
+          reason: 'verify_pin',
+        );
+        if (zkRestore == null) {
+          // A ZK vault is not usable without its unwrapped MVK. The old
+          // PIN-only path continued with the legacy session here, painted the
+          // vault as unlocked, and then every encrypted Memory/Login/File
+          // read failed with "Vault encryption key is unavailable". Keep the
+          // user on the unlock screen instead of entering a partial session.
+          lockMessage =
+              'Could not unlock encrypted vault data. Log in with your vault name and PIN.';
           notifyListeners();
           return false;
         }
-        vlog('pin.timing.auth_login', {'elapsed_ms': tick()});
-
-        final newToken = loginResult['session_token']?.toString();
-        final newVaultId = loginResult['vault_id']?.toString();
-        final newVaultName =
-            loginResult['vault_name']?.toString() ?? knownVaultName;
-        if (newToken == null || newToken.isEmpty || newVaultId == null) {
-          throw Exception('Login response missing session_token or vault_id');
-        }
-        activeToken = newToken;
-        activeVaultId = newVaultId;
-        activeVaultName = newVaultName;
-        activeDisplay = loginResult['display_username']?.toString();
-        activeVaultHandle = loginResult['vault_handle']?.toString();
+        activeToken = zkRestore.sessionToken;
+        activeVaultId = zkRestore.vaultId;
+        activeVaultName = _nonEmptyTrimmed(zkRestore.vaultName) ?? newVaultName;
+        activeDisplay = zkRestore.displayName;
+        activeVaultHandle = zkRestore.vaultHandle;
+      } else if (restoreZkSessionKeys) {
+        inheritanceRevealDiag('verify_pin_zk_restore_skipped', {
+          'expected_vault_fpr': inheritanceRevealIdFingerprint(newVaultId),
+          'expected_role': 'beneficiary',
+          'has_vault_handle': false,
+        });
       }
 
       await setSession(
@@ -2635,12 +2029,87 @@ class AppState extends ChangeNotifier {
         'iterations': iterations,
       });
 
-      // Routine unlock is a latency-sensitive read path. Rotating the legacy
-      // KDF here added a write, a second metadata read and sometimes a second
-      // PBKDF2 derivation before navigation. The authoritative metadata above
-      // already established the correct session key. Key rotation belongs to
-      // an explicit maintenance flow, not every sign-in.
-      vlog('pin.timing.rotate_kdf_skipped', {'elapsed_ms': tick()});
+      // 2026-07-21 (c2f917e first-chat regression fix): the previous
+      // shape wrapped the rotate call, a rotated-flag inspection,
+      // and the re-derive in ONE try block that silently swallowed
+      // every failure. That silently desynced the client key from
+      // the DB whenever the server rotated but the flag inspection
+      // failed for any reason, and the very first /chat POST then
+      // encrypted with the stale key. Server re-derived from the
+      // (now-rotated) DB salt, and vault_core.decrypt_message
+      // raised "Invalid PIN or corrupted data" -->
+      // InvalidVaultUnlockException on the client.
+      //
+      // New shape (three-part):
+      //   * Attempt the rotation. Do NOT silently swallow errors -
+      //     log the outcome via vlog. If the rotate call threw the
+      //     server transaction rolled back (see
+      //     vault_core.py:530-533), so K1 from /vault-meta above is
+      //     still valid and no client action is needed.
+      //   * REGARDLESS of the rotate outcome, refetch /vault-meta.
+      //     That is the authoritative source of the CURRENT DB
+      //     salt/iter and closes the "server committed but response
+      //     was malformed or lost" window that no flag inspection
+      //     can catch.
+      //   * If the fresh salt/iter differ from what K1 was derived
+      //     from, re-derive K2 and REPLACE the cached key so the
+      //     next /chat's server-side re-derive matches.
+      Object? _rotateError;
+      try {
+        await client.rotateVaultKdf(
+          vaultName: activeVaultName,
+          pin: pin,
+          authToken: activeToken,
+        );
+      } catch (e) {
+        _rotateError = e;
+      }
+      vlog('pin.rotate.attempt', {
+        'ok': _rotateError == null,
+        if (_rotateError != null)
+          'error_type': _rotateError.runtimeType.toString(),
+        if (_rotateError != null) 'error': _rotateError.toString(),
+      });
+
+      final freshMeta = await _API.getVaultMeta(
+        vaultName: activeVaultName,
+        authToken: activeToken,
+      );
+      final freshSalt = freshMeta['pin_salt']?.toString();
+      final freshIter =
+          (freshMeta['kdf_iterations'] as num?)?.toInt() ?? iterations;
+      final saltChanged =
+          freshSalt != null && freshSalt.isNotEmpty && freshSalt != pinSalt;
+      final iterChanged = freshIter != iterations;
+      vlog('pin.rotate.post_meta', {
+        'salt_changed': saltChanged,
+        'iter_changed': iterChanged,
+        'new_iterations': freshIter,
+      });
+      if (freshSalt != null &&
+          freshSalt.isNotEmpty &&
+          (saltChanged || iterChanged)) {
+        // Authoritative salt/iter differ from what K1 was derived
+        // from. Re-derive K2 with the fresh values and install as a
+        // new context (bumping the generation). Legacy _VaultCrypto
+        // caches are mirrored inside deriveAndInstallCryptoContext.
+        final _postRotateCtx = await deriveAndInstallCryptoContext(
+          vaultId: activeVaultId,
+          vaultName: activeVaultName,
+          pin: pin,
+          pinSaltBase64: freshSalt,
+          iterations: freshIter,
+          source: 'verify_pin.post_rotate',
+        );
+        if (_postRotateCtx == null) {
+          vlog('pin.verify.derive.superseded', {
+            'phase': 'post_rotate',
+            'vaultName': activeVaultName,
+          });
+          return false;
+        }
+      }
+      vlog('pin.timing.rotate_kdf', {'elapsed_ms': tick()});
 
       pinAttempts = 0;
       lockoutUntil = null;
@@ -2770,15 +2239,10 @@ class AppState extends ChangeNotifier {
             vaultName != backendVaultName,
         'has_pin': result['has_pin'],
       });
-      final displaySafeBackendName =
-          vh.userFacingVaultNameOrNull(backendVaultName);
-      if (displaySafeBackendName != null) {
-        vaultName = displaySafeBackendName;
-        lastVaultName = displaySafeBackendName;
-        await NativeSecureStore.writeString(
-          'last_vault_name',
-          displaySafeBackendName,
-        );
+      if (backendVaultName != null && backendVaultName.trim().isNotEmpty) {
+        vaultName = backendVaultName.trim();
+        lastVaultName = vaultName;
+        await NativeSecureStore.writeString('last_vault_name', vaultName!);
       }
 
       notifyListeners();
@@ -2790,7 +2254,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> loadVaultName() async {
     final token = sessionToken;
-    final localVaultName = vh.userFacingVaultNameOrNull(lastVaultName);
+    final localVaultName = lastVaultName;
 
     if (token == null) {
       if (localVaultName != null && localVaultName.trim().isNotEmpty) {
@@ -2822,15 +2286,12 @@ class AppState extends ChangeNotifier {
             vaultName != backendVaultName,
       });
 
-      final displaySafeBackendName =
-          vh.userFacingVaultNameOrNull(backendVaultName);
-      if (hasVault && displaySafeBackendName != null) {
-        vaultName = displaySafeBackendName;
-        lastVaultName = displaySafeBackendName;
-        await NativeSecureStore.writeString(
-          'last_vault_name',
-          displaySafeBackendName,
-        );
+      if (hasVault &&
+          backendVaultName != null &&
+          backendVaultName.trim().isNotEmpty) {
+        vaultName = backendVaultName.trim();
+        lastVaultName = vaultName;
+        await NativeSecureStore.writeString('last_vault_name', vaultName!);
       } else {
         vaultName = null;
       }
@@ -2933,16 +2394,6 @@ class AppState extends ChangeNotifier {
           (ent['purchased_bytes'] as num?)?.toInt() ?? billingPurchasedBytes;
       billingIncludedBytes =
           (ent['included_bytes'] as num?)?.toInt() ?? billingIncludedBytes;
-      billingStatus = ent['status']?.toString() ?? billingStatus;
-      billingIsDelinquent = ent['is_delinquent'] == true;
-      billingWritesAllowed = ent['writes_allowed'] != false;
-      billingLargeFilesAllowed = ent['large_files_allowed'] != false;
-      billingCryptoAllowed = ent['crypto_allowed'] == true;
-      billingPlanLimitBytes =
-          (ent['plan_limit_bytes'] as num?)?.toInt() ?? billingPlanLimitBytes;
-      billingLargeFileThresholdBytes =
-          (ent['large_file_threshold_bytes'] as num?)?.toInt() ??
-              billingLargeFileThresholdBytes;
 
       billingLoadState = BillingLoadState.loaded;
       billingLoadError = null;
@@ -3246,7 +2697,7 @@ class SvaultaiApp extends StatelessWidget {
         return _ActivityWrapper(child: child);
       },
       debugShowCheckedModeBanner: false,
-      title: 'SVaultAI',
+      title: 'Svaultai',
       locale: app.shellLocale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -3266,18 +2717,12 @@ class SvaultaiApp extends StatelessWidget {
         '/devices': (_) => const DevicesPage(),
         '/security-center': (_) => const SecurityCenterPage(),
         '/storage': (_) => const StoragePage(),
-        '/help-and-faq-public': (_) => const _PublicHelpCenterRoute(),
         kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
-        '/not-found': (_) => const _PublicNotFoundPage(),
       },
-      onUnknownRoute: (_) => MaterialPageRoute<void>(
-        settings: const RouteSettings(name: '/not-found'),
-        builder: (_) => const _PublicNotFoundPage(),
-      ),
-      // The Web must honor the requested browser path so `/` renders the
-      // indexable marketing landing page and direct public/private URLs remain
-      // reloadable. Native users still arrive at authentication immediately.
-      initialRoute: kIsWeb ? null : '/login',
+      // Native users should arrive at authentication immediately. Keep `/`
+      // available for explicit public/marketing navigation, but do not make
+      // the promotional landing page the app's startup screen.
+      initialRoute: '/login',
     );
   }
 }
@@ -3355,8 +2800,14 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
     // the chip cap on the narrowest phones so the wordmark keeps
     // some space to render.
     final screenWidth = MediaQuery.of(context).size.width;
-    final double accountChipMaxWidth =
-        !isMobile ? 260.0 : (screenWidth < 380 ? 84.0 : 160.0);
+    final double accountChipMaxWidth = !isMobile
+        ? 260.0
+        : screenWidth < 360
+            ? 42.0
+            : screenWidth < 430
+                ? 140.0
+                : 180.0;
+    final compactAccountChip = isMobile && screenWidth < 360;
 
     return AppBar(
       toolbarHeight: 72,
@@ -3385,20 +2836,33 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
-          _SVaultAIBrandLogo(
-            key: const Key('top_nav_canonical_logo'),
-            size: isMobile && showMenuButton ? 32 : 42,
+          Container(
+            key: const Key('svaultai_brand_logo'),
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF10A37F).withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: const Color(0xFF10A37F).withValues(alpha: 0.18)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Image.asset(
+              'assets/branding/vaultai-icon-1024.png',
+              fit: BoxFit.cover,
+              semanticLabel: 'SVaultAI logo',
+            ),
           ),
           // 2026-07-21 (c2f917e follow-up): on phone-width viewports
           // (< 600 CSS px) hide the wordmark entirely and show only
-          // the canonical image logo. The previous Flexible+ellipsis approach
+          // the shield logo. The previous Flexible+ellipsis approach
           // produced "V..." at 320-390px which reads as broken UI.
           // Tablet + desktop (>= 600px) keep the full wordmark.
           if (screenWidth >= 600) ...[
             const SizedBox(width: 12),
             const Flexible(
               child: Text(
-                'SVaultAI',
+                'Svaultai',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -3478,7 +2942,6 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: PopupMenuButton<String>(
-                    key: const Key('account_menu_button'),
                     tooltip: 'Account',
                     itemBuilder: (_) => [
                       PopupMenuItem(
@@ -3521,13 +2984,12 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       }
                       if (v == 'sign_out') {
                         final app = context.read<AppState>();
-                        final hadRememberedVaultLogin =
-                            app.hasRememberedVaultLogin;
+                        final hadLastVaultName = app.lastVaultName != null;
                         await app.signOutEverywhere();
                         if (context.mounted) {
                           Navigator.pushNamedAndRemoveUntil(
                             context,
-                            hadRememberedVaultLogin ? '/unlock' : '/login',
+                            hadLastVaultName ? '/unlock' : '/login',
                             (_) => false,
                           );
                         }
@@ -3536,8 +2998,10 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                     child: Container(
                       constraints:
                           BoxConstraints(maxWidth: accountChipMaxWidth),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compactAccountChip ? 8 : 14,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFF262626),
                         borderRadius: BorderRadius.circular(28),
@@ -3548,19 +3012,21 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         children: [
                           const Icon(Icons.account_circle_outlined,
                               size: 22, color: Color(0xFFB4B4B4)),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              app.displayName ?? 'Account',
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
+                          if (!compactAccountChip) ...[
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                app.displayName ?? 'Account',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.expand_more_rounded, size: 18),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.expand_more_rounded, size: 18),
+                          ],
                         ],
                       ),
                     ),
@@ -3841,7 +3307,7 @@ class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
             child: Text(
               'Semantic content search is unavailable for this '
               'private vault. Your files are encrypted end-to-end, '
-              'and SVaultAI cannot read their content to build a '
+              'and Svaultai cannot read their content to build a '
               'search index. Filename search still works.',
               style: TextStyle(
                 color: Color(0xFFCFE2FF),
@@ -4284,13 +3750,11 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
                           _HeroCard(),
                         ],
                       )
-                    : const Row(
-                        children: [
-                          Expanded(child: _HeroText()),
-                          SizedBox(width: 40),
-                          Expanded(child: _HeroCard()),
-                        ],
-                      ),
+                    : const Row(children: [
+                        Expanded(child: _HeroText()),
+                        SizedBox(width: 40),
+                        Expanded(child: _HeroCard()),
+                      ]),
               ),
             ),
           ),
@@ -4310,9 +3774,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 1100),
               child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 18 : 28,
-                ),
+                padding: EdgeInsets.symmetric(horizontal: isMobile ? 18 : 28),
                 child: const PublicLandingFooter(),
               ),
             ),
@@ -4332,7 +3794,7 @@ class _HeroText extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Your private, AI-powered digital vault.',
+          'Your private AI vault.',
           style: Theme.of(context)
               .textTheme
               .headlineMedium
@@ -4340,7 +3802,7 @@ class _HeroText extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         const Text(
-          'Protect and manage credentials, documents, memories, media, identity records, inheritance, and non-custodial digital assets with zero-knowledge, user-controlled access.',
+          'Svaultai helps you save logins, IDs, cards, files, photos, and notes, then retrieve them naturally in chat.',
           style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 16, height: 1.6),
         ),
         const SizedBox(height: 22),
@@ -4537,7 +3999,7 @@ InheritanceRevealLoginIdentifier selectInheritanceRevealLoginIdentifier({
       source: 'none',
     );
   }
-  if (vh.isExplicitVaultHandleDisplay(name)) {
+  if (vh.isValidVaultHandleDisplay(name)) {
     return InheritanceRevealLoginIdentifier(
       vaultName: null,
       vaultHandle: name,
@@ -4819,7 +4281,7 @@ Future<bool> _tryLegacyAdoptionBestEffort({
       if (!context.mounted) return true;
       // Adoption completes silently and the user lands in /chat. The
       // internal vault handle is stored via legacy_adoption for
-      // subsequent ZK login, but the user never sees it — SVaultAI's
+      // subsequent ZK login, but the user never sees it — Svaultai's
       // user-facing credentials are username + PIN only.
       Navigator.of(context).pushReplacementNamed('/chat');
       return true;
@@ -4878,25 +4340,11 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> with RouteAware {
-  static const bool _qaAuthDiagnostics =
-      bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
-
-  void _qaPostUnwrapStage(String stage) {
-    if (_qaAuthDiagnostics) print('[qa-post-unwrap] $stage');
-  }
-
-  void _qaPinDiag() {
-    if (!_qaAuthDiagnostics) return;
-    final value = pinCtrl.text;
-    print('[qa-auth-pin] length=${value.length} '
-        'digits_only=${RegExp(r'^\d*$').hasMatch(value)} '
-        'controller_updated=true');
-  }
-
   final vaultNameCtrl = TextEditingController();
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
+  bool _isZkHandleInput = false;
 
   bool _showForm = false;
 
@@ -4905,31 +4353,42 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     super.initState();
     _scheduleGuard('initState');
     _autofillCachedHandle();
+    vaultNameCtrl.addListener(_maybeMarkZkHandle);
+  }
+
+  void _maybeMarkZkHandle() {
+    final zk = vh.isValidVaultHandleDisplay(vaultNameCtrl.text.trim());
+    if (zk != _isZkHandleInput) {
+      setState(() => _isZkHandleInput = zk);
+    }
   }
 
   Future<void> _autofillCachedHandle() async {
-    // Only a verified user-facing name may initialize this controller. A
-    // private VLT handle stays in AppState/NativeSecureStore for PIN-only ZK
-    // rehydration and is never used as a display fallback. We never overwrite
-    // whatever the user has already started typing.
+    // Prefer the persisted vault name (last_vault_name) — that's
+    // what the user actually types to sign in. Fall back to the
+    // Never fall back to the internal VLT handle. That identifier is
+    // protocol metadata, not a user-facing vault name. Showing it in
+    // this field makes a locally generated value look like a vault
+    // name returned by the backend. We never overwrite whatever the
+    // user has already started typing.
     //
     // Back-compat: read the legacy pre-2026-07-20 keys
-    // (last_canonical_username) if the new
+    // (last_canonical_username / last_display_username) if the new
     // key isn't populated yet — hydrate() migrates them into the
     // new key on next launch.
     try {
       final sp = await SharedPreferences.getInstance();
-      final candidates = <String?>[
-        await NativeSecureStore.readString('last_vault_name'),
-        sp.getString('last_canonical_username'),
-      ];
-      String? persistedName;
-      for (final candidate in candidates) {
-        persistedName ??= vh.userFacingVaultNameOrNull(candidate);
-      }
+      final persistedName =
+          await NativeSecureStore.readString('last_vault_name') ??
+              sp.getString('last_canonical_username') ??
+              sp.getString('last_display_username');
       if (!mounted) return;
-      if (persistedName != null && vaultNameCtrl.text.isEmpty) {
+      if (persistedName != null &&
+          persistedName.isNotEmpty &&
+          vaultNameCtrl.text.isEmpty) {
         vaultNameCtrl.text = persistedName;
+        _maybeMarkZkHandle();
+        return;
       }
     } catch (_) {}
   }
@@ -4972,7 +4431,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         return;
       }
 
-      if (app.hasRememberedVaultLogin) {
+      if (app.lastVaultName != null && app.lastVaultName!.isNotEmpty) {
         Navigator.of(context).pushReplacementNamed('/unlock');
         return;
       }
@@ -4983,11 +4442,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
+    vaultNameCtrl.removeListener(_maybeMarkZkHandle);
+    vaultNameCtrl.dispose();
+    pinCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    if (_qaAuthDiagnostics) print('[qa-auth-pin] login_submit_entered');
     final vaultName = vaultNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
     if (vaultName.isEmpty) {
@@ -4995,8 +4456,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       return;
     }
     final digitsOnly = RegExp(r'^\d+$');
-    if (_qaAuthDiagnostics)
-      print('[qa-auth-pin] login_pin_digits_valid=${digitsOnly.hasMatch(pin)}');
     if (!digitsOnly.hasMatch(pin)) {
       setState(() => err = 'PIN can only contain digits.');
       return;
@@ -5005,7 +4464,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       setState(() => err = 'PIN must be at least 6 digits.');
       return;
     }
-    if (_qaAuthDiagnostics) print('[qa-auth-pin] login_pin_length_valid=true');
     if (pin.length > 64) {
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
@@ -5038,7 +4496,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     // accepted — routed via the handle branch of loginVault.
     // If the ZK lookup 401s (unknown handle), fall through to the
     // pre-ZK legacy /auth/login below for true-legacy accounts.
-    final bool entryIsHandle = vh.isExplicitVaultHandleDisplay(vaultName);
+    final bool entryIsHandle = vh.isValidVaultHandleDisplay(vaultName);
 
     // Preflight: verify the entered identifier is derivable BEFORE
     // touching the network. Any exception (InvalidUsername from a
@@ -5133,16 +4591,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // (backfilled vault_name) > user-typed (when entry was a
         // vault name) > displayName (legacy fallback). Never the
         // VLT handle.
-        final resolvedVaultName =
-            vh.userFacingVaultNameOrNull(loginResult.vaultName) ??
-                (entryIsHandle
-                    ? vh.userFacingVaultNameOrNull(loginResult.displayName)
-                    : vh.userFacingVaultNameOrNull(vaultName));
-        if (resolvedVaultName == null) {
-          throw StateError('Authenticated vault has no display-safe name');
-        }
-        _qaPostUnwrapStage('login_result_ready');
-        _qaPostUnwrapStage('set_session_entered');
+        final resolvedVaultName = loginResult.vaultName ??
+            (entryIsHandle ? loginResult.displayName : vaultName);
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -5150,22 +4600,12 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultHandleValue: loginResult.vaultHandle,
           displayNameValue: loginResult.displayName,
         );
-        _qaPostUnwrapStage('set_session_completed');
         pageTiming('secure_store_complete');
-        _qaPostUnwrapStage('secure_store_complete');
-        _qaPostUnwrapStage('register_device_entered');
-        // Device registration is best-effort and finalize already bound this
-        // session to the request device id. Do not keep the dashboard behind
-        // a redundant registration round-trip.
-        unawaited(_registerDeviceBestEffort(loginResult.sessionToken));
-        _qaPostUnwrapStage('register_device_completed');
-        _qaPostUnwrapStage('inheritance_consume_entered');
+        await _registerDeviceBestEffort(loginResult.sessionToken);
         await _autoConsumeInheritanceTokenIfPresent(
           loginResult.sessionToken,
           app,
         );
-        _qaPostUnwrapStage('inheritance_consume_completed');
-        _qaPostUnwrapStage('legacy_key_cache_entered');
         // 2026-07-22 crypto-context refactor. The MVK unwrapped by
         // OPAQUE is preserved in the legacy _keyCache slot for the
         // ZK metadata surface (ZkActiveMvk publish below reads it).
@@ -5179,22 +4619,11 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // Fix: install the atomic VaultCryptoContext with the
         // FRESHLY-DERIVED PBKDF2 key from current /vault-meta.
         // /chat now reads exclusively from VaultCryptoRegistry.
-        zk_mvk_store.ZkActiveMvk.set(
-          mvk: loginResult.mvk,
-          vaultId: loginResult.vaultId,
-          vaultHandle: loginResult.vaultHandle,
-        );
-        _qaPostUnwrapStage('active_mvk_set');
-        try {
-          _VaultCrypto._keyCache[
-                  _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
-              loginResult.mvk;
-          _VaultCrypto._pinCache[
-              _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] = pin;
-          _qaPostUnwrapStage('legacy_key_cache_completed');
-        } catch (_) {
-          _qaPostUnwrapStage('legacy_key_cache_failed_best_effort');
-        }
+        _VaultCrypto._keyCache[
+                _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] =
+            loginResult.mvk;
+        _VaultCrypto._pinCache[
+            _VaultCrypto._ck(loginResult.vaultId, resolvedVaultName)] = pin;
         _VaultCrypto.setActiveVault(
           vaultId: loginResult.vaultId,
           vaultName: resolvedVaultName,
@@ -5204,6 +4633,11 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // _keyCache (overwriting the MVK slot). ZkActiveMvk is the
         // authoritative source for MVK downstream (see
         // _scheduleMetadataMigration).
+        zk_mvk_store.ZkActiveMvk.set(
+          mvk: loginResult.mvk,
+          vaultId: loginResult.vaultId,
+          vaultHandle: loginResult.vaultHandle,
+        );
         try {
           final _zkLoginMeta = await _API.getVaultMeta(
             vaultName: resolvedVaultName,
@@ -5241,7 +4675,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
             'vaultName': resolvedVaultName,
           });
         }
-        _qaPostUnwrapStage('pbkdf2_context_completed');
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
         // Cleared on logout / vault switch.
@@ -5249,7 +4682,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           skVault: loginResult.skVaultPrivate,
           vaultId: loginResult.vaultId,
         );
-        _qaPostUnwrapStage('active_sk_set');
         inheritanceRevealDiag('normal_login_zk_success', {
           'vault_fpr': inheritanceRevealIdFingerprint(loginResult.vaultId),
           'has_vault_handle': loginResult.vaultHandle.isNotEmpty,
@@ -5259,9 +4691,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   loginResult.vaultId,
         });
         app.markUnlocked();
-        _qaPostUnwrapStage('app_mark_unlocked');
         _refreshSessionListsBestEffort(app);
-        _qaPostUnwrapStage('session_lists_refresh_started');
         pageTiming('session_hydrated');
         // Both post-login side-effects below can throw independently
         // of the authenticated session. If either raises, the user
@@ -5282,7 +4712,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           );
         } catch (_) {}
         if (!mounted) return;
-        _qaPostUnwrapStage('authenticated_route_visible');
         pageTiming('authenticated_route_visible');
         Navigator.pushReplacementNamed(context, '/chat');
         return;
@@ -5394,13 +4823,11 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       final result = await client.authLogin(vaultName: vaultName, pin: pin);
       final token = result['session_token']?.toString() ?? '';
       final vaultId = result['vault_id']?.toString() ?? '';
-      final outName =
-          vh.userFacingVaultNameOrNull(result['vault_name']?.toString()) ??
-              vh.userFacingVaultNameOrNull(vaultName);
+      final outName = result['vault_name']?.toString() ?? vaultName;
       final display = result['display_username']?.toString();
       final vaultHandle = result['vault_handle']?.toString();
       final newDeviceTrusted = result['new_device_trusted'] == true;
-      if (token.isEmpty || vaultId.isEmpty || outName == null) {
+      if (token.isEmpty || vaultId.isEmpty) {
         throw Exception('Login response missing session_token / vault_id');
       }
       await app.setSession(
@@ -5484,122 +4911,101 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     final isMobile = w < 760;
     return Scaffold(
       appBar: TopNavBar(isMobile: isMobile),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) => SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: math.max(0, constraints.maxHeight - 24),
-              ),
-              child: Center(
-                child: SizedBox(
-                  width: w < 420 ? w - 24 : 390,
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2F2F2F),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: Colors.white10),
+      body: Center(
+        child: SizedBox(
+          width: w < 420 ? w - 24 : 390,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2F2F2F),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Sign in to your vault',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Enter your vault name and PIN. Vault names are unique across Svaultai.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFFB4B4B4)),
+                ),
+                const SizedBox(height: 14),
+                Semantics(
+                  container: true,
+                  identifier: 'auth_vault_name_field',
+                  textField: true,
+                  child: TextField(
+                    key: const Key('auth_vault_name_field'),
+                    controller: vaultNameCtrl,
+                    autocorrect: false,
+                    enabled: !loading,
+                    decoration: const InputDecoration(labelText: 'Vault name'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Semantics(
+                  container: true,
+                  identifier: 'auth_pin_field',
+                  textField: true,
+                  child: TextField(
+                    key: const Key('auth_pin_field'),
+                    controller: pinCtrl,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    maxLength: 64,
+                    enabled: !loading,
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      labelText: 'PIN',
+                      helperText: 'Enter your 6–64 digit PIN.',
                     ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Text(
-                          'Sign in to your vault',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 22),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Enter your vault name and PIN. Vault names are unique across SVaultAI.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0xFFB4B4B4)),
-                        ),
-                        const SizedBox(height: 14),
-                        Semantics(
-                          container: true,
-                          identifier: 'auth_vault_name_field',
-                          textField: true,
-                          child: TextField(
-                            key: const Key('auth_vault_name_field'),
-                            controller: vaultNameCtrl,
-                            autocorrect: false,
-                            enabled: !loading,
-                            decoration:
-                                const InputDecoration(labelText: 'Vault name'),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Semantics(
-                          identifier: 'auth_pin_field',
-                          textField: true,
-                          child: Semantics(
-                            identifier: 'qa_login_pin_editable',
-                            textField: true,
-                            child: TextField(
-                              key: const Key('auth_pin_field'),
-                              controller: pinCtrl,
-                              onChanged: (_) => _qaPinDiag(),
-                              keyboardType: TextInputType.number,
-                              obscureText: true,
-                              maxLength: 64,
-                              enabled: !loading,
-                              decoration: const InputDecoration(
-                                counterText: '',
-                                labelText: 'PIN',
-                                helperText: 'Enter your 6–64 digit PIN.',
-                              ),
-                              onSubmitted: loading ? null : (_) => _submit(),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: Semantics(
-                            container: true,
-                            identifier: 'auth_sign_in_button',
-                            button: true,
-                            child: FilledButton(
-                              key: const Key('auth_sign_in_button'),
-                              onPressed: loading ? null : _submit,
-                              child: Text(loading ? 'Signing in…' : 'Sign in'),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        TextButton(
-                          onPressed: loading
-                              ? null
-                              : () => Navigator.pushReplacementNamed(
-                                  context, '/signup'),
-                          child: Semantics(
-                            identifier: 'qa_create_vault_link',
-                            button: true,
-                            child: Text(
-                                AppLocalizations.of(context).authDontHaveVault),
-                          ),
-                        ),
-                        TextButton.icon(
-                          key: const Key('login_form_help_and_faq'),
-                          onPressed: loading
-                              ? null
-                              : () => openHelpCenter(
-                                    context,
-                                    mode: hc.HelpCenterMode.public,
-                                  ),
-                          icon: const Icon(Icons.help_outline, size: 16),
-                          label: const Text('Help & FAQ'),
-                        ),
-                        if (err != null) _authErrorBox(err!),
-                      ],
+                    onSubmitted: loading ? null : (_) => _submit(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: Semantics(
+                    container: true,
+                    identifier: 'auth_sign_in_button',
+                    button: true,
+                    child: FilledButton(
+                      key: const Key('auth_sign_in_button'),
+                      onPressed: loading ? null : _submit,
+                      child: Text(loading ? 'Signing in…' : 'Sign in'),
                     ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: loading
+                      ? null
+                      : () =>
+                          Navigator.pushReplacementNamed(context, '/signup'),
+                  child: Text(
+                    AppLocalizations.of(context).authDontHaveVault,
+                  ),
+                ),
+                TextButton.icon(
+                  key: const Key('login_form_help_and_faq'),
+                  onPressed: loading
+                      ? null
+                      : () => openHelpCenter(
+                            context,
+                            mode: hc.HelpCenterMode.public,
+                          ),
+                  icon: const Icon(Icons.help_outline, size: 16),
+                  label: const Text('Help & FAQ'),
+                ),
+                if (err != null) _authErrorBox(err!),
+              ],
             ),
           ),
         ),
@@ -5616,13 +5022,6 @@ class SignupPage extends StatefulWidget {
 }
 
 class _SignupPageState extends State<SignupPage> {
-  static const bool _qaAuthDiagnostics =
-      bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
-
-  void _qaStage(String stage) {
-    if (_qaAuthDiagnostics) print('[qa-auth-stage] $stage');
-  }
-
   final vaultNameCtrl = TextEditingController();
   final displayNameCtrl = TextEditingController();
   final pinCtrl = TextEditingController();
@@ -5636,7 +5035,6 @@ class _SignupPageState extends State<SignupPage> {
   static const int _maxPinLength = 64;
 
   Future<void> _submit() async {
-    _qaStage('create_handler_entered');
     final vaultName = vaultNameCtrl.text.trim();
     final displayName = displayNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
@@ -5647,42 +5045,32 @@ class _SignupPageState extends State<SignupPage> {
       vaultNameErr = null;
     });
 
-    _qaStage('form_validation_started');
-
     if (vaultName.isEmpty) {
-      _qaStage('validation_failed_vault_name');
       setState(() => vaultNameErr = 'Pick a vault name.');
       return;
     }
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
-      _qaStage('validation_failed_pin_digits');
       setState(() => err = 'PIN can only contain digits.');
       return;
     }
     if (pin.length < _minPinLength) {
-      _qaStage('validation_failed_pin_length');
       setState(() => err = 'PIN must be at least 6 digits.');
       return;
     }
     if (pin.length > _maxPinLength) {
-      _qaStage('validation_failed_pin_max_length');
       setState(() => err = 'PIN must be 64 digits or fewer.');
       return;
     }
     if (pin != confirm) {
-      _qaStage('validation_failed_confirm_pin');
       setState(() => err = 'PINs do not match.');
       return;
     }
     if (!acknowledged) {
-      _qaStage('validation_failed_consent');
       setState(() => err =
-          'Please confirm you understand SVaultAI cannot recover your vault.');
+          'Please confirm you understand Svaultai cannot recover your vault.');
       return;
     }
-
-    _qaStage('form_validation_passed');
 
     setState(() => loading = true);
     final app = context.read<AppState>();
@@ -5692,10 +5080,7 @@ class _SignupPageState extends State<SignupPage> {
     // display_username (or vault_name) is encrypted client-side and
     // never sent to the server as plaintext.
     try {
-      _qaStage('zk_registration_call_entered');
-      _qaStage('opaque_client_start_entered');
       await OpaqueClient.ready();
-      _qaStage('http_transport_entered');
 
       // Identity contract (2026-07-20 corrected):
       //   vaultName    = user-chosen identity used both for signing
@@ -5722,7 +5107,6 @@ class _SignupPageState extends State<SignupPage> {
         displayName: displayNameForEncrypt,
         pin: pin,
       );
-      _qaStage('registration_init_and_finalize_completed');
 
       await app.setSession(
         token: result.sessionToken,
@@ -5735,7 +5119,6 @@ class _SignupPageState extends State<SignupPage> {
         // explicitly.
         displayNameValue: displayName.isEmpty ? null : displayName,
       );
-      _qaStage('registration_completed');
       await _registerDeviceBestEffort(result.sessionToken);
       await _autoConsumeInheritanceTokenIfPresent(
         result.sessionToken,
@@ -5916,7 +5299,7 @@ class _SignupPageState extends State<SignupPage> {
                         SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'If you forget your vault name or PIN, SVaultAI '
+                            'If you forget your vault name or PIN, Svaultai '
                             'cannot recover your vault.',
                             style: TextStyle(
                               color: Color(0xFFFFE0B2),
@@ -5930,18 +5313,14 @@ class _SignupPageState extends State<SignupPage> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  Semantics(
-                    identifier: 'qa_create_vault_name_field',
-                    textField: true,
-                    child: TextField(
-                      controller: vaultNameCtrl,
-                      autocorrect: false,
-                      enabled: !loading,
-                      decoration: InputDecoration(
-                        labelText: 'Vault name',
-                        hintText: 'e.g. Alexa, Atlas, Mira',
-                        errorText: vaultNameErr,
-                      ),
+                  TextField(
+                    controller: vaultNameCtrl,
+                    autocorrect: false,
+                    enabled: !loading,
+                    decoration: InputDecoration(
+                      labelText: 'Vault name',
+                      hintText: 'e.g. Alexa, Atlas, Mira',
+                      errorText: vaultNameErr,
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -5954,87 +5333,71 @@ class _SignupPageState extends State<SignupPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Semantics(
-                    identifier: 'qa_create_vault_pin_field',
-                    textField: true,
-                    child: TextField(
-                      controller: pinCtrl,
-                      keyboardType: TextInputType.number,
-                      obscureText: true,
-                      maxLength: _maxPinLength,
-                      enabled: !loading,
-                      decoration: const InputDecoration(
-                        counterText: '',
-                        labelText: 'PIN (6–64 digits)',
-                        helperText: 'Create a 6–64 digit PIN.',
-                      ),
+                  TextField(
+                    controller: pinCtrl,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    maxLength: _maxPinLength,
+                    enabled: !loading,
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      labelText: 'PIN (6–64 digits)',
+                      helperText: 'Create a 6–64 digit PIN.',
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Semantics(
-                    identifier: 'qa_create_vault_confirm_pin_field',
-                    textField: true,
-                    child: TextField(
-                      controller: confirmPinCtrl,
-                      keyboardType: TextInputType.number,
-                      obscureText: true,
-                      maxLength: _maxPinLength,
-                      enabled: !loading,
-                      decoration: const InputDecoration(
-                        counterText: '',
-                        labelText: 'Confirm PIN',
-                      ),
-                      onSubmitted: loading ? null : (_) => _submit(),
+                  TextField(
+                    controller: confirmPinCtrl,
+                    keyboardType: TextInputType.number,
+                    obscureText: true,
+                    maxLength: _maxPinLength,
+                    enabled: !loading,
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      labelText: 'Confirm PIN',
                     ),
+                    onSubmitted: loading ? null : (_) => _submit(),
                   ),
                   const SizedBox(height: 10),
-                  Semantics(
-                    identifier: 'qa_create_vault_consent',
-                    button: true,
-                    child: InkWell(
-                      onTap: loading
-                          ? null
-                          : () => setState(() => acknowledged = !acknowledged),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Checkbox(
-                              value: acknowledged,
-                              onChanged: loading
-                                  ? null
-                                  : (v) =>
-                                      setState(() => acknowledged = v ?? false),
-                            ),
-                            const Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.only(top: 12),
-                                child: Text(
-                                  'I understand and accept this risk.',
-                                  style: TextStyle(
-                                    color: Color(0xFFE0E0E0),
-                                    fontSize: 13,
-                                  ),
+                  InkWell(
+                    onTap: loading
+                        ? null
+                        : () => setState(() => acknowledged = !acknowledged),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Checkbox(
+                            value: acknowledged,
+                            onChanged: loading
+                                ? null
+                                : (v) =>
+                                    setState(() => acknowledged = v ?? false),
+                          ),
+                          const Expanded(
+                            child: Padding(
+                              padding: EdgeInsets.only(top: 12),
+                              child: Text(
+                                'I understand and accept this risk.',
+                                style: TextStyle(
+                                  color: Color(0xFFE0E0E0),
+                                  fontSize: 13,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
-                    child: Semantics(
-                      identifier: 'qa_create_vault_submit',
-                      button: true,
-                      child: FilledButton(
-                        onPressed: loading ? null : _submit,
-                        child: Text(loading ? 'Creating…' : 'Create vault'),
-                      ),
+                    child: FilledButton(
+                      onPressed: loading ? null : _submit,
+                      child: Text(loading ? 'Creating…' : 'Create vault'),
                     ),
                   ),
                   TextButton(
@@ -6064,30 +5427,15 @@ class UnlockPage extends StatefulWidget {
   State<UnlockPage> createState() => _UnlockPageState();
 }
 
-mixin _SingleLoginReplacement<T extends StatefulWidget> on State<T> {
-  bool _loginReplacementScheduled = false;
-
-  void _scheduleLoginReplacement() {
-    if (_loginReplacementScheduled || !mounted) return;
-    _loginReplacementScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-    });
-  }
-}
-
-class _UnlockPageState extends State<UnlockPage>
-    with _SingleLoginReplacement<UnlockPage> {
+class _UnlockPageState extends State<UnlockPage> {
   final pinCtrl = TextEditingController();
   bool loading = false;
   String? err;
+  bool _leavingForLogin = false;
 
   Future<void> _submit() async {
     final app = context.read<AppState>();
-    final displayVaultName = vh.userFacingVaultNameOrNull(app.lastVaultName);
-    final privateVaultHandle =
-        vh.canonicalInternalVaultHandleOrNull(app.vaultHandle);
+    final name = app.lastVaultName;
     // Cache invariants: to run the ZK unlock path we need either the
     // last used vault_handle (VLT-... display) OR the last used
     // vault_name (legacy). A stale / partially-cleared cache — for
@@ -6095,15 +5443,13 @@ class _UnlockPageState extends State<UnlockPage>
     // wiped — would send us to /unlock with no way to look up the
     // account. Route the user through full /login instead of
     // attempting an unlock that would 100% miss.
-    if (displayVaultName == null && privateVaultHandle == null) {
+    if (name == null || name.isEmpty) {
       releaseWebDiagnosticPrint(
-        '[zk-unlock-diag] cache_incomplete=no_private_login_identifier',
+        '[zk-unlock-diag] cache_incomplete=lastVaultName_missing',
       );
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
-    final entryIsVltHandle = displayVaultName == null;
-    final name = displayVaultName ?? privateVaultHandle!;
     final pin = pinCtrl.text.trim();
     final digitsOnly = RegExp(r'^\d+$');
     if (!digitsOnly.hasMatch(pin)) {
@@ -6138,21 +5484,39 @@ class _UnlockPageState extends State<UnlockPage>
     }
 
     pageTiming('submit_entry');
-    // Friendly names and internal handles remain separate in state. Unlock can
-    // privately use the remembered handle when no display name is available;
-    // it is never assigned to the sign-in controller or rendered here.
+    // Under the corrected identity model (ed825aa), lastVaultName
+    // holds the USER-TYPED vault name — the same string used for
+    // both signing in and as the vault AI's name. Only sessions
+    // predating that migration might carry a VLT-... handle in
+    // this slot (via the SharedPreferences fallback chain in
+    // hydrate). Route accordingly: user-typed name → ZK vault-
+    // name path; literal VLT handle → ZK handle path. Legacy
+    // /auth/login is a last-resort fallback for unadopted pre-ZK
+    // accounts (the ZK path 401's on those because no vault_handle
+    // row exists for the derived bytes).
+    // A PIN-only return already has the authoritative protocol handle saved
+    // locally. Prefer it over deriving a new handle from last_vault_name:
+    // historical builds could persist a server-normalized/friendly name in
+    // that slot, and deriving from that value selects a different OPAQUE
+    // record. The handle remains internal and is never rendered in the field.
+    final loginId = selectInheritanceRevealLoginIdentifier(
+      vaultName: name,
+      lastVaultName: app.lastVaultName,
+      vaultHandle: app.vaultHandle,
+    );
+    final zkLoginUsesHandle = loginId.vaultHandle != null;
     String unlockLastStep = 'submit_entry';
     bool zkLoginNotFound = false;
     {
       try {
         releaseWebDiagnosticPrint('[zk-unlock-step] page/submit_entry '
-            'entry_type=${entryIsVltHandle ? "handle" : "name"}');
+            'entry_type=${zkLoginUsesHandle ? "stored_handle" : "name"}');
         await OpaqueClient.ready();
         unlockLastStep = 'page_opaque_ready';
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
-          vaultName: entryIsVltHandle ? null : name,
-          vaultHandle: entryIsVltHandle ? name : null,
+          vaultName: loginId.vaultName,
+          vaultHandle: loginId.vaultHandle,
           pin: pin,
           onStep: (s) => unlockLastStep = s,
         );
@@ -6164,14 +5528,10 @@ class _UnlockPageState extends State<UnlockPage>
         // client-side app.vaultName / decrypted displayName when
         // the entry was a VLT handle. Never the VLT handle
         // itself.
-        final resolvedVaultName =
-            vh.userFacingVaultNameOrNull(loginResult.vaultName) ??
-                vh.userFacingVaultNameOrNull(app.vaultName) ??
-                vh.userFacingVaultNameOrNull(displayVaultName) ??
-                vh.userFacingVaultNameOrNull(loginResult.displayName);
-        if (resolvedVaultName == null) {
-          throw StateError('Authenticated vault has no display-safe name');
-        }
+        final resolvedVaultName = loginResult.vaultName ??
+            (zkLoginUsesHandle
+                ? (app.vaultName ?? loginResult.displayName)
+                : name);
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -6318,7 +5678,7 @@ class _UnlockPageState extends State<UnlockPage>
         final looksLikeAuth401 = msg.contains('HTTP 401') ||
             msg.contains('failed 401') ||
             msg.contains('Wrong username or PIN');
-        if (looksLikeAuth401 && !entryIsVltHandle) {
+        if (looksLikeAuth401 && !zkLoginUsesHandle) {
           zkLoginNotFound = true;
         } else {
           if (!mounted) return;
@@ -6333,7 +5693,7 @@ class _UnlockPageState extends State<UnlockPage>
 
     // A typed VLT handle never falls back to legacy — a wrong PIN
     // there must fail closed on the ZK side.
-    if (entryIsVltHandle && zkLoginNotFound) {
+    if (zkLoginUsesHandle && zkLoginNotFound) {
       if (!mounted) return;
       setState(() {
         err = 'Wrong username or PIN.';
@@ -6430,19 +5790,34 @@ class _UnlockPageState extends State<UnlockPage>
   }
 
   Future<void> _useAnotherVault() async {
+    if (_leavingForLogin) return;
+    setState(() => _leavingForLogin = true);
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
-    _scheduleLoginReplacement();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/login');
+  }
+
+  @override
+  void dispose() {
+    pinCtrl.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
 
-    if (!app.hasRememberedVaultLogin) {
-      _scheduleLoginReplacement();
+    if (app.lastVaultName == null && !_leavingForLogin) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_leavingForLogin) {
+          _leavingForLogin = true;
+          Navigator.pushReplacementNamed(context, '/login');
+        }
+      });
       return const Scaffold();
     }
+    if (_leavingForLogin) return const Scaffold();
     final w = MediaQuery.of(context).size.width;
     final isMobile = w < 760;
     return Scaffold(
@@ -6534,8 +5909,7 @@ class PinGatePage extends StatefulWidget {
   State<PinGatePage> createState() => _PinGatePageState();
 }
 
-class _PinGatePageState extends State<PinGatePage>
-    with _SingleLoginReplacement<PinGatePage> {
+class _PinGatePageState extends State<PinGatePage> {
   final pinController = TextEditingController();
   String? err;
 
@@ -6561,17 +5935,12 @@ class _PinGatePageState extends State<PinGatePage>
     final token = app.sessionToken;
 
     if (token == null) {
-      // _decide() starts in initState. Navigating synchronously here marks the
-      // Navigator overlay dirty while it is still building PinGatePage, which
-      // is a debug assertion on web. Defer this lifecycle redirect until the
-      // first frame has completed.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+      if (mounted) {
         Navigator.pushReplacementNamed(
           context,
-          app.hasRememberedVaultLogin ? '/unlock' : '/login',
+          app.lastVaultName != null ? '/unlock' : '/login',
         );
-      });
+      }
       return;
     }
 
@@ -6610,14 +5979,14 @@ class _PinGatePageState extends State<PinGatePage>
 
       app.recoveryInfo = null;
 
-      final displaySafeBackendName =
-          vh.userFacingVaultNameOrNull(backendVaultName);
-      if (hasVault && displaySafeBackendName != null) {
-        app.vaultName = displaySafeBackendName;
-        app.lastVaultName = displaySafeBackendName;
+      if (hasVault &&
+          backendVaultName != null &&
+          backendVaultName.trim().isNotEmpty) {
+        app.vaultName = backendVaultName.trim();
+        app.lastVaultName = backendVaultName.trim();
         await NativeSecureStore.writeString(
           'last_vault_name',
-          displaySafeBackendName,
+          backendVaultName.trim(),
         );
       }
 
@@ -6645,7 +6014,8 @@ class _PinGatePageState extends State<PinGatePage>
     if (_submitting) return;
     final app = context.read<AppState>();
     await app.clearSession(keepLastVaultName: false);
-    _scheduleLoginReplacement();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/login');
   }
 
   Future<void> _submit() async {
@@ -6683,11 +6053,6 @@ class _PinGatePageState extends State<PinGatePage>
     final submitStartedAt = DateTime.now();
     final app = context.read<AppState>();
     try {
-      // A PIN-gate unlock after a page refresh must restore the ZK MVK/SK
-      // alongside the legacy PBKDF2 chat key. Without this, the shell reports
-      // an unlocked vault and FileV2/chat work, but CredentialV2 and MemoryV2
-      // remain unusable because their client-side repositories require the
-      // active MVK for this vault.
       final ok = await app.verifyPin(
         _pin,
         restoreZkSessionKeys: true,
@@ -6806,7 +6171,7 @@ class _PinGatePageState extends State<PinGatePage>
                         const SizedBox(width: 10),
                         const Expanded(
                           child: Text(
-                            'SVaultAI cannot reset, recover, view, or '
+                            'Svaultai cannot reset, recover, view, or '
                             'bypass your PIN.\n'
                             'If you forget it, your vault may become '
                             'permanently inaccessible.',
@@ -6847,7 +6212,7 @@ class _PinGatePageState extends State<PinGatePage>
                             child: Padding(
                               padding: EdgeInsets.only(top: 12),
                               child: Text(
-                                'I understand that SVaultAI cannot '
+                                'I understand that Svaultai cannot '
                                 'recover my PIN.',
                                 style: TextStyle(
                                   color: Color(0xFFE0E0E0),
@@ -6880,7 +6245,7 @@ class _PinGatePageState extends State<PinGatePage>
                         SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Remember: SVaultAI cannot recover forgotten PINs.',
+                            'Remember: Svaultai cannot recover forgotten PINs.',
                             style: TextStyle(
                               color: Color(0xFFB4B4B4),
                               fontSize: 12,
@@ -7161,7 +6526,7 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
                 const SizedBox(height: 12),
                 const Text(
                   'Without that key, the old data cannot be decrypted by anyone, '
-                  'including you. To protect your account, SVaultAI will not let a '
+                  'including you. To protect your account, Svaultai will not let a '
                   'new vault be created on top of it. You must erase the unrecoverable '
                   'data before starting fresh.',
                   style: TextStyle(
@@ -7260,16 +6625,17 @@ class _CreateChoiceTile extends StatelessWidget {
   }
 }
 
-enum _MemoryProposalFinalizeOutcome { saved, duplicate, failed }
+class MemoryProposalStripResult {
+  final String strippedBuffer;
+  final String? jsonPayload;
+  const MemoryProposalStripResult({
+    required this.strippedBuffer,
+    required this.jsonPayload,
+  });
+}
 
-String _memoryProposalOutcomeMessage(_MemoryProposalFinalizeOutcome outcome) =>
-    switch (outcome) {
-      _MemoryProposalFinalizeOutcome.saved => 'Memory saved.',
-      _MemoryProposalFinalizeOutcome.duplicate =>
-        'That memory is already saved.',
-      _MemoryProposalFinalizeOutcome.failed =>
-        'Could not save that memory securely. Your vault was not changed.',
-    };
+const String kMemoryProposalOpen = '<<VAULTAI_MEMORY_PROPOSAL>>';
+const String kMemoryProposalClose = '<<END>>';
 
 /// Scan `buffer` for the `<<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>>`
 /// sentinel. If a full sentinel is found, returns the JSON payload
@@ -7284,1153 +6650,110 @@ String _memoryProposalOutcomeMessage(_MemoryProposalFinalizeOutcome outcome) =>
 ///
 /// File-scope function (not a method) so the sentinel-strip logic
 /// can be tested in isolation without a widget harness.
-Map<String, dynamic>? _generatedLoginDraftFromMessage(ChatMessage message) {
-  if (message.role != 'assistant' ||
-      message.kind != ChatMessage.kVaultChatCard) {
-    return null;
+MemoryProposalStripResult extractAndStripMemoryProposal({
+  required String buffer,
+  required bool alreadyFinalized,
+}) {
+  final openIdx = buffer.indexOf(kMemoryProposalOpen);
+  if (openIdx < 0) {
+    return MemoryProposalStripResult(
+      strippedBuffer: buffer,
+      jsonPayload: null,
+    );
   }
-  final payload = message.payload;
-  if (payload?['intent'] != 'vault_generated_login_create_draft') return null;
-  final rawCard = payload?['card'];
-  if (rawCard is! Map) return null;
-  final rawData = rawCard['data'];
-  if (rawData is! Map) return null;
-  final data = Map<String, dynamic>.from(rawData);
-  final draftId = data['draft_id']?.toString().trim() ?? '';
-  final service =
-      (data['service'] ?? data['service_name'])?.toString().trim() ?? '';
-  final username = data['username']?.toString().trim() ?? '';
-  final password = data['password']?.toString() ?? '';
-  if (draftId.isEmpty ||
-      service.isEmpty ||
-      username.isEmpty ||
-      password.isEmpty) {
-    return null;
+  final closeIdx = buffer.indexOf(
+    kMemoryProposalClose,
+    openIdx + kMemoryProposalOpen.length,
+  );
+  if (closeIdx < 0) {
+    return MemoryProposalStripResult(
+      strippedBuffer: buffer.substring(0, openIdx),
+      jsonPayload: null,
+    );
   }
-  return <String, dynamic>{
-    ...data,
-    'draft_id': draftId,
-    'service': service,
-    'username': username,
-    'password': password,
-  };
+  final jsonStart = openIdx + kMemoryProposalOpen.length;
+  final jsonPayload = buffer.substring(jsonStart, closeIdx);
+  final afterClose = closeIdx + kMemoryProposalClose.length;
+  final tail =
+      buffer.substring(afterClose).replaceFirst(RegExp(r'^\r?\n\r?\n'), '');
+  final strippedBuffer = buffer.substring(0, openIdx) + tail;
+  return MemoryProposalStripResult(
+    strippedBuffer: strippedBuffer,
+    jsonPayload: alreadyFinalized ? null : jsonPayload,
+  );
 }
 
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
-  final GeneratedCredentialDraftFinalizer _generatedCredentialFinalizer =
-      GeneratedCredentialDraftFinalizer();
-  final Map<String, String> _credentialV2MigrationOperationIds = {};
   bool _cryptoBillingBannerDismissed = false;
-  bool _privateDomainArbitrationInFlight = false;
-  bool _credentialLookupInFlight = false;
-  Future<void>? _vaultFilesLoadFuture;
-  Future<void>? _vaultLoginsLoadFuture;
-  final CredentialInventorySessionBinding _credentialInventorySession =
-      CredentialInventorySessionBinding();
   BillingLoadState? _cryptoBillingBannerLastState;
-  Map<String, dynamic>? _pendingGeneratedLoginDraft;
-  String? _pendingGeneratedLoginDraftVaultId;
 
-  void _qaV2CreateTrace(String stage) {
-    const enabled =
-        bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
-    if (enabled) print('[qa-v2-create] $stage');
-  }
-
-  void _openSecureItemView(String service, String itemType) {
-    final safeTitle = service.trim();
-    setState(() {
-      selectedSection = _DashboardSection.chat;
-    });
-    if (safeTitle.isEmpty) {
-      _sendQuickPrompt('show me');
-    } else {
-      _sendQuickPrompt('show me $safeTitle');
-    }
-  }
-
-  Future<void> _openLegacySecureItemDirect(
-    String service,
-    String itemType,
-  ) async {
+  Future<void> _openSecureItemView(String service, String itemType) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
-    if (token == null || vaultName == null) return;
+    final safeTitle = service.trim();
+    if (token == null || vaultName == null || safeTitle.isEmpty) {
+      _showSnack('Session expired.');
+      return;
+    }
+
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
-      final fetched =
-          await VaultAIClient(baseUrl: backendBaseUrl).getVaultSecureItem(
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final fetched = await client.getVaultSecureItem(
         vaultName: vaultName,
-        service: service,
+        service: safeTitle,
         itemType: itemType,
         pin: pin,
         authToken: token,
       );
-      final raw = fetched['fields'];
-      final fields = raw is Map ? Map<String, dynamic>.from(raw) : const {};
-      String? firstNonEmptyField(Iterable<String> names) {
-        for (final name in names) {
-          final value = fields[name]?.toString().trim() ?? '';
-          if (value.isNotEmpty) return value;
-        }
-        return null;
-      }
-
-      final identifier = firstNonEmptyField(const <String>[
-        'username',
-        'email',
-        'user_id',
-        'login_id',
-        'account_id',
-      ]);
-      final value = firstNonEmptyField(const <String>[
-        'password',
-        'secure_value',
-        'secret_value',
-        'access_code',
-        'value',
-      ]);
+      final rawFields = fetched['fields'];
+      final fields = <String, String>{
+        if (rawFields is Map)
+          for (final entry in rawFields.entries)
+            if (entry.value is String)
+              entry.key.toString(): entry.value as String,
+      };
       if (!mounted) return;
-      setState(() {
-        msgs.add(_Msg(
-          'assistant',
-          'Here is your $service login.',
-          kind: ChatMessage.kInlineCredential,
-          payload: <String, dynamic>{
-            'service': service,
-            'username': identifier ?? '',
-            'password': value ?? '',
-            'fields': fields,
-          },
-        ));
-      });
-      debugPrint(
-          'ASSISTANT_REPLY_RENDERED_AT=${DateTime.now().toIso8601String()}');
-      _scrollToBottom();
-    } catch (error) {
-      if (app.handleApiException(error)) return;
-      _showSnack('Could not open that saved login locally.');
-    }
-  }
 
-  Future<void> _openCiphertextSecureItemDirect(VaultLoginItem item) async {
-    final fields = item.localFields ?? const <String, dynamic>{};
-    String first(Iterable<String> keys) {
-      for (final key in keys) {
-        final value = fields[key]?.toString() ?? '';
-        if (value.isNotEmpty) return value;
-      }
-      return '';
-    }
-
-    if (!mounted) return;
-    setState(() {
-      selectedSection = _DashboardSection.chat;
-      msgs.add(_Msg(
-        'assistant',
-        'Here is your ${item.service} login.',
-        kind: ChatMessage.kInlineCredential,
-        payload: <String, dynamic>{
-          'service': item.service,
-          'username': first(const ['username', 'email', 'login_id']),
-          'password': first(const ['password', 'secure_value', 'value']),
-          'fields': fields,
+      final readableValue = secureItemViewTextFor(itemType, fields);
+      await showSecureItemDetailSheet(
+        context,
+        title: safeTitle,
+        itemType: itemType,
+        username: fields['username'],
+        revealedValue: readableValue.isEmpty ? null : readableValue,
+        onCopyUsername: (value) {
+          Clipboard.setData(ClipboardData(text: value));
+          _showSnack('Username copied');
         },
-      ));
-    });
-    _scrollToBottom();
-  }
-
-  CredentialV2Repository? _credentialV2Repository(AppState app) {
-    const qaDiagnostics =
-        bool.fromEnvironment('QA_AUTH_DIAGNOSTICS', defaultValue: false);
-    if (!zkV2CredentialReadEnabled) {
-      if (qaDiagnostics)
-        print(
-            '[qa-v2-repo] session_token_present=false app_vault_id_present=false active_mvk_present=false active_mvk_vault_id_present=false vault_identity_match=false read_enabled=false write_enabled=$zkV2CredentialWriteEnabled factory_entered=true factory_succeeded=false app_vault_id_type=unknown active_mvk_vault_id_type=unknown');
-      return null;
-    }
-    final token = app.sessionToken;
-    final mvk = zk_mvk_store.ZkActiveMvk.current();
-    final vaultId = app.vaultId;
-    final activeMvkVaultId = zk_mvk_store.ZkActiveMvk.currentVaultId();
-    String identityType(String? value) {
-      if (value == null || value.isEmpty) return 'unknown';
-      if (value.startsWith('VLT-')) return 'canonical_vault_handle';
-      if (RegExp(r'^[0-9a-fA-F-]{16,}$').hasMatch(value))
-        return 'internal_vault_id';
-      return 'vault_name';
-    }
-
-    final tokenPresent = token != null && token.isNotEmpty;
-    final appVaultIdPresent = vaultId != null && vaultId.isNotEmpty;
-    final activeMvkPresent = mvk != null;
-    final activeMvkVaultIdPresent =
-        activeMvkVaultId != null && activeMvkVaultId.isNotEmpty;
-    final identityMatch = appVaultIdPresent &&
-        activeMvkVaultIdPresent &&
-        vaultId == activeMvkVaultId;
-    if (qaDiagnostics)
-      print(
-          '[qa-v2-repo] session_token_present=$tokenPresent app_vault_id_present=$appVaultIdPresent active_mvk_present=$activeMvkPresent active_mvk_vault_id_present=$activeMvkVaultIdPresent vault_identity_match=$identityMatch read_enabled=true write_enabled=$zkV2CredentialWriteEnabled factory_entered=true factory_succeeded=${tokenPresent && appVaultIdPresent && activeMvkPresent && identityMatch} app_vault_id_type=${identityType(vaultId)} active_mvk_vault_id_type=${identityType(activeMvkVaultId)}');
-    if (!tokenPresent ||
-        !activeMvkPresent ||
-        !appVaultIdPresent ||
-        !identityMatch) {
-      return null;
-    }
-    return CredentialV2Repository(
-      crypto: CredentialV2Crypto(vk_hier.VaultKeyHierarchy(mvk)),
-      api: CredentialV2Api(
-        baseUrl: backendBaseUrl,
-        sessionToken: token,
-        // Credential-v2 calls must not reuse a client across sign-out/login
-        // dashboard lifecycles; a prior dashboard can have disposed it.
-        client: http.Client(),
-      ),
-    );
-  }
-
-  String _newCredentialV2RecordId() {
-    final random = Random.secure();
-    final suffix = base64Url
-        .encode(List<int>.generate(12, (_) => random.nextInt(256)))
-        .replaceAll('=', '');
-    return 'cred-${DateTime.now().microsecondsSinceEpoch}-$suffix';
-  }
-
-  String _credentialV2MigrationKey(VaultLoginItem item) =>
-      '${item.itemType}\u0000${item.service.trim().toLowerCase()}';
-
-  String _credentialV2MigrationRecordId(AppState app, VaultLoginItem item) {
-    final material = '${app.vaultId}|${item.itemType}|'
-        '${item.service.trim().toLowerCase()}';
-    return 'migrated-${sha256.convert(utf8.encode(material))}';
-  }
-
-  Future<void> _migrateCredentialV2(VaultLoginItem item) async {
-    if (!zkV2CredentialMigrationEnabled ||
-        item.cryptoVersion != 'legacy_v1' ||
-        !isLoginLikeType(item.itemType)) {
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Migrate this login to credential v2?'),
-        content: Text(
-          'QA only: migrate exactly ${item.service}. The legacy record is '
-          'retained for rollback. This does not run during login.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const Key('credential_v2_migrate_confirm'),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Migrate this item'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final app = context.read<AppState>();
-    final repository = _credentialV2Repository(app);
-    final token = app.sessionToken;
-    final vaultName = app.vaultName;
-    if (repository == null || token == null || vaultName == null) {
-      _showSnack('Unlock this QA vault again before migration.');
-      return;
-    }
-    final key = _credentialV2MigrationKey(item);
-    final recordId = _credentialV2MigrationRecordId(app, item);
-    final operationId = _credentialV2MigrationOperationIds.putIfAbsent(
-      key,
-      () => credentialV2MigrationOperationId(recordId),
-    );
-    final migrator = CredentialV2Migrator(
-      crypto: repository.crypto,
-      api: repository.api,
-    );
-    var qaMigrationStage = 'started';
-    try {
-      await migrator.migrateOne(
-        recordId: recordId,
-        operationId: operationId,
-        serviceForLookup: item.service,
-        onStage: credentialV2QaDiagnosticsEnabled
-            ? (stage) => qaMigrationStage = stage
-            : null,
-        decryptLegacyLocally: () async {
-          final pin = await _VaultCrypto.currentPinOrThrow();
-          final response =
-              await VaultAIClient(baseUrl: backendBaseUrl).getVaultSecureItem(
-            vaultName: vaultName,
-            service: item.service,
-            itemType: item.itemType,
-            pin: pin,
-            authToken: token,
-          );
-          final rawFields = response['fields'];
-          final fields = rawFields is Map
-              ? Map<String, dynamic>.from(rawFields)
-              : <String, dynamic>{};
-          return CredentialV2Plaintext(
-            service: response['service']?.toString() ?? item.service,
-            username: fields['username']?.toString() ?? '',
-            password: fields['password']?.toString() ?? '',
-            url: fields['url']?.toString(),
-            notes: response['notes']?.toString() ?? fields['note']?.toString(),
+        onCopyValue: (value) {
+          Clipboard.setData(ClipboardData(text: value));
+          _showSnack('Value copied');
+        },
+        onEdit: (title, type) {
+          Navigator.of(context).pop();
+          _openSecureItemEditDialog(
+            title,
+            type,
+            initialFields: fields,
           );
         },
+        onDelete: (title, type) {
+          Navigator.of(context).pop();
+          _startSecureItemDeleteConfirmation(title, type);
+        },
       );
-      _credentialV2MigrationOperationIds.remove(key);
-      _showSnack('Credential v2 migration verified; legacy retained.');
-      await _loadVaultLogins();
-    } catch (error) {
-      final qaStatus =
-          RegExp(r'\(([0-9]{3})\)').firstMatch(error.toString())?.group(1) ??
-              'local';
-      final qaErrorType = error.runtimeType.toString();
-      _showSnack(credentialV2QaDiagnosticsEnabled
-          ? 'Migration paused safely at $qaMigrationStage (status $qaStatus, type $qaErrorType). Retry reuses the same operation.'
-          : 'Migration paused safely. Retry reuses the same operation.');
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not open saved item: $e');
     }
-  }
-
-  Future<void> _rollbackCredentialV2(VaultLoginItem item) async {
-    if (!zkV2CredentialMigrationEnabled ||
-        item.cryptoVersion != credentialV2CryptoVersion ||
-        item.recordId == null) {
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rollback this v2 migration?'),
-        content: Text(
-          'QA only: hide the v2 envelope for ${item.service} and return to '
-          'the retained legacy record.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const Key('credential_v2_rollback_confirm'),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Rollback this item'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    if (!mounted) return;
-    final repository = _credentialV2Repository(context.read<AppState>());
-    if (repository == null) return;
-    try {
-      await CredentialV2Migrator(
-        crypto: repository.crypto,
-        api: repository.api,
-      ).rollbackOne(item.recordId!);
-      _showSnack('Credential v2 rolled back; retained legacy is active.');
-      await _loadVaultLogins();
-    } catch (_) {
-      _showSnack('Rollback was not available for this item.');
-    }
-  }
-
-  Future<void> _openCredentialV2Editor(
-    VaultLoginItem? item, {
-    bool createMode = false,
-    String? initialService,
-  }) async {
-    final app = context.read<AppState>();
-    if (!app.billingWritesAllowed) {
-      _showSnack(app.billingWriteBlockedMessage);
-      return;
-    }
-    if (!zkV2CredentialWriteEnabled) {
-      _showSnack('Credential v2 writing is disabled.');
-      return;
-    }
-    final repository = _credentialV2Repository(app);
-    if (repository == null) {
-      _showSnack('Unlock this QA vault again to use credential v2.');
-      return;
-    }
-    CredentialV2Plaintext? existing;
-    bool? qaEditPrefillEquality;
-    if (item != null) {
-      final recordId = item.recordId;
-      if (recordId == null) return;
-      try {
-        existing = await repository.reveal(recordId);
-        qaEditPrefillEquality = CredentialV2QaDiagnostics.matches(
-          recordId,
-          existing,
-        );
-      } catch (_) {
-        _showSnack(
-            'Could not decrypt this credential. No legacy fallback was used.');
-        return;
-      }
-    }
-    if (!mounted) return;
-    final initial = existing == null
-        ? <String, String>{}
-        : <String, String>{
-            'username': existing.username,
-            'password': existing.password,
-            if (existing.url != null) 'url': existing.url!,
-            if (existing.notes != null) 'note': existing.notes!,
-          };
-    // One create dialog represents one logical record. Keep its ID stable
-    // across Save retries so a lost response cannot create multiple records
-    // or force a fresh CORS preflight URL on every retry.
-    final createRecordId = item == null ? _newCredentialV2RecordId() : null;
-    await showSecureItemEditDialog(
-      context,
-      title: existing?.service ?? initialService?.trim() ?? '',
-      itemType: 'login',
-      dialogTitle: createMode
-          ? 'New login'
-          : credentialV2QaDiagnosticsEnabled && qaEditPrefillEquality != null
-              ? qaEditPrefillEquality
-                  ? 'QA edit prefill equality: PASS'
-                  : 'QA edit prefill equality: FAIL'
-              : null,
-      initialFields: initial,
-      onSave: ({
-        required String oldTitle,
-        required String itemType,
-        required String newTitle,
-        required Map<String, String> fields,
-      }) async {
-        if (!app.billingWritesAllowed) {
-          _showSnack(app.billingWriteBlockedMessage);
-          return false;
-        }
-        return _enqueueChatOperation<bool>(
-          kind: ChatOperationKind.mutation,
-          operation: () async {
-            try {
-              final recordId = item?.recordId ?? createRecordId!;
-              final credential = CredentialV2Plaintext(
-                service: newTitle,
-                username: fields['username'] ?? '',
-                password: fields['password'] ?? '',
-                url: fields['url'],
-                notes: fields['note'],
-                totpSecret: existing?.totpSecret,
-                customFields: existing?.customFields ?? const {},
-              );
-              if (item == null) {
-                await repository.create(
-                  recordId: recordId,
-                  credential: credential,
-                  serviceForLookup: newTitle,
-                );
-              } else {
-                final operationId = credentialV2MigrationOperationId(recordId);
-                await repository.edit(
-                  recordId: recordId,
-                  credential: credential,
-                  serviceForLookup: newTitle,
-                  migrationOperationId: operationId,
-                );
-                final readBack = await repository.reveal(recordId);
-                if (!readBack.semanticallyEquals(credential)) {
-                  throw StateError('credential v2 edit verification failed');
-                }
-                await repository.api.verify(recordId, operationId);
-              }
-              CredentialV2QaDiagnostics.remember(recordId, credential);
-              _showSnack(item == null ? 'Login saved' : 'Updated login');
-              await _reloadVaultLoginsAfterMutation();
-              if (mounted && item == null) {
-                setState(() => selectedSection = _DashboardSection.logins);
-              }
-              return true;
-            } catch (_) {
-              _showSnack('Could not save this credential.');
-              return false;
-            }
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _revealCredentialV2(VaultLoginItem item) async {
-    final repository = _credentialV2Repository(context.read<AppState>());
-    if (repository == null || item.recordId == null) return;
-    try {
-      final value = await repository.reveal(item.recordId!);
-      final equality = CredentialV2QaDiagnostics.matches(
-        item.recordId!,
-        value,
-      );
-      await _showCredentialV2Plaintext(value,
-          recordId: item.recordId, qaEquality: equality);
-    } catch (_) {
-      _showSnack(
-          'Could not decrypt this credential. No legacy fallback was used.');
-    }
-  }
-
-  Future<void> _showCredentialV2Plaintext(CredentialV2Plaintext value,
-      {String? recordId,
-      bool? qaEquality,
-      CredentialV2QaComparison? qaComparison}) async {
-    if (!mounted) return;
-    var passwordRevealed = false;
-    var editRequested = false;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(value.service),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Username'),
-              Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      value.username,
-                      key: const Key('credential_v2_username_value'),
-                    ),
-                  ),
-                  IconButton(
-                    key: const Key('credential_v2_copy_username'),
-                    tooltip: 'Copy username',
-                    onPressed: () async {
-                      await Clipboard.setData(
-                          ClipboardData(text: value.username));
-                      _showSnack('Username copied');
-                    },
-                    icon: const Icon(Icons.copy_outlined),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text('Password'),
-              Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      passwordRevealed ? value.password : '••••••••••••',
-                      key: const Key('credential_v2_password_value'),
-                    ),
-                  ),
-                  IconButton(
-                    key: const Key('credential_v2_toggle_password'),
-                    tooltip:
-                        passwordRevealed ? 'Hide password' : 'Reveal password',
-                    onPressed: () => setDialogState(
-                        () => passwordRevealed = !passwordRevealed),
-                    icon: Icon(passwordRevealed
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined),
-                  ),
-                  IconButton(
-                    key: const Key('credential_v2_copy_password'),
-                    tooltip: 'Copy password',
-                    onPressed: () async {
-                      await Clipboard.setData(
-                          ClipboardData(text: value.password));
-                      _showSnack('Password copied');
-                    },
-                    icon: const Icon(Icons.copy_outlined),
-                  ),
-                ],
-              ),
-              if (value.url?.isNotEmpty == true) Text('URL: ${value.url}'),
-              if (value.notes?.isNotEmpty == true) Text('Note: ${value.notes}'),
-              ...value.customFields.entries
-                  .map((e) => Text('${e.key}: ${e.value}')),
-              if (credentialV2QaDiagnosticsEnabled && qaEquality != null)
-                Text(
-                  qaEquality
-                      ? 'QA credential plaintext equality: PASS'
-                      : 'QA credential plaintext equality: FAIL',
-                ),
-              if (credentialV2QaDiagnosticsEnabled && qaComparison != null) ...[
-                Text(
-                    'USERNAME_MATCH=${qaComparison.username ? 'PASS' : 'FAIL'}'),
-                Text(
-                    'PASSWORD_MATCH=${qaComparison.password ? 'PASS' : 'FAIL'}'),
-                Text('URL_MATCH=${qaComparison.url ? 'PASS' : 'FAIL'}'),
-                Text('NOTES_MATCH=${qaComparison.notes ? 'PASS' : 'FAIL'}'),
-                Text('TOTP_MATCH=${qaComparison.totp ? 'PASS' : 'FAIL'}'),
-                Text(
-                  'CUSTOM_FIELDS_MATCH=${qaComparison.customFields ? 'PASS' : 'FAIL'}',
-                ),
-                Text('SERVICE_MATCH=${qaComparison.service ? 'PASS' : 'FAIL'}'),
-              ],
-            ],
-          ),
-          actions: [
-            if (recordId != null && recordId.isNotEmpty)
-              TextButton(
-                key: Key('qa_v2_credential_edit_$recordId'),
-                onPressed: () {
-                  editRequested = true;
-                  Navigator.pop(ctx);
-                },
-                child: const Text('Edit'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (editRequested && mounted) {
-      await _openCredentialV2Editor(VaultLoginItem(
-        service: value.service,
-        recordId: recordId,
-        cryptoVersion: credentialV2CryptoVersion,
-      ));
-    }
-  }
-
-  Future<bool> _tryLocalCredentialV2LookupReply(String text, AppState app,
-      {String? visibleUserText}) async {
-    if (!zkV2CredentialReadEnabled || attachments.isNotEmpty) return false;
-    if (_credentialLookupInFlight) return true;
-    final intent = parseCredentialV2LookupIntent(text);
-    if (!shouldAttemptCredentialV2Lookup(text)) return false;
-    vlog('credential.lookup.route', {
-      'route': 'local_credential_retrieval',
-      'normalized_intent': intent == null ? 'broad_private_lookup' : 'lookup',
-      'service': intent?.service ?? '',
-      'requested_field': intent?.requestedField.name ?? 'summary',
-    });
-    if (intent?.listAll == true) {
-      input.clear();
-      setState(() => selectedSection = _DashboardSection.logins);
-      await _loadVaultLogins();
-      return true;
-    }
-    final repository = _credentialV2Repository(app);
-    if (repository == null) return false;
-    final lookupEpoch = app.sessionEpoch;
-    final lookupVaultId = app.vaultId!;
-    final lookupToken = app.sessionToken!;
-    bool stillOwned() => app.ownsSessionLoad(
-          epoch: lookupEpoch,
-          vaultIdValue: lookupVaultId,
-          tokenValue: lookupToken,
-        );
-    _credentialLookupInFlight = true;
-    try {
-      // Exact labels win. Natural parent labels (Facebook -> Facebook
-      // Personal/Business) and a unique one-edit brand typo are considered
-      // only after an exact miss; digit-bearing identifiers stay exact-only.
-      final matches = intent?.service?.trim().isNotEmpty == true
-          ? await repository.naturalServiceLookup(intent!.service!.trim())
-          : matchCredentialV2RecordsForText(
-              text,
-              await repository.listDecrypted(),
-            );
-      if (!stillOwned()) {
-        vlog('credential.lookup.stale_completion_dropped', const {});
-        return true;
-      }
-      vlog('credential.lookup.match', {
-        'route': 'credential_v2',
-        'service': intent?.service ?? '',
-        'match_count': matches.length,
-        'reason_code': matches.isEmpty
-            ? 'v2_no_match'
-            : matches.length == 1
-                ? 'v2_unique_match'
-                : 'v2_ambiguous_match',
-      });
-      var legacyMatches = <VaultLoginItem>[];
-      if (matches.length <= 1 && intent?.service?.trim().isNotEmpty == true) {
-        // The dashboard can already be hydrating the legacy inventory when a
-        // user submits an immediate lookup. Await that same authoritative
-        // request instead of treating its still-empty pre-response snapshot
-        // as a real miss.
-        if (vaultLogins.isEmpty) {
-          await _loadVaultLogins();
-        }
-        if (!stillOwned()) {
-          vlog('credential.lookup.stale_completion_dropped', const {});
-          return true;
-        }
-        legacyMatches = matchCredentialServiceCandidates(
-          intent!.service!,
-          vaultLogins.where(
-            (item) => item.cryptoVersion != credentialV2CryptoVersion,
-          ),
-          (item) => item.service,
-        );
-        vlog('credential.lookup.match', {
-          'route': 'legacy_credential',
-          'service': intent.service ?? '',
-          'match_count': legacyMatches.length,
-          'reason_code': legacyMatches.isEmpty
-              ? 'legacy_no_match'
-              : legacyMatches.length == 1
-                  ? 'legacy_unique_match'
-                  : 'legacy_ambiguous_match',
-        });
-        if (matches.isEmpty && legacyMatches.length == 1) {
-          final legacy = legacyMatches.single;
-          if (legacy.cryptoVersion == credentialMetadataCryptoVersion) {
-            await _openCiphertextSecureItemDirect(legacy);
-          } else {
-            await _openLegacySecureItemDirect(legacy.service, legacy.itemType);
-          }
-          return true;
-        }
-        if (matches.length + legacyMatches.length > 1) {
-          final options = <String>[
-            ...matches.map((record) => record.plaintext.service),
-            ...legacyMatches.map((item) => item.service),
-          ].take(8).map((service) => '• $service').join('\n');
-          if (mounted) {
-            setState(() {
-              msgs.add(_Msg(
-                'assistant',
-                'I found multiple matching saved logins. Ask for the exact service name:\n$options',
-              ));
-            });
-            _scrollToBottom();
-          }
-          return true;
-        }
-      }
-      if (matches.isEmpty &&
-          intent == null &&
-          !looksLikePrivateCredentialQuery(text)) {
-        return false;
-      }
-      input.clear();
-      if (matches.isEmpty) {
-        if (mounted) {
-          setState(() {
-            msgs.add(_Msg('assistant', 'No matching saved login was found.'));
-          });
-          _scrollToBottom();
-        }
-        return true;
-      }
-      if (matches.length == 1) {
-        final match = matches.single;
-        if (mounted) {
-          debugPrint(
-              'ASSISTANT_REPLY_RENDERED_AT=${DateTime.now().toIso8601String()}');
-          setState(() {
-            msgs.add(_Msg(
-              'assistant',
-              credentialV2LookupReply(
-                match.plaintext.service,
-                intent?.requestedField ?? CredentialV2RequestedField.summary,
-              ),
-              kind: ChatMessage.kInlineCredential,
-              payload: <String, dynamic>{
-                'record_id': match.recordId,
-                'service': match.plaintext.service,
-                'username': match.plaintext.username,
-                'password': match.plaintext.password,
-              },
-            ));
-          });
-          _scrollToBottom();
-        }
-        return true;
-      }
-      if (!mounted) return true;
-      final options = matches
-          .take(8)
-          .map((record) => '• ${record.plaintext.service}')
-          .join('\n');
-      setState(() {
-        msgs.add(_Msg(
-          'assistant',
-          'I found multiple matching saved logins. Ask for the exact service name:\n$options',
-        ));
-      });
-      _scrollToBottom();
-    } catch (_) {
-      // A credential inventory failure must not claim an unrelated natural
-      // memory/file/general-chat prompt. Only an explicit credential request
-      // is allowed to fail closed as a login lookup.
-      if (parseCredentialV2LookupIntent(text) == null &&
-          !looksLikePrivateCredentialQuery(text)) {
-        return false;
-      }
-      if (mounted) {
-        setState(() {
-          msgs.add(_Msg(
-            'assistant',
-            'Could not open that saved login. No legacy fallback was used.',
-          ));
-        });
-        _scrollToBottom();
-      }
-    } finally {
-      _credentialLookupInFlight = false;
-    }
-    return true;
-  }
-
-  Future<bool> _tryLocalCredentialV2CreateReply(
-    String text,
-    AppState app,
-  ) async {
-    if (attachments.isNotEmpty) return false;
-    if (!zkV2CredentialWriteEnabled) return false;
-    final intent = parseCredentialV2CreateIntent(text);
-    if (intent == null) return false;
-    final service = intent.service?.trim();
-    if (service == null || service.isEmpty) {
-      _appendAssistantMessage(
-        'Which service should I generate and save a login for?',
-      );
-      return true;
-    }
-    final repository = _credentialV2Repository(app);
-    if (repository == null) {
-      _appendAssistantMessage(
-        'I could not securely create that login. Your vault stayed unchanged.',
-      );
-      return true;
-    }
-    try {
-      final existing = await repository.exactLookup(
-        field: 'service',
-        value: service,
-      );
-      if (existing.isNotEmpty && !intent.explicitlyAnother) {
-        final match = existing.first;
-        if (mounted) {
-          setState(() {
-            msgs.add(_Msg(
-              'assistant',
-              existing.length == 1
-                  ? 'You already have a ${match.plaintext.service} login. You can edit, delete, or ask me to create another.'
-                  : 'You already have ${existing.length} ${match.plaintext.service} logins. Here is one; ask me to create another if you want an additional login.',
-              kind: ChatMessage.kInlineCredential,
-              payload: <String, dynamic>{
-                'record_id': match.recordId,
-                'service': match.plaintext.service,
-                'username': match.plaintext.username,
-                'password': match.plaintext.password,
-              },
-            ));
-          });
-          _scrollToBottom();
-        }
-        return true;
-      }
-    } catch (_) {
-      _appendAssistantMessage(
-        'I could not safely check your existing logins. Your vault stayed '
-        'unchanged. Try sending the request again, or open Logins and tap '
-        'Retry.',
-      );
-      return true;
-    }
-    final credential = generateCredentialV2Plaintext(
-      service,
-      username: intent.username,
-      password: intent.password,
-    );
-    final recordId = _newCredentialV2RecordId();
-    try {
-      await repository.create(
-        recordId: recordId,
-        credential: credential,
-        serviceForLookup: credential.service,
-      );
-      CredentialV2QaDiagnostics.remember(recordId, credential);
-      if (!mounted) return true;
-      setState(() {
-        input.clear();
-        msgs.add(_Msg(
-          'assistant',
-          intent.hasSuppliedValues
-              ? 'I securely saved your ${credential.service} login using the values you supplied.'
-              : 'I generated and securely saved your ${credential.service} login.',
-          kind: ChatMessage.kInlineCredential,
-          payload: <String, dynamic>{
-            'record_id': recordId,
-            'service': credential.service,
-            'username': credential.username,
-            'password': credential.password,
-            if (credential.url != null) 'url': credential.url,
-          },
-        ));
-      });
-      _scrollToBottom();
-      await _reloadVaultLoginsAfterMutation();
-    } catch (_) {
-      _appendAssistantMessage(
-        'I could not securely save that generated login. Your vault stayed unchanged.',
-      );
-    }
-    return true;
-  }
-
-  Future<bool> _tryLocalPrivateDeleteReply(String text, AppState app) async {
-    if (attachments.isNotEmpty) return false;
-    final credentialIntent = parseCredentialV2DeleteIntent(text);
-    if (credentialIntent != null) {
-      final repository = _credentialV2Repository(app);
-      if (repository == null) {
-        _appendAssistantMessage('I could not securely delete that login.');
-        return true;
-      }
-      try {
-        final matches = await repository.exactLookup(
-          field: 'service',
-          value: credentialIntent.service,
-        );
-        if (matches.isEmpty) {
-          // Refresh the same inventory shown on Logins before declaring a
-          // miss. It can contain legacy encrypted rows that are not returned
-          // by the CredentialV2 blind-index endpoint.
-          await _loadVaultLogins();
-          final normalized = normalizeExactLookup(credentialIntent.service);
-          final legacyMatches = vaultLogins
-              .where((item) =>
-                  item.cryptoVersion != credentialV2CryptoVersion &&
-                  normalizeExactLookup(item.service) == normalized)
-              .toList(growable: false);
-          if (legacyMatches.length == 1) {
-            final legacy = legacyMatches.single;
-            final token = app.sessionToken;
-            final vaultName = app.vaultName;
-            if (token == null || vaultName == null) return true;
-            final pin = await _VaultCrypto.currentPinOrThrow();
-            await VaultAIClient(baseUrl: backendBaseUrl).deleteVaultSecureItem(
-              vaultName: vaultName,
-              service: legacy.service,
-              itemType: legacy.itemType,
-              pin: pin,
-              authToken: token,
-            );
-            await _reloadVaultLoginsAfterMutation();
-            _appendAssistantMessage(
-                'Deleted the ${legacy.service} login from your vault.');
-            return true;
-          }
-          _appendAssistantMessage(legacyMatches.isEmpty
-              ? 'No matching saved login was found.'
-              : 'I found multiple matching logins. Name the exact service to delete.');
-          return true;
-        }
-        if (matches.length != 1) {
-          _appendAssistantMessage(
-              'I found multiple matching logins. Name the exact service to delete.');
-          return true;
-        }
-        final match = matches.single;
-        await repository.delete(match.recordId);
-        CredentialV2QaDiagnostics.forget(match.recordId);
-        if (mounted) {
-          setState(() => msgs.add(_Msg('assistant',
-              'Deleted the ${match.plaintext.service} login from your vault.')));
-          _scrollToBottom();
-          await _reloadVaultLoginsAfterMutation();
-        }
-      } catch (_) {
-        _appendAssistantMessage(
-            'I could not securely delete that login. Your vault stayed unchanged.');
-      }
-      return true;
-    }
-
-    final memoryDeleteMatch = RegExp(
-      r'^(?:please\s+)?(?:forget|delete|remove)\s+(?:my\s+)?(.+?)(?:\s+memory)?[.?!]*$',
-      caseSensitive: false,
-    ).firstMatch(text.trim());
-    final memorySubject = memoryDeleteMatch?.group(1)?.trim();
-    if (memorySubject != null && memorySubject.isNotEmpty) {
-      if (!app.billingWritesAllowed) {
-        _appendAssistantMessage(
-          'Deleting is paused until your plan is reactivated. Your existing memories are preserved.',
-        );
-        return true;
-      }
-      final token = app.sessionToken;
-      if (token == null) return true;
-      try {
-        final repository = MemoryV2Repository(
-          baseUrl: backendBaseUrl,
-          authToken: token,
-        );
-        final records = await repository.listDecrypted();
-        final matches = matchLocalMemoryRecords(
-          LocalMemoryLookupIntent(subject: memorySubject),
-          records,
-        );
-        if (matches.ambiguous || matches.records.length != 1) {
-          _appendAssistantMessage(
-            matches.records.isEmpty
-                ? 'No matching saved memory was found.'
-                : 'I found multiple matching memories. Add a more specific topic.',
-          );
-          return true;
-        }
-        final row = matches.records.single;
-        final memoryId = (row['memory_id'] ?? row['id'] ?? '').toString();
-        if (memoryId.isEmpty) {
-          _appendAssistantMessage(
-            'I could not securely delete that memory. Your vault stayed unchanged.',
-          );
-          return true;
-        }
-        await repository.delete(memoryId);
-        _appendAssistantMessage('Deleted the saved $memorySubject memory.');
-      } catch (_) {
-        _appendAssistantMessage(
-          'I could not securely delete that memory. Your vault stayed unchanged.',
-        );
-      }
-      return true;
-    }
-
-    final fileMatch = RegExp(
-      r'^(?:please\s+)?(?:delete|remove|erase|discard|get\s+rid\s+of)(?:\s+(?:the|my))?\s+(?:(?:file|document|image|photo|video|audio|recording)\s+)?(.+?)(?:\s+(?:file|document|image|photo|video|audio|recording))?(?:\s+from\s+(?:my\s+)?vault)?[.?!]*$',
-      caseSensitive: false,
-    ).firstMatch(text.trim());
-    final query = fileMatch?.group(1)?.trim();
-    if (query == null || query.isEmpty) return false;
-    // Empty while loading is not an authoritative empty inventory. The
-    // loader is single-flight, so this also awaits a request started by a
-    // newly recreated post-login session before resolving the delete target.
-    if (vaultFiles.isEmpty) await _loadVaultFiles();
-    final resolved = resolveLocalVaultFileLookup(
-      query: query,
-      files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
-            id: file.id,
-            fileName: file.fileName,
-            savedName: file.savedName,
-            mimeType: file.contentType,
-            assetType: file.assetType,
-            relativePath: file.relativePath,
-            sizeBytes: file.fileSize,
-          )),
-    );
-    if (resolved == null) {
-      _appendAssistantMessage(
-          'I could not identify one matching saved file. Add a more specific title.');
-      return true;
-    }
-    final token = app.sessionToken;
-    if (token == null) return true;
-    try {
-      await VaultAIClient(baseUrl: backendBaseUrl).deleteFileV2(
-        authToken: token,
-        fileId: resolved.entry.id,
-      );
-      if (mounted) {
-        setState(() {
-          vaultFiles.removeWhere((file) => file.id == resolved.entry.id);
-          msgs.add(_Msg('assistant',
-              'Deleted "${resolved.entry.displayName}" from your vault.'));
-        });
-        _scrollToBottom();
-      }
-    } catch (_) {
-      _appendAssistantMessage(
-          'I could not securely delete that file. Your vault stayed unchanged.');
-    }
-    return true;
-  }
-
-  Future<void> _deleteCredentialV2(VaultLoginItem item) async {
-    final repository = _credentialV2Repository(context.read<AppState>());
-    if (repository == null || item.recordId == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete login?'),
-        content: Text('Delete ${item.service}?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    await _enqueueChatOperation<void>(
-      kind: ChatOperationKind.mutation,
-      operation: () async {
-        try {
-          await repository.delete(item.recordId!);
-          CredentialV2QaDiagnostics.forget(item.recordId!);
-          await _reloadVaultLoginsAfterMutation();
-          _showSnack('Login deleted');
-        } catch (_) {
-          _showSnack('Could not delete this credential.');
-        }
-      },
-    );
-  }
-
-  Future<void> _deleteInlineCredentialByService(String service) async {
-    final app = context.read<AppState>();
-    final repository = _credentialV2Repository(app);
-    if (repository == null) {
-      _showSnack('Unlock your vault before deleting this login.');
-      return;
-    }
-    try {
-      final matches = await repository.exactLookup(
-        field: 'service',
-        value: service.trim(),
-      );
-      if (matches.length == 1) {
-        final match = matches.single;
-        await _deleteCredentialV2(VaultLoginItem(
-          service: match.plaintext.service,
-          itemType: 'login',
-          recordId: match.recordId,
-          cryptoVersion: credentialV2CryptoVersion,
-        ));
-        return;
-      }
-      if (matches.length > 1) {
-        _showSnack('Multiple matching logins found. Delete one from Logins.');
-        return;
-      }
-    } catch (_) {
-      _showSnack('Could not verify this login safely.');
-      return;
-    }
-    await _deleteLegacyCredentialDirect(service, 'login');
   }
 
   Future<void> _showCreateMenu() async {
     final app = context.read<AppState>();
     if (!app.authed || !app.unlocked) {
       _showSnack('Unlock your vault first.');
-      return;
-    }
-    if (!app.billingWritesAllowed) {
-      _showSnack(
-          'Saving is paused until your plan is reactivated. Your existing data is preserved.');
       return;
     }
     final choice = await showModalBottomSheet<String>(
@@ -8498,10 +6821,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Future<void> _openCreateMemoryDialog() async {
     final app = context.read<AppState>();
-    if (!app.billingWritesAllowed) {
-      _showSnack(app.billingWriteBlockedMessage);
-      return;
-    }
     final token = app.sessionToken;
     final vaultName = app.vaultName;
     if (token == null || vaultName == null || vaultName.isEmpty) {
@@ -8510,72 +6829,34 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final data = await showMemoryEditorDialog(context);
     if (data == null) return;
-    await _enqueueChatOperation<void>(
-      kind: ChatOperationKind.mutation,
-      operation: () async {
-        try {
-          const memoryV2Enabled = memoryV2WriteEnabled;
-          if (memoryV2Enabled) {
-            final repository = MemoryV2Repository(
-              baseUrl: backendBaseUrl,
-              authToken: token,
-            );
-            final result = await repository.create(
-              memoryType: (data['memory_type'] ?? 'note').toString(),
-              plaintext: MemoryV2Plaintext(
-                value: (data['value'] ?? data['body'] ?? '').toString(),
-                normalized: (data['title'] ?? '').toString(),
-                tags: (data['tags'] as List? ?? const [])
-                    .whereType<String>()
-                    .toList(),
-              ),
-            );
-            if (!mounted) return;
-            _showSnack(
-                result.duplicate ? 'Memory already saved' : 'Memory saved');
-            setState(() => selectedSection = _DashboardSection.memory);
-            unawaited(app.refreshVaultStats());
-            return;
-          }
-          final pin = await _VaultCrypto.currentPinOrThrow();
-          final client = VaultAIClient(baseUrl: backendBaseUrl);
-          await client.createMemory(
-            authToken: token,
-            vaultName: vaultName,
-            pin: pin,
-            data: data,
-          );
-          if (!mounted) return;
-          _showSnack('Memory saved');
-          setState(() => selectedSection = _DashboardSection.memory);
-          unawaited(app.refreshVaultStats());
-        } catch (e) {
-          if (app.handleApiException(e)) return;
-          _showSnack('Could not save memory: $e');
-        }
-      },
-    );
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.createMemory(
+        authToken: token,
+        vaultName: vaultName,
+        pin: pin,
+        data: data,
+      );
+      if (!mounted) return;
+      _showSnack('Memory saved');
+      setState(() => selectedSection = _DashboardSection.memory);
+      unawaited(app.refreshVaultStats());
+    } catch (e) {
+      if (app.handleApiException(e)) return;
+      _showSnack('Could not save memory: $e');
+    }
   }
 
   Future<void> _openSecureItemEditDialog(String service, String itemType,
-      {Map<String, String>? initialFields,
-      bool createMode = false,
-      bool forceLegacyTransport = false}) async {
+      {Map<String, String>? initialFields, bool createMode = false}) async {
     final app = context.read<AppState>();
-    if (!app.billingWritesAllowed) {
-      _showSnack(app.billingWriteBlockedMessage);
-      return;
-    }
-
-    if (createMode &&
-        isSecureItemLoginLike(itemType) &&
-        zkV2CredentialWriteEnabled) {
-      await _openCredentialV2Editor(null, createMode: true);
-      return;
-    }
 
     Map<String, String> resolved = initialFields ?? const {};
-    if (resolved.isEmpty) {
+    // A create dialog has no existing item to fetch. Calling the read endpoint
+    // with an empty service produced a misleading "Could not load" banner on
+    // both web and iOS before the user had entered anything.
+    if (resolved.isEmpty && !createMode) {
       final token = app.sessionToken;
       if (token != null && app.vaultName != null) {
         try {
@@ -8617,51 +6898,41 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         required String newTitle,
         required Map<String, String> fields,
       }) async {
-        if (!app.billingWritesAllowed) {
-          _showSnack(app.billingWriteBlockedMessage);
-          return false;
-        }
         final token = app.sessionToken;
         if (token == null || app.vaultName == null) {
           _showSnack('Session expired.');
           return false;
         }
-        return _enqueueChatOperation<bool>(
-          kind: ChatOperationKind.mutation,
-          operation: () async {
-            try {
-              final pin = await _VaultCrypto.currentPinOrThrow();
-              final client = VaultAIClient(baseUrl: backendBaseUrl);
-              final oldServiceForRequest =
-                  oldTitle.trim().isEmpty ? newTitle : oldTitle;
-              await client.updateVaultSecureItem(
-                vaultName: app.vaultName!,
-                oldService: oldServiceForRequest,
-                itemType: itemType,
-                newService: newTitle == oldServiceForRequest ? null : newTitle,
-                fields: fields.isEmpty ? null : fields,
-                pin: pin,
-                authToken: token,
-                forceLegacyTransport: forceLegacyTransport,
-              );
+        try {
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          final client = VaultAIClient(baseUrl: backendBaseUrl);
+          final oldServiceForRequest =
+              oldTitle.trim().isEmpty ? newTitle : oldTitle;
+          await client.updateVaultSecureItem(
+            vaultName: app.vaultName!,
+            oldService: oldServiceForRequest,
+            itemType: itemType,
+            newService: newTitle == oldServiceForRequest ? null : newTitle,
+            fields: fields.isEmpty ? null : fields,
+            pin: pin,
+            authToken: token,
+          );
 
-              final isLogin = itemType == 'login' || itemType == 'credential';
-              _showSnack(createMode
-                  ? (isLogin ? 'Login saved' : 'Saved item')
-                  : (isLogin ? 'Updated login' : 'Updated saved item'));
-              await _reloadVaultLoginsAfterMutation();
-              await app.refreshVaultStats();
-              if (createMode && isLogin) {
-                setState(() => selectedSection = _DashboardSection.logins);
-              }
-              return true;
-            } catch (e) {
-              if (app.handleApiException(e)) return false;
-              _showSnack('Could not update saved item: $e');
-              return false;
-            }
-          },
-        );
+          final isLogin = itemType == 'login' || itemType == 'credential';
+          _showSnack(createMode
+              ? (isLogin ? 'Login saved' : 'Saved item')
+              : (isLogin ? 'Updated login' : 'Updated saved item'));
+          unawaited(_loadVaultLogins());
+          unawaited(app.refreshVaultStats());
+          if (createMode && isLogin) {
+            setState(() => selectedSection = _DashboardSection.logins);
+          }
+          return true;
+        } catch (e) {
+          if (app.handleApiException(e)) return false;
+          _showSnack('Could not update saved item: $e');
+          return false;
+        }
       },
     );
   }
@@ -8801,17 +7072,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _startSecureItemDeleteConfirmation(
-      String service, String itemType) {
-    return _enqueueChatOperation<void>(
-      kind: ChatOperationKind.mutation,
-      operation: () => _startSecureItemDeleteConfirmationNow(
-        service,
-        itemType,
-      ),
-    );
-  }
-
-  Future<void> _startSecureItemDeleteConfirmationNow(
       String service, String itemType) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -8840,28 +7100,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ? 'Delete this saved item from my vault'
             : 'Delete $safeService from my vault');
     final sentinel = '__delete_item:$itemType:$safeService';
-    final chatTicket = _beginChatRequest();
-    final chatRequestId = chatTicket.requestId;
-    final userMessageId = chatTicket.userMessageId;
-    final assistantMessageId = chatTicket.assistantMessageId;
-    final assistantCorrelation = _Msg(
-      'assistant',
-      '',
-      messageId: assistantMessageId,
-      requestId: chatRequestId,
-      replyToMessageId: userMessageId,
-    );
 
     setState(() {
       selectedSection = _DashboardSection.chat;
       sending = true;
       thinking = true;
-      msgs.add(_Msg(
-        'user',
-        visibleBubble,
-        messageId: userMessageId,
-        requestId: chatRequestId,
-      ));
+      msgs.add(_Msg('user', visibleBubble));
     });
     _scrollToBottom();
 
@@ -8881,7 +7125,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() {
           sending = false;
           thinking = false;
-          msgs.removeWhere((message) => message.requestId == chatRequestId);
+          if (msgs.isNotEmpty && msgs.last.role == 'user') {
+            msgs.removeLast();
+          }
         });
         rootScaffoldMessengerKey.currentState?.showSnackBar(
           const SnackBar(
@@ -8901,27 +7147,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       int? assistantIndex;
       String buffer = '';
       bool memoryProposalFinalized = false;
-      String? memoryProposalOutcomeMessage;
 
       final stream = client.chatStream(
         encryptedMessage: encryptedMessage,
         vaultName: vaultName,
         pin: pin,
         authToken: token,
-        requestId: chatRequestId,
         uploadedFileIds: const <String>[],
         appLocale: context.read<AppState>().chatReplyLanguageCode,
         kdfSaltUsed: ctxSnapshot.saltBase64,
         kdfIterationsUsed: ctxSnapshot.iterations,
       );
+
       try {
         await for (final encryptedChunk in stream) {
-          if (!_chatRequests.acceptsEvents(chatRequestId)) break;
           try {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
-            if (!mounted || !_chatRequests.acceptsEvents(chatRequestId)) {
-              return;
-            }
+            if (!mounted) return;
             buffer += decryptedChunk;
 
             // ZK memory-proposal sentinel: strip it BEFORE any
@@ -8934,30 +7176,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = _stripped.strippedBuffer;
             if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              final outcome = await _finalizeMemoryProposalBestEffort(
+              unawaited(_finalizeMemoryProposalBestEffort(
                 jsonPayload: _stripped.jsonPayload!,
                 authToken: token,
-              );
-              memoryProposalOutcomeMessage =
-                  _memoryProposalOutcomeMessage(outcome);
-            }
-            if (memoryProposalOutcomeMessage != null) {
-              buffer = memoryProposalOutcomeMessage!;
+              ));
             }
 
             // dart format off
             final structuredNow = _tryParseAssistantStructuredMessage(buffer);
             final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
-            final correlatedReplacement =
-                replacement.withCorrelationFrom(assistantCorrelation);
             // dart format on
             setState(() {
               if (assistantIndex == null) {
-                msgs.add(correlatedReplacement);
+                msgs.add(replacement);
                 assistantIndex = msgs.length - 1;
                 thinking = false;
               } else {
-                msgs[assistantIndex!] = correlatedReplacement;
+                msgs[assistantIndex!] = replacement;
               }
             });
             _scrollToBottom();
@@ -8967,12 +7202,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             setState(() {
               thinking = false;
               if (assistantIndex == null) {
-                msgs.add(_Msg('assistant', 'Decrypt error: $e')
-                    .withCorrelationFrom(assistantCorrelation));
+                msgs.add(_Msg('assistant', 'Decrypt error: $e'));
                 assistantIndex = msgs.length - 1;
               } else {
-                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e')
-                    .withCorrelationFrom(assistantCorrelation);
+                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e');
               }
             });
           }
@@ -8985,7 +7218,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             thinking = false;
             sending = false;
-            msgs.removeWhere((message) => message.requestId == chatRequestId);
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
           });
           rootScaffoldMessengerKey.currentState?.clearSnackBars();
           rootScaffoldMessengerKey.currentState?.showSnackBar(
@@ -9016,7 +7251,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             thinking = false;
             sending = false;
-            msgs.removeWhere((message) => message.requestId == chatRequestId);
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
           });
           rootScaffoldMessengerKey.currentState?.clearSnackBars();
           if (rederived) {
@@ -9054,12 +7291,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() {
           thinking = false;
           if (assistantIndex == null) {
-            msgs.add(_Msg('assistant', 'Error: $err')
-                .withCorrelationFrom(assistantCorrelation));
+            msgs.add(_Msg('assistant', 'Error: $err'));
             assistantIndex = msgs.length - 1;
           } else {
-            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err')
-                .withCorrelationFrom(assistantCorrelation);
+            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
           }
         });
       }
@@ -9067,8 +7302,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (assistantIndex != null && buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
         if (structured != null && mounted) {
-          setState(() => msgs[assistantIndex!] =
-              structured.withCorrelationFrom(assistantCorrelation));
+          setState(() => msgs[assistantIndex!] = structured);
         }
       }
       if (mounted && thinking) setState(() => thinking = false);
@@ -9079,85 +7313,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!mounted) return;
       setState(() {
         thinking = false;
-        msgs.add(_Msg('assistant', 'Could not start delete: $e')
-            .withCorrelationFrom(assistantCorrelation));
+        msgs.add(_Msg('assistant', 'Could not start delete: $e'));
       });
     } finally {
-      _completeChatRequest(chatRequestId);
       if (mounted) setState(() => sending = false);
     }
   }
 
-  Future<void> _deleteLegacyCredentialDirect(
-      String service, String itemType) async {
-    final app = context.read<AppState>();
-    final token = app.sessionToken;
-    final vaultName = app.vaultName;
-    final safeService = service.trim();
-    if (token == null || vaultName == null || safeService.isEmpty) {
-      _showSnack('Session expired.');
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete login?'),
-        content: Text('Delete "$safeService"? This cannot be undone.'),
-        actions: [
-          TextButton(
-            autofocus: true,
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) {
-      _restoreComposerFocus();
-      return;
-    }
-    await _enqueueChatOperation<void>(
-      kind: ChatOperationKind.mutation,
-      operation: () async {
-        try {
-          final pin = await _VaultCrypto.currentPinOrThrow();
-          await VaultAIClient(baseUrl: backendBaseUrl).deleteVaultSecureItem(
-            vaultName: vaultName,
-            service: safeService,
-            itemType: itemType,
-            pin: pin,
-            authToken: token,
-          );
-          await _reloadVaultLoginsAfterMutation();
-          unawaited(app.refreshVaultStats());
-          _showSnack('Login deleted');
-        } catch (error) {
-          if (app.handleApiException(error)) return;
-          _showSnack(
-              'Could not delete this login. Your vault stayed unchanged.');
-        } finally {
-          _restoreComposerFocus();
-        }
-      },
-    );
-  }
-
-  void _restoreComposerFocus() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_composerFocusNode.hasFocus) {
-        _composerFocusNode.requestFocus();
-      }
-    });
-  }
-
   final input = TextEditingController();
-  final FocusNode _composerFocusNode = FocusNode();
-  bool _composerSubmitStarting = false;
   final List<_Msg> msgs = <_Msg>[];
   final List<_Attachment> attachments = [];
   final ScrollController _scrollController = ScrollController();
@@ -9165,76 +7328,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   bool sending = false;
   bool thinking = false;
-  final ChatOperationQueue _chatOperationQueue = ChatOperationQueue(
-    onTrace: (trace) => debugPrint(
-      'CHAT_OPERATION phase=${trace.phase.name} '
-      'operation_id=${trace.operationId} kind=${trace.kind.name} '
-      'at_us=${trace.timestampMicros}',
-    ),
-  );
-  final ChatRequestRuntime _chatRequests = ChatRequestRuntime();
-  final Set<String> _cancelledChatRequestIds = <String>{};
-
-  ChatRequestTicket _beginChatRequest() {
-    final ticket = _chatRequests.begin();
-    debugPrint(
-      'CHAT_REQUEST phase=started request_id=${ticket.requestId} '
-      'at_us=${DateTime.now().microsecondsSinceEpoch}',
-    );
-    return ticket;
-  }
-
-  void _completeChatRequest(String requestId) {
-    _chatRequests.complete(requestId);
-    debugPrint(
-      'CHAT_REQUEST phase=terminal request_id=$requestId '
-      'at_us=${DateTime.now().microsecondsSinceEpoch}',
-    );
-  }
-
-  bool get _chatOperationBusy => sending || _chatOperationQueue.isBusy;
-
-  Future<T> _enqueueChatOperation<T>({
-    required ChatOperationKind kind,
-    required Future<T> Function() operation,
-  }) {
-    final queued = _chatOperationQueue.enqueue<T>(
-      kind: kind,
-      operation: operation,
-    );
-    if (mounted) setState(() {});
-    return queued.whenComplete(() {
-      if (mounted) setState(() {});
-    });
-  }
-
-  Future<void> _cancelActiveChatRequest() async {
-    final requestId = _chatRequests.activeRequestId;
-    if (requestId == null) return;
-    _chatRequests.cancel(requestId);
-    debugPrint(
-      'CHAT_REQUEST phase=cancelled request_id=$requestId '
-      'at_us=${DateTime.now().microsecondsSinceEpoch}',
-    );
-    _cancelledChatRequestIds.add(requestId);
-    await _chatRequests.cancelActiveIterator();
-    if (!mounted) return;
-    setState(() {
-      final assistantIndex = msgs.indexWhere(
-        (message) => message.requestId == requestId && message.isAssistant,
-      );
-      if (assistantIndex >= 0) {
-        msgs[assistantIndex] = _Msg('assistant', 'Cancelled.')
-            .withCorrelationFrom(msgs[assistantIndex]);
-      }
-      thinking = false;
-      sending = false;
-    });
-  }
-
   bool loadingFiles = false;
-  bool hasLoadedFiles = false;
-  String? filesLoadError;
   bool loadingLogins = false;
 
   bool hasLoadedSecureItems = false;
@@ -9242,19 +7336,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
-  bool _speechInitialized = false;
   bool _isListening = false;
   String _preMicText = '';
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
-  // Legacy inline-banner state remains false on the web. Web recording now
-  // lives entirely inside WebVideoRecorderDialog.
-  bool _isVideoRecording = false;
-  String? _videoPreviewViewType;
   String? _audioRecordingName;
 
   final VideoRecorder _videoRecorder = VideoRecorder();
+  bool _isVideoRecording = false;
+  String? _videoPreviewViewType;
 
   late final NativeMediaCaptureService _nativeMediaCapture;
   late final RecordingStorage _recordingStorage;
@@ -9262,7 +7353,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   late final UploadQueueController _uploadQueue;
 
   _UploadContext? _currentUploadContext;
-  _UploadContext? _retryUploadContext;
 
   late final FolderPickerService _folderPicker;
 
@@ -9846,10 +7936,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               .inheritanceCancelPendingTransferTitle(label),
         ),
         content: const Text(
-          // 2026-07-23: SVaultAI does not email — the cancel notify
+          // 2026-07-23: Svaultai does not email — the cancel notify
           // fires via _create_notification (in-app only).
           'The 30-day countdown will be cleared. The beneficiary will '
-          'be notified inside SVaultAI. They can request again later.',
+          'be notified inside Svaultai. They can request again later.',
         ),
         actions: [
           TextButton(
@@ -10010,14 +8100,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ),
         content: const Text(
           // 2026-07-23: text corrected against the actual backend
-          // state machine. SVaultAI does not email — it notifies
+          // state machine. Svaultai does not email — it notifies
           // owners in-app. The post-countdown behavior is NOT
           // automatic release: the beneficiary must call
           // /inheritance/access/claim → /credentials/retrieve to
           // move the escrow to 'released'. See
           // inheritance_release_routes.py::claim_access.
           'A 30-day countdown will start. The vault owner will be '
-          'notified inside SVaultAI and can approve or reject the '
+          'notified inside Svaultai and can approve or reject the '
           'request during that period. If the owner does not respond '
           'before the countdown ends, you\'ll be able to claim the '
           'credentials and open the inherited login on your account.',
@@ -10204,8 +8294,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'These are the SVaultAI login credentials this '
-                    'beneficiary will inherit. SVaultAI can never read '
+                    'These are the Svaultai login credentials this '
+                    'beneficiary will inherit. Svaultai can never read '
                     'them — they are encrypted on this device and '
                     'released only after your approval or the 30-day '
                     'cooldown.',
@@ -10213,7 +8303,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'SVaultAI username',
+                    'Svaultai username',
                     style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
                   ),
                   TextFormField(
@@ -10230,7 +8320,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'SVaultAI PIN',
+                    'Svaultai PIN',
                     style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
                   ),
                   TextFormField(
@@ -10608,7 +8698,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         backgroundColor: const Color(0xFF2F2F2F),
         title: Text('Approve $beneficiaryLabel?'),
         content: const Text(
-          'Approving will permanently release the saved SVaultAI '
+          'Approving will permanently release the saved Svaultai '
           'username and PIN to this beneficiary. This cannot be '
           'undone.',
         ),
@@ -11095,7 +9185,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final display = _nonEmptyTrimmed(app.displayName) ??
         _nonEmptyTrimmed(app.vaultName) ??
         _nonEmptyTrimmed(app.lastVaultName) ??
-        'SVaultAI';
+        'Svaultai';
     final repair = await ZkAuthService(_zkHttpPost).repairVaultOpaqueRecord(
       vaultHandle: handle,
       pin: pin,
@@ -11296,7 +9386,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             obscureText: true,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-              hintText: 'Enter your SVaultAI PIN',
+              hintText: 'Enter your Svaultai PIN',
               isDense: true,
             ),
             validator: (v) =>
@@ -11335,7 +9425,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       builder: (dCtx) => AlertDialog(
         key: const Key('inheritance_revealed_dialog'),
         backgroundColor: const Color(0xFF2F2F2F),
-        title: Text('Inherited SVaultAI login: $passerLabel'),
+        title: Text('Inherited Svaultai login: $passerLabel'),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -11343,7 +9433,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             children: [
               const Text(
                 'These credentials provide access to the owner\'s '
-                'original SVaultAI account. Keep them private.',
+                'original Svaultai account. Keep them private.',
                 style: TextStyle(
                   color: Color(0xFFFFA726),
                   fontSize: 13,
@@ -12240,6 +10330,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 const SizedBox(height: 24),
                 const LanguageCard(),
                 const SizedBox(height: 24),
+
                 const Text(
                   'Current plan',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
@@ -12269,16 +10360,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           style: const TextStyle(
                               fontSize: 20, fontWeight: FontWeight.w800),
                         ),
-                        if (app.billingIsDelinquent) ...[
-                          const SizedBox(height: 6),
-                          const Text(
-                            'Payment needs attention. Saving, large files, and Crypto Vault are paused until you reactivate. Your existing data is preserved.',
-                            style: TextStyle(
-                              color: Color(0xFFFFC46B),
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: 8),
                         Text(
                           '${formatBytes(used)} used of ${formatBytes(limit)}',
@@ -12307,7 +10388,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     );
                   }),
                 ),
+
                 const SizedBox(height: 16),
+
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/security-center'),
                   borderRadius: BorderRadius.circular(18),
@@ -12351,6 +10434,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/storage'),
                   borderRadius: BorderRadius.circular(18),
@@ -12393,6 +10477,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+
                 InkWell(
                   onTap: () => Navigator.pushNamed(context, '/devices'),
                   borderRadius: BorderRadius.circular(18),
@@ -12434,6 +10519,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+
                 InkWell(
                   key: const Key('settings_help_and_faq_tile'),
                   onTap: () => openHelpCenter(
@@ -12465,7 +10551,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               ),
                               SizedBox(height: 2),
                               Text(
-                                'Answers about SVaultAI, Crypto Vault, '
+                                'Answers about Svaultai, Crypto Vault, '
                                 'Monero, billing, and support.',
                                 style: TextStyle(
                                   color: Color(0xFFB4B4B4),
@@ -12480,7 +10566,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 12),
+
                 InkWell(
                   key: const Key('settings_privacy_policy_tile'),
                   onTap: () => Navigator.pushNamed(
@@ -12513,7 +10601,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               ),
                               SizedBox(height: 2),
                               Text(
-                                'How SVaultAI handles account, '
+                                'How Svaultai handles account, '
                                 'vault, inheritance, wallet, and device data.',
                                 style: TextStyle(
                                   color: Color(0xFFB4B4B4),
@@ -12528,8 +10616,103 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     ),
                   ),
                 ),
-                _DeleteVaultSettingsTile(),
+
                 const SizedBox(height: 24),
+
+                // Buy-More-Storage promotional card is WEB-ONLY.
+                // Rationale: App Store 3.1.1 + Google Play Payments
+                // Policy require in-app digital-goods purchases to use
+                // StoreKit / Play Billing. Mobile users still upgrade
+                // via the web at app.svaultai.com; hiding this
+                // promotional entry point keeps the mobile store
+                // submission compliant without touching web behavior.
+                if (kIsWeb) ...[
+                  InkWell(
+                    onTap: () => Navigator.pushNamed(
+                      context,
+                      '/storage',
+                      arguments: const {'autoOpenPicker': true},
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                    child: Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10A37F).withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color:
+                              const Color(0xFF10A37F).withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.cloud_upload_outlined,
+                                  color: Color(0xFF10A37F)),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Buy More Storage',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      'Add storage in 50 GB blocks. Your '
+                                      'limit updates automatically after '
+                                      'payment.',
+                                      style: TextStyle(
+                                        color: Color(0xFFB4B4B4),
+                                        height: 1.45,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: ElevatedButton.icon(
+                              onPressed: () => Navigator.pushNamed(
+                                context,
+                                '/storage',
+                                arguments: const {'autoOpenPicker': true},
+                              ),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text(
+                                AppLocalizations.of(context).filesChooseStorage,
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10A37F),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+
+                _DeleteVaultSettingsTile(),
+
+                const SizedBox(height: 24),
+
                 CryptoVaultLockedCard(
                   tier: !app.isBillingLoaded
                       ? kTierLoadingLabel
@@ -12553,7 +10736,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   @override
   void initState() {
     super.initState();
-    HardwareKeyboard.instance.addHandler(_onComposerHardwareKey);
     final initialChatTiming = Stopwatch()..start();
     _uploadQueue = UploadQueueController(
       action: _runUploadAction,
@@ -12567,6 +10749,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _folderPicker = createFolderPickerService();
     _nativeMediaCapture = createNativeMediaCaptureService();
     _recordingStorage = createRecordingStorage();
+    _initSpeech();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final app = context.read<AppState>();
 
@@ -12602,10 +10785,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           initialChatTiming.elapsed,
         );
       }
-      // Paint the dashboard first. Private inventories are loaded lazily by
-      // their pages and local chat routes, so startup never decrypts unrelated
-      // credentials/files on the UI-critical path.
       await app.refreshVaultStats();
+      await _loadVaultFiles();
+      await _loadVaultLogins();
       authTimingDiagnosticPrint(
         'initial_vault_data_loaded',
         initialChatTiming.elapsed,
@@ -12613,7 +10795,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
-  Future<bool> _initSpeech() async {
+  Future<void> _initSpeech() async {
     try {
       final ok = await _speech.initialize(
         onError: (_) {
@@ -12625,33 +10807,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           }
         },
       );
-      if (mounted) {
-        setState(() {
-          _speechInitialized = true;
-          _speechAvailable = ok;
-        });
-      }
-      return ok;
+      if (mounted) setState(() => _speechAvailable = ok);
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _speechInitialized = true;
-          _speechAvailable = false;
-        });
-      }
-      return false;
+      if (mounted) setState(() => _speechAvailable = false);
     }
   }
 
   Future<void> _toggleListening() async {
     if (sending) return;
-    if (!_speechInitialized) {
-      final allowed = await _ensureMicrophonePermission(
-        'Microphone permission is needed for voice input.',
-      );
-      if (!allowed) return;
-      await _initSpeech();
-    }
     if (!_speechAvailable) {
       _showSnack(
         'Voice input is unavailable or microphone permission was denied.',
@@ -12793,19 +10956,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<void> _toggleVideoRecording() async {
     if (sending) return;
 
-    if (kIsWeb) {
-      await _openWebVideoRecorder();
-      return;
-    }
-
     if (!kIsWeb && _nativeMediaCapture.isSupported) {
       await _captureNativeVideo();
       return;
     }
-    _showSnack('Video recording is unavailable on this device.');
-  }
 
-  Future<void> _openWebVideoRecorder() async {
     if (_isRecording) {
       _showSnack('Stop audio recording before recording video.');
       return;
@@ -12814,40 +10969,81 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Stop voice input before recording video.');
       return;
     }
-    final recording = await showDialog<WebVideoRecording>(
-      context: context,
-      useRootNavigator: false,
-      barrierDismissible: false,
-      builder: (_) => WebVideoRecorderDialog(recorder: _videoRecorder),
-    );
-    if (!mounted || recording == null) return;
-    final sizeError = _checkUploadSize(recording.bytes.length);
+
+    if (_isVideoRecording) {
+      await _stopVideoRecording();
+      return;
+    }
+
+    bool granted;
+    try {
+      granted = await _videoRecorder.requestPermission();
+    } catch (_) {
+      granted = false;
+    }
+    if (!granted) {
+      _showSnack(
+        'Camera/microphone permission was denied or unavailable.',
+      );
+      return;
+    }
+
+    final viewType =
+        'vault-video-preview-${DateTime.now().microsecondsSinceEpoch}';
+    _videoRecorder.registerPreview(viewType);
+
+    try {
+      _videoRecorder.start();
+      if (mounted) {
+        setState(() {
+          _isVideoRecording = true;
+          _videoPreviewViewType = viewType;
+        });
+      }
+    } catch (_) {
+      _showSnack('Could not start video recording.');
+      _videoRecorder.cancel();
+    }
+  }
+
+  Future<void> _stopVideoRecording() async {
+    Uint8List? bytes;
+    try {
+      bytes = await _videoRecorder.stop();
+    } catch (_) {
+      bytes = null;
+    }
+    if (mounted) {
+      setState(() {
+        _isVideoRecording = false;
+        _videoPreviewViewType = null;
+      });
+    }
+
+    if (bytes == null || bytes.isEmpty) {
+      _showSnack('Recording is empty.');
+      return;
+    }
+
+    final sizeError = _checkUploadSize(bytes.length);
     if (sizeError != null) {
       _showSnack(sizeError);
       return;
     }
-    final recordedBytes = recording.bytes;
-    setState(() {
-      attachments.add(_Attachment(
-        id: _newAttachmentId(),
-        name: 'video_${DateTime.now().millisecondsSinceEpoch}.webm',
-        kind: 'video',
-        readBytes: () async => recordedBytes,
-        size: recordedBytes.length,
-        mimeType: recording.mimeType,
-      ));
-    });
-  }
 
-  // Compatibility cleanup for the retired inline web recorder banner. The
-  // dedicated WebVideoRecorderDialog owns all current web close/discard UI.
-  Future<void> _cancelVideoRecordingWithConfirmation() async {
-    if (!_isVideoRecording) return;
-    _videoRecorder.cancel();
     if (!mounted) return;
+    final recordedBytes = bytes;
     setState(() {
-      _isVideoRecording = false;
-      _videoPreviewViewType = null;
+      attachments.add(
+        _Attachment(
+          id: _newAttachmentId(),
+          name: 'video_${DateTime.now().millisecondsSinceEpoch}.webm',
+          kind: 'video',
+          readBytes: () async => recordedBytes,
+          size: recordedBytes.length,
+          mimeType: 'video/webm',
+        ),
+      );
     });
   }
 
@@ -12860,7 +11056,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     CapturedMedia? captured;
     try {
-      captured = await _nativeMediaCapture.capturePhoto();
+      final app = context.read<AppState>();
+      captured = await app.runWithNativePickerKeepAlive(
+        _nativeMediaCapture.capturePhoto,
+      );
     } catch (_) {
       _showSnack('Could not take a photo.');
       return;
@@ -12887,7 +11086,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     CapturedMedia? captured;
     try {
-      captured = await _nativeMediaCapture.captureVideo();
+      final app = context.read<AppState>();
+      captured = await app.runWithNativePickerKeepAlive(
+        _nativeMediaCapture.captureVideo,
+      );
     } catch (_) {
       _showSnack('Could not record a video.');
       return;
@@ -13004,12 +11206,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   ),
                 ),
                 const Spacer(),
-                IconButton(
-                  key: const Key('video_recording_close_button'),
-                  tooltip: 'Cancel recording',
-                  onPressed: _cancelVideoRecordingWithConfirmation,
-                  icon: const Icon(Icons.close, color: Colors.white70),
-                ),
                 TextButton.icon(
                   onPressed: _toggleVideoRecording,
                   icon: const Icon(Icons.stop, color: Colors.redAccent),
@@ -13082,7 +11278,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ),
               if (failed > 0)
                 TextButton.icon(
-                  onPressed: _retryAllFailedUploads,
+                  onPressed: _uploadQueue.retryAllFailed,
                   icon: const Icon(Icons.refresh, size: 14),
                   label: Text(
                     AppLocalizations.of(context).cryptoRetryFailed,
@@ -13245,14 +11441,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   @override
   void dispose() {
-    HardwareKeyboard.instance.removeHandler(_onComposerHardwareKey);
     _chatMainnetSendApprovalSession.clear();
-    final activeRequestId = _chatRequests.activeRequestId;
-    if (activeRequestId != null) {
-      _chatRequests.cancel(activeRequestId);
-      _cancelledChatRequestIds.add(activeRequestId);
-    }
-    unawaited(_chatRequests.cancelActiveIterator());
     if (_speech.isListening) {
       _speech.cancel();
     }
@@ -13260,7 +11449,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _audioRecorder.stop();
     }
     _audioRecorder.dispose();
-    if (_isVideoRecording || _videoPreviewViewType != null) {
+    if (_isVideoRecording) {
       _videoRecorder.cancel();
     }
     _videoRecorder.dispose();
@@ -13277,7 +11466,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _uploadQueue.removeListener(_onUploadQueueChanged);
     _uploadQueue.dispose();
     input.dispose();
-    _composerFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -13369,74 +11557,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final duplicateAction =
         job.duplicateAction ?? (ctx.isBatchUpload ? 'skip' : 'prompt');
-
-    const fileV2Write = fileV2WriteEnabled;
-    final needsServerCredentialReview =
-        shouldUseServerReadableCredentialReview(ctx.accompanyingText);
-    if (fileV2Write && !needsServerCredentialReview) {
-      final repo = FileV2Repository.current();
-      if (repo == null) throw StateError('file_v2_requires_active_mvk');
-      final fileId = job.fileV2Id ??= 'file-${job.id}';
-      final operationHash = sha256.convert(utf8.encode(job.id)).toString();
-      vlog('file_v2.upload.operation', {
-        'operation_present': true,
-        'operation_hash12': operationHash.substring(0, 12),
-        'attempt': job.attempts,
-      });
-      const chunkSize = kFileV2ChunkBytes;
-      final chunks = (bytes.length / chunkSize).ceil();
-      final manifest = await repo.encryptMetadata(
-          fileId: fileId,
-          filename: filenameWithChosenTitle(
-            originalFilename: job.name,
-            chosenTitle: job.displayName,
-          ),
-          contentType: job.mimeType,
-          relativePath: job.relativePath,
-          label: job.displayName?.trim());
-      var manifestCreated = false;
-      try {
-        await ctx.client.createFileV2Manifest(
-            authToken: ctx.authToken,
-            fileId: fileId,
-            manifestCiphertext: manifest,
-            totalBytes: bytes.length,
-            chunkSize: chunkSize,
-            chunkCount: chunks);
-        manifestCreated = true;
-        for (var i = 0; i < chunks; i++) {
-          final start = i * chunkSize;
-          final end = min(bytes.length, start + chunkSize);
-          final encrypted =
-              await repo.encryptChunk(fileId, i, bytes.sublist(start, end));
-          await ctx.client.putFileV2Chunk(
-              authToken: ctx.authToken,
-              fileId: fileId,
-              chunkIndex: i,
-              ciphertext: encrypted);
-          reportProgress((i + 1) / chunks);
-        }
-      } catch (_) {
-        if (manifestCreated) {
-          try {
-            await ctx.client
-                .deleteFileV2(authToken: ctx.authToken, fileId: fileId);
-          } catch (_) {
-            // Preserve the original upload failure. A later inventory repair
-            // may remove an unreachable partial manifest.
-          }
-        }
-        rethrow;
-      }
-      final confirmationName = uploadConfirmationName(
-        originalFilename: job.name,
-        chosenTitle: job.displayName,
-      );
-      return UploadResult(
-        fileId: fileId,
-        message: 'Uploaded $confirmationName.',
-      );
-    }
 
     Map<String, dynamic> result;
     try {
@@ -13596,46 +11716,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
-  void _bindCredentialInventoryToCurrentSession(AppState app) {
-    if (!_credentialInventorySession.bind(app.sessionEpoch)) return;
-    _vaultLoginsLoadFuture = null;
-    vaultLogins = <VaultLoginItem>[];
-    loadingLogins = false;
-    hasLoadedSecureItems = false;
-    secureItemsError = null;
-  }
-
-  Future<void> _loadVaultLogins() {
-    final app = context.read<AppState>();
-    _bindCredentialInventoryToCurrentSession(app);
-    final active = _vaultLoginsLoadFuture;
-    if (active != null) return active;
-    final next = _loadVaultLoginsOnce();
-    _vaultLoginsLoadFuture = next;
-    return next.whenComplete(() {
-      if (identical(_vaultLoginsLoadFuture, next)) {
-        _vaultLoginsLoadFuture = null;
-      }
-    });
-  }
-
-  Future<void> _reloadVaultLoginsAfterMutation() async {
-    // A session hydration may already be listing credentials when a write
-    // commits. Joining that pre-write request is not a readback: its older
-    // snapshot can still overwrite the dashboard. Wait for it to finish, then
-    // force one fresh authoritative inventory request.
-    final active = _vaultLoginsLoadFuture;
-    if (active != null) await active;
-    await _loadVaultLogins();
-  }
-
-  Future<void> _loadVaultLoginsOnce() async {
+  Future<void> _loadVaultLogins() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
-    final loadEpoch = app.sessionEpoch;
-    final loadVaultId = app.vaultId;
 
-    if (token == null || loadVaultId == null || app.vaultName == null) return;
+    if (token == null || app.vaultName == null) return;
 
     setState(() {
       loadingLogins = true;
@@ -13647,149 +11732,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
 
-      final parsed = <VaultLoginItem>[];
-      var legacyLoadCompleted = false;
-      final activeMvk = zk_mvk_store.ZkActiveMvk.current();
-      final isZkVault = activeMvk != null;
-      var opaqueLoadCompleted = !isZkVault;
-      var v2LoadCompleted = false;
-      Object? legacyLoadError;
-      Object? opaqueLoadError;
-      Object? v2LoadError;
-
-      // Legacy and v2 are independent sources. A v2-only vault must remain
-      // listable even when the legacy endpoint has no corresponding row.
-      try {
-        final result = await client.listVaultSecureItems(
-          vaultName: app.vaultName!,
-          pin: pin,
-          authToken: token,
-        );
-        legacyLoadCompleted = true;
-        final rawItems = result['items'];
-        if (rawItems is List) {
-          for (final item in rawItems) {
-            if (item is Map<String, dynamic>) {
-              parsed.add(VaultLoginItem.fromJson(item));
-            } else if (item is Map) {
-              parsed.add(
-                  VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
-            }
-          }
-        }
-      } catch (error) {
-        legacyLoadError = error;
-      }
-
-      // New ZK vaults persist vault_items with opaque metadata columns only.
-      // Hydrate those durable rows locally under the active MVK; the legacy
-      // plaintext list endpoint intentionally cannot see them.
-      try {
-        final mvk = activeMvk;
-        if (mvk != null) {
-          final metadataKey =
-              await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
-          final opaqueRows = await client.listZkVaultItemCiphertexts(
-            authToken: token,
-          );
-          for (final row in opaqueRows) {
-            try {
-              Future<String> decryptText(String key) async => utf8.decode(
-                    await vk_hier.aesGcmUnwrap(
-                      metadataKey,
-                      vk_hier.b64urlDecode(row[key]?.toString() ?? ''),
-                    ),
-                  );
-              final itemType = await decryptText('item_type_ciphertext');
-              if (isSystemHiddenItemType(itemType)) continue;
-              final service = await decryptText('service_ciphertext');
-              final payload =
-                  jsonDecode(await decryptText('payload_ciphertext'));
-              if (payload is! Map || service.trim().isEmpty) continue;
-              final payloadMap = Map<String, dynamic>.from(payload);
-              final rawFields = payloadMap['fields'];
-              parsed.add(VaultLoginItem(
-                service: service,
-                itemType: itemType,
-                createdAt:
-                    DateTime.tryParse(row['created_at']?.toString() ?? ''),
-                recordId: 'vault-item-${row['item_id']}',
-                cryptoVersion: credentialMetadataCryptoVersion,
-                localFields: rawFields is Map
-                    ? Map<String, dynamic>.from(rawFields)
-                    : payloadMap,
-              ));
-            } on Object {
-              // One malformed or foreign-version row must not blank siblings.
-            }
-          }
-          opaqueLoadCompleted = true;
-        }
-      } catch (error) {
-        opaqueLoadError = error;
-        opaqueLoadCompleted = false;
-        final status =
-            RegExp(r'\(([0-9]{3})\)').firstMatch(error.toString())?.group(1) ??
-                'local';
-        vlog('secure_items.load.opaque_unavailable', {
-          'status': status,
-          'error_type': error.runtimeType.toString(),
-        });
-      }
-
-      final v2Repository = _credentialV2Repository(app);
-      if (v2Repository != null) {
-        try {
-          final v2Records = await v2Repository.listDecrypted();
-          v2LoadCompleted = true;
-          parsed.addAll(v2Records.map((record) => VaultLoginItem(
-                service: record.plaintext.service,
-                itemType: 'login',
-                recordId: record.recordId,
-                cryptoVersion: credentialV2CryptoVersion,
-                migrationState: record.migrationState,
-                verificationState: record.verificationState,
-              )));
-        } catch (error) {
-          v2LoadError = error;
-        }
-      } else {
-        v2LoadCompleted = true;
-      }
-
-      // During the ZK rolling migration, either the legacy-compatible source
-      // or the opaque ciphertext source can be authoritative. Publish valid
-      // records from the successful source instead of discarding them because
-      // the other endpoint is not deployed yet. Pre-ZK vaults still require
-      // the legacy endpoint. V2 remains required whenever configured.
-      final sourcesComplete = credentialInventorySourcesComplete(
-        isZkVault: isZkVault,
-        legacyCompleted: legacyLoadCompleted,
-        opaqueCompleted: opaqueLoadCompleted,
-        v2Completed: v2LoadCompleted,
+      final result = await client.listVaultSecureItems(
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
       );
-      if (!sourcesComplete) {
-        vlog('secure_items.load.incomplete', {
-          'is_zk_vault': isZkVault,
-          'legacy_complete': legacyLoadCompleted,
-          'opaque_complete': opaqueLoadCompleted,
-          'v2_complete': v2LoadCompleted,
-          'legacy_error_type': legacyLoadError?.runtimeType.toString(),
-          'opaque_error_type': opaqueLoadError?.runtimeType.toString(),
-          'v2_error_type': v2LoadError?.runtimeType.toString(),
-        });
-        throw StateError('credential_inventory_incomplete');
+      final rawItems = result['items'];
+      final parsed = <VaultLoginItem>[];
+
+      if (rawItems is List) {
+        for (final item in rawItems) {
+          if (item is Map<String, dynamic>) {
+            parsed.add(VaultLoginItem.fromJson(item));
+          } else if (item is Map) {
+            parsed
+                .add(VaultLoginItem.fromJson(Map<String, dynamic>.from(item)));
+          }
+        }
       }
 
       if (!mounted) return;
-      if (!app.ownsSessionLoad(
-        epoch: loadEpoch,
-        vaultIdValue: loadVaultId,
-        tokenValue: token,
-      )) {
-        vlog('secure_items.load.stale_completion_dropped', const {});
-        return;
-      }
       setState(() {
         vaultLogins = parsed;
         hasLoadedSecureItems = true;
@@ -13799,14 +11761,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (app.handleApiException(e)) return;
 
       if (mounted) {
-        final recovery = safeCredentialInventoryRecoveryMessage(e);
         setState(() {
           hasLoadedSecureItems = true;
-          secureItemsError = recovery;
+          secureItemsError = e.toString();
         });
-        _showSnack(recovery);
       }
-      vlog('secure_items.load.failed', {'error_type': e.runtimeType});
+      _showSnack('Could not load secure items: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -13816,185 +11776,46 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _loadVaultFiles() {
-    final active = _vaultFilesLoadFuture;
-    if (active != null) return active;
-    final next = _loadVaultFilesOnce();
-    _vaultFilesLoadFuture = next;
-    return next.whenComplete(() {
-      if (identical(_vaultFilesLoadFuture, next)) {
-        _vaultFilesLoadFuture = null;
-      }
-    });
-  }
-
-  Future<void> _reloadVaultFilesAfterMutation() async {
-    // A dashboard hydration may already be listing files when an upload
-    // commits. Waiting for that pre-mutation snapshot is insufficient: it can
-    // overwrite the inventory with stale data and cause one early "not found"
-    // reply. Let it finish, then require a fresh post-mutation list.
-    final active = _vaultFilesLoadFuture;
-    if (active != null) await active;
-    await _loadVaultFiles();
-  }
-
-  Future<void> _loadVaultFilesOnce() async {
+  Future<void> _loadVaultFiles() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
-    final loadEpoch = app.sessionEpoch;
-    final loadVaultId = app.vaultId;
 
-    if (token == null || loadVaultId == null || app.vaultName == null) return;
+    if (token == null || app.vaultId == null || app.vaultName == null) return;
 
     setState(() {
       loadingFiles = true;
-      filesLoadError = null;
     });
 
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final fileRepo = FileV2Repository.current();
-      if (fileRepo != null) {
-        QaRuntimeAccess.install(
-          list: () => client.listFileV2(authToken: token),
-          download: (fileId) async {
-            final manifest = await client.getFileV2Manifest(
-                authToken: token, fileId: fileId);
-            final meta = await fileRepo.decryptMetadata(
-                fileId,
-                vk_hier
-                    .b64urlDecode(manifest['manifest_ciphertext'] as String));
-            final out = BytesBuilder(copy: false);
-            final count = (manifest['chunk_count'] as num).toInt();
-            for (var i = 0; i < count; i++) {
-              final frame = await client.getFileV2Chunk(
-                  authToken: token, fileId: fileId, chunkIndex: i);
-              out.add(await fileRepo.decryptChunk(fileId, i, frame));
-            }
-            return {
-              'file_id': fileId,
-              'filename': meta.filename,
-              'content_type': meta.contentType,
-              'bytes': out.takeBytes()
-            };
-          },
-          delete: (fileId) async {
-            await client.deleteFileV2(authToken: token, fileId: fileId);
-            return true;
-          },
-        );
-      }
+      final result = await client.listVaultFiles(
+        vaultName: app.vaultName!,
+        pin: pin,
+        authToken: token,
+      );
+
+      final rawFiles = result['files'];
       final parsed = <_VaultStoredFile>[];
-      var authoritativeInventorySucceeded = false;
 
-      // Legacy and File V2 are independent authoritative inventories. A
-      // failure in the legacy PBKDF2 endpoint must not prevent a private
-      // File V2 vault from rehydrating after login.
-      try {
-        final result = await client.listVaultFiles(
-          vaultName: app.vaultName!,
-          pin: pin,
-          authToken: token,
-        );
-        authoritativeInventorySucceeded = true;
-        final rawFiles = result['files'];
-        if (rawFiles is List) {
-          for (final item in rawFiles) {
-            if (item is Map<String, dynamic>) {
-              parsed.add(_VaultStoredFile.fromJson(item));
-            } else if (item is Map) {
-              parsed.add(
-                  _VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
-            }
+      if (rawFiles is List) {
+        for (final item in rawFiles) {
+          if (item is Map<String, dynamic>) {
+            parsed.add(_VaultStoredFile.fromJson(item));
+          } else if (item is Map) {
+            parsed.add(
+                _VaultStoredFile.fromJson(Map<String, dynamic>.from(item)));
           }
         }
-      } catch (e) {
-        if (app.handleApiException(e)) return;
-        vlog('files.load.legacy.failed', {'error_type': e.runtimeType});
-      }
-
-      const fileV2Read = fileV2ReadEnabled;
-      if (fileV2Read) {
-        final repo = FileV2Repository.current();
-        if (repo != null) {
-          try {
-            final v2 = await client.listFileV2(authToken: token);
-            authoritativeInventorySucceeded = true;
-            final v2Rows = v2['files'];
-            if (v2Rows is List) {
-              for (final raw in v2Rows) {
-                if (raw is! Map) continue;
-                final id = raw['file_id']?.toString();
-                if (id == null || id.isEmpty) continue;
-                try {
-                  final manifest = await client.getFileV2Manifest(
-                      authToken: token, fileId: id);
-                  final ct = vk_hier
-                      .b64urlDecode(manifest['manifest_ciphertext'] as String);
-                  final meta = await repo.decryptMetadata(id, ct);
-                  parsed.add(_VaultStoredFile.fromJson({
-                    'id': id,
-                    'file_name': meta.filename,
-                    if (meta.label?.trim().isNotEmpty == true)
-                      'saved_name': meta.label!.trim(),
-                    'content_type': meta.contentType,
-                    'file_size': raw['total_bytes'],
-                    'storage_mode': 'file_v2',
-                    'crypto_version': 'client_mvk_v2',
-                    'needs_naming': false,
-                  }));
-                } catch (e) {
-                  // One damaged/incompatible record must not hide every other
-                  // valid file in the vault. Keep diagnostics metadata-only.
-                  vlog('files.load.file_v2_record.failed', {
-                    'error_type': e.runtimeType,
-                  });
-                }
-              }
-            }
-          } catch (e) {
-            if (app.handleApiException(e)) return;
-            vlog('files.load.file_v2.failed', {'error_type': e.runtimeType});
-          }
-        }
-      }
-
-      if (!authoritativeInventorySucceeded) {
-        throw StateError('file_inventory_unavailable');
       }
 
       if (!mounted) return;
-      if (!app.ownsSessionLoad(
-        epoch: loadEpoch,
-        vaultIdValue: loadVaultId,
-        tokenValue: token,
-      )) {
-        vlog('files.load.stale_completion_dropped', {
-          'epoch_changed': app.sessionEpoch != loadEpoch,
-          'vault_changed': app.vaultId != loadVaultId,
-        });
-        return;
-      }
-      vlog('files.load.composed', {
-        'total_count': parsed.length,
-        'file_v2_count': parsed.where((file) => file.isFileV2).length,
-        'legacy_count': parsed.where((file) => !file.isFileV2).length,
-      });
       setState(() {
         vaultFiles = parsed;
-        hasLoadedFiles = true;
-        filesLoadError = null;
       });
     } catch (e) {
       if (app.handleApiException(e)) return;
-      vlog('files.load.failed', {'error_type': e.runtimeType});
-      // Transport bodies can be HTML gateway pages. Keep them out of the
-      // product UI; diagnostics retain only the safe runtime type above.
-      setState(() {
-        filesLoadError =
-            'Could not load files. Check your connection and try again.';
-      });
+      _showSnack('Could not load files: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -14061,7 +11882,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           maxWidth: 320,
           maxHeight: maxMenuHeight,
         ),
-        enabled: !_chatOperationBusy,
+        enabled: !sending,
         onSelected: (value) async {
           try {
             switch (value) {
@@ -14217,35 +12038,58 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _pickFile() async {
-    final result = await pickFilesForUpload(allowMultiple: true);
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.any,
+      ),
+    );
 
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'file');
   }
 
   Future<void> _pickImage() async {
-    final result = await pickTypedFilesForUpload(
-      allowMultiple: true,
-      type: FileType.image,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.image,
+      ),
     );
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'image');
   }
 
   Future<void> _pickVideo() async {
-    final result = await pickTypedFilesForUpload(
-      allowMultiple: true,
-      type: FileType.video,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.video,
+      ),
     );
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'video');
   }
 
   Future<void> _pickAudio() async {
-    final result = await pickTypedFilesForUpload(
-      allowMultiple: true,
-      type: FileType.custom,
-      allowedExtensions: kAcceptedAudioExtensions,
+    final app = context.read<AppState>();
+    final result = await app.runWithNativePickerKeepAlive(
+      () => FilePicker.platform.pickFiles(
+        withData: false,
+        withReadStream: true,
+        allowMultiple: true,
+        type: FileType.custom,
+        allowedExtensions: kAcceptedAudioExtensions,
+      ),
     );
     if (result == null || result.files.isEmpty) return;
     _ingestPickedFiles(result.files, kind: 'audio');
@@ -14259,7 +12103,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     FolderPickResult? result;
     try {
-      result = await _folderPicker.pickFolder();
+      final app = context.read<AppState>();
+      result = await app.runWithNativePickerKeepAlive(
+        _folderPicker.pickFolder,
+      );
     } catch (e) {
       _showSnack('Could not open the folder picker: $e');
       return;
@@ -14394,53 +12241,38 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// MVK-derived `memoryKey`, compute `memory_lookup_hash` via the
   /// derived `memoryLookupKey`, and POST to the ciphertext-first
   /// AI-memory endpoint. Fail-closed on any exception: no user-
-  /// plaintext-bearing error. The caller renders only a generic outcome after
-  /// the authoritative write result is known, so a failed write never claims
-  /// that the memory was saved.
-  Future<_MemoryProposalFinalizeOutcome> _finalizeMemoryProposalBestEffort({
+  /// visible error, no fallback plaintext write. The chat reply
+  /// already tells the user the memory was saved; a silent finalize
+  /// failure is the correct privacy failure mode (nothing saved),
+  /// and the user can re-issue the "remember this" instruction on
+  /// the next turn.
+  Future<void> _finalizeMemoryProposalBestEffort({
     required String jsonPayload,
     required String authToken,
   }) async {
     try {
       final decoded = jsonDecode(jsonPayload);
-      if (decoded is! Map) return _MemoryProposalFinalizeOutcome.failed;
+      if (decoded is! Map) return;
       final mt = decoded['memory_type'];
       final mk = decoded['memory_key'];
       final mv = decoded['memory_value'];
       final md = decoded['memory_event_date'];
-      if (mt is! String || mt.isEmpty) {
-        return _MemoryProposalFinalizeOutcome.failed;
-      }
-      if (mk is! String || mk.isEmpty) {
-        return _MemoryProposalFinalizeOutcome.failed;
-      }
-      if (mv is! String || mv.isEmpty) {
-        return _MemoryProposalFinalizeOutcome.failed;
-      }
-      const memoryV2Enabled = memoryV2WriteEnabled;
-      if (!memoryV2Enabled) {
-        return _MemoryProposalFinalizeOutcome.failed;
-      }
-      final repository = MemoryV2Repository(
+      if (mt is! String || mt.isEmpty) return;
+      if (mk is! String || mk.isEmpty) return;
+      if (mv is! String || mv.isEmpty) return;
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.tryZkFinalizeMemoryProposal(
         baseUrl: backendBaseUrl,
         authToken: authToken,
-      );
-      final result = await repository.create(
         memoryType: mt,
-        plaintext: MemoryV2Plaintext(
-          value: mv,
-          normalized: mk,
-          summary: md is String && md.isNotEmpty ? md : null,
-        ),
+        memoryKey: mk,
+        memoryValue: mv,
+        memoryEventDate: md is String && md.isNotEmpty ? md : null,
       );
-      return result.duplicate
-          ? _MemoryProposalFinalizeOutcome.duplicate
-          : _MemoryProposalFinalizeOutcome.saved;
     } catch (_) {
       // Fail privacy-safe: never surface the parsed plaintext memory
       // in an error banner. Silent no-op = memory not saved =
       // correct ZK failure mode.
-      return _MemoryProposalFinalizeOutcome.failed;
     }
   }
 
@@ -14486,58 +12318,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ],
       ),
     );
-    _restoreComposerFocus();
-  }
-
-  Future<void> _renameLocalAttachment(_Attachment attachment) async {
-    final controller = TextEditingController(
-      text: attachment.displayName ?? attachment.name,
-    );
-    final focusNode = FocusNode();
-    final result = await showDialog<String>(
-      context: context,
-      useRootNavigator: false,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Name this file'),
-        content: TextField(
-          key: const Key('attachment_display_name_field'),
-          controller: controller,
-          focusNode: focusNode,
-          autofocus: true,
-          textInputAction: TextInputAction.done,
-          maxLength: 120,
-          onSubmitted: (value) {
-            final name = value.trim();
-            if (name.isNotEmpty) Navigator.pop(dialogContext, name);
-          },
-          decoration: const InputDecoration(labelText: 'Display name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) Navigator.pop(dialogContext, name);
-            },
-            child: const Text('Use name'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    focusNode.dispose();
-    if (result != null && mounted) {
-      final index = attachments.indexWhere((item) => item.id == attachment.id);
-      if (index >= 0) {
-        setState(
-            () => attachments[index] = attachment.copy(displayName: result));
-      }
-    }
-    _restoreComposerFocus();
   }
 
   Future<Map<String, dynamic>> _chunkedUpload({
@@ -14643,23 +12423,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _showSnack('Upload cancelled.');
   }
 
-  Future<void> _retryAllFailedUploads() async {
-    if (_uploadQueue.isBusy || !_uploadQueue.hasFailures) return;
-    final retryContext = _retryUploadContext;
-    if (retryContext == null) {
-      _showSnack('Please attach the failed file again.');
-      return;
-    }
-    _currentUploadContext = retryContext;
-    try {
-      _uploadQueue.retryAllFailed();
-      await _uploadQueue.waitForIdle();
-    } finally {
-      _currentUploadContext = null;
-      if (!_uploadQueue.hasFailures) _retryUploadContext = null;
-    }
-  }
-
   Future<_UploadAttachmentsOutcome> _uploadAttachments({
     required VaultAIClient client,
     required String vaultName,
@@ -14753,7 +12516,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       uploadSafetyCapBytes: app.uploadSafetyCapBytes,
       importId: importId,
     );
-    _retryUploadContext = _currentUploadContext;
 
     final jobs = [
       for (final a in freshAttachments)
@@ -14775,7 +12537,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       await _uploadQueue.waitForIdle();
     } finally {
       _currentUploadContext = null;
-      if (!_uploadQueue.hasFailures) _retryUploadContext = null;
     }
 
     if (importId != null) {
@@ -14875,7 +12636,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     final maybeCard = vcs_parser.parseVaultChatCardMessage(text);
     if (maybeCard != null) {
-      _rememberGeneratedLoginDraft(maybeCard);
       return maybeCard;
     }
 
@@ -14987,6 +12747,35 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           payload: payload,
         );
       }
+      if (type == 'travel_readiness') {
+        final payload = <String, dynamic>{
+          'confidence': decoded['confidence']?.toString() ?? 'blocked',
+          'found': (decoded['found'] is List)
+              ? (decoded['found'] as List).whereType<String>().toList()
+              : const <String>[],
+          'missing': (decoded['missing'] is List)
+              ? (decoded['missing'] as List).whereType<String>().toList()
+              : const <String>[],
+          'expired': (decoded['expired'] is List)
+              ? (decoded['expired'] as List)
+                  .whereType<Map>()
+                  .map((m) => m.cast<String, dynamic>())
+                  .toList()
+              : const <Map<String, dynamic>>[],
+          'expiring_soon': (decoded['expiring_soon'] is List)
+              ? (decoded['expiring_soon'] as List)
+                  .whereType<Map>()
+                  .map((m) => m.cast<String, dynamic>())
+                  .toList()
+              : const <Map<String, dynamic>>[],
+        };
+        return _Msg(
+          'assistant',
+          decoded['message']?.toString() ?? '',
+          kind: 'travel_readiness',
+          payload: payload,
+        );
+      }
       if (type == 'credential_files') {
         final filesRaw = decoded['files'];
         final files = filesRaw is List
@@ -15062,9 +12851,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'records': records,
           'file': fileMap,
           if (decoded['count'] is int) 'count': decoded['count'],
-          if (decoded['analysis_counts'] is Map)
-            'analysis_counts':
-                (decoded['analysis_counts'] as Map).cast<String, dynamic>(),
           if (decoded['text_available'] is bool)
             'text_available': decoded['text_available'],
         };
@@ -15389,17 +13175,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final looksLikeMissingRoute =
           raw.contains('404') || raw.contains('not found');
       if (!looksLikeMissingRoute) rethrow;
-      try {
-        final v2 = await client.getFileV2Manifest(
-            authToken: authToken, fileId: fileId);
-        manifest = {
-          ...v2,
-          'storage_mode': 'file_v2',
-          'file_size': v2['total_bytes']
-        };
-      } catch (_) {
-        manifest = null;
-      }
+      manifest = null;
     }
 
     if (manifest == null) {
@@ -15418,27 +13194,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     final mode = manifest['storage_mode']?.toString() ?? 'inline';
-    if (mode == 'file_v2') {
-      final repo = FileV2Repository.current();
-      if (repo == null) throw StateError('file_v2_requires_active_mvk');
-      final opaque =
-          await client.getFileV2Manifest(authToken: authToken, fileId: fileId);
-      final metaCt =
-          vk_hier.b64urlDecode(opaque['manifest_ciphertext'] as String);
-      final meta = await repo.decryptMetadata(fileId, metaCt);
-      final count = (opaque['chunk_count'] as num).toInt();
-      final out = BytesBuilder(copy: false);
-      for (var i = 0; i < count; i++) {
-        final frame = await client.getFileV2Chunk(
-            authToken: authToken, fileId: fileId, chunkIndex: i);
-        out.add(await repo.decryptChunk(fileId, i, frame));
-      }
-      return (
-        bytes: out.takeBytes(),
-        contentType: meta.contentType,
-        fileName: meta.filename
-      );
-    }
     final fileName = manifest['file_name']?.toString() ?? fallbackFileName;
     final mime = manifest['content_type']?.toString() ?? fallbackMime;
 
@@ -16240,12 +13995,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required bool isVideo,
   }) async {
     if (!kIsWeb) {
+      if (isVideo) {
+        try {
+          final opened = await showNativeVideoViewer(
+            context,
+            fileName: fileName,
+            bytes: bytes,
+          );
+          if (opened) return;
+        } catch (_) {
+          // Fall through to the safe metadata view for unsupported codecs.
+        }
+      }
       await _openMediaMetadataDialog(
         fileName: fileName,
         bytes: bytes,
         mimeType: mimeType,
         isVideo: isVideo,
-        reason: 'In-app playback is currently web-only.',
+        reason: isVideo
+            ? 'This video format could not be played on this device.'
+            : 'In-app audio playback is not available on this device.',
       );
       return;
     }
@@ -16504,33 +14273,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _sendQuickPrompt(
-    String text, {
-    String? encryptedBackendCommand,
-    Map<String, String>? selectionHint,
-    ChatOperationKind? kind,
-  }) {
-    final operationKind = kind ??
-        (isAuthoritativeVaultMutationCommand(
-          text,
-          hasPrivateBackendCommand: encryptedBackendCommand?.isNotEmpty == true,
-        )
-            ? ChatOperationKind.mutation
-            : ChatOperationKind.read);
-    return _enqueueChatOperation<void>(
-      kind: operationKind,
-      operation: () async {
-        if (!mounted) return;
-        setState(() {
-          selectedSection = _DashboardSection.chat;
-          input.text = text;
-          _nextSelectionHint = selectionHint;
-          _nextEncryptedBackendCommand = encryptedBackendCommand;
-        });
-        await Future.delayed(const Duration(milliseconds: 50));
-        await _send();
-      },
-    );
+  Future<void> _sendQuickPrompt(String text) async {
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      input.text = text;
+    });
+    await Future.delayed(const Duration(milliseconds: 50));
+    await _send();
   }
 
   /// Dispatcher for structured card actions surfaced through the
@@ -16548,359 +14297,82 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     String action,
     Map<String, dynamic>? data,
   ) async {
-    if (action == 'credential_v2_edit' || action == 'credential_v2_delete') {
-      final recordId = data?['record_id']?.toString().trim() ?? '';
-      final service = data?['service']?.toString().trim() ?? '';
-      if (recordId.isEmpty || service.isEmpty) {
-        _showSnack('This login card is missing its secure record reference.');
-        return;
-      }
-      final item = VaultLoginItem(
-        service: service,
-        recordId: recordId,
-        cryptoVersion: credentialV2CryptoVersion,
-      );
-      if (action == 'credential_v2_edit') {
-        await _openCredentialV2Editor(item);
-      } else {
-        await _deleteCredentialV2(item);
-      }
-      return;
-    }
     if (action == 'select_login_by_id') {
       final id = (data?['id'] as String?)?.trim() ?? '';
       final title = (data?['title'] as String?)?.trim() ?? '';
       if (id.isEmpty) return;
+      _nextSelectionHint = {
+        'kind': 'login',
+        'id': id,
+      };
       final prompt =
           title.isEmpty ? 'Show my selected login' : 'Show my $title login';
-      await _sendQuickPrompt(
-        prompt,
-        selectionHint: {'kind': 'login', 'id': id},
-      );
+      _sendQuickPrompt(prompt);
       return;
     }
     if (action == 'choose_login') {
       final title = (data?['query'] as String?)?.trim() ?? '';
       if (title.isEmpty) return;
-      await _sendQuickPrompt('Show my $title login');
+      _sendQuickPrompt('Show my $title login');
       return;
     }
     if (action == 'select_file_by_id') {
       final id = (data?['id'] as String?)?.trim() ?? '';
       final title = (data?['title'] as String?)?.trim() ?? '';
       if (id.isEmpty) return;
+      _nextSelectionHint = {
+        'kind': 'file',
+        'id': id,
+      };
       final prompt =
           title.isEmpty ? 'Show my selected file' : 'Show my $title file';
-      await _sendQuickPrompt(
-        prompt,
-        selectionHint: {'kind': 'file', 'id': id},
-      );
+      _sendQuickPrompt(prompt);
       return;
     }
-    if (action == 'credential_extraction_save' ||
-        action == 'credential_extraction_save_selected' ||
-        action == 'credential_extraction_edit_and_save' ||
-        action == 'credential_extraction_cancel') {
-      final candidateIds = (data?['candidate_ids'] is List)
-          ? (data!['candidate_ids'] as List)
-              .map((value) => value.toString().trim())
-              .where((value) => RegExp(r'^[a-f0-9]{24}$').hasMatch(value))
-              .toList(growable: false)
-          : const <String>[];
-      final wireAction = action == 'credential_extraction_save_selected'
-          ? 'save_selected'
-          : action == 'credential_extraction_edit_and_save'
-              ? 'edit_and_save'
-              : action == 'credential_extraction_cancel'
-                  ? 'cancel'
-                  : 'save';
-      if (wireAction != 'cancel' && candidateIds.isEmpty) {
-        _showSnack('Select at least one credential candidate.');
-        throw StateError('credential_extraction_selection_missing');
-      }
-      final overrides = (data?['overrides'] is Map)
-          ? (data!['overrides'] as Map).cast<String, dynamic>()
-          : const <String, dynamic>{};
-      final wirePayload = <String, dynamic>{
-        'action': wireAction,
-        'candidate_ids': candidateIds,
-        if (overrides.isNotEmpty) 'overrides': overrides,
-      };
-      final encoded = base64Url
-          .encode(utf8.encode(jsonEncode(wirePayload)))
-          .replaceAll('=', '');
-      final privateCommand =
-          '__svaultai_credential_extraction_action_v1__:$encoded';
-      final visiblePrompt = wireAction == 'cancel'
-          ? 'Cancel this credential review'
-          : wireAction == 'edit_and_save'
-              ? 'Save my edited credential candidate'
-              : candidateIds.length == 1
-                  ? 'Save this selected credential candidate'
-                  : 'Save ${candidateIds.length} selected credential candidates';
-      await _sendQuickPrompt(
-        visiblePrompt,
-        encryptedBackendCommand: privateCommand,
-      );
-      return;
-    }
-    // Generated-login Save uses the same authoritative credential write and
-    // readback contract as a typed "save it". Cancel remains a chat action so
-    // the server can discard its pending draft.
+    // 2026-08-01 generated-login draft Save / Cancel from the card
+    // button row. Both re-enter the /chat endpoint as a natural-
+    // language message the backend state machine already knows how
+    // to consume:
+    //   "save it"  -> state machine calls consume_draft(...) +
+    //                  save_secret_tool(...) — persists the draft.
+    //   "cancel"   -> state machine ACTION_CANCEL branch — clears
+    //                  the pending draft + the active entity pin.
     if (action == 'generated_login_save') {
-      await _saveGeneratedLoginDraftOnce(
-        data ?? const <String, dynamic>{},
-      );
+      final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
+      final service = (data?['service'] as String?)?.trim() ?? '';
+      if (draftId.isNotEmpty) {
+        _nextSelectionHint = {
+          'kind': 'generated_login_draft',
+          'id': draftId,
+          if (service.isNotEmpty) 'service': service,
+        };
+      }
+      _sendQuickPrompt('save it');
       return;
     }
     if (action == 'generated_login_cancel') {
       final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
       final service = (data?['service'] as String?)?.trim() ?? '';
-      if (!mounted) return;
-      final app = context.read<AppState>();
-      final vaultId = app.vaultId;
-      if (draftId.isEmpty || vaultId == null) {
-        _showSnack('Could not cancel this generated login.');
-        return;
+      if (draftId.isNotEmpty) {
+        _nextSelectionHint = {
+          'kind': 'generated_login_draft',
+          'id': draftId,
+          if (service.isNotEmpty) 'service': service,
+        };
       }
-      final draftKey = '$vaultId:$draftId';
-      _generatedCredentialFinalizer.remember(draftKey);
-      if (zkV2CredentialWriteEnabled && draftId.isNotEmpty) {
-        final repository = _credentialV2Repository(app);
-        if (repository == null) {
-          _showSnack('Could not cancel this generated login.');
-          return;
-        }
-        await _enqueueChatOperation<void>(
-          kind: ChatOperationKind.mutation,
-          operation: () async {
-            try {
-              final canceled = await _generatedCredentialFinalizer.cancel(
-                draftKey,
-                () => repository.api.cancelGeneratedDraft(draftId),
-              );
-              if (canceled) {
-                _clearPendingGeneratedLoginDraft(vaultId);
-                _appendAssistantMessage('Generated login cancelled.');
-              }
-            } catch (_) {
-              _showSnack('Could not cancel this generated login.');
-              rethrow;
-            }
-          },
-        );
-        return;
-      }
-      final canceled = await _generatedCredentialFinalizer.cancel(
-        draftKey,
-        () => _sendQuickPrompt(
-          'cancel',
-          selectionHint: {
-            'kind': 'generated_login_draft',
-            'id': draftId,
-            if (service.isNotEmpty) 'service': service,
-          },
-          kind: ChatOperationKind.mutation,
-        ),
-      );
-      if (canceled) {
-        _clearPendingGeneratedLoginDraft(vaultId);
-      }
+      _sendQuickPrompt('cancel');
       return;
     }
     if (action == 'memory_proposal_save') {
       final payload =
           data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
-      await _enqueueChatOperation<void>(
-        kind: ChatOperationKind.mutation,
-        operation: () => _saveMemoryProposalFromCard(payload),
-      );
+      await _saveMemoryProposalFromCard(payload);
       return;
     }
     if (action == 'memory_proposal_cancel') {
       _appendAssistantMessage('Memory proposal cancelled.');
       return;
     }
-  }
-
-  Future<void> _saveGeneratedLoginDraftOnce(
-    Map<String, dynamic> draft, {
-    String? expectedVaultId,
-  }) async {
-    final draftId = draft['draft_id']?.toString().trim() ?? '';
-    final service = draft['service']?.toString().trim() ?? '';
-    final username = draft['username']?.toString() ?? '';
-    final password = draft['password']?.toString() ?? '';
-    if (draftId.isEmpty ||
-        service.isEmpty ||
-        username.isEmpty ||
-        password.isEmpty) {
-      throw StateError('generated_credential_preflight_failed');
-    }
-    if (!mounted) throw StateError('generated_credential_view_unmounted');
-    final app = context.read<AppState>();
-    final vaultId = app.vaultId;
-    if (!app.unlocked ||
-        app.sessionToken == null ||
-        vaultId == null ||
-        (expectedVaultId != null && expectedVaultId != vaultId)) {
-      throw StateError('generated_credential_vault_scope_missing');
-    }
-    final draftKey = '$vaultId:$draftId';
-    _generatedCredentialFinalizer.remember(draftKey);
-    await _generatedCredentialFinalizer.save(draftKey, () async {
-      if (!zkV2CredentialWriteEnabled) {
-        await _saveGeneratedLoginAuthoritatively(
-          draftId: draftId,
-          service: service,
-          username: username,
-          password: password,
-          url: draft['url']?.toString(),
-          notes: draft['notes']?.toString(),
-          expectedVaultId: expectedVaultId,
-        );
-        return;
-      }
-
-      final repository = _credentialV2Repository(app);
-      if (repository == null) throw StateError('generated_v2_preflight_failed');
-      final recordDigest = sha256.convert(utf8.encode(draftId)).toString();
-      final recordId = 'generated-${recordDigest.substring(0, 32)}';
-      final operationId = credentialV2MigrationOperationId(recordId);
-      final credential = CredentialV2Plaintext(
-        service: service,
-        username: username,
-        password: password,
-        url: draft['url']?.toString(),
-        notes: draft['notes']?.toString(),
-      );
-      try {
-        await repository.create(
-          recordId: recordId,
-          credential: credential,
-          serviceForLookup: service,
-          migrationOperationId: operationId,
-        );
-        _qaV2CreateTrace('readback_entered');
-        final readBack = await repository.reveal(recordId);
-        _qaV2CreateTrace('readback_succeeded');
-        if (!readBack.semanticallyEquals(credential)) {
-          throw StateError('generated credential verification failed');
-        }
-        _qaV2CreateTrace('readback_equality_ok');
-        CredentialV2QaDiagnostics.remember(recordId, credential);
-        _qaV2CreateTrace('verify_entered');
-        await repository.api.verify(recordId, operationId);
-        _qaV2CreateTrace('verify_succeeded');
-        _qaV2CreateTrace('finalize_entered');
-        await repository.api.finalizeGeneratedDraft(
-          recordId: recordId,
-          draftId: draftId,
-        );
-        _qaV2CreateTrace('finalize_succeeded');
-        _clearPendingGeneratedLoginDraft(vaultId);
-        _appendAssistantMessage('Saved your ${service.trim()} login.');
-        await _reloadVaultLoginsAfterMutation();
-      } catch (_) {
-        _showSnack(
-            'Could not securely save this generated login. Retry is safe.');
-        rethrow;
-      }
-    });
-  }
-
-  Future<void> _saveGeneratedLoginAuthoritatively({
-    required String draftId,
-    required String service,
-    required String username,
-    required String password,
-    String? url,
-    String? notes,
-    String? expectedVaultId,
-  }) async {
-    if (draftId.trim().isEmpty ||
-        service.trim().isEmpty ||
-        username.trim().isEmpty ||
-        password.isEmpty) {
-      throw StateError('generated_credential_preflight_failed');
-    }
-
-    if (!mounted) throw StateError('generated_credential_view_unmounted');
-    final initialApp = context.read<AppState>();
-    final initialVaultId = initialApp.vaultId;
-    if (!initialApp.unlocked ||
-        initialApp.sessionToken == null ||
-        initialApp.vaultName == null ||
-        initialVaultId == null ||
-        (expectedVaultId != null && expectedVaultId != initialVaultId)) {
-      throw StateError('generated_credential_vault_scope_missing');
-    }
-
-    // The chat route may acknowledge natural-language intent without proving
-    // a database write. Credential confirmation therefore writes only through
-    // the credential endpoint and publishes success only after list readback.
-    final app = context.read<AppState>();
-    final token = app.sessionToken;
-    final vaultName = app.vaultName;
-    if (token == null ||
-        vaultName == null ||
-        app.vaultId != initialVaultId ||
-        !app.unlocked) {
-      throw StateError('generated_credential_session_missing');
-    }
-    final fields = <String, dynamic>{
-      'username': username,
-      'password': password,
-      if (url != null && url.trim().isNotEmpty) 'url': url.trim(),
-      if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-    };
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    await VaultAIClient(baseUrl: backendBaseUrl).updateVaultSecureItem(
-      vaultName: vaultName,
-      oldService: service,
-      itemType: 'login',
-      fields: fields,
-      pin: pin,
-      authToken: token,
-      // A ZK vault must use the existing MVK ciphertext transport. Legacy
-      // rows are label-migrated after unlock but have no payload ciphertext,
-      // so they cannot participate in authoritative session rehydration.
-      forceLegacyTransport: false,
-    );
-    await _reloadVaultLoginsAfterMutation();
-    if (!_legacyCredentialInventoryContains(service)) {
-      throw StateError('generated_credential_readback_failed');
-    }
-    _clearPendingGeneratedLoginDraft(initialVaultId);
-    _appendAssistantMessage('Saved your ${service.trim()} login.');
-  }
-
-  void _rememberGeneratedLoginDraft(_Msg message) {
-    final draft = _generatedLoginDraftFromMessage(message);
-    if (draft == null || !mounted) return;
-    final app = context.read<AppState>();
-    final vaultId = app.vaultId;
-    if (!app.unlocked || vaultId == null || app.sessionToken == null) return;
-    final draftId = draft['draft_id']?.toString().trim() ?? '';
-    if (draftId.isEmpty) return;
-    _generatedCredentialFinalizer.remember('$vaultId:$draftId');
-    _pendingGeneratedLoginDraft = draft;
-    _pendingGeneratedLoginDraftVaultId = vaultId;
-  }
-
-  void _clearPendingGeneratedLoginDraft(String vaultId) {
-    if (_pendingGeneratedLoginDraftVaultId != vaultId) return;
-    _pendingGeneratedLoginDraft = null;
-    _pendingGeneratedLoginDraftVaultId = null;
-  }
-
-  bool _legacyCredentialInventoryContains(String service) {
-    final normalized = service.trim().toLowerCase();
-    return normalized.isNotEmpty &&
-        vaultLogins.any((item) =>
-            item.cryptoVersion != credentialV2CryptoVersion &&
-            item.itemType.toLowerCase() == 'login' &&
-            item.service.trim().toLowerCase() == normalized);
   }
 
   Future<void> _saveMemoryProposalFromCard(
@@ -16913,57 +14385,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Session expired. Please sign in again.');
       throw StateError('memory_save_session_unavailable');
     }
-    if (!app.billingWritesAllowed) {
-      _showSnack(
-          'Saving is paused until your plan is reactivated. Your existing memories are preserved.');
-      throw StateError('subscription_delinquent_write_blocked');
-    }
     try {
-      const memoryV2Enabled = memoryV2WriteEnabled;
-      String? message;
-      if (memoryV2Enabled) {
-        final title = (payload['title'] ??
-                payload['subject_display'] ??
-                payload['subject'] ??
-                'Personal note')
-            .toString()
-            .trim();
-        final value =
-            (payload['value'] ?? payload['body'] ?? '').toString().trim();
-        if (value.isEmpty) throw StateError('memory_value_missing');
-        final result = await MemoryV2Repository(
-          baseUrl: backendBaseUrl,
-          authToken: token,
-        ).create(
-          memoryType: (payload['memory_type'] ?? 'note').toString(),
-          plaintext: MemoryV2Plaintext(
-            value: value,
-            normalized: title,
-            summary: (payload['body'] ?? value).toString(),
-            tags: (payload['tags'] as List? ?? const [])
-                .whereType<String>()
-                .toList(growable: false),
-          ),
-        );
-        message = result.duplicate
-            ? 'Already saved: ${title.isEmpty ? 'Personal note' : title}.'
-            : 'Saved: ${title.isEmpty ? 'Personal note' : title}.';
-      } else {
-        final pin = await _VaultCrypto.currentPinOrThrow();
-        final result =
-            await VaultAIClient(baseUrl: backendBaseUrl).createMemory(
-          authToken: token,
-          vaultName: vaultName,
-          pin: pin,
-          data: payload,
-        );
-        message = (result['message'] as String?)?.trim();
-      }
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final result = await VaultAIClient(baseUrl: backendBaseUrl).createMemory(
+        authToken: token,
+        vaultName: vaultName,
+        pin: pin,
+        data: payload,
+      );
+      final message = (result['message'] as String?)?.trim();
       _appendAssistantMessage(
         message == null || message.isEmpty ? 'Memory saved.' : message,
       );
       _showSnack('Memory saved');
-      unawaited(app.refreshVaultStats());
     } on InvalidVaultUnlockException {
       _showSnack('Your vault is locked. Please enter your PIN again.');
       throw StateError('memory_save_vault_locked');
@@ -16977,12 +14411,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   /// after send. The hint is a structured field on the /chat body —
   /// it never appears in the user-visible chat prose.
   Map<String, String>? _nextSelectionHint;
-
-  /// One-shot private command used by structured review cards. The visible
-  /// chat bubble remains a human-readable action label, while this payload is
-  /// placed inside the already encrypted chat message. It is never copied to
-  /// selection_hint, request diagnostics, analytics, or plaintext logs.
-  String? _nextEncryptedBackendCommand;
 
   /// The last file id the user opened/downloaded via a direct card
   /// tap (i.e. without a chat prompt in between). Set from
@@ -17216,363 +14644,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     if (!mounted) return true;
     setState(() {
+      msgs.add(_Msg('user', text));
       msgs.add(_Msg('assistant', reply));
     });
     _scrollToBottom();
     return true;
-  }
-
-  Future<bool> _tryLocalPrivateDomainArbitration(
-    String text,
-    AppState app,
-  ) async {
-    if (attachments.isNotEmpty) return false;
-    final topic = extractInventoryPrivateLookupTopic(text);
-    if (topic == null) return false;
-    if (_privateDomainArbitrationInFlight) return true;
-    _privateDomainArbitrationInFlight = true;
-    try {
-      final credentialRepository = _credentialV2Repository(app);
-      var credentials = const <DecryptedCredentialV2Record>[];
-      var legacyCredentialMatches = const <VaultLoginItem>[];
-      var memoryMatches = const <Map<String, dynamic>>[];
-      VaultLocalFileLookupMatch? fileMatch;
-      final normalizedTopic =
-          topic.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
-
-      Future<void> loadCredentials() async {
-        if (credentialRepository == null) return;
-        try {
-          credentials = await credentialRepository.listDecrypted();
-        } catch (_) {
-          // Credential, memory, and file inventories are independent. A
-          // transient credential read/decrypt failure must not turn an
-          // ordinary bare-word prompt such as "hey" into a private-request
-          // failure. Explicit private wording still fails closed below.
-          credentials = const <DecryptedCredentialV2Record>[];
-        }
-      }
-
-      Future<void> loadLegacyCredentials() async {
-        // A session-recreated dashboard may already have started this load.
-        // Always join the single-flight before treating the inventory as
-        // empty; `loadingLogins` describes progress, not an empty result.
-        if (vaultLogins.isEmpty) {
-          try {
-            await _loadVaultLogins();
-          } catch (_) {
-            // Keep independently available inventories.
-          }
-        }
-        legacyCredentialMatches = vaultLogins.where((item) {
-          if (item.cryptoVersion == credentialV2CryptoVersion) return false;
-          final service = item.service
-              .toLowerCase()
-              .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-              .trim();
-          return service.isNotEmpty &&
-              (service == normalizedTopic ||
-                  service.contains(normalizedTopic) ||
-                  normalizedTopic.contains(service));
-        }).toList(growable: false);
-      }
-
-      Future<void> loadMemories() async {
-        const memoryEnabled = memoryV2ReadEnabled;
-        if (memoryEnabled && app.sessionToken != null) {
-          try {
-            final memoryRecords = await MemoryV2Repository(
-              baseUrl: backendBaseUrl,
-              authToken: app.sessionToken!,
-            ).listDecrypted();
-            memoryMatches = matchLocalMemoryRecords(
-              LocalMemoryLookupIntent(subject: topic),
-              memoryRecords,
-            ).records;
-          } catch (_) {
-            memoryMatches = const <Map<String, dynamic>>[];
-          }
-        }
-      }
-
-      Future<void> loadFiles() async {
-        if (vaultFiles.isEmpty) {
-          try {
-            await _loadVaultFiles();
-          } catch (_) {
-            // Keep already available local file metadata, if any.
-          }
-        }
-        fileMatch = resolveLocalVaultFileLookup(
-          query: topic,
-          files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
-                id: file.id,
-                fileName: file.fileName,
-                savedName: file.savedName,
-                mimeType: file.contentType,
-                assetType: file.assetType,
-                relativePath: file.relativePath,
-                sizeBytes: file.fileSize,
-              )),
-        );
-      }
-
-      // Exact v2 service lookups use the encrypted blind index first. This
-      // decrypts only matching candidates instead of every credential in the
-      // vault, which keeps normal chat recall responsive as inventories grow.
-      if (credentialRepository != null && normalizedTopic.isNotEmpty) {
-        try {
-          final exact = await credentialRepository.exactLookup(
-            field: 'service',
-            value: topic,
-          );
-          if (exact.length == 1) {
-            final match = exact.single;
-            if (mounted) {
-              debugPrint(
-                  'ASSISTANT_REPLY_RENDERED_AT=${DateTime.now().toIso8601String()}');
-              setState(() {
-                input.clear();
-                msgs.add(_Msg(
-                  'assistant',
-                  'Here is your ${match.plaintext.service} login.',
-                  kind: ChatMessage.kInlineCredential,
-                  payload: <String, dynamic>{
-                    'record_id': match.recordId,
-                    'service': match.plaintext.service,
-                    'username': match.plaintext.username,
-                    'password': match.plaintext.password,
-                  },
-                ));
-              });
-              _scrollToBottom();
-            }
-            return true;
-          }
-        } catch (_) {
-          // Continue with the inventory arbitration fallback. No plaintext is
-          // sent off-device and a blind-index miss is not an error response.
-        }
-      }
-
-      // Once the exact fast path misses, load all independent inventories at
-      // the same time. Memory/file prompts must not sit behind a full
-      // credential decrypt pass, and vice versa.
-      final credentialLoads = Future.wait<void>([
-        loadCredentials(),
-        loadLegacyCredentials(),
-      ]);
-      final otherInventoryLoads = Future.wait<void>([
-        loadMemories(),
-        loadFiles(),
-      ]);
-      await credentialLoads;
-      final credentialMatches =
-          matchCredentialV2RecordsForText(topic, credentials);
-
-      final exactV2CredentialMatches = credentialMatches.where((record) {
-        final service = record.plaintext.service
-            .toLowerCase()
-            .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-            .trim();
-        return service == normalizedTopic;
-      }).toList(growable: false);
-      final exactLegacyCredentialMatches =
-          legacyCredentialMatches.where((item) {
-        final service = item.service
-            .toLowerCase()
-            .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-            .trim();
-        return service == normalizedTopic;
-      }).toList(growable: false);
-      final exactCredentialCount =
-          exactV2CredentialMatches.length + exactLegacyCredentialMatches.length;
-
-      // An exact unique credential match is decisive. Do not make a normal
-      // login lookup wait for unrelated memory/file inventories.
-      if (exactCredentialCount == 1 && exactV2CredentialMatches.isNotEmpty) {
-        final match = exactV2CredentialMatches.single;
-        if (mounted) {
-          setState(() {
-            msgs.add(_Msg(
-              'assistant',
-              'Here is your ${match.plaintext.service} login.',
-              kind: ChatMessage.kInlineCredential,
-              payload: <String, dynamic>{
-                'record_id': match.recordId,
-                'service': match.plaintext.service,
-                'username': match.plaintext.username,
-                'password': match.plaintext.password,
-              },
-            ));
-          });
-          _scrollToBottom();
-        }
-        return true;
-      }
-      if (exactCredentialCount == 1 &&
-          exactLegacyCredentialMatches.isNotEmpty) {
-        final match = exactLegacyCredentialMatches.single;
-        await _openLegacySecureItemDirect(match.service, match.itemType);
-        return true;
-      }
-
-      await otherInventoryLoads;
-      final candidates = exactCredentialCount == 1
-          ? <String>['credential']
-          : <String>[
-              if (credentialMatches.isNotEmpty ||
-                  legacyCredentialMatches.isNotEmpty)
-                'credential',
-              if (memoryMatches.isNotEmpty) 'memory',
-              if (fileMatch != null) 'file',
-            ];
-      const diagnostics = bool.fromEnvironment(
-        'QA_CHAT_PRIVACY_DIAGNOSTICS',
-        defaultValue: false,
-      );
-      if (diagnostics) {
-        print('PRIVATE_INTENT_CANDIDATES=${candidates.join(',')}');
-        print('CREDENTIAL_INTENT_SCORE=${credentialMatches.isEmpty ? 0 : 100}');
-        print('MEMORY_INTENT_SCORE=${memoryMatches.isEmpty ? 0 : 100}');
-        print('FILE_INTENT_SCORE=${fileMatch?.score ?? 0}');
-      }
-
-      if (candidates.length == 1) {
-        if (candidates.single == 'credential') {
-          if (diagnostics) print('SELECTED_PRIVATE_DOMAIN=credential');
-          if (exactCredentialCount == 1 &&
-              exactLegacyCredentialMatches.isNotEmpty) {
-            final match = exactLegacyCredentialMatches.single;
-            if (mounted) {
-              await _openLegacySecureItemDirect(
-                match.service,
-                match.itemType,
-              );
-            }
-            return true;
-          }
-          if (credentialMatches.length == 1) {
-            final match = credentialMatches.single;
-            if (mounted) {
-              setState(() {
-                msgs.add(_Msg(
-                  'assistant',
-                  'Here is your ${match.plaintext.service} login.',
-                  kind: ChatMessage.kInlineCredential,
-                  payload: <String, dynamic>{
-                    'record_id': match.recordId,
-                    'service': match.plaintext.service,
-                    'username': match.plaintext.username,
-                    'password': match.plaintext.password,
-                  },
-                ));
-              });
-              _scrollToBottom();
-            }
-            return true;
-          }
-          if (credentialMatches.length > 1) {
-            final options = credentialMatches
-                .take(8)
-                .map((record) => '• ${record.plaintext.service}')
-                .join('\n');
-            if (mounted) {
-              setState(() {
-                msgs.add(_Msg(
-                  'assistant',
-                  'I found multiple matching saved logins. Ask for the exact service name:\n$options',
-                ));
-              });
-              _scrollToBottom();
-            }
-            return true;
-          }
-          if (credentialMatches.isEmpty &&
-              legacyCredentialMatches.length == 1) {
-            final match = legacyCredentialMatches.single;
-            if (mounted) {
-              await _openLegacySecureItemDirect(
-                match.service,
-                match.itemType,
-              );
-            }
-            return true;
-          }
-          if (credentialMatches.isEmpty && legacyCredentialMatches.length > 1) {
-            if (mounted) {
-              setState(() {
-                input.clear();
-                msgs.add(_Msg('assistant',
-                    'I found multiple matching saved logins. Add a few identifying words.'));
-              });
-              _scrollToBottom();
-            }
-            return true;
-          }
-          return true;
-        }
-        if (candidates.single == 'file') {
-          if (diagnostics) print('SELECTED_PRIVATE_DOMAIN=file');
-          return _tryLocalVaultFileLookupReply(text);
-        }
-        if (diagnostics) print('SELECTED_PRIVATE_DOMAIN=memory');
-        if (!mounted) return true;
-        setState(() {
-          input.clear();
-          msgs.add(_Msg(
-            'assistant',
-            memoryMatches
-                .map((row) => row['value']?.toString() ?? '')
-                .where((value) => value.isNotEmpty)
-                .join('\n'),
-          ));
-        });
-        _scrollToBottom();
-        return true;
-      }
-
-      final normalizedInput =
-          text.trim().replaceFirst(RegExp(r'[.?!]+$'), '').trim();
-      final isBareInventoryProbe =
-          normalizedInput.toLowerCase() == topic.toLowerCase();
-      if (candidates.isEmpty && extractLocalFileLookupQuery(text) != null) {
-        // Local file inventory contains metadata only.  A miss here is not
-        // evidence that OCR, transcript, entity, or semantic indexes have no
-        // match, so let the existing shared vault search pipeline answer it.
-        return false;
-      }
-      if (candidates.isEmpty && isBareInventoryProbe) {
-        // A bare word is private only when local inventory gives us evidence.
-        // Otherwise preserve ordinary general chat (for example, "hey").
-        return false;
-      }
-
-      if (!mounted) return true;
-      final reply = candidates.length > 1
-          ? 'I found more than one possible match. Do you mean a login, saved memory, or file?'
-          : 'I could not find a matching saved item in your vault.';
-      if (diagnostics) {
-        print('SELECTED_PRIVATE_DOMAIN=local_clarification');
-      }
-      setState(() {
-        input.clear();
-        msgs.add(_Msg('assistant', reply));
-      });
-      _scrollToBottom();
-      return true;
-    } catch (_) {
-      if (!mounted) return true;
-      setState(() {
-        input.clear();
-        msgs.add(_Msg('assistant',
-            'I could not safely resolve that private request locally. Specify whether you mean a login, saved memory, or file.'));
-      });
-      _scrollToBottom();
-      return true;
-    } finally {
-      _privateDomainArbitrationInFlight = false;
-    }
   }
 
   Future<bool> _tryLocalVaultFileLookupReply(String text) async {
@@ -17580,33 +14656,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final query = extractLocalFileLookupQuery(text);
     if (query == null) return false;
 
-    // Join an active post-login inventory request before deciding that the
-    // requested file is absent. `_loadVaultFiles` coalesces concurrent calls.
-    if (vaultFiles.isEmpty) {
+    if (vaultFiles.isEmpty && !loadingFiles) {
       await _loadVaultFiles();
     }
     if (!mounted) return true;
-
-    if (query == localFileListAllQuery) {
-      final labels = vaultFiles
-          .map((file) => file.savedName?.trim().isNotEmpty == true
-              ? file.savedName!.trim()
-              : file.fileName.trim())
-          .where((label) => label.isNotEmpty)
-          .toList(growable: false);
-      setState(() {
-        selectedSection = _DashboardSection.chat;
-        input.clear();
-        msgs.add(_Msg(
-          'assistant',
-          labels.isEmpty
-              ? 'You do not have any saved files.'
-              : 'Files in your vault:\n${labels.map((label) => '- $label').join('\n')}',
-        ));
-      });
-      _scrollToBottom();
-      return true;
-    }
 
     final match = resolveLocalVaultFileLookup(
       query: query,
@@ -17620,18 +14673,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             sizeBytes: file.fileSize,
           )),
     );
-    if (shouldDeferLocalFileMissToSemanticSearch(
-      query: query,
-      match: match,
-    )) {
-      return false;
-    }
+    if (match == null) return false;
 
-    // The list-all branch returned above and a null match was deferred, so a
-    // match is guaranteed here.
-    final resolvedMatch = match!;
-
-    final file = resolvedMatch.entry;
+    final file = match.entry;
     final label = file.displayName;
     final savedName = (file.savedName ?? '').trim();
     final relativePath = (file.relativePath ?? '').trim();
@@ -17647,6 +14691,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       selectedSection = _DashboardSection.chat;
       _nextSelectionHint = {'kind': 'file', 'id': file.id};
       input.clear();
+      msgs.add(_Msg('user', text));
       msgs.add(_Msg(
         'assistant',
         'Here is "$label" from your vault.',
@@ -17661,245 +14706,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
-  Future<bool> _tryLocalMemoryV2LookupReply(String text, AppState app) async {
-    if (attachments.isNotEmpty) return false;
-    final intent = parseLocalMemoryLookupIntent(text);
-    if (intent == null) return false;
-    const diagnostics = bool.fromEnvironment('QA_CHAT_PRIVACY_DIAGNOSTICS',
-        defaultValue: false);
-    if (diagnostics) print('QA_MEMORY_CHAT_INTENT_LOCAL=true');
-    const enabled = memoryV2ReadEnabled;
-    if (!enabled || app.sessionToken == null || app.vaultId == null)
-      return true;
-    final lookupToken = app.sessionToken!;
-    final lookupVaultId = app.vaultId!;
-    final lookupEpoch = app.sessionEpoch;
-    try {
-      final repo = MemoryV2Repository(
-        baseUrl: backendBaseUrl,
-        authToken: lookupToken,
-      );
-      final records = await repo.listDecrypted();
-      if (!app.ownsSessionLoad(
-        epoch: lookupEpoch,
-        vaultIdValue: lookupVaultId,
-        tokenValue: lookupToken,
-      )) {
-        vlog('memory.load.stale_completion_dropped', const {});
-        return true;
-      }
-      final matches = matchLocalMemoryRecords(intent, records);
-      if (diagnostics) {
-        print('QA_MEMORY_CHAT_DECRYPTED_COUNT=${records.length}');
-        print('QA_MEMORY_CHAT_MATCH_COUNT=${matches.records.length}');
-        print('QA_MEMORY_CHAT_AMBIGUOUS=${matches.ambiguous}');
-      }
-      if (!mounted) return true;
-      final reply = intent.needsClarification || matches.ambiguous
-          ? 'Which saved memory do you mean? Add a topic or a few identifying words.'
-          : matches.records.isEmpty
-              ? 'No matching saved memory was found.'
-              : matches.records
-                  .map((row) => row['value']?.toString() ?? '')
-                  .where((value) => value.isNotEmpty)
-                  .join('\n');
-      setState(() {
-        msgs.add(_Msg('assistant', reply));
-      });
-      _scrollToBottom();
-    } catch (_) {
-      _appendAssistantMessage('Could not open that saved memory locally.');
-    }
-    input.clear();
-    return true;
-  }
-
-  Future<bool> _tryLocalMemoryV2ContextSave(String text, AppState app) async {
-    if (attachments.isNotEmpty) return false;
-    const enabled = memoryV2WriteEnabled;
-    if (!enabled || app.sessionToken == null) return false;
-
-    final explicitSave = hasExplicitLocalMemorySaveDirective(text);
-    final parsedCurrent = parseLocalMemoryFact(text);
-    LocalMemoryFact? fact = explicitSave || parsedCurrent?.relationship != null
-        ? parsedCurrent
-        : null;
-    final requestedSubject = parseLocalMemoryContextSaveSubject(text);
-    if (fact == null && requestedSubject == null) return false;
-    if (fact == null) {
-      for (var i = msgs.length - 2; i >= 0; i--) {
-        final candidate = msgs[i];
-        if (candidate.role != 'user') continue;
-        final parsed = parseLocalMemoryFact(candidate.text);
-        if (parsed == null) break;
-        if (requestedSubject!.isNotEmpty) {
-          final wanted = _memoryTerms(requestedSubject);
-          final available = _memoryTerms(parsed.subject);
-          if (wanted.isNotEmpty && wanted.intersection(available).isEmpty) {
-            break;
-          }
-        }
-        fact = parsed;
-        break;
-      }
-    }
-    if (fact == null) return false;
-    if (!app.billingWritesAllowed) {
-      _appendAssistantMessage(
-        'Saving is paused until your plan is reactivated. Your existing memories are preserved.',
-      );
-      return true;
-    }
-
-    try {
-      final result = await MemoryV2Repository(
-        baseUrl: backendBaseUrl,
-        authToken: app.sessionToken!,
-      ).create(
-        memoryType: fact.memoryType,
-        plaintext: MemoryV2Plaintext(
-          value: fact.value,
-          normalized: fact.normalized,
-          summary: 'My ${fact.subject} is ${fact.value}',
-          tags: <String>{..._memoryTerms(fact.subject), ...fact.tags}
-              .toList(growable: false),
-        ),
-      );
-      _appendAssistantMessage(
-        result.duplicate
-            ? 'Already saved: ${fact.subject}.'
-            : 'Saved: ${fact.subject}.',
-      );
-      unawaited(app.refreshVaultStats());
-    } catch (e) {
-      if (app.handleApiException(e)) return true;
-      _appendAssistantMessage('Could not save that memory securely.');
-    }
-    return true;
-  }
-
-  Future<void> _enqueueComposerSend() {
-    final text = input.text.trim();
-    if (text.isEmpty && attachments.isEmpty) return Future<void>.value();
-    final app = context.read<AppState>();
-    final isGeneratedSaveConfirmation = attachments.isEmpty &&
-        _nextEncryptedBackendCommand?.isNotEmpty != true &&
-        _isGeneratedLoginSaveConfirmation(text);
-    Map<String, dynamic>? generatedDraft;
-    if (isGeneratedSaveConfirmation) {
-      if (_pendingGeneratedLoginDraftVaultId == app.vaultId) {
-        generatedDraft = _pendingGeneratedLoginDraft;
-      }
-      generatedDraft ??= _latestGeneratedLoginDraft();
-    }
-    if (generatedDraft != null) {
-      // Typed "save it" and the generated-login card must share the same
-      // authoritative persistence function. Sending the text straight to
-      // /chat can land on a worker that does not own the in-memory draft and
-      // return HTTP 200 without committing a credential row.
-      final draft = generatedDraft;
-      final expectedVaultId = app.vaultId;
-      return _enqueueChatOperation<void>(
-        kind: ChatOperationKind.mutation,
-        operation: () async {
-          if (!mounted) return;
-          setState(() {
-            selectedSection = _DashboardSection.chat;
-            msgs.add(_Msg('user', text));
-            input.clear();
-          });
-          _scrollToBottom();
-          try {
-            await _saveGeneratedLoginDraftOnce(
-              draft,
-              expectedVaultId: expectedVaultId,
-            );
-          } catch (_) {
-            _appendAssistantMessage(
-              'Could not save that credential securely. Nothing was saved.',
-            );
-          }
-        },
-      );
-    }
-    if (isGeneratedSaveConfirmation) {
-      // A credential confirmation must never fall through to general chat.
-      // General chat can return friendly success prose without executing a
-      // credential write, which caused the production false acknowledgement.
-      input.clear();
-      _appendAssistantMessage(
-        'Could not confirm that credential draft. Nothing was saved.',
-      );
-      return Future<void>.value();
-    }
-    final kind = isAuthoritativeVaultMutationCommand(
-      text,
-      hasAttachments: attachments.isNotEmpty,
-      hasPrivateBackendCommand:
-          _nextEncryptedBackendCommand?.isNotEmpty == true,
-    )
-        ? ChatOperationKind.mutation
-        : ChatOperationKind.read;
-    return _enqueueChatOperation<void>(
-      kind: kind,
-      operation: _send,
-    );
-  }
-
-  bool _isGeneratedLoginSaveConfirmation(String text) {
-    final normalized =
-        text.trim().toLowerCase().replaceAll(RegExp(r'[.!]+$'), '').trim();
-    return const <String>{
-      'save it',
-      'save this',
-      'save',
-      'yes save it',
-      'yes, save it',
-      'confirm save',
-    }.contains(normalized);
-  }
-
-  Map<String, dynamic>? _latestGeneratedLoginDraft() {
-    if (msgs.isEmpty) return null;
-    // The streaming renderer can append assistant-only status/replacement
-    // messages after the generated card. Walk those messages, but never cross
-    // a later user turn: that boundary prevents an old draft from being
-    // reused by an unrelated future "save it" command.
-    for (var index = msgs.length - 1; index >= 0; index--) {
-      final message = msgs[index];
-      if (message.role == 'user') return null;
-      if (message.role != 'assistant' ||
-          message.kind != ChatMessage.kVaultChatCard) {
-        continue;
-      }
-      final draft = _generatedLoginDraftFromMessage(message);
-      if (draft != null) return draft;
-    }
-    return null;
-  }
-
   Future<void> _send() async {
-    debugPrint('SEND_HANDLER_ENTERED_AT=${DateTime.now().toIso8601String()}');
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
-    final operationKind = isAuthoritativeVaultMutationCommand(
-      text,
-      hasAttachments: attachments.isNotEmpty,
-      hasPrivateBackendCommand:
-          _nextEncryptedBackendCommand?.isNotEmpty == true,
-    )
-        ? ChatOperationKind.mutation
-        : ChatOperationKind.read;
-
-    // Structured card actions must reach the backend verbatim after message
-    // encryption. Consume the one-shot command before any local natural-
-    // language router can mistake its human-readable bubble for a new vault
-    // request. A failed/expired send must not leave a secret-bearing command
-    // queued for an unrelated later message.
-    final privateBackendCommand = _nextEncryptedBackendCommand;
-    _nextEncryptedBackendCommand = null;
-    final hasPrivateBackendCommand =
-        privateBackendCommand != null && privateBackendCommand.isNotEmpty;
 
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -17913,11 +14722,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final vaultName = app.vaultName;
     final activeVaultId = app.vaultId;
 
-    // Optional privacy boundary for sensitive vault questions.  When enabled,
-    // commands that could expose secret material are stopped before the remote
-    // chat/provider path. Domain-specific local handlers (credential-v2 and
-    // file lookup) run below; unsupported sensitive domains fail closed.
-    const privateLocalRouting = privateVaultLocalRoutingEnabled;
     vlog('chat.preSend', {
       'vault_id': activeVaultId,
       'vaultName': vaultName,
@@ -17948,26 +14752,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
 
-    // Text-only sends become visible before any inventory lookup, crypto work,
-    // or network request. This is the user-visible submission boundary.
-    _Msg? optimisticUserMessage;
-    if (attachments.isEmpty) {
-      optimisticUserMessage = _Msg('user', text);
-      setState(() {
-        selectedSection = _DashboardSection.chat;
-        input.clear();
-        msgs.add(optimisticUserMessage!);
-      });
-      debugPrint('USER_BUBBLE_APPENDED_AT=${DateTime.now().toIso8601String()}');
-      _scrollToBottom();
-    }
-    debugPrint('ROUTING_STARTED_AT=${DateTime.now().toIso8601String()}');
-    final credentialCreateRequiresBackend =
-        shouldRouteCredentialV2CreateToBackend(
-      text,
-      localWriteEnabled: zkV2CredentialWriteEnabled,
-    );
-
     // Deterministic ACCOUNT-USERNAME intent (login identifier only).
     // "What is my username" / "What's my account name" / "What
     // username did I register" is answered directly from
@@ -17981,62 +14765,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // regex — they fall through to the LLM path where the server-
     // injected vault-AI identity context answers with the
     // persistent AI keeper's name and role.
-    if (!hasPrivateBackendCommand) {
-      if (attachments.isEmpty &&
-          shouldUseServerReadableCredentialReview(text)) {
-        _appendAssistantMessage(
-          'Attach the file you want analyzed, then send that request again. '
-          'No credential draft was created and nothing was saved.',
-        );
-        return;
-      }
-
-      if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
-        input.clear();
-        return;
-      }
-
-      if (await _tryLocalPrivateDeleteReply(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalMemoryV2ContextSave(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalCredentialV2CreateReply(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalCredentialV2LookupReply(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalMemoryV2LookupReply(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalPrivateDomainArbitration(text, app)) {
-        return;
-      }
-
-      if (await _tryLocalVaultFileLookupReply(text)) {
-        return;
-      }
+    if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
+      input.clear();
+      return;
     }
 
-    if (privateLocalRouting &&
-        !hasPrivateBackendCommand &&
-        attachments.isEmpty &&
-        !credentialCreateRequiresBackend &&
-        !isCredentialExtractionReviewDecision(text) &&
-        _looksLikePrivateVaultCommand(text)) {
-      setState(() {
-        msgs.add(_Msg('assistant',
-            'This private vault request must be handled locally and was not sent to the AI service.'));
-      });
-      _scrollToBottom();
-      input.clear();
+    if (await _tryLocalVaultFileLookupReply(text)) {
       return;
     }
 
@@ -18047,15 +14781,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     final replyLanguageCode = app.chatReplyLanguageCode;
     final rawPendingAttachments = attachments.map((a) => a.copy()).toList();
-    final isCurrentAttachmentCredentialReview =
-        rawPendingAttachments.isNotEmpty &&
-            shouldUseServerReadableCredentialReview(text);
-    final attachmentTitle = isCurrentAttachmentCredentialReview
-        ? null
-        : attachmentTitleFromComposerText(
-            text,
-            attachmentCount: rawPendingAttachments.length,
-          );
+    final attachmentTitle = attachmentTitleFromComposerText(
+      text,
+      attachmentCount: rawPendingAttachments.length,
+    );
     final pendingAttachments = attachmentTitle == null
         ? rawPendingAttachments
         : [
@@ -18104,62 +14833,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               size: a.size,
             ))
         .toList(growable: false);
-    final chatTicket = _beginChatRequest();
-    final chatRequestId = chatTicket.requestId;
-    final userMessageId = chatTicket.userMessageId;
-    final assistantMessageId = chatTicket.assistantMessageId;
-
-    var backendText = text;
-    if (hasPrivateBackendCommand) {
-      backendText = privateBackendCommand;
-    }
-    final isConversationalFollowUp = RegExp(
-      r'^(?:go on|continue|tell me more|what do you mean|wait[, ]+what do you mean|say (?:that|it) (?:again|more simply)|make (?:that|it) simpler|explain (?:that|it)|why|how so|what assumptions am i making|challenge my thinking gently|(?:now )?give me the strongest counterargument|summarize (?:that|the tradeoff)(?: in three sentences)?)\??[.!]?$',
-      caseSensitive: false,
-    ).hasMatch(text.trim());
-    if (isConversationalFollowUp && attachments.isEmpty && msgs.length >= 2) {
-      ChatMessage? previousAssistant;
-      ChatMessage? previousUser;
-      for (var i = msgs.length - 1; i >= 0; i--) {
-        final candidate = msgs[i];
-        if (previousAssistant == null &&
-            candidate.role == 'assistant' &&
-            candidate.kind == ChatMessage.kText &&
-            candidate.text.trim().isNotEmpty) {
-          previousAssistant = candidate;
-          continue;
-        }
-        if (previousAssistant != null && candidate.role == 'user') {
-          previousUser = candidate;
-          break;
-        }
-      }
-      if (previousUser != null &&
-          previousAssistant != null &&
-          !_looksLikePrivateVaultCommand(previousUser.text)) {
-        final priorUser = previousUser.text.trim();
-        final priorAssistant = previousAssistant.text.trim();
-        if (priorUser.length <= 2000 && priorAssistant.length <= 4000) {
-          backendText =
-              'Continue this ordinary conversation without searching the vault.\n'
-              'Previous user message: $priorUser\n'
-              'Previous assistant response: $priorAssistant\n'
-              'Current user follow-up: $text';
-        }
-      }
-    }
 
     setState(() {
       sending = true;
-      if (optimisticUserMessage == null) {
-        msgs.add(_Msg(
-          'user',
-          text,
-          messageId: userMessageId,
-          requestId: chatRequestId,
-          attachments: attachmentSummaries.isEmpty ? null : attachmentSummaries,
-        ));
-      }
+      msgs.add(_Msg(
+        'user',
+        text,
+        attachments: attachmentSummaries.isEmpty ? null : attachmentSummaries,
+      ));
       input.clear();
       attachments.clear();
     });
@@ -18185,22 +14866,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (hadAttachments) {
         await app.refreshVaultStats();
-        await _reloadVaultFilesAfterMutation();
+        await _loadVaultFiles();
         await _loadVaultLogins();
-      }
-
-      if (hadAttachments && uploadedFileIds.isEmpty) {
-        if (!mounted) return;
-        _completeChatRequest(chatRequestId);
-        setState(() {
-          sending = false;
-        });
-        return;
       }
 
       if (text.isEmpty && uploadedFileIds.isNotEmpty) {
         if (!mounted) return;
-        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -18209,36 +14880,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       if (hadAttachments && attachmentTitle != null) {
         if (!mounted) return;
-        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
         return;
       }
 
-      if (uploadOutcome.autoNamedAny && !isCurrentAttachmentCredentialReview) {
+      if (uploadOutcome.autoNamedAny) {
         if (!mounted) return;
-        _completeChatRequest(chatRequestId);
-        setState(() {
-          sending = false;
-        });
-        return;
-      }
-
-      final explicitSaveOnly = hadAttachments &&
-          uploadedFileIds.isNotEmpty &&
-          !isCurrentAttachmentCredentialReview &&
-          RegExp(r'\b(?:save|upload|store|keep|add)\b', caseSensitive: false)
-              .hasMatch(text) &&
-          !RegExp(r'\b(?:analy[sz]e|summari[sz]e|explain|compare|read|what)\b',
-                  caseSensitive: false)
-              .hasMatch(text);
-      if (explicitSaveOnly) {
-        _appendAssistantMessage(uploadedFileIds.length == 1
-            ? 'Saved the file securely in your vault.'
-            : 'Saved all ${uploadedFileIds.length} files securely in your vault.');
-        if (!mounted) return;
-        _completeChatRequest(chatRequestId);
         setState(() {
           sending = false;
         });
@@ -18247,30 +14896,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       setState(() {
         thinking = true;
-        msgs.add(_Msg(
-          'assistant',
-          '',
-          messageId: assistantMessageId,
-          requestId: chatRequestId,
-          replyToMessageId: optimisticUserMessage?.messageId ?? userMessageId,
-        ));
       });
       _scrollToBottom();
-      final int assistantIndex = msgs.indexWhere(
-        (message) => message.messageId == assistantMessageId,
-      );
-      if (assistantIndex < 0) {
-        throw StateError('correlated assistant placeholder missing');
-      }
+      int? assistantIndex;
       String buffer = '';
-      bool terminalFailureRendered = false;
       // Per-send ZK memory-proposal state. The backend emits the
       // sentinel exactly once per turn, but SSE decoding may deliver
       // it across chunks — track whether we've already fired the
       // client finalize so we do not double-POST if the sentinel is
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
-      String? memoryProposalOutcomeMessage;
 
       // 2026-07-22 atomic crypto context snapshot. This is the ONE
       // place the /chat send path samples the vault's key + KDF
@@ -18301,7 +14936,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         setState(() {
           sending = false;
           thinking = false;
-          msgs.removeWhere((message) => message.requestId == chatRequestId);
+          if (msgs.isNotEmpty && msgs.last.role == 'user') {
+            msgs.removeLast();
+          }
           input.text = text;
           input.selection = TextSelection.collapsed(offset: text.length);
         });
@@ -18316,10 +14953,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
         return;
       }
+      final chatRequestId =
+          '${DateTime.now().microsecondsSinceEpoch}_${ctxSnapshot.generation}';
       final keyFp = await cryptoFingerprintForKey(ctxSnapshot.key);
       final saltFp = cryptoFingerprintForSaltBase64(ctxSnapshot.saltBase64);
       final encryptedMessage = await encryptWithContext(
-        plaintext: backendText,
+        plaintext: text,
         context: ctxSnapshot,
       );
       vlog('chat.body.diag', {
@@ -18344,25 +14983,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         vaultName: vaultName,
         pin: pin,
         authToken: authToken,
-        requestId: chatRequestId,
         uploadedFileIds: uploadedFileIds,
         appLocale: replyLanguageCode,
         selectionHint: hintForThisSend,
         kdfSaltUsed: ctxSnapshot.saltBase64,
         kdfIterationsUsed: ctxSnapshot.iterations,
       );
-      final streamIterator = StreamIterator<String>(stream);
-      _chatRequests.assignIterator(chatRequestId, streamIterator);
 
       try {
-        while (await streamIterator.moveNext()) {
-          if (!_chatRequests.acceptsEvents(chatRequestId)) break;
-          final encryptedChunk = streamIterator.current;
+        await for (final encryptedChunk in stream) {
           try {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
-            if (!mounted || !_chatRequests.acceptsEvents(chatRequestId)) {
-              break;
-            }
+            if (!mounted) return;
             buffer += decryptedChunk;
 
             // ZK memory-proposal sentinel: the backend emits
@@ -18382,26 +15014,24 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = stripped.strippedBuffer;
             if (stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              final outcome = await _finalizeMemoryProposalBestEffort(
+              unawaited(_finalizeMemoryProposalBestEffort(
                 jsonPayload: stripped.jsonPayload!,
                 authToken: authToken,
-              );
-              memoryProposalOutcomeMessage =
-                  _memoryProposalOutcomeMessage(outcome);
-            }
-            if (memoryProposalOutcomeMessage != null) {
-              buffer = memoryProposalOutcomeMessage!;
+              ));
             }
 
             // dart format off
             final structuredNow = _tryParseAssistantStructuredMessage(buffer);
-            final _Msg replacement =
-                (structuredNow ?? _Msg('assistant', buffer))
-                    .withCorrelationFrom(msgs[assistantIndex]);
+            final _Msg replacement = structuredNow ?? _Msg('assistant', buffer);
             // dart format on
             setState(() {
-              msgs[assistantIndex] = replacement;
-              thinking = false;
+              if (assistantIndex == null) {
+                msgs.add(replacement);
+                assistantIndex = msgs.length - 1;
+                thinking = false;
+              } else {
+                msgs[assistantIndex!] = replacement;
+              }
             });
             _scrollToBottom();
           } catch (e) {
@@ -18409,14 +15039,42 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!mounted) return;
             setState(() {
               thinking = false;
-              msgs[assistantIndex] = _Msg(
-                'assistant',
-                friendlyChatGenerationFailure(text),
-              ).withCorrelationFrom(msgs[assistantIndex]);
+              if (assistantIndex == null) {
+                msgs.add(_Msg('assistant', 'Decrypt error: $e'));
+                assistantIndex = msgs.length - 1;
+              } else {
+                msgs[assistantIndex!] = _Msg('assistant', 'Decrypt error: $e');
+              }
             });
           }
         }
       } catch (err) {
+        final networkText = err.toString().toLowerCase();
+        final isTransportDrop = networkText.contains('clientexception') ||
+            networkText.contains('connection closed before full header') ||
+            networkText.contains('connection reset') ||
+            networkText.contains('socketexception');
+        if (isTransportDrop) {
+          if (!mounted) return;
+          setState(() {
+            thinking = false;
+            sending = false;
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
+            input.text = text;
+            input.selection = TextSelection.collapsed(offset: text.length);
+          });
+          rootScaffoldMessengerKey.currentState?.clearSnackBars();
+          rootScaffoldMessengerKey.currentState?.showSnackBar(
+            const SnackBar(
+              content: Text(
+                'The connection was interrupted. Your request was kept—tap send to retry.',
+              ),
+            ),
+          );
+          return;
+        }
         // 2026-07-22: server 400 "Invalid PIN or corrupted data" is
         // NOT a session-expired condition and NOT an incorrect PIN
         // — it's a client-side crypto-context mismatch. Preserve
@@ -18431,7 +15089,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() {
             thinking = false;
             sending = false;
-            msgs.removeWhere((message) => message.requestId == chatRequestId);
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
             input.text = text;
             input.selection = TextSelection.collapsed(offset: text.length);
           });
@@ -18469,7 +15129,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             sending = false;
             // Drop the just-added user message (send failed) so the
             // chat log doesn't imply the message was received.
-            msgs.removeWhere((message) => message.requestId == chatRequestId);
+            if (msgs.isNotEmpty && msgs.last.role == 'user') {
+              msgs.removeLast();
+            }
             // Put the text back in the input so the user can just
             // tap send again — no retyping.
             input.text = text;
@@ -18514,32 +15176,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         // desync symptom.
         if (app.handleApiException(err)) return;
         if (!mounted) return;
-        terminalFailureRendered = true;
         setState(() {
           thinking = false;
-          msgs[assistantIndex] = _Msg(
-            'assistant',
-            err is ChatResponseTimeoutException
-                ? chatTimeoutRecovery
-                : friendlyChatGenerationFailure(text),
-          ).withCorrelationFrom(msgs[assistantIndex]);
+          if (assistantIndex == null) {
+            msgs.add(_Msg('assistant', 'Error: $err'));
+            assistantIndex = msgs.length - 1;
+          } else {
+            msgs[assistantIndex!] = _Msg('assistant', 'Error: $err');
+          }
         });
-      } finally {
-        await streamIterator.cancel();
-        if (_chatRequests.activeRequestId == chatRequestId) {
-          _chatRequests.clearIterator();
-        }
       }
 
-      if (_cancelledChatRequestIds.remove(chatRequestId)) return;
-      _completeChatRequest(chatRequestId);
-
-      if (buffer.isNotEmpty) {
+      if (assistantIndex != null && buffer.isNotEmpty) {
         final structured = _tryParseAssistantStructuredMessage(buffer);
         if (structured != null && mounted) {
           setState(() {
-            msgs[assistantIndex] =
-                structured.withCorrelationFrom(msgs[assistantIndex]);
+            msgs[assistantIndex!] = structured;
           });
           // "download it" / "open it" / "view it" pronoun follow-ups
           // arrive as a vault_file card with pending_action set. Fire
@@ -18548,30 +15200,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           // tap.
           _maybeTriggerPendingFileAction(structured);
         }
-      } else if (!terminalFailureRendered &&
-          mounted &&
-          _chatRequests.acceptsEvents(chatRequestId)) {
-        setState(() {
-          msgs[assistantIndex] = _Msg(
-            'assistant',
-            friendlyChatGenerationFailure(text),
-          ).withCorrelationFrom(msgs[assistantIndex]);
-        });
       }
 
       if (mounted && thinking) {
         setState(() => thinking = false);
       }
 
-      if (operationKind == ChatOperationKind.mutation) {
-        await app.refreshVaultStats();
-        await _reloadVaultFilesAfterMutation();
-        await _reloadVaultLoginsAfterMutation();
-      } else {
-        unawaited(app.refreshVaultStats());
-        unawaited(_loadVaultFiles());
-        unawaited(_loadVaultLogins());
-      }
+      unawaited(app.refreshVaultStats());
+      unawaited(_loadVaultFiles());
+      unawaited(_loadVaultLogins());
 
       if (!mounted) return;
       setState(() {
@@ -18582,47 +15219,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!mounted) return;
 
       if (e is UploadCancelledException) {
-        _chatRequests.cancel(chatRequestId);
         setState(() {
           thinking = false;
           sending = false;
         });
         return;
       }
-      _completeChatRequest(chatRequestId);
       setState(() {
         thinking = false;
-        final failure = _Msg(
+        msgs.add(_Msg(
           'assistant',
           uploadCommitted && hadAttachments
               ? 'Your file was saved. I could not complete the optional '
                   'follow-up.'
-              : friendlyChatGenerationFailure(text),
-          messageId: assistantMessageId,
-          requestId: chatRequestId,
-          replyToMessageId: userMessageId,
-        );
-        final existing = msgs.indexWhere(
-          (message) => message.messageId == assistantMessageId,
-        );
-        if (existing >= 0) {
-          msgs[existing] = failure;
-        } else {
-          msgs.add(failure);
-        }
+              : 'I could not complete that request. Try again.',
+        ));
         sending = false;
       });
       _scrollToBottom();
     }
   }
-
-  static final RegExp _privateVaultCommandRe = RegExp(
-    r'\b(password|passcode|totp|seed\s*phrase|private\s*key|wallet\s*key|mvk|encryption\s*key|secure\s*note|passport|identity\s+document|inheritance\s+(?:key|secret))\b',
-    caseSensitive: false,
-  );
-
-  bool _looksLikePrivateVaultCommand(String text) =>
-      _privateVaultCommandRe.hasMatch(text);
 
   Widget _buildAttachmentPanel(bool isMobile) {
     if (attachments.isEmpty) return const SizedBox.shrink();
@@ -18630,7 +15246,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       isMobile: isMobile,
       count: attachments.length,
       itemBuilder: (context, index) => _buildAttachmentRow(attachments[index]),
-      onClear: _chatOperationBusy ? null : _clearAttachments,
+      onClear: sending ? null : _clearAttachments,
     );
   }
 
@@ -18677,7 +15293,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    a.displayName ?? a.name,
+                    a.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -18695,13 +15311,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               ),
             ),
             const SizedBox(width: 8),
-            IconButton(
-              key: ValueKey('attachment_rename_${a.id}'),
-              tooltip: 'Rename before saving',
-              onPressed:
-                  _chatOperationBusy ? null : () => _renameLocalAttachment(a),
-              icon: const Icon(Icons.edit_outlined, size: 18),
-            ),
             const Icon(Icons.info_outline, size: 18),
           ],
         ),
@@ -18709,43 +15318,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     );
   }
 
-  bool get _composerIsComposing {
-    final composing = input.value.composing;
-    return composing.isValid && !composing.isCollapsed;
-  }
-
-  Future<void> _submitComposer() async {
-    if (_composerSubmitStarting ||
-        sending ||
-        _composerIsComposing ||
-        _chatOperationQueue.isBusy) {
-      return;
-    }
-    if (input.text.trim().isEmpty && attachments.isEmpty) return;
-    _composerSubmitStarting = true;
-    try {
-      await _enqueueComposerSend();
-    } finally {
-      _composerSubmitStarting = false;
-    }
-  }
-
-  bool _onComposerHardwareKey(KeyEvent event) {
-    if (!_composerFocusNode.hasFocus || event is! KeyDownEvent) return false;
-    if (event.logicalKey != LogicalKeyboardKey.enter) return false;
-    final keyboard = HardwareKeyboard.instance;
-    if (keyboard.isShiftPressed || keyboard.isAltPressed) return false;
-    debugPrint('SEND_KEY_EVENT_AT=${DateTime.now().toIso8601String()}');
-    unawaited(_submitComposer());
-    return true;
-  }
-
   Widget _buildComposer(bool isMobile) {
     final vr = VaultResponsive.of(context);
 
-    final canSend = !sending &&
-        (input.text.trim().isNotEmpty || attachments.isNotEmpty) &&
-        !_chatOperationQueue.isBusy;
+    final canSend =
+        !sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty);
 
     Widget _attachmentIcon() => SizedBox(
           key: const Key('composer_attachment_button'),
@@ -18764,7 +15341,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
             color: _isListening ? const Color(0xFF10A37F) : null,
             tooltip: _isListening ? 'Stop listening' : 'Speak',
-            onPressed: _chatOperationBusy ? null : _toggleListening,
+            onPressed: sending ? null : _toggleListening,
           ),
         );
 
@@ -18778,7 +15355,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             icon: const Icon(Icons.stop_circle),
             color: Colors.redAccent,
             tooltip: 'Stop recording',
-            onPressed: _chatOperationBusy
+            onPressed: sending
                 ? null
                 : (_isVideoRecording
                     ? _toggleVideoRecording
@@ -18793,7 +15370,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         button: true,
         identifier: 'composer_send_button',
         label: sending
-            ? 'Cancel response'
+            ? AppLocalizations.of(context).chatSending
             : AppLocalizations.of(context).chatSendButton,
         child: Material(
           key: const Key('composer_send_button'),
@@ -18801,16 +15378,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap: sending
-                ? _cancelActiveChatRequest
-                : (_chatOperationBusy
-                    ? null
-                    : (canSend ? _submitComposer : null)),
+            onTap: canSend ? _send : null,
             child: SizedBox(
               width: size,
               height: size,
               child: Icon(
-                sending ? Icons.close_rounded : Icons.arrow_upward_rounded,
+                sending ? Icons.hourglass_top : Icons.arrow_upward_rounded,
                 size: vr.isMobile ? 18 : 20,
                 color: iconColor,
               ),
@@ -18820,65 +15393,49 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
 
-    final editableTextField = TextField(
-      key: const Key('chat_composer_field'),
-      controller: input,
-      focusNode: _composerFocusNode,
-      enabled: !_chatOperationBusy,
-      decoration: InputDecoration(
-        hintText: isMobile
-            ? 'Ask SVaultAI…'
-            : AppLocalizations.of(context).chatComposerHint,
-        border: InputBorder.none,
-        enabledBorder: InputBorder.none,
-        focusedBorder: InputBorder.none,
-        isDense: true,
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: 4,
-          vertical: isMobile ? 8 : 10,
-        ),
-      ),
-      minLines: vr.composerMinLines,
-      maxLines: vr.composerMaxLines,
-      textInputAction:
-          isMobile ? TextInputAction.send : TextInputAction.newline,
-      keyboardType: TextInputType.multiline,
-      onSubmitted: canSend ? (_) => _submitComposer() : null,
-      onChanged: (_) {
-        // Flutter web's multiline EditableText consumes Enter before
-        // shortcut/key handlers in some browsers. Detect the single trailing
-        // line break it just inserted and turn that into the same guarded send
-        // lifecycle. Shift+Enter and Alt+Enter intentionally keep the newline.
-        final keyboard = HardwareKeyboard.instance;
-        if (!isMobile &&
-            input.text.endsWith('\n') &&
-            !keyboard.isShiftPressed &&
-            !keyboard.isAltPressed) {
-          final withoutSubmitNewline =
-              input.text.substring(0, input.text.length - 1);
-          input.value = TextEditingValue(
-            text: withoutSubmitNewline,
-            selection:
-                TextSelection.collapsed(offset: withoutSubmitNewline.length),
-          );
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) unawaited(_submitComposer());
-          });
-          return;
-        }
-        setState(() {});
-      },
-    );
-
     final textField = Semantics(
       container: true,
       identifier: 'chat_composer_field',
       textField: true,
-      // Desktop/web policy: Enter and Ctrl+Enter send. Shift+Enter and
-      // Alt+Enter stay unbound so EditableText inserts a newline. The
-      // synchronous latch blocks key-repeat duplicates; composing IME text
-      // is never submitted.
-      child: editableTextField,
+      child: Focus(
+        onKeyEvent: (node, event) {
+          if (!isMobile &&
+              event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.enter &&
+              !HardwareKeyboard.instance.isShiftPressed) {
+            if (canSend) _send();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: TextField(
+          key: const Key('chat_composer_field'),
+          controller: input,
+          enabled: !sending,
+          decoration: InputDecoration(
+            hintText: isMobile
+                ? 'Ask Svaultai…'
+                : AppLocalizations.of(context).chatComposerHint,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: 4,
+              vertical: isMobile ? 8 : 10,
+            ),
+          ),
+          minLines: vr.composerMinLines,
+          maxLines: vr.composerMaxLines,
+          textInputAction:
+              isMobile ? TextInputAction.send : TextInputAction.newline,
+          keyboardType: TextInputType.multiline,
+          onSubmitted: isMobile && canSend ? (_) => _send() : null,
+          onChanged: (_) {
+            setState(() {});
+          },
+        ),
+      ),
     );
 
     return SafeArea(
@@ -18920,226 +15477,196 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Widget _buildChatView(bool isMobile) {
     final app = context.watch<AppState>();
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.escape): () =>
-            unawaited(_cancelVideoRecordingWithConfirmation()),
-      },
-      child: Column(
-        children: [
-          Expanded(
-            child: ChatMessageList(
-              key: const Key('chat_message_list'),
-              messages: msgs,
-              thinking: thinking,
+    return Column(
+      children: [
+        Expanded(
+          child: ChatMessageList(
+            key: const Key('chat_message_list'),
+            messages: msgs,
+            thinking: thinking,
 
-              streaming:
-                  sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
-              isMobile: isMobile,
-              padding: EdgeInsets.symmetric(
-                horizontal: isMobile ? 8 : 16,
-                vertical: isMobile ? 8 : 12,
-              ),
-              scrollController: _scrollController,
-              // Typing indicator identity: the user-chosen vault
-              // name (``AppState._vaultName``), which is the vault's
-              // own identity — the same string the user typed to
-              // sign into the vault and the same string the LLM is
-              // instructed to identify as. It is a per-vault value
-              // (e.g. "Brain", "My Safe", "Family Vault"), NOT a
-              // hardcoded global constant.
-              //
-              // 2026-07-22 fix: the previous binding was
-              // ``vaultName: app.displayName`` — that field is the
-              // human owner's display label (e.g. "Chosen"), not
-              // the vault's identity, and produced the incident
-              // "Chosen is thinking..." for a user named Chosen.
-              // Never re-bind this parameter to app.displayName or
-              // to a hardcoded literal; the vault-name registry
-              // pattern (AppState.setSession populates
-              // ``_vaultName`` from the authenticated backend
-              // vault_name and clears it on sign-out) is the single
-              // source of truth per-session.
-              vaultName: app.vaultName,
-              // Per-file in-flight state, watched from AppState so the
-              // whole chat rebuilds when any file starts / finishes a
-              // view or download. Individual cards render their own
-              // spinner / disabled buttons based on set membership.
-              viewInFlightFileIds: app.viewInFlightFileIds,
-              downloadInFlightFileIds: app.downloadInFlightFileIds,
-              onOpenVaultFile: (msg) => _openVaultFileCard(msg),
-              onDownloadVaultFile: (msg) => _downloadVaultFileCard(msg),
-              onShowMoreFiles: () => _requestMoreFiles(),
-              isShowMoreFilesInFlight: app.showMoreFilesInFlight,
-              onCardAction: _handleChatCardAction,
-              onShowRelated: _showRelatedFilesForFile,
-              onLoadRelated: _fetchRelatedFilesEnvelope,
-              onScanRemaining: _handleScanRemaining,
-              onDeepAnswerPoll: _pollDeepAnswerJob,
-              onDeepAnswerReady: _promoteDeepAnswerResult,
-              isDeepScanActive: ({
-                required String intent,
-                required String normalizedQuery,
-              }) =>
-                  isDeepScanActive(
-                intent: intent,
-                normalizedQuery: normalizedQuery,
-              ),
-
-              onSecureItemView: (itemId, title, itemType) {
-                final safeTitle = title.trim();
-                _sendQuickPrompt(
-                    safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
-              },
-
-              onSecureItemReveal: null,
-              onSecureItemCopyUsername: (username) {
-                Clipboard.setData(ClipboardData(text: username));
-                _showSnack('Username copied');
-              },
-              onSecureItemCopyValue: (value) {
-                Clipboard.setData(ClipboardData(text: value));
-                _showSnack('Value copied');
-              },
-              onSecureItemEdit: (title, itemType) {
-                _openSecureItemEditDialog(title, itemType);
-              },
-              onSecureItemDelete: (title, itemType) {
-                if (itemType == 'login' || itemType == 'credential') {
-                  unawaited(_deleteInlineCredentialByService(title));
-                } else {
-                  _startSecureItemDeleteConfirmation(title, itemType);
-                }
-              },
-
-              onCryptoWalletAction: _handleCryptoWalletChatAction,
-
-              onOpenVault: () {
-                if (mounted) {
-                  setState(() => selectedSection = _DashboardSection.dashboard);
-                }
-              },
-              onOpenAssetDetail: (asset) {
-                if (!mounted) return;
-                setState(() => selectedSection = _DashboardSection.cryptoVault);
-              },
-              onOpenSendFlow: () {
-                if (!mounted) return;
-                setState(() => selectedSection = _DashboardSection.cryptoVault);
-              },
-              onOpenSecurityPage: () {
-                if (!mounted) return;
-                setState(() => selectedSection = _DashboardSection.settings);
-              },
-              onOpenBillingPage: () {
-                if (!mounted) return;
-                setState(() => selectedSection = _DashboardSection.settings);
-              },
-              onOpenStoragePage: () {
-                if (!mounted) return;
-                setState(() => selectedSection = _DashboardSection.files);
-              },
-              onOpenVaultItem: (category, id) {
-                if (!mounted) return;
-                switch (category) {
-                  case 'login':
-                  case 'generated_login':
-                  case 'id_document':
-                  case 'secure_item':
-                    setState(() => selectedSection = _DashboardSection.logins);
-                    break;
-                  case 'crypto':
-                    setState(
-                        () => selectedSection = _DashboardSection.cryptoVault);
-                    break;
-                  case 'file':
-                  case 'document':
-                    setState(() => selectedSection = _DashboardSection.files);
-                    break;
-                  case 'activity':
-                    setState(
-                        () => selectedSection = _DashboardSection.dashboard);
-                    break;
-                  default:
-                    setState(
-                        () => selectedSection = _DashboardSection.dashboard);
-                }
-              },
-              onSearchVault: (query) {
-                _sendQuickPrompt('search my vault for $query');
-              },
-
-              onFetchCryptoBalance: ({
-                required String asset,
-                required String address,
-              }) async {
-                return _fetchCryptoBalanceForChatCard(
-                  asset: asset,
-                  address: address,
-                );
-              },
-              onFetchCryptoActivity: ({
-                required String asset,
-                required String address,
-                int limit = 10,
-              }) async {
-                return _fetchCryptoActivityForChatCard(
-                  asset: asset,
-                  address: address,
-                  limit: limit,
-                );
-              },
-
-              cryptoCache: CryptoChatLiveCache.instance,
-
-              cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
-              onOpenCryptoUpgrade: () {
-                if (!mounted) return;
-                setState(() => selectedSection = _DashboardSection.settings);
-              },
+            streaming:
+                sending && msgs.isNotEmpty && msgs.last.role == 'assistant',
+            isMobile: isMobile,
+            padding: EdgeInsets.symmetric(
+              horizontal: isMobile ? 8 : 16,
+              vertical: isMobile ? 8 : 12,
             ),
+            scrollController: _scrollController,
+            // Typing indicator identity: the user-chosen vault
+            // name (``AppState._vaultName``), which is the vault's
+            // own identity — the same string the user typed to
+            // sign into the vault and the same string the LLM is
+            // instructed to identify as. It is a per-vault value
+            // (e.g. "Brain", "My Safe", "Family Vault"), NOT a
+            // hardcoded global constant.
+            //
+            // 2026-07-22 fix: the previous binding was
+            // ``vaultName: app.displayName`` — that field is the
+            // human owner's display label (e.g. "Chosen"), not
+            // the vault's identity, and produced the incident
+            // "Chosen is thinking..." for a user named Chosen.
+            // Never re-bind this parameter to app.displayName or
+            // to a hardcoded literal; the vault-name registry
+            // pattern (AppState.setSession populates
+            // ``_vaultName`` from the authenticated backend
+            // vault_name and clears it on sign-out) is the single
+            // source of truth per-session.
+            vaultName: app.vaultName,
+            // Per-file in-flight state, watched from AppState so the
+            // whole chat rebuilds when any file starts / finishes a
+            // view or download. Individual cards render their own
+            // spinner / disabled buttons based on set membership.
+            viewInFlightFileIds: app.viewInFlightFileIds,
+            downloadInFlightFileIds: app.downloadInFlightFileIds,
+            onOpenVaultFile: (msg) => _openVaultFileCard(msg),
+            onDownloadVaultFile: (msg) => _downloadVaultFileCard(msg),
+            onShowMoreFiles: () => _requestMoreFiles(),
+            isShowMoreFilesInFlight: app.showMoreFilesInFlight,
+            onCardAction: _handleChatCardAction,
+            onShowRelated: _showRelatedFilesForFile,
+            onLoadRelated: _fetchRelatedFilesEnvelope,
+            onScanRemaining: _handleScanRemaining,
+            onDeepAnswerPoll: _pollDeepAnswerJob,
+            onDeepAnswerReady: _promoteDeepAnswerResult,
+            isDeepScanActive: ({
+              required String intent,
+              required String normalizedQuery,
+            }) =>
+                isDeepScanActive(
+              intent: intent,
+              normalizedQuery: normalizedQuery,
+            ),
+
+            onSecureItemView: (itemId, title, itemType) {
+              final safeTitle = title.trim();
+              _sendQuickPrompt(
+                  safeTitle.isEmpty ? 'show me' : 'show me $safeTitle');
+            },
+
+            onSecureItemReveal: null,
+            onSecureItemCopyUsername: (username) {
+              Clipboard.setData(ClipboardData(text: username));
+              _showSnack('Username copied');
+            },
+            onSecureItemCopyValue: (value) {
+              Clipboard.setData(ClipboardData(text: value));
+              _showSnack('Value copied');
+            },
+            onSecureItemEdit: (title, itemType) {
+              _openSecureItemEditDialog(title, itemType);
+            },
+            onSecureItemDelete: (title, itemType) {
+              _startSecureItemDeleteConfirmation(title, itemType);
+            },
+
+            onCryptoWalletAction: _handleCryptoWalletChatAction,
+
+            onOpenVault: () {
+              if (mounted) {
+                setState(() => selectedSection = _DashboardSection.dashboard);
+              }
+            },
+            onOpenAssetDetail: (asset) {
+              if (!mounted) return;
+              setState(() => selectedSection = _DashboardSection.cryptoVault);
+            },
+            onOpenSendFlow: () {
+              if (!mounted) return;
+              setState(() => selectedSection = _DashboardSection.cryptoVault);
+            },
+            onOpenSecurityPage: () {
+              if (!mounted) return;
+              setState(() => selectedSection = _DashboardSection.settings);
+            },
+            onOpenBillingPage: () {
+              if (!mounted) return;
+              Navigator.of(context).pushNamed(
+                '/storage',
+                arguments: const {'autoOpenPicker': true},
+              );
+            },
+            onOpenStoragePage: () {
+              if (!mounted) return;
+              setState(() => selectedSection = _DashboardSection.files);
+            },
+            onOpenVaultItem: (category, id) {
+              if (!mounted) return;
+              switch (category) {
+                case 'login':
+                case 'generated_login':
+                case 'id_document':
+                case 'secure_item':
+                  setState(() => selectedSection = _DashboardSection.logins);
+                  break;
+                case 'crypto':
+                  setState(
+                      () => selectedSection = _DashboardSection.cryptoVault);
+                  break;
+                case 'file':
+                case 'document':
+                  setState(() => selectedSection = _DashboardSection.files);
+                  break;
+                case 'activity':
+                  setState(() => selectedSection = _DashboardSection.dashboard);
+                  break;
+                default:
+                  setState(() => selectedSection = _DashboardSection.dashboard);
+              }
+            },
+            onSearchVault: (query) {
+              _sendQuickPrompt('search my vault for $query');
+            },
+
+            onFetchCryptoBalance: ({
+              required String asset,
+              required String address,
+            }) async {
+              return _fetchCryptoBalanceForChatCard(
+                asset: asset,
+                address: address,
+              );
+            },
+            onFetchCryptoActivity: ({
+              required String asset,
+              required String address,
+              int limit = 10,
+            }) async {
+              return _fetchCryptoActivityForChatCard(
+                asset: asset,
+                address: address,
+                limit: limit,
+              );
+            },
+
+            cryptoCache: CryptoChatLiveCache.instance,
+
+            cryptoEntitled: context.watch<AppState>().isCryptoEntitled,
+            onOpenCryptoUpgrade: () {
+              if (!mounted) return;
+              Navigator.of(context).pushNamed(
+                '/storage',
+                arguments: const {'autoOpenPicker': true},
+              );
+            },
           ),
-          if (_isVideoRecording) _buildRecordingBanner(),
-          _buildImportPanel(),
-          _buildAttachmentPanel(isMobile),
-          _buildComposer(isMobile),
-        ],
-      ),
+        ),
+        if (_isVideoRecording) _buildRecordingBanner(),
+        _buildImportPanel(),
+        _buildAttachmentPanel(isMobile),
+        _buildComposer(isMobile),
+      ],
     );
   }
 
   Widget _buildFilesSection(bool isMobile) {
-    final inventoryState = resolveFileInventoryViewState(
-      loading: loadingFiles,
-      authoritativeLoadCompleted: hasLoadedFiles,
-      fileCount: vaultFiles.length,
-      hasError: filesLoadError != null,
-    );
-    if (inventoryState == FileInventoryViewState.loading) {
+    if (loadingFiles) {
       return const Center(
         child: CircularProgressIndicator(),
       );
     }
 
-    if (inventoryState == FileInventoryViewState.error) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(filesLoadError!),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              key: const Key('files_retry_button'),
-              onPressed: _loadVaultFiles,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (inventoryState == FileInventoryViewState.readyEmpty) {
+    if (vaultFiles.isEmpty) {
       return SingleChildScrollView(
         padding: EdgeInsets.all(isMobile ? 12 : 20),
         child: Center(
@@ -19237,15 +15764,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 ),
                 const SizedBox(height: 16),
                 const ZkSemanticSearchUnavailableBanner(),
-                // The legacy folder tree is loaded from a different endpoint
-                // and does not contain FileV2 rows. Always render decrypted
-                // FileV2 metadata from the composed inventory before the
-                // legacy tree so newly uploaded private files remain
-                // manageable after refresh and relogin.
-                if (_folderTreeData != null)
-                  ...vaultFiles
-                      .where((file) => file.isFileV2)
-                      .map(_buildVaultFileCard),
                 if (_folderTreeData != null)
                   FolderBrowser(
                     treeData: _folderTreeData!,
@@ -19382,71 +15900,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 ),
               ),
             ),
-            if (file.isFileV2)
-              Semantics(
-                container: true,
-                identifier: 'qa_file_v2_delete_${file.id}',
-                button: true,
-                child: IconButton(
-                  key: ValueKey('qa_file_v2_delete_${file.id}'),
-                  tooltip: 'Delete file',
-                  onPressed: () => _deleteFileV2(file),
-                  icon: const Icon(Icons.delete_outline),
-                  color: const Color(0xFFE57373),
-                ),
-              ),
           ],
         ),
       ),
-    );
-  }
-
-  Future<void> _deleteFileV2(_VaultStoredFile file) async {
-    final token = context.read<AppState>().sessionToken;
-    if (token == null) return;
-    final label = (file.savedName ?? '').trim().isNotEmpty
-        ? file.savedName!.trim()
-        : file.fileName;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete file?'),
-        content: Text('Delete "$label"? This cannot be undone.'),
-        actions: [
-          TextButton(
-            autofocus: true,
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) {
-      _restoreComposerFocus();
-      return;
-    }
-    await _enqueueChatOperation<void>(
-      kind: ChatOperationKind.mutation,
-      operation: () async {
-        try {
-          await VaultAIClient(baseUrl: backendBaseUrl).deleteFileV2(
-            authToken: token,
-            fileId: file.id,
-          );
-          if (!mounted) return;
-          setState(() => vaultFiles.removeWhere((f) => f.id == file.id));
-          _showSnack('File deleted');
-        } catch (e) {
-          _showSnack('Could not delete file.');
-        } finally {
-          _restoreComposerFocus();
-        }
-      },
     );
   }
 
@@ -19815,6 +16271,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         AppLocalizations.of(context).sidebarCryptoVault,
                         compact: _vr.isMobile,
                         verticalPadding: _drawerTileVpad),
+                    tile(
+                        _DashboardSection.concierge,
+                        Icons.auto_awesome_outlined,
+                        AppLocalizations.of(context).sidebarConcierge,
+                        compact: _vr.isMobile,
+                        verticalPadding: _drawerTileVpad),
                     tile(_DashboardSection.expiry, Icons.event_busy_outlined,
                         AppLocalizations.of(context).sidebarExpiry,
                         compact: _vr.isMobile,
@@ -19846,27 +16308,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Widget _buildBody(bool isMobile) {
-    // AppState can recreate a session while this dashboard route remains
-    // mounted. Reset credential-only inventory state before route rendering,
-    // otherwise a completed empty/old list suppresses the new authoritative
-    // Logins-page hydration trigger.
-    _bindCredentialInventoryToCurrentSession(context.read<AppState>());
     switch (selectedSection) {
       case _DashboardSection.dashboard:
         return _buildDashboardHome(isMobile);
       case _DashboardSection.chat:
         return _buildChatView(isMobile);
       case _DashboardSection.files:
-        if (!hasLoadedFiles && !loadingFiles && filesLoadError == null) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted &&
-                selectedSection == _DashboardSection.files &&
-                !hasLoadedFiles &&
-                !loadingFiles) {
-              _loadVaultFiles();
-            }
-          });
-        }
         return _buildFilesSection(isMobile);
 
       case _DashboardSection.logins:
@@ -19903,57 +16350,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             _openSecureItemEditDialog(service, itemType);
           },
           onDelete: (service, itemType) {
-            unawaited(
-              _startSecureItemDeleteConfirmation(service, itemType),
-            );
+            _startSecureItemDeleteConfirmation(service, itemType);
           },
-          onViewItem: (item) {
-            if (item.cryptoVersion == credentialV2CryptoVersion) {
-              unawaited(_revealCredentialV2(item));
-            } else if (item.cryptoVersion == credentialMetadataCryptoVersion) {
-              unawaited(_openCiphertextSecureItemDirect(item));
-            } else {
-              _openSecureItemView(item.service, item.itemType);
-            }
-          },
-          onEditItem: (item) {
-            if (item.cryptoVersion == credentialV2CryptoVersion) {
-              unawaited(_openCredentialV2Editor(item));
-            } else {
-              unawaited(_openSecureItemEditDialog(
-                item.service,
-                item.itemType,
-                forceLegacyTransport: true,
-              ));
-            }
-          },
-          onDeleteItem: (item) {
-            if (item.cryptoVersion == credentialV2CryptoVersion) {
-              unawaited(_deleteCredentialV2(item));
-            } else {
-              unawaited(
-                  _deleteLegacyCredentialDirect(item.service, item.itemType));
-            }
-          },
-          onMigrateItem: zkV2CredentialMigrationEnabled
-              ? (item) {
-                  if (item.cryptoVersion == 'legacy_v1' &&
-                      isLoginLikeType(item.itemType)) {
-                    unawaited(_migrateCredentialV2(item));
-                  }
-                }
-              : null,
-          onRollbackItem: zkV2CredentialMigrationEnabled
-              ? (item) {
-                  if (isCredentialV2RollbackEligible(item)) {
-                    unawaited(_rollbackCredentialV2(item));
-                  }
-                }
-              : null,
         );
 
       case _DashboardSection.cryptoVault:
         return _buildCryptoVaultSection(isMobile);
+
+      case _DashboardSection.concierge:
+        return _buildConciergeSection(isMobile);
 
       case _DashboardSection.expiry:
         return _buildExpirySection(isMobile);
@@ -20135,7 +16540,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'SVaultAI Crypto Wallet',
+                'Svaultai Crypto Wallet',
                 key: const Key('crypto_vault_engine_disabled_heading'),
                 style: TextStyle(
                   fontSize: vrHeadline(context),
@@ -20151,6 +16556,42 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildConciergeSection(bool isMobile) {
+    final app = context.watch<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) {
+      return Center(
+        child: Padding(
+          padding:
+              EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
+          child: Text(
+            AppLocalizations.of(context).unlockToSeeConcierge,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return ConciergePage(
+      client: VaultAIClient(baseUrl: backendBaseUrl),
+      authToken: token,
+      vaultName: vaultName,
+      isMobile: isMobile,
+      onAskVaultAI: (prompt) async {
+        setState(() => selectedSection = _DashboardSection.chat);
+        await _sendQuickPrompt(prompt);
+      },
+      onOpenSecurityCenter: () =>
+          Navigator.pushNamed(context, '/security-center'),
+      onOpenExpiry: () => setState(
+        () => selectedSection = _DashboardSection.expiry,
+      ),
+      onOpenInheritance: () => setState(
+        () => selectedSection = _DashboardSection.inheritance,
       ),
     );
   }
@@ -20205,10 +16646,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       vaultName: vaultName,
       isMobile: isMobile,
       pinProvider: _VaultCrypto.currentPinOrThrow,
-      mutationRunner: (operation) => _enqueueChatOperation<void>(
-        kind: ChatOperationKind.mutation,
-        operation: operation,
-      ),
       onAskVaultAI: (prompt) async {
         setState(() => selectedSection = _DashboardSection.chat);
         await _sendQuickPrompt(prompt);
@@ -20301,7 +16738,7 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
                   ),
                   SizedBox(height: 2),
                   Text(
-                    'Permanently delete your SVaultAI vault. This '
+                    'Permanently delete your Svaultai vault. This '
                     'cannot be undone. Trusted device + PIN + exact '
                     'phrase required.',
                     style: TextStyle(
@@ -21219,17 +17656,6 @@ Future<SecretKey> _deriveVaultPbkdf2Key({
   required String pinSaltBase64,
   required int iterations,
 }) async {
-  if (kIsWeb) {
-    final keyBytes = await deriveWebPbkdf2HmacSha256(
-      password: pin,
-      salt: Uint8List.fromList(base64Decode(pinSaltBase64)),
-      iterations: iterations,
-    );
-    if (keyBytes == null || keyBytes.length != 32) {
-      throw StateError('Web Crypto PBKDF2 returned an invalid key length.');
-    }
-    return SecretKey(keyBytes);
-  }
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     final keyBytes = await OpaqueClient.pbkdf2HmacSha256(
       password: pin,

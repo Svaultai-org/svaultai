@@ -1,3 +1,5 @@
+
+
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -8,8 +10,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../api_client.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/solana_wallet.dart';
-import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
+
 
 const String kSolanaReceivePanelTitle = 'Receive Solana';
 const String kSolanaReceiveNetworkBadge = 'Solana';
@@ -17,7 +19,7 @@ const String kSolanaReceiveCreateButtonLabel = 'Create my Solana wallet';
 const String kSolanaReceiveCopyButtonLabel = 'Copy address';
 const String kSolanaReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kSolanaReceiveNonCustodialAttestation =
-    'Non-custodial: SVaultAI never sees your Solana secret key. Your '
+    'Non-custodial: Svaultai never sees your Solana secret key. Your '
     'wallet is encrypted with your PIN and stored as ciphertext only.';
 const String kSolanaReceiveAssetWarning =
     'Only send SOL on Solana to this address.';
@@ -33,11 +35,15 @@ const String kSolanaReceivePanelCreateBtnKey =
 const String kSolanaReceivePanelQrKey = 'solana_receive_panel_qr';
 const String kSolanaReceivePanelAddressTextKey =
     'solana_receive_panel_address_text';
-const String kSolanaReceivePanelCopyBtnKey = 'solana_receive_panel_copy_btn';
-const String kSolanaReceivePanelWarningKey = 'solana_receive_panel_warning';
-const String kSolanaReceivePanelDisabledKey = 'solana_receive_panel_disabled';
+const String kSolanaReceivePanelCopyBtnKey =
+    'solana_receive_panel_copy_btn';
+const String kSolanaReceivePanelWarningKey =
+    'solana_receive_panel_warning';
+const String kSolanaReceivePanelDisabledKey =
+    'solana_receive_panel_disabled';
 const String kSolanaReceivePanelNoKeySnackKey =
     'solana_receive_panel_no_key_snackbar';
+
 
 class CryptoWalletEngineSolanaReceivePanel extends StatefulWidget {
   final String authToken;
@@ -54,7 +60,7 @@ class CryptoWalletEngineSolanaReceivePanel extends StatefulWidget {
     required this.encryptForVault,
     required this.isVaultKeyAvailable,
     this.features,
-    this.walletLabel = 'SVaultAI SOL wallet',
+    this.walletLabel = 'Svaultai SOL wallet',
   });
 
   @override
@@ -75,7 +81,8 @@ class _CryptoWalletEngineSolanaReceivePanelState
     _load();
   }
 
-  bool get _solanaEnabled => widget.features?.solanaEnabled ?? true;
+  bool get _solanaEnabled =>
+      widget.features?.solanaEnabled ?? true;
 
   Future<void> _load() async {
     if (!_solanaEnabled) {
@@ -115,8 +122,7 @@ class _CryptoWalletEngineSolanaReceivePanelState
         const SnackBar(
           key: Key(kSolanaReceivePanelNoKeySnackKey),
           content: Text(
-            kSolanaReceiveCreateBlockedNoVaultKey,
-            maxLines: 3,
+            kSolanaReceiveCreateBlockedNoVaultKey, maxLines: 3,
           ),
         ),
       );
@@ -136,31 +142,10 @@ class _CryptoWalletEngineSolanaReceivePanelState
       plaintextSecret = wallet.secretKeyBytes;
       publicAddress = wallet.publicAddress;
       final secretJson = jsonEncode({
-        'schema': 'solana_secret_v1',
-        'keyOrigin': 'generated_client_side',
+        'schema':        'solana_secret_v1',
+        'keyOrigin':     'generated_client_side',
         'secretKeyBase58': wallet.secretKeyBase58,
       });
-      const walletV2Write =
-          bool.fromEnvironment('WALLET_V2_WRITE_ENABLED', defaultValue: false);
-      if (walletV2Write) {
-        final repo = WalletV2Repository.current(
-            api: widget.client, authToken: widget.authToken);
-        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
-        await repo.create(
-            chain: 'solana',
-            network: kSolanaNetworkId,
-            asset: kSolanaAssetTicker,
-            publicAddress: publicAddress,
-            walletLabel: widget.walletLabel,
-            secretPayload: jsonDecode(secretJson) as Map<String, dynamic>);
-        wipeSecretKey(plaintextSecret);
-        plaintextSecret = null;
-        wallet = null;
-        if (!mounted) return;
-        setState(() => _creating = false);
-        await _load();
-        return;
-      }
       encryptedSecret = await widget.encryptForVault(secretJson);
     } catch (e) {
       if (!mounted) return;
@@ -174,7 +159,9 @@ class _CryptoWalletEngineSolanaReceivePanelState
       return;
     }
 
-    wipeSecretKey(plaintextSecret);
+    if (plaintextSecret != null) {
+      wipeSecretKey(plaintextSecret);
+    }
     plaintextSecret = null;
     wallet = null;
 
@@ -226,14 +213,13 @@ class _CryptoWalletEngineSolanaReceivePanelState
   Widget _buildBody(BuildContext context) {
     if (_loading) {
       return Padding(
-        padding:
-            EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
+        padding: EdgeInsets.all(
+            MediaQuery.of(context).size.width < 600 ? 16 : 24),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 18,
-              height: 18,
+              width: 18, height: 18,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -329,8 +315,8 @@ class _CryptoWalletEngineSolanaReceivePanelState
             decoration: walletSuccessPanel(),
             child: const Row(
               children: [
-                Icon(Icons.shield_outlined,
-                    size: 16, color: kWalletAccentSuccess),
+                Icon(Icons.shield_outlined, size: 16,
+                    color: kWalletAccentSuccess),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -350,8 +336,7 @@ class _CryptoWalletEngineSolanaReceivePanelState
             onPressed: _creating ? null : _createWallet,
             icon: _creating
                 ? const SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 14, height: 14,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation<Color>(
@@ -438,12 +423,13 @@ class _CryptoWalletEngineSolanaReceivePanelState
             decoration: walletWarningPanel(),
             child: Row(
               children: [
-                const Icon(Icons.warning_amber_rounded,
-                    size: 16, color: kWalletAccentWarning),
+                const Icon(Icons.warning_amber_rounded, size: 16,
+                    color: kWalletAccentWarning),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    (body['warning'] ?? kSolanaReceiveAssetWarning).toString(),
+                    (body['warning']
+                        ?? kSolanaReceiveAssetWarning).toString(),
                     key: const Key(kSolanaReceivePanelWarningKey),
                     style: const TextStyle(
                       color: kWalletAccentWarning,

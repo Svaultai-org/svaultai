@@ -1,46 +1,68 @@
+
+
 import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 
+
 enum UploadJobStatus {
+  
   pending,
 
+  
   reading,
 
+  
   uploading,
 
+  
   uploaded,
 
+  
   failed,
 
+  
   retrying,
 
+  
   cancelled,
 
+  
   skippedDuplicate,
 
+  
   stoppedForStorage,
 }
 
+
 class UploadJob {
+  
+  
   final String id;
 
+  
   final String name;
 
+  
   final String? displayName;
 
   final String kind;
 
+  
   final String? mimeType;
 
+  
   final int size;
 
+  
   final String? relativePath;
 
+  
   final String? importId;
 
+  
   final Future<Uint8List> Function() readBytes;
 
   UploadJobStatus status;
@@ -49,18 +71,17 @@ class UploadJob {
   String? uploadedFileId;
   int attempts;
 
+  
   String? duplicateAction;
 
+  
   Map<String, dynamic>? duplicateDetail;
 
+  
   UploadResult? lastResult;
 
+  
   Uint8List? cachedBytes;
-
-  /// Stable identity for one logical File V2 write. It survives automatic
-  /// and operator-triggered retries of this queue job so an uncertain network
-  /// response cannot create a second authoritative manifest.
-  String? fileV2Id;
 
   UploadJob({
     required this.id,
@@ -84,19 +105,28 @@ class UploadJob {
       status == UploadJobStatus.stoppedForStorage;
 }
 
+
 class UploadResult {
+  
+  
   final String fileId;
 
+  
   final bool autoNamed;
 
+  
   final String? message;
 
+  
   final bool skippedDuplicate;
 
+  
   final String? existingRelativePath;
 
+  
   final bool renamed;
 
+  
   final String? originalSavedName;
 
   const UploadResult({
@@ -110,6 +140,7 @@ class UploadResult {
   });
 }
 
+
 class TransientUploadException implements Exception {
   final String reason;
   final Duration? pauseFor;
@@ -119,6 +150,7 @@ class TransientUploadException implements Exception {
   String toString() => 'TransientUploadException($reason, pauseFor=$pauseFor)';
 }
 
+
 class DuplicateUploadDecisionRequired implements Exception {
   final Map<String, dynamic> detail;
   const DuplicateUploadDecisionRequired(this.detail);
@@ -127,12 +159,15 @@ class DuplicateUploadDecisionRequired implements Exception {
   String toString() => 'DuplicateUploadDecisionRequired()';
 }
 
+
 enum DuplicateUploadDecision { skip, keepBoth }
+
 
 typedef DuplicateResolver = Future<DuplicateUploadDecision?> Function(
   UploadJob job,
   Map<String, dynamic> detail,
 );
+
 
 class NameConflictDecisionRequired implements Exception {
   final Map<String, dynamic> detail;
@@ -142,12 +177,15 @@ class NameConflictDecisionRequired implements Exception {
   String toString() => 'NameConflictDecisionRequired()';
 }
 
+
 enum NameConflictDecision { keepBoth, cancel, replace }
+
 
 typedef NameConflictResolver = Future<NameConflictDecision?> Function(
   UploadJob job,
   Map<String, dynamic> detail,
 );
+
 
 class StorageLimitDuringUploadException implements Exception {
   final String message;
@@ -161,18 +199,22 @@ class StorageLimitDuringUploadException implements Exception {
   });
 
   @override
-  String toString() => 'StorageLimitDuringUploadException(message: $message)';
+  String toString() =>
+      'StorageLimitDuringUploadException(message: $message)';
 }
+
 
 typedef StorageLimitHandler = void Function(
   StorageLimitDuringUploadException error,
 );
+
 
 typedef UploadAction = Future<UploadResult> Function(
   UploadJob job,
   Uint8List bytes,
   void Function(double progress) reportProgress,
 );
+
 
 Future<Uint8List> readPlatformFileBytes(PlatformFile pf) async {
   final stream = pf.readStream;
@@ -191,19 +233,28 @@ Future<Uint8List> readPlatformFileBytes(PlatformFile pf) async {
   );
 }
 
+
 class UploadQueueController extends ChangeNotifier {
+  
+  
   final int maxConcurrency;
 
+  
   final int maxAttempts;
 
+  
   final Duration maxBackoff;
 
+  
   final UploadAction action;
 
+  
   final DuplicateResolver? onDuplicate;
 
+  
   final NameConflictResolver? onNameConflict;
 
+  
   final StorageLimitHandler? onStorageLimitHit;
 
   final List<UploadJob> _jobs = [];
@@ -223,12 +274,16 @@ class UploadQueueController extends ChangeNotifier {
   })  : assert(maxConcurrency > 0),
         assert(maxAttempts > 0);
 
+  
   bool _stoppedForStorage = false;
   bool get stoppedForStorage => _stoppedForStorage;
 
-  int get stoppedForStorageCount =>
-      _jobs.where((j) => j.status == UploadJobStatus.stoppedForStorage).length;
+  
+  int get stoppedForStorageCount => _jobs
+      .where((j) => j.status == UploadJobStatus.stoppedForStorage)
+      .length;
 
+  
   List<UploadJob> get jobs => List.unmodifiable(_jobs);
 
   int get totalCount => _jobs.length;
@@ -242,16 +297,21 @@ class UploadQueueController extends ChangeNotifier {
   int get cancelledCount =>
       _jobs.where((j) => j.status == UploadJobStatus.cancelled).length;
 
+  
   int get skippedDuplicateCount =>
       _jobs.where((j) => j.status == UploadJobStatus.skippedDuplicate).length;
 
-  int get renamedCount =>
-      _jobs.where((j) => j.lastResult?.renamed == true).length;
+  
+  int get renamedCount => _jobs
+      .where((j) => j.lastResult?.renamed == true)
+      .length;
 
+  
   bool get isBusy => _jobs.any((j) => !j.isTerminal);
 
   bool get hasFailures => failedCount > 0;
 
+  
   Duration? get pauseRemaining {
     final until = _pauseUntil;
     if (until == null) return null;
@@ -259,6 +319,7 @@ class UploadQueueController extends ChangeNotifier {
     return remaining.isNegative ? null : remaining;
   }
 
+  
   void enqueue(UploadJob job) {
     if (_disposed) return;
     _jobs.add(job);
@@ -266,6 +327,7 @@ class UploadQueueController extends ChangeNotifier {
     _pump();
   }
 
+  
   void enqueueAll(Iterable<UploadJob> jobs) {
     if (_disposed) return;
     final list = jobs.toList(growable: false);
@@ -275,6 +337,7 @@ class UploadQueueController extends ChangeNotifier {
     _pump();
   }
 
+  
   void retry(String jobId) {
     final job = _findJob(jobId);
     if (job == null) return;
@@ -287,6 +350,7 @@ class UploadQueueController extends ChangeNotifier {
     _pump();
   }
 
+  
   void retryAllFailed() {
     var changed = false;
     for (final j in _jobs) {
@@ -304,6 +368,7 @@ class UploadQueueController extends ChangeNotifier {
     }
   }
 
+  
   void cancel(String jobId) {
     final job = _findJob(jobId);
     if (job == null || job.isTerminal) return;
@@ -312,6 +377,7 @@ class UploadQueueController extends ChangeNotifier {
     notifyListeners();
   }
 
+  
   void cancelAll() {
     var changed = false;
     for (final j in _jobs) {
@@ -324,18 +390,21 @@ class UploadQueueController extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
+  
   void clearTerminal() {
     final before = _jobs.length;
     _jobs.removeWhere((j) => j.isTerminal);
     if (_jobs.length != before) notifyListeners();
   }
 
+  
   void reset() {
     cancelAll();
     _jobs.clear();
     notifyListeners();
   }
 
+  
   Future<List<String>> waitForIdle() {
     if (!isBusy) return Future.value(_collectUploadedIds());
     final completer = Completer<List<String>>();
@@ -352,6 +421,7 @@ class UploadQueueController extends ChangeNotifier {
     return completer.future;
   }
 
+  
   UploadJob? _nextPending() {
     for (final j in _jobs) {
       if (j.status == UploadJobStatus.pending) return j;
@@ -369,7 +439,7 @@ class UploadQueueController extends ChangeNotifier {
       final next = _nextPending();
       if (next == null) return;
       _inFlight += 1;
-
+      
       _runJob(next);
     }
   }
@@ -422,16 +492,19 @@ class UploadQueueController extends ChangeNotifier {
             job.progress = p.clamp(0, 1).toDouble();
             notifyListeners();
           });
-
+          
+          
           if (job.status == UploadJobStatus.cancelled) {
             job.cachedBytes = null;
             notifyListeners();
             return;
           }
-
+          
+          
           if (result.skippedDuplicate) {
             job.status = UploadJobStatus.skippedDuplicate;
-
+            
+            
             job.uploadedFileId = result.fileId;
             job.lastResult = result;
             job.progress = 1;
@@ -447,6 +520,8 @@ class UploadQueueController extends ChangeNotifier {
           notifyListeners();
           return;
         } on StorageLimitDuringUploadException catch (e) {
+          
+          
           job.status = UploadJobStatus.stoppedForStorage;
           job.cachedBytes = null;
           job.errorMessage = e.message;
@@ -462,10 +537,15 @@ class UploadQueueController extends ChangeNotifier {
           if (shouldFire) {
             try {
               onStorageLimitHit?.call(e);
-            } catch (_) {}
+            } catch (_) {
+              
+              
+            }
           }
           return;
         } on NameConflictDecisionRequired catch (e) {
+          
+          
           job.duplicateDetail = e.detail;
           NameConflictDecision decision = NameConflictDecision.cancel;
           final resolver = onNameConflict;
@@ -481,18 +561,23 @@ class UploadQueueController extends ChangeNotifier {
             return;
           }
           if (decision == NameConflictDecision.keepBoth) {
+            
+            
             job.duplicateAction = 'keep_both';
             job.status = UploadJobStatus.pending;
-            job.attempts -= 1;
+            job.attempts -= 1;  
             notifyListeners();
             continue;
           }
-
+          
+          
           job.status = UploadJobStatus.cancelled;
           job.cachedBytes = null;
           notifyListeners();
           return;
         } on DuplicateUploadDecisionRequired catch (e) {
+          
+          
           job.duplicateDetail = e.detail;
           DuplicateUploadDecision decision = DuplicateUploadDecision.skip;
           final resolver = onDuplicate;
@@ -501,6 +586,8 @@ class UploadQueueController extends ChangeNotifier {
               final choice = await resolver(job, e.detail);
               if (choice != null) decision = choice;
             } catch (_) {
+              
+              
               decision = DuplicateUploadDecision.skip;
             }
           }
@@ -508,15 +595,19 @@ class UploadQueueController extends ChangeNotifier {
             return;
           }
           if (decision == DuplicateUploadDecision.keepBoth) {
+            
+            
             job.duplicateAction = 'keep_both';
             job.status = UploadJobStatus.pending;
-            job.attempts -= 1;
+            job.attempts -= 1;  
             notifyListeners();
             continue;
           }
-
+          
+          
           job.status = UploadJobStatus.skippedDuplicate;
-          job.uploadedFileId = (e.detail['existing_file_id'] as String?) ?? '';
+          job.uploadedFileId =
+              (e.detail['existing_file_id'] as String?) ?? '';
           job.progress = 1;
           job.cachedBytes = null;
           notifyListeners();
@@ -524,7 +615,7 @@ class UploadQueueController extends ChangeNotifier {
         } on TransientUploadException catch (e) {
           if (e.pauseFor != null && e.pauseFor!.inMilliseconds > 0) {
             final newPauseUntil = DateTime.now().add(e.pauseFor!);
-
+            
             if (_pauseUntil == null || newPauseUntil.isAfter(_pauseUntil!)) {
               _pauseUntil = newPauseUntil;
             }
@@ -532,6 +623,7 @@ class UploadQueueController extends ChangeNotifier {
           if (job.attempts >= maxAttempts) {
             job.status = UploadJobStatus.failed;
             job.errorMessage = e.reason;
+            job.cachedBytes = null;
             notifyListeners();
             return;
           }
@@ -540,8 +632,10 @@ class UploadQueueController extends ChangeNotifier {
           final backoff = e.pauseFor ?? _backoffFor(job.attempts);
           await Future.delayed(backoff);
           if (_disposed || job.status == UploadJobStatus.cancelled) return;
-
-          while (_pauseUntil != null && _pauseUntil!.isAfter(DateTime.now())) {
+          
+          
+          while (_pauseUntil != null &&
+              _pauseUntil!.isAfter(DateTime.now())) {
             await Future.delayed(
               _pauseUntil!.difference(DateTime.now()),
             );
@@ -551,6 +645,7 @@ class UploadQueueController extends ChangeNotifier {
         } catch (e) {
           job.status = UploadJobStatus.failed;
           job.errorMessage = '$e';
+          job.cachedBytes = null;
           notifyListeners();
           return;
         }
@@ -562,9 +657,11 @@ class UploadQueueController extends ChangeNotifier {
   }
 
   Duration _backoffFor(int attempt) {
+    
     final ms = 250 * (1 << (attempt - 1));
-    final clamped =
-        ms > maxBackoff.inMilliseconds ? maxBackoff.inMilliseconds : ms;
+    final clamped = ms > maxBackoff.inMilliseconds
+        ? maxBackoff.inMilliseconds
+        : ms;
     return Duration(milliseconds: clamped);
   }
 

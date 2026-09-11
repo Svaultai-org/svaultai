@@ -1,3 +1,5 @@
+
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,8 +9,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../api_client.dart';
 import '../services/crypto_wallet_features.dart';
 import '../services/tron_wallet.dart';
-import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
+
 
 const String kTronReceivePanelTitle = 'Receive USDT (TRC20)';
 const String kTronReceiveNetworkBadge = 'TRON';
@@ -16,7 +18,7 @@ const String kTronReceiveCreateButtonLabel = 'Create my TRON wallet';
 const String kTronReceiveCopyButtonLabel = 'Copy address';
 const String kTronReceiveCopyDoneSnackbar = 'Address copied to clipboard';
 const String kTronReceiveNonCustodialAttestation =
-    'Non-custodial: SVaultAI never sees your TRON secret key. Your '
+    'Non-custodial: Svaultai never sees your TRON secret key. Your '
     'wallet is encrypted with your PIN and stored as ciphertext only.';
 const String kTronReceiveAssetWarning =
     'Only send USDT TRC20 on TRON to this address.';
@@ -29,16 +31,22 @@ const String kTronReceiveLoadingLabel = 'Loading TRON wallet…';
 const String kTronReceiveDisabledMessage =
     'USDT TRC20 receive is temporarily unavailable.';
 const String kTronReceivePanelKey = 'tron_receive_panel';
-const String kTronReceivePanelCreateBtnKey = 'tron_receive_panel_create_btn';
+const String kTronReceivePanelCreateBtnKey =
+    'tron_receive_panel_create_btn';
 const String kTronReceivePanelQrKey = 'tron_receive_panel_qr';
 const String kTronReceivePanelAddressTextKey =
     'tron_receive_panel_address_text';
-const String kTronReceivePanelCopyBtnKey = 'tron_receive_panel_copy_btn';
-const String kTronReceivePanelWarningKey = 'tron_receive_panel_warning';
-const String kTronReceivePanelGasNoteKey = 'tron_receive_panel_gas_note';
-const String kTronReceivePanelDisabledKey = 'tron_receive_panel_disabled';
+const String kTronReceivePanelCopyBtnKey =
+    'tron_receive_panel_copy_btn';
+const String kTronReceivePanelWarningKey =
+    'tron_receive_panel_warning';
+const String kTronReceivePanelGasNoteKey =
+    'tron_receive_panel_gas_note';
+const String kTronReceivePanelDisabledKey =
+    'tron_receive_panel_disabled';
 const String kTronReceivePanelNoKeySnackKey =
     'tron_receive_panel_no_key_snackbar';
+
 
 class CryptoWalletEngineTronReceivePanel extends StatefulWidget {
   final String authToken;
@@ -55,7 +63,7 @@ class CryptoWalletEngineTronReceivePanel extends StatefulWidget {
     required this.encryptForVault,
     required this.isVaultKeyAvailable,
     this.features,
-    this.walletLabel = 'SVaultAI TRON wallet',
+    this.walletLabel = 'Svaultai TRON wallet',
   });
 
   @override
@@ -76,7 +84,8 @@ class _CryptoWalletEngineTronReceivePanelState
     _load();
   }
 
-  bool get _tronEnabled => widget.features?.tronEnabled ?? true;
+  bool get _tronEnabled =>
+      widget.features?.tronEnabled ?? true;
 
   Future<void> _load() async {
     if (!_tronEnabled) {
@@ -116,8 +125,7 @@ class _CryptoWalletEngineTronReceivePanelState
         const SnackBar(
           key: Key(kTronReceivePanelNoKeySnackKey),
           content: Text(
-            kTronReceiveCreateBlockedNoVaultKey,
-            maxLines: 3,
+            kTronReceiveCreateBlockedNoVaultKey, maxLines: 3,
           ),
         ),
       );
@@ -135,30 +143,10 @@ class _CryptoWalletEngineTronReceivePanelState
       wallet = generateTronWallet();
       publicAddress = wallet.publicAddress;
       final secretJson = jsonEncode({
-        'schema': 'tron_secret_v1',
-        'keyOrigin': 'generated_client_side',
+        'schema':        'tron_secret_v1',
+        'keyOrigin':     'generated_client_side',
         'privateKeyHex': wallet.privateKeyHex,
       });
-      const walletV2Write =
-          bool.fromEnvironment('WALLET_V2_WRITE_ENABLED', defaultValue: false);
-      if (walletV2Write) {
-        final repo = WalletV2Repository.current(
-            api: widget.client, authToken: widget.authToken);
-        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
-        await repo.create(
-            chain: 'tron',
-            network: kTronNetworkId,
-            asset: kTronAssetTicker,
-            publicAddress: publicAddress,
-            walletLabel: widget.walletLabel,
-            secretPayload: jsonDecode(secretJson) as Map<String, dynamic>);
-        wipeTronPrivateKeyHex(wallet.privateKeyHex);
-        wallet = null;
-        if (!mounted) return;
-        setState(() => _creating = false);
-        await _load();
-        return;
-      }
       encryptedSecret = await widget.encryptForVault(secretJson);
       wipeTronPrivateKeyHex(wallet.privateKeyHex);
       wallet = null;
@@ -219,14 +207,13 @@ class _CryptoWalletEngineTronReceivePanelState
   Widget _buildBody(BuildContext context) {
     if (_loading) {
       return Padding(
-        padding:
-            EdgeInsets.all(MediaQuery.of(context).size.width < 600 ? 16 : 24),
+        padding: EdgeInsets.all(
+            MediaQuery.of(context).size.width < 600 ? 16 : 24),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 18,
-              height: 18,
+              width: 18, height: 18,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -322,8 +309,8 @@ class _CryptoWalletEngineTronReceivePanelState
             decoration: walletSuccessPanel(),
             child: const Row(
               children: [
-                Icon(Icons.shield_outlined,
-                    size: 16, color: kWalletAccentSuccess),
+                Icon(Icons.shield_outlined, size: 16,
+                    color: kWalletAccentSuccess),
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -343,8 +330,7 @@ class _CryptoWalletEngineTronReceivePanelState
             onPressed: _creating ? null : _createWallet,
             icon: _creating
                 ? const SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 14, height: 14,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation<Color>(
@@ -452,12 +438,13 @@ class _CryptoWalletEngineTronReceivePanelState
             decoration: walletWarningPanel(),
             child: Row(
               children: [
-                const Icon(Icons.warning_amber_rounded,
-                    size: 16, color: kWalletAccentWarning),
+                const Icon(Icons.warning_amber_rounded, size: 16,
+                    color: kWalletAccentWarning),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    (body['warning'] ?? kTronReceiveAssetWarning).toString(),
+                    (body['warning']
+                        ?? kTronReceiveAssetWarning).toString(),
                     key: const Key(kTronReceivePanelWarningKey),
                     style: const TextStyle(
                       color: kWalletAccentWarning,
@@ -478,12 +465,13 @@ class _CryptoWalletEngineTronReceivePanelState
             ),
             child: Row(
               children: [
-                const Icon(Icons.local_gas_station_outlined,
-                    size: 16, color: kWalletTextSecondary),
+                const Icon(Icons.local_gas_station_outlined, size: 16,
+                    color: kWalletTextSecondary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    (body['gasNote'] ?? kTronReceiveGasNote).toString(),
+                    (body['gasNote']
+                        ?? kTronReceiveGasNote).toString(),
                     key: const Key(kTronReceivePanelGasNoteKey),
                     style: kWalletMutedStyle,
                   ),

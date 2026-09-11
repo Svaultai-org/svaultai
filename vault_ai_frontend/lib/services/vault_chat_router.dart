@@ -326,58 +326,6 @@ class VaultChatCard {
   }
 }
 
-/// Pure, non-UI projection of a generated-login draft card. The UI and QA
-/// harness can consume the same already-sanitized card data without adding
-/// another parsing or crypto path.
-class GeneratedLoginPayload {
-  final String draftId;
-  final String service;
-  final String? username;
-  final String? password;
-  final String? url;
-  final String? title;
-  final String? email;
-  final DateTime? expiresAt;
-
-  const GeneratedLoginPayload({
-    required this.draftId,
-    required this.service,
-    this.username,
-    this.password,
-    this.url,
-    this.title,
-    this.email,
-    this.expiresAt,
-  });
-
-  static GeneratedLoginPayload? tryParse(VaultChatCard card) {
-    if (card.cardType != kVcrCardGeneratedLogin || card.data == null) {
-      return null;
-    }
-    final data = card.data!;
-    final view = data['view']?.toString() ?? card.view;
-    if (view != 'create_draft' && view != 'create_draft_batch') return null;
-    final draftId = data['draft_id']?.toString() ?? '';
-    final service = (data['service'] ?? data['service_name'])?.toString() ?? '';
-    if (draftId.isEmpty || service.isEmpty) return null;
-    DateTime? expiry;
-    final rawExpiry = data['expires_at'];
-    if (rawExpiry is num) {
-      expiry = DateTime.fromMillisecondsSinceEpoch(rawExpiry.toInt() * 1000);
-    }
-    return GeneratedLoginPayload(
-      draftId: draftId,
-      service: service,
-      username: data['username']?.toString(),
-      password: data['password']?.toString(),
-      url: data['url']?.toString(),
-      title: data['title']?.toString(),
-      email: data['email']?.toString(),
-      expiresAt: expiry,
-    );
-  }
-}
-
 const Set<String> kVcrForbiddenDataKeys = <String>{
   'password',
   'password_value',
@@ -429,12 +377,9 @@ const Set<String> _kLoginDetailPayloadKeys = <String>{
 
 const Set<String> _kLoginDetailLoginKeys = <String>{
   'id',
-  'record_id',
   'title',
   'service',
   'username',
-  'identifier_type',
-  'identifier_label',
   'password',
   'domain',
   'website',
@@ -504,7 +449,6 @@ const Set<String> _kGeneratedLoginDraftKeys = <String>{
   'username',
   'password',
   'draft_id',
-  'expires_at',
   'explicit_fields',
   'actions',
   'email',
@@ -611,33 +555,33 @@ List<dynamic> _stripForbiddenKeysList(List<dynamic> raw) {
 }
 
 const String kVcrRefusalCopySecretMaterial =
-    'SVaultAI never surfaces your seed, mnemonic, private keys, '
+    'Svaultai never surfaces your seed, mnemonic, private keys, '
     'encrypted wallet secret, auth token, or API key through '
     'chat. If you need to back up sensitive material, use the '
     'existing gated flow (Security page, unlock + confirm).';
 
 const String kVcrRefusalCopyExchangeAction =
-    'SVaultAI is a non-custodial wallet. It does not buy, sell, '
+    'Svaultai is a non-custodial wallet. It does not buy, sell, '
     'swap, trade, stake, bridge, or exchange assets. You can '
     'receive, hold, and send from your own device.';
 
 const String kVcrRefusalCopyBypassPin =
-    'SVaultAI does not bypass PIN unlock, trusted-device checks, '
+    'Svaultai does not bypass PIN unlock, trusted-device checks, '
     'or local signing. These gates exist so nothing moves '
     'without your explicit confirmation on your device.';
 
 const String kVcrRefusalCopyExportAll =
     'Exporting your whole vault requires an explicit '
-    'confirmation step in the Security page. SVaultAI will not '
+    'confirmation step in the Security page. Svaultai will not '
     'dump your entire vault from a chat message.';
 
 const String kVcrRefusalCopyMassReveal =
-    'SVaultAI will not reveal every password or every secure '
+    'Svaultai will not reveal every password or every secure '
     'item at once. Open a single item and use the reveal-with-'
     'unlock flow to see its value.';
 
 const String kVcrRefusalCopyAutoSend =
-    'SVaultAI cannot auto-send crypto. Every send requires a '
+    'Svaultai cannot auto-send crypto. Every send requires a '
     'trusted device, PIN unlock, local signing on your device, '
     'a fee preview where supported, and an explicit '
     'confirmation before broadcast.';

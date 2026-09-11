@@ -13,7 +13,7 @@ import 'package:vault_ai_frontend/logins_page.dart';
 Future<void> _pump(
   WidgetTester tester, {
   required List<VaultLoginItem> items,
-  String vaultLabel = 'SVaultAI',
+  String vaultLabel = 'Svaultai',
   bool isLoading = false,
 }) async {
   
@@ -48,15 +48,6 @@ VaultLoginItem _item(String type, String service) =>
 
 
 void main() {
-  testWidgets('duplicate services use record identity keys', (tester) async {
-    await _pump(tester, items: const [
-      VaultLoginItem(service: 'QA Example Service', recordId: 'v2-a'),
-      VaultLoginItem(service: 'QA Example Service', recordId: 'v2-b'),
-      VaultLoginItem(service: 'QA Example Service'),
-    ]);
-    expect(find.text('QA Example Service'), findsNWidgets(3));
-  });
-
   group('Heading + subtitle', () {
     testWidgets('heading reads "Logins & Secure Items"',
         (tester) async {

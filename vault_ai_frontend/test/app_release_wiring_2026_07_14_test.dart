@@ -17,7 +17,7 @@
 //     "Update now" calls `applyUpdateAndReload`.
 //   * ETH / SOL / TRON Send panels each block Review when
 //     `sendShouldBeBlocked() == true`, with a panel-specific
-//     "SVaultAI was updated" error.
+//     "Svaultai was updated" error.
 //   * `applyUpdateAndReload(reloadAllowed: () => false)` defers
 //     the reload; a later `reloadAllowed: () => true` runs it.
 //   * Source-level proof that the production wiring exists in

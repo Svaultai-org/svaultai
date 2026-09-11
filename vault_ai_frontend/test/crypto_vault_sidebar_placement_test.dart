@@ -43,8 +43,8 @@ void main() {
         () async {
       final src = await _readMain();
       expect(
-        RegExp(r'tile\s*\(\s*_DashboardSection\.cryptoVault').hasMatch(src),
-        isTrue,
+        src,
+        contains('tile(_DashboardSection.cryptoVault'),
         reason:
             'the Drawer must expose a tile(...) call for the '
             'Crypto Vault section so the sidebar surface lists it',
@@ -68,7 +68,7 @@ void main() {
         () async {
       final src = await _readMain();
       final m = RegExp(
-        r'tile\s*\(\s*_DashboardSection\.cryptoVault\s*,\s*'
+        r'tile\(_DashboardSection\.cryptoVault\s*,\s*'
         r'Icons\.(\w+)\s*,',
       ).firstMatch(src);
       expect(
@@ -106,14 +106,11 @@ void main() {
       '(after Logins or after Memory)',
       () async {
         final src = await _readMain();
-        int tileIndex(String section) => RegExp(
-              'tile\\s*\\(\\s*_DashboardSection\\.$section',
-            ).firstMatch(src)?.start ?? -1;
-        final cryptoIdx = tileIndex('cryptoVault');
-        final loginsIdx = tileIndex('logins');
-        final memoryIdx = tileIndex('memory');
+        final cryptoIdx  = src.indexOf('tile(_DashboardSection.cryptoVault');
+        final loginsIdx  = src.indexOf('tile(_DashboardSection.logins');
+        final memoryIdx  = src.indexOf('tile(_DashboardSection.memory');
         final inheritanceIdx =
-            tileIndex('inheritance');
+            src.indexOf('tile(_DashboardSection.inheritance');
         expect(cryptoIdx, greaterThan(-1));
         expect(loginsIdx, greaterThan(-1));
         expect(
@@ -126,7 +123,7 @@ void main() {
         
         
         final settingsIdx =
-            tileIndex('settings');
+            src.indexOf('tile(_DashboardSection.settings');
         if (settingsIdx > -1) {
           expect(
             cryptoIdx < settingsIdx,

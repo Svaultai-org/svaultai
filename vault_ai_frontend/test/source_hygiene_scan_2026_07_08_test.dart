@@ -42,6 +42,8 @@ void main() {
       'Coming soon',
       'Planned',
       'Later phase',
+      'Phase 2',
+      'Phase 3',
       'Privacy wallet later',
       'No Send, no Receive, no QR',
     ];

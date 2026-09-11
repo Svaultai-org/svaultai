@@ -212,23 +212,25 @@ void main() {
       
       
       expect(
-        RegExp(
-          r'app\.billingBlockCount\s*>\s*0\s*&&\s*'
-          r'app\.billingPurchasedBytes\s*>\s*0[\s\S]*?'
-          r'kTierUpgradedLabel[\s\S]*?kTierFreeLabel',
-        ).hasMatch(mainSrc),
-        isTrue,
+        mainSrc,
+        contains(
+          '(app.billingBlockCount > 0\n'
+          '                            && app.billingPurchasedBytes > 0)\n'
+          '                        ? kTierUpgradedLabel\n'
+          '                        : kTierFreeLabel',
+        ),
         reason: 'Settings call site must pass the resolved tier '
             'derived from AppState.billingBlockCount + '
             'billingPurchasedBytes inside the isBillingLoaded gate.',
       );
       expect(
-        RegExp(
-          r'onOpenCryptoVault:\s*\(\)\s*\{[\s\S]*?setState\s*\('
-          r'[\s\S]*?selectedSection\s*=\s*'
-          r'_DashboardSection\.cryptoVault[\s\S]*?\);[\s\S]*?\}',
-        ).hasMatch(mainSrc),
-        isTrue,
+        mainSrc,
+        contains(
+          'onOpenCryptoVault: () {\n'
+          '                  setState(() =>\n'
+          '                      selectedSection = _DashboardSection.cryptoVault);\n'
+          '                },',
+        ),
         reason: 'Settings call site must wire onOpenCryptoVault to a '
             'sidebar section switch — never to the /storage route.',
       );

@@ -211,6 +211,26 @@ List<SecureItemEditField> secureItemEditFieldsFor(String itemType) {
   ];
 }
 
+/// Formats the locally decrypted fields for the explicit View action.
+///
+/// The title is deliberately not parsed or rewritten here. Saved-item titles
+/// may themselves contain words such as "Login" (for example, "QA Login"),
+/// so routing View back through natural-language chat can change the lookup
+/// target. The caller has already resolved the exact item before using this
+/// formatter.
+String secureItemViewTextFor(
+  String itemType,
+  Map<String, String> fields,
+) {
+  final lines = <String>[];
+  for (final field in secureItemEditFieldsFor(itemType)) {
+    final value = fields[field.key]?.trim() ?? '';
+    if (value.isEmpty) continue;
+    lines.add('${field.label}: $value');
+  }
+  return lines.join('\n\n');
+}
+
 typedef SecureItemRevealHandler = void Function(String title, String itemType);
 typedef SecureItemEditHandler = void Function(String title, String itemType);
 typedef SecureItemDeleteHandler = void Function(String title, String itemType);

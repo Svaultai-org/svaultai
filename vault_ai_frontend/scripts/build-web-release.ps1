@@ -35,9 +35,6 @@ try {
     foreach ($arg in $args) {
         if ($arg -eq '--allow-dev-release') {
             $allowDev = $true
-        } elseif ($arg -match '^--dart-define=(ZK_V2_|MEMORY_V2_|FILE_V2_|WALLET_BACKUP_V2_|WALLET_V2_|PRIVATE_VAULT_LOCAL_ROUTING_ENABLED=)') {
-            Write-Error '[vault-release] production privacy flags are pinned by this script.'
-            exit 2
         } else {
             $flutterExtraArgs += $arg
         }
@@ -80,46 +77,11 @@ This guard prevents shipping a production release with APP_RELEASE=dev
     Write-Host "[vault-release] APP_RELEASE=$shaFull" -ForegroundColor Cyan
     Write-Host "[vault-release] (display-only short: $shaShort)" -ForegroundColor Cyan
 
-    if (-not $allowDev) {
-        git fetch --quiet origin refs/heads/main:refs/remotes/origin/main
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error '[release-baseline] could not refresh origin/main.'
-            exit 2
-        }
-        git rev-parse --verify 'origin/main^{commit}' *> $null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error '[release-baseline] origin/main is unavailable.'
-            exit 2
-        }
-        git merge-base --is-ancestor origin/main $shaFull
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error '[release-baseline] candidate does not contain the current main branch.'
-            exit 2
-        }
-        git diff --quiet $shaFull --
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error '[release-baseline] tracked files do not match the release SHA.'
-            exit 2
-        }
-        Write-Host '[release-baseline] current main is included.' -ForegroundColor Green
-    }
-
-    python scripts/verify-release-contract.py --backend-url https://api.svaultai.com/release-contract
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error '[vault-release] live backend feature contract is incompatible.'
-        exit 7
-    }
-
     # ---- Build ----
     $buildArgs = @(
         'build', 'web', '--release',
         '--pwa-strategy=none',
-        "--dart-define=APP_RELEASE=$shaFull",
-        '--dart-define-from-file=config/release-contract.production.json',
-        '--dart-define=CRYPTO_WALLET_DEFAULT_NETWORK=ethereum_mainnet',
-        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_RECEIVE_ENABLED=true',
-        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_ERC20_RECEIVE_ENABLED=true',
-        '--dart-define=CRYPTO_WALLET_ENGINE_MAINNET_SEND_ENABLED=true'
+        "--dart-define=APP_RELEASE=$shaFull"
     ) + $flutterExtraArgs
     Write-Host "[vault-release] flutter $($buildArgs -join ' ')" -ForegroundColor Cyan
     flutter @buildArgs
@@ -167,25 +129,6 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         commit      = $shaFull
         commitShort = $shaShort
         builtAt     = $builtAt
-        apiContract = 'svaultai-core-v2-2026-08-16'
-        features    = @{
-            credentialV2Read  = $true
-            credentialV2Write = $false
-            credentialV2Migration = $false
-            memoryV2Read      = $true
-            memoryV2Write     = $true
-            memoryV2Migration = $false
-            fileV2Read        = $true
-            fileV2Write       = $true
-            fileV2Migration   = $false
-            walletBackupV2Read = $false
-            walletBackupV2Write = $false
-            walletBackupV2Migration = $false
-            walletV2Read = $false
-            walletV2Write = $false
-            walletV2Migration = $false
-            privateVaultLocalRouting = $false
-        }
     } | ConvertTo-Json -Compress
     $releasePath = Join-Path $flutterProjectRoot 'build/web/release.json'
     [System.IO.File]::WriteAllText(

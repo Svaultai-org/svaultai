@@ -1,24 +1,29 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
+import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vault_ai_frontend/services/native_secure_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late FlutterSecureStoragePlatform originalPlatform;
   late Map<String, String> keychain;
 
   setUp(() {
+    originalPlatform = FlutterSecureStoragePlatform.instance;
     keychain = <String, String>{};
-    FlutterSecureStorage.setMockInitialValues(keychain);
+    FlutterSecureStoragePlatform.instance =
+        TestFlutterSecureStoragePlatform(keychain);
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     NativeSecureStore.useSharedPreferencesForTesting = false;
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
   tearDown(() {
+    FlutterSecureStoragePlatform.instance = originalPlatform;
     debugDefaultTargetPlatformOverride = null;
   });
 

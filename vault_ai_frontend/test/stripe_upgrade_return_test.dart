@@ -27,14 +27,23 @@ void main() {
   });
 
   
-  group('Retired return-from-checkout branch', () {
-    test('checkout=success is not detected by active storage UI', () {
+  group('Return-from-checkout success branch', () {
+    test('checkout=success triggers _runPostCheckoutPoll', () {
       
       
       expect(
         storagePageSrc,
-        isNot(contains("if (flag == 'success')")),
-        reason: 'retired Stripe return flags must have no active handler',
+        contains("if (flag == 'success')"),
+        reason:
+            'storage_page.dart must detect ?checkout=success from '
+            'the Stripe redirect.',
+      );
+      expect(
+        storagePageSrc,
+        contains('_runPostCheckoutPoll()'),
+        reason:
+            'The success branch must invoke _runPostCheckoutPoll() — '
+            'NOT a single _refresh() that races the webhook.',
       );
     });
 
@@ -54,7 +63,8 @@ void main() {
       expect(
         storagePageSrc,
         contains(
-          'Future<Map<String, dynamic>?> _pollEntitlementUntilPaidSubscriptionActive(',
+          'Future<Map<String, dynamic>?>\n'
+          '      _pollEntitlementUntilPaidSubscriptionActive(',
         ),
         reason:
             '_pollEntitlementUntilPaidSubscriptionActive must return '
@@ -211,12 +221,10 @@ void main() {
     test('vlog is imported from main.dart', () {
       expect(
         storagePageSrc,
-        matches(
-          RegExp(
-            r"import 'main\.dart'\s+show\s+"
-            r'AppState,\s*backendBaseUrl,\s*'
-            r'kVaultStorageLimitBytes,\s*vlog;',
-          ),
+        contains(
+          "import 'main.dart'\n"
+          "    show AppState, backendBaseUrl, "
+          "kVaultStorageLimitBytes, vlog;",
         ),
         reason: 'storage_page.dart must import vlog so the dev '
             'diagnostic line surfaces in the browser console.',

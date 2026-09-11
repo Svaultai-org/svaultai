@@ -154,7 +154,7 @@ void main() {
       expect(l.settingsTitle, isNot(equals('Settings')));
       expect(l.deleteVaultTitle, isNot(equals('Delete vault permanently?')));
 
-      expect(l.deleteVaultBody, contains('SVaultAI'));
+      expect(l.deleteVaultBody, contains('Svaultai'));
     });
 
     test('French loads and translates', () async {
@@ -396,7 +396,7 @@ void main() {
       }
     });
 
-    test('no strings claim SVaultAI is impossible to attack', () async {
+    test('no strings claim Svaultai is impossible to attack', () async {
       const bads = <String>[
         'unhackable', 'impossible to hack', 'impossible to attack',
       ];

@@ -50,16 +50,20 @@ import 'package:flutter_test/flutter_test.dart';
 String _mainDart() => File('lib/main.dart').readAsStringSync();
 
 
-// The current OPAQUE login flow owns KDF rotation. Legacy verifyPin must not
-// retain a second rotation path that can race the authenticated session.
-String _verifyPinWindow() {
+// Extract the ~800 chars around the rotate call inside verifyPin.
+String _verifyPinRotateWindow() {
   final src = _mainDart();
   final verifyIdx =
       src.indexOf('Future<bool> verifyPin');
   expect(verifyIdx, greaterThan(-1),
       reason: 'AppState.verifyPin must exist');
-  final nextMethod = src.indexOf('\n  Future<', verifyIdx + 20);
-  return src.substring(verifyIdx, nextMethod < 0 ? src.length : nextMethod);
+  final rotateIdx = src.indexOf('rotateVaultKdf(', verifyIdx);
+  expect(rotateIdx, greaterThan(-1),
+      reason: 'verifyPin must call rotateVaultKdf');
+  // Take a healthy window on either side.
+  final start = (rotateIdx - 200).clamp(0, src.length);
+  final end   = (rotateIdx + 1400).clamp(0, src.length);
+  return src.substring(start, end);
 }
 
 
@@ -70,12 +74,23 @@ void main() {
       'verifyPin refetches /vault-meta after rotateVaultKdf '
       '(defends against rotate-response desync)',
       () {
-        final window = _verifyPinWindow();
+        final window = _verifyPinRotateWindow();
         // The fix must AWAIT a second getVaultMeta call after the
         // rotate step. That fetch is the authoritative source of
         // the CURRENT DB salt/iter and closes the "server rotated
         // but client silently kept old key" window.
-        expect(window.contains('rotateVaultKdf('), isFalse);
+        final metaCount = 'getVaultMeta('.allMatches(window).length;
+        expect(
+          metaCount, greaterThanOrEqualTo(1),
+          reason: 'after rotateVaultKdf, verifyPin must refetch '
+                  '/vault-meta so the client always resyncs to the '
+                  'authoritative post-rotation salt/iter. Without '
+                  'the refetch, a server-side rotation whose '
+                  'response was malformed / lost / silently caught '
+                  'leaves the client encrypting /chat with a stale '
+                  'key and produces "unlock session expired" on '
+                  'the very first chat.',
+        );
       },
     );
 
@@ -83,7 +98,7 @@ void main() {
       'verifyPin no longer gates the re-derive on '
       '`rotateResult[\\\'rotated\\\'] == true`',
       () {
-        final window = _verifyPinWindow();
+        final window = _verifyPinRotateWindow();
         // A `rotated == true` gate is what caused the production
         // desync — any type/coercion or JSON weirdness that made
         // the comparison false silently skipped the re-derive.
@@ -107,7 +122,7 @@ void main() {
     test(
       'verifyPin does not silently catch-and-drop rotate errors',
       () {
-        final window = _verifyPinWindow();
+        final window = _verifyPinRotateWindow();
         // The old `catch (_) {}` masked network failures, HTTP
         // errors, and PBKDF2 exceptions with zero diagnostic
         // output. The fix must at minimum LOG the failure via
@@ -129,12 +144,12 @@ void main() {
     test(
       'verifyPin logs the rotate attempt outcome via vlog',
       () {
-        final window = _verifyPinWindow();
+        final window = _verifyPinRotateWindow();
         // Positive contract: there IS a vlog call in the rotate
         // block. Prevents a future refactor from removing the
         // observability we just gained.
         expect(
-          _mainDart().contains('vlog('),
+          window.contains('vlog('),
           isTrue,
           reason: 'verifyPin must vlog the rotate outcome so we '
                   'can diagnose future unlock-session-expired '

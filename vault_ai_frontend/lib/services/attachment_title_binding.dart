@@ -28,42 +28,6 @@ String? attachmentTitleFromComposerText(
   return normalized.isEmpty ? null : normalized;
 }
 
-/// Preserves the user's exact visible title while retaining a safe original
-/// extension for downloads/playback. The exact title is stored separately as
-/// FileV2 metadata `label`; this filename is the transport/download name.
-String filenameWithChosenTitle({
-  required String originalFilename,
-  String? chosenTitle,
-}) {
-  final title = chosenTitle?.trim();
-  if (title == null || title.isEmpty) return originalFilename;
-  final originalBase = originalFilename.split(RegExp(r'[\\/]')).last;
-  final dot = originalBase.lastIndexOf('.');
-  final extension = dot > 0 && dot < originalBase.length - 1
-      ? originalBase.substring(dot)
-      : '';
-  if (extension.isNotEmpty &&
-      title.toLowerCase().endsWith(extension.toLowerCase())) {
-    return title;
-  }
-  return '$title$extension';
-}
-
-/// Selects the normal user-facing name for an upload confirmation. A chosen
-/// vault label is authoritative; the transient device filename is only a
-/// fallback when the user did not provide one.
-String uploadConfirmationName({
-  required String originalFilename,
-  String? chosenTitle,
-}) {
-  final title = chosenTitle?.trim();
-  if (title != null && title.isNotEmpty) return title;
-  return filenameWithChosenTitle(
-    originalFilename: originalFilename,
-    chosenTitle: chosenTitle,
-  );
-}
-
 String? _stripExplicitNamingCommand(String text) {
   final patterns = <RegExp>[
     RegExp(

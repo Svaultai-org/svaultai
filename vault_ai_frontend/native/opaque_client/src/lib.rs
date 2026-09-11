@@ -88,6 +88,13 @@ fn key_stretching() -> Result<argon2::Argon2<'static>, ()> {
     ))
 }
 
+/// Link anchor used by the iOS Runner. A native reference is required so the
+/// static linker retains this archive's exported C symbols for Dart FFI.
+#[no_mangle]
+pub extern "C" fn vaultai_opaque_client_link_anchor() -> u32 {
+    1
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn vaultai_opaque_client_start_registration(
     password: *const c_char,
@@ -284,6 +291,13 @@ mod tests {
     use super::*;
     use opaque_ke::{ServerLogin, ServerLoginParameters, ServerRegistration, ServerSetup};
 
+    unsafe fn take_ffi_json(value: *mut c_char) -> serde_json::Value {
+        assert!(!value.is_null());
+        let text = CStr::from_ptr(value).to_str().unwrap().to_owned();
+        vaultai_opaque_client_free_string(value);
+        serde_json::from_str(&text).unwrap()
+    }
+
     fn hex_to_bytes(value: &str) -> Vec<u8> {
         assert_eq!(value.len() % 2, 0);
         (0..value.len())
@@ -425,6 +439,42 @@ mod tests {
                 pbkdf2_sha256(password, salt, iterations).to_vec(),
                 hex_to_bytes(expected_hex),
             );
+        }
+    }
+
+    #[test]
+    fn ffi_rejects_invalid_inputs_without_panicking() {
+        unsafe {
+            let invalid = CString::new("not-base64!").unwrap();
+            let empty = CString::new("").unwrap();
+            let password = CString::new("password").unwrap();
+
+            let pbkdf2 = take_ffi_json(vaultai_pbkdf2_hmac_sha256(
+                password.as_ptr(),
+                invalid.as_ptr(),
+                1,
+            ));
+            assert_eq!(pbkdf2["ok"], false);
+            assert_eq!(pbkdf2["error"], "bad_input");
+
+            let zero_iterations = take_ffi_json(vaultai_pbkdf2_hmac_sha256(
+                password.as_ptr(),
+                empty.as_ptr(),
+                0,
+            ));
+            assert_eq!(zero_iterations["error"], "bad_input");
+
+            let login = take_ffi_json(vaultai_opaque_client_finish_login(
+                invalid.as_ptr(),
+                invalid.as_ptr(),
+                password.as_ptr(),
+                empty.as_ptr(),
+                empty.as_ptr(),
+            ));
+            assert_eq!(login["ok"], false);
+            assert_eq!(login["error"], "bad_input");
+
+            vaultai_opaque_client_free_string(std::ptr::null_mut());
         }
     }
 }

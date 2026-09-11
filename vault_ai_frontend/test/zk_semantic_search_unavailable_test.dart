@@ -82,7 +82,7 @@ void main() {
           reason: 'the banner must sit ABOVE the FolderBrowser '
                   'search field so users see the "unavailable" '
                   'notice before typing');
-      expect(browser - construction, lessThan(800),
+      expect(browser - construction, lessThan(600),
           reason: 'the banner must be close to the FolderBrowser '
                   'mount, not scattered elsewhere in the widget '
                   'tree');

@@ -15,7 +15,6 @@ import '../services/zk_send_draft_helper.dart' as zk_draft_helper;
 import '../services/evm_networks.dart';
 import '../services/local_outgoing_tx_store.dart';
 import '../services/recipient_qr_parser.dart';
-import '../services/wallet_v2_repository.dart';
 import 'crypto_wallet_engine_design.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
@@ -65,11 +64,11 @@ const String kMainnetSendNewRecipientWarning =
 // becomes "Retry balance check" until the balance loads.
 const String kMainnetSendBalanceUnverifiedError =
     'Balance could not be verified. Tap Retry balance check to try '
-    'again. SVaultAI will not sign or broadcast a transaction while '
+    'again. Svaultai will not sign or broadcast a transaction while '
     'your balance is unknown.';
 const String kMainnetSendEthGasBalanceUnverifiedError =
     'ETH balance for gas could not be verified. Tap Retry balance '
-    'check to try again. SVaultAI will not sign or broadcast a token '
+    'check to try again. Svaultai will not sign or broadcast a token '
     'transfer while the parent ETH balance is unknown.';
 const String kMainnetSendRetryBalanceLabel = 'Retry balance check';
 const String kMainnetSendRetryFeeLabel = 'Retry fee estimate';
@@ -140,7 +139,7 @@ const String kEthSendResultBodySubmitted =
     'wallet activity once a node includes it in a block.';
 const String kEthSendResultBodyUncertain =
     "The mainnet RPC accepted the raw transaction but no Ethereum "
-    "node has yet reported seeing it. SVaultAI will keep checking. "
+    "node has yet reported seeing it. Svaultai will keep checking. "
     "Do not re-sign with a new nonce until the status is confirmed "
     "as not_found on the network.";
 const String kEthSendResultBodyRejected =
@@ -219,7 +218,7 @@ const String kEthSendMaxActionLabel = 'Max';
 // persisted draft. It calls the dedicated fee-estimate endpoint
 // with the destination address the user has already entered.
 const String kSendUpdatePendingError =
-    'SVaultAI was updated. Refresh before starting a new send.';
+    'Svaultai was updated. Refresh before starting a new send.';
 const String kEthSendMaxRequiresDestinationError =
     'Enter a destination address first so we can estimate the '
     'network fee.';
@@ -236,7 +235,7 @@ const String kEthSendReviewWarning =
 const String kEthSendReviewConfirmButtonLabel = 'Confirm and enter PIN';
 const String kEthSendPinDialogTitle = 'Enter your PIN to sign locally';
 const String kEthSendPinDialogBody =
-    'Your private key is decrypted on this device only. SVaultAI never '
+    'Your private key is decrypted on this device only. Svaultai never '
     'sees the plaintext key.';
 const String kEthSendPinDialogConfirmLabel = 'Sign + broadcast';
 const String kEthSendBroadcastPendingLabel = 'Signing and broadcasting…';
@@ -2182,70 +2181,47 @@ class _CryptoWalletEngineSendPanelState
       }
     }
 
+    String? encryptedSecret;
+    try {
+      final Map<String, dynamic> body = widget.isMainnet
+          ? await widget.client.getCryptoWalletEncryptedSecretNetwork(
+              network: widget.network,
+              asset: widget.asset,
+              authToken: widget.authToken,
+            )
+          : await widget.client.getCryptoWalletEncryptedSecret(
+              asset: widget.asset,
+              authToken: widget.authToken,
+            );
+      final status = (body['status'] ?? '').toString();
+      if (status != 'encrypted_secret_ready') {
+        _broadcastInFlight = false;
+        setState(() {
+          _stage = _Stage.review;
+          _error = kEthSendErrorEncryptedSecretMissing;
+        });
+        return;
+      }
+      encryptedSecret = body['encryptedWalletSecret'].toString();
+    } catch (e) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _Stage.review;
+        _error = kEthSendErrorSigningKeyUnavailable;
+      });
+      return;
+    }
+
     String? privateKeyHex;
-    const walletV2Read =
-        bool.fromEnvironment('WALLET_V2_READ_ENABLED', defaultValue: false);
-    if (walletV2Read) {
-      try {
-        final repo = WalletV2Repository.current(
-            api: widget.client, authToken: widget.authToken);
-        if (repo == null) throw StateError('wallet_v2_requires_active_mvk');
-        final envelope =
-            await repo.find(chain: 'evm', publicAddress: widget.fromAddress);
-        if (envelope == null) throw StateError('wallet_v2_not_found');
-        final secret = await repo.decrypt(envelope);
-        privateKeyHex = secret['privateKeyHex']?.toString();
-        if (privateKeyHex == null || privateKeyHex.isEmpty)
-          throw StateError('wallet_v2_secret_invalid');
-      } catch (e) {
-        _broadcastInFlight = false;
-        setState(() {
-          _stage = _Stage.review;
-          _error = kEthSendErrorSigningKeyUnavailable;
-        });
-        return;
-      }
-    } else {
-      String? encryptedSecret;
-      try {
-        final Map<String, dynamic> body = widget.isMainnet
-            ? await widget.client.getCryptoWalletEncryptedSecretNetwork(
-                network: widget.network,
-                asset: widget.asset,
-                authToken: widget.authToken,
-              )
-            : await widget.client.getCryptoWalletEncryptedSecret(
-                asset: widget.asset,
-                authToken: widget.authToken,
-              );
-        final status = (body['status'] ?? '').toString();
-        if (status != 'encrypted_secret_ready') {
-          _broadcastInFlight = false;
-          setState(() {
-            _stage = _Stage.review;
-            _error = kEthSendErrorEncryptedSecretMissing;
-          });
-          return;
-        }
-        encryptedSecret = body['encryptedWalletSecret'].toString();
-      } catch (e) {
-        _broadcastInFlight = false;
-        setState(() {
-          _stage = _Stage.review;
-          _error = kEthSendErrorSigningKeyUnavailable;
-        });
-        return;
-      }
-      try {
-        privateKeyHex = await widget.decryptForVault(encryptedSecret);
-      } catch (e) {
-        _broadcastInFlight = false;
-        setState(() {
-          _stage = _Stage.review;
-          _error = kEthSendErrorWalletKeyDecryptFailed;
-        });
-        return;
-      }
+    try {
+      privateKeyHex = await widget.decryptForVault(encryptedSecret);
+    } catch (e) {
+      _broadcastInFlight = false;
+      setState(() {
+        _stage = _Stage.review;
+        _error = kEthSendErrorWalletKeyDecryptFailed;
+      });
+      return;
     }
 
     String? signedTx;

@@ -1,9 +1,12 @@
+
+
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:vault_ai_frontend/main.dart'
-    show generateVoiceRecordingFilename, kAcceptedAudioExtensions;
+import 'package:vault_ai_frontend/main.dart' show
+    generateVoiceRecordingFilename, kAcceptedAudioExtensions;
+
 
 String _readLib(String relative) {
   final file = File('lib/$relative');
@@ -12,34 +15,38 @@ String _readLib(String relative) {
   return file.readAsStringSync();
 }
 
+
 void main() {
   group('kAcceptedAudioExtensions', () {
     test('includes the five promised formats', () {
+      
+      
       for (final ext in ['mp3', 'm4a', 'wav', 'aac', 'ogg']) {
         expect(
-          kAcceptedAudioExtensions,
-          contains(ext),
+          kAcceptedAudioExtensions, contains(ext),
           reason: 'must accept .$ext',
         );
       }
     });
 
     test('contains no dot prefix', () {
+      
+      
       for (final ext in kAcceptedAudioExtensions) {
         expect(
           ext.startsWith('.'),
           isFalse,
           reason: 'extension "$ext" must not start with a dot — '
-              'FilePicker filters on bare extensions',
+                  'FilePicker filters on bare extensions',
         );
       }
     });
 
     test('all lowercase', () {
+      
       for (final ext in kAcceptedAudioExtensions) {
         expect(
-          ext,
-          equals(ext.toLowerCase()),
+          ext, equals(ext.toLowerCase()),
           reason: 'extension "$ext" must be lowercase',
         );
       }
@@ -47,9 +54,9 @@ void main() {
   });
 
   group('generateVoiceRecordingFilename', () {
-    test(
-        'produces the canonical "Voice recording - <date> <time>" '
+    test('produces the canonical "Voice recording - <date> <time>" '
         'shape', () {
+      
       final ts = DateTime(2026, 6, 6, 14, 32, 8);
       expect(
         generateVoiceRecordingFilename(now: ts),
@@ -58,6 +65,8 @@ void main() {
     });
 
     test('pads single-digit month/day/hour/minute/second', () {
+      
+      
       final ts = DateTime(2026, 1, 3, 1, 2, 3);
       expect(
         generateVoiceRecordingFilename(now: ts),
@@ -66,13 +75,18 @@ void main() {
     });
 
     test('uses dashes instead of colons in the time component', () {
+      
+      
       final ts = DateTime(2026, 6, 6, 14, 32, 8);
       final name = generateVoiceRecordingFilename(now: ts);
-      expect(name.contains(':'), isFalse, reason: 'colons break on Windows');
+      expect(name.contains(':'), isFalse,
+          reason: 'colons break on Windows');
       expect(name, contains('14-32-08'));
     });
 
     test('honors the extension parameter', () {
+      
+      
       final ts = DateTime(2026, 6, 6, 14, 32, 8);
       expect(
         generateVoiceRecordingFilename(now: ts, extension: 'ogg'),
@@ -81,6 +95,8 @@ void main() {
     });
 
     test('default extension is m4a', () {
+      
+      
       final ts = DateTime(2026, 6, 6, 14, 32, 8);
       expect(
         generateVoiceRecordingFilename(now: ts).endsWith('.m4a'),
@@ -90,7 +106,10 @@ void main() {
   });
 
   group('Audio upload option mounted inside the + attachment menu', () {
-    test('+ menu has an Upload audio entry that routes to _pickAudio', () {
+    test('+ menu has an Upload audio entry that routes to _pickAudio',
+        () {
+      
+      
       final src = _readLib('main.dart');
       expect(
         src,
@@ -101,7 +120,8 @@ void main() {
         src.contains("Text('Upload audio')") ||
             src.contains('filesUploadAudio'),
         isTrue,
-        reason: 'menu entry must carry "Upload audio" label (literal '
+        reason:
+            'menu entry must carry "Upload audio" label (literal '
             'or via AppLocalizations.filesUploadAudio)',
       );
       expect(
@@ -119,6 +139,8 @@ void main() {
 
   group('_pickAudio implementation', () {
     test('uses FileType.custom with the extension whitelist', () {
+      
+      
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> _pickAudio()');
       expect(idx, greaterThan(-1),
@@ -132,19 +154,18 @@ void main() {
         window,
         contains('allowedExtensions: kAcceptedAudioExtensions'),
         reason: 'picker must reference the canonical constant so a '
-            'new format added to the list automatically reaches '
-            'the dialog filter',
+                'new format added to the list automatically reaches '
+                'the dialog filter',
       );
       expect(
         window,
         contains('allowMultiple: true'),
         reason: 'audio picker must support multi-select like the '
-            'other picker entry points',
+                'other picker entry points',
       );
     });
 
-    test(
-        'routes picked files through _ingestPickedFiles with kind '
+    test('routes picked files through _ingestPickedFiles with kind '
         '"audio"', () {
       final src = _readLib('main.dart');
       final idx = src.indexOf('Future<void> _pickAudio()');
@@ -156,36 +177,35 @@ void main() {
         window,
         contains("_ingestPickedFiles(result.files, kind: 'audio')"),
         reason: '_pickAudio must hand off to the shared ingest path '
-            'with the audio kind tag',
+                'with the audio kind tag',
       );
     });
   });
 
   group('Recorder filename uses generateVoiceRecordingFilename', () {
-    test(
-        'the in-app recorder no longer uses the legacy '
+    test('the in-app recorder no longer uses the legacy '
         '"recording_<epoch>.m4a" shape', () {
+      
+      
       final src = _readLib('main.dart');
       expect(
-        src.contains(
-            "'recording_\${DateTime.now().millisecondsSinceEpoch}.m4a'"),
+        src.contains("'recording_\${DateTime.now().millisecondsSinceEpoch}.m4a'"),
         isFalse,
         reason: 'recorder must use generateVoiceRecordingFilename(), '
-            'not the epoch-ms shape',
+                'not the epoch-ms shape',
       );
-
+      
       expect(
         src,
         contains('generateVoiceRecordingFilename(now: DateTime.now())'),
         reason: 'the recorder must produce its filename through the '
-            'shared helper',
+                'shared helper',
       );
     });
   });
 
   group('Native recording and capture guards', () {
-    test(
-        'voice recorder uses platform storage instead of URL-fetching '
+    test('voice recorder uses platform storage instead of URL-fetching '
         'native file paths', () {
       final src = _readLib('main.dart');
       expect(
@@ -225,31 +245,7 @@ void main() {
         reason: 'microphone permission must be requested only for voice '
             'recording/capture actions',
       );
-      expect(
-          src,
-          isNot(contains(
-              '_recordingStorage = createRecordingStorage();\n    _initSpeech();')),
-          reason: 'opening chat must not trigger the system microphone dialog');
-      expect(src, contains("if (!_speechInitialized)"));
-      expect(
-          src, contains("'Microphone permission is needed for voice input.'"));
       expect(src, contains('openAppSettings'));
-    });
-
-    test('post-login chat navigation does not request media permission', () {
-      final src = _readLib('main.dart');
-      final unlocked = src.indexOf('app.markUnlocked();');
-      final chatRoute = src.indexOf(
-        "Navigator.pushReplacementNamed(context, '/chat');",
-        unlocked,
-      );
-      expect(unlocked, greaterThanOrEqualTo(0));
-      expect(chatRoute, greaterThan(unlocked));
-      final postLogin = src.substring(unlocked, chatRoute);
-      expect(postLogin, isNot(contains('Permission.microphone.request()')));
-      expect(postLogin, isNot(contains('Permission.camera.request()')));
-      expect(postLogin, isNot(contains('_toggleRecording()')));
-      expect(postLogin, isNot(contains('_toggleVideoRecording()')));
     });
 
     test('Android camera capture uses native media capture service', () {

@@ -1,5 +1,3 @@
-
-
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -7,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/services/folder_picker.dart';
 import 'package:vault_ai_frontend/services/upload_queue.dart';
-
 
 void main() {
   group('normalizePickedRelativePath', () {
@@ -19,7 +16,6 @@ void main() {
     });
 
     test('three-level nested path preserved', () {
-      
       expect(
         normalizePickedRelativePath('My Life Backup/Photos/family.jpg'),
         'My Life Backup/Photos/family.jpg',
@@ -63,8 +59,6 @@ void main() {
     });
 
     test('leading slash stripped (treat input as relative)', () {
-      
-      
       expect(
         normalizePickedRelativePath('/Bank/statement.pdf'),
         'Bank/statement.pdf',
@@ -91,8 +85,6 @@ void main() {
     });
 
     test('script and archive filenames pass through unchanged', () {
-      
-      
       const samples = [
         'project/app.py',
         'project/.env.example',
@@ -164,14 +156,12 @@ void main() {
     test('createFolderPickerService returns a non-null instance', () {
       final picker = createFolderPickerService();
       expect(picker, isNotNull);
-      
-      
+
       expect(picker.isSupported, isA<bool>());
       expect(picker.unsupportedReason, isA<String>());
     });
 
-    test('unsupported reason is non-empty when isSupported is false',
-        () {
+    test('unsupported reason is non-empty when isSupported is false', () {
       final picker = createFolderPickerService();
       if (!picker.isSupported) {
         expect(
@@ -186,21 +176,19 @@ void main() {
   group('Source guard: main.dart wiring', () {
     String readMain() {
       final file = File('lib/main.dart');
-      expect(file.existsSync(), isTrue,
-          reason: 'lib/main.dart must exist');
+      expect(file.existsSync(), isTrue, reason: 'lib/main.dart must exist');
       return file.readAsStringSync();
     }
 
     test('_Attachment carries relativePath through copy()', () {
       final src = readMain();
-      
+
       expect(
         src,
         contains('final String? relativePath;'),
         reason: '_Attachment must declare relativePath',
       );
-      
-      
+
       expect(
         src,
         contains('relativePath: relativePath,'),
@@ -208,11 +196,9 @@ void main() {
       );
     });
 
-    test('folder upload option mounted inside the + attachment menu',
-        () {
+    test('folder upload option mounted inside the + attachment menu', () {
       final src = readMain();
-      
-      
+
       expect(
         src,
         contains('Icons.folder_open'),
@@ -230,8 +216,7 @@ void main() {
       );
     });
 
-    test('_pickFolder method exists and routes through _folderPicker',
-        () {
+    test('_pickFolder method exists and routes through _folderPicker', () {
       final src = readMain();
       expect(
         src,
@@ -245,15 +230,23 @@ void main() {
       );
       expect(
         src,
-        contains('_folderPicker.pickFolder()'),
-        reason: '_pickFolder must call the service',
+        contains('_folderPicker.pickFolder,'),
+        reason: '_pickFolder must call the service inside the trusted '
+            'native-picker keep-alive',
+      );
+      expect(
+        src,
+        contains('runWithNativePickerKeepAlive'),
+        reason: 'an Apple folder picker must not be interrupted by the '
+            'normal inactivity lock while it is open',
       );
     });
 
-    test('UploadJob is constructed with relativePath in '
+    test(
+        'UploadJob is constructed with relativePath in '
         '_uploadAttachments', () {
       final src = readMain();
-      
+
       expect(
         src,
         contains('relativePath: a.relativePath,'),
@@ -288,37 +281,31 @@ void main() {
       );
     });
 
-    test('both upload methods accept optional relativePath parameter',
-        () {
+    test('both upload methods accept optional relativePath parameter', () {
       final src = readApi();
-      
+
       final count = 'String? relativePath'.allMatches(src).length;
       expect(
         count,
         greaterThanOrEqualTo(2),
         reason: 'uploadVaultFile + initChunkedUpload must both '
-                'declare relativePath',
+            'declare relativePath',
       );
     });
 
     test('relative_path is omitted from the wire when null', () {
       final src = readApi();
-      
-      
+
       expect(
         src,
-        contains(
-            "if (relativePath != null && relativePath.isNotEmpty)"),
+        contains("if (relativePath != null && relativePath.isNotEmpty)"),
         reason: 'null relativePath must NOT be sent (omit-when-null)',
       );
     });
   });
 
   group('Lazy reads invariant survives folder picks (hang fix)', () {
-    test('PickedFolderFile.readBytes is NOT invoked at construction',
-        () {
-      
-      
+    test('PickedFolderFile.readBytes is NOT invoked at construction', () {
       var reads = 0;
       final file = PickedFolderFile(
         name: 'a.bin',

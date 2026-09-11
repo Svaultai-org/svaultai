@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugPrint, defaultTargetPlatform, kIsWeb, kReleaseMode;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'services/native_secure_store.dart';
 
 
 const _kDeviceIdKey = 'vaultai_device_id_v1';
@@ -37,13 +40,23 @@ Future<String> getOrCreateDeviceId() async {
     return _cachedDeviceId!;
   }
   final sp = await SharedPreferences.getInstance();
-  var id = sp.getString(_kDeviceIdKey);
+  // Preserve Android/web behavior. On iOS the device-bound identifier is
+  // sensitive session metadata and belongs in Keychain, with one-time
+  // migration handled by NativeSecureStore.
+  final useIosKeychain = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  var id = useIosKeychain
+      ? await NativeSecureStore.readString(_kDeviceIdKey)
+      : sp.getString(_kDeviceIdKey);
   final created = id == null || id.isEmpty;
   if (created) {
     final r = Random.secure();
     final bytes = List<int>.generate(32, (_) => r.nextInt(256));
     id = base64Url.encode(bytes).replaceAll('=', '');
-    await sp.setString(_kDeviceIdKey, id);
+    if (useIosKeychain) {
+      await NativeSecureStore.writeString(_kDeviceIdKey, id);
+    } else {
+      await sp.setString(_kDeviceIdKey, id);
+    }
     _vlog('device-id.persisted', {
       'key': _kDeviceIdKey,
       'id_prefix': _idPrefix(id),

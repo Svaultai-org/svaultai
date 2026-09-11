@@ -371,11 +371,17 @@ void main() {
       );
     });
 
-    test('PIN reauth forwards the typed OPAQUE vault handle into session state',
-        () {
-      expect(mainSource.contains('loginResult.vaultHandle'), isTrue);
+    test('PIN reauth forwards auth/login vault_handle into session state', () {
       expect(
-        mainSource.contains('vaultHandleValue: loginResult.vaultHandle'),
+        mainSource.contains("loginResult['vault_handle']?.toString()"),
+        isTrue,
+      );
+      expect(
+        mainSource.contains('var activeVaultHandle = newVaultHandle'),
+        isTrue,
+      );
+      expect(
+        mainSource.contains('vaultHandleValue: activeVaultHandle'),
         isTrue,
       );
     });
@@ -458,14 +464,12 @@ void main() {
           isFalse);
     });
 
-    test('account switch clears vaultHandle; ordinary logout retains auth hint',
-        () {
+    test('logout clears vaultHandle memory and persisted storage', () {
       final idx = mainSource.indexOf('Future<void> clearSession');
       expect(idx, greaterThan(-1));
       final window =
-          mainSource.substring(idx, (idx + 4200).clamp(0, mainSource.length));
-      expect(window.contains('rememberedVaultHandle'), isTrue);
-      expect(window.contains('vaultHandle = rememberedVaultHandle'), isTrue);
+          mainSource.substring(idx, (idx + 2800).clamp(0, mainSource.length));
+      expect(window.contains('vaultHandle = null'), isTrue);
       expect(
         window.contains("NativeSecureStore.deleteString('last_vault_handle')"),
         isTrue,

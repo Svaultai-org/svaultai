@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-	Privacy Manifest for SVaultAI. Required by Apple since May 2024.
+	Privacy Manifest for Svaultai. Required by Apple since May 2024.
 	Uploads without this file are rejected with ITMS-91053 /
 	ITMS-91056 for touching "required-reason APIs" (UserDefaults,
 	file timestamp, disk space, boot time).
 
 	Declarations must match reality:
-	  * NSPrivacyTracking = false — SVaultAI does NOT track users
+	  * NSPrivacyTracking = false — Svaultai does NOT track users
 	    across other apps or websites. No ad SDKs are linked.
 	  * NSPrivacyTrackingDomains empty for the same reason.
 	  * NSPrivacyCollectedDataTypes lists what the backend receives.
-	    Vault payloads remain encrypted in the ZK model, but storage is
-	    scoped to an authenticated vault, so user content is conservatively
-	    declared as linked to the account.
+	    Vault contents (files, notes, wallet addresses, chat) are
+	    encrypted client-side (ZK model) before upload, so they are
+	    declared as NOT LINKED to user identity.
 	  * NSPrivacyAccessedAPITypes declares each required-reason API
 	    with an approved reason string per Apple's list.
 -->
@@ -27,19 +27,20 @@
 	<array/>
 
 	<!--
-		Data SVaultAI's backend receives directly from the app.
+		Data Svaultai's backend receives directly from the app.
 		Encrypted vault payloads are NOT included here because the
 		server sees only ciphertext + non-identifying metadata.
 	-->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 
-		<!-- User ID — the user-chosen vault name is an account-level
-		     sign-in identifier. It is not required to be an email
-		     address and is not used for tracking. -->
+		<!-- Email — the vault_name at signup is an email-shaped
+		     identifier used to sign in. Linked to identity because
+		     the same value logs in every session. Not used for
+		     tracking. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
-			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
 			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
@@ -47,18 +48,20 @@
 			<key>NSPrivacyCollectedDataTypePurposes</key>
 			<array>
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+				<string>NSPrivacyCollectedDataTypePurposeAuthentication</string>
 			</array>
 		</dict>
 
-		<!-- Other User Content — vault payloads such as files, notes,
-		     and chat. Stored ciphertext remains scoped to the signed-in
-		     vault, so this is conservatively declared as linked while
-		     remaining not used for tracking. -->
+		<!-- Other User Content — encrypted vault payloads (files,
+		     notes, chat). Ciphertext only; the server cannot read
+		     it. Declared as NOT LINKED because the encrypted blobs
+		     alone cannot be tied back to a user's identity, and
+		     NOT USED FOR TRACKING. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
-			<true/>
+			<false/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypePurposes</key>

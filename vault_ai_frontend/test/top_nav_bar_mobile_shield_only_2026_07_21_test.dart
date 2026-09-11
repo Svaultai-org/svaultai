@@ -51,14 +51,14 @@ Future<void> _pumpHeader(
   );
 }
 
-// Wordmark Text finder — 'SVaultAI' (case-preserved wordmark
-// literal). Any variant like 'V...' would not have data=='SVaultAI'
+// Wordmark Text finder — 'Svaultai' (case-preserved wordmark
+// literal). Any variant like 'V...' would not have data=='Svaultai'
 // but the ellipsis is rendered by TextPainter, not by mutating
 // the Text.data string. So the correct assertion is: on phone,
-// the Text('SVaultAI') widget is NOT in the tree at all.
+// the Text('Svaultai') widget is NOT in the tree at all.
 Finder _wordmarkTextFinder() {
   return find.byWidgetPredicate(
-    (w) => w is Text && w.data == 'SVaultAI',
+    (w) => w is Text && w.data == 'Svaultai',
   );
 }
 
@@ -95,7 +95,7 @@ void main() {
           isMobile: false,
         );
         expect(_wordmarkTextFinder(), findsOneWidget,
-            reason: 'tablet must show full SVaultAI wordmark');
+            reason: 'tablet must show full Svaultai wordmark');
       },
     );
 
@@ -114,29 +114,19 @@ void main() {
     );
   });
 
-  group('TopNavBar — compact mobile navigation', () {
+  group('TopNavBar — official logo is always rendered', () {
     testWidgets(
-      'canonical image logo replaces the obsolete shield on iPhone SE',
+      'shield icon shows on iPhone SE (mobile fallback)',
       (tester) async {
         final app = _authedAppState();
         await _pumpHeader(tester, device: DeviceProfiles.iphoneSE, app: app);
-        expect(find.byKey(const Key('top_nav_canonical_logo')), findsOneWidget);
-        final image = tester.widget<Image>(find.descendant(
-          of: find.byKey(const Key('top_nav_canonical_logo')),
-          matching: find.byType(Image),
-        ));
-        expect(
-          (image.image as AssetImage).assetName,
-          'assets/branding/vaultai-icon-1024.png',
-        );
-
-        // The canonical image remains visible even when the mobile wordmark
-        // is hidden; the old generic shield must not return.
-        final shield = find.byWidgetPredicate(
-          (w) => w is Icon && w.icon == Icons.shield_rounded,
-        );
-        expect(shield, findsNothing,
-            reason: 'the old header logo must not remain in the widget tree');
+        // The shield is Icon(Icons.shield_rounded, ...) inside a
+        // fixed 42x42 Container. Presence confirms the brand mark
+        // remains visible even when the wordmark is hidden.
+        final logo = find.byKey(const Key('svaultai_brand_logo'));
+        expect(logo, findsOneWidget,
+            reason: 'official brand mark must remain visible on '
+                'phones even after the wordmark is hidden');
       },
     );
   });
