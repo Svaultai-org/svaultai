@@ -56,6 +56,24 @@ def test_vault_item_ciphertext_inventory_is_vault_scoped_and_opaque() -> None:
     assert "encrypted_data" not in src
 
 
+def test_memory_ciphertext_inventory_and_delete_routes_are_registered() -> None:
+    """The released clients require both operations after a relogin.
+
+    Keeping this at router-contract level prevents a backend image that only
+    supports memory writes from reaching production again.
+    """
+    methods_by_path = {
+        (getattr(route, "path", None), method)
+        for route in router.routes
+        for method in getattr(route, "methods", set())
+    }
+    assert ("/vault/ciphertext/vault-ai-memory", "GET") in methods_by_path
+    assert (
+        "/vault/ciphertext/vault-ai-memory/{memory_id}",
+        "DELETE",
+    ) in methods_by_path
+
+
 def test_crypto_ciphertext_endpoints_reject_wrong_hash_length() -> None:
     from routes.vault_ciphertext_write_routes import (
         _b64url_decode,

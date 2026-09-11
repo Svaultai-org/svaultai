@@ -249,6 +249,27 @@ def test_terminal_legacy_stripe_row_does_not_grant_or_revive(monkeypatch):
     assert normalized.provider == "free"
     assert normalized.purchased_bytes == 0
     assert normalized.has_active_subscription is False
+    assert normalized.status == "expired"
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    ["canceled", "expired", "revoked", "refunded"],
+)
+def test_terminal_subscription_falls_back_to_writable_free_status(
+    monkeypatch, terminal_status,
+):
+    terminal = _legacy_row(status=terminal_status)
+    monkeypatch.setattr(ent, "get_db", lambda: _Connection([terminal]))
+
+    normalized = ent.get_normalized_account_entitlement(ACCOUNT_ID)
+
+    assert normalized.provider == "free"
+    assert normalized.status == terminal_status
+    assert normalized.status not in {
+        "delinquent", "past_due", "unpaid", "payment_failed",
+        "incomplete_expired",
+    }
 
 
 def test_pending_migration_keeps_current_provider_authoritative(monkeypatch):

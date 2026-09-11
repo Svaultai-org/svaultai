@@ -7752,7 +7752,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               }
               CredentialV2QaDiagnostics.remember(recordId, credential);
               _showSnack(item == null ? 'Login saved' : 'Updated login');
-              await _loadVaultLogins();
+              await _reloadVaultLoginsAfterMutation();
               if (mounted && item == null) {
                 setState(() => selectedSection = _DashboardSection.logins);
               }
@@ -8178,7 +8178,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ));
       });
       _scrollToBottom();
-      await _loadVaultLogins();
+      await _reloadVaultLoginsAfterMutation();
     } catch (_) {
       _appendAssistantMessage(
         'I could not securely save that generated login. Your vault stayed unchanged.',
@@ -8225,7 +8225,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               pin: pin,
               authToken: token,
             );
-            await _loadVaultLogins();
+            await _reloadVaultLoginsAfterMutation();
             _appendAssistantMessage(
                 'Deleted the ${legacy.service} login from your vault.');
             return true;
@@ -8247,7 +8247,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           setState(() => msgs.add(_Msg('assistant',
               'Deleted the ${match.plaintext.service} login from your vault.')));
           _scrollToBottom();
-          await _loadVaultLogins();
+          await _reloadVaultLoginsAfterMutation();
         }
       } catch (_) {
         _appendAssistantMessage(
@@ -8380,7 +8380,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         try {
           await repository.delete(item.recordId!);
           CredentialV2QaDiagnostics.forget(item.recordId!);
-          await _loadVaultLogins();
+          await _reloadVaultLoginsAfterMutation();
           _showSnack('Login deleted');
         } catch (_) {
           _showSnack('Could not delete this credential.');
@@ -8649,7 +8649,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               _showSnack(createMode
                   ? (isLogin ? 'Login saved' : 'Saved item')
                   : (isLogin ? 'Updated login' : 'Updated saved item'));
-              await _loadVaultLogins();
+              await _reloadVaultLoginsAfterMutation();
               await app.refreshVaultStats();
               if (createMode && isLogin) {
                 setState(() => selectedSection = _DashboardSection.logins);
@@ -9133,7 +9133,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             pin: pin,
             authToken: token,
           );
-          await _loadVaultLogins();
+          await _reloadVaultLoginsAfterMutation();
           unawaited(app.refreshVaultStats());
           _showSnack('Login deleted');
         } catch (error) {
@@ -13619,6 +13619,16 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
+  Future<void> _reloadVaultLoginsAfterMutation() async {
+    // A session hydration may already be listing credentials when a write
+    // commits. Joining that pre-write request is not a readback: its older
+    // snapshot can still overwrite the dashboard. Wait for it to finish, then
+    // force one fresh authoritative inventory request.
+    final active = _vaultLoginsLoadFuture;
+    if (active != null) await active;
+    await _loadVaultLogins();
+  }
+
   Future<void> _loadVaultLoginsOnce() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
@@ -13639,8 +13649,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       final parsed = <VaultLoginItem>[];
       var legacyLoadCompleted = false;
+      final activeMvk = zk_mvk_store.ZkActiveMvk.current();
+      final isZkVault = activeMvk != null;
+      var opaqueLoadCompleted = !isZkVault;
       var v2LoadCompleted = false;
       Object? legacyLoadError;
+      Object? opaqueLoadError;
       Object? v2LoadError;
 
       // Legacy and v2 are independent sources. A v2-only vault must remain
@@ -13671,7 +13685,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // Hydrate those durable rows locally under the active MVK; the legacy
       // plaintext list endpoint intentionally cannot see them.
       try {
-        final mvk = zk_mvk_store.ZkActiveMvk.current();
+        final mvk = activeMvk;
         if (mvk != null) {
           final metadataKey =
               await vk_hier.VaultKeyHierarchy(mvk).metadataKey();
@@ -13709,10 +13723,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               // One malformed or foreign-version row must not blank siblings.
             }
           }
+          opaqueLoadCompleted = true;
         }
       } catch (error) {
-        legacyLoadError = error;
-        legacyLoadCompleted = false;
+        opaqueLoadError = error;
+        opaqueLoadCompleted = false;
+        final status =
+            RegExp(r'\(([0-9]{3})\)').firstMatch(error.toString())?.group(1) ??
+                'local';
+        vlog('secure_items.load.opaque_unavailable', {
+          'status': status,
+          'error_type': error.runtimeType.toString(),
+        });
       }
 
       final v2Repository = _credentialV2Repository(app);
@@ -13735,14 +13757,25 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         v2LoadCompleted = true;
       }
 
-      // The page is a merged legacy + V2 inventory. Publishing READY_EMPTY
-      // while either configured source failed turns a transport/session race
-      // into the false claim that the vault has no saved credentials.
-      if (!legacyLoadCompleted || !v2LoadCompleted) {
+      // During the ZK rolling migration, either the legacy-compatible source
+      // or the opaque ciphertext source can be authoritative. Publish valid
+      // records from the successful source instead of discarding them because
+      // the other endpoint is not deployed yet. Pre-ZK vaults still require
+      // the legacy endpoint. V2 remains required whenever configured.
+      final sourcesComplete = credentialInventorySourcesComplete(
+        isZkVault: isZkVault,
+        legacyCompleted: legacyLoadCompleted,
+        opaqueCompleted: opaqueLoadCompleted,
+        v2Completed: v2LoadCompleted,
+      );
+      if (!sourcesComplete) {
         vlog('secure_items.load.incomplete', {
+          'is_zk_vault': isZkVault,
           'legacy_complete': legacyLoadCompleted,
+          'opaque_complete': opaqueLoadCompleted,
           'v2_complete': v2LoadCompleted,
           'legacy_error_type': legacyLoadError?.runtimeType.toString(),
+          'opaque_error_type': opaqueLoadError?.runtimeType.toString(),
           'v2_error_type': v2LoadError?.runtimeType.toString(),
         });
         throw StateError('credential_inventory_incomplete');
@@ -16698,7 +16731,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final service = draft['service']?.toString().trim() ?? '';
     final username = draft['username']?.toString() ?? '';
     final password = draft['password']?.toString() ?? '';
-    if (draftId.isEmpty || service.isEmpty || username.isEmpty || password.isEmpty) {
+    if (draftId.isEmpty ||
+        service.isEmpty ||
+        username.isEmpty ||
+        password.isEmpty) {
       throw StateError('generated_credential_preflight_failed');
     }
     if (!mounted) throw StateError('generated_credential_view_unmounted');
@@ -16764,9 +16800,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         _qaV2CreateTrace('finalize_succeeded');
         _clearPendingGeneratedLoginDraft(vaultId);
         _appendAssistantMessage('Saved your ${service.trim()} login.');
-        await _loadVaultLogins();
+        await _reloadVaultLoginsAfterMutation();
       } catch (_) {
-        _showSnack('Could not securely save this generated login. Retry is safe.');
+        _showSnack(
+            'Could not securely save this generated login. Retry is safe.');
         rethrow;
       }
     });
@@ -16830,7 +16867,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // so they cannot participate in authoritative session rehydration.
       forceLegacyTransport: false,
     );
-    await _loadVaultLogins();
+    await _reloadVaultLoginsAfterMutation();
     if (!_legacyCredentialInventoryContains(service)) {
       throw StateError('generated_credential_readback_failed');
     }
@@ -17746,8 +17783,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (text.isEmpty && attachments.isEmpty) return Future<void>.value();
     final app = context.read<AppState>();
     final isGeneratedSaveConfirmation = attachments.isEmpty &&
-            _nextEncryptedBackendCommand?.isNotEmpty != true &&
-            _isGeneratedLoginSaveConfirmation(text);
+        _nextEncryptedBackendCommand?.isNotEmpty != true &&
+        _isGeneratedLoginSaveConfirmation(text);
     Map<String, dynamic>? generatedDraft;
     if (isGeneratedSaveConfirmation) {
       if (_pendingGeneratedLoginDraftVaultId == app.vaultId) {
@@ -17810,11 +17847,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   bool _isGeneratedLoginSaveConfirmation(String text) {
-    final normalized = text
-        .trim()
-        .toLowerCase()
-        .replaceAll(RegExp(r'[.!]+$'), '')
-        .trim();
+    final normalized =
+        text.trim().toLowerCase().replaceAll(RegExp(r'[.!]+$'), '').trim();
     return const <String>{
       'save it',
       'save this',
@@ -18532,7 +18566,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (operationKind == ChatOperationKind.mutation) {
         await app.refreshVaultStats();
         await _reloadVaultFilesAfterMutation();
-        await _loadVaultLogins();
+        await _reloadVaultLoginsAfterMutation();
       } else {
         unawaited(app.refreshVaultStats());
         unawaited(_loadVaultFiles());

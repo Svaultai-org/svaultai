@@ -20,14 +20,14 @@ void main() {
     expect(end, greaterThan(start));
     final method = source.substring(start, end);
     expect(method, isNot(contains("await _sendQuickPrompt(\n      'save it'")));
-    expect(method, contains('await _loadVaultLogins();'));
+    expect(method, contains('await _reloadVaultLoginsAfterMutation();'));
     expect(method, contains('forceLegacyTransport: false'));
     expect(
       method,
       contains("StateError('generated_credential_readback_failed')"),
     );
     final write = method.indexOf('updateVaultSecureItem(');
-    final readback = method.indexOf('await _loadVaultLogins();');
+    final readback = method.indexOf('await _reloadVaultLoginsAfterMutation();');
     final acknowledgement = method.indexOf(
       "_appendAssistantMessage('Saved your \${service.trim()} login.');",
     );
@@ -241,5 +241,89 @@ void main() {
       ),
       CredentialInventoryViewState.error,
     );
+  });
+
+  test('ZK inventory does not depend on rejected plaintext legacy endpoint',
+      () {
+    expect(
+      credentialInventorySourcesComplete(
+        isZkVault: true,
+        legacyCompleted: false,
+        opaqueCompleted: true,
+        v2Completed: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('ZK inventory fails closed when an authoritative source fails', () {
+    expect(
+      credentialInventorySourcesComplete(
+        isZkVault: true,
+        legacyCompleted: false,
+        opaqueCompleted: false,
+        v2Completed: true,
+      ),
+      isFalse,
+    );
+    expect(
+      credentialInventorySourcesComplete(
+        isZkVault: true,
+        legacyCompleted: true,
+        opaqueCompleted: true,
+        v2Completed: false,
+      ),
+      isFalse,
+    );
+  });
+
+  test('ZK rolling deploy accepts legacy inventory until opaque GET exists',
+      () {
+    expect(
+      credentialInventorySourcesComplete(
+        isZkVault: true,
+        legacyCompleted: true,
+        opaqueCompleted: false,
+        v2Completed: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('pre-ZK inventory still requires the legacy endpoint', () {
+    expect(
+      credentialInventorySourcesComplete(
+        isZkVault: false,
+        legacyCompleted: false,
+        opaqueCompleted: true,
+        v2Completed: true,
+      ),
+      isFalse,
+    );
+    expect(
+      credentialInventorySourcesComplete(
+        isZkVault: false,
+        legacyCompleted: true,
+        opaqueCompleted: true,
+        v2Completed: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('post-write credential readback cannot join a pre-write snapshot', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start =
+        source.indexOf('Future<void> _reloadVaultLoginsAfterMutation()');
+    final end = source.indexOf(
+      'Future<void> _loadVaultLoginsOnce()',
+      start,
+    );
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final helper = source.substring(start, end);
+    expect(helper, contains('final active = _vaultLoginsLoadFuture'));
+    expect(helper, contains('if (active != null) await active'));
+    expect(helper, contains('await _loadVaultLogins()'));
   });
 }

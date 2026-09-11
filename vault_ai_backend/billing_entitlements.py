@@ -1241,11 +1241,12 @@ def get_normalized_account_entitlement(
             ) <= now
         ):
             mapped = "expired"
-        status = (
-            "past_due"
-            if mapped in {"delinquent", "canceled", "expired", "revoked", "refunded"}
-            else mapped
-        )
+        # A terminal subscription falls back to the free tier; it is not a
+        # payment delinquency. Converting normal expiry/cancellation to
+        # past_due made free-tier vaults read-only forever after a sandbox or
+        # paid subscription ended. Preserve only an actual delinquent state as
+        # past_due so the existing write gate remains strict for non-payment.
+        status = "past_due" if mapped == "delinquent" else mapped
         source = "free"
         provider = "free"
         purchased = 0

@@ -300,6 +300,23 @@ class StorageEntitlementShape(unittest.TestCase):
                                                                      
                                                                     
         "has_active_subscription",
+        # Provider-neutral ownership and product metadata are part of the
+        # current public entitlement contract. Keep them locked here so a
+        # future field addition still requires architecture review.
+        "provider",
+        "product_id",
+        "base_plan_id",
+        "billing_period",
+        "storage_bytes",
+        "display_tier",
+        "subscription_status",
+        "entitlement_family",
+        "ownership_status",
+        "conflict_reason_code",
+        "current_provider",
+        "target_provider",
+        "migration_status",
+        "web_card_purchase_allowed",
     })
 
     def test_field_set_matches_spec(self):
