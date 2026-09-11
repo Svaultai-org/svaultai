@@ -127,39 +127,37 @@ void main() {
       'UnlockPage handles user-typed vault name (not just VLT '
       'handle) — regression for "Vault name or PIN is incorrect"', () {
     test(
-        'UnlockPage submits via ZK loginVault(vaultName:) when the '
-        'cached lastVaultName is a user-typed name, and via '
-        'loginVault(vaultHandle:) only when it is a literal VLT '
-        'display', () {
+        'UnlockPage prefers the securely stored protocol handle and '
+        'falls back to the user-typed vault name', () {
       final src = _read('lib/main.dart');
       final unlockIdx = src.indexOf('class _UnlockPageState');
       final endIdx = src.indexOf('class PinGatePage', unlockIdx);
       final window = src.substring(unlockIdx, endIdx);
-      // Positive: the entry classifier picks vaultName vs
-      // vaultHandle based on whether the cached name looks like a
-      // VLT display. Under the corrected identity model, most
-      // returning users have the user-typed name in that slot.
+      // PIN-only return must prefer the authoritative handle saved with
+      // the session. Re-deriving a handle from a friendly/normalised vault
+      // name can select a different OPAQUE record after a process restart.
       expect(
         window.contains(
-          'final entryIsVltHandle = vh.isValidVaultHandleDisplay(name);',
+          'final loginId = selectInheritanceRevealLoginIdentifier(',
         ),
         isTrue,
       );
-      // Positive: the ZK call routes both cases correctly.
       expect(
-        window.contains(
-          'vaultName: entryIsVltHandle ? null : name,',
-        ),
+        window.contains('vaultName: name,'),
         isTrue,
-        reason: 'user-typed lastVaultName must go through the ZK '
-            'vault-name path; the legacy fallback would 401 for '
-            'every ZK-adopted account (that is the bug we are '
-            'fixing)',
       );
       expect(
-        window.contains(
-          'vaultHandle: entryIsVltHandle ? name : null,',
-        ),
+        window.contains('vaultHandle: app.vaultHandle,'),
+        isTrue,
+        reason: 'the stored protocol handle must survive a PIN-only '
+            'restart so OPAQUE login reaches the original vault',
+      );
+      expect(
+        window.contains('vaultName: loginId.vaultName,'),
+        isTrue,
+      );
+      expect(
+        window.contains('vaultHandle: loginId.vaultHandle,'),
         isTrue,
       );
     });
@@ -189,7 +187,7 @@ void main() {
       );
       expect(
         window.contains(
-          'if (looksLikeAuth401 && !entryIsVltHandle)',
+          'if (looksLikeAuth401 && !zkLoginUsesHandle)',
         ),
         isTrue,
         reason: 'only a 401 from the ZK path AND a non-VLT entry '
