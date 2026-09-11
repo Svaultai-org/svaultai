@@ -1919,14 +1919,22 @@ class AppState extends ChangeNotifier {
           vaultHandleHint: newVaultHandle,
           reason: 'verify_pin',
         );
-        if (zkRestore != null) {
-          activeToken = zkRestore.sessionToken;
-          activeVaultId = zkRestore.vaultId;
-          activeVaultName =
-              _nonEmptyTrimmed(zkRestore.vaultName) ?? newVaultName;
-          activeDisplay = zkRestore.displayName;
-          activeVaultHandle = zkRestore.vaultHandle;
+        if (zkRestore == null) {
+          // A ZK vault is not usable without its unwrapped MVK. The old
+          // PIN-only path continued with the legacy session here, painted the
+          // vault as unlocked, and then every encrypted Memory/Login/File
+          // read failed with "Vault encryption key is unavailable". Keep the
+          // user on the unlock screen instead of entering a partial session.
+          lockMessage =
+              'Could not unlock encrypted vault data. Log in with your vault name and PIN.';
+          notifyListeners();
+          return false;
         }
+        activeToken = zkRestore.sessionToken;
+        activeVaultId = zkRestore.vaultId;
+        activeVaultName = _nonEmptyTrimmed(zkRestore.vaultName) ?? newVaultName;
+        activeDisplay = zkRestore.displayName;
+        activeVaultHandle = zkRestore.vaultHandle;
       } else if (restoreZkSessionKeys) {
         inheritanceRevealDiag('verify_pin_zk_restore_skipped', {
           'expected_vault_fpr': inheritanceRevealIdFingerprint(newVaultId),
@@ -5457,19 +5465,29 @@ class _UnlockPageState extends State<UnlockPage> {
     // /auth/login is a last-resort fallback for unadopted pre-ZK
     // accounts (the ZK path 401's on those because no vault_handle
     // row exists for the derived bytes).
-    final entryIsVltHandle = vh.isValidVaultHandleDisplay(name);
+    // A PIN-only return already has the authoritative protocol handle saved
+    // locally. Prefer it over deriving a new handle from last_vault_name:
+    // historical builds could persist a server-normalized/friendly name in
+    // that slot, and deriving from that value selects a different OPAQUE
+    // record. The handle remains internal and is never rendered in the field.
+    final loginId = selectInheritanceRevealLoginIdentifier(
+      vaultName: name,
+      lastVaultName: app.lastVaultName,
+      vaultHandle: app.vaultHandle,
+    );
+    final zkLoginUsesHandle = loginId.vaultHandle != null;
     String unlockLastStep = 'submit_entry';
     bool zkLoginNotFound = false;
     {
       try {
         releaseWebDiagnosticPrint('[zk-unlock-step] page/submit_entry '
-            'entry_type=${entryIsVltHandle ? "handle" : "name"}');
+            'entry_type=${zkLoginUsesHandle ? "stored_handle" : "name"}');
         await OpaqueClient.ready();
         unlockLastStep = 'page_opaque_ready';
         final zk = ZkAuthService(_zkHttpPost);
         final loginResult = await zk.loginVault(
-          vaultName: entryIsVltHandle ? null : name,
-          vaultHandle: entryIsVltHandle ? name : null,
+          vaultName: loginId.vaultName,
+          vaultHandle: loginId.vaultHandle,
           pin: pin,
           onStep: (s) => unlockLastStep = s,
         );
@@ -5482,7 +5500,7 @@ class _UnlockPageState extends State<UnlockPage> {
         // the entry was a VLT handle. Never the VLT handle
         // itself.
         final resolvedVaultName = loginResult.vaultName ??
-            (entryIsVltHandle
+            (zkLoginUsesHandle
                 ? (app.vaultName ?? loginResult.displayName)
                 : name);
         await app.setSession(
@@ -5631,7 +5649,7 @@ class _UnlockPageState extends State<UnlockPage> {
         final looksLikeAuth401 = msg.contains('HTTP 401') ||
             msg.contains('failed 401') ||
             msg.contains('Wrong username or PIN');
-        if (looksLikeAuth401 && !entryIsVltHandle) {
+        if (looksLikeAuth401 && !zkLoginUsesHandle) {
           zkLoginNotFound = true;
         } else {
           if (!mounted) return;
@@ -5646,7 +5664,7 @@ class _UnlockPageState extends State<UnlockPage> {
 
     // A typed VLT handle never falls back to legacy — a wrong PIN
     // there must fail closed on the ZK side.
-    if (entryIsVltHandle && zkLoginNotFound) {
+    if (zkLoginUsesHandle && zkLoginNotFound) {
       if (!mounted) return;
       setState(() {
         err = 'Wrong username or PIN.';
@@ -6006,7 +6024,10 @@ class _PinGatePageState extends State<PinGatePage> {
     final submitStartedAt = DateTime.now();
     final app = context.read<AppState>();
     try {
-      final ok = await app.verifyPin(_pin);
+      final ok = await app.verifyPin(
+        _pin,
+        restoreZkSessionKeys: true,
+      );
       if (!ok) {
         setState(() {
           err = app.lockMessage ?? 'Incorrect PIN. Try again.';

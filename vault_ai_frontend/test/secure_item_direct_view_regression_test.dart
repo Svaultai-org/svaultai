@@ -69,4 +69,46 @@ void main() {
     expect(body, contains('showSecureItemDetailSheet('));
     expect(body, isNot(contains('_sendQuickPrompt(')));
   });
+
+  test('PIN-only unlock restores ZK keys from the saved vault handle',
+      () async {
+    final source = await File('lib/main.dart').readAsString();
+    final unlockStart = source.indexOf('class _UnlockPageState');
+    final unlockEnd = source.indexOf('class PinGatePage', unlockStart);
+    expect(unlockStart, isNonNegative);
+    expect(unlockEnd, greaterThan(unlockStart));
+    final unlockBody = source.substring(unlockStart, unlockEnd);
+
+    expect(
+      unlockBody,
+      contains('selectInheritanceRevealLoginIdentifier('),
+    );
+    expect(unlockBody, contains('vaultHandle: app.vaultHandle'));
+    expect(unlockBody, contains('vaultName: loginId.vaultName'));
+    expect(unlockBody, contains('vaultHandle: loginId.vaultHandle'));
+  });
+
+  test('session PIN gate refuses to unlock without restored ZK keys', () async {
+    final source = await File('lib/main.dart').readAsString();
+    final verifyStart = source.indexOf('Future<bool> verifyPin(');
+    final verifyEnd = source.indexOf(
+      'Future<bool> applyFreshKdfMetadata(',
+      verifyStart,
+    );
+    expect(verifyStart, isNonNegative);
+    expect(verifyEnd, greaterThan(verifyStart));
+    final verifyBody = source.substring(verifyStart, verifyEnd);
+    expect(verifyBody, contains('if (zkRestore == null)'));
+    expect(
+      verifyBody,
+      contains('Could not unlock encrypted vault data.'),
+    );
+
+    final pinGateStart = source.indexOf('class _PinGatePageState');
+    final pinGateEnd = source.indexOf('class _ChatDashboardPageState');
+    expect(pinGateStart, isNonNegative);
+    expect(pinGateEnd, greaterThan(pinGateStart));
+    final pinGateBody = source.substring(pinGateStart, pinGateEnd);
+    expect(pinGateBody, contains('restoreZkSessionKeys: true'));
+  });
 }
