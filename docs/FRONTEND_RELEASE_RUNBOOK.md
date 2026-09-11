@@ -12,7 +12,8 @@ stale-cache pass. Follow it verbatim.
 
 ## 1. Prerequisites
 
-- Fresh `git pull` on the release commit.
+- Fresh `git pull` on the release commit. The release commit must contain the
+  current `origin/main`; the build wrapper now refreshes and enforces this.
 - `flutter --version` reports the tooling on this build host
   (currently `Flutter 3.38.7` stable; see project root README).
 - No local uncommitted changes (`git status --short` empty).

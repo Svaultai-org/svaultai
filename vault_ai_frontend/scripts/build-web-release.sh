@@ -90,6 +90,10 @@ built_at="$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")"
 echo "[vault-release] APP_RELEASE=$sha_full"
 echo "[vault-release] (display-only short: $sha_short)"
 
+if [ "$allow_dev" -ne 1 ]; then
+    "$script_dir/verify-release-baseline.sh" "$sha_full"
+fi
+
 python3 scripts/verify-release-contract.py \
     --backend-url https://api.svaultai.com/release-contract
 

@@ -3,6 +3,8 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+"$repo_dir/vault_ai_frontend/scripts/verify-release-baseline.sh" HEAD
+
 cd "$repo_dir/vault_ai_backend"
 python_bin="${PYTHON_BIN:-python3}"
 if ! "$python_bin" -c 'import pytest' >/dev/null 2>&1; then

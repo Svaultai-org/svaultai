@@ -80,6 +80,30 @@ This guard prevents shipping a production release with APP_RELEASE=dev
     Write-Host "[vault-release] APP_RELEASE=$shaFull" -ForegroundColor Cyan
     Write-Host "[vault-release] (display-only short: $shaShort)" -ForegroundColor Cyan
 
+    if (-not $allowDev) {
+        git fetch --quiet origin refs/heads/main:refs/remotes/origin/main
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error '[release-baseline] could not refresh origin/main.'
+            exit 2
+        }
+        git rev-parse --verify 'origin/main^{commit}' *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error '[release-baseline] origin/main is unavailable.'
+            exit 2
+        }
+        git merge-base --is-ancestor origin/main $shaFull
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error '[release-baseline] candidate does not contain the current main branch.'
+            exit 2
+        }
+        git diff --quiet $shaFull --
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error '[release-baseline] tracked files do not match the release SHA.'
+            exit 2
+        }
+        Write-Host '[release-baseline] current main is included.' -ForegroundColor Green
+    }
+
     python scripts/verify-release-contract.py --backend-url https://api.svaultai.com/release-contract
     if ($LASTEXITCODE -ne 0) {
         Write-Error '[vault-release] live backend feature contract is incompatible.'
