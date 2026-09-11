@@ -25,6 +25,18 @@ void main() {
     const pin = '847261';
     const existingVault = String.fromEnvironment('QA_VAULT_NAME');
     const existingPin = String.fromEnvironment('QA_PIN');
+    const orphanLoginTitlesRaw =
+        String.fromEnvironment('QA_ORPHAN_LOGIN_TITLES');
+    const orphanMemoryTitlesRaw =
+        String.fromEnvironment('QA_ORPHAN_MEMORY_TITLES');
+    final orphanLoginTitles = orphanLoginTitlesRaw
+        .split('|')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty);
+    final orphanMemoryTitles = orphanMemoryTitlesRaw
+        .split('|')
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty);
     final usesExistingVault =
         existingVault.isNotEmpty && existingPin.isNotEmpty;
     final activeVaultName = usesExistingVault ? existingVault : vaultName;
@@ -64,8 +76,117 @@ void main() {
       expect(find.text(value), findsWidgets);
     }
 
+    Future<void> waitForFinder(Finder finder, String reason) async {
+      for (var i = 0; i < 30 && finder.evaluate().isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(finder, findsOneWidget, reason: reason);
+    }
+
     final loginCards = find.byWidgetPredicate((widget) =>
         widget.key?.toString().contains('secure_item_card_') == true);
+
+    Future<bool> deleteLoginByTitle(String title) async {
+      final titleFinder = find.text(title);
+      if (titleFinder.evaluate().isEmpty) return false;
+      final titleElement = titleFinder.evaluate().first;
+      Element? cardElement = titleElement;
+      while (cardElement != null &&
+          !(cardElement.widget.key?.toString().contains('secure_item_card_') ??
+              false)) {
+        cardElement = cardElement._parentForQA;
+      }
+      expect(cardElement, isNotNull);
+      final card = find.byKey(cardElement!.widget.key!);
+      final deleteButton = find.descendant(
+        of: card,
+        matching: find.widgetWithText(OutlinedButton, 'Delete'),
+      );
+      expect(deleteButton, findsOneWidget);
+      await tester.ensureVisible(deleteButton);
+      await tester.pumpAndSettle();
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete').last);
+      for (var i = 0; i < 30 && find.text(title).evaluate().isNotEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      if (find.text(title).evaluate().isNotEmpty) {
+        final refresh = find.widgetWithText(OutlinedButton, 'Refresh');
+        expect(refresh, findsOneWidget);
+        await tester.ensureVisible(refresh);
+        await tester.tap(refresh);
+        for (var i = 0; i < 30 && find.text(title).evaluate().isNotEmpty; i++) {
+          await tester.pump(const Duration(milliseconds: 500));
+        }
+      }
+      expect(find.text(title), findsNothing);
+      return true;
+    }
+
+    Future<bool> deleteMemoryByTitle(String title) async {
+      final search = find.byWidgetPredicate((widget) =>
+          widget is TextField &&
+          widget.decoration?.hintText == 'Search memories...');
+      expect(search, findsOneWidget);
+      await tester.ensureVisible(search);
+      await tester.enterText(search, title);
+      await tester.pumpAndSettle();
+      if (find.text(title).evaluate().isEmpty) {
+        await tester.enterText(search, '');
+        await tester.pumpAndSettle();
+        return false;
+      }
+
+      String? deleteIdentifier;
+      final root =
+          tester.binding.pipelineOwner.semanticsOwner?.rootSemanticsNode;
+      bool scan(SemanticsNode node) {
+        if (deleteIdentifier == null &&
+            node.identifier.startsWith('qa_memory_v2_delete_')) {
+          deleteIdentifier = node.identifier;
+        }
+        node.visitChildren(scan);
+        return true;
+      }
+
+      if (root != null) scan(root);
+      if (deleteIdentifier == null) {
+        await tester.enterText(search, '');
+        await tester.pumpAndSettle();
+        return false;
+      }
+      final deleteSemantics = find.bySemanticsIdentifier(deleteIdentifier!);
+      final deleteButton = find.descendant(
+        of: deleteSemantics,
+        matching: find.byType(IconButton),
+      );
+      expect(deleteButton, findsOneWidget);
+      await tester.ensureVisible(deleteButton);
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete').last);
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+      final refreshedSearch = find.byWidgetPredicate((widget) =>
+          widget is TextField &&
+          widget.decoration?.hintText == 'Search memories...');
+      await tester.enterText(refreshedSearch, '');
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 30 && find.text(title).evaluate().isNotEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      if (find.text(title).evaluate().isNotEmpty) {
+        final refresh = find.widgetWithText(OutlinedButton, 'Refresh');
+        expect(refresh, findsOneWidget);
+        await tester.ensureVisible(refresh);
+        await tester.tap(refresh);
+        for (var i = 0; i < 30 && find.text(title).evaluate().isNotEmpty; i++) {
+          await tester.pump(const Duration(milliseconds: 500));
+        }
+      }
+      expect(find.text(title), findsNothing);
+      return true;
+    }
 
     Future<void> signOutAndRelogin() async {
       expect(find.byTooltip('Account'), findsOneWidget);
@@ -172,9 +293,10 @@ void main() {
     await tester.tap(find.byKey(const Key('top_nav_create_button')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('create_choice_login')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-        find.byKey(const Key('secure_item_edit_title')), loginTitle);
+    await tester.pump();
+    final loginTitleField = find.byKey(const Key('secure_item_edit_title'));
+    await waitForFinder(loginTitleField, 'login_editor_did_not_open');
+    await tester.enterText(loginTitleField, loginTitle);
     await tester.enterText(
         find.byKey(const Key('secure_item_edit_username')), 'qa-user');
     await tester.enterText(
@@ -204,59 +326,24 @@ void main() {
     await waitForText(loginTitle);
     stage('LOGIN_REHYDRATED');
 
-    final loginTitleElement = find.text(loginTitle).evaluate().first;
-    Element? loginCardElement = loginTitleElement;
-    while (loginCardElement != null &&
-        !(loginCardElement.widget.key
-                ?.toString()
-                .contains('secure_item_card_') ??
-            false)) {
-      loginCardElement = loginCardElement._parentForQA;
-    }
-    expect(loginCardElement, isNotNull);
-    final loginCard = find.byKey(loginCardElement!.widget.key!);
-    final loginDelete = find.descendant(
-      of: loginCard,
-      matching: find.widgetWithText(OutlinedButton, 'Delete'),
-    );
-    expect(loginDelete, findsOneWidget);
-    await tester.tap(loginDelete);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete').last);
-    await tester.pumpAndSettle(const Duration(seconds: 4));
-    expect(find.text(loginTitle), findsNothing);
+    expect(await deleteLoginByTitle(loginTitle), isTrue);
     stage('LOGIN_CLEANUP_OK');
+    for (final orphanTitle in orphanLoginTitles) {
+      if (await deleteLoginByTitle(orphanTitle)) {
+        stage('ORPHAN_LOGIN_CLEANUP_OK');
+      }
+    }
 
     await openSidebarSection('sidebar_section_memory');
     await waitForText(memoryTitle);
     stage('MEMORY_REHYDRATED');
-
-    // Delete the temporary memory via its row semantics.
-    String? memoryDeleteIdentifier;
-    final root = tester.binding.pipelineOwner.semanticsOwner?.rootSemanticsNode;
-    bool scan(SemanticsNode node) {
-      if (memoryDeleteIdentifier == null &&
-          node.identifier.startsWith('qa_memory_v2_delete_')) {
-        memoryDeleteIdentifier = node.identifier;
-      }
-      node.visitChildren(scan);
-      return true;
-    }
-
-    if (root != null) scan(root);
-    expect(memoryDeleteIdentifier, isNotNull);
-    final memoryDelete = find.bySemanticsIdentifier(memoryDeleteIdentifier!);
-    final memoryDeleteButton = find.descendant(
-      of: memoryDelete,
-      matching: find.byType(IconButton),
-    );
-    final deleteWidget = tester.widget<IconButton>(memoryDeleteButton);
-    deleteWidget.onPressed!.call();
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete').last);
-    await tester.pumpAndSettle(const Duration(seconds: 4));
-    expect(find.text(memoryTitle), findsNothing);
+    expect(await deleteMemoryByTitle(memoryTitle), isTrue);
     stage('MEMORY_CLEANUP_OK');
+    for (final orphanTitle in orphanMemoryTitles) {
+      if (await deleteMemoryByTitle(orphanTitle)) {
+        stage('ORPHAN_MEMORY_CLEANUP_OK');
+      }
+    }
 
     if (!usesExistingVault) {
       // Permanently delete the temporary vault so the production backend is
