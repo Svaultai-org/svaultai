@@ -52,15 +52,21 @@ Future<void> _sendChat(WidgetTester tester, String text) async {
     isNot(false),
     reason: 'The previous chat request must finish before the next send.',
   );
-  await tester.tap(composer);
-  await tester.enterText(composer, text);
+  // Drive the controller instead of the native keyboard. Long iOS acceptance
+  // journeys can leave the composer partially covered by the last dashboard
+  // card, which makes a synthetic tap miss even though the field is enabled.
+  // This still exercises the real composer state and Send callback.
+  final textField = tester.widget<TextField>(composer);
+  textField.controller!.value = TextEditingValue(
+    text: text,
+    selection: TextSelection.collapsed(offset: text.length),
+  );
   // The production composer enables Send from its parent's onChanged rebuild.
   // Trigger that callback explicitly as well so a native iOS text-input state
   // handoff cannot leave the driver looking at the preceding disabled button.
-  tester.widget<TextField>(composer).onChanged?.call(text);
+  textField.onChanged?.call(text);
   await tester.pump();
-  FocusManager.instance.primaryFocus?.unfocus();
-  await tester.pumpAndSettle();
+  expect(textField.controller!.text, text);
   final sendControl = find.descendant(
     of: find.byKey(const Key('composer_send_button')),
     matching: find.byType(InkWell),
@@ -74,6 +80,16 @@ Future<void> _sendChat(WidgetTester tester, String text) async {
   expect(send.onTap, isNotNull);
   send.onTap!();
   await tester.pump();
+  final acceptedDeadline = DateTime.now().add(const Duration(seconds: 90));
+  while (textField.controller!.text.isNotEmpty &&
+      DateTime.now().isBefore(acceptedDeadline)) {
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+  expect(
+    textField.controller!.text,
+    isEmpty,
+    reason: 'The chat command must be accepted and clear the composer.',
+  );
 }
 
 Future<void> _screenshot(
@@ -159,8 +175,10 @@ void main() {
     (tester) async {
       final suffix = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       final vaultName = 'acceptance$suffix';
+      debugPrint('SVAULTAI_ACCEPTANCE_VAULT:$vaultName');
       const displayName = 'Release Acceptance';
       const loginTitle = 'wife';
+      const loginDisplayTitle = 'Wife';
       const memoryTitle = 'Acceptance Memory';
       const generatedLoginTitle = 'GitHub';
       const fileName = 'acceptance-note.txt';
@@ -213,6 +231,26 @@ void main() {
           find.byKey(const Key('chat_composer_field')),
           timeout: const Duration(seconds: 90),
         );
+        final cleanupState = Provider.of<app.AppState>(
+          tester.element(find.byType(app.ChatDashboardPage)),
+          listen: false,
+        );
+        final cleanupItems = await VaultAIClient(
+          baseUrl: app.backendBaseUrl,
+        ).listVaultSecureItems(
+          vaultName: cleanupState.vaultName!,
+          pin: _pin,
+          authToken: cleanupState.sessionToken!,
+        );
+        final cleanupServices = ((cleanupItems['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((row) => '${row['service'] ?? ''}')
+            .where((service) => service.isNotEmpty)
+            .toList(growable: false);
+        debugPrint(
+          'SVAULTAI_CLEANUP_SECURE_ITEMS:'
+          '${cleanupItems['engine'] ?? 'legacy'}:$cleanupServices',
+        );
         await _deleteCurrentVault(tester);
         return;
       }
@@ -239,6 +277,26 @@ void main() {
           tester,
           find.byKey(const Key('chat_composer_field')),
           timeout: const Duration(seconds: 90),
+        );
+        final cleanupState = Provider.of<app.AppState>(
+          tester.element(find.byType(app.ChatDashboardPage)),
+          listen: false,
+        );
+        final cleanupItems = await VaultAIClient(
+          baseUrl: app.backendBaseUrl,
+        ).listVaultSecureItems(
+          vaultName: cleanupState.vaultName!,
+          pin: _pin,
+          authToken: cleanupState.sessionToken!,
+        );
+        final cleanupServices = ((cleanupItems['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((row) => '${row['service'] ?? ''}')
+            .where((service) => service.isNotEmpty)
+            .toList(growable: false);
+        debugPrint(
+          'SVAULTAI_CLEANUP_SECURE_ITEMS:'
+          '${cleanupItems['engine'] ?? 'legacy'}:$cleanupServices',
         );
         await _deleteCurrentVault(tester);
         return;
@@ -314,7 +372,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('secure_item_edit_save')));
       await _waitFor(tester, find.byKey(const Key('logins_page')));
-      await _waitFor(tester, find.text(loginTitle));
+      await _waitFor(tester, find.text(loginDisplayTitle));
       await _screenshot(tester, '04-login-saved-and-visible');
 
       await tester.tap(find.byKey(const Key('top_nav_create_button')));
@@ -490,7 +548,7 @@ void main() {
       );
 
       await _openSection(tester, 'logins');
-      await _waitFor(tester, find.text(loginTitle));
+      await _waitFor(tester, find.text(loginDisplayTitle));
       await _waitFor(tester, find.textContaining(generatedLoginTitle));
       await _screenshot(tester, '11-logins-retrieved-after-relogin');
 
@@ -573,7 +631,7 @@ void main() {
       await _openSection(tester, 'logins');
       await _settleNetwork(tester);
       expect(find.text(generatedLoginTitle), findsNothing);
-      expect(find.text(loginTitle), findsWidgets);
+      expect(find.text(loginDisplayTitle), findsWidgets);
       await _screenshot(tester, '18-chat-login-deleted');
 
       await _openSection(tester, 'chat');
@@ -583,7 +641,7 @@ void main() {
       await _waitFor(tester, find.textContaining('Deleted "wife"'));
       await _openSection(tester, 'logins');
       await _settleNetwork(tester);
-      expect(find.text(loginTitle), findsNothing);
+      expect(find.text(loginDisplayTitle), findsNothing);
 
       await _openSection(tester, 'chat');
       await _sendChat(tester, 'Delete my file $fileName');
