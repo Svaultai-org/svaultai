@@ -111,6 +111,20 @@ class TestPeekIntentWithoutSideEffects(unittest.TestCase):
         self.assertIsNone(env)
         self.assertEqual(called, [])
 
+    def test_delete_sentinel_bypasses_credential_creation_parser(self):
+        from vault_credential_command import (
+            ACTION_UNRELATED,
+            extract_credential_command,
+        )
+
+        command = extract_credential_command(
+            "__delete_item:login:qa-wifi-22181689",
+            has_pending_draft=False,
+        )
+
+        self.assertEqual(command.action, ACTION_UNRELATED)
+        self.assertEqual(command.explicit_fields, {})
+
     def test_complete_credential_assertion_bypasses_lookup_fast_path(self):
         called: list[str] = []
 

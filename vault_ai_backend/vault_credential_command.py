@@ -863,6 +863,14 @@ def extract_credential_command(
     if not message or not isinstance(message, str):
         return CredentialCommand(action=ACTION_UNRELATED)
 
+    # Dashboard Delete actions arrive through the encrypted chat transport as
+    # an internal sentinel. Colons and hyphens in that sentinel resemble an
+    # explicit username to the generic credential extractor, which would
+    # otherwise divert the request into the create-login privacy guard before
+    # the authoritative secure-item delete router can handle it.
+    if message.lstrip().lower().startswith("__delete_item:"):
+        return CredentialCommand(action=ACTION_UNRELATED)
+
     raw = message
     stripped = _strip_leading_filler(raw)
     explicit = extract_explicit_fields(raw)
