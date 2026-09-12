@@ -15015,9 +15015,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       switch (command.kind) {
         case VaultLocalContentKind.login:
+          final pin = await _VaultCrypto.currentPinOrThrow();
           final result = await client.listVaultSecureItems(
             vaultName: vaultName,
-            pin: await _VaultCrypto.currentPinOrThrow(),
+            pin: pin,
             authToken: token,
           );
           final rows = ((result['items'] as List?) ?? const <dynamic>[])
@@ -15025,28 +15026,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               .map((row) => Map<String, dynamic>.from(row))
               .where((row) => '${row['item_type'] ?? 'login'}' == 'login')
               .toList();
-          final match = resolveVaultLocalContentMatch(
+          final matchIndex = resolveVaultLocalContentLabelIndex(
             query: command.query,
-            entries: rows.map((row) => VaultLocalContentEntry(
-                  id: '${row['id']}',
-                  label: '${row['service'] ?? ''}',
-                )),
+            labels: rows
+                .map((row) => '${row['service'] ?? ''}')
+                .toList(growable: false),
           );
-          if (match == null) {
+          if (matchIndex == null) {
             _appendLocalVaultReply(
               text,
               'No saved login matches "${command.query}".',
             );
             return true;
           }
-          final row =
-              rows.firstWhere((item) => '${item['id']}' == match.entry.id);
-          final service = '${row['service'] ?? match.entry.label}'.trim();
+          final row = rows[matchIndex];
+          final service = '${row['service'] ?? ''}'.trim();
           final itemType = '${row['item_type'] ?? 'login'}'.trim();
           if (command.action == VaultLocalContentAction.delete) {
             _pendingLocalDelete = _VaultLocalDeleteTarget(
               kind: VaultLocalContentKind.login,
-              id: match.entry.id,
+              id: '${row['id'] ?? matchIndex}',
               label: service,
               service: service,
               itemType: itemType,
@@ -15057,7 +15056,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             );
             return true;
           }
-          final rawFields = row['fields'];
+          // The list endpoint is metadata-only for legacy records and omits
+          // both ids and credential fields. Fetch the one exact selected
+          // service after matching so the detail card contains its real
+          // client-decrypted fields instead of an empty shell.
+          final detail = await client.getVaultSecureItem(
+            vaultName: vaultName,
+            service: service,
+            itemType: itemType,
+            pin: pin,
+            authToken: token,
+          );
+          final rawFields = detail['fields'];
           final fields = <String, String>{
             if (rawFields is Map)
               for (final entry in rawFields.entries)
@@ -15074,8 +15084,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               'password': fields['password'],
             if ((fields['url'] ?? fields['website'] ?? '').isNotEmpty)
               'website': fields['url'] ?? fields['website'],
-            if ('${row['notes'] ?? fields['note'] ?? ''}'.isNotEmpty)
-              'notes': '${row['notes'] ?? fields['note']}',
+            if ('${detail['notes'] ?? fields['note'] ?? ''}'.isNotEmpty)
+              'notes': '${detail['notes'] ?? fields['note']}',
             'fields': fields,
             'generated': true,
           };

@@ -268,6 +268,34 @@ VaultLocalContentMatch? resolveVaultLocalContentMatch({
   return matches.first;
 }
 
+/// Resolves a query to the position of a label in a listing response.
+///
+/// Some legacy secure-item list responses intentionally contain only a
+/// service name and type, with no database id. Using a missing `id` as the
+/// lookup key makes every legacy row look identical ("null"), so a match for
+/// a later row can accidentally reopen the first row in the list. A local
+/// index is stable for the lifetime of this response and keeps the selected
+/// row exact without exposing or requiring a server id.
+int? resolveVaultLocalContentLabelIndex({
+  required String query,
+  required List<String> labels,
+}) {
+  final match = resolveVaultLocalContentMatch(
+    query: query,
+    entries: <VaultLocalContentEntry>[
+      for (var index = 0; index < labels.length; index++)
+        VaultLocalContentEntry(
+          id: '$index',
+          label: labels[index],
+        ),
+    ],
+  );
+  if (match == null) return null;
+  final index = int.tryParse(match.entry.id);
+  if (index == null || index < 0 || index >= labels.length) return null;
+  return index;
+}
+
 String normalizeVaultLocalContentText(String value) {
   return value
       .toLowerCase()

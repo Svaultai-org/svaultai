@@ -18,6 +18,11 @@ void main() {
     expect(nord?.action, VaultLocalContentAction.retrieve);
     expect(nord?.query, 'nord vpn');
 
+    final facebook = parseVaultLocalContentCommand('Show me facebook login');
+    expect(facebook?.kind, VaultLocalContentKind.login);
+    expect(facebook?.action, VaultLocalContentAction.retrieve);
+    expect(facebook?.query, 'facebook');
+
     final wife = parseVaultLocalContentCommand(
       'Delete wife login from my vault',
     );
@@ -141,6 +146,24 @@ void main() {
       ],
     );
     expect(match, isNull);
+  });
+
+  test('selects the correct legacy login when list rows have no ids', () {
+    final index = resolveVaultLocalContentLabelIndex(
+      query: 'facebook',
+      labels: const <String>[
+        'nord vpn',
+        'instagram',
+        'facebook',
+      ],
+    );
+    expect(index, 2);
+
+    final noMatch = resolveVaultLocalContentLabelIndex(
+      query: 'linkedin',
+      labels: const <String>['nord vpn', 'facebook'],
+    );
+    expect(noMatch, isNull);
   });
 
   test('recognizes confirmation and cancellation replies exactly', () {
