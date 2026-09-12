@@ -52,7 +52,13 @@ Future<void> _sendChat(WidgetTester tester, String text) async {
     isNot(false),
     reason: 'The previous chat request must finish before the next send.',
   );
+  await tester.tap(composer);
   await tester.enterText(composer, text);
+  // The production composer enables Send from its parent's onChanged rebuild.
+  // Trigger that callback explicitly as well so a native iOS text-input state
+  // handoff cannot leave the driver looking at the preceding disabled button.
+  tester.widget<TextField>(composer).onChanged?.call(text);
+  await tester.pump();
   FocusManager.instance.primaryFocus?.unfocus();
   await tester.pumpAndSettle();
   final sendControl = find.descendant(
@@ -394,7 +400,10 @@ void main() {
       // Exact production regression: a login generated in chat must become a
       // normal encrypted dashboard row immediately.
       await tester.ensureVisible(generatedSave);
-      await tester.tap(generatedSave);
+      final generatedSaveButton = tester.widget<ElevatedButton>(generatedSave);
+      expect(generatedSaveButton.onPressed, isNotNull);
+      generatedSaveButton.onPressed!();
+      await tester.pump();
       await _waitFor(tester, find.byKey(const Key('logins_page')));
       await _waitFor(tester, find.textContaining(generatedLoginTitle));
       await _screenshot(tester, '08-chat-generated-login-saved-and-visible');
