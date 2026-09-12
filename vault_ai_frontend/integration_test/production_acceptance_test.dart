@@ -173,6 +173,13 @@ void main() {
   testWidgets(
     'production iPhone create-save-sign-out-sign-in-retrieve-delete journey',
     (tester) async {
+      expect(
+        app.backendBaseUrl,
+        'https://api.svaultai.com',
+        reason: 'Production acceptance must exercise the same backend as the '
+            'App Store build. Pass '
+            '--dart-define=BACKEND_BASE_URL=https://api.svaultai.com.',
+      );
       final suffix = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       final vaultName = 'acceptance$suffix';
       debugPrint('SVAULTAI_ACCEPTANCE_VAULT:$vaultName');
