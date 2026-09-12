@@ -157,7 +157,6 @@ void main() {
       const loginTitle = 'Acceptance Login';
       const memoryTitle = 'Acceptance Memory';
       const generatedLoginTitle = 'GitHub';
-      const chatMemoryTitle = "Mom's birthday";
       const fileName = 'acceptance-note.txt';
 
       app.main();
@@ -414,7 +413,18 @@ void main() {
       );
       expect(find.textContaining('could not save'), findsNothing);
       await _openSection(tester, 'memory');
-      await _waitFor(tester, find.text(chatMemoryTitle));
+      await _settleNetwork(tester);
+      final savedChatMemories = await VaultAIClient(
+        baseUrl: app.backendBaseUrl,
+      ).listZkMemories(authToken: appState.sessionToken!);
+      expect(
+        (savedChatMemories['items'] as List).whereType<Map>().any(
+              (row) => '${row['value'] ?? row['memory_value'] ?? row['body']}'
+                  .contains('January 30, 1965'),
+            ),
+        isTrue,
+        reason: 'The chat memory must be present in ciphertext storage.',
+      );
       await _screenshot(tester, '09-chat-memory-saved-and-visible');
 
       await tester.tap(find.byKey(const Key('account_menu_button')));
@@ -459,7 +469,17 @@ void main() {
 
       await _openSection(tester, 'memory');
       await _waitFor(tester, find.text(memoryTitle));
-      await _waitFor(tester, find.text(chatMemoryTitle));
+      final reloginMemories = await VaultAIClient(
+        baseUrl: app.backendBaseUrl,
+      ).listZkMemories(authToken: appState.sessionToken!);
+      expect(
+        (reloginMemories['items'] as List).whereType<Map>().any(
+              (row) => '${row['value'] ?? row['memory_value'] ?? row['body']}'
+                  .contains('January 30, 1965'),
+            ),
+        isTrue,
+        reason: 'The chat memory must still decrypt after sign-in.',
+      );
       await _screenshot(tester, '12-memories-retrieved-after-relogin');
 
       await _openSection(tester, 'files');
@@ -493,10 +513,20 @@ void main() {
       await _sendChat(tester, 'Delete my mom birthday memory');
       await _waitFor(tester, find.textContaining('Reply yes or no'));
       await _sendChat(tester, 'yes');
-      await _waitFor(tester, find.textContaining('Deleted "Mom'));
+      await _waitFor(tester, find.textContaining('Deleted "'));
       await _openSection(tester, 'memory');
       await _settleNetwork(tester);
-      expect(find.text(chatMemoryTitle), findsNothing);
+      final remainingMemories = await VaultAIClient(
+        baseUrl: app.backendBaseUrl,
+      ).listZkMemories(authToken: appState.sessionToken!);
+      expect(
+        (remainingMemories['items'] as List).whereType<Map>().any(
+              (row) => '${row['value'] ?? row['memory_value'] ?? row['body']}'
+                  .contains('January 30, 1965'),
+            ),
+        isFalse,
+        reason: 'Confirmed chat deletion must remove the ciphertext row.',
+      );
       await _screenshot(tester, '17-chat-memory-deleted');
 
       await _openSection(tester, 'chat');

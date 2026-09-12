@@ -58,6 +58,22 @@ void main() {
     expect(match?.entry.id, 'atlas');
   });
 
+  test('matches a generic memory title through its decrypted value', () {
+    final match = resolveVaultLocalContentMatch(
+      query: 'Project Orion launch date',
+      entries: const <VaultLocalContentEntry>[
+        VaultLocalContentEntry(
+          id: 'orion',
+          label: 'Personal note',
+          aliases: <String>[
+            'Project Orion launch date is April 9, 2032',
+          ],
+        ),
+      ],
+    );
+    expect(match?.entry.id, 'orion');
+  });
+
   test('does not guess between equally named encrypted records', () {
     final match = resolveVaultLocalContentMatch(
       query: 'GitHub',

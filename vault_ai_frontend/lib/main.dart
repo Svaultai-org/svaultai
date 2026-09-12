@@ -14935,6 +14935,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   label: '${row['title'] ?? row['memory_key'] ?? ''}',
                   aliases: <String>[
                     if (row['memory_key'] != null) '${row['memory_key']}',
+                    if (row['value'] != null) '${row['value']}',
+                    if (row['memory_value'] != null) '${row['memory_value']}',
+                    if (row['body'] != null) '${row['body']}',
                   ],
                 )),
           );
