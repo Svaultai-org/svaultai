@@ -12,6 +12,45 @@ void main() {
     expect(remove?.kind, VaultLocalContentKind.login);
     expect(remove?.action, VaultLocalContentAction.delete);
     expect(remove?.query, 'Generated');
+
+    final nord = parseVaultLocalContentCommand('Show my nord vpn login');
+    expect(nord?.kind, VaultLocalContentKind.login);
+    expect(nord?.action, VaultLocalContentAction.retrieve);
+    expect(nord?.query, 'nord vpn');
+
+    final wife = parseVaultLocalContentCommand(
+      'Delete wife login from my vault',
+    );
+    expect(wife?.kind, VaultLocalContentKind.login);
+    expect(wife?.action, VaultLocalContentAction.delete);
+    expect(wife?.query, 'wife');
+  });
+
+  test('parses an explicit personal fact as an encrypted memory save', () {
+    final command = parseVaultLocalMemorySaveCommand(
+      'save my wife name to be rachael habtu',
+    );
+    expect(command, isNotNull);
+    expect(command?.title, 'Wife name');
+    expect(command?.value, 'rachael habtu');
+    expect(command?.memoryType, 'family');
+    expect(command?.relationship, 'wife');
+    expect(command?.toMemoryData()['memory_type'], 'family');
+  });
+
+  test('never downgrades credentials or recovery data into a memory', () {
+    for (final phrase in <String>[
+      'save my wife login as rachael',
+      'save my github password as hunter2',
+      'remember my recovery code is abc123',
+      'save my pin to be 123456',
+    ]) {
+      expect(
+        parseVaultLocalMemorySaveCommand(phrase),
+        isNull,
+        reason: phrase,
+      );
+    }
   });
 
   test('parses explicit and natural memory queries', () {
@@ -80,6 +119,16 @@ void main() {
       entries: const <VaultLocalContentEntry>[
         VaultLocalContentEntry(id: '1', label: 'GitHub'),
         VaultLocalContentEntry(id: '2', label: 'GitHub'),
+      ],
+    );
+    expect(match, isNull);
+  });
+
+  test('never returns an unrelated login for a no-match query', () {
+    final match = resolveVaultLocalContentMatch(
+      query: 'nord vpn',
+      entries: const <VaultLocalContentEntry>[
+        VaultLocalContentEntry(id: 'wife', label: 'wife'),
       ],
     );
     expect(match, isNull);

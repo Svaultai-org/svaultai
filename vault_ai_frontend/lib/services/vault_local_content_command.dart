@@ -2,6 +2,33 @@ enum VaultLocalContentKind { memory, login, file }
 
 enum VaultLocalContentAction { retrieve, delete }
 
+class VaultLocalMemorySaveCommand {
+  final String title;
+  final String value;
+  final String memoryType;
+  final String relationship;
+
+  const VaultLocalMemorySaveCommand({
+    required this.title,
+    required this.value,
+    required this.memoryType,
+    required this.relationship,
+  });
+
+  Map<String, dynamic> toMemoryData() => <String, dynamic>{
+        'title': title,
+        'memory_key': title,
+        'value': value,
+        'body': value,
+        'memory_type': memoryType,
+        'category': memoryType,
+        'subject': relationship == 'self' ? 'self' : relationship,
+        'subject_display': relationship == 'self' ? 'your' : relationship,
+        'relationship': relationship,
+        'attribute': title,
+      };
+}
+
 class VaultLocalContentCommand {
   final VaultLocalContentKind kind;
   final VaultLocalContentAction action;
@@ -61,6 +88,51 @@ final RegExp _fileNoun = RegExp(
   r'\b(?:files?|documents?|docs?|images?|photos?|pictures?|videos?|audio)\b',
   caseSensitive: false,
 );
+
+final RegExp _explicitPersonalMemorySave = RegExp(
+  r'^\s*(?:please\s+)?(?:remember|save)\s+(?:that\s+)?my\s+'
+  r'(?<title>[^.!?]{1,80}?)\s+(?:is|as|to\s+be)\s+'
+  r'(?<value>[^\r\n]{1,2000}?)\s*[.!?]*\s*$',
+  caseSensitive: false,
+);
+
+final RegExp _sensitiveVaultNoun = RegExp(
+  r'\b(?:login|credential|password|passcode|pin|username|email|token|'
+  r'secret|private\s+key|seed|recovery|backup\s+code|api\s+key|imei|'
+  r'serial|wallet|account|address)\b',
+  caseSensitive: false,
+);
+
+final RegExp _familyRelationship = RegExp(
+  r'^(?:wife|husband|spouse|partner|mother|mom|father|dad|parent|'
+  r'sister|brother|daughter|son|child|grandmother|grandma|grandfather|'
+  r'grandpa|aunt|uncle|cousin)\b',
+  caseSensitive: false,
+);
+
+VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
+  String message,
+) {
+  final match = _explicitPersonalMemorySave.firstMatch(message);
+  if (match == null) return null;
+  final rawTitle = (match.namedGroup('title') ?? '').trim();
+  final value = (match.namedGroup('value') ?? '').trim();
+  if (rawTitle.isEmpty || value.isEmpty) return null;
+
+  // Credentials, recovery data, and device identifiers use their dedicated
+  // encrypted record flows. Never silently downgrade them into a memory.
+  if (_sensitiveVaultNoun.hasMatch(rawTitle)) return null;
+
+  final title = rawTitle[0].toUpperCase() + rawTitle.substring(1);
+  final family = _familyRelationship.firstMatch(rawTitle);
+  final relationship = family?.group(0)?.toLowerCase() ?? 'self';
+  return VaultLocalMemorySaveCommand(
+    title: title,
+    value: value,
+    memoryType: family == null ? 'note' : 'family',
+    relationship: relationship,
+  );
+}
 
 VaultLocalContentCommand? parseVaultLocalContentCommand(String message) {
   final text = message.trim();

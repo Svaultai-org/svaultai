@@ -14804,6 +14804,69 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _scrollToBottom();
   }
 
+  Future<bool> _tryLocalMemorySaveCommand(String text) async {
+    if (attachments.isNotEmpty) return false;
+    if (_pendingLocalDelete != null) return false;
+    final command = parseVaultLocalMemorySaveCommand(text);
+    if (command == null) return false;
+
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) return false;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+
+    try {
+      await _VaultCrypto.currentPinOrThrow();
+
+      // "Save my X as Y" updates the one existing memory named X instead
+      // of silently creating duplicates each time the value changes.
+      String? existingId;
+      var ambiguousExistingTitle = false;
+      final existing = await client.listZkMemories(authToken: token);
+      final wanted = normalizeVaultLocalContentText(command.title);
+      for (final raw in (existing['items'] as List?) ?? const <dynamic>[]) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw);
+        final title = '${row['title'] ?? row['memory_key'] ?? ''}';
+        if (normalizeVaultLocalContentText(title) != wanted) continue;
+        final id = '${row['id'] ?? ''}'.trim();
+        if (id.isEmpty) continue;
+        if (existingId != null) {
+          // Ambiguous legacy duplicates are never overwritten by guessing.
+          existingId = null;
+          ambiguousExistingTitle = true;
+          break;
+        }
+        existingId = id;
+      }
+
+      await client.upsertZkMemory(
+        authToken: token,
+        data: command.toMemoryData(),
+        memoryId: ambiguousExistingTitle ? null : existingId,
+      );
+      if (mounted) setState(() => _memoryRefreshGeneration++);
+      unawaited(app.refreshVaultStats());
+      _appendLocalVaultReply(
+        text,
+        'Memory saved securely. "${command.title}" is now in your vault.',
+      );
+      _showSnack('Memory saved');
+      return true;
+    } on InvalidVaultUnlockException {
+      _showSnack('Your vault is locked. Please enter your PIN again.');
+      return true;
+    } catch (e) {
+      if (app.handleApiException(e)) return true;
+      _appendLocalVaultReply(
+        text,
+        'I could not save that memory. Nothing was changed.',
+      );
+      return true;
+    }
+  }
+
   Future<bool> _tryLocalVaultContentCommand(String text) async {
     if (attachments.isNotEmpty) return false;
 
@@ -15193,6 +15256,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // persistent AI keeper's name and role.
     if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
       input.clear();
+      return;
+    }
+
+    if (await _tryLocalMemorySaveCommand(text)) {
       return;
     }
 

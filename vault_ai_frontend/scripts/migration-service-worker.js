@@ -40,12 +40,11 @@
 //
 // LIFECYCLE OF THIS SW ACROSS FUTURE DEPLOYMENTS:
 //
-//   The body of this file is stable across releases (no version
-//   string here). Nginx serves it with `Cache-Control: no-store`
-//   AND the SW-update request bypasses HTTP cache anyway, so
-//   browsers still re-fetch periodically — but they see the same
-//   bytes, do nothing, and the AppReleaseController continues to
-//   drive every release rollout.
+//   The release build stamps the commit SHA into this body. That
+//   guarantees a byte difference so WebKit activates the worker on
+//   every release, including for clients whose old Flutter bundle
+//   has no AppReleaseController. Nginx also serves the worker with
+//   `Cache-Control: no-store`.
 //
 // SECURITY / DATA-LOSS INVARIANTS:
 //
@@ -64,6 +63,11 @@
 // Do NOT check in a fetch handler here. Do NOT precache anything.
 
 'use strict';
+
+// Replaced by the canonical release build. Embedding the release in the
+// worker body is intentional: a byte-identical worker is not reactivated,
+// even when a registration URL query changes on some WebKit versions.
+var VAULTAI_RELEASE = '__VAULTAI_APP_RELEASE__';
 
 
 self.addEventListener('install', function (event) {
@@ -98,20 +102,29 @@ self.addEventListener('activate', function (event) {
       console.log('[vaultai-sw] activate: drained ' + deleted + ' flutter cache(s)'); // TEMP diag 2026-07-17
     } catch (_) { /* Cache Storage unsupported: ignore. */ }
 
-    // 2026-07-17: the previous `clients[j].navigate(clients[j].url)`
-    // loop that used to live here caused an infinite reload cycle.
-    // Both this SW's navigate() AND the bootstrap's controllerchange
-    // listener were triggering reloads for the same activation; on
-    // Chrome (and, symmetrically, iPhone Safari) the two paths
-    // raced past the sessionStorage dedup and looped forever.
-    //
-    // The single reload path now lives ONLY in
-    // vaultai-sw-bootstrap.js's `controllerchange` handler, which
-    // dedupes via `sessionStorage['vaultai_sw_migration_reloaded']`.
-    // This SW no longer forces client navigation; it just claims
-    // clients + drains flutter caches. Fresh code is picked up by
-    // the bootstrap's reload OR the next natural navigation.
-    console.log('[vaultai-sw] activate: done (no navigate loop)'); // TEMP diag 2026-07-17
+    // Force tabs that are still executing a pre-bootstrap Flutter bundle to
+    // load the current app. Those tabs cannot hear the bootstrap's
+    // controllerchange listener because that listener does not exist in the
+    // old JavaScript. The release marker makes this navigation one-shot and
+    // prevents the historical double-reload loop.
+    try {
+      var clients = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true
+      });
+      for (var j = 0; j < clients.length; j++) {
+        try {
+          var target = new URL(clients[j].url);
+          if (target.searchParams.get('_vaultai_release') === VAULTAI_RELEASE) {
+            continue;
+          }
+          target.searchParams.set('_vaultai_release', VAULTAI_RELEASE);
+          await clients[j].navigate(target.toString());
+        } catch (_) {}
+      }
+    } catch (_) { /* WindowClient.navigate unsupported: natural reload wins. */ }
+
+    console.log('[vaultai-sw] activate: done'); // TEMP diag 2026-09-12
   })());
 });
 

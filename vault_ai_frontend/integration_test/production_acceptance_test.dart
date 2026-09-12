@@ -160,7 +160,7 @@ void main() {
       final suffix = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       final vaultName = 'acceptance$suffix';
       const displayName = 'Release Acceptance';
-      const loginTitle = 'Acceptance Login';
+      const loginTitle = 'wife';
       const memoryTitle = 'Acceptance Memory';
       const generatedLoginTitle = 'GitHub';
       const fileName = 'acceptance-note.txt';
@@ -421,6 +421,14 @@ void main() {
         timeout: const Duration(seconds: 90),
       );
       expect(find.textContaining('could not save'), findsNothing);
+
+      // Exact phrases reported from production Mobile Safari. A personal
+      // relationship fact is a memory, never a generated credential draft.
+      await _sendChat(tester, 'save my wife name to be rachael habtu');
+      await _waitFor(
+        tester,
+        find.textContaining('Memory saved securely.'),
+      );
       await _openSection(tester, 'memory');
       await _settleNetwork(tester);
       final savedChatMemories = await VaultAIClient(
@@ -433,6 +441,16 @@ void main() {
             ),
         isTrue,
         reason: 'The chat memory must be present in ciphertext storage.',
+      );
+      expect(
+        (savedChatMemories['items'] as List).whereType<Map>().any(
+              (row) =>
+                  '${row['title'] ?? row['memory_key']}' == 'Wife name' &&
+                  '${row['value'] ?? row['memory_value'] ?? row['body']}' ==
+                      'rachael habtu',
+            ),
+        isTrue,
+        reason: 'The exact relationship fact must be saved as a memory.',
       );
       await _screenshot(tester, '09-chat-memory-saved-and-visible');
 
@@ -498,6 +516,15 @@ void main() {
       // Zero-knowledge chat retrieval must use the decrypted client-side
       // records. The backend cannot and must not read these ciphertext rows.
       await _openSection(tester, 'chat');
+      await _sendChat(tester, 'Show my nord vpn login');
+      await _waitFor(
+        tester,
+        find.textContaining('No saved login matches "nord vpn".'),
+      );
+
+      await _sendChat(tester, 'What is my wife name?');
+      await _waitFor(tester, find.textContaining('rachael habtu'));
+
       await _sendChat(tester, 'What is my mom birthday?');
       await _waitFor(
         tester,
@@ -548,6 +575,15 @@ void main() {
       expect(find.text(generatedLoginTitle), findsNothing);
       expect(find.text(loginTitle), findsWidgets);
       await _screenshot(tester, '18-chat-login-deleted');
+
+      await _openSection(tester, 'chat');
+      await _sendChat(tester, 'Delete wife login from my vault');
+      await _waitFor(tester, find.textContaining('Reply yes or no'));
+      await _sendChat(tester, 'yes');
+      await _waitFor(tester, find.textContaining('Deleted "wife"'));
+      await _openSection(tester, 'logins');
+      await _settleNetwork(tester);
+      expect(find.text(loginTitle), findsNothing);
 
       await _openSection(tester, 'chat');
       await _sendChat(tester, 'Delete my file $fileName');

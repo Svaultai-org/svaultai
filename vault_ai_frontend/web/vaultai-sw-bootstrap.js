@@ -20,6 +20,21 @@
   var SW_URL = '/flutter_service_worker.js?v=' + RELEASE;
   var SW_SCOPE = '/';
   var RELOAD_KEY = 'vaultai_sw_migration_reloaded';
+
+  // The migration worker uses this short-lived query marker to force an old
+  // Flutter tab onto the current bundle. Remove it from the visible URL once
+  // the new bootstrap is executing; it is not application state.
+  try {
+    var visibleUrl = new URL(window.location.href);
+    if (visibleUrl.searchParams.has('_vaultai_release')) {
+      visibleUrl.searchParams.delete('_vaultai_release');
+      window.history.replaceState(
+        window.history.state,
+        document.title,
+        visibleUrl.toString()
+      );
+    }
+  } catch (_) {}
   var reloaded = false;
 
   if (!('serviceWorker' in navigator)) {

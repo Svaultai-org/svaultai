@@ -43,6 +43,21 @@ def test_relationship_name_parser_handles_natural_variants() -> None:
         assert intent.memory_type == "identity"
 
 
+def test_save_wife_name_is_memory_not_generated_login_request() -> None:
+    intent = parse_personal_memory_intent(
+        "save my wife name to be rachael habtu"
+    )
+
+    assert intent is not None
+    assert intent.action == "save"
+    assert intent.subject == "wife"
+    assert intent.relationship == "wife"
+    assert intent.attribute == "name"
+    assert intent.memory_type == "identity"
+    assert intent.category == "family"
+    assert intent.value == "rachael habtu"
+
+
 def test_explicit_credentials_never_enter_personal_memory_routing() -> None:
     for text in (
         "save my Facebook username john and password X",

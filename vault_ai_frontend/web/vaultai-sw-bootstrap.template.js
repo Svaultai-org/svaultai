@@ -22,17 +22,12 @@
 //     `controllerchange` event whose target release matches the
 //     stored SHA does NOT reload again.
 //   * Reload trigger:
-//       (a) FIRST-migration for a client controlled by the pre-
-//           Round-11 offline-first Flutter SW: the migration SW's
-//           `activate` handler calls `client.navigate(client.url)`
-//           — that reload happens WITHOUT this bootstrap running,
-//           because the OLD JS on the tab has no such listener.
-//       (b) SUBSEQUENT updates: this bootstrap listens for
-//           `controllerchange` and reloads once per session per
-//           release. When the migration SW subsequently activates
-//           on a NEW deploy, it calls `client.navigate` AND we
-//           also see `controllerchange`; we deduplicate via the
-//           sessionStorage guard + an in-scope `reloaded` flag.
+//       (a) A release-stamped migration worker navigates legacy tabs
+//           with a one-shot `_vaultai_release` query marker. This works
+//           even when the OLD JS has no bootstrap listener.
+//       (b) This bootstrap also listens for `controllerchange` and
+//           reloads once per session per release. The worker marker plus
+//           this sessionStorage guard keep the two paths finite.
 //   * NEVER touches localStorage / IndexedDB / cookies / wallet
 //     ciphertext. Only touches `sessionStorage` under one key.
 //   * Safari (WebKit), Chrome (Blink), and Firefox (Gecko) all
@@ -56,6 +51,21 @@
   var SW_URL = '/flutter_service_worker.js?v=' + RELEASE;
   var SW_SCOPE = '/';
   var RELOAD_KEY = 'vaultai_sw_migration_reloaded';
+
+  // The migration worker uses this short-lived query marker to force an old
+  // Flutter tab onto the current bundle. Remove it from the visible URL once
+  // the new bootstrap is executing; it is not application state.
+  try {
+    var visibleUrl = new URL(window.location.href);
+    if (visibleUrl.searchParams.has('_vaultai_release')) {
+      visibleUrl.searchParams.delete('_vaultai_release');
+      window.history.replaceState(
+        window.history.state,
+        document.title,
+        visibleUrl.toString()
+      );
+    }
+  } catch (_) {}
 
   // TEMP diag 2026-07-17
   console.log('[vaultai-sw-bootstrap] loaded; RELEASE=' + RELEASE);

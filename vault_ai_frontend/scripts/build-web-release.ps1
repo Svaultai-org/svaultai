@@ -131,7 +131,16 @@ This guard prevents shipping a production release with APP_RELEASE=dev
         Write-Error "[vault-release] ERROR: migration-service-worker.js missing at $swSource"
         exit 3
     }
-    Copy-Item -Force -Path $swSource -Destination $swDest
+    $swContent = Get-Content -Raw -Path $swSource
+    $swContent = $swContent.Replace('__VAULTAI_APP_RELEASE__', $shaFull)
+    [System.IO.File]::WriteAllText(
+        $swDest, $swContent, [System.Text.UTF8Encoding]::new($false)
+    )
+    if ((Get-Content -Raw -Path $swDest) -like "*__VAULTAI_APP_RELEASE__*" -or
+        (Get-Content -Raw -Path $swDest) -notlike "*$shaFull*") {
+        Write-Error "[vault-release] ERROR: release substitution failed for $swDest"
+        exit 3
+    }
     Write-Host "[vault-release] wrote migration SW to $swDest" -ForegroundColor Green
 
     # ---- SW-registration bootstrap ----

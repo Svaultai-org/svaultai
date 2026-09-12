@@ -78,14 +78,26 @@ _SUBJECT_ALIASES = {
     "dad": ("father", "dad", "father"),
     "father": ("father", "father", "father"),
     "papa": ("father", "papa", "father"),
+    "wife": ("wife", "wife", "wife"),
+    "husband": ("husband", "husband", "husband"),
+    "spouse": ("spouse", "spouse", "spouse"),
+    "partner": ("partner", "partner", "partner"),
+    "sister": ("sister", "sister", "sister"),
+    "brother": ("brother", "brother", "brother"),
+    "daughter": ("daughter", "daughter", "daughter"),
+    "son": ("son", "son", "son"),
 }
 
 _ATTR_RE = r"(?:birthday|birth\s+date|date\s+of\s+birth|dob)"
-_SUBJECT_RE = r"(?:mom|mum|mother|mama|dad|father|papa)"
+_SUBJECT_RE = (
+    r"(?:mom|mum|mother|mama|dad|father|papa|wife|husband|spouse|"
+    r"partner|sister|brother|daughter|son)"
+)
 _APOSTROPHE_RE = r"(?:'|\u2019)"
 _SAVE_TRIGGER_RE = re.compile(
     r"^\s*(?:please\s+)?(?:remember(?:\s+that)?|save\s+this(?:\s+about\s+me)?|"
     r"save\s+that|save\s+memory|save\s+this\s+memory|"
+    r"save(?=\s+my\s+(?:wife|husband|spouse|partner|sister|brother|daughter|son)\b)|"
     r"don(?:'|\u2019)?t\s+forget|dont\s+forget|"
     r"keep\s+this(?:\s+for\s+me)?|note\s+that)\s*:?\s+"
     r"(?P<fact>.+?)\s*$",
@@ -144,7 +156,7 @@ _RELATIONSHIP_NAME_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})"
     rf"(?:{_APOSTROPHE_RE}s)?\s+"
     r"(?P<attribute>(?:full\s+|first\s+|given\s+)?name)\s*"
-    r"(?:is|=|:)\s*(?P<value>.+?)\s*$",
+    r"(?:is|=|:|to\s+be)\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
 _TRAILING_SAVE_TRIGGER_RE = re.compile(

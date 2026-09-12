@@ -116,7 +116,18 @@ if [ ! -f "$sw_source" ]; then
     echo "[vault-release] ERROR: migration-service-worker.js missing at $sw_source." >&2
     exit 3
 fi
-cp -f "$sw_source" "$sw_dest"
+awk -v release="$sha_full" '{
+    n = index($0, "__VAULTAI_APP_RELEASE__");
+    while (n > 0) {
+        $0 = substr($0, 1, n-1) release substr($0, n+length("__VAULTAI_APP_RELEASE__"));
+        n = index($0, "__VAULTAI_APP_RELEASE__");
+    }
+    print $0;
+}' "$sw_source" > "$sw_dest"
+if grep -q "__VAULTAI_APP_RELEASE__" "$sw_dest" || ! grep -q "$sha_full" "$sw_dest"; then
+    echo "[vault-release] ERROR: release substitution failed for $sw_dest" >&2
+    exit 3
+fi
 echo "[vault-release] wrote migration SW to $sw_dest"
 
 # 4. Bootstrap: substitute __VAULTAI_APP_RELEASE__ → full SHA.

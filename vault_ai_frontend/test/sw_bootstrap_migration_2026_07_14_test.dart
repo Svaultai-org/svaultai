@@ -28,18 +28,17 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-
 String _read(String rel) {
   return File('${Directory.current.path}/$rel')
       .readAsStringSync()
       .replaceAll('\r\n', '\n');
 }
 
-
 void main() {
   group('Round 12 — index.html loads SW bootstrap before Flutter', () {
-    test('vaultai-sw-bootstrap.js precedes flutter_bootstrap.js '
-         'and is SYNCHRONOUS (no async)', () {
+    test(
+        'vaultai-sw-bootstrap.js precedes flutter_bootstrap.js '
+        'and is SYNCHRONOUS (no async)', () {
       final html = _read('web/index.html');
       final swIdx = html.indexOf('vaultai-sw-bootstrap.js');
       final flutterIdx = html.indexOf('flutter_bootstrap.js');
@@ -47,31 +46,28 @@ void main() {
           reason: 'index.html must reference vaultai-sw-bootstrap.js.');
       expect(flutterIdx, greaterThan(-1));
       expect(swIdx < flutterIdx, isTrue,
-          reason:
-              'SW bootstrap must load BEFORE flutter_bootstrap.js.');
-      final swTag = RegExp(
-              r'<script[^>]*vaultai-sw-bootstrap\.js[^>]*></script>')
-          .firstMatch(html);
-      expect(swTag, isNotNull,
-          reason: 'SW bootstrap must be a <script> tag.');
+          reason: 'SW bootstrap must load BEFORE flutter_bootstrap.js.');
+      final swTag =
+          RegExp(r'<script[^>]*vaultai-sw-bootstrap\.js[^>]*></script>')
+              .firstMatch(html);
+      expect(swTag, isNotNull, reason: 'SW bootstrap must be a <script> tag.');
       // Synchronous: no `async` or `defer` attribute on the SW
       // bootstrap tag (Flutter's own tag is async — that's fine).
       final tagText = swTag!.group(0)!;
       expect(tagText.contains(' async'), isFalse,
-          reason:
-              'SW bootstrap must be SYNCHRONOUS so registration '
+          reason: 'SW bootstrap must be SYNCHRONOUS so registration '
               'is attached before Flutter runs.');
       expect(tagText.contains(' defer'), isFalse);
     });
 
-    test('source fallback exists so the referenced bootstrap URL is '
-         'a 200 even after an accidental plain Flutter build', () {
+    test(
+        'source fallback exists so the referenced bootstrap URL is '
+        'a 200 even after an accidental plain Flutter build', () {
       final fallback = File(
         '${Directory.current.path}/web/vaultai-sw-bootstrap.js',
       );
       expect(fallback.existsSync(), isTrue,
-          reason:
-              'index.html references /vaultai-sw-bootstrap.js; the '
+          reason: 'index.html references /vaultai-sw-bootstrap.js; the '
               'source web/ asset must exist so plain build/web output '
               'does not deploy a 404 for that URL.');
       final js = fallback.readAsStringSync().replaceAll('\r\n', '\n');
@@ -81,8 +77,7 @@ void main() {
           "if (RELEASE.charAt(0) === '_' && RELEASE.charAt(1) === '_')",
         ),
         isTrue,
-        reason:
-            'The source fallback must no-op until the release build '
+        reason: 'The source fallback must no-op until the release build '
             'substitutes a concrete SHA.',
       );
     });
@@ -94,13 +89,13 @@ void main() {
       tpl = _read('web/vaultai-sw-bootstrap.template.js');
     });
 
-    test('registers the exact SW script URL with query and '
-         'scope="/"', () {
+    test(
+        'registers the exact SW script URL with query and '
+        'scope="/"', () {
       expect(
         tpl.contains("'/flutter_service_worker.js?v=' + RELEASE"),
         true,
-        reason:
-            'SW must be registered at /flutter_service_worker.js '
+        reason: 'SW must be registered at /flutter_service_worker.js '
             'with a `?v=<release>` query so every deploy is a '
             'distinct URL.',
       );
@@ -116,15 +111,15 @@ void main() {
           "if (RELEASE.charAt(0) === '_' && RELEASE.charAt(1) === '_')",
         ),
         true,
-        reason:
-            'Raw template (with __VAULTAI_APP_RELEASE__ literal) '
+        reason: 'Raw template (with __VAULTAI_APP_RELEASE__ literal) '
             'must never call .register(); guard clause required.',
       );
     });
 
-    test('uses sessionStorage loop guard keyed on RELOAD_KEY = '
-         '"vaultai_sw_migration_reloaded" and dedupes per '
-         'RELEASE', () {
+    test(
+        'uses sessionStorage loop guard keyed on RELOAD_KEY = '
+        '"vaultai_sw_migration_reloaded" and dedupes per '
+        'RELEASE', () {
       expect(
         tpl.contains("var RELOAD_KEY = 'vaultai_sw_migration_reloaded'"),
         true,
@@ -140,17 +135,19 @@ void main() {
       );
       expect(semanticCheck.hasMatch(tpl), true,
           reason: 'safeReload must compare the persisted release '
-                  'target to the current RELEASE constant');
+              'target to the current RELEASE constant');
     });
 
-    test('controllerchange handler + in-scope reloaded flag; '
-         'safeReload guarded by both', () {
+    test(
+        'controllerchange handler + in-scope reloaded flag; '
+        'safeReload guarded by both', () {
       // The listener may be on one or multiple lines (Round-13 added
       // diag logging inside the callback). Assert the addEventListener
       // + safeReload call are both present and wired together.
       expect(
         RegExp(r"navigator\.serviceWorker\.addEventListener\(\s*"
-               r"'controllerchange'").hasMatch(tpl),
+                r"'controllerchange'")
+            .hasMatch(tpl),
         true,
         reason: 'bootstrap must attach a controllerchange listener',
       );
@@ -166,9 +163,11 @@ void main() {
       );
     });
 
-    test('never touches localStorage / IndexedDB / cookies / '
-         'wallet ciphertext', () {
-      final commentless = tpl.split('\n')
+    test(
+        'never touches localStorage / IndexedDB / cookies / '
+        'wallet ciphertext', () {
+      final commentless = tpl
+          .split('\n')
           .where((l) => !l.trimLeft().startsWith('//'))
           .join('\n');
       expect(commentless.contains('localStorage.'), false);
@@ -176,8 +175,9 @@ void main() {
       expect(commentless.contains('document.cookie'), false);
     });
 
-    test('does not attempt registration when serviceWorker is '
-         'not supported', () {
+    test(
+        'does not attempt registration when serviceWorker is '
+        'not supported', () {
       expect(tpl.contains("if (!('serviceWorker' in navigator))"), true);
     });
   });
@@ -188,26 +188,38 @@ void main() {
       sw = _read('scripts/migration-service-worker.js');
     });
 
-    test('skipWaiting + clients.claim + flutter* cache drain + '
-         'client.navigate remain in place', () {
+    test(
+        'skipWaiting + clients.claim + flutter* cache drain + '
+        'client.navigate remain in place', () {
       expect(sw.contains('self.skipWaiting()'), true);
       expect(sw.contains('self.clients.claim()'), true);
       expect(sw.contains("names[i].indexOf('flutter') === 0"), true);
-      expect(sw.contains('.navigate('), true);
+      final commentless = sw
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//'))
+          .join('\n');
+      expect(commentless.contains('await clients[j].navigate('), true,
+          reason: 'Already-open legacy tabs must be forced onto the new '
+              'bundle; a bootstrap listener does not exist in those tabs.');
+      expect(commentless.contains("searchParams.get('_vaultai_release')"), true,
+          reason: 'Forced navigation must have a per-release loop guard.');
+      expect(sw.contains("'__VAULTAI_APP_RELEASE__'"), true,
+          reason: 'The worker body must change on every deployment so '
+              'WebKit activates it.');
     });
 
     test('has NO fetch handler (pass-through)', () {
       // Look for the exact substring the SW spec matches on: a
       // `self.addEventListener('fetch', ...)` handler.
       expect(sw.contains("addEventListener('fetch'"), false,
-          reason:
-              'Migration SW MUST NOT install a fetch handler — '
+          reason: 'Migration SW MUST NOT install a fetch handler — '
               'pass-through only, so Nginx `no-store` shell rules '
               'take effect on every request.');
     });
 
     test('never touches auth / wallet / user prefs storage', () {
-      final commentless = sw.split('\n')
+      final commentless = sw
+          .split('\n')
           .where((l) => !l.trimLeft().startsWith('//'))
           .join('\n');
       expect(commentless.contains('localStorage.'), false);
@@ -217,16 +229,16 @@ void main() {
   });
 
   group('Round 12 — build scripts fail-closed on dev', () {
-    test('.sh script requires RELEASE_SHA or --allow-dev-release; '
-         'never silently emits APP_RELEASE=dev in production', () {
+    test(
+        '.sh script requires RELEASE_SHA or --allow-dev-release; '
+        'never silently emits APP_RELEASE=dev in production', () {
       final sh = _read('scripts/build-web-release.sh');
       expect(sh.contains(r'RELEASE_SHA'), true,
           reason: 'Must accept RELEASE_SHA env var for archive '
-                  'hosts.');
+              'hosts.');
       expect(sh.contains('--allow-dev-release'), true,
           reason: 'Must accept explicit local-dev opt-in.');
-      expect(sh.contains('cannot resolve a real 40-char commit SHA'),
-          true,
+      expect(sh.contains('cannot resolve a real 40-char commit SHA'), true,
           reason: 'Must fail closed with a clear diagnostic.');
       expect(sh.contains('exit 2'), true,
           reason: 'Must exit non-zero on the fail-closed path.');
@@ -236,17 +248,15 @@ void main() {
       // The old silent-dev fallback MUST NOT remain:
       expect(sh.contains('echo dev'), false,
           reason: 'The silent `|| echo dev` fallback that shipped '
-                  'in Round 11 must not survive.');
+              'in Round 11 must not survive.');
     });
 
-    test('.ps1 script requires RELEASE_SHA or --allow-dev-release',
-        () {
+    test('.ps1 script requires RELEASE_SHA or --allow-dev-release', () {
       final ps1 = _read('scripts/build-web-release.ps1');
       expect(ps1.contains(r'$env:RELEASE_SHA'), true);
       expect(ps1.contains('--allow-dev-release'), true);
       expect(ps1.contains(r"'^[a-f0-9]{40}$'"), true);
-      expect(ps1.contains('cannot resolve a real 40-char commit SHA'),
-          true);
+      expect(ps1.contains('cannot resolve a real 40-char commit SHA'), true);
       expect(ps1.contains('exit 2'), true);
       // The old Round-11 silent-fallback pattern used
       //   $shaFull = 'dev'
@@ -259,26 +269,26 @@ void main() {
         // guarded by an explicit `if (allowDev)` block above it.
         final scope = ps1.substring(0, devIdx);
         expect(scope.contains(r'if ($allowDev)'), true,
-            reason:
-                'Any "dev" literal in build-web-release.ps1 must '
+            reason: 'Any "dev" literal in build-web-release.ps1 must '
                 r'be reachable only via `if ($allowDev)`. Direct '
                 'silent fallback is forbidden.');
       }
     });
 
-    test('both scripts overwrite build/web/flutter_service_worker.js '
-         'with migration-service-worker.js', () {
+    test(
+        'both scripts overwrite build/web/flutter_service_worker.js '
+        'with migration-service-worker.js', () {
       final sh = _read('scripts/build-web-release.sh');
       final ps1 = _read('scripts/build-web-release.ps1');
       for (final src in [sh, ps1]) {
         expect(src.contains('migration-service-worker.js'), true);
-        expect(src.contains('build/web/flutter_service_worker.js'),
-            true);
+        expect(src.contains('build/web/flutter_service_worker.js'), true);
       }
     });
 
-    test('both scripts substitute __VAULTAI_APP_RELEASE__ in the '
-         'bootstrap template', () {
+    test(
+        'both scripts substitute __VAULTAI_APP_RELEASE__ in the '
+        'bootstrap template', () {
       final sh = _read('scripts/build-web-release.sh');
       final ps1 = _read('scripts/build-web-release.ps1');
       expect(sh.contains('__VAULTAI_APP_RELEASE__'), true);
@@ -288,6 +298,16 @@ void main() {
       expect(sh.contains('build/web/vaultai-sw-bootstrap.js'), true);
       expect(ps1.contains('build/web/vaultai-sw-bootstrap.js'), true);
     });
+
+    test('both scripts also stamp the release into the migration worker', () {
+      final sh = _read('scripts/build-web-release.sh');
+      final ps1 = _read('scripts/build-web-release.ps1');
+      for (final src in [sh, ps1]) {
+        expect(src.contains('migration-service-worker.js'), true);
+        expect(src.contains('__VAULTAI_APP_RELEASE__'), true);
+        expect(src.contains('flutter_service_worker.js'), true);
+      }
+    });
   });
 
   group('Round 12 — .gitattributes LF enforcement', () {
@@ -295,8 +315,7 @@ void main() {
       final ga = _read('../.gitattributes');
       expect(ga.contains('*.sh'), true);
       expect(RegExp(r'\*\.sh\s+text\s+eol=lf').hasMatch(ga), true,
-          reason:
-              '.gitattributes MUST pin .sh files to LF so Linux '
+          reason: '.gitattributes MUST pin .sh files to LF so Linux '
               'shebang parsing does not break with CRLF.');
       // .ps1 stays CRLF (Windows-native):
       expect(RegExp(r'\*\.ps1\s+text\s+eol=crlf').hasMatch(ga), true);
@@ -310,36 +329,34 @@ void main() {
       expect(firstEol, greaterThan(-1));
       // The byte immediately before the first \n must NOT be \r.
       expect(bytes[firstEol - 1], isNot(equals(0x0D)),
-          reason:
-              'The first line of build-web-release.sh has CRLF — '
+          reason: 'The first line of build-web-release.sh has CRLF — '
               'production reported /usr/bin/env: bash\\r on this '
               'exact symptom. It must be LF.');
     });
   });
 
   group('Round 12 — Nginx cache contract unchanged', () {
-    test('shell files no-store; /assets no-cache,must-revalidate; '
-         'no immutable directive anywhere', () {
+    test(
+        'shell files no-store; /assets no-cache,must-revalidate; '
+        'no immutable directive anywhere', () {
       final conf = _read('../deploy/nginx/app.svaultai.com.conf');
       // Every explicit Cache-Control directive:
-      final headers = RegExp(
-              r'add_header\s+Cache-Control\s+"([^"]+)"',
-              multiLine: true)
-          .allMatches(conf)
-          .map((m) => m.group(1)!)
-          .toList();
+      final headers =
+          RegExp(r'add_header\s+Cache-Control\s+"([^"]+)"', multiLine: true)
+              .allMatches(conf)
+              .map((m) => m.group(1)!)
+              .toList();
       expect(headers, isNotEmpty);
       for (final h in headers) {
         expect(h.contains('immutable'), false,
-            reason:
-                'Immutable would reintroduce the stale-cache bug. '
+            reason: 'Immutable would reintroduce the stale-cache bug. '
                 'Offending: $h');
       }
       // Contains a no-store directive AND a no-cache/must-revalidate:
       expect(headers.any((h) => h.contains('no-store')), true);
       expect(
-        headers.any((h) =>
-            h.contains('no-cache') && h.contains('must-revalidate')),
+        headers.any(
+            (h) => h.contains('no-cache') && h.contains('must-revalidate')),
         true,
       );
     });
