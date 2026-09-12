@@ -6855,7 +6855,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       if (!mounted) return;
       _showSnack('Memory saved');
-      setState(() => selectedSection = _DashboardSection.memory);
+      setState(() {
+        selectedSection = _DashboardSection.memory;
+        _memoryRefreshGeneration++;
+      });
       unawaited(app.refreshVaultStats());
     } catch (e) {
       if (app.handleApiException(e)) return;
@@ -7162,6 +7165,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       int? assistantIndex;
       String buffer = '';
       bool memoryProposalFinalized = false;
+      bool memoryProposalFinalizeFailed = false;
 
       final stream = client.chatStream(
         encryptedMessage: encryptedMessage,
@@ -7180,6 +7184,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
             if (!mounted) return;
             buffer += decryptedChunk;
+            if (memoryProposalFinalizeFailed) {
+              buffer = 'I could not save that memory. Please try again.';
+            }
 
             // ZK memory-proposal sentinel: strip it BEFORE any
             // downstream parse/render and fire the ciphertext-first
@@ -7191,10 +7198,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = _stripped.strippedBuffer;
             if (_stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              unawaited(_finalizeMemoryProposalBestEffort(
+              final saved = await _finalizeMemoryProposalBestEffort(
                 jsonPayload: _stripped.jsonPayload!,
                 authToken: token,
-              ));
+              );
+              if (!saved) {
+                memoryProposalFinalizeFailed = true;
+                buffer = 'I could not save that memory. Please try again.';
+              }
             }
 
             // dart format off
@@ -7408,6 +7419,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   List<VaultLoginItem> vaultLogins = [];
 
   _DashboardSection selectedSection = _DashboardSection.chat;
+  int _memoryRefreshGeneration = 0;
   final CryptoWalletMainnetSendApprovalSession _chatMainnetSendApprovalSession =
       CryptoWalletMainnetSendApprovalSession();
 
@@ -12305,31 +12317,38 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _scrollToBottom();
   }
 
-  /// Encrypt the parsed memory proposal locally under the active
-  /// MVK-derived `memoryKey`, compute `memory_lookup_hash` via the
-  /// derived `memoryLookupKey`, and POST to the ciphertext-first
-  /// AI-memory endpoint. Fail-closed on any exception: no user-
-  /// visible error, no fallback plaintext write. The chat reply
-  /// already tells the user the memory was saved; a silent finalize
-  /// failure is the correct privacy failure mode (nothing saved),
-  /// and the user can re-issue the "remember this" instruction on
-  /// the next turn.
-  Future<void> _finalizeMemoryProposalBestEffort({
+  /// Persist a chat memory only after encrypting it under the active MVK.
+  /// Returns false on any failure so chat cannot claim success unless the
+  /// ciphertext endpoint acknowledged the write. No plaintext is included in
+  /// an error banner or sent to a legacy persistence endpoint.
+  Future<bool> _finalizeMemoryProposalBestEffort({
     required String jsonPayload,
     required String authToken,
   }) async {
     try {
       final decoded = jsonDecode(jsonPayload);
-      if (decoded is! Map) return;
+      if (decoded is! Map) return false;
+      final data = Map<String, dynamic>.from(decoded);
+      final hasFullPayload = data['title'] is String ||
+          data['value'] is String ||
+          data['body'] is String;
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      if (hasFullPayload) {
+        await client.upsertZkMemory(
+          authToken: authToken,
+          data: data,
+        );
+        if (mounted) setState(() => _memoryRefreshGeneration++);
+        return true;
+      }
       final mt = decoded['memory_type'];
       final mk = decoded['memory_key'];
       final mv = decoded['memory_value'];
       final md = decoded['memory_event_date'];
-      if (mt is! String || mt.isEmpty) return;
-      if (mk is! String || mk.isEmpty) return;
-      if (mv is! String || mv.isEmpty) return;
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
-      await client.tryZkFinalizeMemoryProposal(
+      if (mt is! String || mt.isEmpty) return false;
+      if (mk is! String || mk.isEmpty) return false;
+      if (mv is! String || mv.isEmpty) return false;
+      final saved = await client.tryZkFinalizeMemoryProposal(
         baseUrl: backendBaseUrl,
         authToken: authToken,
         memoryType: mt,
@@ -12337,10 +12356,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         memoryValue: mv,
         memoryEventDate: md is String && md.isNotEmpty ? md : null,
       );
+      if (saved && mounted) setState(() => _memoryRefreshGeneration++);
+      return saved;
     } catch (_) {
-      // Fail privacy-safe: never surface the parsed plaintext memory
-      // in an error banner. Silent no-op = memory not saved =
-      // correct ZK failure mode.
+      return false;
     }
   }
 
@@ -14397,25 +14416,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _sendQuickPrompt(prompt);
       return;
     }
-    // 2026-08-01 generated-login draft Save / Cancel from the card
-    // button row. Both re-enter the /chat endpoint as a natural-
-    // language message the backend state machine already knows how
-    // to consume:
-    //   "save it"  -> state machine calls consume_draft(...) +
-    //                  save_secret_tool(...) — persists the draft.
-    //   "cancel"   -> state machine ACTION_CANCEL branch — clears
-    //                  the pending draft + the active entity pin.
+    // Generated-login Save goes directly through the ciphertext write path.
+    // Re-entering chat with "save it" used the legacy server-side store, so
+    // the new Logins dashboard could retrieve the item through chat but could
+    // not list it. Cancel still clears the transient backend draft via chat.
     if (action == 'generated_login_save') {
-      final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
-      final service = (data?['service'] as String?)?.trim() ?? '';
-      if (draftId.isNotEmpty) {
-        _nextSelectionHint = {
-          'kind': 'generated_login_draft',
-          'id': draftId,
-          if (service.isNotEmpty) 'service': service,
-        };
-      }
-      _sendQuickPrompt('save it');
+      final payload =
+          data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
+      await _saveGeneratedLoginDraftFromCard(payload);
       return;
     }
     if (action == 'generated_login_cancel') {
@@ -14443,6 +14451,52 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<void> _saveGeneratedLoginDraftFromCard(
+    Map<String, dynamic> payload,
+  ) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) {
+      _showSnack('Session expired. Please sign in again.');
+      throw StateError('generated_login_session_unavailable');
+    }
+    final draftId = '${payload['draft_id'] ?? ''}'.trim();
+    final service =
+        '${payload['service'] ?? payload['service_name'] ?? ''}'.trim();
+    final fields = <String, dynamic>{};
+    for (final key in const ['username', 'password', 'email', 'url', 'note']) {
+      final value = payload[key];
+      if (value is String && value.trim().isNotEmpty) fields[key] = value;
+    }
+    if (draftId.isEmpty || service.isEmpty || fields.isEmpty) {
+      _showSnack('This login draft is incomplete. Generate it again.');
+      throw StateError('generated_login_draft_incomplete');
+    }
+    try {
+      await _VaultCrypto.currentPinOrThrow();
+      await VaultAIClient(baseUrl: backendBaseUrl)
+          .saveGeneratedLoginDraftCiphertext(
+        authToken: token,
+        draftId: draftId,
+        service: service,
+        fields: fields,
+      );
+      await _reloadVaultLoginsAfterMutation();
+      if (!mounted) return;
+      _appendAssistantMessage('Login saved securely.');
+      _showSnack('Login saved');
+      setState(() => selectedSection = _DashboardSection.logins);
+      unawaited(app.refreshVaultStats());
+    } on InvalidVaultUnlockException {
+      _showSnack('Your vault is locked. Please enter your PIN again.');
+      throw StateError('generated_login_vault_locked');
+    } catch (_) {
+      _showSnack('Could not save login. Please try again.');
+      throw StateError('generated_login_save_failed');
+    }
+  }
+
   Future<void> _saveMemoryProposalFromCard(
     Map<String, dynamic> payload,
   ) async {
@@ -14459,6 +14513,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: token,
         data: payload,
       );
+      if (mounted) {
+        setState(() => _memoryRefreshGeneration++);
+      }
       _appendAssistantMessage('Memory saved.');
       _showSnack('Memory saved');
     } on InvalidVaultUnlockException {
@@ -14969,6 +15026,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       // client finalize so we do not double-POST if the sentinel is
       // re-observed after buffer growth.
       bool memoryProposalFinalized = false;
+      bool memoryProposalFinalizeFailed = false;
 
       // 2026-07-22 atomic crypto context snapshot. This is the ONE
       // place the /chat send path samples the vault's key + KDF
@@ -15059,6 +15117,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             final decryptedChunk = await _VaultCrypto.decrypt(encryptedChunk);
             if (!mounted) return;
             buffer += decryptedChunk;
+            if (memoryProposalFinalizeFailed) {
+              buffer = 'I could not save that memory. Please try again.';
+            }
 
             // ZK memory-proposal sentinel: the backend emits
             // <<VAULTAI_MEMORY_PROPOSAL>>{json}<<END>> at the head
@@ -15077,10 +15138,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             buffer = stripped.strippedBuffer;
             if (stripped.jsonPayload != null && !memoryProposalFinalized) {
               memoryProposalFinalized = true;
-              unawaited(_finalizeMemoryProposalBestEffort(
+              final saved = await _finalizeMemoryProposalBestEffort(
                 jsonPayload: stripped.jsonPayload!,
                 authToken: authToken,
-              ));
+              );
+              if (!saved) {
+                memoryProposalFinalizeFailed = true;
+                buffer = 'I could not save that memory. Please try again.';
+              }
             }
 
             // dart format off
@@ -16713,6 +16778,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
     return MemoryPage(
+      key: ValueKey(
+        'memory-page-$vaultName-$_memoryRefreshGeneration',
+      ),
       client: VaultAIClient(baseUrl: backendBaseUrl),
       authToken: token,
       vaultName: vaultName,

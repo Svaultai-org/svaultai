@@ -278,6 +278,50 @@ def test_save_and_immediate_recall_exact_reproduction(memory_store):
     assert "January 30, 1965" in recall
 
 
+def test_client_owned_direct_save_returns_finalize_envelope_without_db_write(
+    memory_store,
+):
+    reply = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="remember my favorite test color is ultraviolet",
+        source_message_id="client-owned-save",
+        session_id="session-client-owned",
+        client_owned_storage=True,
+    )
+    assert reply is not None
+    assert reply.startswith("<<VAULTAI_MEMORY_PROPOSAL>>")
+    assert "Memory saved securely." in reply
+    assert memory_store.rows == []
+
+
+def test_client_owned_pending_confirmation_returns_finalize_envelope_without_db_write(
+    memory_store,
+):
+    proposal = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="my mother's birthday is Feb 6",
+        source_message_id="client-owned-proposal",
+        session_id="session-client-owned",
+        client_owned_storage=True,
+    )
+    assert proposal is not None
+    assert "vault_memory_proposal_card" in proposal
+
+    reply = dpm.handle_personal_memory_turn(
+        vault_id="vault-a",
+        key=_KEY,
+        message="save it",
+        source_message_id="client-owned-confirm",
+        session_id="session-client-owned",
+        client_owned_storage=True,
+    )
+    assert reply is not None
+    assert reply.startswith("<<VAULTAI_MEMORY_PROPOSAL>>")
+    assert memory_store.rows == []
+
+
 def test_aliases_recall_the_same_structured_fact(memory_store):
     _handle(memory_store, "remember my mom birthday is January 30, 1965")
     assert "January 30, 1965" in _handle(
@@ -975,6 +1019,7 @@ def test_exact_memory_route_handles_chat_endpoint_before_ai_planner(monkeypatch)
     harness.setUp()
     try:
         harness._patch("durable_personal_memory.get_db", side_effect=store.get_db)
+        harness._patch("vault_core.is_vault_zk_adopted", return_value=False)
         harness.arm_planner_sentinel()
 
         save = harness.post_message(

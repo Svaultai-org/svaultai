@@ -1952,6 +1952,22 @@ def _proposal_envelope(intent: PersonalMemoryIntent) -> str:
     return json.dumps(envelope, separators=(",", ":"), sort_keys=True)
 
 
+def _client_owned_save_envelope(payload: dict[str, Any]) -> str:
+    """Return a client-finalize envelope without persisting readable data.
+
+    The entire chat response is already encrypted for the active vault.  The
+    frontend strips this marker, encrypts ``payload`` under the MVK-derived
+    memory key, and only then sends the opaque record to storage.
+    """
+
+    return (
+        "<<VAULTAI_MEMORY_PROPOSAL>>"
+        + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        + "<<END>>\n\n"
+        + "Memory saved securely."
+    )
+
+
 def save_memory_payload(
     *,
     vault_id: str,
@@ -2201,6 +2217,7 @@ def handle_personal_memory_turn(
     message: str,
     source_message_id: Optional[str] = None,
     session_id: Optional[str] = None,
+    client_owned_storage: bool = False,
 ) -> Optional[str]:
     cleaned = _clean_message(message)
     if _MISSING_DETAILS_FOLLOWUP_RE.match(cleaned):
@@ -2216,6 +2233,8 @@ def handle_personal_memory_turn(
         if pending is None:
             return "There isn't a memory waiting to be saved."
         _pop_pending_proposal(vault_id, session_id)
+        if client_owned_storage:
+            return _client_owned_save_envelope(pending)
         saved = save_memory_payload(
             vault_id=vault_id,
             key=key,
@@ -2230,6 +2249,13 @@ def handle_personal_memory_turn(
             return None
         return "Memory proposal cancelled."
     if intent.action == "save":
+        if client_owned_storage:
+            return _client_owned_save_envelope(
+                _payload_for_intent(
+                    intent,
+                    source_message_id=source_message_id,
+                )
+            )
         return _save_memory(
             vault_id,
             key,

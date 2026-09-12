@@ -28,4 +28,31 @@ void main() {
     expect(source, contains('_vaultLoginsLoadToken == token'));
     expect(source, contains('_vaultLoginsLoadVault == vaultName'));
   });
+
+  test('dashboard lists both ciphertext items and pre-fix legacy chat saves',
+      () {
+    final source = File('lib/api_client.dart').readAsStringSync();
+    final start = source.indexOf('listVaultSecureItems({');
+    final end = source.indexOf('_listZkVaultItems({', start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final body = source.substring(start, end);
+    expect(body, contains('_listLegacyVaultSecureItems('));
+    expect(body, contains("item['storage_engine'] = 'legacy_compatibility'"));
+    expect(body, contains("'ciphertext_with_legacy_compatibility'"));
+  });
+
+  test('generated-login card saves directly to ciphertext inventory', () {
+    final source = File('lib/main.dart').readAsStringSync();
+    final start = source.indexOf("if (action == 'generated_login_save')");
+    final end =
+        source.indexOf("if (action == 'generated_login_cancel')", start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final actionBody = source.substring(start, end);
+    expect(actionBody, contains('_saveGeneratedLoginDraftFromCard'));
+    expect(actionBody, isNot(contains("_sendQuickPrompt('save it')")));
+    expect(source, contains('.saveGeneratedLoginDraftCiphertext('));
+    expect(source, contains('await _reloadVaultLoginsAfterMutation();'));
+  });
 }

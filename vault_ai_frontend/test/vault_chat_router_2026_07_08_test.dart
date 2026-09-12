@@ -280,7 +280,8 @@ void main() {
       expect(cancelled, isFalse);
     });
 
-    testWidgets('memory proposal shows progress then saved after backend success',
+    testWidgets(
+        'memory proposal shows progress then saved after backend success',
         (tester) async {
       final completer = Completer<void>();
       var saveCalls = 0;
@@ -322,9 +323,11 @@ void main() {
           findsOneWidget);
       expect(find.text('Memory saved.'), findsOneWidget);
       expect(
-        tester.widget<ElevatedButton>(
-          find.byKey(const Key('vault_chat_card_memory_save')),
-        ).onPressed,
+        tester
+            .widget<ElevatedButton>(
+              find.byKey(const Key('vault_chat_card_memory_save')),
+            )
+            .onPressed,
         isNull,
       );
     });
@@ -372,9 +375,11 @@ void main() {
       expect(find.byKey(const Key('vault_chat_card_memory_error')),
           findsOneWidget);
       expect(
-        tester.widget<ElevatedButton>(
-          find.byKey(const Key('vault_chat_card_memory_save')),
-        ).onPressed,
+        tester
+            .widget<ElevatedButton>(
+              find.byKey(const Key('vault_chat_card_memory_save')),
+            )
+            .onPressed,
         isNotNull,
       );
 
@@ -421,16 +426,19 @@ void main() {
       await tester.pump();
       expect(find.text('Saving...'), findsOneWidget);
 
-      await tester.pump(kMemoryProposalSaveTimeout + const Duration(seconds: 1));
+      await tester
+          .pump(kMemoryProposalSaveTimeout + const Duration(seconds: 1));
       await tester.pumpAndSettle();
 
       expect(saveCalls, 1);
       expect(find.byKey(const Key('vault_chat_card_memory_error')),
           findsOneWidget);
       expect(
-        tester.widget<ElevatedButton>(
-          find.byKey(const Key('vault_chat_card_memory_save')),
-        ).onPressed,
+        tester
+            .widget<ElevatedButton>(
+              find.byKey(const Key('vault_chat_card_memory_save')),
+            )
+            .onPressed,
         isNotNull,
       );
     });
@@ -646,8 +654,8 @@ void main() {
       await tester.pumpWidget(_wrap(
         VaultChatCardView(
           response: response,
-          onGeneratedLoginSave: (draftId, service) {
-            saved.add('$draftId:$service');
+          onGeneratedLoginSave: (data) {
+            saved.add('${data['draft_id']}:${data['service']}');
           },
         ),
       ));

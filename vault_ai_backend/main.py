@@ -14185,12 +14185,14 @@ async def chat_endpoint(
             from durable_personal_memory import (
                 handle_personal_memory_turn as _handle_personal_memory_turn,
             )
+            from vault_core import is_vault_zk_adopted as _is_vault_zk_adopted
             _personal_memory_reply = _handle_personal_memory_turn(
                 vault_id=vault_id,
                 key=key,
                 message=decrypted_message or "",
                 source_message_id=str(_chat_request_id or ""),
                 session_id=str((principal or {}).get("token_id") or ""),
+                client_owned_storage=_is_vault_zk_adopted(vault_id),
             )
         except Exception:
             logger.exception(

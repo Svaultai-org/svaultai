@@ -44,6 +44,7 @@ import base64
 import binascii
 import logging
 import os
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -58,6 +59,7 @@ from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write
 from taxonomy import ALLOWED_MEMORY_TYPES
+from vault_credential_draft import consume_draft, get_draft
 
 
 logger = logging.getLogger(__name__)
@@ -141,6 +143,25 @@ class VaultItemCiphertextResponse(BaseModel):
     created_at: str
 
 
+class GeneratedDraftCiphertextFinalizeRequest(BaseModel):
+    """Link an already-written opaque vault item to its transient draft.
+
+    The endpoint never receives the credential values.  It only consumes the
+    server-side draft after proving that the authenticated vault owns a fully
+    ciphertext-backed item.
+    """
+
+    item_id: int = Field(..., gt=0)
+    draft_id: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("draft_id")
+    @classmethod
+    def validate_draft_id(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value):
+            raise ValueError("draft_id has invalid format")
+        return value
+
+
 @router.post(
     "/vault/ciphertext/vault-items",
     response_model=VaultItemUpsertResponse,
@@ -214,6 +235,64 @@ def vault_item_upsert_ciphertext(
         return VaultItemUpsertResponse(item_id=payload.item_id, created=False)
     finally:
         conn.close()
+
+
+@router.post(
+    "/vault/ciphertext/vault-items/generated-drafts/finalize",
+    response_model=dict,
+)
+def finalize_generated_draft_ciphertext(
+    payload: GeneratedDraftCiphertextFinalizeRequest,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict:
+    """Consume a login draft only after its opaque item is durable.
+
+    This keeps chat-created logins on the same client-encrypted storage path
+    used by the Logins dashboard and makes retries idempotent.
+    """
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT 1
+              FROM vault_items
+             WHERE id = %s
+               AND vault_id = %s
+               AND item_type_ciphertext IS NOT NULL
+               AND service_ciphertext IS NOT NULL
+               AND payload_ciphertext IS NOT NULL
+            """,
+            (payload.item_id, principal["vault_id"]),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(
+                status_code=409,
+                detail="opaque vault item must exist before draft finalize",
+            )
+    finally:
+        conn.close()
+
+    current = get_draft(
+        vault_id=str(principal["vault_id"]),
+        draft_id=payload.draft_id,
+    )
+    if current is None:
+        return {
+            "status": "already_finalized",
+            "item_id": payload.item_id,
+            "draft_id": payload.draft_id,
+        }
+    consumed = consume_draft(
+        vault_id=str(principal["vault_id"]),
+        draft_id=payload.draft_id,
+    )
+    return {
+        "status": "finalized" if consumed is not None else "already_finalized",
+        "item_id": payload.item_id,
+        "draft_id": payload.draft_id,
+    }
 
 
 @router.get(

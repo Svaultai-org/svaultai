@@ -27,7 +27,6 @@ import 'package:vault_ai_frontend/ui/chat/chat_cards.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
 import 'package:vault_ai_frontend/ui/vault_chat_cards.dart';
 
-
 // ---------------------------------------------------------------------------
 // Fixtures — captured VERBATIM from the backend endpoint tests
 // (test_chat_endpoint_deterministic_2026_08_01.py evidence dump).
@@ -111,7 +110,6 @@ const String kBackendCredDraftJson = '''
 }
 ''';
 
-
 // A regression-fossil: what the backend used to emit BEFORE d184d22.
 // The parser must NOT accept this — it degraded to plain text in
 // production. If someone reverts blocker #2, this fixture becomes a
@@ -148,50 +146,42 @@ const String kOldBrokenDisambigJson = '''
 }
 ''';
 
-
 // ---------------------------------------------------------------------------
 // Blocker 1 — file_disambiguation.files parser + renderer
 // ---------------------------------------------------------------------------
 
 void _testBlocker1() {
   group('Blocker 1: file_disambiguation.files', () {
-
     test('backend envelope decodes to a two-entry `files` list', () {
-      final decoded = jsonDecode(kBackendDisambigJson)
-          as Map<String, dynamic>;
+      final decoded = jsonDecode(kBackendDisambigJson) as Map<String, dynamic>;
       expect(decoded['type'], 'file_disambiguation');
       expect(decoded['files'], isA<List>());
-      final files = (decoded['files'] as List)
-          .cast<Map<String, dynamic>>();
+      final files = (decoded['files'] as List).cast<Map<String, dynamic>>();
       expect(files.length, 2);
       expect(files[0]['file_id'], 'row-pdf-passport-2024');
       expect(files[1]['file_id'], 'row-pdf-passport-2025');
     });
 
     test('each row carries every field the frontend row reader keys on', () {
-      final decoded = jsonDecode(kBackendDisambigJson)
-          as Map<String, dynamic>;
-      final files = (decoded['files'] as List)
-          .cast<Map<String, dynamic>>();
+      final decoded = jsonDecode(kBackendDisambigJson) as Map<String, dynamic>;
+      final files = (decoded['files'] as List).cast<Map<String, dynamic>>();
       for (final row in files) {
         // These are the keys the row renderer at chat_cards.dart:3520
         // reads. Missing any is a rendering regression.
-        expect(row.containsKey('file_id'),          isTrue);
-        expect(row.containsKey('file_name'),        isTrue);
-        expect(row.containsKey('saved_name'),       isTrue);
-        expect(row.containsKey('mime_type'),        isTrue);
-        expect(row.containsKey('confidence'),       isTrue);
-        expect(row.containsKey('reasons'),          isTrue);
-        expect(row.containsKey('best_match'),       isTrue);
+        expect(row.containsKey('file_id'), isTrue);
+        expect(row.containsKey('file_name'), isTrue);
+        expect(row.containsKey('saved_name'), isTrue);
+        expect(row.containsKey('mime_type'), isTrue);
+        expect(row.containsKey('confidence'), isTrue);
+        expect(row.containsKey('reasons'), isTrue);
+        expect(row.containsKey('best_match'), isTrue);
         expect(row.containsKey('mostly_credentials'), isTrue);
       }
     });
 
     test('`content_type` is NOT the key the frontend reads (mime_type is)', () {
-      final decoded = jsonDecode(kBackendDisambigJson)
-          as Map<String, dynamic>;
-      final files = (decoded['files'] as List)
-          .cast<Map<String, dynamic>>();
+      final decoded = jsonDecode(kBackendDisambigJson) as Map<String, dynamic>;
+      final files = (decoded['files'] as List).cast<Map<String, dynamic>>();
       // Belt-and-braces: earlier internal envelopes used content_type.
       // If someone re-introduces it and drops mime_type, the row
       // renderer at chat_cards.dart:3520-3533 renders "unknown mime".
@@ -203,10 +193,9 @@ void _testBlocker1() {
       'ChatMessage built from the backend envelope renders '
       'FileDisambiguationCard, not plain assistant text',
       (WidgetTester tester) async {
-        final decoded = jsonDecode(kBackendDisambigJson)
-            as Map<String, dynamic>;
-        final files = (decoded['files'] as List)
-            .cast<Map<String, dynamic>>();
+        final decoded =
+            jsonDecode(kBackendDisambigJson) as Map<String, dynamic>;
+        final files = (decoded['files'] as List).cast<Map<String, dynamic>>();
         final msg = ChatMessage(
           'assistant',
           decoded['message']?.toString() ?? '',
@@ -252,19 +241,20 @@ void _testBlocker1() {
         // assistant text, neither structured row would render.
         expect(find.text('passport 2024'), findsOneWidget,
             reason: 'file_disambiguation.files[0].saved_name did not '
-                    'render as a card row — parser or contract '
-                    'regressed');
+                'render as a card row — parser or contract '
+                'regressed');
         expect(find.text('passport 2025'), findsOneWidget,
             reason: 'file_disambiguation.files[1].saved_name did not '
-                    'render as a card row — parser or contract '
-                    'regressed');
+                'render as a card row — parser or contract '
+                'regressed');
       },
     );
 
-    test('regression-fossil: the OLD `options` envelope produces an '
-         'empty files list — exactly the empty-render bug Codex flagged', () {
-      final decoded = jsonDecode(kOldBrokenDisambigJson)
-          as Map<String, dynamic>;
+    test(
+        'regression-fossil: the OLD `options` envelope produces an '
+        'empty files list — exactly the empty-render bug Codex flagged', () {
+      final decoded =
+          jsonDecode(kOldBrokenDisambigJson) as Map<String, dynamic>;
       // The parser cast at main.dart:11204 uses `decoded['files']`.
       // With the old envelope shape, `files` is null → cast becomes
       // an empty list → card renders zero candidates. Test that the
@@ -275,11 +265,10 @@ void _testBlocker1() {
           : const <Map<String, dynamic>>[];
       expect(files, isEmpty,
           reason: 'old envelope shape leaks empty candidate list — '
-                  'this is the exact bug the fix closes');
+              'this is the exact bug the fix closes');
     });
   });
 }
-
 
 // ---------------------------------------------------------------------------
 // Blocker 2 — vault_chat_card + card.cardType=vault_generated_login_card
@@ -287,19 +276,18 @@ void _testBlocker1() {
 
 void _testBlocker2() {
   group('Blocker 2: vault_chat_card generated-login envelope', () {
-
     test('parseVaultChatCardMessage accepts the new backend envelope', () {
       final result = parseVaultChatCardMessage(kBackendCredDraftJson);
       expect(result, isNotNull,
           reason: 'parser rejected a valid vault_chat_card envelope '
-                  '— rendering will fall back to plain assistant text');
+              '— rendering will fall back to plain assistant text');
       expect(result!.kind, ChatMessage.kVaultChatCard);
       final payload = result.payload;
       expect(payload, isNotNull);
       expect(payload!['intent'], 'vault_generated_login_create_draft');
       final card = payload['card'] as Map<String, dynamic>;
       expect(card['cardType'], 'vault_generated_login_card');
-      expect(card['view'],     'create_draft');
+      expect(card['view'], 'create_draft');
     });
 
     test('parser REJECTS the OLD top-level type (regression fossil)', () {
@@ -313,7 +301,7 @@ void _testBlocker2() {
       final result = parseVaultChatCardMessage(kOldBrokenCredDraftJson);
       expect(result, isNull,
           reason: 'parser accepted the old broken envelope — the '
-                  'blocker-2 fix has regressed');
+              'blocker-2 fix has regressed');
     });
 
     testWidgets(
@@ -333,8 +321,8 @@ void _testBlocker2() {
 
         // Route through VaultChatResponse.fromJson → the same
         // widget the real chat bubble uses (VaultChatCardView).
-        final envelope = jsonDecode(kBackendCredDraftJson)
-            as Map<String, dynamic>;
+        final envelope =
+            jsonDecode(kBackendCredDraftJson) as Map<String, dynamic>;
         final response = VaultChatResponse.fromJson(envelope);
         expect(response.card.cardType, 'vault_generated_login_card',
             reason: 'router failed to recognize the card type');
@@ -353,8 +341,8 @@ void _testBlocker2() {
             home: Scaffold(
               body: VaultChatCardView(
                 response: response,
-                onGeneratedLoginSave: (id, svc) {
-                  savedDraftId = id;
+                onGeneratedLoginSave: (data) {
+                  savedDraftId = '${data['draft_id']}';
                 },
                 onGeneratedLoginCancel: (id, svc) {
                   cancelledDraftId = id;
@@ -403,9 +391,11 @@ void _testBlocker2() {
           'vault_chat_card_generated_login_password_value',
         ));
         expect(passwordValueFinder, findsOneWidget);
-        final passwordDisplay = tester.widget<Text>(
-          passwordValueFinder,
-        ).data;
+        final passwordDisplay = tester
+            .widget<Text>(
+              passwordValueFinder,
+            )
+            .data;
         expect(
           passwordDisplay?.contains('•'),
           isTrue,
@@ -415,7 +405,7 @@ void _testBlocker2() {
           passwordDisplay?.contains('P@ssw0rd!ExampleGenerated'),
           isFalse,
           reason: 'plaintext password leaked in default (unrevealed) '
-                  'render — security regression',
+              'render — security regression',
         );
 
         // Reveal-eye toggle exposes the real password.
@@ -425,11 +415,14 @@ void _testBlocker2() {
         expect(revealFinder, findsOneWidget);
         await tester.tap(revealFinder);
         await tester.pumpAndSettle();
-        final revealedText = tester.widget<Text>(
-          passwordValueFinder,
-        ).data;
+        final revealedText = tester
+            .widget<Text>(
+              passwordValueFinder,
+            )
+            .data;
         expect(
-          revealedText, 'P@ssw0rd!ExampleGenerated',
+          revealedText,
+          'P@ssw0rd!ExampleGenerated',
           reason: 'reveal toggle did not expose the plaintext password',
         );
 
@@ -440,7 +433,7 @@ void _testBlocker2() {
         final cancelBtn = find.byKey(const Key(
           'vault_chat_card_generated_login_cancel',
         ));
-        expect(saveBtn,   findsOneWidget);
+        expect(saveBtn, findsOneWidget);
         expect(cancelBtn, findsOneWidget);
 
         // Tap Cancel first; callback fires with the draft id.
@@ -448,7 +441,7 @@ void _testBlocker2() {
         await tester.pumpAndSettle();
         expect(cancelledDraftId, 'draft-endpoint-0001',
             reason: 'Cancel button did not invoke the callback with '
-                    'the correct draft_id');
+                'the correct draft_id');
         // Save doesn't fire because the widget debounces once
         // dispatched — verify that guard holds.
         expect(savedDraftId, isNull);
@@ -481,8 +474,8 @@ void _testBlocker2() {
               .setMockMethodCallHandler(SystemChannels.platform, null);
         });
 
-        final envelope = jsonDecode(kBackendCredDraftJson)
-            as Map<String, dynamic>;
+        final envelope =
+            jsonDecode(kBackendCredDraftJson) as Map<String, dynamic>;
         final response = VaultChatResponse.fromJson(envelope);
         await tester.pumpWidget(
           MaterialApp(
@@ -505,7 +498,8 @@ void _testBlocker2() {
         )));
         await tester.pumpAndSettle();
         expect(
-          clipboardValues, contains('beraves123@gmail.com'),
+          clipboardValues,
+          contains('beraves123@gmail.com'),
           reason: 'copy button did not write username to clipboard',
         );
 
@@ -516,17 +510,18 @@ void _testBlocker2() {
         )));
         await tester.pumpAndSettle();
         expect(
-          clipboardValues, contains('P@ssw0rd!ExampleGenerated'),
+          clipboardValues,
+          contains('P@ssw0rd!ExampleGenerated'),
           reason: 'copy button did not write plaintext password to '
-                  'clipboard',
+              'clipboard',
         );
       },
     );
 
-    test('the envelope does NOT surface generated username/password '
-         'at the TOP level (security posture preserved)', () {
-      final decoded = jsonDecode(kBackendCredDraftJson)
-          as Map<String, dynamic>;
+    test(
+        'the envelope does NOT surface generated username/password '
+        'at the TOP level (security posture preserved)', () {
+      final decoded = jsonDecode(kBackendCredDraftJson) as Map<String, dynamic>;
       // The credential values live INSIDE the `card.data` sub-dict —
       // not at the top level of the envelope, and not directly on
       // `card`. That way any caller that logs the outer envelope for
@@ -544,7 +539,6 @@ void _testBlocker2() {
     });
   });
 }
-
 
 void main() {
   _testBlocker1();

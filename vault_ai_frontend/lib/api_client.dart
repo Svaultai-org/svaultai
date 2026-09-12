@@ -2902,8 +2902,52 @@ class VaultAIClient {
     required String authToken,
   }) async {
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
-      return _listZkVaultItems(authToken: authToken);
+      final ciphertext = await _listZkVaultItems(authToken: authToken);
+      final legacy = await _listLegacyVaultSecureItems(
+        vaultName: vaultName,
+        pin: pin,
+        authToken: authToken,
+      );
+      final combined = <Map<String, dynamic>>[];
+      final seen = <String>{};
+      for (final raw in (ciphertext['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        final service = '${item['service'] ?? ''}'.trim();
+        final type = '${item['item_type'] ?? 'other'}'.trim();
+        if (service.isEmpty) continue;
+        seen.add('${type.toLowerCase()}\u0000${service.toLowerCase()}');
+        combined.add(item);
+      }
+      for (final raw in (legacy['items'] as List? ?? const [])) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        final service = '${item['service'] ?? ''}'.trim();
+        final type = '${item['item_type'] ?? 'other'}'.trim();
+        if (service.isEmpty) continue;
+        final key = '${type.toLowerCase()}\u0000${service.toLowerCase()}';
+        if (seen.add(key)) {
+          item['storage_engine'] = 'legacy_compatibility';
+          combined.add(item);
+        }
+      }
+      return <String, dynamic>{
+        'items': combined,
+        'engine': 'ciphertext_with_legacy_compatibility',
+      };
     }
+    return _listLegacyVaultSecureItems(
+      vaultName: vaultName,
+      pin: pin,
+      authToken: authToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> _listLegacyVaultSecureItems({
+    required String vaultName,
+    required String pin,
+    required String authToken,
+  }) async {
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
     final response = await http.post(
@@ -3015,7 +3059,9 @@ class VaultAIClient {
           return Map<String, dynamic>.from(raw);
         }
       }
-      throw Exception('Saved item not found');
+      // Older builds and the previous chat-confirmation path wrote to the
+      // legacy encrypted table. Fall through so those records stay usable;
+      // all new dashboard and chat-card writes remain client-encrypted.
     }
     final uri = Uri.parse('$baseUrl/get-secure-item');
 
@@ -4630,6 +4676,81 @@ class VaultAIClient {
     return decoded;
   }
 
+  /// Persist a generated-login draft on the same client-encrypted path used
+  /// by the Logins dashboard, then consume the server's transient draft.
+  /// Credential values are never sent to the finalize endpoint.
+  Future<Map<String, dynamic>> saveGeneratedLoginDraftCiphertext({
+    required String authToken,
+    required String draftId,
+    required String service,
+    required Map<String, dynamic> fields,
+  }) async {
+    final safeDraftId = draftId.trim();
+    final safeService = service.trim();
+    if (safeDraftId.isEmpty || safeService.isEmpty || fields.isEmpty) {
+      throw ArgumentError('Generated login draft is incomplete');
+    }
+    if (zk_mvk_store.ZkActiveMvk.current() == null) {
+      throw StateError('Vault encryption key is unavailable');
+    }
+
+    // Retrying after a dropped finalize response must not create duplicates.
+    final current = await _listZkVaultItems(authToken: authToken);
+    int? existingItemId;
+    for (final raw in (current['items'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      final type = '${raw['item_type'] ?? ''}'.trim().toLowerCase();
+      final title = '${raw['service'] ?? ''}'.trim().toLowerCase();
+      if ((type == 'login' || type == 'credential') &&
+          title == safeService.toLowerCase()) {
+        existingItemId = (raw['id'] as num?)?.toInt();
+        break;
+      }
+    }
+
+    final saved = await tryZkVaultItemCiphertextUpsert(
+      baseUrl: baseUrl,
+      authToken: authToken,
+      existingItemId: existingItemId,
+      itemType: 'login',
+      service: safeService,
+      payload: <String, dynamic>{
+        'fields': Map<String, dynamic>.from(fields),
+        'source': 'generated_login_draft',
+      },
+    );
+    final itemId = (saved?['item_id'] as num?)?.toInt();
+    if (itemId == null) {
+      throw StateError('Generated login could not be encrypted');
+    }
+
+    final finalizeUri = Uri.parse(
+      '$baseUrl/vault/ciphertext/vault-items/generated-drafts/finalize',
+    );
+    final finalized = await http.post(
+      finalizeUri,
+      headers: _defaultHeaders(authToken: authToken, json: true),
+      body: jsonEncode(<String, dynamic>{
+        'item_id': itemId,
+        'draft_id': safeDraftId,
+      }),
+    );
+    if (finalized.statusCode != 200) {
+      _throwIfAuthExpired(finalized.statusCode, finalized.body);
+      _throwIfDeviceNotTrusted(finalized.statusCode, finalized.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Generated login finalize failed',
+        statusCode: finalized.statusCode,
+        responseBody: finalized.body,
+      ));
+    }
+    return <String, dynamic>{
+      ...saved!,
+      'service': safeService,
+      'item_type': 'login',
+    };
+  }
+
   Future<Map<String, dynamic>> deleteVaultSecureItem({
     required String vaultName,
     required String service,
@@ -4648,24 +4769,26 @@ class VaultAIClient {
           break;
         }
       }
-      if (itemId == null) throw Exception('Saved item not found');
-      final uri = Uri.parse(
-        '$baseUrl/vault/ciphertext/vault-items/$itemId',
-      );
-      final response = await http.delete(
-        uri,
-        headers: _defaultHeaders(authToken: authToken),
-      );
-      if (response.statusCode != 200) {
-        _throwIfAuthExpired(response.statusCode, response.body);
-        _throwIfDeviceNotTrusted(response.statusCode, response.body);
-        throw Exception(_formatBackendError(
-          prefix: 'Could not delete saved item',
-          statusCode: response.statusCode,
-          responseBody: response.body,
-        ));
+      if (itemId != null) {
+        final uri = Uri.parse(
+          '$baseUrl/vault/ciphertext/vault-items/$itemId',
+        );
+        final response = await http.delete(
+          uri,
+          headers: _defaultHeaders(authToken: authToken),
+        );
+        if (response.statusCode != 200) {
+          _throwIfAuthExpired(response.statusCode, response.body);
+          _throwIfDeviceNotTrusted(response.statusCode, response.body);
+          throw Exception(_formatBackendError(
+            prefix: 'Could not delete saved item',
+            statusCode: response.statusCode,
+            responseBody: response.body,
+          ));
+        }
+        return jsonDecode(response.body) as Map<String, dynamic>;
       }
-      return jsonDecode(response.body) as Map<String, dynamic>;
+      // No ciphertext row matched: continue into the legacy delete endpoint.
     }
     final uri = Uri.parse('$baseUrl/delete-secure-item');
 

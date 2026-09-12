@@ -13,6 +13,7 @@ import pytest
 
 from routes.vault_ciphertext_write_routes import (
     AiMemoryCiphertextRequest,
+    GeneratedDraftCiphertextFinalizeRequest,
     NotificationCiphertextRequest,
     UploadedFileMetadataRequest,
     VaultItemUpsertRequest,
@@ -25,6 +26,7 @@ def test_router_registers_all_ciphertext_write_paths() -> None:
     paths = {getattr(r, "path", None) for r in router.routes}
     expected = {
         "/vault/ciphertext/vault-items",
+        "/vault/ciphertext/vault-items/generated-drafts/finalize",
         "/vault/ciphertext/uploaded-files",
         "/vault/ciphertext/notifications",
         "/vault/ciphertext/vault-ai-memory",
@@ -130,6 +132,44 @@ def test_vault_item_upsert_accepts_ciphertext_only() -> None:
     _reject_plaintext_leak(
         req, ("item_type", "service", "encrypted_data"),
     )
+
+
+def test_generated_draft_finalize_accepts_identity_only() -> None:
+    req = GeneratedDraftCiphertextFinalizeRequest(
+        item_id=42,
+        draft_id="draft-safe_2026.09:login",
+    )
+    assert req.item_id == 42
+    assert req.draft_id == "draft-safe_2026.09:login"
+    assert "password" not in GeneratedDraftCiphertextFinalizeRequest.model_fields
+    assert "username" not in GeneratedDraftCiphertextFinalizeRequest.model_fields
+
+
+@pytest.mark.parametrize("draft_id", ["", "bad draft", "../escape", "!draft"])
+def test_generated_draft_finalize_rejects_invalid_id(draft_id: str) -> None:
+    with pytest.raises(ValueError):
+        GeneratedDraftCiphertextFinalizeRequest(item_id=1, draft_id=draft_id)
+
+
+def test_generated_draft_finalize_proves_vault_ownership_and_ciphertext() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    src = inspect.getsource(mod.finalize_generated_draft_ciphertext)
+    assert "id = %s" in src
+    assert "vault_id = %s" in src
+    assert 'principal["vault_id"]' in src
+    assert "item_type_ciphertext IS NOT NULL" in src
+    assert "service_ciphertext IS NOT NULL" in src
+    assert "payload_ciphertext IS NOT NULL" in src
+    assert "consume_draft" in src
+
+
+def test_zk_chat_memory_routes_to_client_owned_ciphertext_finalize() -> None:
+    from pathlib import Path
+
+    src = Path("main.py").read_text(encoding="utf-8")
+    assert "client_owned_storage=_is_vault_zk_adopted(vault_id)" in src
 
 
 def test_uploaded_file_metadata_rejects_plaintext_leak() -> None:

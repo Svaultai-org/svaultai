@@ -91,11 +91,14 @@ class VaultChatCardView extends StatelessWidget {
   final void Function(String id, String title)? onLoginSelectById;
 
   /// 2026-08-01 generated-login-draft card actions.
-  /// Both receive the draft's stable `draft_id` and the service
-  /// display name. The handler in `chat_bubble.dart` turns them
+  /// Save receives the complete draft so the client can encrypt and persist
+  /// the credential without asking the backend to write readable fields.
+  /// Cancel only needs the stable `draft_id` and service display name.
+  /// The handler in `chat_bubble.dart` turns them
   /// into `onCardAction` calls with `generated_login_save` /
   /// `generated_login_cancel` action names.
-  final void Function(String draftId, String service)? onGeneratedLoginSave;
+  final FutureOr<void> Function(Map<String, dynamic> data)?
+      onGeneratedLoginSave;
   final void Function(String draftId, String service)? onGeneratedLoginCancel;
   final FutureOr<void> Function(Map<String, dynamic> data)?
       onMemoryProposalSave;
@@ -1701,7 +1704,7 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
 /// Generated login draft review card.
 class _GeneratedLoginCard extends StatefulWidget {
   final VaultChatCard card;
-  final void Function(String draftId, String service)? onSave;
+  final FutureOr<void> Function(Map<String, dynamic> data)? onSave;
   final void Function(String draftId, String service)? onCancel;
 
   const _GeneratedLoginCard({
@@ -1717,6 +1720,7 @@ class _GeneratedLoginCard extends StatefulWidget {
 class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
   final Set<String> _passwordRevealedDrafts = <String>{};
   final Set<String> _dispatchedDrafts = <String>{};
+  final Set<String> _savingDrafts = <String>{};
 
   Map<String, dynamic> get _data =>
       widget.card.data ?? const <String, dynamic>{};
@@ -1778,11 +1782,23 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     });
   }
 
-  void _handleSave(String draftId, String service) {
+  Future<void> _handleSave(Map<String, dynamic> data) async {
+    final draftId = _readStringFrom(data, 'draft_id');
+    final service = _readStringFrom(data, 'service', 'service_name');
     final key = _dispatchKey(draftId, service);
-    if (_dispatchedDrafts.contains(key)) return;
-    setState(() => _dispatchedDrafts.add(key));
-    widget.onSave?.call(draftId, service);
+    if (_dispatchedDrafts.contains(key) || _savingDrafts.contains(key)) return;
+    setState(() => _savingDrafts.add(key));
+    try {
+      await widget.onSave?.call(Map<String, dynamic>.from(data));
+      if (!mounted) return;
+      setState(() {
+        _savingDrafts.remove(key);
+        _dispatchedDrafts.add(key);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _savingDrafts.remove(key));
+    }
   }
 
   void _handleCancel(String draftId, String service) {
@@ -1871,6 +1887,7 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     final title = _readStringFrom(data, 'title');
     final actions = _actionsFrom(data);
     final dispatched = _isDispatched(draftId, service);
+    final saving = _savingDrafts.contains(_dispatchKey(draftId, service));
     final passwordRevealed = _isPasswordRevealed(draftId, service);
     String keyed(String base) => suffix.isEmpty ? base : '${base}_$suffix';
 
@@ -1992,7 +2009,7 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
                       keyed('vault_chat_card_generated_login_save'),
                     ),
                     onPressed:
-                        dispatched ? null : () => _handleSave(draftId, service),
+                        dispatched || saving ? null : () => _handleSave(data),
                     icon: const Icon(Icons.check_rounded, size: 18),
                     label: const Text('Save login'),
                     style: ElevatedButton.styleFrom(
