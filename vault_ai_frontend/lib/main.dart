@@ -6717,6 +6717,20 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
   );
 }
 
+bool isClientSecureItemDeleteConfirmationPhrase(String message) {
+  return RegExp(
+    r'^\s*(?:yes|confirm(?:\s+delete)?|delete\s+(?:it|that|now)|go\s+ahead(?:\s+and\s+delete\s+it)?|proceed|do\s+it)\s*[.!?]*\s*$',
+    caseSensitive: false,
+  ).hasMatch(message);
+}
+
+bool isClientSecureItemDeleteCancellationPhrase(String message) {
+  return RegExp(
+    r"^\s*(?:no|nope|cancel(?:\s+(?:it|that|delete))?|keep\s+it|never\s*mind|don'?t\s+delete(?:\s+(?:it|that))?)\s*[.!?]*\s*$",
+    caseSensitive: false,
+  ).hasMatch(message);
+}
+
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
@@ -7134,6 +7148,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         : (service.trim().isEmpty
             ? 'Delete this saved item from my vault'
             : 'Delete $safeService from my vault');
+
+    // Ciphertext vault items are intentionally opaque to the backend, so the
+    // dashboard must keep confirmation client-side and execute the confirmed
+    // delete through the authenticated ciphertext endpoint. The previous
+    // chat sentinel could only delete legacy server-readable rows and falsely
+    // reported that a visible ZK login was already gone.
+    if (app.unlocked) {
+      final question = isLogin
+          ? 'Are you sure you want to delete $safeService login from your vault?'
+          : 'Are you sure you want to delete $safeService from your vault?';
+      setState(() {
+        selectedSection = _DashboardSection.chat;
+        _pendingClientSecureItemDeleteService = safeService;
+        _pendingClientSecureItemDeleteType = itemType;
+        msgs.add(_Msg('user', visibleBubble));
+        msgs.add(_Msg('assistant', question));
+      });
+      _scrollToBottom();
+      return;
+    }
+
     final sentinel = '__delete_item:$itemType:$safeService';
 
     setState(() {
@@ -7363,6 +7398,85 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
+  Future<bool> _tryResolveClientSecureItemDelete(String text) async {
+    final service = _pendingClientSecureItemDeleteService;
+    final itemType = _pendingClientSecureItemDeleteType;
+    if (service == null || itemType == null) return false;
+
+    final isConfirm = isClientSecureItemDeleteConfirmationPhrase(text);
+    final isCancel = isClientSecureItemDeleteCancellationPhrase(text);
+    if (!isConfirm && !isCancel) return false;
+
+    input.clear();
+    if (isCancel) {
+      if (!mounted) return true;
+      setState(() {
+        _pendingClientSecureItemDeleteService = null;
+        _pendingClientSecureItemDeleteType = null;
+        msgs.add(_Msg('user', text));
+        msgs.add(_Msg('assistant', "Okay — I won't delete it."));
+      });
+      _scrollToBottom();
+      return true;
+    }
+
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || !app.unlocked) {
+      _appendAssistantMessage('Session expired. Please sign in again.');
+      return true;
+    }
+
+    setState(() {
+      sending = true;
+      thinking = true;
+      msgs.add(_Msg('user', text));
+      input.clear();
+    });
+    _scrollToBottom();
+
+    try {
+      final pin = await _VaultCrypto.currentPinOrThrow();
+      final client = VaultAIClient(baseUrl: backendBaseUrl);
+      await client.deleteVaultSecureItem(
+        vaultName: vaultName,
+        service: service,
+        itemType: itemType,
+        pin: pin,
+        authToken: token,
+      );
+      if (!mounted) return true;
+      final isLogin = itemType == 'login' || itemType == 'credential';
+      setState(() {
+        _pendingClientSecureItemDeleteService = null;
+        _pendingClientSecureItemDeleteType = null;
+        thinking = false;
+        msgs.add(_Msg(
+          'assistant',
+          isLogin
+              ? 'Deleted $service login from your vault.'
+              : 'Deleted $service from your vault.',
+        ));
+      });
+      await _reloadVaultLoginsAfterMutation();
+      await app.refreshVaultStats();
+    } catch (e) {
+      if (app.handleApiException(e)) return true;
+      if (!mounted) return true;
+      setState(() {
+        thinking = false;
+        msgs.add(_Msg(
+          'assistant',
+          'Could not delete that saved item. Please try again.',
+        ));
+      });
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
+    return true;
+  }
+
   final input = TextEditingController();
   final List<_Msg> msgs = <_Msg>[];
   final List<_Attachment> attachments = [];
@@ -7371,6 +7485,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   bool sending = false;
   bool thinking = false;
+  String? _pendingClientSecureItemDeleteService;
+  String? _pendingClientSecureItemDeleteType;
   bool loadingFiles = false;
   bool loadingLogins = false;
   Future<void>? _vaultLoginsLoadFuture;
@@ -15238,6 +15354,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'vaultName': vaultName,
       });
       app.handleApiException(const InvalidVaultUnlockException());
+      return;
+    }
+
+    if (attachments.isEmpty && await _tryResolveClientSecureItemDelete(text)) {
       return;
     }
 

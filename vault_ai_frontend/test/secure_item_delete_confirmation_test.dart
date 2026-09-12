@@ -1,6 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/main.dart'
+    show
+        isClientSecureItemDeleteCancellationPhrase,
+        isClientSecureItemDeleteConfirmationPhrase;
 
 String _readMain() {
   return File(
@@ -9,6 +13,26 @@ String _readMain() {
 }
 
 void main() {
+  group('client ciphertext delete confirmation phrases', () {
+    test('accepts an explicit confirmation', () {
+      expect(isClientSecureItemDeleteConfirmationPhrase('yes'), isTrue);
+      expect(
+        isClientSecureItemDeleteConfirmationPhrase('confirm delete'),
+        isTrue,
+      );
+      expect(isClientSecureItemDeleteConfirmationPhrase('show it'), isFalse);
+    });
+
+    test('accepts cancellation without deleting', () {
+      expect(isClientSecureItemDeleteCancellationPhrase('no'), isTrue);
+      expect(
+        isClientSecureItemDeleteCancellationPhrase("don't delete it"),
+        isTrue,
+      );
+      expect(isClientSecureItemDeleteCancellationPhrase('yes'), isFalse);
+    });
+  });
+
   group('Logins page Delete wiring', () {
     test('onDelete routes through _startSecureItemDeleteConfirmation', () {
       final src = _readMain();
@@ -74,9 +98,7 @@ void main() {
       );
     });
 
-    test(
-        'builds the closed-set sentinel and encrypts THAT, not the '
-        'user-visible text', () {
+    test('client-owned ciphertext delete is confirmed locally first', () {
       final src = _readMain();
       final start =
           src.indexOf('Future<void> _startSecureItemDeleteConfirmation(');
@@ -87,35 +109,39 @@ void main() {
 
       expect(
         body,
-        contains("'__delete_item:\$itemType:\$safeService'"),
-        reason: 'The wire payload must be the closed-set sentinel the '
-            'backend recognises in vault_secure_item_delete_confirmation.',
+        contains('_pendingClientSecureItemDeleteService = safeService'),
+        reason: 'The dashboard must keep the selected client-encrypted item '
+            'until the user confirms the destructive action.',
+      );
+      expect(
+        body,
+        contains("msgs.add(_Msg('assistant', question))"),
+        reason: 'The user must see an explicit confirmation question before '
+            'the ciphertext row is deleted.',
+      );
+    });
+
+    test('confirmed action uses ciphertext-aware delete and refreshes', () {
+      final src = _readMain();
+      final start = src.indexOf(
+        'Future<bool> _tryResolveClientSecureItemDelete(',
+      );
+      expect(start, greaterThan(-1));
+      final body = src.substring(
+        start,
+        (start + 6000).clamp(0, src.length),
       );
 
-      // 2026-07-22 crypto-context refactor: the delete-sentinel is
-      // now encrypted via `encryptWithContext(plaintext: sentinel,
-      // context: ctxSnapshot)` instead of the legacy
-      // `_VaultCrypto.encrypt(sentinel)`. The invariant remains
-      // "the wire payload is the SENTINEL, not the visible bubble"
-      // — the change is only which crypto helper is called.
       expect(
         body,
-        contains('encryptWithContext('),
-        reason: 'The encrypted /chat payload MUST be produced via '
-            'encryptWithContext so the key and its declared KDF '
-            'metadata come from a single immutable snapshot.',
+        contains('await client.deleteVaultSecureItem('),
+        reason: 'Confirmed dashboard deletion must use the existing method '
+            'that resolves and deletes client-encrypted vault items.',
       );
       expect(
         body,
-        contains('plaintext: sentinel'),
-        reason: 'The encrypted plaintext MUST be the sentinel — the '
-            'visible bubble is shown to the user separately.',
-      );
-      expect(
-        body,
-        isNot(contains('plaintext: visibleBubble')),
-        reason: 'The visible bubble is for display only; it must not be '
-            'sent on the wire.',
+        contains('await _reloadVaultLoginsAfterMutation()'),
+        reason: 'The visible dashboard must refresh after a confirmed delete.',
       );
     });
 
