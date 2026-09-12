@@ -1405,12 +1405,28 @@ _SERVICE_FROM_FOR_RE: re.Pattern[str] = re.compile(
 )
 
 
+# ``generate a login for GitHub`` puts the item noun before the service.
+# This form must be checked before ``_SERVICE_FROM_CREATE_RE`` because that
+# older pattern would otherwise interpret the adjective ``generated`` in
+# ``create a generated login for GitHub`` as the service name.
+_SERVICE_AFTER_LOGIN_FOR_RE: re.Pattern[str] = re.compile(
+    r"""
+    \b(?:logins?|accounts?|credentials?|sign[\s-]?ins?)
+    \s+for\s+(?:(?:my|the|our)\s+)?
+    (?P<service>[A-Za-z0-9][A-Za-z0-9\.\-&\s]{0,80}?)
+    (?=\s+(?:with|using|username|password|email|url|website)\b|\s*[.!?]*\s*$)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 # Words that must NOT be picked up as service names — English stop
 # words that could accidentally match the pattern above.
 _SERVICE_STOPWORDS: frozenset[str] = frozenset({
     "new", "another", "quick", "fresh", "extra", "second",
     "third", "different", "additional", "spare", "temporary",
     "test", "throwaway", "one", "same", "similar",
+    "generated",
     "and", "or", "me", "my", "us", "a", "an", "the",
     "save", "create", "generate", "make", "add", "set", "up",
 })
@@ -1419,7 +1435,11 @@ _SERVICE_STOPWORDS: frozenset[str] = frozenset({
 def _extract_service_from_message(message: str) -> Optional[str]:
     if not isinstance(message, str) or not message.strip():
         return None
-    for pat in (_SERVICE_FROM_CREATE_RE, _SERVICE_FROM_FOR_RE):
+    for pat in (
+        _SERVICE_AFTER_LOGIN_FOR_RE,
+        _SERVICE_FROM_CREATE_RE,
+        _SERVICE_FROM_FOR_RE,
+    ):
         m = pat.search(message)
         if not m:
             continue

@@ -354,7 +354,8 @@ void main() {
       await _openSection(tester, 'chat');
       await tester.enterText(
         find.byKey(const Key('chat_composer_field')),
-        'Create me a login for GitHub',
+        'Create a generated login for GitHub with username '
+        'acceptance-github@example.com',
       );
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
@@ -465,8 +466,62 @@ void main() {
       await _waitFor(tester, find.text(fileName));
       await _screenshot(tester, '13-file-retrieved-after-relogin');
 
+      // Zero-knowledge chat retrieval must use the decrypted client-side
+      // records. The backend cannot and must not read these ciphertext rows.
+      await _openSection(tester, 'chat');
+      await _sendChat(tester, 'What is my mom birthday?');
+      await _waitFor(
+        tester,
+        find.textContaining('January 30, 1965'),
+      );
+      await _screenshot(tester, '14-chat-memory-retrieved');
+
+      await _sendChat(tester, 'Show me my GitHub login');
+      await _waitFor(
+        tester,
+        find.byKey(const Key('vault_chat_card_login_detail')),
+      );
+      await _waitFor(tester, find.textContaining(generatedLoginTitle));
+      await _screenshot(tester, '15-chat-login-retrieved');
+
+      await _sendChat(tester, 'Show me file $fileName');
+      await _waitFor(tester, find.textContaining(fileName));
+      await _screenshot(tester, '16-chat-file-retrieved');
+
+      // Every chat deletion is two-step. The success response is only shown
+      // after the corresponding ciphertext DELETE has returned successfully.
+      await _sendChat(tester, 'Delete my mom birthday memory');
+      await _waitFor(tester, find.textContaining('Reply yes or no'));
+      await _sendChat(tester, 'yes');
+      await _waitFor(tester, find.textContaining('Deleted "Mom'));
+      await _openSection(tester, 'memory');
+      await _settleNetwork(tester);
+      expect(find.text(chatMemoryTitle), findsNothing);
+      await _screenshot(tester, '17-chat-memory-deleted');
+
+      await _openSection(tester, 'chat');
+      await _sendChat(tester, 'Delete my GitHub login');
+      await _waitFor(tester, find.textContaining('Reply yes or no'));
+      await _sendChat(tester, 'yes');
+      await _waitFor(tester, find.textContaining('Deleted "GitHub"'));
+      await _openSection(tester, 'logins');
+      await _settleNetwork(tester);
+      expect(find.text(generatedLoginTitle), findsNothing);
+      expect(find.text(loginTitle), findsWidgets);
+      await _screenshot(tester, '18-chat-login-deleted');
+
+      await _openSection(tester, 'chat');
+      await _sendChat(tester, 'Delete my file $fileName');
+      await _waitFor(tester, find.textContaining('Reply yes or no'));
+      await _sendChat(tester, 'yes');
+      await _waitFor(tester, find.textContaining('Deleted "$fileName"'));
+      await _openSection(tester, 'files');
+      await _settleNetwork(tester);
+      expect(find.text(fileName), findsNothing);
+      await _screenshot(tester, '19-chat-file-deleted');
+
       await _deleteCurrentVault(tester);
-      await _screenshot(tester, '14-temporary-vault-deleted');
+      await _screenshot(tester, '20-temporary-vault-deleted');
     },
     timeout: const Timeout(Duration(minutes: 8)),
   );

@@ -12,7 +12,8 @@ void main() {
       source,
       contains(r"'$baseUrl/vault/ciphertext/vault-items/$itemId'"),
     );
-    expect(source, contains("return _listZkVaultItems(authToken: authToken)"));
+    expect(source, contains("_listZkVaultItems(authToken: authToken)"));
+    expect(source, contains("'engine': 'ciphertext_with_legacy_compatibility'"));
     expect(source, contains('existingItemId: existingItemId'));
     expect(source, contains("'fields': rawFields is Map"));
     expect(source, contains("'id': raw['item_id']"));

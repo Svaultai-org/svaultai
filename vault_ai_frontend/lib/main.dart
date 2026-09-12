@@ -54,6 +54,7 @@ import 'services/native_video_viewer.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
+import 'services/vault_local_content_command.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
@@ -622,6 +623,22 @@ class _VaultStoredFile {
       relativePath: json['relative_path']?.toString(),
     );
   }
+}
+
+class _VaultLocalDeleteTarget {
+  final VaultLocalContentKind kind;
+  final String id;
+  final String label;
+  final String? service;
+  final String? itemType;
+
+  const _VaultLocalDeleteTarget({
+    required this.kind,
+    required this.id,
+    required this.label,
+    this.service,
+    this.itemType,
+  });
 }
 
 void vlog(String tag, [Map<String, Object?>? data]) {
@@ -7417,6 +7434,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   FolderTreeData? _folderTreeData;
   String _folderSearchQuery = '';
   List<VaultLoginItem> vaultLogins = [];
+  _VaultLocalDeleteTarget? _pendingLocalDelete;
 
   _DashboardSection selectedSection = _DashboardSection.chat;
   int _memoryRefreshGeneration = 0;
@@ -14771,6 +14789,291 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return true;
   }
 
+  void _appendLocalVaultReply(
+    String userText,
+    String assistantText, {
+    _Msg? structured,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      input.clear();
+      msgs.add(_Msg('user', userText));
+      msgs.add(structured ?? _Msg('assistant', assistantText));
+    });
+    _scrollToBottom();
+  }
+
+  Future<bool> _tryLocalVaultContentCommand(String text) async {
+    if (attachments.isNotEmpty) return false;
+
+    final pending = _pendingLocalDelete;
+    if (pending != null) {
+      if (isVaultLocalDeleteCancellation(text)) {
+        _pendingLocalDelete = null;
+        _appendLocalVaultReply(text, 'Okay. I kept "${pending.label}".');
+        return true;
+      }
+      if (!isVaultLocalDeleteConfirmation(text)) {
+        _appendLocalVaultReply(
+          text,
+          'Please reply yes to permanently delete "${pending.label}", '
+          'or no to keep it.',
+        );
+        return true;
+      }
+      return _executeLocalVaultDelete(text, pending);
+    }
+
+    final command = parseVaultLocalContentCommand(text);
+    if (command == null) return false;
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) return false;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+
+    try {
+      switch (command.kind) {
+        case VaultLocalContentKind.login:
+          final result = await client.listVaultSecureItems(
+            vaultName: vaultName,
+            pin: await _VaultCrypto.currentPinOrThrow(),
+            authToken: token,
+          );
+          final rows = ((result['items'] as List?) ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .where((row) => '${row['item_type'] ?? 'login'}' == 'login')
+              .toList();
+          final match = resolveVaultLocalContentMatch(
+            query: command.query,
+            entries: rows.map((row) => VaultLocalContentEntry(
+                  id: '${row['id']}',
+                  label: '${row['service'] ?? ''}',
+                )),
+          );
+          if (match == null) {
+            _appendLocalVaultReply(
+              text,
+              'No saved login matches "${command.query}".',
+            );
+            return true;
+          }
+          final row =
+              rows.firstWhere((item) => '${item['id']}' == match.entry.id);
+          final service = '${row['service'] ?? match.entry.label}'.trim();
+          final itemType = '${row['item_type'] ?? 'login'}'.trim();
+          if (command.action == VaultLocalContentAction.delete) {
+            _pendingLocalDelete = _VaultLocalDeleteTarget(
+              kind: VaultLocalContentKind.login,
+              id: match.entry.id,
+              label: service,
+              service: service,
+              itemType: itemType,
+            );
+            _appendLocalVaultReply(
+              text,
+              'Permanently delete the "$service" login? Reply yes or no.',
+            );
+            return true;
+          }
+          final rawFields = row['fields'];
+          final fields = <String, String>{
+            if (rawFields is Map)
+              for (final entry in rawFields.entries)
+                if (entry.value != null)
+                  entry.key.toString(): entry.value.toString(),
+          };
+          final login = <String, dynamic>{
+            'id': row['id'],
+            'title': service,
+            'service': service,
+            if ((fields['username'] ?? '').isNotEmpty)
+              'username': fields['username'],
+            if ((fields['password'] ?? '').isNotEmpty)
+              'password': fields['password'],
+            if ((fields['url'] ?? fields['website'] ?? '').isNotEmpty)
+              'website': fields['url'] ?? fields['website'],
+            if ('${row['notes'] ?? fields['note'] ?? ''}'.isNotEmpty)
+              'notes': '${row['notes'] ?? fields['note']}',
+            'fields': fields,
+            'generated': true,
+          };
+          final structured = _Msg(
+            'assistant',
+            'Here is your "$service" login.',
+            kind: 'vault_chat_card',
+            payload: <String, dynamic>{
+              'intent': 'vault_login_search',
+              'card': <String, dynamic>{
+                'cardType': 'vault_login_card',
+                'view': 'detail',
+                'query': command.query,
+                'data': <String, dynamic>{
+                  'available': true,
+                  'view': 'detail',
+                  'query': command.query,
+                  'login': login,
+                },
+              },
+            },
+          );
+          _appendLocalVaultReply(text, structured.text, structured: structured);
+          return true;
+
+        case VaultLocalContentKind.memory:
+          final result = await client.listZkMemories(authToken: token);
+          final rows = ((result['items'] as List?) ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList();
+          final match = resolveVaultLocalContentMatch(
+            query: command.query,
+            entries: rows.map((row) => VaultLocalContentEntry(
+                  id: '${row['id']}',
+                  label: '${row['title'] ?? row['memory_key'] ?? ''}',
+                  aliases: <String>[
+                    if (row['memory_key'] != null) '${row['memory_key']}',
+                  ],
+                )),
+          );
+          if (match == null) {
+            if (!command.explicitKind &&
+                command.action == VaultLocalContentAction.retrieve) {
+              return false;
+            }
+            _appendLocalVaultReply(
+              text,
+              'No saved memory matches "${command.query}".',
+            );
+            return true;
+          }
+          final row =
+              rows.firstWhere((item) => '${item['id']}' == match.entry.id);
+          final label =
+              '${row['title'] ?? row['memory_key'] ?? match.entry.label}'
+                  .trim();
+          if (command.action == VaultLocalContentAction.delete) {
+            _pendingLocalDelete = _VaultLocalDeleteTarget(
+              kind: VaultLocalContentKind.memory,
+              id: match.entry.id,
+              label: label,
+            );
+            _appendLocalVaultReply(
+              text,
+              'Permanently delete the "$label" memory? Reply yes or no.',
+            );
+            return true;
+          }
+          final value =
+              '${row['value'] ?? row['memory_value'] ?? row['body'] ?? ''}'
+                  .trim();
+          final reply = value.isEmpty
+              ? 'I found the "$label" memory.'
+              : 'I remember "$label": $value';
+          _appendLocalVaultReply(text, reply);
+          return true;
+
+        case VaultLocalContentKind.file:
+          if (command.action != VaultLocalContentAction.delete) return false;
+          if (vaultFiles.isEmpty && !loadingFiles) await _loadVaultFiles();
+          final match = resolveLocalVaultFileLookup(
+            query: command.query,
+            files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
+                  id: file.id,
+                  fileName: file.fileName,
+                  savedName: file.savedName,
+                  mimeType: file.contentType,
+                  assetType: file.assetType,
+                  relativePath: file.relativePath,
+                  sizeBytes: file.fileSize,
+                )),
+          );
+          if (match == null) {
+            _appendLocalVaultReply(
+              text,
+              'No saved file matches "${command.query}".',
+            );
+            return true;
+          }
+          _pendingLocalDelete = _VaultLocalDeleteTarget(
+            kind: VaultLocalContentKind.file,
+            id: match.entry.id,
+            label: match.entry.displayName,
+          );
+          _appendLocalVaultReply(
+            text,
+            'Permanently delete the "${match.entry.displayName}" file? '
+            'Reply yes or no.',
+          );
+          return true;
+      }
+    } catch (e) {
+      if (app.handleApiException(e)) return true;
+      _appendLocalVaultReply(
+        text,
+        'I could not access that saved item. Please try again.',
+      );
+      return true;
+    }
+  }
+
+  Future<bool> _executeLocalVaultDelete(
+    String userText,
+    _VaultLocalDeleteTarget target,
+  ) async {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null || vaultName.isEmpty) return false;
+    final client = VaultAIClient(baseUrl: backendBaseUrl);
+    _pendingLocalDelete = null;
+    try {
+      switch (target.kind) {
+        case VaultLocalContentKind.login:
+          await client.deleteVaultSecureItem(
+            vaultName: vaultName,
+            service: target.service ?? target.label,
+            itemType: target.itemType ?? 'login',
+            pin: await _VaultCrypto.currentPinOrThrow(),
+            authToken: token,
+          );
+          await _reloadVaultLoginsAfterMutation();
+          break;
+        case VaultLocalContentKind.memory:
+          await client.deleteZkMemory(
+            authToken: token,
+            memoryId: target.id,
+          );
+          if (mounted) setState(() => _memoryRefreshGeneration++);
+          break;
+        case VaultLocalContentKind.file:
+          await client.deleteVaultFile(
+            vaultName: vaultName,
+            fileId: target.id,
+            pin: await _VaultCrypto.currentPinOrThrow(),
+            authToken: token,
+          );
+          await _loadVaultFiles();
+          break;
+      }
+      unawaited(app.refreshVaultStats());
+      _appendLocalVaultReply(
+        userText,
+        'Deleted "${target.label}" permanently.',
+      );
+      return true;
+    } catch (e) {
+      if (app.handleApiException(e)) return true;
+      _appendLocalVaultReply(
+        userText,
+        'I could not delete "${target.label}". Nothing was changed.',
+      );
+      return true;
+    }
+  }
+
   Future<bool> _tryLocalVaultFileLookupReply(String text) async {
     if (attachments.isNotEmpty) return false;
     final query = extractLocalFileLookupQuery(text);
@@ -14887,6 +15190,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     // persistent AI keeper's name and role.
     if (attachments.isEmpty && _tryDirectAccountUsernameReply(text, app)) {
       input.clear();
+      return;
+    }
+
+    if (await _tryLocalVaultContentCommand(text)) {
       return;
     }
 

@@ -694,6 +694,15 @@ class ExtractServiceFromMessageTest(unittest.TestCase):
             ["Example"],
         )
 
+    def test_generated_login_for_service_with_explicit_username(self):
+        self.assertEqual(
+            det._extract_service_from_message(
+                "Create a generated login for GitHub with username "
+                "atlas-test@example.com",
+            ),
+            "GitHub",
+        )
+
     def test_login_for_service_forms_do_not_enable_lookup(self):
         for message in (
             "show me my Facebook login",
