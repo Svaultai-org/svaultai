@@ -39,6 +39,37 @@ Future<void> _settleNetwork(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 2));
 }
 
+Future<void> _sendChat(WidgetTester tester, String text) async {
+  final composer = find.byKey(const Key('chat_composer_field'));
+  await _waitFor(tester, composer);
+  final readyDeadline = DateTime.now().add(const Duration(seconds: 45));
+  while (tester.widget<TextField>(composer).enabled == false &&
+      DateTime.now().isBefore(readyDeadline)) {
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+  expect(
+    tester.widget<TextField>(composer).enabled,
+    isNot(false),
+    reason: 'The previous chat request must finish before the next send.',
+  );
+  await tester.enterText(composer, text);
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pumpAndSettle();
+  final sendControl = find.descendant(
+    of: find.byKey(const Key('composer_send_button')),
+    matching: find.byType(InkWell),
+  );
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  while (tester.widget<InkWell>(sendControl).onTap == null &&
+      DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+  final send = tester.widget<InkWell>(sendControl);
+  expect(send.onTap, isNotNull);
+  send.onTap!();
+  await tester.pump();
+}
+
 Future<void> _screenshot(
   WidgetTester tester,
   String name,
@@ -125,6 +156,8 @@ void main() {
       const displayName = 'Release Acceptance';
       const loginTitle = 'Acceptance Login';
       const memoryTitle = 'Acceptance Memory';
+      const generatedLoginTitle = 'GitHub';
+      const chatMemoryTitle = "Mom's birthday";
       const fileName = 'acceptance-note.txt';
 
       app.main();
@@ -321,7 +354,7 @@ void main() {
       await _openSection(tester, 'chat');
       await tester.enterText(
         find.byKey(const Key('chat_composer_field')),
-        'Briefly confirm that the vault chat is working.',
+        'Create me a login for GitHub',
       );
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
@@ -339,6 +372,13 @@ void main() {
         timeout: const Duration(seconds: 90),
       );
       await _settleNetwork(tester);
+      final generatedSave =
+          find.byKey(const Key('vault_chat_card_generated_login_save'));
+      await _waitFor(
+        tester,
+        generatedSave,
+        timeout: const Duration(seconds: 90),
+      );
       final composer = tester.widget<TextField>(
         find.byKey(const Key('chat_composer_field')),
       );
@@ -349,7 +389,32 @@ void main() {
       );
       expect(find.textContaining('ClientException'), findsNothing);
       expect(find.textContaining('Error:'), findsNothing);
-      await _screenshot(tester, '07-production-chat-response');
+      await _screenshot(tester, '07-chat-generated-login-ready-to-save');
+
+      // Exact production regression: a login generated in chat must become a
+      // normal encrypted dashboard row immediately.
+      await tester.ensureVisible(generatedSave);
+      await tester.tap(generatedSave);
+      await _waitFor(tester, find.byKey(const Key('logins_page')));
+      await _waitFor(tester, find.textContaining(generatedLoginTitle));
+      await _screenshot(tester, '08-chat-generated-login-saved-and-visible');
+
+      // Exact production regression: an explicit memory saved through chat
+      // must be encrypted by the client, acknowledged, and listed in Memory.
+      await _openSection(tester, 'chat');
+      await _sendChat(
+        tester,
+        'Remember my mom birthday is January 30, 1965',
+      );
+      await _waitFor(
+        tester,
+        find.textContaining('Memory saved securely.'),
+        timeout: const Duration(seconds: 90),
+      );
+      expect(find.textContaining('could not save'), findsNothing);
+      await _openSection(tester, 'memory');
+      await _waitFor(tester, find.text(chatMemoryTitle));
+      await _screenshot(tester, '09-chat-memory-saved-and-visible');
 
       await tester.tap(find.byKey(const Key('account_menu_button')));
       await tester.pumpAndSettle();
@@ -370,7 +435,7 @@ void main() {
         find.byKey(const Key('auth_pin_field')).hitTestable(),
         _pin,
       );
-      await _screenshot(tester, '08-returning-user-sign-in');
+      await _screenshot(tester, '10-returning-user-sign-in');
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
       final signInButton =
@@ -388,18 +453,20 @@ void main() {
 
       await _openSection(tester, 'logins');
       await _waitFor(tester, find.text(loginTitle));
-      await _screenshot(tester, '09-login-retrieved-after-relogin');
+      await _waitFor(tester, find.textContaining(generatedLoginTitle));
+      await _screenshot(tester, '11-logins-retrieved-after-relogin');
 
       await _openSection(tester, 'memory');
       await _waitFor(tester, find.text(memoryTitle));
-      await _screenshot(tester, '10-memory-retrieved-after-relogin');
+      await _waitFor(tester, find.text(chatMemoryTitle));
+      await _screenshot(tester, '12-memories-retrieved-after-relogin');
 
       await _openSection(tester, 'files');
       await _waitFor(tester, find.text(fileName));
-      await _screenshot(tester, '11-file-retrieved-after-relogin');
+      await _screenshot(tester, '13-file-retrieved-after-relogin');
 
       await _deleteCurrentVault(tester);
-      await _screenshot(tester, '12-temporary-vault-deleted');
+      await _screenshot(tester, '14-temporary-vault-deleted');
     },
     timeout: const Timeout(Duration(minutes: 8)),
   );
