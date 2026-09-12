@@ -74,6 +74,24 @@ def test_memory_ciphertext_inventory_and_delete_routes_are_registered() -> None:
     ) in methods_by_path
 
 
+def test_vault_item_ciphertext_delete_is_vault_scoped() -> None:
+    import inspect
+    from routes import vault_ciphertext_write_routes as mod
+
+    methods_by_path = {
+        (getattr(route, "path", None), method)
+        for route in router.routes
+        for method in getattr(route, "methods", set())
+    }
+    assert (
+        "/vault/ciphertext/vault-items/{item_id}",
+        "DELETE",
+    ) in methods_by_path
+    src = inspect.getsource(mod.delete_vault_item_ciphertext)
+    assert "id = %s AND vault_id = %s" in src
+    assert 'principal["vault_id"]' in src
+
+
 def test_crypto_ciphertext_endpoints_reject_wrong_hash_length() -> None:
     from routes.vault_ciphertext_write_routes import (
         _b64url_decode,

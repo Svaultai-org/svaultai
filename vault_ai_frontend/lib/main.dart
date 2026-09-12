@@ -6922,7 +6922,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           _showSnack(createMode
               ? (isLogin ? 'Login saved' : 'Saved item')
               : (isLogin ? 'Updated login' : 'Updated saved item'));
-          unawaited(_loadVaultLogins());
+          await _reloadVaultLoginsAfterMutation();
           unawaited(app.refreshVaultStats());
           if (createMode && isLogin) {
             setState(() => selectedSection = _DashboardSection.logins);
@@ -7307,7 +7307,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       if (mounted && thinking) setState(() => thinking = false);
       await app.refreshVaultStats();
-      await _loadVaultLogins();
+      await _reloadVaultLoginsAfterMutation();
     } catch (e) {
       if (app.handleApiException(e)) return;
       if (!mounted) return;
@@ -7330,6 +7330,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool thinking = false;
   bool loadingFiles = false;
   bool loadingLogins = false;
+  Future<void>? _vaultLoginsLoadFuture;
+  String? _vaultLoginsLoadToken;
+  String? _vaultLoginsLoadVault;
 
   bool hasLoadedSecureItems = false;
   String? secureItemsError;
@@ -11716,11 +11719,46 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
   }
 
-  Future<void> _loadVaultLogins() async {
+  Future<void> _loadVaultLogins() {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    if (token == null || vaultName == null) return Future<void>.value();
+
+    final active = _vaultLoginsLoadFuture;
+    if (active != null &&
+        _vaultLoginsLoadToken == token &&
+        _vaultLoginsLoadVault == vaultName) {
+      return active;
+    }
+
+    final next = _loadVaultLoginsOnce();
+    _vaultLoginsLoadToken = token;
+    _vaultLoginsLoadVault = vaultName;
+    _vaultLoginsLoadFuture = next;
+    next.whenComplete(() {
+      if (identical(_vaultLoginsLoadFuture, next)) {
+        _vaultLoginsLoadFuture = null;
+        _vaultLoginsLoadToken = null;
+        _vaultLoginsLoadVault = null;
+      }
+    });
+    return next;
+  }
+
+  Future<void> _reloadVaultLoginsAfterMutation() async {
+    final active = _vaultLoginsLoadFuture;
+    if (active != null) await active;
+    await _loadVaultLogins();
+  }
+
+  Future<void> _loadVaultLoginsOnce() async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
 
     if (token == null || app.vaultName == null) return;
+    final requestToken = token;
+    final requestVaultName = app.vaultName!;
 
     setState(() {
       loadingLogins = true;
@@ -11751,16 +11789,26 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
 
-      if (!mounted) return;
+      if (!mounted ||
+          app.sessionToken != requestToken ||
+          app.vaultName != requestVaultName) {
+        return;
+      }
       setState(() {
         vaultLogins = parsed;
         hasLoadedSecureItems = true;
         secureItemsError = null;
       });
     } catch (e) {
+      if (app.sessionToken != requestToken ||
+          app.vaultName != requestVaultName) {
+        return;
+      }
       if (app.handleApiException(e)) return;
 
-      if (mounted) {
+      if (mounted &&
+          app.sessionToken == requestToken &&
+          app.vaultName == requestVaultName) {
         setState(() {
           hasLoadedSecureItems = true;
           secureItemsError = e.toString();
@@ -11768,7 +11816,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       _showSnack('Could not load secure items: $e');
     } finally {
-      if (mounted) {
+      if (mounted &&
+          app.sessionToken == requestToken &&
+          app.vaultName == requestVaultName) {
         setState(() {
           loadingLogins = false;
         });
@@ -14867,7 +14917,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (hadAttachments) {
         await app.refreshVaultStats();
         await _loadVaultFiles();
-        await _loadVaultLogins();
+        await _reloadVaultLoginsAfterMutation();
       }
 
       if (text.isEmpty && uploadedFileIds.isNotEmpty) {
@@ -15208,7 +15258,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
       unawaited(app.refreshVaultStats());
       unawaited(_loadVaultFiles());
-      unawaited(_loadVaultLogins());
+      unawaited(_reloadVaultLoginsAfterMutation());
 
       if (!mounted) return;
       setState(() {

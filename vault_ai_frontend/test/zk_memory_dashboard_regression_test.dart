@@ -15,7 +15,10 @@ void main() {
     expect(page, isNot(contains('.createMemory(')));
     expect(page, isNot(contains('.updateMemory(')));
     expect(page, isNot(contains('.deleteMemory(')));
-    expect(api, contains('/vault/ciphertext/vault-ai-memory/list'));
+    expect(api, contains(r"'$baseUrl/vault/ciphertext/vault-ai-memory'"));
+    expect(api, contains("'memory_id': resolvedMemoryId"));
+    expect(api, contains('Uri.encodeComponent(memoryId)'));
+    expect(page, contains(r"final id = '${row['id'] ?? ''}'.trim()"));
     expect(api, contains('aesGcmUnwrap('));
   });
 

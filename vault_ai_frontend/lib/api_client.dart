@@ -2933,11 +2933,10 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
-    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items/list');
-    final response = await http.post(
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
+    final response = await http.get(
       uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode(<String, dynamic>{'limit': 500}),
+      headers: _defaultHeaders(authToken: authToken),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2949,7 +2948,7 @@ class VaultAIClient {
       ));
     }
     final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
+    if (decoded is! List) {
       throw Exception('Invalid ciphertext secure-items response format');
     }
     final metaKey =
@@ -2966,7 +2965,7 @@ class VaultAIClient {
     }
 
     final items = <Map<String, dynamic>>[];
-    for (final raw in (decoded['items'] as List? ?? const [])) {
+    for (final raw in decoded) {
       if (raw is! Map) continue;
       try {
         final type = await decryptRequired(raw['item_type_ciphertext']);
@@ -2978,7 +2977,7 @@ class VaultAIClient {
             : <String, dynamic>{};
         final rawFields = payload['fields'];
         items.add(<String, dynamic>{
-          'id': raw['id'],
+          'id': raw['item_id'],
           'service': service,
           'item_type': type,
           'fields': rawFields is Map
@@ -4345,7 +4344,16 @@ class VaultAIClient {
     );
     final lookupHash = await vault_key_hierarchy.keyedLookupHash(
       memoryLookup,
-      utf8.encode(memoryKey),
+      utf8.encode(memoryKey.trim().toLowerCase()),
+    );
+    final recordCanonical = <String>[
+      memoryType,
+      memoryKey.trim().toLowerCase(),
+      memoryValue.trim().toLowerCase(),
+    ].join('\u0000');
+    final recordHash = await vault_key_hierarchy.keyedLookupHash(
+      memoryLookup,
+      utf8.encode(recordCanonical),
     );
 
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
@@ -4356,6 +4364,7 @@ class VaultAIClient {
         'Authorization': 'Bearer $authToken',
       },
       body: jsonEncode(<String, dynamic>{
+        'memory_id': 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}',
         'memory_type': memoryType,
         'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
         'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
@@ -4371,11 +4380,10 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
-    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/list');
-    final response = await http.post(
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    final response = await http.get(
       uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode(<String, dynamic>{'limit': limit}),
+      headers: _defaultHeaders(authToken: authToken),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -4387,14 +4395,14 @@ class VaultAIClient {
       ));
     }
     final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
+    if (decoded is! List) {
       throw Exception('Invalid memory list response format');
     }
     final memoryKey =
         await vault_key_hierarchy.VaultKeyHierarchy(mvk).memoryKey();
     final items = <Map<String, dynamic>>[];
     final counts = <String, int>{};
-    for (final raw in (decoded['items'] as List? ?? const [])) {
+    for (final raw in decoded.take(limit)) {
       if (raw is! Map) continue;
       final envelope = raw['payload_ciphertext'];
       if (envelope is! String || envelope.isEmpty) continue;
@@ -4409,7 +4417,7 @@ class VaultAIClient {
             '${raw['memory_type'] ?? payload['memory_type'] ?? 'note'}';
         items.add(<String, dynamic>{
           ...Map<String, dynamic>.from(payload),
-          'id': raw['id'],
+          'id': raw['memory_id'],
           'memory_type': type,
           'created_at': raw['created_at'],
           'updated_at': raw['updated_at'],
@@ -4428,13 +4436,15 @@ class VaultAIClient {
 
   Future<void> deleteZkMemory({
     required String authToken,
-    required int memoryId,
+    required String memoryId,
   }) async {
-    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory/delete');
-    final response = await http.post(
+    final uri = Uri.parse(
+      '$baseUrl/vault/ciphertext/vault-ai-memory/'
+      '${Uri.encodeComponent(memoryId)}',
+    );
+    final response = await http.delete(
       uri,
-      headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode(<String, dynamic>{'memory_id': memoryId}),
+      headers: _defaultHeaders(authToken: authToken),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -4450,7 +4460,7 @@ class VaultAIClient {
   Future<void> upsertZkMemory({
     required String authToken,
     required Map<String, dynamic> data,
-    int? memoryId,
+    String? memoryId,
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
@@ -4466,15 +4476,27 @@ class VaultAIClient {
       lookupKey,
       utf8.encode(lookupText.trim().toLowerCase()),
     );
+    final recordCanonical = <String>[
+      '${data['memory_type'] ?? 'note'}',
+      lookupText.trim().toLowerCase(),
+      '${data['value'] ?? data['memory_value'] ?? ''}'.trim().toLowerCase(),
+    ].join('\u0000');
+    final recordHash = await vault_key_hierarchy.keyedLookupHash(
+      lookupKey,
+      utf8.encode(recordCanonical),
+    );
+    final resolvedMemoryId = memoryId ??
+        'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(<String, dynamic>{
-        if (memoryId != null) 'memory_id': memoryId,
+        'memory_id': resolvedMemoryId,
         'memory_type': '${data['memory_type'] ?? 'note'}',
         'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
         'payload_ciphertext': vault_key_hierarchy.b64urlEncode(envelope),
+        'replace_existing': memoryId != null,
       }),
     );
     if (response.statusCode != 200) {
@@ -4621,11 +4643,12 @@ class VaultAIClient {
         }
       }
       if (itemId == null) throw Exception('Saved item not found');
-      final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items/delete');
-      final response = await http.post(
+      final uri = Uri.parse(
+        '$baseUrl/vault/ciphertext/vault-items/$itemId',
+      );
+      final response = await http.delete(
         uri,
-        headers: _defaultHeaders(authToken: authToken, json: true),
-        body: jsonEncode(<String, dynamic>{'item_id': itemId}),
+        headers: _defaultHeaders(authToken: authToken),
       );
       if (response.statusCode != 200) {
         _throwIfAuthExpired(response.statusCode, response.body);

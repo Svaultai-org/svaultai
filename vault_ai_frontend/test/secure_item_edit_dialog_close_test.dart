@@ -203,8 +203,8 @@ void main() {
   });
 
 
-  group('main.dart wiring — refresh runs unawaited', () {
-    test('main.dart uses unawaited() to refresh after save success', () {
+  group('main.dart wiring — refresh publishes the saved item', () {
+    test('main.dart awaits a fresh inventory load after save success', () {
       
       
       final src = File(
@@ -217,11 +217,10 @@ void main() {
       );
       expect(
         exec,
-        contains('unawaited(_loadVaultLogins())'),
+        contains('await _reloadVaultLoginsAfterMutation();'),
         reason:
-            'main.dart must refresh the Logins list AFTER the '
-            'dialog returns — operator brief Bug 1: no stuck '
-            'modal overlay.',
+            'main.dart must wait for any stale in-flight inventory '
+            'request, then publish a fresh list containing the saved item.',
       );
     });
   });

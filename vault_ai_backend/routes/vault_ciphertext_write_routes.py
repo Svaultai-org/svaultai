@@ -260,6 +260,28 @@ def list_vault_item_ciphertexts(
         conn.close()
 
 
+@router.delete("/vault/ciphertext/vault-items/{item_id}", response_model=dict)
+def delete_vault_item_ciphertext(
+    item_id: int,
+    principal: SessionPrincipal = Depends(verify_session_token),
+) -> dict:
+    """Delete one opaque vault item owned by the active vault."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM vault_items WHERE id = %s AND vault_id = %s",
+            (item_id, principal["vault_id"]),
+        )
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="item not found")
+        conn.commit()
+        return {"status": "deleted", "item_id": item_id}
+    finally:
+        conn.close()
+
+
 class UploadedFileMetadataRequest(BaseModel):
     file_id: str = Field(..., min_length=1, max_length=128)
     file_name_ciphertext: Optional[str] = None

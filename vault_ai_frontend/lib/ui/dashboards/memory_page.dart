@@ -670,8 +670,8 @@ class _MemoryPageState extends State<MemoryPage> {
     required Map<String, dynamic> data,
   }) async {
     try {
-      final id = row == null ? null : int.tryParse('${row['id']}');
-      if (row != null && id == null) throw Exception('Missing memory id');
+      final id = row == null ? null : '${row['id'] ?? ''}'.trim();
+      if (row != null && id!.isEmpty) throw Exception('Missing memory id');
       await widget.client.upsertZkMemory(
         authToken: widget.authToken,
         data: data,
@@ -713,8 +713,8 @@ class _MemoryPageState extends State<MemoryPage> {
     );
     if (confirmed != true) return;
     try {
-      final id = int.tryParse('${row['id']}');
-      if (id == null) throw Exception('Missing memory id');
+      final id = '${row['id'] ?? ''}'.trim();
+      if (id.isEmpty) throw Exception('Missing memory id');
       await widget.client.deleteZkMemory(
         authToken: widget.authToken,
         memoryId: id,
