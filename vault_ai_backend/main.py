@@ -14774,6 +14774,56 @@ async def chat_endpoint(
                 (vault_id or "")[:8] + "...",
             )
 
+        # Dashboard Delete is an internal encrypted transport command, not
+        # natural-language chat. Give it first refusal before either chat
+        # router or the credential parser: both legitimately tokenize words
+        # such as "login" and previously converted the sentinel into a search
+        # or a create-login command before the secure delete state machine ran.
+        from vault_secure_item_delete_confirmation import (
+            is_delete_intent_sentinel as _early_delete_check,
+        )
+        if _early_delete_check(decrypted_message or ""):
+            try:
+                from vault_secure_item_save import (
+                    BAND_DELETE_CONFIRMATION_PENDING as _EARLY_DELETE_PENDING,
+                    route_secure_item_message as _early_delete_route,
+                )
+                from vault_active_context import (
+                    CONTEXT_SECURE_ITEM_DELETE_CONFIRMATION as _EARLY_DELETE_CTX,
+                    set_active_context as _early_delete_set_context,
+                )
+
+                _early_delete_result = _early_delete_route(
+                    vault_id=vault_id,
+                    key=key,
+                    user_message=decrypted_message or "",
+                    user_tier="free",
+                )
+                if (
+                    (_early_delete_result or {}).get("band")
+                    == _EARLY_DELETE_PENDING
+                ):
+                    _early_delete_set_context(vault_id, _EARLY_DELETE_CTX)
+                    try:
+                        request.state.chat_path = (
+                            "secure_item_delete_sentinel_early"
+                        )
+                    except Exception:
+                        pass
+                    return encrypted_reply(_early_delete_result["message"])
+            except Exception:
+                logger.exception(
+                    "[CHAT-DEBUG] early_secure_item_delete_failed vault=%s",
+                    (vault_id or "")[:8] + "...",
+                )
+
+            # Never let a recognized internal delete command fall through to
+            # unrelated chat/credential handlers, even if state persistence
+            # fails transiently.
+            return encrypted_reply(
+                "I couldn't start that delete safely. Please try again."
+            )
+
         if (
             _cfp is not None
             and not (

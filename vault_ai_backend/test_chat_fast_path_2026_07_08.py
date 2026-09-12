@@ -125,6 +125,24 @@ class TestPeekIntentWithoutSideEffects(unittest.TestCase):
         self.assertEqual(command.action, ACTION_UNRELATED)
         self.assertEqual(command.explicit_fields, {})
 
+    def test_delete_sentinel_has_first_refusal_before_chat_router(self):
+        from pathlib import Path
+
+        src = (Path(__file__).parent / "main.py").read_text(
+            encoding="utf-8",
+        )
+        early_delete = src.find(
+            "is_delete_intent_sentinel as _early_delete_check",
+        )
+        fast_router = src.find(
+            "_cfp.SPAN_FAST_ROUTER_START",
+            early_delete,
+        )
+
+        self.assertGreater(early_delete, 0)
+        self.assertGreater(fast_router, 0)
+        self.assertLess(early_delete, fast_router)
+
     def test_complete_credential_assertion_bypasses_lookup_fast_path(self):
         called: list[str] = []
 
