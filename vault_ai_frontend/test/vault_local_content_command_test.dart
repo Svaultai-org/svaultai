@@ -36,6 +36,15 @@ void main() {
     expect(command?.memoryType, 'family');
     expect(command?.relationship, 'wife');
     expect(command?.toMemoryData()['memory_type'], 'family');
+
+    final friend = parseVaultLocalMemorySaveCommand(
+      'save my friend name Rashida Jones',
+    );
+    expect(friend, isNotNull);
+    expect(friend?.title, 'Friend name');
+    expect(friend?.value, 'Rashida Jones');
+    expect(friend?.memoryType, 'relationship');
+    expect(friend?.relationship, 'friend');
   });
 
   test('never downgrades credentials or recovery data into a memory', () {

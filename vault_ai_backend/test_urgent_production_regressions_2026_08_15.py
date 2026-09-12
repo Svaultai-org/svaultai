@@ -58,6 +58,21 @@ def test_save_wife_name_is_memory_not_generated_login_request() -> None:
     assert intent.value == "rachael habtu"
 
 
+def test_save_friend_name_without_connector_is_memory_not_login() -> None:
+    intent = parse_personal_memory_intent(
+        "save my friend name Rashida Jones"
+    )
+
+    assert intent is not None
+    assert intent.action == "save"
+    assert intent.subject == "friend"
+    assert intent.relationship == "friend"
+    assert intent.attribute == "name"
+    assert intent.memory_type == "identity"
+    assert intent.category == "relationship"
+    assert intent.value == "Rashida Jones"
+
+
 def test_explicit_credentials_never_enter_personal_memory_routing() -> None:
     for text in (
         "save my Facebook username john and password X",

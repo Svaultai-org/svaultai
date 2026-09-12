@@ -82,6 +82,7 @@ _SUBJECT_ALIASES = {
     "husband": ("husband", "husband", "husband"),
     "spouse": ("spouse", "spouse", "spouse"),
     "partner": ("partner", "partner", "partner"),
+    "friend": ("friend", "friend", "friend"),
     "sister": ("sister", "sister", "sister"),
     "brother": ("brother", "brother", "brother"),
     "daughter": ("daughter", "daughter", "daughter"),
@@ -91,13 +92,13 @@ _SUBJECT_ALIASES = {
 _ATTR_RE = r"(?:birthday|birth\s+date|date\s+of\s+birth|dob)"
 _SUBJECT_RE = (
     r"(?:mom|mum|mother|mama|dad|father|papa|wife|husband|spouse|"
-    r"partner|sister|brother|daughter|son)"
+    r"partner|friend|sister|brother|daughter|son)"
 )
 _APOSTROPHE_RE = r"(?:'|\u2019)"
 _SAVE_TRIGGER_RE = re.compile(
     r"^\s*(?:please\s+)?(?:remember(?:\s+that)?|save\s+this(?:\s+about\s+me)?|"
     r"save\s+that|save\s+memory|save\s+this\s+memory|"
-    r"save(?=\s+my\s+(?:wife|husband|spouse|partner|sister|brother|daughter|son)\b)|"
+    r"save(?=\s+my\s+(?:wife|husband|spouse|partner|friend|sister|brother|daughter|son)\b)|"
     r"don(?:'|\u2019)?t\s+forget|dont\s+forget|"
     r"keep\s+this(?:\s+for\s+me)?|note\s+that)\s*:?\s+"
     r"(?P<fact>.+?)\s*$",
@@ -156,7 +157,7 @@ _RELATIONSHIP_NAME_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})"
     rf"(?:{_APOSTROPHE_RE}s)?\s+"
     r"(?P<attribute>(?:full\s+|first\s+|given\s+)?name)\s*"
-    r"(?:is|=|:|to\s+be)\s*(?P<value>.+?)\s*$",
+    r"(?:(?:is|=|:|to\s+be)\s*)?(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
 _TRAILING_SAVE_TRIGGER_RE = re.compile(
@@ -552,6 +553,7 @@ def _parse_fact_statement(
     if m:
         subject, display, relationship = _subject_parts(m.group("subject"))
         value = _display_name_value(m.group("value"))
+        is_family = relationship != "friend"
         return PersonalMemoryIntent(
             action=action,
             subject=subject,
@@ -560,10 +562,14 @@ def _parse_fact_statement(
             attribute="name",
             title=f"{display.title()}'s name",
             memory_type="identity",
-            category="family",
+            category="family" if is_family else "relationship",
             value=value,
             display_value=value,
-            tags=("family", "identity", "name"),
+            tags=(
+                ("family", "identity", "name")
+                if is_family
+                else ("relationship", "identity", "name")
+            ),
             is_correction=is_correction,
             needs_clarification=not bool(value),
         )

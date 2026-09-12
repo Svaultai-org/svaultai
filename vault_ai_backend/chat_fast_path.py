@@ -245,6 +245,14 @@ def peek_intent_without_side_effects(
     text = decrypted_message.strip()
     if not text:
         return None
+    # Delete buttons in the web/iOS clients send an internal sentinel to the
+    # authoritative secure-item router.  Never let the read-only card router
+    # interpret that sentinel as a login search (for example, turning
+    # ``__delete_item:login:wife`` into a visible ``__delete_item wife``
+    # not-found query).  Returning None preserves the message for the
+    # confirmation-and-delete path later in the request pipeline.
+    if text.lower().startswith("__delete_item:"):
+        return None
     # A complete user-supplied login is create/save data. Credential words
     # make the deterministic card router look retrieval-like, but allowing
     # that envelope to short-circuit here prevents the downstream draft flow

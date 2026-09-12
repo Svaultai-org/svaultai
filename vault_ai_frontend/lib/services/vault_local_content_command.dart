@@ -96,6 +96,16 @@ final RegExp _explicitPersonalMemorySave = RegExp(
   caseSensitive: false,
 );
 
+final RegExp _relationshipNameMemorySaveWithoutConnector = RegExp(
+  r'^\s*(?:please\s+)?(?:remember|save)\s+(?:that\s+)?my\s+'
+  r'(?<relationship>friend|wife|husband|spouse|partner|mother|mom|father|dad|'
+  r'sister|brother|daughter|son|child|grandmother|grandma|grandfather|grandpa|'
+  r'aunt|uncle|cousin)\s+'
+  r'(?<attribute>(?:full\s+|first\s+|given\s+)?name)\s+'
+  r'(?<value>[^\r\n]{1,2000}?)\s*[.!?]*\s*$',
+  caseSensitive: false,
+);
+
 final RegExp _sensitiveVaultNoun = RegExp(
   r'\b(?:login|credential|password|passcode|pin|username|email|token|'
   r'secret|private\s+key|seed|recovery|backup\s+code|api\s+key|imei|'
@@ -113,10 +123,20 @@ final RegExp _familyRelationship = RegExp(
 VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
   String message,
 ) {
-  final match = _explicitPersonalMemorySave.firstMatch(message);
-  if (match == null) return null;
-  final rawTitle = (match.namedGroup('title') ?? '').trim();
-  final value = (match.namedGroup('value') ?? '').trim();
+  final explicit = _explicitPersonalMemorySave.firstMatch(message);
+  final relationshipName = explicit == null
+      ? _relationshipNameMemorySaveWithoutConnector.firstMatch(message)
+      : null;
+  if (explicit == null && relationshipName == null) return null;
+  final rawTitle = explicit != null
+      ? (explicit.namedGroup('title') ?? '').trim()
+      : '${relationshipName?.namedGroup('relationship') ?? ''} '
+              '${relationshipName?.namedGroup('attribute') ?? ''}'
+          .trim();
+  final value = (explicit?.namedGroup('value') ??
+          relationshipName?.namedGroup('value') ??
+          '')
+      .trim();
   if (rawTitle.isEmpty || value.isEmpty) return null;
 
   // Credentials, recovery data, and device identifiers use their dedicated
@@ -125,11 +145,16 @@ VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
 
   final title = rawTitle[0].toUpperCase() + rawTitle.substring(1);
   final family = _familyRelationship.firstMatch(rawTitle);
-  final relationship = family?.group(0)?.toLowerCase() ?? 'self';
+  final explicitRelationship =
+      relationshipName?.namedGroup('relationship')?.toLowerCase();
+  final relationship =
+      explicitRelationship ?? family?.group(0)?.toLowerCase() ?? 'self';
   return VaultLocalMemorySaveCommand(
     title: title,
     value: value,
-    memoryType: family == null ? 'note' : 'family',
+    memoryType: relationship == 'friend'
+        ? 'relationship'
+        : (family == null ? 'note' : 'family'),
     relationship: relationship,
   );
 }

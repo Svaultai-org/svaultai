@@ -93,6 +93,24 @@ class TestSafeIntentSet(unittest.TestCase):
 
 class TestPeekIntentWithoutSideEffects(unittest.TestCase):
 
+    def test_delete_sentinel_bypasses_login_search_fast_path(self):
+        called: list[str] = []
+
+        def build(text: str) -> dict:
+            called.append(text)
+            return {
+                "intent": cfp.INTENT_LOGIN_SEARCH,
+                "card": {"query": "__delete_item wife"},
+            }
+
+        env = cfp.peek_intent_without_side_effects(
+            "__delete_item:login:wife",
+            build_envelope=build,
+        )
+
+        self.assertIsNone(env)
+        self.assertEqual(called, [])
+
     def test_complete_credential_assertion_bypasses_lookup_fast_path(self):
         called: list[str] = []
 
