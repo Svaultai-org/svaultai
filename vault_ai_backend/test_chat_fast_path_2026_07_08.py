@@ -134,14 +134,19 @@ class TestPeekIntentWithoutSideEffects(unittest.TestCase):
         early_delete = src.find(
             "is_delete_intent_sentinel as _early_delete_check",
         )
+        pending_delete = src.find(
+            "get_pending_delete_intent as _early_pending_delete",
+        )
         fast_router = src.find(
             "_cfp.SPAN_FAST_ROUTER_START",
             early_delete,
         )
 
         self.assertGreater(early_delete, 0)
+        self.assertGreater(pending_delete, 0)
         self.assertGreater(fast_router, 0)
         self.assertLess(early_delete, fast_router)
+        self.assertLess(pending_delete, fast_router)
 
     def test_complete_credential_assertion_bypasses_lookup_fast_path(self):
         called: list[str] = []
