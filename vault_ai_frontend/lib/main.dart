@@ -7484,7 +7484,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   bool sending = false;
+  // Claimed synchronously at the very start of a composer dispatch. The
+  // existing `sending` flag is intentionally set later, after local command
+  // routing. That left a window where repeated iOS tap/submit events could
+  // run the same lookup several times. This gate covers that entire window.
+  bool _sendDispatchInFlight = false;
   bool thinking = false;
+  final Set<String> _generatedLoginDraftActionsInFlight = <String>{};
+  final Set<String> _resolvedGeneratedLoginDrafts = <String>{};
   String? _pendingClientSecureItemDeleteService;
   String? _pendingClientSecureItemDeleteType;
   bool loadingFiles = false;
@@ -14503,6 +14510,73 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     await _send();
   }
 
+  String _generatedLoginDraftActionKey(Map<String, dynamic>? data) {
+    final draftId = '${data?['draft_id'] ?? ''}'.trim();
+    if (draftId.isNotEmpty) return 'draft:$draftId';
+    final service = '${data?['service'] ?? data?['service_name'] ?? ''}'
+        .trim()
+        .toLowerCase();
+    return 'service:$service';
+  }
+
+  bool _generatedLoginDraftMatches(
+    Map<dynamic, dynamic> candidate,
+    Map<String, dynamic>? target,
+  ) {
+    final targetDraftId = '${target?['draft_id'] ?? ''}'.trim();
+    final candidateDraftId = '${candidate['draft_id'] ?? ''}'.trim();
+    if (targetDraftId.isNotEmpty) return candidateDraftId == targetDraftId;
+    final targetService =
+        '${target?['service'] ?? target?['service_name'] ?? ''}'
+            .trim()
+            .toLowerCase();
+    final candidateService =
+        '${candidate['service'] ?? candidate['service_name'] ?? ''}'
+            .trim()
+            .toLowerCase();
+    return targetService.isNotEmpty && candidateService == targetService;
+  }
+
+  /// Persists generated-login action state in the message model, rather than
+  /// only in the card widget State. ListView may dispose an off-screen card;
+  /// when it comes back, this model-owned state keeps Save/Cancel one-shot.
+  void _setGeneratedLoginDraftActionState(
+    _Msg msg,
+    Map<String, dynamic>? target,
+    String? actionState,
+  ) {
+    void mutate() {
+      final payload = msg.payload;
+      final cardRaw = payload?['card'];
+      if (cardRaw is! Map) return;
+      final dataRaw = cardRaw['data'];
+      if (dataRaw is! Map) return;
+
+      void updateCandidate(Map<dynamic, dynamic> candidate) {
+        if (!_generatedLoginDraftMatches(candidate, target)) return;
+        if (actionState == null) {
+          candidate.remove('action_state');
+        } else {
+          candidate['action_state'] = actionState;
+        }
+      }
+
+      updateCandidate(dataRaw);
+      final draftsRaw = dataRaw['drafts'];
+      if (draftsRaw is List) {
+        for (final candidate in draftsRaw.whereType<Map>()) {
+          updateCandidate(candidate);
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(mutate);
+    } else {
+      mutate();
+    }
+  }
+
   /// Dispatcher for structured card actions surfaced through the
   /// chat bubble → chat message list plumbing. Actions carry a
   /// (msg, action, data) tuple. Today we route:
@@ -14557,10 +14631,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (action == 'generated_login_save') {
       final payload =
           data == null ? <String, dynamic>{} : Map<String, dynamic>.from(data);
-      await _saveGeneratedLoginDraftFromCard(payload);
+      final actionKey = _generatedLoginDraftActionKey(payload);
+      if (_generatedLoginDraftActionsInFlight.contains(actionKey) ||
+          _resolvedGeneratedLoginDrafts.contains(actionKey)) {
+        return;
+      }
+      _generatedLoginDraftActionsInFlight.add(actionKey);
+      _setGeneratedLoginDraftActionState(msg, payload, 'saving');
+      try {
+        await _saveGeneratedLoginDraftFromCard(payload);
+        _resolvedGeneratedLoginDrafts.add(actionKey);
+        _setGeneratedLoginDraftActionState(msg, payload, 'saved');
+      } catch (_) {
+        // A failed save remains retryable. Only successful actions become
+        // permanently resolved.
+        _setGeneratedLoginDraftActionState(msg, payload, null);
+        rethrow;
+      } finally {
+        _generatedLoginDraftActionsInFlight.remove(actionKey);
+      }
       return;
     }
     if (action == 'generated_login_cancel') {
+      final actionKey = _generatedLoginDraftActionKey(data);
+      if (_generatedLoginDraftActionsInFlight.contains(actionKey) ||
+          _resolvedGeneratedLoginDrafts.contains(actionKey)) {
+        return;
+      }
+      _generatedLoginDraftActionsInFlight.add(actionKey);
+      _resolvedGeneratedLoginDrafts.add(actionKey);
+      _setGeneratedLoginDraftActionState(msg, data, 'cancelled');
       final draftId = (data?['draft_id'] as String?)?.trim() ?? '';
       final service = (data?['service'] as String?)?.trim() ?? '';
       if (draftId.isNotEmpty) {
@@ -14570,7 +14670,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (service.isNotEmpty) 'service': service,
         };
       }
-      _sendQuickPrompt('cancel');
+      try {
+        await _sendQuickPrompt('cancel');
+      } finally {
+        _generatedLoginDraftActionsInFlight.remove(actionKey);
+      }
       return;
     }
     if (action == 'memory_proposal_save') {
@@ -15322,6 +15426,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _send() async {
+    if (_sendDispatchInFlight || sending) return;
+    if (input.text.trim().isEmpty && attachments.isEmpty) return;
+
+    _sendDispatchInFlight = true;
+    if (mounted) setState(() {});
+    try {
+      await _sendOnce();
+    } finally {
+      _sendDispatchInFlight = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _sendOnce() async {
     final text = input.text.trim();
     if ((text.isEmpty && attachments.isEmpty) || sending) return;
 
@@ -15881,7 +15999,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       isMobile: isMobile,
       count: attachments.length,
       itemBuilder: (context, index) => _buildAttachmentRow(attachments[index]),
-      onClear: sending ? null : _clearAttachments,
+      onClear: sending || _sendDispatchInFlight ? null : _clearAttachments,
     );
   }
 
@@ -15956,8 +16074,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Widget _buildComposer(bool isMobile) {
     final vr = VaultResponsive.of(context);
 
-    final canSend =
-        !sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty);
+    final composerBusy = sending || _sendDispatchInFlight;
+    final canSend = !sending &&
+        (input.text.trim().isNotEmpty || attachments.isNotEmpty) &&
+        !_sendDispatchInFlight;
 
     Widget _attachmentIcon() => SizedBox(
           key: const Key('composer_attachment_button'),
@@ -15976,7 +16096,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
             color: _isListening ? const Color(0xFF10A37F) : null,
             tooltip: _isListening ? 'Stop listening' : 'Speak',
-            onPressed: sending ? null : _toggleListening,
+            onPressed: composerBusy ? null : _toggleListening,
           ),
         );
 
@@ -15990,7 +16110,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             icon: const Icon(Icons.stop_circle),
             color: Colors.redAccent,
             tooltip: 'Stop recording',
-            onPressed: sending
+            onPressed: composerBusy
                 ? null
                 : (_isVideoRecording
                     ? _toggleVideoRecording
@@ -16004,7 +16124,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return Semantics(
         button: true,
         identifier: 'composer_send_button',
-        label: sending
+        label: composerBusy
             ? AppLocalizations.of(context).chatSending
             : AppLocalizations.of(context).chatSendButton,
         child: Material(
@@ -16018,7 +16138,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               width: size,
               height: size,
               child: Icon(
-                sending ? Icons.hourglass_top : Icons.arrow_upward_rounded,
+                composerBusy ? Icons.hourglass_top : Icons.arrow_upward_rounded,
                 size: vr.isMobile ? 18 : 20,
                 color: iconColor,
               ),
@@ -16046,7 +16166,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         child: TextField(
           key: const Key('chat_composer_field'),
           controller: input,
-          enabled: !sending,
+          enabled: !composerBusy,
           decoration: InputDecoration(
             hintText: isMobile
                 ? 'Ask Svaultai…'

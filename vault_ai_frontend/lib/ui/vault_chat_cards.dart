@@ -1886,8 +1886,11 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
     final url = _readStringFrom(data, 'url');
     final title = _readStringFrom(data, 'title');
     final actions = _actionsFrom(data);
-    final dispatched = _isDispatched(draftId, service);
-    final saving = _savingDrafts.contains(_dispatchKey(draftId, service));
+    final actionState = _readStringFrom(data, 'action_state');
+    final resolved = actionState == 'saved' || actionState == 'cancelled';
+    final dispatched = resolved || _isDispatched(draftId, service);
+    final saving = actionState == 'saving' ||
+        _savingDrafts.contains(_dispatchKey(draftId, service));
     final passwordRevealed = _isPasswordRevealed(draftId, service);
     String keyed(String base) => suffix.isEmpty ? base : '${base}_$suffix';
 
@@ -1903,8 +1906,15 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
-          'Draft — review the values, then Save or Cancel.',
+        Text(
+          actionState == 'saved'
+              ? 'Login saved securely.'
+              : actionState == 'cancelled'
+                  ? 'Draft cancelled.'
+                  : actionState == 'saving'
+                      ? 'Saving login securely…'
+                      : 'Draft — review the values, then Save or Cancel.',
+          key: Key(keyed('vault_chat_card_generated_login_action_status')),
           style: TextStyle(
             color: kWalletTextMuted,
             fontSize: 12,
@@ -1993,78 +2003,103 @@ class _GeneratedLoginCardState extends State<_GeneratedLoginCard> {
 
         const SizedBox(height: 16),
 
-        // Action row: Save + Cancel. Save is primary (accent),
-        // Cancel is a low-emphasis button so accidental taps are
-        // rarer than intentional saves.
-        Row(
-          children: [
-            if (actions.contains('save'))
-              Expanded(
-                child: Semantics(
-                  container: true,
-                  identifier: keyed('vault_chat_card_generated_login_save'),
-                  button: true,
-                  child: ElevatedButton.icon(
-                    key: Key(
-                      keyed('vault_chat_card_generated_login_save'),
-                    ),
-                    onPressed:
-                        dispatched || saving ? null : () => _handleSave(data),
-                    icon: const Icon(Icons.check_rounded, size: 18),
-                    label: const Text('Save login'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kWalletAccentPrimary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
+        // Once the controller has claimed an action, replace the controls
+        // with a stable status. Keeping only disabled buttons was not enough:
+        // ListView recycling recreated their State and made them active again.
+        if (resolved)
+          Row(
+            key: Key(keyed('vault_chat_card_generated_login_resolved')),
+            children: [
+              Icon(
+                actionState == 'saved'
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.cancel_outlined,
+                size: 18,
+                color: actionState == 'saved'
+                    ? kWalletAccentPrimary
+                    : kWalletTextMuted,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                actionState == 'saved' ? 'Login saved' : 'Draft cancelled',
+                style: const TextStyle(
+                  color: kWalletTextPrimary,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              if (actions.contains('save'))
+                Expanded(
+                  child: Semantics(
+                    container: true,
+                    identifier: keyed('vault_chat_card_generated_login_save'),
+                    button: true,
+                    child: ElevatedButton.icon(
+                      key: Key(
+                        keyed('vault_chat_card_generated_login_save'),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                      onPressed:
+                          dispatched || saving ? null : () => _handleSave(data),
+                      icon: const Icon(Icons.check_rounded, size: 18),
+                      label: Text(saving ? 'Saving…' : 'Save login'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kWalletAccentPrimary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            if (actions.contains('save') && actions.contains('cancel'))
-              const SizedBox(width: 10),
-            if (actions.contains('cancel'))
-              Expanded(
-                child: Semantics(
-                  container: true,
-                  identifier: keyed('vault_chat_card_generated_login_cancel'),
-                  button: true,
-                  child: OutlinedButton.icon(
-                    key: Key(
-                      keyed('vault_chat_card_generated_login_cancel'),
-                    ),
-                    onPressed: dispatched
-                        ? null
-                        : () => _handleCancel(draftId, service),
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    label: const Text('Cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kWalletTextPrimary,
-                      side: const BorderSide(color: kWalletBorder),
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
+              if (actions.contains('save') && actions.contains('cancel'))
+                const SizedBox(width: 10),
+              if (actions.contains('cancel'))
+                Expanded(
+                  child: Semantics(
+                    container: true,
+                    identifier: keyed('vault_chat_card_generated_login_cancel'),
+                    button: true,
+                    child: OutlinedButton.icon(
+                      key: Key(
+                        keyed('vault_chat_card_generated_login_cancel'),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                      onPressed: dispatched || saving
+                          ? null
+                          : () => _handleCancel(draftId, service),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      label: const Text('Cancel'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kWalletTextPrimary,
+                        side: const BorderSide(color: kWalletBorder),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
       ],
     );
   }

@@ -602,6 +602,126 @@ void main() {
       expect(find.text('HBO Max'), findsOneWidget);
     });
 
+    testWidgets('generated login Save accepts only one rapid action',
+        (tester) async {
+      final pendingSave = Completer<void>();
+      var saveCalls = 0;
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(
+          response: _parse(
+            intent: 'vault_generated_login_create_draft',
+            card: {
+              'cardType': 'vault_generated_login_card',
+              'view': 'create_draft',
+              'data': {
+                'view': 'create_draft',
+                'service': 'Netflix',
+                'username': 'netflix@example.com',
+                'password': 'SamplePassword1!',
+                'draft_id': 'draft-one-shot-save',
+                'actions': ['save', 'cancel'],
+              },
+            },
+          ),
+          onGeneratedLoginSave: (_) {
+            saveCalls++;
+            return pendingSave.future;
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      final saveFinder = find.byKey(
+        const Key('vault_chat_card_generated_login_save'),
+      );
+      final saveButton = tester.widget<ElevatedButton>(saveFinder);
+      saveButton.onPressed!();
+      saveButton.onPressed!();
+      saveButton.onPressed!();
+      await tester.pump();
+
+      expect(saveCalls, 1);
+      expect(tester.widget<ElevatedButton>(saveFinder).onPressed, isNull);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(
+              const Key('vault_chat_card_generated_login_cancel'),
+            ))
+            .onPressed,
+        isNull,
+      );
+
+      pendingSave.complete();
+      await tester.pumpAndSettle();
+      expect(saveCalls, 1);
+    });
+
+    testWidgets('resolved generated login stays one-shot after widget rebuild',
+        (tester) async {
+      VaultChatResponse resolvedResponse(String actionState) => _parse(
+            intent: 'vault_generated_login_create_draft',
+            card: {
+              'cardType': 'vault_generated_login_card',
+              'view': 'create_draft',
+              'data': {
+                'view': 'create_draft',
+                'service': 'Netflix',
+                'username': 'netflix@example.com',
+                'password': 'SamplePassword1!',
+                'draft_id': 'draft-persisted-save',
+                'actions': ['save', 'cancel'],
+                'action_state': actionState,
+              },
+            },
+          );
+
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(response: resolvedResponse('saved')),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Login saved'), findsOneWidget);
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_cancel')),
+        findsNothing,
+      );
+
+      // Dispose the card, then construct it again as ListView does after an
+      // off-screen item is recycled. The model-owned action_state must win.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(response: resolvedResponse('saved')),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Login saved'), findsOneWidget);
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_cancel')),
+        findsNothing,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(_wrap(
+        VaultChatCardView(response: resolvedResponse('cancelled')),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Draft cancelled'), findsOneWidget);
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_save')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('vault_chat_card_generated_login_cancel')),
+        findsNothing,
+      );
+    });
+
     testWidgets('generated login batch renders every requested draft',
         (tester) async {
       final saved = <String>[];

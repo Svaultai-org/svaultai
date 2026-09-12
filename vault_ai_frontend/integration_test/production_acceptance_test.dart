@@ -597,12 +597,34 @@ void main() {
       );
       await _screenshot(tester, '14-chat-memory-retrieved');
 
-      await _sendChat(tester, 'Show me my GitHub login');
+      // Exact iOS one-tap regression: multiple tap callbacks delivered before
+      // the first local lookup awaits must still create one command/result.
+      const oneShotLookup = 'Show me my GitHub login';
+      await tester.enterText(
+        find.byKey(const Key('chat_composer_field')),
+        oneShotLookup,
+      );
+      await tester.pumpAndSettle();
+      final oneShotSendControl = find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      );
+      final oneShotSend = tester.widget<InkWell>(oneShotSendControl);
+      expect(oneShotSend.onTap, isNotNull);
+      oneShotSend.onTap!();
+      oneShotSend.onTap!();
+      oneShotSend.onTap!();
+      await tester.pump();
       await _waitFor(
         tester,
         find.byKey(const Key('vault_chat_card_login_detail')),
       );
       await _waitFor(tester, find.textContaining(generatedLoginTitle));
+      expect(
+        find.text(oneShotLookup),
+        findsOneWidget,
+        reason: 'One Send action must create exactly one user command.',
+      );
       await _screenshot(tester, '15-chat-login-retrieved');
 
       await _sendChat(tester, 'Show me file $fileName');

@@ -456,6 +456,10 @@ const Set<String> _kGeneratedLoginDraftKeys = <String>{
   'title',
   'drafts',
   'count',
+  // Client-owned one-shot action state. The chat controller writes this
+  // after Save/Cancel is claimed so a recycled ListView card cannot restore
+  // active buttons for an action that already ran.
+  'action_state',
 };
 
 Map<String, dynamic> _sanitizeGeneratedLoginDraftRow(Map raw) {

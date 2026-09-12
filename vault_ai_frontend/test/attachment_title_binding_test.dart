@@ -82,10 +82,9 @@ void main() {
       expect(src, contains('name: a.displayName ?? a.name'));
       expect(
         src,
-        contains(
-          '!sending && (input.text.trim().isNotEmpty || attachments.isNotEmpty)',
-        ),
+        contains('(input.text.trim().isNotEmpty || attachments.isNotEmpty)'),
       );
+      expect(src, contains('!_sendDispatchInFlight'));
       expect(src, contains('uploadCommitted && hadAttachments'));
       expect(
         src,
@@ -112,8 +111,7 @@ void main() {
           api, contains("await fill('saved_name', 'saved_name_ciphertext')"));
       expect(api, contains("map['needs_naming'] = false"));
 
-      final folderIdx =
-          api.indexOf("Future<Map<String, dynamic>> listFolder(");
+      final folderIdx = api.indexOf("Future<Map<String, dynamic>> listFolder(");
       expect(folderIdx, greaterThan(-1));
       final folderBody = api.substring(
         folderIdx,

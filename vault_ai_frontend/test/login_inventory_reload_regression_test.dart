@@ -55,4 +55,27 @@ void main() {
     expect(source, contains('.saveGeneratedLoginDraftCiphertext('));
     expect(source, contains('await _reloadVaultLoginsAfterMutation();'));
   });
+
+  test('chat dispatch and generated-login actions are parent-owned one-shot',
+      () {
+    final source = File('lib/main.dart').readAsStringSync();
+    expect(source, contains('bool _sendDispatchInFlight = false;'));
+    expect(source, contains('if (_sendDispatchInFlight || sending) return;'));
+    expect(source, contains('_sendDispatchInFlight = true;'));
+    expect(source, contains('await _sendOnce();'));
+    expect(source, contains('_sendDispatchInFlight = false;'));
+    expect(source,
+        contains('final composerBusy = sending || _sendDispatchInFlight;'));
+    expect(source, contains('_generatedLoginDraftActionsInFlight'));
+    expect(source, contains('_resolvedGeneratedLoginDrafts'));
+    expect(source,
+        contains("_setGeneratedLoginDraftActionState(msg, payload, 'saved')"));
+
+    final router =
+        File('lib/services/vault_chat_router.dart').readAsStringSync();
+    expect(router, contains("'action_state',"));
+    final cards = File('lib/ui/vault_chat_cards.dart').readAsStringSync();
+    expect(cards, contains("actionState == 'saved'"));
+    expect(cards, contains('vault_chat_card_generated_login_resolved'));
+  });
 }
