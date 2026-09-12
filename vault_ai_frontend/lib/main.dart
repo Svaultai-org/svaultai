@@ -641,6 +641,13 @@ String _safeVlogValue(String tag, String key, Object? value) {
   final lowerTag = tag.toLowerCase();
   final text = value.toString();
 
+  if (value is Map) {
+    return '{${value.entries.map((entry) {
+      final nestedKey = entry.key.toString();
+      return '$nestedKey: ${_safeVlogValue(tag, nestedKey, entry.value)}';
+    }).join(', ')}}';
+  }
+
   if (lowerKey.contains('vault_id') ||
       lowerKey == 'vaultid' ||
       lowerKey.endsWith('vaultid')) {
@@ -2942,6 +2949,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                 Padding(
                   padding: const EdgeInsets.only(right: 16),
                   child: PopupMenuButton<String>(
+                    key: const Key('account_menu_button'),
                     tooltip: 'Account',
                     itemBuilder: (_) => [
                       PopupMenuItem(
@@ -2968,6 +2976,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                       ),
                       const PopupMenuDivider(),
                       PopupMenuItem(
+                        key: const Key('account_menu_sign_out'),
                         value: 'sign_out',
                         child: Text(
                           AppLocalizations.of(context).commonSignOut,
@@ -4985,6 +4994,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                 ),
                 const SizedBox(height: 10),
                 TextButton(
+                  key: const Key('login_create_vault_link'),
                   onPressed: loading
                       ? null
                       : () =>
@@ -5314,6 +5324,7 @@ class _SignupPageState extends State<SignupPage> {
                   ),
                   const SizedBox(height: 14),
                   TextField(
+                    key: const Key('signup_vault_name_field'),
                     controller: vaultNameCtrl,
                     autocorrect: false,
                     enabled: !loading,
@@ -5325,6 +5336,7 @@ class _SignupPageState extends State<SignupPage> {
                   ),
                   const SizedBox(height: 10),
                   TextField(
+                    key: const Key('signup_display_name_field'),
                     controller: displayNameCtrl,
                     enabled: !loading,
                     decoration: const InputDecoration(
@@ -5334,6 +5346,7 @@ class _SignupPageState extends State<SignupPage> {
                   ),
                   const SizedBox(height: 10),
                   TextField(
+                    key: const Key('signup_pin_field'),
                     controller: pinCtrl,
                     keyboardType: TextInputType.number,
                     obscureText: true,
@@ -5347,6 +5360,7 @@ class _SignupPageState extends State<SignupPage> {
                   ),
                   const SizedBox(height: 10),
                   TextField(
+                    key: const Key('signup_confirm_pin_field'),
                     controller: confirmPinCtrl,
                     keyboardType: TextInputType.number,
                     obscureText: true,
@@ -5370,6 +5384,7 @@ class _SignupPageState extends State<SignupPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Checkbox(
+                            key: const Key('signup_risk_checkbox'),
                             value: acknowledged,
                             onChanged: loading
                                 ? null
@@ -5396,6 +5411,7 @@ class _SignupPageState extends State<SignupPage> {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
+                      key: const Key('signup_create_vault_button'),
                       onPressed: loading ? null : _submit,
                       child: Text(loading ? 'Creating…' : 'Create vault'),
                     ),
@@ -5887,6 +5903,7 @@ class _UnlockPageState extends State<UnlockPage> {
                   ),
                 ),
                 TextButton(
+                  key: const Key('unlock_use_another_vault_button'),
                   onPressed: loading ? null : _useAnotherVault,
                   child: Text(
                     AppLocalizations.of(context).authUseAnotherVault,
@@ -10750,7 +10767,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _folderPicker = createFolderPickerService();
     _nativeMediaCapture = createNativeMediaCaptureService();
     _recordingStorage = createRecordingStorage();
-    _initSpeech();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final app = context.read<AppState>();
 
@@ -10816,6 +10832,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   Future<void> _toggleListening() async {
     if (sending) return;
+    if (!_speechAvailable) {
+      await _initSpeech();
+      if (!mounted) return;
+    }
     if (!_speechAvailable) {
       _showSnack(
         'Voice input is unavailable or microphone permission was denied.',
@@ -15740,6 +15760,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       color: Color(0xFFB4B4B4),
                       fontSize: 15,
                       height: 1.6,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  OutlinedButton.icon(
+                    key: const Key('files_empty_refresh_button'),
+                    onPressed: _loadVaultFiles,
+                    icon: const Icon(Icons.refresh),
+                    label: Text(
+                      AppLocalizations.of(context).commonRefresh,
                     ),
                   ),
                 ],

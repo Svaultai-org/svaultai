@@ -25,6 +25,12 @@ String _safeVlogValue(String tag, String key, Object? value) {
   final lowerKey = key.toLowerCase();
   final lowerTag = tag.toLowerCase();
   final text = value.toString();
+  if (value is Map) {
+    return '{${value.entries.map((entry) {
+      final nestedKey = entry.key.toString();
+      return '$nestedKey: ${_safeVlogValue(tag, nestedKey, entry.value)}';
+    }).join(', ')}}';
+  }
   if (lowerKey == 'url') {
     return _safeUrlForLog(text);
   }
@@ -4485,8 +4491,8 @@ class VaultAIClient {
       lookupKey,
       utf8.encode(recordCanonical),
     );
-    final resolvedMemoryId = memoryId ??
-        'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
+    final resolvedMemoryId =
+        memoryId ?? 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     final response = await http.post(
       uri,
