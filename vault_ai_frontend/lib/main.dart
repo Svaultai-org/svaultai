@@ -6830,12 +6830,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final data = await showMemoryEditorDialog(context);
     if (data == null) return;
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
-      await client.createMemory(
+      await client.upsertZkMemory(
         authToken: token,
-        vaultName: vaultName,
-        pin: pin,
         data: data,
       );
       if (!mounted) return;
@@ -14436,17 +14434,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw StateError('memory_save_session_unavailable');
     }
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
-      final result = await VaultAIClient(baseUrl: backendBaseUrl).createMemory(
+      await _VaultCrypto.currentPinOrThrow();
+      await VaultAIClient(baseUrl: backendBaseUrl).upsertZkMemory(
         authToken: token,
-        vaultName: vaultName,
-        pin: pin,
         data: payload,
       );
-      final message = (result['message'] as String?)?.trim();
-      _appendAssistantMessage(
-        message == null || message.isEmpty ? 'Memory saved.' : message,
-      );
+      _appendAssistantMessage('Memory saved.');
       _showSnack('Memory saved');
     } on InvalidVaultUnlockException {
       _showSnack('Your vault is locked. Please enter your PIN again.');

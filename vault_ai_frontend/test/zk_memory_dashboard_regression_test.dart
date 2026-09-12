@@ -15,6 +15,9 @@ void main() {
     expect(page, isNot(contains('.createMemory(')));
     expect(page, isNot(contains('.updateMemory(')));
     expect(page, isNot(contains('.deleteMemory(')));
+    final main = await File('lib/main.dart').readAsString();
+    expect(main, contains('.upsertZkMemory('));
+    expect(main, isNot(contains('.createMemory(')));
     expect(api, contains(r"'$baseUrl/vault/ciphertext/vault-ai-memory'"));
     expect(api, contains("'memory_id': resolvedMemoryId"));
     expect(api, contains('Uri.encodeComponent(memoryId)'));
