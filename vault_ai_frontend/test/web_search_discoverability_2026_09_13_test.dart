@@ -18,6 +18,15 @@ void main() {
           'https://app.svaultai.com/features/digital-inheritance/',
       'web/features/zero-knowledge-security/index.html':
           'https://app.svaultai.com/features/zero-knowledge-security/',
+      'web/guides/index.html': 'https://app.svaultai.com/guides/',
+      'web/guides/private-encrypted-vault/index.html':
+          'https://app.svaultai.com/guides/private-encrypted-vault/',
+      'web/guides/password-manager-vs-digital-vault/index.html':
+          'https://app.svaultai.com/guides/password-manager-vs-digital-vault/',
+      'web/guides/encrypted-file-storage-checklist/index.html':
+          'https://app.svaultai.com/guides/encrypted-file-storage-checklist/',
+      'web/guides/digital-inheritance-checklist/index.html':
+          'https://app.svaultai.com/guides/digital-inheritance-checklist/',
     };
 
     test('every feature page is indexable, canonical, and descriptive', () {
@@ -47,12 +56,22 @@ void main() {
       }
     });
 
-    test('feature hub links to every focused guide', () {
+    test('feature and guide hubs expose every focused public page', () {
       final hub = _read('web/features/index.html');
-      for (final canonical in pages.values.skip(1)) {
+      final guideHub = _read('web/guides/index.html');
+      for (final canonical in pages.values.where(
+        (url) => url.contains('/features/') && url != pages.values.first,
+      )) {
         final path = Uri.parse(canonical).path;
         expect(hub, contains('href="$path"'), reason: path);
       }
+      for (final canonical in pages.values.where(
+        (url) => url.contains('/guides/') && !url.endsWith('/guides/'),
+      )) {
+        final path = Uri.parse(canonical).path;
+        expect(guideHub, contains('href="$path"'), reason: path);
+      }
+      expect(hub, contains('href="/guides/"'));
     });
 
     test('sitemap exposes every public feature URL', () {
@@ -68,8 +87,10 @@ void main() {
       final nginx = _read('../deploy/nginx/app.svaultai.com.conf');
 
       expect(robots, contains('Allow: /features/'));
+      expect(robots, contains('Allow: /guides/'));
       expect(robots, contains('Disallow: /login'));
       expect(nginx, contains(r'~^/features(?:/.*)?$'));
+      expect(nginx, contains(r'~^/guides(?:/.*)?$'));
       expect(
           nginx,
           contains(
