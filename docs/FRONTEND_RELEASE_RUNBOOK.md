@@ -165,6 +165,24 @@ build without further action.
   upstream host mappings, and other operator-specific values live
   in an out-of-band overlay.
 
+## 10. Notify search engines after public-page changes
+
+Run this step only when the release adds, changes, or removes a public URL in
+`web/sitemap.xml`. Private application routes must remain excluded from the
+sitemap and protected by the Nginx `X-Robots-Tag` rules.
+
+After the new sitemap and IndexNow verification file are reachable in
+production, run:
+
+```
+./scripts/submit-indexnow.sh
+```
+
+The command submits the canonical sitemap URLs to IndexNow participants,
+including Bing. A `200` or `202` response is success. Also confirm that Google
+Search Console reports `https://app.svaultai.com/sitemap.xml` as successful;
+Google will discover later sitemap changes when it re-reads the same URL.
+
 ---
 
 ## Emergency: user is stuck on an old build
