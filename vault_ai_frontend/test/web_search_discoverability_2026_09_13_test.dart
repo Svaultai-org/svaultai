@@ -109,5 +109,20 @@ void main() {
           html, contains('Free download with optional in-app subscriptions'));
       expect(html, contains('href="/features/"'));
     });
+
+    test('IndexNow ownership and submission wiring are valid', () {
+      const key = 'd3e731074886067a0a003327df1cbed1';
+      final keyFile = _read('web/$key.txt').trim();
+      final submissionScript = _read('scripts/submit-indexnow.sh');
+
+      expect(keyFile, key);
+      expect(keyFile, matches(RegExp(r'^[a-f0-9]{32}$')));
+      expect(submissionScript, contains('https://api.indexnow.org/indexnow'));
+      expect(
+        submissionScript,
+        contains('https://app.svaultai.com/\${indexnow_key}.txt'),
+      );
+      expect(submissionScript, contains("'urlList': urls"));
+    });
   });
 }
