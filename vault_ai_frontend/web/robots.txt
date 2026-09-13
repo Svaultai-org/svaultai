@@ -2,6 +2,7 @@ User-agent: *
 Allow: /
 Allow: /privacy/
 Allow: /help-and-faq-public
+Allow: /features/
 Disallow: /auth
 Disallow: /login
 Disallow: /signup
