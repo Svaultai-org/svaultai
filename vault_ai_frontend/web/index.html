@@ -15,6 +15,18 @@
     the `--base-href` argument provided to `flutter build`.
   -->
   <base href="$FLUTTER_BASE_HREF">
+  <script>
+    // Production must serve Flutter's generated build/web/index.html, where
+    // the token above is replaced with "/". If a raw web/index.html is ever
+    // copied over the generated shell by mistake, repair the base URI before
+    // Flutter starts instead of crashing to a blank screen.
+    (function repairUnbuiltFlutterBaseHref() {
+      var base = document.querySelector('base');
+      if (base && base.getAttribute('href') === '$FLUTTER_BASE_HREF') {
+        base.setAttribute('href', '/');
+      }
+    })();
+  </script>
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">

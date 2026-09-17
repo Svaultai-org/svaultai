@@ -188,7 +188,25 @@ else
     fi
 fi
 
-# ---- 5) template file leftover (warn only, not blocking) --------------
+# ---- 5) generated index has a resolved root base href -----------------
+index_html="$bundle_dir/index.html"
+if [ ! -f "$index_html" ]; then
+    echo "[verify-web-release] FAIL: $index_html missing." >&2
+    fail=$((fail+1))
+else
+    if grep -q '\$FLUTTER_BASE_HREF' "$index_html"; then
+        echo "[verify-web-release] FAIL: index.html contains the unresolved" >&2
+        echo "[verify-web-release]        \$FLUTTER_BASE_HREF token." >&2
+        echo "[verify-web-release]        Deploy build/web, never web/index.html." >&2
+        fail=$((fail+1))
+    fi
+    if ! grep -q '<base href="/">' "$index_html"; then
+        echo "[verify-web-release] FAIL: index.html is missing <base href=\"/\">." >&2
+        fail=$((fail+1))
+    fi
+fi
+
+# ---- 6) template file leftover (warn only, not blocking) --------------
 template_leftover="$bundle_dir/vaultai-sw-bootstrap.template.js"
 if [ -f "$template_leftover" ]; then
     echo "[verify-web-release] WARN: $template_leftover is present in the bundle." >&2

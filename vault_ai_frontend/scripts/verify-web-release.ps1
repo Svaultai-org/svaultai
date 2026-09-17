@@ -161,7 +161,24 @@ if (-not (Test-Path $mainJs -PathType Leaf)) {
     }
 }
 
-# ---- 5) template file leftover (warn only, not blocking) --------------
+# ---- 5) generated index has a resolved root base href -----------------
+$indexHtml = Join-Path $bundleDir 'index.html'
+if (-not (Test-Path $indexHtml -PathType Leaf)) {
+    Write-Error "[verify-web-release] FAIL: $indexHtml missing."
+    $fail++
+} else {
+    $indexText = Get-Content -Raw -Path $indexHtml
+    if ($indexText.Contains('$FLUTTER_BASE_HREF')) {
+        Write-Error '[verify-web-release] FAIL: index.html contains the unresolved $FLUTTER_BASE_HREF token. Deploy build/web, never web/index.html.'
+        $fail++
+    }
+    if (-not $indexText.Contains('<base href="/">')) {
+        Write-Error '[verify-web-release] FAIL: index.html is missing <base href="/">.'
+        $fail++
+    }
+}
+
+# ---- 6) template file leftover (warn only, not blocking) --------------
 $templateLeftover = Join-Path $bundleDir 'vaultai-sw-bootstrap.template.js'
 if (Test-Path $templateLeftover -PathType Leaf) {
     Write-Warning @'

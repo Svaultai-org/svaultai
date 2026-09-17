@@ -110,6 +110,31 @@ void main() {
       expect(html, contains('href="/features/"'));
     });
 
+    test('raw Flutter shell repairs an unresolved production base href', () {
+      final html = _read('web/index.html');
+      expect(html, contains(r'<base href="$FLUTTER_BASE_HREF">'));
+      expect(
+        html,
+        contains(
+          "base.getAttribute('href') === '\u0024FLUTTER_BASE_HREF'",
+        ),
+      );
+      expect(html, contains("base.setAttribute('href', '/')"));
+    });
+
+    test('release verifier rejects an unresolved Flutter base href', () {
+      final verifier = _read('scripts/verify-web-release.sh');
+      final windowsVerifier = _read('scripts/verify-web-release.ps1');
+      expect(verifier, contains(r"grep -q '\$FLUTTER_BASE_HREF'"));
+      expect(verifier, contains('Deploy build/web, never web/index.html.'));
+      expect(verifier, contains('<base href=\\"/\\">'));
+      expect(windowsVerifier, contains(r"Contains('$FLUTTER_BASE_HREF')"));
+      expect(
+        windowsVerifier,
+        contains('Deploy build/web, never web/index.html.'),
+      );
+    });
+
     test('IndexNow ownership and submission wiring are valid', () {
       const key = 'd3e731074886067a0a003327df1cbed1';
       final keyFile = _read('web/$key.txt').trim();
