@@ -4192,11 +4192,13 @@ Future<Map<String, dynamic>> _zkHttpPost(
       deviceId.isNotEmpty) {
     requestBody.putIfAbsent('device_id', () => deviceId);
   }
-  final response = await http.post(
-    uri,
-    headers: headers,
-    body: jsonEncode(requestBody),
-  );
+  final response = await http
+      .post(
+        uri,
+        headers: headers,
+        body: jsonEncode(requestBody),
+      )
+      .timeout(const Duration(seconds: 30));
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
       'ZK POST $path failed ${response.statusCode}: ${response.body}',
@@ -5264,6 +5266,17 @@ class _SignupPageState extends State<SignupPage> {
         friendly = 'That username is already taken. Please choose another.';
       } else if (msg.contains('failed 429') || msg.contains('HTTP 429')) {
         friendly = 'Too many attempts. Please wait and try again.';
+      } else if (msg.contains('failed 500') ||
+          msg.contains('failed 502') ||
+          msg.contains('failed 503') ||
+          msg.contains('failed 504') ||
+          msg.contains('HTTP 500') ||
+          msg.contains('HTTP 502') ||
+          msg.contains('HTTP 503') ||
+          msg.contains('HTTP 504')) {
+        friendly =
+            'SVaultAI is temporarily unavailable. Your vault was not created. '
+            'Please try again shortly.';
       } else {
         friendly = 'Signup failed. Please try again.';
       }
@@ -10956,7 +10969,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
       }
       await app.refreshVaultStats();
+      if (!mounted) return;
       await _loadVaultFiles();
+      if (!mounted) return;
       await _loadVaultLogins();
       authTimingDiagnosticPrint(
         'initial_vault_data_loaded',
@@ -11891,6 +11906,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _loadVaultLogins() {
+    if (!mounted) return Future<void>.value();
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
@@ -11924,6 +11940,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _loadVaultLoginsOnce() async {
+    if (!mounted) return;
     final app = context.read<AppState>();
     final token = app.sessionToken;
 
@@ -11985,7 +12002,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           secureItemsError = e.toString();
         });
       }
-      _showSnack('Could not load secure items: $e');
+      if (mounted) _showSnack('Could not load secure items: $e');
     } finally {
       if (mounted &&
           app.sessionToken == requestToken &&
@@ -11998,6 +12015,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _loadVaultFiles() async {
+    if (!mounted) return;
     final app = context.read<AppState>();
     final token = app.sessionToken;
 

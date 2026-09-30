@@ -101,7 +101,7 @@ services:
       VAULTAI_CRYPTO_HEALTH_ADMIN_TOKEN:   ${VAULTAI_CRYPTO_HEALTH_ADMIN_TOKEN}
       VAULTAI_BILLING_HEALTH_ADMIN_TOKEN:  ${VAULTAI_BILLING_HEALTH_ADMIN_TOKEN}
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/debug/ping"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3

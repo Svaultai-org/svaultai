@@ -205,6 +205,38 @@ void main() {
       expect(window.contains("'failed 409'"), isTrue);
       expect(window.contains("'HTTP 409'"), isTrue);
     });
+
+    test('server outages are distinct from invalid signup data', () {
+      final src = _readLib('main.dart');
+      final idx = src.indexOf('class _SignupPageState');
+      final endIdx = src.indexOf('Widget build(BuildContext context)', idx);
+      final window = src.substring(idx, endIdx);
+
+      for (final status in const [500, 502, 503, 504]) {
+        expect(window.contains("'failed $status'"), isTrue);
+        expect(window.contains("'HTTP $status'"), isTrue);
+      }
+      expect(
+        window.contains(
+          "'SVaultAI is temporarily unavailable. Your vault was not created. '",
+        ),
+        isTrue,
+        reason: 'A backend/database outage must not look like a user mistake',
+      );
+    });
+
+    test('ZK auth posts have a bounded network timeout', () {
+      final src = _readLib('main.dart');
+      final start = src.indexOf('Future<Map<String, dynamic>> _zkHttpPost(');
+      final end = src.indexOf('Future<Map<String, dynamic>> _zkHttpGet(', start);
+      final window = src.substring(start, end);
+
+      expect(
+        window.contains('.timeout(const Duration(seconds: 30))'),
+        isTrue,
+        reason: 'Signup must not spin forever on a half-open connection',
+      );
+    });
   });
 
   group('UnlockPage cache invariants', () {

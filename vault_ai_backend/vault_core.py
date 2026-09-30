@@ -77,6 +77,18 @@ def is_real_name(normalized: str) -> bool:
 DB_POOL_MIN = int(os.getenv("DB_POOL_MIN", "1"))
 DB_POOL_MAX = int(os.getenv("DB_POOL_MAX", "10"))
 
+# TCP keepalives bound how long a half-open connection to the managed
+# Postgres pooler can sit in our process looking usable.  The defaults are
+# intentionally conservative: they are short enough to recover from a
+# pooler/DNS failover without requiring an API restart, but long enough to
+# avoid churning healthy remote connections.
+DB_CONNECT_TIMEOUT_SECONDS = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "10"))
+DB_KEEPALIVES_IDLE_SECONDS = int(os.getenv("DB_KEEPALIVES_IDLE_SECONDS", "30"))
+DB_KEEPALIVES_INTERVAL_SECONDS = int(
+    os.getenv("DB_KEEPALIVES_INTERVAL_SECONDS", "10")
+)
+DB_KEEPALIVES_COUNT = int(os.getenv("DB_KEEPALIVES_COUNT", "3"))
+
 _pool: Optional[ThreadedConnectionPool] = None
 
 
@@ -88,6 +100,11 @@ def _get_pool() -> ThreadedConnectionPool:
             minconn=DB_POOL_MIN,
             maxconn=DB_POOL_MAX,
             dsn=DATABASE_URL,
+            connect_timeout=DB_CONNECT_TIMEOUT_SECONDS,
+            keepalives=1,
+            keepalives_idle=DB_KEEPALIVES_IDLE_SECONDS,
+            keepalives_interval=DB_KEEPALIVES_INTERVAL_SECONDS,
+            keepalives_count=DB_KEEPALIVES_COUNT,
         )
         logger.info(
             "Initialized DB connection pool (min=%d, max=%d)",
@@ -110,13 +127,18 @@ class _PooledConnection:
         if self._released:
             return
         self._released = True
+        discard = bool(self._conn.closed)
         try:
-            if not self._conn.closed:
+            if not discard:
                 self._conn.rollback()
         except Exception:
-            pass
+            # A rollback failure means the socket is no longer trustworthy.
+            # Returning it to ThreadedConnectionPool caused the September 30
+            # production outage: every request repeatedly borrowed the same
+            # timed-out connection until the whole API was restarted.
+            discard = True
         try:
-            self._pool.putconn(self._conn)
+            self._pool.putconn(self._conn, close=discard)
         except Exception:
             logger.exception("Failed returning connection to pool; discarding")
             try:
@@ -138,10 +160,40 @@ class _PooledConnection:
 
 
 def get_db() -> _PooledConnection:
-
-
     pool = _get_pool()
-    return _PooledConnection(pool.getconn(), pool)
+
+    # ThreadedConnectionPool does not validate sockets on checkout.  Managed
+    # database poolers can retire an idle connection while the Python object
+    # remains open, so prove liveness before handing it to a request.  Drain
+    # at most the configured pool size; after each discard the pool creates a
+    # fresh connection as needed.
+    last_error: Optional[Exception] = None
+    for _ in range(max(1, DB_POOL_MAX)):
+        conn = pool.getconn()
+        try:
+            if conn.closed:
+                raise psycopg2.InterfaceError("pooled connection is closed")
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            conn.rollback()
+            return _PooledConnection(conn, pool)
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Discarding unusable pooled DB connection: %s",
+                type(exc).__name__,
+            )
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    assert last_error is not None
+    raise last_error
 
 
 def close_pool() -> None:
