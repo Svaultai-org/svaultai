@@ -127,22 +127,10 @@ async def schedule_background_startup_tasks() -> StartupTasks:
   
     logger.info("startup: app ready")
 
+    # Account deletion is exclusively user initiated from an authenticated
+    # vault session. Do not schedule the retired unpaid/inactive sweeper.
     inactive_cleanup_task: Optional[asyncio.Task] = None
-    try:
-        from inactive_unpaid_cleanup import run_forever_daily
-        inactive_cleanup_task = asyncio.create_task(
-            run_forever_daily(),
-            name="inactive-unpaid-cleanup",
-        )
-        logger.info(
-            "inactive-cleanup: scheduled daily background loop",
-        )
-    except Exception:
-        logger.exception(
-            "inactive-cleanup: failed to schedule; "
-            "unpaid-inactive-6-months cleanup will not run "
-            "until next restart",
-        )
+    logger.info("inactive-cleanup: disabled; deletion is user-only")
 
     return StartupTasks(
         reconciler=reconciler_task,

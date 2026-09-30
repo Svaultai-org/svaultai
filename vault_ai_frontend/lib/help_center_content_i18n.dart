@@ -4,11 +4,7 @@
 // the Help Center's offline rendering. FAQ IDs and category IDs are
 // stable across every locale.
 
-import 'help_center_content.dart'
-    show FaqEntry, kFaqEntries, faqEntryById;
-
-
-
+import 'help_center_content.dart' show FaqEntry, kFaqEntries, faqEntryById;
 
 const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
   'en': {
@@ -2799,7 +2795,6 @@ const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
   },
 };
 
-
 const Map<String, Map<String, String>> kFaqCategoryLabelsI18n = {
   'en': {
     'getting_started': 'Getting started',
@@ -2873,15 +2868,19 @@ const Map<String, Map<String, String>> kFaqCategoryLabelsI18n = {
   },
 };
 
-
 String _normaliseFaqLocale(String? locale) {
   final v = (locale ?? 'en').trim().toLowerCase();
   if (v.isEmpty) return 'en';
   return v.split('-').first;
 }
 
-
 FaqEntry? localizedFaqEntry(String faqId, String? locale) {
+  // These legacy IDs used to describe automatic inactivity deletion.
+  // Account deletion is now user-only, so always use the reviewed canonical
+  // copy and never surface stale translated promises from older bundles.
+  if (faqId == 'why-inactive-unpaid-deleted' || faqId == 'how-to-prevent-auto-deletion') {
+    return faqEntryById(faqId);
+  }
   final base = _normaliseFaqLocale(locale);
   final table = kFaqTranslations[base] ?? const <String, FaqEntry>{};
   final hit = table[faqId];
@@ -2892,9 +2891,7 @@ FaqEntry? localizedFaqEntry(String faqId, String? locale) {
   return faqEntryById(faqId);
 }
 
-
 List<FaqEntry> localizedFaqEntries(String? locale) {
-
   final base = _normaliseFaqLocale(locale);
   final result = <FaqEntry>[];
   for (final canonical in kFaqEntries) {
@@ -2902,7 +2899,6 @@ List<FaqEntry> localizedFaqEntries(String? locale) {
   }
   return List<FaqEntry>.unmodifiable(result);
 }
-
 
 List<FaqEntry> localizedFaqEntriesMatchingQuery(
   String? locale,
@@ -2912,11 +2908,9 @@ List<FaqEntry> localizedFaqEntriesMatchingQuery(
   final localised = localizedFaqEntries(locale);
   if (q.isEmpty) return localised;
   return localised.where((e) {
-    return e.question.toLowerCase().contains(q) ||
-        e.answer.toLowerCase().contains(q);
+    return e.question.toLowerCase().contains(q) || e.answer.toLowerCase().contains(q);
   }).toList(growable: false);
 }
-
 
 String localizedFaqCategoryLabelFor(String categoryId, String? locale) {
   final base = _normaliseFaqLocale(locale);

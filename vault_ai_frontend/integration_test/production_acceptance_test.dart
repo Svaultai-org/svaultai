@@ -173,12 +173,17 @@ void main() {
   testWidgets(
     'production iPhone create-save-sign-out-sign-in-retrieve-delete journey',
     (tester) async {
+      const allowIsolatedStage = bool.fromEnvironment(
+        'SVAULTAI_ACCEPTANCE_ALLOW_ISOLATED_STAGE',
+      );
       expect(
-        app.backendBaseUrl,
-        'https://api.svaultai.com',
+        app.backendBaseUrl == 'https://api.svaultai.com' ||
+            (allowIsolatedStage &&
+                app.backendBaseUrl == 'http://127.0.0.1:18081'),
+        isTrue,
         reason: 'Production acceptance must exercise the same backend as the '
-            'App Store build. Pass '
-            '--dart-define=BACKEND_BASE_URL=https://api.svaultai.com.',
+            'App Store build, or the explicitly enabled isolated production '
+            'clone at http://127.0.0.1:18081.',
       );
       final suffix = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
       final vaultName = 'acceptance$suffix';

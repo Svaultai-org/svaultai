@@ -169,6 +169,12 @@ class TestLookupDecoderRejectsBadInput:
             _decode_lookup_v1_or_400("!!!not base64!!!")
 
 
+@pytest.mark.skip(
+    reason=(
+        "Migration 0045 fills the blind index before erasing readable names; "
+        "runtime plaintext-name scanning is intentionally removed."
+    ),
+)
 class TestLegacyRandomHandleLookupRecovery:
     """Username login must reach OPAQUE for pre-index adopted vaults."""
 

@@ -1,11 +1,9 @@
 """Vault deletion service.
 
-Two entry points share the same underlying cascade:
-
-  * user-requested deletion (called by /vault/delete/confirm after
-    the trusted-device + PIN + exact-phrase gate has passed)
-  * automatic deletion of unpaid users inactive for 6+ months
-    (called by the background cleanup job)
+Only the authenticated user deletion flow may invoke the cascade. It is
+called by ``/vault/delete/confirm`` after the trusted-device, PIN, exact-phrase,
+and billing gates have passed. Support/admin APIs and automatic cleanup jobs
+are not allowed to delete a user account.
 
 The service deletes the vault row; PostgreSQL cascades the delete to
 every vault-owned table via the ON DELETE CASCADE FKs declared in
@@ -35,8 +33,7 @@ Absolute rules enforced here:
   2. NEVER logs vault name, PIN, encrypted material, or wallet
      records. Log lines carry only the hashed vault id prefix and
      the deletion reason.
-  3. Refuses to delete when a fresh billing/activity re-check
-     disagrees with the caller's assumption (auto-delete path).
+  3. Refuses every reason except an authenticated user request.
 """
 
 from __future__ import annotations
@@ -56,11 +53,7 @@ REASON_UNPAID_INACTIVE_6_MONTHS:  str = "unpaid_inactive_6_months"
 REASON_DEVELOPMENT_FULL_USER_WIPE: str = "development_full_user_wipe"
 
 
-_ALLOWED_REASONS = frozenset({
-    REASON_USER_REQUESTED,
-    REASON_UNPAID_INACTIVE_6_MONTHS,
-    REASON_DEVELOPMENT_FULL_USER_WIPE,
-})
+_ALLOWED_REASONS = frozenset({REASON_USER_REQUESTED})
 
 
 CONFIRMATION_PHRASE: str = "DELETE MY VAULT"
@@ -82,9 +75,8 @@ class VaultDeletionBlockedByStripeError(VaultDeletionError):
     subscription would leave the customer being billed for storage
     that no longer exists. Callers MUST NOT delete the vault when
     this exception is raised; instead, they should retry deletion
-    later (the daily unpaid-inactive job will do so automatically;
-    user-initiated deletion returns HTTP 503 so the user can retry
-    on their own).
+    later. User-initiated deletion returns HTTP 503 so the owner can retry
+    on their own; no automatic or administrator retry can delete the vault.
 
     Only raised when ``cancel_subscription_for_account`` returns
     ``outcome='error'``. The noop outcomes (``noop_no_customer``,
@@ -310,9 +302,10 @@ def delete_vault_and_all_data(
 ) -> None:
     """Fully delete a vault's data. Enforced:
 
-      * `reason` must be a member of `_ALLOWED_REASONS`.
-      * Never broadcasts a crypto transaction — Stripe cancellation
-        is a best-effort side effect that is swallowed on failure.
+      * `reason` must be ``user_requested``. This service deliberately
+        refuses support, administrator, bulk-test, and inactivity reasons.
+      * Never broadcasts a crypto transaction. Stripe cancellation must be
+        confirmed before the vault row is removed.
       * No sensitive data is logged.
 
     Raises VaultNotFoundError if the vault was already gone.

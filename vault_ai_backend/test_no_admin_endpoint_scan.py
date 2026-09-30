@@ -119,32 +119,9 @@ def test_ciphertext_write_router_registers_inheritance_rewrap() -> None:
 
 
 def test_zk_routes_privacy_surface() -> None:
-    """Fixed 2026-07-20 (corrected). The privacy contract:
-
-    * ``vault_name`` (the user-chosen identity for both signing in
-      AND the vault AI) IS product-facing server-visible metadata
-      per the 2026-07-20 product-model clarification. The register-
-      finalize + login-finalize endpoints accept it so the server
-      can store it in ``vaults.vault_name`` and inject it
-      authoritatively into the LLM prompt.
-    * ``display_name`` must NEVER appear as a plaintext request
-      field — the ZK design encrypts it into
-      ``display_name_ciphertext`` client-side.
-    * ``display_username`` (a retired legacy field name) must
-      never resurface.
-
-    Endpoints that DO NOT store vault_name (init variants + adopt)
-    must not accept it either.
-    """
+    """No ZK endpoint may accept a readable account/display name."""
     import routes.auth_zk_routes as zk
 
-    # Endpoints that legitimately need vault_name for the plaintext
-    # store: register-finalize (initial write) and login-finalize
-    # (opportunistic backfill for post-migration-0031 accounts).
-    vault_name_writers = {
-        zk.ZkRegisterFinalizeRequest,
-        zk.ZkLoginFinalizeRequest,
-    }
     all_zk_models = {
         zk.ZkRegisterInitRequest,
         zk.ZkRegisterFinalizeRequest,
@@ -155,17 +132,9 @@ def test_zk_routes_privacy_surface() -> None:
 
     for model in all_zk_models:
         fields = set(model.model_fields.keys())
-        if model in vault_name_writers:
-            assert "vault_name" in fields, (
-                f"{model.__name__} must accept vault_name — the "
-                "server needs it to populate vaults.vault_name for "
-                "prompt injection"
-            )
-        else:
-            assert "vault_name" not in fields, (
-                f"{model.__name__} accepts vault_name but must not "
-                "— only the finalize endpoints write vault_name"
-            )
+        assert "vault_name" not in fields, (
+            f"{model.__name__} accepts a readable vault_name"
+        )
         # Plaintext display fields are always forbidden.
         assert "display_username" not in fields, (
             f"{model.__name__} accepts display_username — retired"

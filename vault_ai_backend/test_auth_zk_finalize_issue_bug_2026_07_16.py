@@ -112,13 +112,13 @@ class IssueSessionTokenSignatureContractTests(unittest.TestCase):
 
     _DUMMY_VAULT_ID = "00000000-0000-0000-0000-000000000001"
 
-    def test_missing_vault_name_raises_type_error(self) -> None:
-        with self.assertRaises(TypeError) as cm:
-            auth_local.issue_session_token(
-                vault_id=self._DUMMY_VAULT_ID,
-                device_id=None,
-            )
-        self.assertIn("vault_name", str(cm.exception))
+    def test_vault_name_is_optional_and_defaults_to_empty(self) -> None:
+        import inspect
+
+        parameter = inspect.signature(
+            auth_local.issue_session_token
+        ).parameters["vault_name"]
+        self.assertEqual(parameter.default, "")
 
     def test_missing_client_label_raises_type_error(self) -> None:
         with self.assertRaises(TypeError) as cm:
@@ -361,6 +361,7 @@ class ZkRegisterFinalizeBehavioralTests(_ZkRouteHarness):
             "pin_salt":                  base64.b64encode(b"\x11" * 16).decode(),
             "pin_verifier":              base64.b64encode(b"\x22" * 32).decode(),
             "kdf_iterations":            600000,
+            "username_lookup":           _b64url_no_pad(b"\x33" * 32),
         }
 
     def _run_route(self, mock_issue_return: Dict[str, Any]) -> tuple:
@@ -429,7 +430,7 @@ class ZkRegisterFinalizeBehavioralTests(_ZkRouteHarness):
         self.assertEqual(m_issue.call_count, 1, "issue_session_token called exactly once")
         _, kwargs = m_issue.call_args
         self.assertEqual(kwargs["vault_id"], self._VAULT_ID)
-        self.assertEqual(kwargs["vault_name"], self._VAULT_NAME)
+        self.assertEqual(kwargs["vault_name"], "")
         self.assertEqual(kwargs["device_id"], self._DEVICE_ID)
         self.assertEqual(kwargs["client_label"], self._EXPECTED_LABEL)
 
@@ -606,7 +607,7 @@ class ZkLoginFinalizeBehavioralTests(_ZkRouteHarness):
         self.assertEqual(m_issue.call_count, 1)
         _, kwargs = m_issue.call_args
         self.assertEqual(kwargs["vault_id"], self._VAULT_ID)
-        self.assertEqual(kwargs["vault_name"], self._VAULT_NAME)
+        self.assertEqual(kwargs["vault_name"], "")
         self.assertEqual(kwargs["device_id"], self._DEVICE_ID)
         self.assertEqual(kwargs["client_label"], self._EXPECTED_LABEL)
 

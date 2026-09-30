@@ -18,7 +18,8 @@ Covers:
   * log output contains no email, filename, wallet address, PIN,
     session token, or Stripe customer id — only hashed prefixes and
     per-table counts
-  * new deletion reason is registered in the shared service
+  * the historical bulk-wipe reason is retained as a compatibility
+    constant but cannot authorize deletion through the shared service
 """
 
 from __future__ import annotations
@@ -112,14 +113,14 @@ def _run_main_capturing(argv, env):
         return exit_code, buf_out.getvalue(), buf_err.getvalue()
 
 
-class TestNewDeletionReasonRegistered(unittest.TestCase):
-    def test_new_reason_registered_in_shared_service(self):
+class TestBulkDeletionReasonRetired(unittest.TestCase):
+    def test_historical_reason_cannot_authorize_deletion(self):
         import vault_deletion_service as vds
         self.assertEqual(
             vds.REASON_DEVELOPMENT_FULL_USER_WIPE,
             "development_full_user_wipe",
         )
-        self.assertIn(
+        self.assertNotIn(
             vds.REASON_DEVELOPMENT_FULL_USER_WIPE,
             vds._ALLOWED_REASONS,
         )

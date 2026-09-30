@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,14 +8,12 @@ import 'package:vault_ai_frontend/help_center_content.dart';
 import 'package:vault_ai_frontend/help_center_page.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 
-
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
   AppLocalizations.delegate,
   GlobalMaterialLocalizations.delegate,
   GlobalWidgetsLocalizations.delegate,
   GlobalCupertinoLocalizations.delegate,
 ];
-
 
 Future<void> _pumpDeleteFlow(
   WidgetTester tester, {
@@ -44,7 +41,6 @@ Future<void> _pumpDeleteFlow(
   await tester.pumpAndSettle();
 }
 
-
 Future<void> _pumpHelpCenter(
   WidgetTester tester, {
   HelpCenterMode mode = HelpCenterMode.signedIn,
@@ -64,17 +60,13 @@ Future<void> _pumpHelpCenter(
   await tester.pumpAndSettle();
 }
 
-
 String _answerFor(String id) {
   final e = faqEntryById(id);
   expect(e, isNotNull, reason: 'FAQ $id must exist in kFaqEntries');
   return e!.answer;
 }
 
-
 void main() {
-
-
   group('Part 1 — Delete Vault destructive dialog renders', () {
     testWidgets('renders with destructive title', (tester) async {
       await _pumpDeleteFlow(tester);
@@ -119,7 +111,6 @@ void main() {
     });
   });
 
-
   group('Part 2 — Confirmation phrase gate', () {
     testWidgets(
       'delete button is disabled until phrase matches exactly',
@@ -128,8 +119,7 @@ void main() {
         final ElevatedButton btn = tester.widget<ElevatedButton>(
           find.byKey(const Key('delete_vault_confirm_button')),
         );
-        expect(btn.onPressed, isNull,
-            reason: 'button must start disabled');
+        expect(btn.onPressed, isNull, reason: 'button must start disabled');
 
         await tester.enterText(
           find.byKey(const Key('delete_vault_phrase_field')),
@@ -137,8 +127,7 @@ void main() {
         );
         await tester.pump();
 
-        final ElevatedButton stillBtn =
-            tester.widget<ElevatedButton>(
+        final ElevatedButton stillBtn = tester.widget<ElevatedButton>(
           find.byKey(const Key('delete_vault_confirm_button')),
         );
         expect(stillBtn.onPressed, isNull,
@@ -150,13 +139,11 @@ void main() {
         );
         await tester.pump();
 
-        final ElevatedButton nowBtn =
-            tester.widget<ElevatedButton>(
+        final ElevatedButton nowBtn = tester.widget<ElevatedButton>(
           find.byKey(const Key('delete_vault_confirm_button')),
         );
         expect(nowBtn.onPressed, isNotNull,
-            reason:
-                'button must enable only when BOTH the phrase and '
+            reason: 'button must enable only when BOTH the phrase and '
                 'the PIN are entered correctly');
       },
     );
@@ -178,8 +165,7 @@ void main() {
           find.byKey(const Key('delete_vault_confirm_button')),
         );
         expect(btn.onPressed, isNull,
-            reason:
-                'phrase must be exactly DELETE MY VAULT — case '
+            reason: 'phrase must be exactly DELETE MY VAULT — case '
                 'matters');
       },
     );
@@ -200,7 +186,6 @@ void main() {
       },
     );
   });
-
 
   group('Part 3 — PIN gate', () {
     testWidgets('PIN field is obscured', (tester) async {
@@ -227,7 +212,6 @@ void main() {
       expect(kDeleteVaultConfirmationPhrase, equals('DELETE MY VAULT'));
     });
   });
-
 
   group('Part 4 — Cancel path', () {
     testWidgets(
@@ -278,7 +262,6 @@ void main() {
     );
   });
 
-
   group('Part 5 — FAQ deletion entries are present', () {
     for (final id in const <String>[
       'delete-my-vault',
@@ -290,35 +273,36 @@ void main() {
     ]) {
       test('FAQ $id exists in kFaqEntries', () {
         expect(
-          faqEntryById(id), isNotNull,
+          faqEntryById(id),
+          isNotNull,
           reason: 'FAQ $id must be present',
         );
       });
     }
 
-    test('automatic-deletion FAQ mentions the 6-month cutoff', () {
+    test('inactive-vault FAQ confirms deletion is never automatic', () {
       final a = _answerFor('why-inactive-unpaid-deleted').toLowerCase();
-      expect(a.contains('6 months'), isTrue);
-      expect(a.contains('unpaid'), isTrue);
-      expect(a.contains('permanently deleted'), isTrue);
+      expect(a.contains('does not delete'), isTrue);
+      expect(a.contains('vault owner'), isTrue);
+      expect(a.contains('after signing in'), isTrue);
     });
 
-    test('prevent-auto-deletion FAQ explains keep-active path', () {
+    test('user-only deletion FAQ excludes support and administrators', () {
       final a = _answerFor('how-to-prevent-auto-deletion').toLowerCase();
-      expect(a.contains('sign in'), isTrue);
-      expect(a.contains('subscribe'), isTrue);
-      expect(a.contains('6-month'), isTrue);
+      expect(a.contains('only the signed-in vault owner'), isTrue);
+      expect(a.contains('support and administrators'), isTrue);
+      expect(a.contains('confirmation phrase'), isTrue);
     });
 
-    test('crypto-when-vault-deleted is explicit about no on-chain move',
-        () {
+    test('crypto-when-vault-deleted is explicit about no on-chain move', () {
       final a = _answerFor('crypto-when-vault-deleted').toLowerCase();
       expect(a.contains('does not move or delete'), isTrue);
       expect(a.contains('blockchain'), isTrue);
       expect(a.contains('never broadcasts'), isTrue);
     });
 
-    test('can-i-recover-deleted-vault is honest that recovery is not '
+    test(
+        'can-i-recover-deleted-vault is honest that recovery is not '
         'possible', () {
       final a = _answerFor('can-i-recover-deleted-vault').toLowerCase();
       expect(a.contains('no.'), isTrue);
@@ -327,9 +311,7 @@ void main() {
     });
   });
 
-
-  group('Part 6 — no pending-deletion / grace-period copy anywhere',
-      () {
+  group('Part 6 — no pending-deletion / grace-period copy anywhere', () {
     const forbidden = <String>[
       'pending deletion',
       'pending-deletion',
@@ -359,14 +341,13 @@ void main() {
         }
       }
       expect(
-        offenders, isEmpty,
-        reason:
-            'delete-policy copy must not mention pending deletion '
+        offenders,
+        isEmpty,
+        reason: 'delete-policy copy must not mention pending deletion '
             'or grace periods: $offenders',
       );
     });
   });
-
 
   group('Part 7 — Help Center render integration', () {
     testWidgets(
@@ -384,12 +365,12 @@ void main() {
     );
 
     testWidgets(
-      'Help Center renders the automatic-deletion copy',
+      'Help Center renders the user-only deletion copy',
       (tester) async {
         await _pumpHelpCenter(tester);
         expect(
           find.textContaining(
-            'not used for at least 6 months',
+            'Only the signed-in vault owner',
             findRichText: true,
           ),
           findsWidgets,
@@ -397,7 +378,6 @@ void main() {
       },
     );
   });
-
 
   group('Part 8 — No secrets or generic-Aisha copy anywhere', () {
     const banned = <String>[
@@ -420,8 +400,7 @@ void main() {
       'how-to-prevent-auto-deletion',
     ];
 
-    test('delete FAQs never surface seed/mnemonic/private-key text',
-        () {
+    test('delete FAQs never surface seed/mnemonic/private-key text', () {
       final offenders = <String>[];
       for (final id in scannedIds) {
         final a = _answerFor(id).toLowerCase();
@@ -447,17 +426,14 @@ void main() {
     );
   });
 
-
   group('Part 9 — Mobile layout has no overflow', () {
     testWidgets('delete dialog at 400x900', (tester) async {
-      await _pumpDeleteFlow(tester,
-          size: const Size(400, 900));
+      await _pumpDeleteFlow(tester, size: const Size(400, 900));
       expect(tester.takeException(), isNull);
     });
 
     testWidgets('delete dialog at 360x800', (tester) async {
-      await _pumpDeleteFlow(tester,
-          size: const Size(360, 800));
+      await _pumpDeleteFlow(tester, size: const Size(360, 800));
       expect(tester.takeException(), isNull);
     });
 

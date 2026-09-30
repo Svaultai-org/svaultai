@@ -338,7 +338,7 @@ def get_vault_status(*, vault_id: str, key: bytes) -> str:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(
                 """
-                SELECT vault_name, total_bytes, locked_until,
+                SELECT total_bytes, locked_until,
                        frozen_until, created_at, updated_at
                 FROM vaults
                 WHERE vault_id = %s
@@ -397,7 +397,7 @@ def get_vault_status(*, vault_id: str, key: bytes) -> str:
         coverage = {"is_complete": False}
 
     return json.dumps({
-        "vault_name":              str(vrow.get("vault_name") or ""),
+        "vault_name":              None,
         "vault_state":             "unlocked" if unlocked else "locked",
         "total_files":             int(files_row.get("n") or 0),
         "total_saved_credentials": int(items_row.get("n") or 0),

@@ -978,7 +978,7 @@ def get_my_vault(
                                                                        
         cursor.execute(
             """
-            SELECT vault_id, vault_name, pin_salt, pin_verifier,
+            SELECT vault_id, pin_salt, pin_verifier,
                    must_reset, locked_until, inherited_from_label, created_at
             FROM vaults
             WHERE vault_id = %s
@@ -992,17 +992,16 @@ def get_my_vault(
                                                                         
         logger.info(
             "[PIN-DEBUG] /my-vault vault=...%s has_vault=%s has_pin=%s "
-            "vault_name=%r",
+            "private_name_server_visible=false",
             (vault_id or "")[-8:],
             row is not None,
             bool(row["pin_verifier"]) if row else False,
-            row["vault_name"] if row else None,
         )
 
         if row:
             return {
                 "has_vault": True,
-                "vault_name": row["vault_name"],
+                "vault_name": None,
                 "has_pin": bool(row["pin_verifier"]),
                 "must_reset": bool(row.get("must_reset")),
                 "locked_until": row["locked_until"].isoformat() if row.get("locked_until") else None,
@@ -1078,7 +1077,7 @@ class ChatRequest(BaseModel):
 
 
 class VaultNameCheck(BaseModel):
-    vault_name: str
+    username_lookup: str = Field(..., min_length=1, max_length=200)
 
 
 class VaultMetaRequest(BaseModel):
@@ -1132,9 +1131,9 @@ class TransferActionRequest(BaseModel):
 
 class ClaimTransferRequest(BaseModel):
     link_id: int
-    vault_name: str                                       
+    vault_name: str = ""
     pin: str
-    inherited_vault_name: Optional[str] = None                          
+    inherited_username_lookup: str = Field(..., min_length=1, max_length=200)
 
 
 class ListFilesRequest(BaseModel):
@@ -6632,27 +6631,8 @@ def get_vault_total_bytes(vault_id: str) -> int:
 
 
 def _lookup_vault_name_safe(vault_id: str) -> str:
-
-
-    try:
-        conn = get_db()
-        try:
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(
-                """
-                SELECT vault_name
-                FROM vaults
-                WHERE vault_id = %s
-                LIMIT 1
-                """,
-                (vault_id,),
-            )
-            row = cur.fetchone()
-            return str((row or {}).get("vault_name") or "")
-        finally:
-            conn.close()
-    except Exception:
-        return ""
+    del vault_id
+    return ""
 
 
 def bump_vault_total_bytes(vault_id: str, delta_bytes: int):
@@ -9875,7 +9855,7 @@ async def get_or_create_vault_meta_endpoint(
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT vault_id, vault_name, pin_salt, pin_verifier,
+            SELECT vault_id, pin_salt, pin_verifier,
                    total_bytes, created_at, kdf_iterations
             FROM vaults
             WHERE vault_id = %s
@@ -9892,10 +9872,10 @@ async def get_or_create_vault_meta_endpoint(
 
                                                                        
         logger.info(
-            "[PIN-DEBUG] /get-or-create-vault-meta vault=...%s vault_name=%r "
+            "[PIN-DEBUG] /get-or-create-vault-meta vault=...%s "
             "pin_salt_len=%d kdf_iterations=%d pin_verifier_present_before=%s "
             "pin_len=%d",
-            (vault_id or "")[-8:], row["vault_name"],
+            (vault_id or "")[-8:],
             len(pin_salt or ""), kdf_iterations,
             bool(row.get("pin_verifier")),
             len(payload.pin or ""),
@@ -9941,7 +9921,7 @@ async def get_or_create_vault_meta_endpoint(
             )
 
         return {
-            "vault_name": row["vault_name"],
+            "vault_name": None,
             "vault_id": str(row["vault_id"]),
             "pin_salt": pin_salt,
             "kdf_iterations": kdf_iterations,
@@ -9963,7 +9943,7 @@ async def vault_meta_endpoint(
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT vault_id, vault_name, pin_salt, total_bytes,
+            SELECT vault_id, pin_salt, total_bytes,
                    created_at, kdf_iterations
             FROM vaults
             WHERE vault_id = %s
@@ -9977,7 +9957,7 @@ async def vault_meta_endpoint(
             raise HTTPException(status_code=404, detail="Vault not found")
 
         return {
-            "vault_name": row["vault_name"],
+            "vault_name": None,
             "vault_id": str(row["vault_id"]),
             "pin_salt": row["pin_salt"],
             "kdf_iterations": int(row.get("kdf_iterations") or KDF_LEGACY_ITERATIONS),
@@ -10016,7 +9996,6 @@ async def verify_pin_endpoint(
     print("[PIN-DEBUG] DEVICE_GATE_OK", flush=True)
     print(
         f"[PIN-DEBUG] VERIFY_ROUTE_ENTRY vault=...{str(vault_id)[-6:]} "
-        f"vault_name={payload.vault_name!r} "
         f"pin_len={len(payload.pin or '')}",
         flush=True,
     )
@@ -10568,25 +10547,10 @@ async def beneficiary_list_inheritances_endpoint(
         # can decide whether to show Request access / Cancel / Claim
         # / Reveal. ``credentials_saved`` is set by the LEFT JOIN
         # on ``inheritance_credentials`` (soft-delete respected).
-        #
-        # 2026-07-23: also expose the owner's chosen ``vault_name``
-        # so the beneficiary UI can render a human-readable owner
-        # identity even when ``passer_label`` is NULL (which happens
-        # for every ZK-created pairing — the plaintext label is
-        # encrypted under the OWNER's metadataKey and stored in
-        # ``passer_label_ciphertext``, which the beneficiary cannot
-        # decrypt). The vault_name is already server-visible product
-        # metadata (returned by /auth/me to the owner) and the
-        # beneficiary already holds a pairing code they exchanged
-        # with the owner, so surfacing it here does not leak new
-        # information. It is nullable — a pre-migration-0031 ZK
-        # account that never adopted a real vault_name returns NULL
-        # and the frontend falls back to 'Unknown'.
         cursor.execute(
             """
             SELECT bl.id,
                    bl.passer_label,
-                   ov.vault_name AS owner_vault_name,
                    bl.status,
                    bl.transfer_requested_at,
                    bl.transfer_executes_at,
@@ -10601,8 +10565,6 @@ async def beneficiary_list_inheritances_endpoint(
               LEFT JOIN inheritance_credentials ic
                      ON ic.beneficiary_link_id = bl.id
                     AND ic.deleted_at IS NULL
-              LEFT JOIN vaults ov
-                     ON ov.vault_id = bl.passer_vault_id
              WHERE bl.beneficiary_vault_id = %s
              ORDER BY bl.created_at DESC
             """,
@@ -10624,10 +10586,7 @@ async def beneficiary_list_inheritances_endpoint(
             {
                 "id": r["id"],
                 "passer_label": r["passer_label"],
-                # 2026-07-23: owner's chosen vault_name, nullable.
-                # Frontend uses this as a fallback when passer_label
-                # is NULL (every ZK-created pairing).
-                "owner_vault_name": r.get("owner_vault_name"),
+                "owner_vault_name": None,
                 "status": r["status"],
                 "pairing_state": r.get("pairing_state") or "paired_no_credentials",
                 "credentials_saved": bool(r.get("credentials_saved")),
@@ -10768,37 +10727,6 @@ async def beneficiary_cancel_transfer_endpoint(
 VAULT_FREEZE_DAYS = int(os.getenv("VAULT_FREEZE_DAYS", "90"))
 
 
-def _generate_inherited_vault_name(
-    base_name: str,
-) -> str:
-
-
-    base = (base_name or "Inherited vault").strip()[:50] or "Inherited vault"
-    candidate = f"{base} (inherited)"
-    suffix = 1
-
-    conn = get_db()
-    try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        while True:
-            cursor.execute(
-                """
-                SELECT 1 FROM vaults
-                WHERE LOWER(vault_name) = LOWER(%s)
-                LIMIT 1
-                """,
-                (candidate,),
-            )
-            if cursor.fetchone() is None:
-                return candidate
-            suffix += 1
-            candidate = f"{base} (inherited {suffix})"
-            if suffix > 99:               
-                return f"{base} ({uuid.uuid4().hex[:6]})"
-    finally:
-        conn.close()
-
-
 @app.post("/beneficiary/claim-transfer")
 @limiter.limit("5/hour")
 async def beneficiary_claim_transfer_endpoint(
@@ -10854,20 +10782,24 @@ async def beneficiary_claim_transfer_endpoint(
         passer_label = link["passer_label"]
 
                                                                     
-        requested_name = (payload.inherited_vault_name or "").strip()
-        if requested_name:
-            cursor.execute(
-                "SELECT 1 FROM vaults WHERE LOWER(vault_name) = LOWER(%s) LIMIT 1",
-                (requested_name,),
+        try:
+            username_lookup = base64.urlsafe_b64decode(
+                payload.inherited_username_lookup
+                + "=" * (-len(payload.inherited_username_lookup) % 4)
             )
-            if cursor.fetchone() is not None:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"A vault named \"{requested_name}\" already exists. Pick another.",
-                )
-            new_vault_name = requested_name
-        else:
-            new_vault_name = _generate_inherited_vault_name(passer_label)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid inherited vault lookup.") from exc
+        if len(username_lookup) != 32:
+            raise HTTPException(status_code=400, detail="Invalid inherited vault lookup.")
+        cursor.execute(
+            "SELECT 1 FROM vaults WHERE username_lookup_v1 = %s LIMIT 1",
+            (username_lookup,),
+        )
+        if cursor.fetchone() is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="That inherited vault name is already in use. Pick another.",
+            )
 
                                                                      
         cursor.execute(
@@ -10893,14 +10825,16 @@ async def beneficiary_claim_transfer_endpoint(
         )
 
         new_vault_id = str(uuid.uuid4())
+        opaque_vault_label = f"vault-{new_vault_id.replace('-', '')}"
         cursor.execute(
             """
             INSERT INTO vaults
-              (vault_id, vault_name, account_id, pin_salt, pin_verifier,
-               kdf_iterations, inherited_from_label, total_bytes)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 0)
+              (vault_id, vault_name, username_lookup_v1, account_id,
+               pin_salt, pin_verifier, kdf_iterations,
+               inherited_from_label, total_bytes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0)
             """,
-            (new_vault_id, new_vault_name, new_account_id,
+            (new_vault_id, opaque_vault_label, username_lookup, new_account_id,
              new_pin_salt, new_pin_verifier,
              new_kdf_iterations, passer_label),
         )
@@ -11210,7 +11144,8 @@ async def beneficiary_claim_transfer_endpoint(
     logger.warning(
         "Transfer claimed by vault=%s: %d items + %d files copied from "
         "passer vault=%s into new vault=%s (%s)",
-        vault_id, len(item_rows), len(file_rows), passer_vault_id, new_vault_name, new_vault_id,
+        vault_id, len(item_rows), len(file_rows), passer_vault_id,
+        opaque_vault_label, new_vault_id,
     )
 
                                            
@@ -11249,7 +11184,7 @@ async def beneficiary_claim_transfer_endpoint(
 
     return {
         "claimed": True,
-        "inherited_vault_name": new_vault_name,
+        "inherited_vault_name": None,
         "pin_salt": new_pin_salt,
         "kdf_iterations": new_kdf_iterations,
         "items_copied": len(item_rows),
@@ -11271,7 +11206,7 @@ async def list_my_vaults_endpoint(
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT vault_name, inherited_from_label, must_reset,
+            SELECT inherited_from_label, must_reset,
                    frozen_until, total_bytes, created_at,
                    pin_verifier IS NOT NULL AS has_pin
             FROM vaults
@@ -11289,7 +11224,7 @@ async def list_my_vaults_endpoint(
     return {
         "vaults": [
             {
-                "vault_name": r["vault_name"],
+                "vault_name": None,
                 "inherited_from_label": r["inherited_from_label"],
                 "must_reset": bool(r["must_reset"]),
                 "frozen_until": r["frozen_until"].isoformat() if r["frozen_until"] else None,
@@ -11469,13 +11404,21 @@ async def check_vault_name_available(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            lookup = base64.urlsafe_b64decode(
+                payload.username_lookup + "=" * (-len(payload.username_lookup) % 4)
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid username lookup.") from exc
+        if len(lookup) != 32:
+            raise HTTPException(status_code=400, detail="Invalid username lookup.")
         cursor.execute(
             """
             SELECT 1
             FROM vaults
-            WHERE LOWER(vault_name) = LOWER(%s)
+            WHERE username_lookup_v1 = %s
             """,
-            (payload.vault_name,),
+            (lookup,),
         )
         available = cursor.fetchone() is None
     finally:
@@ -13325,39 +13268,9 @@ def _flag_enabled(env_var: str, *, default_true: bool = True) -> bool:
 
 
 def _fetch_vault_name_for_prompt(vault_id: str) -> Optional[str]:
-    """Server-authoritative lookup of the user-chosen vault name.
-
-    Reads ``vaults.vault_name`` for the AUTHENTICATED vault_id
-    (never trusts a client-supplied value on this turn). The vault
-    name is the user-chosen identity for BOTH the vault and its AI
-    keeper — one string, one meaning. Returns None on lookup
-    failure, missing row, or NULL column; callers fall back to
-    ``tools.VAULT_NAME_FALLBACK``.
-
-    Failure is intentionally swallowed: a DB hiccup during prompt
-    build must not fail the chat request. The prompt just uses the
-    fallback name that turn.
-    """
-    try:
-        conn = get_db()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT vault_name FROM vaults WHERE vault_id = %s",
-                (vault_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            value = row[0]
-            if value is None:
-                return None
-            return str(value)
-        finally:
-            conn.close()
-    except Exception:
-        logger.exception("[PROMPT] vault_name lookup failed")
-        return None
+    """Readable vault names are device-local and never loaded here."""
+    del vault_id
+    return None
 
 
 def _build_chat_prompt_context(
@@ -13409,29 +13322,9 @@ def _build_chat_prompt_context(
     raw_locale = (request.headers.get("accept-language") or "").strip()
     locale_hint = raw_locale.split(",")[0].strip()[:16] or "auto"
 
-    # SERVER-AUTHORITATIVE vault_name lookup. The chat request may
-    # also carry a vault_name field on the wire, but the identity
-    # slot in the prompt trusts ONLY the value from the authenticated
-    # ``vaults`` row keyed by principal["vault_id"]. On any failure
-    # the prompt builder returns None and
-    # ``tools.build_vault_runtime_context`` substitutes the neutral
-    # literal ``VaultAI`` — never a hash, handle, UUID, template
-    # token, or the random 32-hex placeholder that used to leak
-    # into the UI before 2026-07-20.
-    #
-    # 2026-07-22 chat deep-fix note: this slot is the AI keeper's
-    # own name in the LLM's system prompt. It is the USER-CHOSEN
-    # vault name (e.g. "Brain", "My Safe", "Family Vault") — a
-    # per-vault value, NOT a hardcoded global constant. It must
-    # NEVER be sourced from the user's DISPLAY NAME
-    # (``users.display_name``), which is the human owner's own
-    # label; the prior "Chosen is thinking..." regression came
-    # from the frontend binding the ChatMessageList vault-name
-    # parameter to ``app.displayName`` instead of to
-    # ``app.vaultName``. Both fields have a legitimate purpose:
-    # display_name identifies the human owner in UI headers /
-    # greetings; vault_name is the vault's own identity used both
-    # for signing in and for the AI keeper.
+    # Human-readable account names never enter the server prompt. The prompt
+    # helper uses its neutral "VaultAI" fallback; the device can still render
+    # its locally stored name in the interface.
     vault_name = _fetch_vault_name_for_prompt(vault_id)
 
     return {
@@ -13511,7 +13404,7 @@ async def chat_endpoint(
 
                                                                    
     print(
-        f"[CHAT-DEBUG] entry vault_id={vault_id} vault_name={req.vault_name!r} "
+        f"[CHAT-DEBUG] entry vault_id={vault_id} "
         f"pin_len={len(req.pin or '')} encrypted_len={len(req.encrypted_message or '')} "
         f"uploaded_file_count={len(req.uploaded_file_ids or [])}",
         flush=True,
@@ -15778,7 +15671,7 @@ async def chat_endpoint(
                     else None
                 ),
                 turn_id=str(_chat_request_id or ""),
-                vault_name=req.vault_name or "",
+                vault_name="",
                 reply_language=(_reply_language or "en"),
                 user_message=decrypted_message or "",
                 memory=memory,
@@ -17343,7 +17236,7 @@ async def chat_endpoint(
             intent_data = await detect_vault_intent(
                 safe_for_intent,
                 memory,
-                req.vault_name,
+                "",
             )
         except Exception as e:
             print(

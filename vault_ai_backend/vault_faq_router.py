@@ -40,7 +40,7 @@ _PATTERNS_BY_ID = {
     "how-local-signing-works": _patterns(r"\bhow\s+does\s+local\s+signing\s+work\b"),
     "never-share-seed": _patterns(r"\bwhy\s+should(?:n'?t|\s+i\s+not)\s+share\s+(?:my\s+)?seed\s+phrase\b"),
     "inheritance": _patterns(r"\b(?:what\s+is|how\s+does)\s+(?:the\s+)?inheritance(?:\s+feature)?\s*(?:work)?\b", r"\bcan\s+(?:my\s+)?beneficiary\s+access\b"),
-    "inactive-unsubscribed-vault": _patterns(r"\bwhat\s+happens\s+after\s+six\s+months\b", r"\b(?:inactive|unsubscribed|unpaid)\s+vaults?\s+(?:deleted|deletion)\b", r"\bhow\s+do\s+i\s+reset\s+(?:the\s+)?inactivity\b"),
+    "inactive-unsubscribed-vault": _patterns(r"\bcan\s+s?vault\s*ai\s+delete\s+(?:my\s+)?inactive\s+vault\b", r"\b(?:inactive|unsubscribed|unpaid)\s+vaults?\s+(?:deleted|deletion)\b", r"\bwho\s+can\s+delete\s+(?:my\s+)?vault\b"),
     "subscription-expired": _patterns(r"\bwhat\s+happens\s+(?:when|if)\s+(?:my\s+)?subscription\s+expires?\b"),
     "delete-vault": _patterns(r"\bhow\s+do\s+i\s+(?:permanently\s+)?delete\s+(?:my\s+)?(?:vault|account)\b", r"^\s*(?:i\s+want\s+to\s+)?delete\s+my\s+(?:vault|account|profile)\s*[?.!]*\s*$"),
     "deletion-and-blockchain": _patterns(r"\bwhat\s+happens\s+to\s+(?:my\s+)?(?:wallet|crypto|blockchain)\s+(?:records?\s+)?(?:when|if)\s+i\s+delete\b"),

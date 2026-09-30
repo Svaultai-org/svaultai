@@ -261,9 +261,9 @@ class SessionPrincipal(TypedDict):
 def issue_session_token(
     *,
     vault_id: str,
-    vault_name: str,
     device_id: Optional[str] = None,
     client_label: str,
+    vault_name: str = "",
     ttl_hours: Optional[int] = None,
 ) -> IssuedSession:
     """Mint a session token atomically under the single-session policy.
@@ -305,8 +305,6 @@ def issue_session_token(
     """
     if not vault_id:
         raise ValueError("issue_session_token requires vault_id")
-    if not vault_name:
-        raise ValueError("issue_session_token requires vault_name")
     if not isinstance(client_label, str) or not client_label:
         raise ValueError("issue_session_token requires client_label")
 
@@ -556,8 +554,7 @@ def _load_principal(
             """
             SELECT s.token_id, s.vault_id, s.device_id, s.expires_at,
                    s.revoked_at, s.revoked_reason, s.token_id_hash,
-                   s.last_used_at,
-                   v.vault_name
+                   s.last_used_at
               FROM auth_sessions s
               JOIN vaults v ON v.vault_id = s.vault_id
              WHERE s.token_id = %s
@@ -606,7 +603,10 @@ def _load_principal(
 
         principal: SessionPrincipal = {
             "vault_id":   str(row["vault_id"]),
-            "vault_name": row["vault_name"],
+            # The account's human login name is client-private.  Keep the
+            # legacy principal key as an empty compatibility value so older
+            # authenticated handlers cannot accidentally receive it.
+            "vault_name": "",
             "token_id":   str(row["token_id"]),
             "device_id":  row["device_id"],
         }

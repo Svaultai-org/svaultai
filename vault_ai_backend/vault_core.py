@@ -295,21 +295,9 @@ def decrypt_bytes(encrypted_b64: str, key: bytes) -> bytes:
 
 
 def get_vault_id_for_name(vault_name: str) -> Optional[str]:
-
-
-    if not vault_name:
-        return None
-    conn = get_db()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT vault_id FROM vaults WHERE vault_name = %s LIMIT 1",
-            (vault_name,),
-        )
-        row = cur.fetchone()
-        return str(row[0]) if row else None
-    finally:
-        conn.close()
+    """Retired: readable vault names are not stored server-side."""
+    del vault_name
+    return None
 
 
 def is_vault_zk_adopted(vault_id: str) -> bool:

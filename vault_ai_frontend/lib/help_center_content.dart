@@ -1,28 +1,23 @@
-
 class FaqCategory {
   final String id;
   final String label;
   const FaqCategory({required this.id, required this.label});
 }
 
-
 const FaqCategory kFaqCategoryGettingStarted =
     FaqCategory(id: 'getting_started', label: 'Getting started');
 const FaqCategory kFaqCategorySecurity =
     FaqCategory(id: 'security', label: 'Security');
-const FaqCategory kFaqCategoryFiles =
-    FaqCategory(id: 'files', label: 'Files');
+const FaqCategory kFaqCategoryFiles = FaqCategory(id: 'files', label: 'Files');
 const FaqCategory kFaqCategorySecureItems =
     FaqCategory(id: 'secure_items', label: 'Secure items');
-const FaqCategory kFaqCategoryIds =
-    FaqCategory(id: 'ids', label: 'IDs');
+const FaqCategory kFaqCategoryIds = FaqCategory(id: 'ids', label: 'IDs');
 const FaqCategory kFaqCategoryCrypto =
     FaqCategory(id: 'crypto', label: 'Crypto Vault');
 const FaqCategory kFaqCategoryBilling =
     FaqCategory(id: 'billing', label: 'Billing');
 const FaqCategory kFaqCategoryTroubleshooting =
     FaqCategory(id: 'troubleshooting', label: 'Troubleshooting');
-
 
 const List<FaqCategory> kFaqCategories = <FaqCategory>[
   kFaqCategoryGettingStarted,
@@ -34,7 +29,6 @@ const List<FaqCategory> kFaqCategories = <FaqCategory>[
   kFaqCategoryBilling,
   kFaqCategoryTroubleshooting,
 ];
-
 
 class FaqEntry {
   final String id;
@@ -49,15 +43,12 @@ class FaqEntry {
   });
 }
 
-
 const List<FaqEntry> kFaqEntries = <FaqEntry>[
-
   FaqEntry(
     id: 'what-is-vaultai',
     category: 'getting_started',
     question: 'What is Svaultai?',
-    answer:
-        'Svaultai is your private digital vault. Think of a '
+    answer: 'Svaultai is your private digital vault. Think of a '
         'bank vault or a safe at home: people use those to '
         'protect important papers, drives, cash, gold, IDs, '
         'and private records. Svaultai gives you that idea in '
@@ -75,8 +66,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'what-can-i-save',
     category: 'getting_started',
     question: 'What can I save in Svaultai?',
-    answer:
-        'You can save files, documents, photos, videos, '
+    answer: 'You can save files, documents, photos, videos, '
         'audio, passwords, generated logins, secure notes, '
         'codes, device details, ID documents, and Crypto '
         'Vault assets. Internal wallet records are managed '
@@ -87,8 +77,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-create-my-vault',
     category: 'getting_started',
     question: 'How do I create my vault?',
-    answer:
-        'Open the Svaultai sign-in flow, pick or confirm your '
+    answer: 'Open the Svaultai sign-in flow, pick or confirm your '
         'vault name, and set your PIN when prompted. Your '
         'PIN helps protect your vault unlock process — keep '
         'it safe. If recovery is not available for your '
@@ -99,8 +88,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-unlock-my-vault',
     category: 'getting_started',
     question: 'How do I unlock my vault?',
-    answer:
-        'Open Svaultai on a trusted device and enter your '
+    answer: 'Open Svaultai on a trusted device and enter your '
         'PIN. Your PIN unlocks the vault locally — the '
         'server never sees your PIN in plaintext. Some '
         'sensitive actions may ask for confirmation again.',
@@ -109,8 +97,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'trusted-device',
     category: 'getting_started',
     question: 'What is a trusted device?',
-    answer:
-        'A trusted device is a device you have already approved '
+    answer: 'A trusted device is a device you have already approved '
         'for this account. Sensitive actions — revealing a '
         'password, showing a full ID number, preparing a crypto '
         'send — require the request to come from a trusted '
@@ -120,19 +107,16 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'files-vs-secure-items',
     category: 'getting_started',
     question: 'What is the difference between files and secure items?',
-    answer:
-        'Files are uploaded blobs: PDFs, images, spreadsheets, '
+    answer: 'Files are uploaded blobs: PDFs, images, spreadsheets, '
         'and other documents. Secure items are short encrypted '
         'text records: logins, notes, codes, device details, '
         'and crypto wallet addresses.',
   ),
-
   FaqEntry(
     id: 'is-my-vault-encrypted',
     category: 'security',
     question: 'Is my vault encrypted?',
-    answer:
-        'Yes. Svaultai stores sensitive vault data encrypted with '
+    answer: 'Yes. Svaultai stores sensitive vault data encrypted with '
         'a key derived from your PIN. Sensitive values are '
         'masked by default and protected by trusted-device, '
         'unlock/PIN, and confirmation gates where required.',
@@ -141,8 +125,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'can-vaultai-read-secrets',
     category: 'security',
     question: 'Can Svaultai read my saved secrets?',
-    answer:
-        'Svaultai does not display or ask for your seed phrase, '
+    answer: 'Svaultai does not display or ask for your seed phrase, '
         'private key, mnemonic, spend key, view key, encrypted '
         'wallet secret, auth token, or API key in chat. The AI '
         'only works with masked, safe projections of your vault.',
@@ -151,8 +134,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'if-i-forget-my-pin',
     category: 'security',
     question: 'What happens if I forget my PIN?',
-    answer:
-        'The PIN is required to derive your encryption key. If '
+    answer: 'The PIN is required to derive your encryption key. If '
         'you forget it, recovery may not be possible — keep your '
         'PIN safe and consider recording it in a physical '
         'location only you can access.',
@@ -161,8 +143,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'can-someone-else-access',
     category: 'security',
     question: 'Can someone else access my vault?',
-    answer:
-        'Only from a trusted device, with your PIN. Sensitive '
+    answer: 'Only from a trusted device, with your PIN. Sensitive '
         'reveals require additional confirmation. Never share '
         'your PIN, and remove trusted-device access for devices '
         'you no longer control.',
@@ -171,8 +152,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'lost-my-device',
     category: 'security',
     question: 'What should I do if I lose my device?',
-    answer:
-        'Open the Security page from another trusted device and '
+    answer: 'Open the Security page from another trusted device and '
         'revoke access for the lost device. Your PIN still '
         'protects your vault, but revoking removes the trusted-'
         'device status.',
@@ -181,8 +161,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-local-signing-works',
     category: 'security',
     question: 'How does local signing work for crypto?',
-    answer:
-        'Crypto sends are signed on your device with keys that '
+    answer: 'Crypto sends are signed on your device with keys that '
         'only your device can access. The server never receives '
         'your private key. Every send requires trusted device, '
         'PIN unlock, local signing, and explicit confirmation.',
@@ -191,8 +170,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'never-share-seed',
     category: 'security',
     question: 'Why should I not share my seed phrase or private key?',
-    answer:
-        'Anyone with your seed phrase, private key, mnemonic, '
+    answer: 'Anyone with your seed phrase, private key, mnemonic, '
         'spend key, or view key can access or spend your crypto. '
         'Svaultai will never ask for these values, and no '
         'support person should either.',
@@ -201,8 +179,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'delete-my-vault',
     category: 'security',
     question: 'How do I delete my vault?',
-    answer:
-        'Open Settings and choose Delete vault. Svaultai shows a '
+    answer: 'Open Settings and choose Delete vault. Svaultai shows a '
         'warning, then asks you to type the exact phrase '
         'DELETE MY VAULT, enter your PIN, and confirm from a '
         'trusted device. This is intentionally not a one-click '
@@ -214,8 +191,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'what-happens-when-i-delete-my-vault',
     category: 'security',
     question: 'What happens when I delete my vault?',
-    answer:
-        'Deleting your vault permanently deletes your Svaultai '
+    answer: 'Deleting your vault permanently deletes your Svaultai '
         'vault data, including files, secure items, logins, ID '
         'documents, Crypto Vault encrypted wallet records, and '
         'related vault metadata. Any active storage '
@@ -230,21 +206,18 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'can-i-recover-deleted-vault',
     category: 'security',
     question: 'Can I recover a deleted vault?',
-    answer:
-        'No. Once you confirm deletion, Svaultai removes vault '
+    answer: 'No. Once you confirm deletion, Svaultai removes vault '
         'data permanently and cannot restore it. There is no '
         'hidden shadow copy and no recovery flow. If you also '
         'lose the wallet backup you kept outside Svaultai, '
         'on-chain crypto in that wallet may become '
         'unrecoverable too.',
   ),
-
   FaqEntry(
     id: 'how-do-i-upload-files',
     category: 'files',
     question: 'How do I upload files?',
-    answer:
-        'Open the Vault or Files view and choose Upload. You '
+    answer: 'Open the Vault or Files view and choose Upload. You '
         'can also drop files onto the app. Uploads are '
         'encrypted before storage.',
   ),
@@ -252,8 +225,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'what-file-types',
     category: 'files',
     question: 'What file types can I store?',
-    answer:
-        'Svaultai accepts common document, image, audio, and '
+    answer: 'Svaultai accepts common document, image, audio, and '
         'video file types. Any file that fits within your '
         'storage quota can be uploaded.',
   ),
@@ -261,8 +233,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'search-inside-documents',
     category: 'files',
     question: 'Can I search inside documents?',
-    answer:
-        'Yes. Svaultai extracts text from supported documents '
+    answer: 'Yes. Svaultai extracts text from supported documents '
         'and lets you search across their contents from chat '
         'or the file list.',
   ),
@@ -270,8 +241,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'summarize-pdf',
     category: 'files',
     question: 'Can Svaultai summarize my PDF?',
-    answer:
-        'Yes. Ask the assistant to summarize a specific PDF or '
+    answer: 'Yes. Ask the assistant to summarize a specific PDF or '
         'document. The summary uses the extracted text; it '
         'does not modify the original file.',
   ),
@@ -279,8 +249,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-cant-find-file',
     category: 'files',
     question: "Why can't Svaultai find my file?",
-    answer:
-        'Check the file name spelling, the vault you are '
+    answer: 'Check the file name spelling, the vault you are '
         'in, and whether the upload completed. Files that are '
         'still analyzing may not appear in searches yet.',
   ),
@@ -288,18 +257,15 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-delete-a-file',
     category: 'files',
     question: 'How do I delete a file?',
-    answer:
-        "Open the file's row in the Files list and choose "
+    answer: "Open the file's row in the Files list and choose "
         'Delete. Deletion is permanent — Svaultai does not keep '
         'a shadow copy.',
   ),
-
   FaqEntry(
     id: 'how-do-i-save-a-password',
     category: 'secure_items',
     question: 'How do I save a password?',
-    answer:
-        'Open the Logins & Secure Items page and choose Save, '
+    answer: 'Open the Logins & Secure Items page and choose Save, '
         'or ask the assistant to save a login. Svaultai encrypts '
         'the entry before storing it.',
   ),
@@ -307,8 +273,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-view-a-password',
     category: 'secure_items',
     question: 'How do I view a saved password?',
-    answer:
-        "Open the login's row and choose View. Revealing the "
+    answer: "Open the login's row and choose View. Revealing the "
         'password requires trusted device, PIN unlock, and '
         'explicit confirmation — the chat itself never displays '
         'the password value.',
@@ -317,8 +282,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-are-passwords-masked',
     category: 'secure_items',
     question: 'Why are passwords masked?',
-    answer:
-        'Passwords are masked by default so nobody looking over '
+    answer: 'Passwords are masked by default so nobody looking over '
         'your shoulder — including the AI transcript — sees the '
         'value. Reveal requires unlock and confirmation.',
   ),
@@ -326,8 +290,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'generated-login',
     category: 'secure_items',
     question: 'How do I create a generated login?',
-    answer:
-        'Ask the assistant to generate a new login for a '
+    answer: 'Ask the assistant to generate a new login for a '
         'service, or open the Logins page and pick Generate. '
         'You confirm the draft before it is saved.',
   ),
@@ -335,26 +298,22 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'edit-delete-secure-item',
     category: 'secure_items',
     question: 'How do I edit or delete a secure item?',
-    answer:
-        "Open the item's row and choose Edit or Delete. Both "
+    answer: "Open the item's row and choose Edit or Delete. Both "
         'actions require unlock; deletion is permanent.',
   ),
   FaqEntry(
     id: 'duplicate-logins',
     category: 'secure_items',
     question: 'Can Svaultai find duplicate logins?',
-    answer:
-        'Yes. Ask the assistant to show duplicate or reused '
+    answer: 'Yes. Ask the assistant to show duplicate or reused '
         'passwords. Svaultai compares saved logins locally after '
         'unlock and flags matches.',
   ),
-
   FaqEntry(
     id: 'save-passport-license',
     category: 'ids',
     question: 'Can I save my passport or driver license?',
-    answer:
-        'Yes. Upload the document and mark it as an ID '
+    answer: 'Yes. Upload the document and mark it as an ID '
         'document. Extracted fields are stored encrypted; the '
         'ID number is masked by default.',
   ),
@@ -362,8 +321,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'ids-masked-by-default',
     category: 'ids',
     question: 'Are ID numbers hidden by default?',
-    answer:
-        'Yes. Only the last few characters are shown. Revealing '
+    answer: 'Yes. Only the last few characters are shown. Revealing '
         'the full number requires trusted device, PIN unlock, '
         'and explicit confirmation.',
   ),
@@ -371,8 +329,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'id-expiry-reminders',
     category: 'ids',
     question: 'Can Svaultai remind me about expiration dates?',
-    answer:
-        'Ask the assistant when your passport or license '
+    answer: 'Ask the assistant when your passport or license '
         'expires. Svaultai reads the extracted expiry date '
         'from your ID documents.',
   ),
@@ -380,18 +337,15 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-search-ids',
     category: 'ids',
     question: 'How do I search my ID documents?',
-    answer:
-        'Ask the assistant, or open the ID Documents page and '
+    answer: 'Ask the assistant, or open the ID Documents page and '
         'use the search bar. Searches match on type, issuing '
         'country, and issuing state — not on the raw ID number.',
   ),
-
   FaqEntry(
     id: 'what-is-crypto-vault',
     category: 'crypto',
     question: 'What is Crypto Vault?',
-    answer:
-        'Crypto Vault is the non-custodial wallet feature of '
+    answer: 'Crypto Vault is the non-custodial wallet feature of '
         'Svaultai. It stores your public receive addresses, '
         'shows live balances from public providers, and lets '
         'you prepare sends that you sign locally.',
@@ -400,8 +354,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'supported-assets',
     category: 'crypto',
     question: 'Which assets are supported?',
-    answer:
-        'ETH, USDT ERC20, USDC ERC20 on Ethereum; SOL on '
+    answer: 'ETH, USDT ERC20, USDC ERC20 on Ethereum; SOL on '
         'Solana; USDT TRC20 on TRON; XMR on Monero (receive '
         'only in this release).',
   ),
@@ -409,8 +362,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'is-crypto-custodial',
     category: 'crypto',
     question: 'Is Crypto Vault custodial?',
-    answer:
-        'No. Crypto Vault is non-custodial. Your keys are on '
+    answer: 'No. Crypto Vault is non-custodial. Your keys are on '
         'your device; Svaultai cannot move your crypto without '
         'your local signature.',
   ),
@@ -418,8 +370,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'can-vaultai-move-crypto',
     category: 'crypto',
     question: 'Can Svaultai move my crypto?',
-    answer:
-        'No. Svaultai cannot broadcast a transaction without '
+    answer: 'No. Svaultai cannot broadcast a transaction without '
         'your PIN unlock, trusted device, local signing, and '
         'explicit confirmation. It never auto-sends.',
   ),
@@ -427,8 +378,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'pin-before-sending',
     category: 'crypto',
     question: 'Why do I need a PIN before sending?',
-    answer:
-        'The PIN unlocks the local signing key. Without it '
+    answer: 'The PIN unlocks the local signing key. Without it '
         'your device cannot sign a transaction, and Svaultai '
         'will not accept an unsigned send request.',
   ),
@@ -436,8 +386,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'usdt-erc20-vs-trc20',
     category: 'crypto',
     question: 'Why does USDT have ERC20 and TRC20?',
-    answer:
-        'USDT exists on multiple networks. Svaultai supports '
+    answer: 'USDT exists on multiple networks. Svaultai supports '
         'USDT ERC20 on Ethereum and USDT TRC20 on TRON. You '
         'must pick the correct network — addresses, fees, and '
         'transfers are network-specific and not interchangeable.',
@@ -446,8 +395,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'usdc-uses-eth-address',
     category: 'crypto',
     question: 'Why does USDC use my Ethereum address?',
-    answer:
-        'USDC and USDT ERC20 are ERC20 tokens on Ethereum. '
+    answer: 'USDC and USDT ERC20 are ERC20 tokens on Ethereum. '
         'Your Ethereum wallet address can receive ETH, USDT '
         'ERC20, and USDC ERC20. Sending an ERC20 token spends '
         'ETH as gas.',
@@ -456,8 +404,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'erc20-needs-eth-gas',
     category: 'crypto',
     question: 'Why do token transfers need ETH for gas?',
-    answer:
-        'Ethereum charges gas in ETH for every transaction, '
+    answer: 'Ethereum charges gas in ETH for every transaction, '
         'including ERC20 token transfers. Without a small ETH '
         'balance, USDT ERC20 and USDC ERC20 sends will fail.',
   ),
@@ -465,8 +412,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-monero-different',
     category: 'crypto',
     question: 'Why is Monero different?',
-    answer:
-        'Monero is private. A public Monero address does not '
+    answer: 'Monero is private. A public Monero address does not '
         'reveal its balance. To show balance or activity, the '
         'wallet must scan the Monero blockchain using wallet '
         'scanning capability.',
@@ -475,8 +421,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'monero-balance-in-browser',
     category: 'crypto',
     question: "Why can't I see my Monero balance in the browser?",
-    answer:
-        'Real Monero scanning cannot run safely inside the web '
+    answer: 'Real Monero scanning cannot run safely inside the web '
         'app. In web, Svaultai can show your Monero receive '
         'address, but balance and activity require the desktop '
         'or native local scanner.',
@@ -485,8 +430,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'monero-send-disabled',
     category: 'crypto',
     question: 'Why is Monero send disabled?',
-    answer:
-        'XMR send is disabled until real local Monero scanning '
+    answer: 'XMR send is disabled until real local Monero scanning '
         'and signing are implemented. This prevents fake '
         'balances, unsafe spending, or invalid transactions.',
   ),
@@ -494,8 +438,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'buy-sell-swap',
     category: 'crypto',
     question: 'Can I buy, sell, swap, or trade crypto in Svaultai?',
-    answer:
-        'No. Crypto Vault is for storing, receiving, and '
+    answer: 'No. Crypto Vault is for storing, receiving, and '
         'sending supported assets where enabled. It is not an '
         'exchange and does not support buy, sell, swap, trade, '
         'stake, bridge, or exchange features.',
@@ -504,8 +447,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'provider-unavailable',
     category: 'crypto',
     question: 'What happens if a provider is unavailable?',
-    answer:
-        'Svaultai shows a clear unavailable reason instead of '
+    answer: 'Svaultai shows a clear unavailable reason instead of '
         'inventing a balance. A 0 balance is shown only when '
         'the provider actually returns zero.',
   ),
@@ -513,8 +455,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-balance-zero',
     category: 'crypto',
     question: 'Why does my balance say 0?',
-    answer:
-        'A displayed 0 balance means the provider returned a '
+    answer: 'A displayed 0 balance means the provider returned a '
         'real zero. If the provider was unavailable, Svaultai '
         'shows an unavailable reason instead of a fake zero.',
   ),
@@ -522,8 +463,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'receive-when-balance-zero',
     category: 'crypto',
     question: 'Can I receive crypto even if balance is 0?',
-    answer:
-        'Yes. Receive works regardless of balance. Share your '
+    answer: 'Yes. Receive works regardless of balance. Share your '
         'public receive address to accept funds; incoming '
         'transfers show up when your provider reports them.',
   ),
@@ -531,8 +471,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'crypto-when-vault-deleted',
     category: 'crypto',
     question: 'What happens to my crypto if I delete my vault?',
-    answer:
-        'Deleting your vault does not move or delete your '
+    answer: 'Deleting your vault does not move or delete your '
         'crypto on the blockchain. Svaultai stores encrypted '
         'wallet records locally and on the server — but the '
         'coins themselves live on-chain. Deleting your Svaultai '
@@ -542,13 +481,11 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
         'access to those funds. Svaultai never broadcasts '
         'crypto transactions during deletion.',
   ),
-
   FaqEntry(
     id: 'what-plan-am-i-on',
     category: 'billing',
     question: 'What plan am I on?',
-    answer:
-        'Ask the assistant "what plan am I on" or open the '
+    answer: 'Ask the assistant "what plan am I on" or open the '
         'Billing page. Svaultai shows your active plan and the '
         'storage quota it grants.',
   ),
@@ -556,8 +493,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'storage-limits',
     category: 'billing',
     question: 'How much storage do I have?',
-    answer:
-        'Ask the assistant "how much storage am I using" or '
+    answer: 'Ask the assistant "how much storage am I using" or '
         'open the Storage page. Svaultai shows used bytes, '
         'quota bytes, and percent used.',
   ),
@@ -565,16 +501,14 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'storage-exceeded',
     category: 'billing',
     question: 'What happens if I exceed storage?',
-    answer:
-        'Uploads are blocked until you free space or upgrade. '
+    answer: 'Uploads are blocked until you free space or upgrade. '
         'Existing files remain accessible.',
   ),
   FaqEntry(
     id: 'how-do-i-upgrade',
     category: 'billing',
     question: 'How do I upgrade storage?',
-    answer:
-        'Open the Billing page and choose an upgrade tier. '
+    answer: 'Open the Billing page and choose an upgrade tier. '
         'Checkout runs through a payment provider; Svaultai '
         'does not store your payment details.',
   ),
@@ -582,8 +516,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-cancel',
     category: 'billing',
     question: 'How do I cancel or manage subscription?',
-    answer:
-        'Open the Billing page and choose Manage subscription. '
+    answer: 'Open the Billing page and choose Manage subscription. '
         'You can cancel or change your plan through the '
         'payment provider portal.',
   ),
@@ -591,8 +524,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-checkout-opens',
     category: 'billing',
     question: 'Why does checkout open?',
-    answer:
-        'Payments run through a payment provider so Svaultai '
+    answer: 'Payments run through a payment provider so Svaultai '
         'does not handle payment details directly. Checkout '
         "opens in the provider's UI.",
   ),
@@ -600,46 +532,33 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-storage-calculated',
     category: 'billing',
     question: 'How is storage calculated?',
-    answer:
-        'Storage counts the encrypted byte size of your '
+    answer: 'Storage counts the encrypted byte size of your '
         'uploaded files and documents. Secure items are small '
         'and typically negligible for quota.',
   ),
   FaqEntry(
     id: 'why-inactive-unpaid-deleted',
     category: 'billing',
-    question: 'Why are unpaid inactive vaults deleted?',
-    answer:
-        'Unpaid vaults that are not used for at least 6 months '
-        'may be permanently deleted. This keeps Svaultai '
-        'storage focused on people who are actively using '
-        'their vault. To keep your vault active, sign in and '
-        'use your vault before the 6-month inactivity cutoff, '
-        'or subscribe if you want continued storage '
-        'protection. If you subscribe or become active before '
-        'the cutoff, the vault is not deleted.',
+    question: 'Can Svaultai delete my inactive vault?',
+    answer: 'No. Svaultai does not delete a vault because it is inactive '
+        'or unsubscribed. Permanent account deletion can only be started '
+        'by the vault owner after signing in and completing the protected '
+        'Delete vault confirmation flow.',
   ),
   FaqEntry(
     id: 'how-to-prevent-auto-deletion',
     category: 'billing',
-    question: 'How do I prevent automatic deletion?',
-    answer:
-        'To prevent automatic deletion, sign in and use your '
-        'vault before the 6-month inactivity cutoff — a '
-        'login, unlock, upload, or vault activity resets the '
-        'timer. Alternatively, subscribe: paid vaults are not '
-        'subject to the unpaid-inactive-6-months rule. If you '
-        'were on a paid plan and later cancelled, the '
-        'inactivity clock only starts after your paid '
-        'entitlement ends.',
+    question: 'Who can delete my vault?',
+    answer: 'Only the signed-in vault owner can request permanent deletion. '
+        'Svaultai support and administrators do not have an account-delete '
+        'control. The owner must pass the in-app security checks and enter '
+        'the exact confirmation phrase before deletion can proceed.',
   ),
-
   FaqEntry(
     id: 'why-balance-unavailable',
     category: 'troubleshooting',
     question: 'Why is my balance unavailable?',
-    answer:
-        'The provider for that asset did not return a value in '
+    answer: 'The provider for that asset did not return a value in '
         'time. Svaultai shows an honest "unavailable" state '
         'instead of a fake zero. Retry usually recovers it.',
   ),
@@ -647,19 +566,16 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-file-not-showing',
     category: 'troubleshooting',
     question: 'Why is my file not showing?',
-    answer:
-        'Check that the upload finished, you are in the right '
+    answer: 'Check that the upload finished, you are in the right '
         'vault, and any active filters or search terms match. '
         'Files still analyzing may not appear in searches yet.',
   ),
   FaqEntry(
     id: 'why-chat-searches-files',
     category: 'troubleshooting',
-    question:
-        'Why is chat searching files when I asked about '
+    question: 'Why is chat searching files when I asked about '
         'something else?',
-    answer:
-        'That is a bug. Chat should route to the correct vault '
+    answer: 'That is a bug. Chat should route to the correct vault '
         'category — Crypto Vault, logins, IDs, billing, '
         'storage, or activity — before falling back to file '
         'search. If a specific phrase misroutes, please tell '
@@ -669,8 +585,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'monero-desktop-required',
     category: 'troubleshooting',
     question: 'Why does Monero say desktop app required?',
-    answer:
-        'Monero scanning cannot run inside a browser. When the '
+    answer: 'Monero scanning cannot run inside a browser. When the '
         'app is running in web, Monero balance and activity '
         'require the desktop or native scanner.',
   ),
@@ -678,8 +593,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'tron-provider-unavailable',
     category: 'troubleshooting',
     question: 'Why does TRON say provider unavailable?',
-    answer:
-        'The TRON balance provider did not respond in time. '
+    answer: 'The TRON balance provider did not respond in time. '
         'Svaultai shows unavailable instead of a fake zero. '
         'Retry usually recovers, and receive addresses remain '
         'valid regardless.',
@@ -688,8 +602,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'why-subscription-checking',
     category: 'troubleshooting',
     question: 'Why is subscription status checking?',
-    answer:
-        'Svaultai is fetching your latest plan state from the '
+    answer: 'Svaultai is fetching your latest plan state from the '
         'billing provider. It usually clears within a few '
         'seconds; if it persists, try Refresh from the Billing '
         'page.',
@@ -698,8 +611,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-refresh',
     category: 'troubleshooting',
     question: 'How do I refresh my vault?',
-    answer:
-        'Every list page has a Refresh action, and chat cards '
+    answer: 'Every list page has a Refresh action, and chat cards '
         'have a Retry button when data is unavailable. Pulling '
         'to refresh works on touch devices.',
   ),
@@ -707,8 +619,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-report-bug',
     category: 'troubleshooting',
     question: 'How do I report a bug?',
-    answer:
-        'There is no live customer-support team yet. Use the '
+    answer: 'There is no live customer-support team yet. Use the '
         'in-app FAQ and the AI assistant to search for a '
         'solution first. If a report-issue path is available '
         'in your build, use it; otherwise describe the problem '
@@ -718,8 +629,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-get-support',
     category: 'troubleshooting',
     question: 'How do I get support?',
-    answer:
-        'Since there is no live customer-support team yet, use '
+    answer: 'Since there is no live customer-support team yet, use '
         'the in-app FAQ and the AI assistant. If a report-'
         'issue or contact-support route is available in your '
         'build, use it. Otherwise, live support contact is not '
@@ -727,12 +637,11 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
   ),
 ];
 
-
 List<FaqEntry> faqEntriesInCategory(String categoryId) {
-  return kFaqEntries.where((e) => e.category == categoryId)
+  return kFaqEntries
+      .where((e) => e.category == categoryId)
       .toList(growable: false);
 }
-
 
 List<FaqEntry> faqEntriesMatchingQuery(String rawQuery) {
   final q = rawQuery.trim().toLowerCase();
@@ -742,7 +651,6 @@ List<FaqEntry> faqEntriesMatchingQuery(String rawQuery) {
         e.answer.toLowerCase().contains(q);
   }).toList(growable: false);
 }
-
 
 FaqEntry? faqEntryById(String id) {
   for (final e in kFaqEntries) {

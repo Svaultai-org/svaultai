@@ -490,14 +490,8 @@ class ZkAuthService {
 
     final legacyPin = await _deriveLegacyPinVerifier(pin);
 
-    // Send the user-typed vault_name plaintext so the backend can
-    // store it authoritatively in vaults.vault_name for LLM prompt
-    // injection + /auth/me responses. Server normalizes on
-    // receive; no random-hex placeholder is generated anymore.
-    // Privacy classification per 2026-07-20 clarification: this
-    // value is server-visible product metadata (not a private
-    // credential); the private login lookup remains
-    // username_lookup (32 opaque bytes).
+    // The user-typed vault name stays on the device. Registration sends only
+    // opaque lookup identifiers plus encrypted account material.
     final finalizeResponse = await _post(
       '/auth/zk-register-finalize',
       {
@@ -512,7 +506,6 @@ class ZkAuthService {
         'pin_verifier': legacyPin.pinVerifier,
         'kdf_iterations': legacyPin.kdfIterations,
         'username_lookup': lookupV1B64,
-        'vault_name': vaultName,
       },
     );
 
@@ -648,9 +641,7 @@ class ZkAuthService {
         );
         step(legacy ? 'opaque_legacy_finish_success' : 'opaque_finish_login');
         timing(
-          legacy
-              ? 'opaque_legacy_finish_complete'
-              : 'opaque_finish_complete',
+          legacy ? 'opaque_legacy_finish_complete' : 'opaque_finish_complete',
         );
         return (finish: finish, slotId: slotId);
       } on OpaqueAuthenticationFailed {
@@ -690,19 +681,11 @@ class ZkAuthService {
       slotId = legacy.slotId;
     }
 
-    // Opportunistic backfill: for accounts registered before
-    // migration 0031 whose vaults.vault_name was NULLed by the
-    // backfill migration (they used to hold a random-hex
-    // placeholder), send the user's typed vault_name so the server
-    // can populate the column. The server silently skips the write
-    // if the row already has a non-NULL value or if the value
-    // would collide with another vault — login still succeeds.
     final finalizeResponse = await _post(
       '/auth/zk-login-finalize',
       {
         'slot_id': slotId,
         'ke3': finish.finishLoginRequest,
-        if (vaultName != null && vaultName.isNotEmpty) 'vault_name': vaultName,
       },
     );
     step('post_login_finalize');
@@ -739,7 +722,8 @@ class ZkAuthService {
       mvk: mvk,
       skVaultPrivate: skVault,
       displayName: displayName,
-      vaultName: finalizeResponse['vault_name'] as String?,
+      // The readable sign-in name is intentionally device-local.
+      vaultName: vaultName,
     );
   }
 

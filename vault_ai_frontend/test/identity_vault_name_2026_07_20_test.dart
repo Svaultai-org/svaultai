@@ -54,16 +54,12 @@ void main() {
       // Native secure storage is authoritative on Android; legacy
       // SharedPreferences keys remain readable as one-time fallbacks
       // so existing users' typed names are preserved.
-      expect(
-          src.contains(
-              "NativeSecureStore.readString('last_vault_name')"),
+      expect(src.contains("NativeSecureStore.readString('last_vault_name')"),
           isTrue);
       expect(src.contains("sp.getString('last_canonical_username')"), isTrue,
           reason: 'legacy key must be readable as a one-time fallback '
               'so existing users\' typed names are preserved');
-      expect(
-          src.contains(
-              "NativeSecureStore.readString('last_display_name')"),
+      expect(src.contains("NativeSecureStore.readString('last_display_name')"),
           isTrue);
       expect(src.contains("sp.getString('last_display_username')"), isTrue,
           reason: 'legacy display key fallback');
@@ -77,16 +73,15 @@ void main() {
       expect(idx, greaterThan(-1));
       final window = src.substring(idx, (idx + 5000).clamp(0, src.length));
       expect(
-          window.contains(
-              "NativeSecureStore.deleteString('last_vault_name')"),
+          window.contains("NativeSecureStore.deleteString('last_vault_name')"),
           isTrue);
       expect(
-          window.contains(
-              "NativeSecureStore.deleteString('last_display_name')"),
+          window
+              .contains("NativeSecureStore.deleteString('last_display_name')"),
           isTrue);
       expect(
-          window.contains(
-              "NativeSecureStore.deleteString('last_vault_handle')"),
+          window
+              .contains("NativeSecureStore.deleteString('last_vault_handle')"),
           isTrue);
       expect(window.contains("sp.remove('last_display_username')"), isTrue);
       expect(window.contains("sp.remove('last_canonical_username')"), isTrue);
@@ -192,10 +187,10 @@ void main() {
     });
   });
 
-  group('Wire protocol carries vault_name for register + login backfill', () {
+  group('Readable vault name stays on device', () {
     test(
         'registerVault takes vaultName as its required param and sends '
-        'it as the ``vault_name`` request field', () {
+        'only opaque username_lookup on the wire', () {
       final src = _read('lib/services/zk_auth_service.dart');
       final idx = src.indexOf('Future<RegisterResult> registerVault(');
       expect(idx, greaterThan(-1));
@@ -204,33 +199,27 @@ void main() {
       expect(window.contains('required String vaultName'), isTrue,
           reason: 'the retired ``username`` param name is gone; '
               'the caller passes the user-typed vault name');
-      expect(window.contains("'vault_name': vaultName"), isTrue,
-          reason: 'the vault name is sent in the register-finalize '
-              'body so the server can store it authoritatively');
+      expect(window.contains("'vault_name': vaultName"), isFalse);
+      expect(window.contains("'username_lookup': lookupV1B64"), isTrue);
     });
 
-    test(
-        'loginVault takes vaultName as an optional param and sends '
-        'it on login-finalize for opportunistic backfill', () {
+    test('loginVault keeps vaultName local and never sends it on finalize', () {
       final src = _read('lib/services/zk_auth_service.dart');
       final idx = src.indexOf('Future<LoginResult> loginVault(');
       expect(idx, greaterThan(-1));
       final endIdx = src.indexOf('/// Transparent legacy adoption', idx);
       final window = src.substring(idx, endIdx);
       expect(window.contains('String? vaultName'), isTrue);
-      // The backfill body carries vault_name on login-finalize.
-      expect(window.contains("'vault_name': vaultName"), isTrue);
+      expect(window.contains("'vault_name': vaultName"), isFalse);
     });
 
-    test('LoginResult carries the SERVER-authoritative vaultName', () {
+    test('LoginResult retains a device-local vaultName', () {
       final src = _read('lib/services/zk_auth_service.dart');
       final classIdx = src.indexOf('class LoginResult');
       final endIdx = src.indexOf('}', classIdx);
       final window = src.substring(classIdx, endIdx);
       expect(window.contains('final String? vaultName;'), isTrue,
-          reason: 'the login-finalize response now returns vault_name '
-              'so the client can populate app.vaultName with the '
-              'server-authoritative value');
+          reason: 'the UI still needs the locally typed name');
     });
   });
 
@@ -259,13 +248,12 @@ void main() {
       }
     });
 
-    test(
-        'api_client exposes setVaultName (not setVaultAiName); '
-        'endpoint is /vault/name (not /vault/ai-name)', () {
+    test('api_client keeps setVaultName as a local-only compatibility method',
+        () {
       final src = _read('lib/api_client.dart');
       expect(src.contains('Future<String?> setVaultName('), isTrue);
       expect(src.contains('setVaultAiName'), isFalse);
-      expect(src.contains("'\$baseUrl/vault/name'"), isTrue);
+      expect(src.contains("'\$baseUrl/vault/name'"), isFalse);
       expect(src.contains("/vault/ai-name"), isFalse);
     });
   });

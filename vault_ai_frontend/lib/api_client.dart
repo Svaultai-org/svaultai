@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import 'services/session_termination.dart' as st;
+import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
 
@@ -362,7 +363,7 @@ Map<String, dynamic> buildChatRequestBody({
 }) {
   return <String, dynamic>{
     'encrypted_message': encryptedMessage,
-    'vault_name': vaultName,
+    'vault_name': '',
     'pin': pin,
     'uploaded_file_ids': uploadedFileIds ?? const <String>[],
     // Client-declared protocol version. Backend uses THIS (not a
@@ -615,7 +616,11 @@ class VaultAIClient {
     final uri = Uri.parse('$baseUrl/auth/signup');
     final headers = _defaultHeaders(json: true);
     final body = jsonEncode({
-      'vault_name': vaultName,
+      // This retired endpoint will reject the request; never send the
+      // readable account name while an old call site is still present.
+      'username_lookup': vault_handle.vaultHandleB64Url(
+        vault_handle.deriveUsernameLookupV1(vaultName),
+      ),
       'pin': pin,
       'confirm_pin': confirmPin,
       if (displayUsername != null && displayUsername.isNotEmpty)
@@ -693,7 +698,9 @@ class VaultAIClient {
     final uri = Uri.parse('$baseUrl/auth/login');
     final headers = _defaultHeaders(json: true);
     final body = jsonEncode({
-      'vault_name': vaultName,
+      'username_lookup': vault_handle.vaultHandleB64Url(
+        vault_handle.deriveUsernameLookupV1(vaultName),
+      ),
       'pin': pin,
     });
 
@@ -815,32 +822,11 @@ class VaultAIClient {
     required String authToken,
     required String? vaultName,
   }) async {
-    final uri = Uri.parse('$baseUrl/vault/name');
-    final response = await _runWithNetLog(
-      'vault.name.set',
-      uri,
-      () => http.patch(
-        uri,
-        headers: _defaultHeaders(authToken: authToken),
-        body: jsonEncode({'vault_name': vaultName}),
-      ),
-    );
-    if (response.statusCode == 401) {
-      throw const AuthExpiredException();
-    }
-    if (response.statusCode != 200) {
-      throw Exception(_formatBackendError(
-        prefix: 'vault/name failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid /vault/name response format');
-    }
-    final stored = decoded['vault_name'];
-    return stored is String && stored.isNotEmpty ? stored : null;
+    // The readable vault name is local-only. Keep this compatibility method
+    // for call sites that update local state, but never transmit the value.
+    if (authToken.isEmpty) throw const AuthExpiredException();
+    final local = vaultName?.trim();
+    return local == null || local.isEmpty ? null : local;
   }
 
   Future<void> authLogout({required String authToken}) async {
@@ -1229,7 +1215,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/expiry/active');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'limit': limit,
     };
     if (expiryFilter != null && expiryFilter.isNotEmpty) {
@@ -1266,7 +1252,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/memory/timeline');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'limit': limit,
     };
     if (memoryType != null && memoryType.isNotEmpty) {
@@ -1305,7 +1291,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/memory/list');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'pin': pin,
       'limit': limit,
       if (query != null && query.isNotEmpty) 'query': query,
@@ -1347,7 +1333,7 @@ class VaultAIClient {
       authToken: authToken,
       body: <String, dynamic>{
         ...data,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       },
       prefix: 'Memory save failed',
@@ -1368,7 +1354,7 @@ class VaultAIClient {
       body: <String, dynamic>{
         ...data,
         'id': id,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       },
       prefix: 'Memory update failed',
@@ -1387,7 +1373,7 @@ class VaultAIClient {
       authToken: authToken,
       body: <String, dynamic>{
         'id': id,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       },
       prefix: 'Memory delete failed',
@@ -1434,7 +1420,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/security-center/analyze-passwords');
     final body = jsonEncode({
-      'vault_name': vaultName,
+      'vault_name': '',
       'pin': pin,
       if (cursor != null) 'cursor': cursor,
       if (limit != null) 'limit': limit,
@@ -1523,7 +1509,7 @@ class VaultAIClient {
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
+      body: jsonEncode({'vault_name': '', 'pin': pin}),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1551,7 +1537,7 @@ class VaultAIClient {
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
+      body: jsonEncode({'vault_name': '', 'pin': pin}),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1640,7 +1626,7 @@ class VaultAIClient {
     request.headers.addAll(headers);
     _vlogRequest('chat.stream', uri, headers);
     _vlog('chat.body', {
-      'vault_name': vaultName,
+      'vault_name': '',
       'encrypted_message_len': encryptedMessage.length,
       'pin_present': pin.isNotEmpty,
       'uploaded_file_count': (uploadedFileIds ?? const <String>[]).length,
@@ -1709,7 +1695,9 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'username_lookup': vault_handle.vaultHandleB64Url(
+          vault_handle.deriveUsernameLookupV1(vaultName),
+        ),
       }),
     );
 
@@ -1794,7 +1782,7 @@ class VaultAIClient {
         uri,
         headers: headers,
         body: jsonEncode({
-          'vault_name': vaultName,
+          'vault_name': '',
           'pin': pin,
         }),
       );
@@ -1925,7 +1913,7 @@ class VaultAIClient {
 
     final uri = Uri.parse(
       '$baseUrl/vault-meta'
-      '?vault_name=${Uri.encodeQueryComponent(vaultName)}',
+      '?vault_name=',
     );
 
     final response = await http.get(uri, headers: headers);
@@ -1961,7 +1949,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'acknowledge_orphan_wipe': acknowledgeOrphanWipe,
       }),
@@ -2000,7 +1988,7 @@ class VaultAIClient {
       Uri.parse('$baseUrl/beneficiary/create'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'label': label,
       }),
@@ -2028,7 +2016,7 @@ class VaultAIClient {
       Uri.parse('$baseUrl/beneficiary/link'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'pairing_code': pairingCode,
       }),
@@ -2067,7 +2055,7 @@ class VaultAIClient {
     final response = await http.post(
       Uri.parse('$baseUrl/beneficiary/list-mine'),
       headers: headers,
-      body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
+      body: jsonEncode({'vault_name': '', 'pin': pin}),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2118,7 +2106,7 @@ class VaultAIClient {
     final response = await http.post(
       Uri.parse('$baseUrl/beneficiary/list-inheritances'),
       headers: _defaultHeaders(authToken: authToken, json: true),
-      body: jsonEncode({'vault_name': vaultName, 'pin': pin}),
+      body: jsonEncode({'vault_name': '', 'pin': pin}),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2145,10 +2133,15 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
-        if (inheritedVaultName != null && inheritedVaultName.isNotEmpty)
-          'inherited_vault_name': inheritedVaultName,
+        'inherited_username_lookup': vault_handle.vaultHandleB64Url(
+          vault_handle.deriveUsernameLookupV1(
+            inheritedVaultName != null && inheritedVaultName.isNotEmpty
+                ? inheritedVaultName
+                : 'Inherited vault',
+          ),
+        ),
       }),
     );
     if (response.statusCode != 200) {
@@ -2195,7 +2188,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -2223,7 +2216,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -2251,7 +2244,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
         'link_id': linkId,
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -2602,7 +2595,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -2872,7 +2865,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -2954,7 +2947,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -3069,7 +3062,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'service': service,
         'item_type': itemType,
         'pin': pin,
@@ -3359,7 +3352,7 @@ class VaultAIClient {
       _defaultHeaders(authToken: authToken),
     );
 
-    request.fields['vault_name'] = vaultName;
+    request.fields['vault_name'] = '';
     request.fields['pin'] = pin;
 
     if (contentType != null && contentType.isNotEmpty) {
@@ -3507,7 +3500,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/imports/start');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'pin': pin,
       'total_files': totalFiles,
       'total_bytes_planned': totalBytesPlanned,
@@ -3578,7 +3571,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/imports/$importId/cancel');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'pin': pin,
     };
 
@@ -3616,7 +3609,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/imports/$importId/complete');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'pin': pin,
       'failed_count_delta': failedCountDelta,
       'skipped_duplicate_count_delta': skippedDuplicateCountDelta,
@@ -3716,7 +3709,7 @@ class VaultAIClient {
       _defaultHeaders(authToken: authToken),
     );
 
-    request.fields['vault_name'] = vaultName;
+    request.fields['vault_name'] = '';
     request.fields['file_id'] = fileId;
     request.fields['saved_name'] = savedName;
     request.fields['pin'] = pin;
@@ -3754,7 +3747,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -3841,7 +3834,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -3877,7 +3870,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'file_id': fileId,
         'pin': pin,
       }),
@@ -3917,7 +3910,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/upload-file/init');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'pin': pin,
       'filename': filename,
       'content_type': contentType,
@@ -4034,7 +4027,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'file_id': fileId,
       }),
@@ -4070,7 +4063,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'file_id': fileId,
       }),
@@ -4106,7 +4099,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'file_id': fileId,
       }),
@@ -4174,7 +4167,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
       }),
     );
@@ -4211,7 +4204,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'pin': pin,
         'old_service': oldService,
         'new_service': newService,
@@ -4249,7 +4242,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'service': service,
         'pin': pin,
       }),
@@ -4315,7 +4308,7 @@ class VaultAIClient {
 
     final uri = Uri.parse('$baseUrl/update-secure-item');
     final body = <String, dynamic>{
-      'vault_name': vaultName,
+      'vault_name': '',
       'old_service': oldService,
       'item_type': itemType,
       'pin': pin,
@@ -4796,7 +4789,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'service': service,
         'item_type': itemType,
         'pin': pin,
@@ -4830,7 +4823,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'file_id': fileId,
         'saved_name': savedName,
         'pin': pin,
@@ -4863,7 +4856,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
-        'vault_name': vaultName,
+        'vault_name': '',
         'file_id': fileId,
         'pin': pin,
       }),

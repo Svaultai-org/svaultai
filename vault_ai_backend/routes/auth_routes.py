@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
-import re
-import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
-from psycopg2 import errors as pg_errors
 from psycopg2.extras import RealDictCursor
 
 from auth_local import (
@@ -34,7 +33,6 @@ from vault_core import (
     decrypt_message,
     derive_key,
     encrypt_message,
-    generate_pin_salt,
     get_db,
 )
 from vault_handle import to_display as vault_handle_to_display
@@ -44,19 +42,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-VAULT_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,49}$")
-VAULT_NAME_MIN_LENGTH = 3
-VAULT_NAME_MAX_LENGTH = 50
-
 PIN_MAX_LENGTH = 64
 
 GENERIC_LOGIN_ERROR = "Vault name or PIN is incorrect"
+USERNAME_LOOKUP_BYTES = 32
 
 
-def _normalize_vault_name(raw: str) -> str:
-
-
-    return (raw or "").strip().lower()
+def _decode_username_lookup(value: str) -> bytes:
+    try:
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail="Invalid username lookup") from exc
+    if len(raw) != USERNAME_LOOKUP_BYTES:
+        raise HTTPException(status_code=400, detail="Invalid username lookup")
+    return raw
 
 
 def _validate_pin_shape(pin: str, *, is_signup: bool) -> None:
@@ -76,23 +75,6 @@ def _validate_pin_shape(pin: str, *, is_signup: bool) -> None:
         raise HTTPException(
             status_code=400, detail="PIN must be at least 6 digits.",
         )
-
-
-def _validate_vault_name(name: str) -> str:
-    normalized = _normalize_vault_name(name)
-    if not VAULT_NAME_PATTERN.match(normalized):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "invalid_vault_name",
-                "message": (
-                    f"Vault name must be {VAULT_NAME_MIN_LENGTH}-{VAULT_NAME_MAX_LENGTH} "
-                    "characters, lowercase letters, digits, '_' or '-', and must "
-                    "start with a letter or digit."
-                ),
-            },
-        )
-    return normalized
 
 
 def _validate_display_username(username: Optional[str]) -> Optional[str]:
@@ -116,23 +98,18 @@ def _default_display_username(vault_id: str) -> str:
     return f"User {short}"
 
 
-class SignupRequest(BaseModel):
-    vault_name: str        = Field(..., min_length=1, max_length=64)
-    pin: str               = Field(..., min_length=1, max_length=PIN_MAX_LENGTH)
-    confirm_pin: str       = Field(..., min_length=1, max_length=PIN_MAX_LENGTH)
-    display_username: Optional[str] = Field(default=None, max_length=200)
-    acknowledged_irrecoverable: bool = Field(default=False)
-
-
 class LoginRequest(BaseModel):
-    vault_name: str = Field(..., min_length=1, max_length=64)
-    pin: str        = Field(..., min_length=1, max_length=PIN_MAX_LENGTH)
+    username_lookup: str = Field(..., min_length=1, max_length=200)
+    pin: str = Field(..., min_length=1, max_length=PIN_MAX_LENGTH)
 
 
 class AuthResponse(BaseModel):
     session_token:      str
     vault_id:           str
-    vault_name:         str
+    # Human-readable login names never come from the service.  The field is
+    # retained as nullable for one release so older clients can decode the
+    # response without learning an internal database label.
+    vault_name:         Optional[str] = None
     display_username:   Optional[str] = None
     vault_handle:       Optional[str] = None
     zk:                 bool = False
@@ -144,14 +121,6 @@ class AuthResponse(BaseModel):
 
 class MeResponse(BaseModel):
     vault_id:         str
-    # vault_name is the user-chosen identity for the vault AND for
-    # the AI keeper — one string, one concept. Nullable so ZK
-    # accounts that haven't been backfilled since the 0031 migration
-    # can exist as NULL; the frontend + prompt fall back to the
-    # neutral literal "VaultAI" until the row carries a real value.
-    # NEVER a hash, handle, UUID, template token, or random
-    # placeholder. Set via /auth/zk-register-finalize or /auth/zk-
-    # login-finalize (backfill) or PATCH /vault/name.
     vault_name:       Optional[str] = None
     display_username: Optional[str]
     vault_handle:     Optional[str] = None
@@ -241,8 +210,8 @@ def _build_response(
     return AuthResponse(
         session_token=token_bundle["token"],
         vault_id=str(token_bundle["vault_id"]),
-        vault_name=token_bundle["vault_name"],
-        display_username=display_username,
+        vault_name=None,
+        display_username=None,
         vault_handle=handle_display,
         zk=handle_display is not None,
         new_device_trusted=new_device_trusted,
@@ -250,148 +219,20 @@ def _build_response(
     )
 
 
-@router.post("/auth/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-def signup(payload: SignupRequest, request: Request) -> AuthResponse:
-                                                                        
-                                                                 
-    origin = request.headers.get("origin") or "-"
-    device_id_present = bool(request.headers.get("x-device-id"))
-    client_host = (request.client.host if request.client else "-") or "-"
-    print(
-        f"[AUTH] /auth/signup ROUTE_ENTRY "
-        f"origin={origin} client={client_host} "
-        f"device_id_present={device_id_present} "
-        f"vault_name_len={len(payload.vault_name or '')} "
-        f"pin_len={len(payload.pin or '')} "
-        f"has_display_username={payload.display_username is not None} "
-        f"acknowledged={payload.acknowledged_irrecoverable}",
-        flush=True,
-    )
+@router.post("/auth/signup", status_code=status.HTTP_410_GONE)
+def signup_disabled(request: Request) -> None:
+    """Reject the retired plaintext-username signup protocol.
 
+    Current clients use the OPAQUE/ZK registration endpoints, which receive
+    only client-derived opaque identifiers.
+    """
     enforce_signup_rate_limit(request)
-
-    if not payload.acknowledged_irrecoverable:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code":    "acknowledgement_required",
-                "message": (
-                    "You must acknowledge that VaultAI cannot recover a "
-                    "lost vault name or PIN."
-                ),
-            },
-        )
-
-    vault_name = _validate_vault_name(payload.vault_name)
-    _validate_pin_shape(payload.pin, is_signup=True)
-    if payload.pin != payload.confirm_pin:
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "pin_mismatch", "message": "PINs do not match"},
-        )
-    display_username = _validate_display_username(payload.display_username)
-
-                                                                       
-    pin_salt = generate_pin_salt()
-    iterations = KDF_TARGET_ITERATIONS
-    key = derive_key(payload.pin, pin_salt, iterations=iterations)
-    pin_verifier = encrypt_message(PIN_VERIFIER_PLAINTEXT, key)
-
-    vault_id = str(uuid.uuid4())
-    account_id = str(uuid.uuid4())
-
-                                                                    
-    if display_username is None:
-        display_username = _default_display_username(vault_id)
-
-    conn = get_db()
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
-                                                                   
-        cur.execute(
-            """
-            INSERT INTO accounts (account_id, account_type, sales_channel)
-            VALUES (%s, 'individual', 'self_service')
-            """,
-            (account_id,),
-        )
-
-        try:
-            cur.execute(
-                """
-                INSERT INTO vaults
-                  (vault_id, vault_name, display_username,
-                   pin_salt, pin_verifier,
-                   kdf_iterations, kdf_algorithm,
-                   account_id, acknowledged_irrecoverable,
-                   last_login_at, last_vault_unlock_at,
-                   last_any_activity_at)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pbkdf2_sha256', %s, TRUE,
-                        NOW(), NOW(), NOW())
-                """,
-                (vault_id, vault_name, display_username,
-                 pin_salt, pin_verifier, iterations, account_id),
-            )
-        except pg_errors.UniqueViolation:
-            conn.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code":    "vault_name_taken",
-                    "message": "That vault name is already taken.",
-                },
-            )
-
-                                                             
-        cur.execute(
-            "UPDATE accounts SET billing_owner_vault_id = %s WHERE account_id = %s",
-            (vault_id, account_id),
-        )
-        cur.execute(
-            """
-            INSERT INTO account_members (account_id, vault_id, role, status)
-            VALUES (%s, %s, 'owner', 'active')
-            """,
-            (account_id, vault_id),
-        )
-        cur.execute(
-            """
-            INSERT INTO account_subscriptions (account_id, status, source)
-            VALUES (%s, 'none', 'none')
-            """,
-            (account_id,),
-        )
-        cur.execute(
-            "INSERT INTO account_storage_totals (account_id) VALUES (%s)",
-            (account_id,),
-        )
-
-        conn.commit()
-    except HTTPException:
-        raise
-    except Exception:
-        conn.rollback()
-        logger.exception("[AUTH] signup failed for vault_name_prefix=%s", vault_name[:3])
-        raise HTTPException(status_code=500, detail="Signup failed")
-    finally:
-        conn.close()
-
-    device_id = _device_id_from_request(request)
-                                                                 
-                                                                      
-    _upsert_trusted_device(vault_id=vault_id, device_id=device_id, request=request)
-
-    issued = issue_session_token(
-        vault_id=vault_id,
-        vault_name=vault_name,
-        device_id=device_id,
-        client_label=normalize_client_label(request.headers.get("user-agent")),
-    )
-    return _build_response(
-        issued,
-        display_username=display_username,
-        new_device_trusted=False,
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "private_signup_required",
+            "message": "Please update SVaultAI and create the vault again.",
+        },
     )
 
 
@@ -416,69 +257,29 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         f"[AUTH] /auth/login ROUTE_ENTRY "
         f"origin={origin} client={client_host} "
         f"device_id_present={device_id_present} "
-        f"vault_name_len={len(payload.vault_name or '')} "
+        f"lookup_present={bool(payload.username_lookup)} "
         f"pin_len={len(payload.pin or '')}",
         flush=True,
     )
 
     enforce_login_rate_limit(request)
     _validate_pin_shape(payload.pin, is_signup=False)
-    # 2026-07-20: preserve the user-typed casing here. Migration 0031
-    # repurposed vaults.vault_name from the legacy lowercase-only
-    # login identifier to the user-chosen product identity, and
-    # tools.normalize_vault_name (used by ZK signup) preserves case.
-    # A blind .lower() at the lookup step caused the endpoint to miss
-    # every ZK-signed-up mixed-case row (e.g. "Alexa"), which surfaced
-    # as the production "PIN loop" on the reload -> /pin path.
-    vault_name_raw = (payload.vault_name or "").strip()
-    if not vault_name_raw:
-
-
-        _do_dummy_derive(payload.pin)
-        raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
+    username_lookup = _decode_username_lookup(payload.username_lookup)
 
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Case-insensitive lookup with EXACT-case precedence, plus
-        # explicit ambiguity refusal. Collision safety:
-        #
-        #  * Case-sensitive UNIQUE(vault_name) means at most ONE row
-        #    can match exact-case equality with vault_name = %(raw)s.
-        #  * If that exact-case row exists we use it — deterministic;
-        #    NEVER authenticates a case-collided sibling.
-        #  * If no exact-case match exists AND multiple rows share
-        #    the same case-insensitive canonical form (reachable only
-        #    across the legacy/ZK boundary — see the CollisionSchema
-        #    audit in test_auth_login_case_insensitive_2026_07_20.py)
-        #    we REFUSE with the same generic 401 as a nonexistent
-        #    vault. Never pick an arbitrary row from a case-collided
-        #    set: doing so would let a client who types the shared
-        #    case-insensitive form authenticate as an unintended
-        #    vault whose PIN happened to match.
         cur.execute(
             """
-            SELECT vault_id, vault_name, pin_salt, pin_verifier, kdf_iterations,
+            SELECT vault_id, pin_salt, pin_verifier, kdf_iterations,
                    failed_pin_attempts, locked_until, must_reset, display_username,
-                   vault_handle,
-                   (vault_name = %(raw)s) AS is_exact_match
+                   vault_handle
             FROM vaults
-            WHERE LOWER(vault_name) = LOWER(%(raw)s)
+            WHERE username_lookup_v1 = %s
             """,
-            {"raw": vault_name_raw},
+            (username_lookup,),
         )
-        rows = cur.fetchall()
-
-        row = None
-        if rows:
-            exact_matches = [r for r in rows if r.get("is_exact_match")]
-            if exact_matches:
-                # UNIQUE(vault_name) case-sensitively guarantees len<=1.
-                row = exact_matches[0]
-            elif len(rows) == 1:
-                row = rows[0]
-            # else: ambiguous — leave row=None, fall through to the
-            # generic 401 below.
+        row = cur.fetchone()
 
         if not row:
 
@@ -576,7 +377,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         raise
     except Exception:
         conn.rollback()
-        logger.exception("[AUTH] login failed for vault_name_prefix=%s", vault_name[:3])
+        logger.exception("[AUTH] login failed after opaque lookup")
         raise HTTPException(status_code=500, detail="Login failed")
     finally:
         conn.close()
@@ -588,7 +389,7 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
 
     issued = issue_session_token(
         vault_id=vault_id,
-        vault_name=row["vault_name"],
+        vault_name="",
         device_id=device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
@@ -607,8 +408,7 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            SELECT vault_id, vault_name, display_username, vault_handle,
-                   created_at
+            SELECT vault_id, vault_handle, created_at
             FROM vaults
             WHERE vault_id = %s
             """,
@@ -620,8 +420,8 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
             raise HTTPException(status_code=401, detail="Invalid token")
         return MeResponse(
             vault_id=str(row["vault_id"]),
-            vault_name=row.get("vault_name"),
-            display_username=row.get("display_username"),
+            vault_name=None,
+            display_username=None,
             vault_handle=_display_vault_handle(row.get("vault_handle")),
             zk=row.get("vault_handle") is not None,
             created_at=row["created_at"],
@@ -631,14 +431,8 @@ def me(principal: SessionPrincipal = Depends(verify_session_token)) -> MeRespons
 
 
 class VaultNameUpdateRequest(BaseModel):
-    # User-chosen identity for both the vault and the AI keeper.
-    # Server normalizes (trim + whitespace-collapse + length 1..60
-    # + no control chars) and stores plaintext in vaults.vault_name.
-    # The server-side prompt builder always reads from
-    # vaults.vault_name for the authenticated vault_id — the client
-    # value here is authenticated by the session cookie but is only
-    # used to WRITE the row; it is not otherwise trusted as an
-    # identity source.
+    # Compatibility-only. Current clients never send this field and the
+    # service never stores it.
     vault_name: Optional[str] = Field(default=None, max_length=200)
 
 
@@ -651,46 +445,14 @@ def set_vault_name(
     payload: VaultNameUpdateRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> VaultNameResponse:
-    """Set or clear the user-chosen vault name for the caller's
-    authenticated vault.
+    """Retired compatibility endpoint.
 
-    Passing ``vault_name: null`` (or a value that normalizes to
-    empty) clears the column; the prompt builder then falls back
-    to the neutral ``VaultAI`` literal.
-
-    The endpoint touches ONLY the row for ``principal["vault_id"]``.
+    The readable vault name stays on the user's device and is never written
+    into the service database.  Returning success avoids breaking an older
+    client during the update window while discarding the supplied value.
     """
-    from tools import normalize_vault_name
-    normalized: Optional[str] = normalize_vault_name(payload.vault_name)
-    # Explicit clear semantics: the request supplied a value but it
-    # normalized away (e.g. all whitespace or all control chars).
-    # Treat that as "clear the column" rather than 400 — the user
-    # is asking for no name, and the fallback path is what we want.
-    conn = get_db()
-    try:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "UPDATE vaults SET vault_name = %s WHERE vault_id = %s",
-                (normalized, principal["vault_id"]),
-            )
-        except pg_errors.UniqueViolation as exc:
-            conn.rollback()
-            # The vault_name column carries a UNIQUE index inherited
-            # from the legacy login-lookup era. NULL doesn't collide,
-            # but two accounts trying to claim the same non-NULL
-            # value do. Surface a clean 409.
-            raise HTTPException(
-                status_code=409,
-                detail="That vault name is already in use.",
-            ) from exc
-        if cur.rowcount != 1:
-            conn.rollback()
-            raise HTTPException(status_code=404, detail="vault not found")
-        conn.commit()
-    finally:
-        conn.close()
-    return VaultNameResponse(vault_name=normalized)
+    del payload, principal
+    return VaultNameResponse(vault_name=None)
 
 
 @router.post(

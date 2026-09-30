@@ -49,6 +49,7 @@ import hashlib
 import logging
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -140,10 +141,8 @@ from rate_limit_auth import (
 )
 from vault_core import get_db
 from vault_handle import (
-    InvalidUsername,
     InvalidVaultHandle,
     VAULT_HANDLE_BYTES,
-    derive_username_lookup_v1,
     from_display,
     to_display,
 )
@@ -167,34 +166,6 @@ DUPLICATE_USERNAME_ERROR = (
 
 ZK_REPAIR_BRANCH_PRESERVE = "preserve_existing_key"
 ZK_REPAIR_BRANCH_ROTATE = "rotate_new_key"
-
-
-def _match_legacy_username_lookup_candidate(
-    rows: list[dict],
-    lookup_bytes: bytes,
-) -> tuple[Optional[dict], int]:
-    """Resolve a pre-blind-index random-handle row without raw input.
-
-    Legacy adoption generated a random ``vault_handle`` and older clients did
-    not persist ``username_lookup_v1``. A later username-only login therefore
-    misses both indexed lookups even though the row has complete OPAQUE state.
-    The server already stores ``vault_name`` for legacy-login compatibility,
-    so compare the client-supplied opaque lookup against a locally-derived
-    value for only the NULL-index candidates. Exactly one match is required;
-    an ambiguous canonical-name collision fails closed.
-    """
-    matches: list[dict] = []
-    for row in rows:
-        vault_name = row.get("vault_name")
-        if not isinstance(vault_name, str) or not vault_name.strip():
-            continue
-        try:
-            candidate = derive_username_lookup_v1(vault_name)
-        except InvalidUsername:
-            continue
-        if secrets.compare_digest(candidate, lookup_bytes):
-            matches.append(row)
-    return (matches[0] if len(matches) == 1 else None, len(matches))
 
 
 def _b64url_decode(value: str, *, name: str, max_bytes: int) -> bytes:
@@ -259,12 +230,10 @@ class ZkRegisterInitRequest(BaseModel):
     #   lookup_v1 = SHA-256(b"vaultai.username_lookup.v1|"
     #                       || nfkc_casefolded_utf8_username)
     # The raw username is NEVER sent to the server. The server sees
-    # 32 opaque bytes with the same visibility properties as
-    # vault_handle. Optional so a stale client still completes on
-    # the vault_handle uniqueness gate alone.
-    username_lookup: Optional[str] = Field(
-        default=None, min_length=1, max_length=200,
-    )
+    # only this 32-byte one-way lookup. It is required for every new
+    # registration; accepting a new row without it would create an
+    # account that cannot use the private-name login protocol.
+    username_lookup: str = Field(..., min_length=1, max_length=200)
 
 
 class ZkRegisterInitResponse(BaseModel):
@@ -289,33 +258,32 @@ async def zk_register_init(
     # authoritative uniqueness gate is the partial UNIQUE index on
     # vaults.username_lookup_v1 at INSERT time (atomic vs. concurrent
     # registrations — the preflight is only an early hint).
-    if payload.username_lookup is not None:
-        lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
-        conn = get_db()
-        try:
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(
-                """
-                SELECT 1 FROM vaults
-                WHERE username_lookup_v1 = %s
-                LIMIT 1
-                """,
-                (lookup_bytes,),
+    lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT 1 FROM vaults
+            WHERE username_lookup_v1 = %s
+            LIMIT 1
+            """,
+            (lookup_bytes,),
+        )
+        if cur.fetchone() is not None:
+            logger.info(
+                "[ZK-REGISTER-INIT] duplicate username pid=%d "
+                "handle_fpr=%s lookup_fpr=%s",
+                os.getpid(),
+                _handle_fingerprint(handle_bytes),
+                _lookup_v1_fingerprint(lookup_bytes),
             )
-            if cur.fetchone() is not None:
-                logger.info(
-                    "[ZK-REGISTER-INIT] duplicate username pid=%d "
-                    "handle_fpr=%s lookup_fpr=%s",
-                    os.getpid(),
-                    _handle_fingerprint(handle_bytes),
-                    _lookup_v1_fingerprint(lookup_bytes),
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=DUPLICATE_USERNAME_ERROR,
-                )
-        finally:
-            conn.close()
+            raise HTTPException(
+                status_code=409,
+                detail=DUPLICATE_USERNAME_ERROR,
+            )
+    finally:
+        conn.close()
 
     try:
         ke2 = opaque_registration_start(ke1, _opaque_credential_id(handle_bytes))
@@ -351,22 +319,9 @@ class ZkRegisterFinalizeRequest(BaseModel):
     pin_salt: str = Field(..., min_length=1, max_length=200)
     pin_verifier: str = Field(..., min_length=1, max_length=400)
     kdf_iterations: int = Field(..., ge=100_000, le=2_000_000)
-    # Same as ZkRegisterInitRequest.username_lookup — 32 opaque
-    # bytes (base64url) derived client-side from the canonical
-    # username. Optional so older client builds still complete
-    # registration on the plain vault_handle uniqueness path.
-    username_lookup: Optional[str] = Field(
-        default=None, min_length=1, max_length=200,
-    )
-    # User-chosen vault name (product-facing identity for BOTH the
-    # vault and the AI keeper). Stored plaintext in
-    # vaults.vault_name after server-side normalization. Optional
-    # so a stale client can still register — the row is created
-    # with vault_name = NULL and the fixed client's next login
-    # backfills it.
-    vault_name: Optional[str] = Field(
-        default=None, min_length=1, max_length=200,
-    )
+    # Same as ZkRegisterInitRequest.username_lookup — required 32-byte
+    # one-way lookup derived client-side from the canonical username.
+    username_lookup: str = Field(..., min_length=1, max_length=200)
 
     @field_validator("acknowledged_irrecoverable")
     @classmethod
@@ -441,24 +396,15 @@ async def zk_register_finalize(
         _record_fingerprint(record),
     )
 
-    # Decode the client's username_lookup once; used by the INSERT
-    # column and by the UniqueViolation diagnostic. Absence means the
-    # row will be written with NULL and only participate in
-    # vault_handle uniqueness — pre-migration behavior.
-    lookup_bytes: Optional[bytes] = None
-    if payload.username_lookup is not None:
-        lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
+    # Decode the client's one-way lookup once. New private-identifier
+    # registrations never write a NULL lookup.
+    lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
 
-    # Normalize the user-chosen vault name. Before migration 0031
-    # this INSERT wrote encode(gen_random_bytes(16),'hex') to satisfy
-    # the NOT NULL UNIQUE constraint on vault_name — that produced
-    # the 32-hex placeholder that leaked into the typing indicator
-    # as "b21e31c5b59abdc8067ff6b23643b254 is thinking...". 0031
-    # dropped NOT NULL and repurposed the column as the user-chosen
-    # identity for both the vault and its AI keeper. We now insert
-    # the client-supplied name (normalized) or NULL.
-    from tools import normalize_vault_name
-    stored_vault_name: Optional[str] = normalize_vault_name(payload.vault_name)
+    # The human login name remains on the user's device.  The legacy
+    # ``vault_name`` column receives only a deterministic opaque row label so
+    # old internal joins keep working without storing readable usernames.
+    vault_id = str(uuid.uuid4())
+    opaque_vault_label = f"vault-{vault_id.replace('-', '')}"
 
     conn = get_db()
     try:
@@ -485,7 +431,7 @@ async def zk_register_finalize(
                   username_lookup_v1
                 )
                 VALUES (
-                  gen_random_uuid(), %s, %s, %s,
+                  %s, %s, %s, %s,
                   %s, %s,
                   %s, %s, %s,
                   %s,
@@ -493,16 +439,17 @@ async def zk_register_finalize(
                   %s,
                   %s
                 )
-                RETURNING vault_id, vault_name
+                RETURNING vault_id
                 """,
                 (
+                    vault_id,
                     payload.pin_salt, payload.pin_verifier,
                     payload.kdf_iterations,
                     handle_bytes, record,
                     wrapped_mvk, wrapped_sk_vault, pk_vault_public,
                     display_name_ciphertext,
                     account_id, payload.acknowledged_irrecoverable,
-                    stored_vault_name,
+                    opaque_vault_label,
                     lookup_bytes,
                 ),
             )
@@ -523,8 +470,7 @@ async def zk_register_finalize(
             logger.warning(
                 "[ZK-REGISTER] duplicate on finalize (handle_fpr=%s lookup_fpr=%s)",
                 _handle_fingerprint(handle_bytes),
-                _lookup_v1_fingerprint(lookup_bytes)
-                if lookup_bytes is not None else "-",
+                _lookup_v1_fingerprint(lookup_bytes),
             )
             raise HTTPException(
                 status_code=409,
@@ -532,14 +478,6 @@ async def zk_register_finalize(
             ) from exc
         _new_vault_row = cur.fetchone()
         vault_id = str(_new_vault_row["vault_id"])
-        # RETURNING can bring back NULL now that vault_name is
-        # nullable — that is the correct outcome when the client
-        # didn't supply a vault_name yet. The session token embeds
-        # an empty string in that slot (honest: the vault has no
-        # name until the user picks one). Every prompt and every UI
-        # surface reads vault_name from the vaults row directly, so
-        # the session-token slot is not the identity source.
-        row_vault_name: Optional[str] = _new_vault_row["vault_name"]
 
         cur.execute(
             """
@@ -562,7 +500,7 @@ async def zk_register_finalize(
 
     token = issue_session_token(
         vault_id=vault_id,
-        vault_name=row_vault_name or "",
+        vault_name="",
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
@@ -649,6 +587,7 @@ async def zk_login_init(
                    username_lookup_v1
             FROM vaults
             WHERE vault_handle = %s
+              AND opaque_registration_record IS NOT NULL
             """,
             (handle_bytes,),
         )
@@ -665,39 +604,11 @@ async def zk_login_init(
                        username_lookup_v1
                 FROM vaults
                 WHERE username_lookup_v1 = %s
+                  AND opaque_registration_record IS NOT NULL
                 """,
                 (lookup_bytes,),
             )
             row = cur.fetchone()
-        # Rows adopted before username_lookup_v1 shipped use a random handle,
-        # so neither the deterministic handle nor the NULL blind index can
-        # identify them. Recover from the stored legacy vault_name without
-        # accepting that raw name over the ZK endpoint. A successful unique
-        # match flows into the existing conflict-checked backfill below, so
-        # this bounded compatibility scan is paid only once per repaired row.
-        if row is None and lookup_bytes is not None:
-            cur.execute(
-                """
-                SELECT vault_id, opaque_registration_record, vault_handle,
-                       username_lookup_v1, vault_name
-                FROM vaults
-                WHERE username_lookup_v1 IS NULL
-                  AND vault_name IS NOT NULL
-                  AND vault_handle IS NOT NULL
-                  AND opaque_registration_record IS NOT NULL
-                """,
-            )
-            row, legacy_match_count = _match_legacy_username_lookup_candidate(
-                cur.fetchall(), lookup_bytes,
-            )
-            if legacy_match_count > 1:
-                logger.warning(
-                    "[ZK-LOGIN-INIT] ambiguous legacy username lookup "
-                    "pid=%d lookup_fpr=%s match_count=%d",
-                    os.getpid(),
-                    _lookup_v1_fingerprint(lookup_bytes),
-                    legacy_match_count,
-                )
         # Conflict-detected opportunistic backfill: if the row we
         # matched carries NULL, we would like to populate it so a
         # subsequent duplicate registration for the same canonical
@@ -842,19 +753,6 @@ class ZkLoginFinalizeRequest(BaseModel):
     slot_id: str = Field(..., min_length=1, max_length=128)
     ke3: str = Field(..., min_length=1)
     device_id: Optional[str] = Field(default=None, max_length=128)
-    # Opportunistic backfill of vault_name for accounts that predate
-    # migration 0031_vault_name_repurpose. The user's typed name is
-    # already stored client-side (that same string drives their
-    # username_lookup_v1); if the vaults row still has NULL
-    # vault_name — a leftover of the pre-0031 random-hex placeholder
-    # having been NULLed by the backfill migration — we populate it
-    # from this field on successful login, provided the value does
-    # not collide with an existing vault_name. Never overwrites a
-    # non-NULL value; conflicts are silently skipped and logged for
-    # operator review, so the login itself still succeeds.
-    vault_name: Optional[str] = Field(
-        default=None, min_length=1, max_length=200,
-    )
 
 
 class ZkLoginFinalizeResponse(BaseModel):
@@ -864,12 +762,6 @@ class ZkLoginFinalizeResponse(BaseModel):
     wrapped_mvk: str
     wrapped_sk_vault: str
     display_name_ciphertext: str
-    # Server-authoritative user-chosen vault name (product-facing
-    # identity for both vault and AI keeper). May be null on
-    # accounts whose column was NULLed by migration 0031 and
-    # haven't been backfilled yet — the client falls back to its
-    # locally-typed value or the neutral "VaultAI" literal.
-    vault_name: Optional[str] = None
 
 
 @router.post("/auth/zk-login-finalize", response_model=ZkLoginFinalizeResponse)
@@ -929,67 +821,13 @@ async def zk_login_finalize(
                   last_any_activity_at = NOW(),
                   failed_pin_attempts  = 0
               WHERE vault_id = %s
-              RETURNING vault_id, vault_name, wrapped_mvk, wrapped_sk_vault,
+              RETURNING vault_id, wrapped_mvk, wrapped_sk_vault,
                         display_name_ciphertext, vault_handle
             """,
             (row["vault_id"],),
         )
         vault_row = cur.fetchone()
 
-        # Opportunistic vault_name backfill for existing accounts
-        # whose column is still NULL after migration 0031. See the
-        # comment on ZkLoginFinalizeRequest.vault_name. Silently
-        # skipped on any conflict — login itself never fails on
-        # this write.
-        if (
-            vault_row is not None
-            and vault_row.get("vault_name") is None
-            and payload.vault_name is not None
-        ):
-            from tools import normalize_vault_name
-            candidate = normalize_vault_name(payload.vault_name)
-            if candidate is not None:
-                try:
-                    cur.execute(
-                        """
-                        UPDATE vaults
-                           SET vault_name = %s
-                         WHERE vault_id = %s
-                           AND vault_name IS NULL
-                        RETURNING vault_name
-                        """,
-                        (candidate, row["vault_id"]),
-                    )
-                    updated = cur.fetchone()
-                    if updated is not None:
-                        vault_row["vault_name"] = updated["vault_name"]
-                        logger.info(
-                            "[ZK-LOGIN-FINALIZE] vault_name backfilled "
-                            "vault_id=%s",
-                            row["vault_id"],
-                        )
-                except pg_errors.UniqueViolation:
-                    conn.rollback()
-                    # Re-issue the successful-login UPDATE so the
-                    # last_login_at bookkeeping is not lost, then
-                    # log the collision. Login still succeeds.
-                    cur.execute(
-                        """
-                        UPDATE vaults
-                          SET last_login_at        = NOW(),
-                              last_vault_unlock_at = NOW(),
-                              last_any_activity_at = NOW(),
-                              failed_pin_attempts  = 0
-                          WHERE vault_id = %s
-                        """,
-                        (row["vault_id"],),
-                    )
-                    logger.warning(
-                        "[ZK-LOGIN-FINALIZE] vault_name backfill conflict "
-                        "vault_id=%s (name already claimed by another vault); "
-                        "row keeps NULL until operator adjudicates",
-                        row["vault_id"],
-                    )
         conn.commit()
     finally:
         conn.close()
@@ -1001,11 +839,7 @@ async def zk_login_finalize(
 
     token = issue_session_token(
         vault_id=str(vault_row["vault_id"]),
-        # vault_name is nullable after migration 0031. The session
-        # token embeds an empty string in that slot when the row
-        # has no name yet; every prompt and every UI surface reads
-        # the authoritative value from the vaults row on demand.
-        vault_name=vault_row.get("vault_name") or "",
+        vault_name="",
         device_id=payload.device_id,
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
@@ -1048,7 +882,6 @@ async def zk_login_finalize(
         display_name_ciphertext=_b64url_encode(
             bytes(vault_row["display_name_ciphertext"]),
         ),
-        vault_name=vault_row.get("vault_name"),
     )
 
 

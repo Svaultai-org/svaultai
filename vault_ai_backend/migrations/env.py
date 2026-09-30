@@ -23,6 +23,16 @@ if not database_url:
 if database_url.startswith("postgres://"):
     database_url = "postgresql://" + database_url[len("postgres://"):]
 
+# SQLAlchemy 2.1 changed the bare ``postgresql://`` URL to prefer the
+# psycopg-v3 driver.  VaultAI deliberately ships psycopg2-binary (the same
+# driver used by the application), so make the dialect explicit instead of
+# allowing a dependency upgrade to break production migrations at startup.
+if database_url.startswith("postgresql://"):
+    database_url = (
+        "postgresql+psycopg2://"
+        + database_url[len("postgresql://"):]
+    )
+
 config.set_main_option("sqlalchemy.url", database_url)
 
 if config.config_file_name is not None:
