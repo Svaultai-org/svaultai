@@ -1,7 +1,7 @@
 # SVaultAI provider-neutral billing cutover
 
-Status: repository implementation complete; external store/provider setup is
-required before purchases can be accepted.
+Status: store-only billing implementation. Paid storage is verified only by
+Apple App Store or Google Play; web card checkout is removed.
 
 ## Product contract
 
@@ -22,8 +22,8 @@ required before purchases can be accepted.
 - Apple billing period: auto-renewing `P1M`.
 - Apple entitlement: 50 GiB total; the paid plan replaces the free 1 GiB
   limit and is not additive.
-- Web checkout remains disabled until a provider approves the fully disclosed
-  business model in writing.
+- Web has no checkout. A valid Apple/Play subscription follows the same account
+  across devices, including web.
 
 The provider-neutral ledger stores provider purchase identity, product/plan,
 quantity, normalized status, renewal/expiry, verification state, and minimal
@@ -203,46 +203,15 @@ pricing configured; no duplicate Apple products exist.
    refund, revocation, duplicate notification, and cross-device sign-in using
    Xcode StoreKit testing and App Store sandbox. Windows cannot certify these.
 
-## Web-card provider shortlist
+## Retired card-billing boundary
 
-No candidate is activated, and none should be described as approved until it
-confirms the exact SVaultAI model in writing: private SaaS/cloud storage plus a
-non-custodial wallet whose keys remain client-side and whose transactions are
-locally signed.
+Stripe runtime routes, SDK, merchant configuration, checkout, portal, and live
+cancellation calls are removed. Historical migrations and payment records remain
+for accounting and audit; they never grant storage in the store-only resolver.
+Migration 0046 releases retired web-card ownership without deleting vault data.
 
-1. **Adyen — recommended for an approval request.** It supports recurring
-   token payments and authoritative webhooks. Its current restricted-business
-   list explicitly treats cloud storage/file sharing and several financial or
-   crypto categories as restricted for direct merchants, so SVaultAI must seek
-   pre-approval and describe the non-custodial boundary accurately. Adyen is a
-   PSP, not merchant of record. Legal-entity jurisdiction and expected volume
-   must be confirmed during sales underwriting.
-2. **PayPal Braintree — second approval request.** It supports subscription
-   lifecycle webhooks and signed webhook parsing. PayPal's acceptable-use
-   policy requires pre-approval for cryptocurrency-related activity; the
-   application must disclose wallet functionality and private cloud storage.
-   It is a PSP/gateway, not merchant of record. Availability depends on the
-   merchant legal entity's supported country and underwriting.
-3. **Paddle — only after written eligibility confirmation.** It provides
-   merchant-of-record checkout, subscription lifecycle, tax handling,
-   idempotency keys, and webhooks for SaaS. Its acceptable-use policy prohibits
-   exchanges/trading platforms and other financial or virtual-currency
-   services. Although SVaultAI does none of those, the wallet surface makes
-   classification uncertain; do not integrate unless Paddle explicitly
-   approves the disclosed non-custodial product.
-
-Official policy/technical sources reviewed on 2026-08-14:
-
-- https://www.adyen.com/legal/list-restricted-prohibited/
-- https://docs.adyen.com/online-payments/tokenization/make-token-payments
-- https://developer.paypal.com/braintree/docs/reference/general/webhooks/overview
-- https://www.paypal.com/us/legalhub/paypal/acceptableuse-full
-- https://developer.paddle.com/get-started/how-paddle-works/
-- https://www.paddle.com/help/start/intro-to-paddle/what-am-i-not-allowed-to-sell-on-paddle
-
-## Legacy Stripe boundary
-
-`/billing/checkout-session` and `/billing/portal-session` are stable retired
-route tombstones and never contact Stripe. The old schema, webhook adapter,
-event log, and historical records remain intact for audit/rollback. Core
-startup no longer imports, probes, or requires a Stripe merchant account.
+Before deploying, cancel all still-recurring Stripe subscriptions in the merchant
+dashboard and confirm no future charge is scheduled. Removing credentials or
+code alone cannot stop provider-side charges. Do not finalize draft invoices.
+Then disable the obsolete webhook and revoke/remove the old credentials from
+production configuration. See STORE_ONLY_BILLING.md for the cutover checklist.

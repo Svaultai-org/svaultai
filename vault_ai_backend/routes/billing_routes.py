@@ -146,7 +146,6 @@ def _billing_me_safe_default_payload() -> dict:
         "current_provider":          "free",
         "target_provider":           None,
         "migration_status":          "none",
-        "web_card_purchase_allowed": True,
         "last_webhook_event":       None,
         "recent_webhook_count":     0,
         "billing_state":            "safe_default",
@@ -165,7 +164,8 @@ def _count_recent_global_webhooks(window_seconds: int = 60) -> int:
                 """
                 SELECT COUNT(*)::int
                   FROM provider_event_log
-                 WHERE received_at > NOW() - (
+                 WHERE source IN ('apple', 'google_play')
+                   AND received_at > NOW() - (
                          INTERVAL '1 second' * %s
                        );
                 """,
@@ -212,6 +212,7 @@ def _read_last_webhook_event(account_id: str) -> Optional[dict]:
                          ON pel.source = se.source
                         AND pel.source_event_id = se.source_event_id
                  WHERE se.account_id = %s
+                   AND se.source IN ('apple', 'google_play')
                  ORDER BY se.occurred_at DESC
                  LIMIT 1
                 """,

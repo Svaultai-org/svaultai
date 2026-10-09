@@ -49,7 +49,8 @@ Map<String, dynamic> _entitlement({
   final pct = percentUsed ?? (limit > 0 ? (used / limit) * 100.0 : 0.0);
 
   const liveStatuses = {'active', 'in_grace', 'canceled_pending'};
-  final defaultHasSub = source == 'stripe' && liveStatuses.contains(status);
+  final defaultHasSub = const {'apple', 'google_play'}.contains(source) &&
+      liveStatuses.contains(status);
   return <String, dynamic>{
     'account_id': '00000000-0000-0000-0000-000000000001',
     'account_type': accountType,
@@ -417,14 +418,13 @@ void main() {
       expect(find.text('Manage Subscription'), findsNothing);
     });
 
-    testWidgets('active Stripe subscriber renders both buttons',
-        (tester) async {
+    testWidgets('active Apple subscriber renders both buttons', (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement(
         blockCount: 2,
         status: 'active',
       );
-      data['source'] = 'stripe';
+      data['source'] = 'apple';
       data['has_active_subscription'] = true;
       await tester.pumpWidget(_wrap(StorageBody(
         data: data,
@@ -436,14 +436,14 @@ void main() {
       expect(find.text('Manage Subscription'), findsOneWidget);
     });
 
-    testWidgets('Stripe in_grace still shows Manage (user can fix payment)',
+    testWidgets('Apple in_grace still shows Manage (user can fix payment)',
         (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement(
         blockCount: 1,
         status: 'in_grace',
       );
-      data['source'] = 'stripe';
+      data['source'] = 'apple';
       await tester.pumpWidget(_wrap(StorageBody(
         data: data,
         onBuyStorage: () {},
@@ -455,36 +455,12 @@ void main() {
     testWidgets('Manage button hidden when callbacks are null', (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement(blockCount: 1, status: 'active');
-      data['source'] = 'stripe';
+      data['source'] = 'apple';
       await tester.pumpWidget(_wrap(StorageBody(
         data: data,
       )));
 
       expect(find.text('Manage Subscription'), findsNothing);
-    });
-  });
-
-  group('hasManageableStripeSubscription predicate', () {
-    test('returns false for free tier', () {
-      expect(hasManageableStripeSubscription(_entitlement()), isFalse);
-    });
-
-    test('returns false when source is not stripe', () {
-      final data = _entitlement(blockCount: 1, status: 'active');
-      data['source'] = 'apple';
-      expect(hasManageableStripeSubscription(data), isFalse);
-    });
-
-    test('returns true for active Stripe sub', () {
-      final data = _entitlement(blockCount: 1, status: 'active');
-      data['source'] = 'stripe';
-      expect(hasManageableStripeSubscription(data), isTrue);
-    });
-
-    test('returns true for canceled_pending Stripe sub', () {
-      final data = _entitlement(blockCount: 1, status: 'canceled_pending');
-      data['source'] = 'stripe';
-      expect(hasManageableStripeSubscription(data), isTrue);
     });
   });
 
@@ -617,7 +593,7 @@ void main() {
       );
 
       expect(
-        find.text('Today\'s charge  ·  prorated by Stripe'),
+        find.text('Your app store will confirm today\'s charge'),
         findsWidgets,
       );
 
@@ -776,167 +752,50 @@ void main() {
     });
   });
 
-  group('CheckoutReturnBanner', () {
-    testWidgets('success kind shows confirmation copy and dismiss icon',
-        (tester) async {
-      var dismissed = false;
-      await tester.pumpWidget(_wrap(CheckoutReturnBanner(
-        kind: 'success',
-        onDismiss: () => dismissed = true,
-      )));
-
-      expect(find.text('Payment confirmed'), findsOneWidget);
-      expect(
-        find.textContaining('Your new storage will appear here'),
-        findsOneWidget,
-      );
-
-      final dismissBtn = find.byIcon(Icons.close);
-      expect(dismissBtn, findsOneWidget);
-      await tester.tap(dismissBtn);
-      expect(dismissed, isTrue);
+  group('verified store subscription predicates', () {
+    test('Apple and Google Play honor the verified active flag', () {
+      for (final source in ['apple', 'google_play']) {
+        expect(
+            hasActiveSubscription(_entitlement(
+              source: source,
+              status: 'active',
+              hasActiveSubscription: true,
+            )),
+            isTrue);
+        expect(
+            hasActiveSubscription(_entitlement(
+              source: source,
+              status: 'expired',
+              hasActiveSubscription: false,
+            )),
+            isFalse);
+      }
     });
 
-    testWidgets('cancel kind shows neutral note and dismiss icon',
-        (tester) async {
-      var dismissed = false;
-      await tester.pumpWidget(_wrap(CheckoutReturnBanner(
-        kind: 'cancel',
-        onDismiss: () => dismissed = true,
-      )));
-
-      expect(find.text('Checkout cancelled'), findsOneWidget);
-      expect(
-        find.textContaining('No changes were made'),
-        findsOneWidget,
-      );
-      await tester.tap(find.byIcon(Icons.close));
-      expect(dismissed, isTrue);
-    });
-  });
-
-  group('checkout redirect URL builders', () {
-    String readLib(String relative) {
-      final file = File('lib/$relative');
-      expect(file.existsSync(), isTrue,
-          reason: 'expected file does not exist: ${file.path}');
-      return file.readAsStringSync();
-    }
-
-    test('buildCheckoutRedirectUrl returns null off-web (kIsWeb=false)', () {
-      expect(buildCheckoutRedirectUrl('success'), isNull);
-      expect(buildCheckoutRedirectUrl('cancel'), isNull);
-      expect(buildPortalReturnUrl(), isNull);
+    test('free and retired card providers cannot enable paid controls', () {
+      for (final source in ['none', 'stripe', 'web_card']) {
+        final data = _entitlement(
+          source: source,
+          status: 'active',
+          hasActiveSubscription: true,
+        );
+        expect(hasActiveSubscription(data), isFalse);
+        expect(hasManageableSubscription(data), isFalse);
+      }
     });
 
-    test(
-        'storage_page.dart forwards origin-derived success_url and '
-        'cancel_url to createStripeCheckoutSession', () {
-      final src = readLib('storage_page.dart');
-
-      final idx = src.indexOf('createStripeCheckoutSession(');
-      expect(idx, greaterThan(-1),
-          reason: 'createStripeCheckoutSession call missing');
-      final window = src.substring(
-        idx,
-        (idx + 600).clamp(0, src.length),
-      );
-      expect(
-        window,
-        contains("successUrl: buildCheckoutRedirectUrl('success')"),
-        reason: 'success_url must be forwarded so Stripe redirects to '
-            'the actual frontend origin, not the env fallback.',
-      );
-      expect(
-        window,
-        contains("cancelUrl: buildCheckoutRedirectUrl('cancel')"),
-        reason: 'cancel_url must be forwarded too.',
-      );
-    });
-
-    test(
-        'storage_page.dart forwards origin-derived return_url to '
-        'createStripePortalSession', () {
-      final src = readLib('storage_page.dart');
-      final idx = src.indexOf('createStripePortalSession(');
-      expect(idx, greaterThan(-1));
-      final window = src.substring(
-        idx,
-        (idx + 400).clamp(0, src.length),
-      );
-      expect(
-        window,
-        contains("returnUrl: buildPortalReturnUrl()"),
-      );
-    });
-
-    test(
-        'storage_page.dart reads checkout flag from BOTH route args '
-        'and Uri.base.queryParameters', () {
-      final src = readLib('storage_page.dart');
-      expect(src, contains("Uri.base.queryParameters['checkout']"),
-          reason: 'Storage page must read ?checkout=... from the URL');
-      expect(src, contains("args['checkout']"),
-          reason: 'Storage page must also read checkout from route '
-              'arguments for the in-app navigation case');
-    });
-
-    test(
-        'main.dart enables PathUrlStrategy on web so /storage works '
-        'without #', () {
-      final src = File('lib/main.dart').readAsStringSync();
-
-      expect(src, contains('PathUrlStrategy'),
-          reason: 'Set PathUrlStrategy so /storage?checkout=success '
-              'routes cleanly without a leading #');
-      expect(src, contains('flutter_web_plugins'));
-    });
-  });
-
-  group('hasActiveSubscription rule', () {
-    test('true when payload says has_active_subscription=true', () {
-      final data = _entitlement(hasActiveSubscription: true);
-      expect(hasActiveSubscription(data), isTrue);
-    });
-
-    test('false when payload says has_active_subscription=false', () {
-      final data = _entitlement(hasActiveSubscription: false);
-      expect(hasActiveSubscription(data), isFalse);
-    });
-
-    test('falls back to source+status when flag is missing', () {
-      final paid = <String, dynamic>{
-        'source': 'stripe',
-        'status': 'active',
-      };
-      final free = <String, dynamic>{
-        'source': 'none',
-        'status': 'none',
-      };
-      final expiredStripe = <String, dynamic>{
-        'source': 'stripe',
-        'status': 'expired',
-      };
-      expect(hasActiveSubscription(paid), isTrue);
-      expect(hasActiveSubscription(free), isFalse);
-      expect(hasActiveSubscription(expiredStripe), isFalse);
-    });
-
-    test('canceled_pending counts as active', () {
-      final data = _entitlement(
-        source: 'stripe',
-        status: 'canceled_pending',
-        blockCount: 1,
-      );
-      expect(hasActiveSubscription(data), isTrue);
-    });
-
-    test('Apple-source sub never flags as Stripe-modifiable', () {
-      final data = <String, dynamic>{
-        'source': 'apple',
-        'status': 'active',
-      };
-      expect(hasActiveSubscription(data), isFalse);
+    test('store status fallback supports active, grace and cancellation', () {
+      for (final source in ['apple', 'google_play']) {
+        for (final status in ['active', 'in_grace', 'canceled_pending']) {
+          expect(hasActiveSubscription({'source': source, 'status': status}),
+              isTrue);
+        }
+        expect(hasActiveSubscription({'source': source, 'status': 'expired'}),
+            isFalse);
+        expect(
+            hasManageableSubscription({'source': source, 'status': 'expired'}),
+            isTrue);
+      }
     });
   });
 
@@ -959,11 +818,11 @@ void main() {
     });
 
     testWidgets(
-      'shows "Upgrade storage" when user has an active Stripe subscription',
+      'shows "Upgrade storage" when user has an active Apple subscription',
       (tester) async {
         await _enlargeSurface(tester);
         final data = _entitlement(
-          source: 'stripe',
+          source: 'apple',
           status: 'active',
           blockCount: 2,
         );
@@ -977,11 +836,11 @@ void main() {
       },
     );
 
-    testWidgets('expired Stripe sub flips label back to "Buy storage"',
+    testWidgets('expired Apple sub flips label back to "Buy storage"',
         (tester) async {
       await _enlargeSurface(tester);
       final data = _entitlement(
-        source: 'stripe',
+        source: 'apple',
         status: 'expired',
         blockCount: 1,
       );
@@ -992,323 +851,6 @@ void main() {
       )));
       expect(find.text('Buy storage'), findsOneWidget);
       expect(find.text('Upgrade storage'), findsNothing);
-    });
-  });
-
-  group('createStripeCheckoutSession response shape', () {
-    test('api_client exposes the createStripeCheckoutSession entry point', () {
-      final src = File('lib/api_client.dart').readAsStringSync();
-      expect(
-        src,
-        contains('createStripeCheckoutSession'),
-        reason: 'api_client must expose the Stripe checkout helper',
-      );
-    });
-
-    test('storage_page._startCheckout branches on action field', () {
-      final src = File('lib/storage_page.dart').readAsStringSync();
-      expect(src, contains("result['action']"),
-          reason: '_startCheckout must read the action field');
-      expect(src, contains("'updated_existing'"),
-          reason: '_startCheckout must handle the in-place upgrade branch');
-      expect(src, contains('_pollEntitlementForBlocks'),
-          reason: 'in-place upgrade must trigger the entitlement poll');
-    });
-  });
-
-  group('storage_page post-upgrade poll', () {
-    late String storageSource;
-
-    setUpAll(() {
-      storageSource = File('lib/storage_page.dart').readAsStringSync();
-    });
-
-    test('_pollEntitlementForBlocks exists with the right shape', () {
-      expect(storageSource, contains('_pollEntitlementForBlocks'),
-          reason: 'the post-upgrade poll helper must exist');
-      expect(storageSource, contains('maxAttempts = 10'),
-          reason: 'spec calls for "up to 10 seconds" of polling');
-      expect(storageSource, contains('interval = Duration(seconds: 1)'),
-          reason: 'spec calls for 1-second tick interval');
-    });
-
-    test('poll uses BOTH local _data AND AppState.applyBillingPayload', () {
-      expect(storageSource, contains('app.applyBillingPayload(data)'),
-          reason: 'the poll must feed AppState too, not just _data');
-
-      final pollDeclIdx = storageSource.indexOf(
-        'Future<bool> _pollEntitlementForBlocks',
-      );
-      expect(pollDeclIdx, greaterThan(-1),
-          reason: '_pollEntitlementForBlocks declaration must exist');
-      final body = storageSource.substring(
-        pollDeclIdx,
-        (pollDeclIdx + 2500).clamp(0, storageSource.length),
-      );
-      expect(body, contains('_data = data'),
-          reason: 'the poll must also update the local _data snapshot');
-      expect(body, contains('blocks >= targetBlocks'),
-          reason: 'the poll must early-exit on target reached');
-    });
-
-    test('poll captures AppState BEFORE the first await (BuildContext-safe)',
-        () {
-      final fnIdx = storageSource.indexOf('_startCheckout(int blockCount)');
-      expect(fnIdx, greaterThan(-1));
-      final readIdx = storageSource.indexOf('context.read<AppState>()', fnIdx);
-      final awaitIdx = storageSource.indexOf(
-          'await _client.createStripeCheckoutSession', fnIdx);
-      expect(readIdx, greaterThan(-1),
-          reason: '_startCheckout must read AppState via Provider');
-      expect(awaitIdx, greaterThan(-1));
-      expect(readIdx, lessThan(awaitIdx),
-          reason: 'AppState must be captured BEFORE any await — '
-              'context.read across an async gap is unsafe');
-    });
-
-    test('downgrade flow uses friendly dialog, not the error dialog', () {
-      expect(storageSource, contains('_LowerPlanDialog'),
-          reason: '_LowerPlanDialog widget must exist');
-
-      expect(storageSource, contains('Changing to a lower plan'),
-          reason: 'Phase 1: lower-plan dialog title');
-      expect(
-        storageSource,
-        contains('To reduce your storage plan, open Manage Subscription.'),
-        reason: 'lower-plan dialog body (first sentence)',
-      );
-      expect(
-        storageSource,
-        contains(
-          'Changes to a lower plan may take effect at the end of your',
-        ),
-        reason: 'lower-plan dialog body (second sentence)',
-      );
-
-      expect(
-        storageSource.contains("'Manage Subscription'") ||
-            storageSource.contains('settingsManageSubscription'),
-        isTrue,
-        reason: 'lower-plan dialog must have a Manage Subscription '
-            'button, either as literal or via '
-            'AppLocalizations.settingsManageSubscription',
-      );
-      expect(
-        storageSource.contains("'Close'"),
-        isTrue,
-        reason: 'lower-plan dialog must have a Close button',
-      );
-
-      final lowerPlanIdx = storageSource.indexOf('class _LowerPlanDialog');
-      expect(lowerPlanIdx, greaterThan(-1),
-          reason: '_LowerPlanDialog class must exist');
-
-      final nextClassIdx = storageSource.indexOf(
-        RegExp(r'^class\s', multiLine: true),
-        lowerPlanIdx + 1,
-      );
-      final endIdx = nextClassIdx > -1 ? nextClassIdx : storageSource.length;
-      final lowerPlanBody = storageSource.substring(lowerPlanIdx, endIdx);
-      for (final banned in const [
-        'Exception',
-        'Checkout session failed',
-        "Upgrade couldn't start",
-      ]) {
-        expect(
-          lowerPlanBody.contains(banned),
-          isFalse,
-          reason: 'banned leak string "$banned" must not appear inside '
-              '_LowerPlanDialog body',
-        );
-      }
-
-      final showDialogIdx =
-          storageSource.indexOf('Future<void> _showLowerPlanDialog');
-      expect(showDialogIdx, greaterThan(-1),
-          reason: '_showLowerPlanDialog must exist');
-      final dialogBody = storageSource.substring(
-        showDialogIdx,
-        (showDialogIdx + 1000).clamp(0, storageSource.length),
-      );
-      expect(dialogBody, contains('_onManageSubscription'),
-          reason: "lower-plan dialog must reuse _StoragePageState's existing "
-              '_onManageSubscription, not its own copy');
-
-      final onBuyIdx = storageSource.indexOf('Future<void> _onBuyStorage()');
-      expect(onBuyIdx, greaterThan(-1));
-      final onBuyBody = storageSource.substring(
-        onBuyIdx,
-        (onBuyIdx + 3000).clamp(0, storageSource.length),
-      );
-      final preCheckPos = onBuyBody.indexOf('picked < currentBlocks');
-      final startCheckoutPos = onBuyBody.indexOf('_startCheckout(picked)');
-      expect(preCheckPos, greaterThan(-1));
-      expect(startCheckoutPos, greaterThan(-1));
-      expect(preCheckPos, lessThan(startCheckoutPos),
-          reason: 'the picked < currentBlocks pre-check must be lexically '
-              'BEFORE the _startCheckout call so the downgrade path '
-              'never reaches the backend');
-
-      expect(storageSource, contains('_isDowngradeNotSupportedError'),
-          reason: 'catch-block helper for the race-condition fallback');
-      expect(storageSource, contains('downgrade_not_supported'),
-          reason: 'the helper must match on the backend error code so the '
-              'fallback routes correctly');
-    });
-
-    test('three-phase dialog copy matches the spec verbatim', () {
-      expect(
-        storageSource,
-        contains('Checking your upgrade…'),
-        reason: 'Phase 1: progress dialog title',
-      );
-
-      expect(
-        storageSource,
-        contains("We're updating your Svaultai storage plan."),
-        reason: 'Phase 1: progress dialog body (first sentence)',
-      );
-      expect(
-        storageSource,
-        contains('This usually'),
-        reason: 'Phase 1: progress dialog body (second sentence)',
-      );
-
-      expect(
-        storageSource,
-        contains('Storage upgraded successfully'),
-        reason: 'Phase 2: success dialog title',
-      );
-      expect(
-        storageSource,
-        contains('Your storage limit is now '),
-        reason: 'Phase 2: success dialog body ("...is now N GB.")',
-      );
-
-      expect(
-        storageSource,
-        contains("'Payment received'"),
-        reason: 'Phase 3: timeout dialog title — operator-pinned',
-      );
-      expect(
-        storageSource,
-        contains("We're still applying your upgrade."),
-        reason: 'Phase 3: timeout dialog body (first sentence)',
-      );
-      expect(
-        storageSource,
-        contains('Refresh in a moment.'),
-        reason: 'Phase 3: timeout dialog body (second sentence)',
-      );
-      expect(
-        storageSource.contains("'Refresh now'") ||
-            storageSource.contains('storageRefreshNow'),
-        isTrue,
-        reason: 'Phase 3: timeout dialog must have a Refresh-now action, '
-            'either as literal or via '
-            'AppLocalizations.storageRefreshNow',
-      );
-    });
-
-    test('forbidden copy strings have been removed', () {
-      expect(
-        storageSource,
-        isNot(contains('Refreshing your storage limit')),
-        reason: 'banned phrase: "Refreshing your storage limit"',
-      );
-      expect(
-        storageSource,
-        isNot(contains('The prorated charge is on its way')),
-        reason: 'banned phrase: "The prorated charge is on its way"',
-      );
-    });
-
-    test(
-        'no developer/diagnostic cards exist in the Storage page UI '
-        '(debug OR release)', () {
-      expect(
-        storageSource,
-        isNot(contains('kDebugMode')),
-        reason: 'kDebugMode reference removed with the dev card',
-      );
-
-      for (final symbol in const [
-        'DevCleanupCard',
-        '_DevCleanupResultDialog',
-        '_DevDialogRow',
-        '_onCleanupDuplicateSubs',
-        '_busyDevCleanup',
-      ]) {
-        expect(
-          storageSource,
-          isNot(contains(symbol)),
-          reason: 'identifier $symbol must be removed; the cleanup '
-              'surface is backend-script-only now',
-        );
-      }
-
-      for (final copy in const [
-        'Developer tools',
-        'Cleanup duplicate Stripe subscriptions',
-        'Cleanup complete',
-        'Canceled IDs',
-        'Cleanup failed',
-      ]) {
-        expect(
-          storageSource,
-          isNot(contains(copy)),
-          reason: 'copy "$copy" must be removed; do not re-introduce '
-              'a frontend cleanup surface',
-        );
-      }
-
-      for (final iconName in const [
-        'bug_report_outlined',
-        'cleaning_services_outlined',
-      ]) {
-        expect(
-          storageSource,
-          isNot(contains(iconName)),
-          reason: 'Icons.$iconName was used only by the dev card; '
-              'its return likely means the card returned',
-        );
-      }
-
-      final apiClientSource = File('lib/api_client.dart').readAsStringSync();
-      expect(
-        apiClientSource,
-        isNot(contains('cleanupDuplicateStripeSubscriptions')),
-        reason: 'api_client.dart must not expose a method that calls '
-            '/billing/dev/cleanup-duplicate-subs; the operator '
-            'runs the backend script instead',
-      );
-    });
-
-    test('upgrade-outcome surfaces use showDialog, not snackbars', () {
-      expect(storageSource, contains('_UpgradeProgressDialog'),
-          reason: 'Phase 1 progress dialog widget must exist');
-      expect(storageSource, contains('_UpgradeSuccessDialog'),
-          reason: 'Phase 2 success dialog widget must exist');
-      expect(storageSource, contains('_UpgradeTimeoutDialog'),
-          reason: 'Phase 3 timeout dialog widget must exist');
-      expect(storageSource, contains('_UpgradeErrorDialog'),
-          reason: 'error dialog widget must exist');
-
-      final branchIdx = storageSource.indexOf("'updated_existing'");
-      expect(branchIdx, greaterThan(-1));
-
-      final branchBody = storageSource.substring(
-        branchIdx,
-        (branchIdx + 3000).clamp(0, storageSource.length),
-      );
-      expect(branchBody, contains('_UpgradeProgressDialog'),
-          reason: 'updated_existing branch must show the progress dialog');
-      expect(branchBody, contains('_UpgradeSuccessDialog'),
-          reason: 'updated_existing branch must show the success dialog');
-      expect(branchBody, contains('_UpgradeTimeoutDialog'),
-          reason: 'updated_existing branch must show the timeout dialog');
-      expect(branchBody, isNot(contains('showSnackBar')),
-          reason: 'updated_existing branch must NOT use snackbars');
     });
   });
 }

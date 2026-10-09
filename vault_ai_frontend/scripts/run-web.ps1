@@ -16,9 +16,8 @@
 #   the same, and the auto-trust hatch (VAULTAI_ENV=local +
 #   VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST=true) only has to fire once.
 #
-#   The backend's STRIPE_CHECKOUT_SUCCESS_URL / CANCEL_URL /
-#   PORTAL_RETURN_URL in .env already point at port 5173, so this
-#   script keeps the Stripe return flow working end-to-end.
+#   A stable origin also keeps authentication and device state consistent.
+#   Paid subscriptions are handled only by Apple App Store or Google Play.
 #
 # Usage:
 #   .\scripts\run-web.ps1               # canonical launch

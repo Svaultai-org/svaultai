@@ -1018,102 +1018,6 @@ class VaultAIClient {
     return decoded;
   }
 
-  Future<Map<String, dynamic>> createStripeCheckoutSession({
-    required String authToken,
-    required int blockCount,
-    String? successUrl,
-    String? cancelUrl,
-  }) async {
-    final uri = Uri.parse('$baseUrl/billing/checkout-session');
-    final headers = _defaultHeaders(authToken: authToken, json: true);
-    final body = jsonEncode({
-      'block_count': blockCount,
-      if (successUrl != null) 'success_url': successUrl,
-      if (cancelUrl != null) 'cancel_url': cancelUrl,
-    });
-
-    _vlog('billing.checkout_session.preflight', {
-      'baseUrl': baseUrl,
-      'url': uri.toString(),
-      'block_count': blockCount,
-      'body_len': body.length,
-      'auth_token_present': authToken.isNotEmpty,
-      'auth_token_len': authToken.length,
-      'x_device_id_present': headers.containsKey('X-Device-Id'),
-      'has_success_url': successUrl != null,
-      'has_cancel_url': cancelUrl != null,
-    });
-    _vlogRequest('billing.checkout_session', uri, headers);
-
-    final http.Response response;
-    try {
-      response = await _runWithNetLog(
-        'billing.checkout_session',
-        uri,
-        () => http.post(uri, headers: headers, body: body),
-      );
-    } catch (e, st) {
-      _vlog('billing.checkout_session.network_failure', {
-        'baseUrl': baseUrl,
-        'url': uri.toString(),
-        'error_type': e.runtimeType.toString(),
-        'error': e.toString(),
-        'stack_first_line': st.toString().split('\n').firstWhere(
-              (_) => true,
-              orElse: () => '-',
-            ),
-      });
-      rethrow;
-    }
-
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Checkout session failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid checkout-session response format');
-    }
-    return decoded;
-  }
-
-  Future<Map<String, dynamic>> createStripePortalSession({
-    required String authToken,
-    String? returnUrl,
-  }) async {
-    final uri = Uri.parse('$baseUrl/billing/portal-session');
-    final headers = _defaultHeaders(authToken: authToken, json: true);
-    final body = jsonEncode({
-      if (returnUrl != null) 'return_url': returnUrl,
-    });
-    _vlogRequest('billing.portal_session', uri, headers);
-    final response = await _runWithNetLog(
-      'billing.portal_session',
-      uri,
-      () => http.post(uri, headers: headers, body: body),
-    );
-
-    if (response.statusCode != 200) {
-      _throwIfAuthExpired(response.statusCode, response.body);
-      _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'Portal session failed',
-        statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
-    }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid portal-session response format');
-    }
-    return decoded;
-  }
-
   Future<Map<String, dynamic>> getBillingMe({
     required String authToken,
   }) async {
@@ -1143,6 +1047,35 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> getBillingProviders({
+    required String authToken,
+  }) async {
+    final uri = Uri.parse('$baseUrl/billing/providers');
+    final headers = _defaultHeaders(authToken: authToken);
+    _vlogRequest('billing.providers', uri, headers);
+    final response = await _runWithNetLog(
+      'billing.providers',
+      uri,
+      () => http.get(uri, headers: headers),
+    );
+
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception(_formatBackendError(
+        prefix: 'Billing providers failed',
+        statusCode: response.statusCode,
+        responseBody: response.body,
+      ));
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid billing providers response format');
+    }
+    return decoded;
+  }
+
   /// Sends StoreKit 2's signed transaction JWS to the backend. Storage is
   /// granted only after Apple signature, bundle, environment, product, expiry,
   /// and app-account binding checks pass server-side.
@@ -1150,7 +1083,7 @@ class VaultAIClient {
     required String authToken,
     required String signedTransaction,
   }) async {
-    final uri = Uri.parse('$baseUrl/billing/apple/transactions');
+    final uri = Uri.parse('$baseUrl/billing/apple/verify-transaction');
     final headers = _defaultHeaders(authToken: authToken, json: true);
     _vlogRequest('billing.apple.verify', uri, headers);
     final response = await _runWithNetLog(

@@ -299,7 +299,6 @@ class DocsExistAndReferenceTheCorrectEnvVarsTests(unittest.TestCase):
             "TRON_USDT_CONTRACT_ADDRESS",
             "VAULTAI_CRYPTO_XMR_ENABLED",
             "VAULTAI_CRYPTO_XMR_SCANNER_MODE",
-            "STRIPE_WEBHOOK_SECRET",
             "VAULTAI_CRYPTO_HEALTH_ADMIN_TOKEN",
         ):
             self.assertIn(

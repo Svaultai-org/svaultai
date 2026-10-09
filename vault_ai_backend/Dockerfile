@@ -16,7 +16,6 @@
 #     -e DATABASE_URL=... \
 #     -e OPENAI_API_KEY=... \
 #     -e CORS_ALLOWED_ORIGIN_REGEX='^https://(app|www)\.svaultai\.com$|^https://svaultai\.com$' \
-#     -e STRIPE_API_KEY=... -e STRIPE_WEBHOOK_SECRET=... \
 #     -e VAULTAI_RATE_LIMIT_BACKEND=redis \
 #     -e VAULTAI_RATE_LIMIT_REDIS_URL=... \
 #     vaultai-backend:latest

@@ -32,7 +32,6 @@ ROUTES_EXEMPT_FROM_DEVICE_GATE = frozenset({
     "/devices/dev/reset-trust-state",
 
                                                                  
-    "/billing/stripe/webhook",
 })
 
 

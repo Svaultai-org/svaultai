@@ -14,7 +14,7 @@ Part G — path traversal + upload safety helpers exist
 Part H — security-headers middleware wired
 Part I — SQL uses parameterized queries; user text not concatenated
 Part J — crypto vault safety invariants (source scan)
-Part K — Stripe webhook signature verify + idempotency
+Part K — store notification verification + idempotency, retired card routes
 Part L — security event logger closed-set + refuses secrets
 Part M — env-var + docs present
 """
@@ -444,17 +444,22 @@ class TestPartJ_CryptoInvariants(unittest.TestCase):
                 self.assertNotIn(banned, src)
 
 
-class TestPartK_StripeWebhookSignatureAndIdempotency(unittest.TestCase):
+class TestPartK_StoreNotificationVerificationAndIdempotency(unittest.TestCase):
 
-    def test_stripe_route_verifies_signature(self):
+    def test_store_notifications_require_provider_verification(self):
         src = (
-            _BACKEND_ROOT / "routes" / "stripe_routes.py"
+            _BACKEND_ROOT / "routes" / "provider_billing_routes.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("verify_webhook_signature", src)
-        self.assertIn("Stripe-Signature", src)
+        self.assertIn("verify_oauth2_token", src)
+        self.assertIn("_verify_google_pubsub_request(request)", src)
+        self.assertIn("decode_verified_apple_notification", src)
+        apple_src = (_BACKEND_ROOT / "apple_billing.py").read_text()
+        self.assertIn("verify_and_decode_notification", apple_src)
+        self.assertIn("claim_provider_event", src)
 
-        self.assertIn("StripeSignatureError", src)
-        self.assertIn("StripeEventDecodeError", src)
+    def test_retired_stripe_signature_routes_are_absent(self):
+        self.assertFalse((_BACKEND_ROOT / "routes/stripe_routes.py").exists())
+        self.assertFalse((_BACKEND_ROOT / "stripe_service.py").exists())
 
     def test_idempotency_table_exists(self):
 
@@ -470,7 +475,7 @@ class TestPartK_StripeWebhookSignatureAndIdempotency(unittest.TestCase):
             found_pel,
             msg=(
                 "provider_event_log table must be defined in an "
-                "alembic migration for Stripe webhook idempotency"
+                "alembic migration for store-notification idempotency"
             ),
         )
 
@@ -574,11 +579,13 @@ class TestPartL_SecurityEventLogger(unittest.TestCase):
         self.assertIn("REASON_DELETE_VAULT_CONFIRMED", src)
         self.assertIn("REASON_DELETE_VAULT_REQUESTED", src)
 
-    def test_inactive_job_emits_inactive_deleted_event(self):
+    def test_retired_inactive_job_never_emits_deletion_success(self):
         src = (
             _BACKEND_ROOT / "inactive_unpaid_cleanup.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("REASON_INACTIVE_UNPAID_DELETED", src)
+        self.assertNotIn("REASON_INACTIVE_UNPAID_DELETED", src)
+        self.assertNotIn("emit_security_event(", src)
+        self.assertNotIn("delete_vault_and_all_data(", src)
 
 
 class TestPartM_EnvExampleAndConfigDocs(unittest.TestCase):

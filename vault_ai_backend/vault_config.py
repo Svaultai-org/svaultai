@@ -438,10 +438,6 @@ def _validate_production_requirements(cfg: VaultConfig) -> None:
         missing.append(
             "VAULTAI_DEBUG_ENDPOINTS_ENABLED must be unset/false in production",
         )
-    if not os.getenv("STRIPE_WEBHOOK_SECRET", "").strip():
-        missing.append(
-            "STRIPE_WEBHOOK_SECRET (required for signed Stripe webhooks)",
-        )
     if os.getenv(
         "VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST", "",
     ).strip().lower() == "true":

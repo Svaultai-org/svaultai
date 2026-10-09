@@ -1578,12 +1578,13 @@ def test_apple_library_enums_use_wire_values():
 def test_schema_and_routes_preserve_history_and_retire_checkout():
     root = Path(__file__).parent
     migration = (root / "migrations/versions/0042_provider_neutral_billing.py").read_text()
-    stripe_routes = (root / "routes/stripe_routes.py").read_text()
     main = (root / "main.py").read_text()
     assert "UNIQUE (provider, external_purchase_id)" in migration
     assert "data-preserving no-op" in migration
-    checkout_window = stripe_routes[stripe_routes.index("async def create_checkout_session_endpoint"):]
-    assert checkout_window.index("checkout_provider_retired") < checkout_window.index("from stripe_service import")
+    assert not (root / "routes/stripe_routes.py").exists()
+    assert not (root / "stripe_service.py").exists()
+    assert "stripe_routes" not in main
+    assert "stripe_service" not in main
     lifespan = main[main.index("async def lifespan"):main.index("app = FastAPI")]
     assert "probe_stripe" not in lifespan
 

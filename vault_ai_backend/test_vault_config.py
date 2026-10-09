@@ -30,8 +30,6 @@ def _is_production_source(path: pathlib.Path) -> bool:
         "inspect_sub_columns.py",
         "inspect_tables.py",
         "inspect_vaults.py",
-        "manual_backfill_item_id.py",
-        "add_stripe_item_column.py",
         "reset_dev_db.py",
         "password_audit.py",
         "backfill_asset_tags.py",
@@ -93,7 +91,7 @@ class ProductionFailsClosedTests(unittest.TestCase):
         os.environ["VAULTAI_ENV"] = "production"
         os.environ["VAULT_SESSION_SECRET"] = "x" * 48
         os.environ["CORS_ALLOWED_ORIGIN_REGEX"] = "https://example.com"
-        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_stub"
+        self.assertNotIn("STRIPE_WEBHOOK_SECRET", os.environ)
         cfg = vault_config.get_config()
         self.assertTrue(cfg.is_production)
 

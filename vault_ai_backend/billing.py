@@ -74,7 +74,6 @@ class StorageEntitlement:
     current_provider: str = "free"
     target_provider: Optional[str] = None
     migration_status: str = "none"
-    web_card_purchase_allowed: bool = True
 
 
 _PRICING_CACHE: dict[str, int] = {}
@@ -315,16 +314,6 @@ def _purchased_bytes_active(status: str, purchased: int) -> int:
     return purchased if status in _STATUSES_THAT_GRANT_STORAGE else 0
 
 
-def _grant_is_live(expires_at, now_iso: Optional[str]) -> bool:
-
-
-    if expires_at is None:
-        return True
-                                                                   
-                                                                
-    return True
-
-
 def get_entitlement(account_id: str) -> StorageEntitlement:
 
 
@@ -345,19 +334,12 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
               a.account_id,
               a.account_type,
               a.sales_channel,
-              COALESCE(s.status, 'none')          AS status,
-              COALESCE(s.source, 'none')          AS source,
-              COALESCE(s.block_count, 0)          AS block_count,
-              COALESCE(s.purchased_bytes, 0)      AS purchased_bytes,
-              COALESCE(s.storage_bytes_grant, 0)  AS storage_bytes_grant,
-              s.storage_bytes_grant_expires_at,
-              s.current_period_end,
-              (
-                s.source = 'admin_grant'
-                AND s.current_period_end IS NOT NULL
-                AND NOW() > s.current_period_end
-              ) AS admin_grant_expired,
-              COALESCE(s.cancel_at_period_end, FALSE) AS cancel_at_period_end,
+              CASE
+                WHEN s.storage_bytes_grant_expires_at IS NULL
+                  OR s.storage_bytes_grant_expires_at > NOW()
+                THEN COALESCE(s.storage_bytes_grant, 0)
+                ELSE 0
+              END AS storage_bytes_grant,
               COALESCE(t.encrypted_bytes, 0)      AS used_bytes
             FROM accounts a
             LEFT JOIN account_subscriptions s ON s.account_id = a.account_id
@@ -395,10 +377,13 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
             has_active_subscription=False,
         )
 
-    status = str(row["status"])
-    source = str(row["source"])
-    purchased = int(row["purchased_bytes"])
-    block_count_val = int(row["block_count"])
+    # Historic payment records remain available for accounting only. They
+    # cannot grant storage, lock free accounts, or substitute for a verified
+    # App Store / Google Play entitlement, even during a ledger outage.
+    status = "none"
+    source = "none"
+    purchased = 0
+    block_count_val = 0
     grant = int(row["storage_bytes_grant"])
     provider = "free"
     product_id = None
@@ -412,17 +397,13 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
     current_provider = "free"
     target_provider = None
     migration_status = "none"
-    web_card_purchase_allowed = True
     normalized = None
     try:
         from billing_entitlements import get_normalized_account_entitlement
         normalized = get_normalized_account_entitlement(account_id)
     except Exception:
-        # During a rolling deploy the application may briefly start before
-        # migration 0042 is applied. Existing legacy entitlements remain the
-        # fail-safe source until the normalized ledger is available.
         logger.warning(
-            "normalized billing ledger unavailable; using legacy entitlement",
+            "store billing ledger unavailable; using included storage",
             exc_info=True,
         )
     if normalized is not None:
@@ -442,31 +423,6 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         current_provider = normalized.current_provider
         target_provider = normalized.target_provider
         migration_status = normalized.migration_status
-        web_card_purchase_allowed = normalized.web_card_purchase_allowed
-
-    if normalized is None and bool(row.get("admin_grant_expired")):
-        status = "expired"
-        purchased = 0
-        block_count_val = 0
-        provider = "free"
-        current_provider = "free"
-        display_tier = "1 GB"
-        subscription_status = "free"
-
-                                                                    
-    grant_expires = row["storage_bytes_grant_expires_at"]
-    if grant_expires is not None:
-                                                                   
-                                                                  
-        conn2 = get_db()
-        try:
-            cur2 = conn2.cursor()
-            cur2.execute("SELECT (NOW() > %s)::bool;", (grant_expires,))
-            expired = bool(cur2.fetchone()[0])
-        finally:
-            conn2.close()
-        if expired:
-            grant = 0
 
     purchased_active = _purchased_bytes_active(status, purchased)
                                                                            
@@ -481,7 +437,7 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
     period_end = (
         normalized.current_period_end
         if normalized is not None
-        else row["current_period_end"]
+        else None
     )
     period_end_iso = (
         period_end.isoformat() if period_end is not None else None
@@ -491,31 +447,8 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
     has_active_subscription = (
         normalized.has_active_subscription
         if normalized is not None
-        else status in _STATUSES_THAT_GRANT_STORAGE
+        else False
     )
-
-    if normalized is None:
-        if has_active_subscription and purchased_active > 0:
-            provider = "web_card" if source in {
-                "stripe", "stripe_legacy", "web_card"
-            } else source
-            current_provider = provider
-            subscription_status = status
-            ownership_status = "owned"
-            # An active legacy web-card subscription already owns storage.
-            # A second web checkout is an explicit migration/upgrade flow,
-            # never a generic purchase.
-            web_card_purchase_allowed = False
-            try:
-                from billing_entitlements import canonical_storage_display_tier
-                display_tier = canonical_storage_display_tier(purchased_active)
-            except Exception:
-                display_tier = f"{block_count_val * 50} GB"
-        else:
-            provider = "free"
-            current_provider = "free"
-            display_tier = "1 GB"
-            subscription_status = "free" if status == "none" else status
 
     return StorageEntitlement(
         account_id=str(row["account_id"]),
@@ -535,7 +468,7 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         cancel_at_period_end=(
             normalized.cancel_at_period_end
             if normalized is not None
-            else bool(row["cancel_at_period_end"])
+            else False
         ),
         block_price_cents_usd=price,
         block_bytes=bb,
@@ -553,7 +486,6 @@ def get_entitlement(account_id: str) -> StorageEntitlement:
         current_provider=current_provider,
         target_provider=target_provider,
         migration_status=migration_status,
-        web_card_purchase_allowed=web_card_purchase_allowed,
     )
 
 

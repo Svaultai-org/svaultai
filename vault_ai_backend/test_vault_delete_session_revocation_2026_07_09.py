@@ -239,8 +239,6 @@ class TestDeletedVaultCannotBeLoaded(unittest.TestCase):
         with mock.patch.object(
             vds, "_delete_vault_row", return_value=False,
         ), mock.patch.object(
-            vds, "_cancel_stripe_subscription_best_effort",
-        ), mock.patch.object(
             vds, "_insert_tombstone",
         ):
             with self.assertRaises(vds.VaultNotFoundError):
@@ -434,8 +432,8 @@ class TestNoSecretsInLogs(unittest.TestCase):
 class TestDeleteServiceNeverBroadcastsCrypto(unittest.TestCase):
     """(7) The deletion service must never broadcast a crypto
     transaction. This is a permanent invariant — the deletion is a
-    database cascade + safe tombstone + best-effort Stripe cancel.
-    Nothing else."""
+    database cascade + safe tombstone. It never contacts a payment
+    provider or broadcasts a transaction."""
 
     def test_deletion_service_source_forbids_broadcast_verbs(self):
         import inspect

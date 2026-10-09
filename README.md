@@ -302,7 +302,7 @@ Castilian/Spanish, and Brazilian Portuguese/Portuguese are normalized.
   deletion is a single row-delete under the hood.
 - **Storage layer** — file chunks are encrypted client-side and
   reassembled server-side into an authenticated chunk stream.
-- **Third-party** — Stripe (billing), OpenAI (chat completions,
+- **Third-party** — Apple App Store / Google Play (billing), OpenAI (chat completions,
   behind masked projections only), Alchemy / Helius / TronGrid
   (public RPC for crypto receive), Redis (rate-limit backend in
   prod).

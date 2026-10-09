@@ -19,9 +19,8 @@ dependencies:
     sdk: flutter
   intl: any
 
-  # Web-only — gives us PathUrlStrategy so Stripe redirects to
-  # /storage?checkout=success route cleanly instead of needing
-  # /#/storage?... The package is a transitive dep of flutter for
+  # Web-only — gives us PathUrlStrategy for clean public/app routes
+  # instead of hash-prefixed paths. This is a transitive dep of Flutter for
   # web targets, but Dart analyzer requires an explicit entry.
   flutter_web_plugins:
     sdk: flutter

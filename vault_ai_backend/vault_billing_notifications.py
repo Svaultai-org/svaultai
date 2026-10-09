@@ -2,10 +2,10 @@
 
 Emits four user-facing notifications:
 
-  * ``billing.payment_failed`` — Stripe's first (or any) failed renewal.
+  * ``billing.payment_failed`` — the store reports a failed renewal.
   * ``billing.payment_recovered`` — a subsequent successful payment
     after a prior failure or after full cancellation.
-  * ``billing.subscription_cancelled`` — Stripe cancelled the
+  * ``billing.subscription_cancelled`` — the store ended the
     subscription (usually after dunning exhausts).
   * ``billing.account_over_quota`` — the 30-day over-quota grace ended
     (user is stored over the free-tier headroom and hasn't
@@ -27,8 +27,7 @@ Delivery paths — both fire per event:
     placeholder never raises and never blocks the webhook path.
 
 Never logs the raw amount charged, the last-four of the card, or any
-Stripe internal identifier without redaction. All logs use
-``redact_stripe_id``.
+payment-provider identifier without redaction.
 
 Every public function is best-effort — it swallows every exception
 and logs. The webhook path MUST NOT fail because a notification
@@ -70,9 +69,9 @@ ALL_BILLING_KINDS: frozenset[str] = frozenset({
 _COPY: dict[str, tuple[str, str]] = {
     NOTIFY_KIND_PAYMENT_FAILED: (
         "Your payment didn't go through",
-        "We couldn't charge your card for this month's storage. "
-        "Your vault stays fully available while Stripe retries — "
-        "no data lost. Update your card in Billing whenever you can.",
+        "Your store reported a problem renewing storage. "
+        "Check your Apple or Google Play subscription and payment method. "
+        "Your existing vault data is not deleted.",
     ),
     NOTIFY_KIND_PAYMENT_RECOVERED: (
         "Payment recovered — thanks!",
@@ -232,7 +231,7 @@ def notify_payment_failed(
 ) -> None:
     """Fired from ``_handle_invoice_payment_failed`` and from the
     grace-period sweep when a user transitions from ``in_grace`` to
-    ``past_due`` (Stripe finally gave up).
+    ``past_due`` (the store ended the retry period).
     """
     _fanout(
         account_id,

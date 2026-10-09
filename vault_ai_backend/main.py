@@ -340,9 +340,6 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
 
-    # Stripe is a legacy-history adapter only. Core startup deliberately does
-    # not load, probe, or require a Stripe merchant configuration.
-
                                                                
     if os.getenv("VAULTAI_CHUNKED_UPLOADS", "false").lower() == "true":
         try:
@@ -471,9 +468,6 @@ app.include_router(provider_billing_router)
 app.include_router(file_v2_router)
 
                                                                       
-from routes.stripe_routes import router as stripe_router
-app.include_router(stripe_router)
-
                                                                        
 from routes.chunked_download_routes import (              
     router as chunked_download_router,

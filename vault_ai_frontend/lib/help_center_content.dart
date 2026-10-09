@@ -508,25 +508,26 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'how-do-i-upgrade',
     category: 'billing',
     question: 'How do I upgrade storage?',
-    answer: 'Open the Billing page and choose an upgrade tier. '
-        'Checkout runs through a payment provider; Svaultai '
-        'does not store your payment details.',
+    answer: 'Storage subscriptions use Apple App Store or Google Play billing. '
+        'Open Storage in the supported mobile app to see available plans. '
+        'Your verified storage works with the same vault on the web; '
+        'web card checkout is not available.',
   ),
   FaqEntry(
     id: 'how-do-i-cancel',
     category: 'billing',
     question: 'How do I cancel or manage subscription?',
-    answer: 'Open the Billing page and choose Manage subscription. '
-        'You can cancel or change your plan through the '
-        'payment provider portal.',
+    answer: 'Open Storage and choose Manage subscription. '
+        'Change or cancel your plan in the Apple App Store or Google Play '
+        'account that purchased it.',
   ),
   FaqEntry(
     id: 'why-checkout-opens',
     category: 'billing',
     question: 'Why does checkout open?',
-    answer: 'Payments run through a payment provider so Svaultai '
-        'does not handle payment details directly. Checkout '
-        "opens in the provider's UI.",
+    answer: 'Apple App Store or Google Play confirms subscription payments '
+        'in its own interface. Svaultai does not handle your card details '
+        'or provide web card checkout.',
   ),
   FaqEntry(
     id: 'how-storage-calculated',

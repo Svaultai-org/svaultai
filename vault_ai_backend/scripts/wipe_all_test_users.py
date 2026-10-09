@@ -23,14 +23,14 @@ Absolute rules enforced here — production must never be able to wipe:
     ``--i-understand-this-deletes-all-users``.
   * The dry-run printout carries counts only. No email, no display
     name, no PIN, no file name, no ID number, no wallet address, no
-    encrypted secret, no Stripe customer id, no session token, no API
+    encrypted secret, no provider customer id, no session token, no API
     key. Counts are aggregated with ``SELECT COUNT(*)`` and printed
     verbatim.
   * The destructive path prefers ``delete_vault_and_all_data()`` per
     vault, which cascades the delete through every vault-owned table,
     inserts an anonymized tombstone
-    (hashed_vault_id + deleted_at + deletion_reason), and best-effort
-    cancels the account's Stripe subscription. After every vault is
+    (hashed_vault_id + deleted_at + deletion_reason). Production deletion
+    remains owner-only; this historical tool cannot cancel billing. After every vault is
     gone, we clean up leftovers that don't cascade from ``vaults``
     (orphaned accounts, standalone tombstone rows the operator asked
     to purge, contact-sales requests with a NULL vault ref, etc.),

@@ -3,7 +3,7 @@
 Production plan for the svaultai.com launch. Complements
 [../vault_ai_backend/DEPLOYMENT_RUNBOOK.md](../vault_ai_backend/DEPLOYMENT_RUNBOOK.md)
 (day-to-day operator instructions) with everything a first-time
-deploy needs: DNS, Stripe, database, storage, security, and the
+deploy needs: DNS, Apple/Google Play billing, database, storage, security, and the
 smoke-test that gates go/no-go.
 
 **Do not treat this file as authoritative for security invariants —
@@ -20,7 +20,7 @@ it is a checklist. The invariants themselves live in
 - [3. Backend deployment](#3-backend-deployment)
 - [4. Frontend deployment](#4-frontend-deployment)
 - [5. Database checklist](#5-database-checklist)
-- [6. Stripe checklist](#6-stripe-checklist)
+- [6. Store billing checklist](#6-store-billing-checklist)
 - [7. Storage / file handling](#7-storage--file-handling)
 - [8. Security checklist](#8-security-checklist)
 - [9. Smoke test plan](#9-smoke-test-plan)
@@ -33,7 +33,7 @@ it is a checklist. The invariants themselves live in
 | Domain | Purpose | Serves |
 |---|---|---|
 | `https://app.svaultai.com`  | User-facing web app | Flutter web build output |
-| `https://api.svaultai.com`  | Backend API         | FastAPI (uvicorn), Stripe webhook |
+| `https://api.svaultai.com`  | Backend API         | FastAPI (uvicorn), verified store notifications |
 | `https://www.svaultai.com`  | Marketing site      | Static or same web app landing |
 | `https://svaultai.com`      | Apex                | 301 → `https://www.svaultai.com` |
 
@@ -58,7 +58,7 @@ Before the app goes public:
 - [ ] `A`/`AAAA` for `svaultai.com` apex → same-as-www **or** a
       redirect service that 301s to `https://www.svaultai.com`.
 - [ ] `MX` and SPF/DKIM/DMARC records if you plan to send mail from
-      the domain (issue-report replies, Stripe receipt reply-to,
+      the domain (issue-report replies, store support,
       etc.). Not required for the app itself to work.
 - [ ] HTTPS certificate provisioned (Let's Encrypt via Caddy /
       Cloudflare / cert-manager / managed platform) on:
@@ -78,12 +78,8 @@ Before the app goes public:
       Expected: `200`, `access-control-allow-origin: https://app.svaultai.com`,
       `access-control-allow-headers` containing `content-type` and
       `x-device-id`, `access-control-allow-credentials: true`.
-- [ ] The **Stripe webhook endpoint** is reachable from the public
-      internet: `POST https://api.svaultai.com/billing/stripe/webhook`
-      returns `400` (bad signature) rather than `404` or timing out
-      when hit with a dummy body.
-
----
+- [ ] Apple and Google Play notification endpoints are reachable and reject
+      unverified notifications.
 
 ## 3. Backend deployment
 
@@ -130,7 +126,7 @@ following are missing or unsafe:
 - `DATABASE_URL` — required.
 - `OPENAI_API_KEY` — required if chat/completion is enabled.
 - `CORS_ALLOWED_ORIGIN_REGEX` — required, must not be `*`.
-- `STRIPE_WEBHOOK_SECRET` — required for billing routes.
+- Store verification configuration — required for Apple/Google Play purchases.
 - `VAULTAI_DEBUG_ENDPOINTS_ENABLED` must be `false`/unset.
 - `VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST` must be `false`/unset.
 - Rate-limit backend defaults to redis in prod; the app warns and
@@ -138,7 +134,7 @@ following are missing or unsafe:
 
 All of these are asserted by
 `test_production_deployment_readiness_2026_06_30.py` and
-`test_stripe_production_hardening_2026_07_02.py` in the backend
+`test_store_only_billing_2026_10_08.py` in the backend
 test suite.
 
 ### 3.3 Alembic migrations
@@ -265,62 +261,15 @@ config touches that path.
 
 ---
 
-## 6. Stripe checklist
+## 6. Store billing checklist
 
-### 6.1 Live-mode setup
-
-- [ ] Live-mode Stripe account created.
-- [ ] Live **product** created (the "VaultAI storage block" or
-      whatever the launch name is).
-- [ ] Live **price** for the storage block; copy the `price_...`
-      id to `STRIPE_STORAGE_BLOCK_PRICE_ID`.
-- [ ] Live **API secret key** (`sk_live_...`) in the secret store
-      as `STRIPE_API_KEY`.
-- [ ] Live **publishable key** (`pk_live_...`) as
-      `STRIPE_PUBLISHABLE_KEY`.
-- [ ] Live **webhook endpoint** created in the Stripe dashboard
-      pointing at `https://api.svaultai.com/billing/stripe/webhook`.
-- [ ] Live **webhook signing secret** (`whsec_...`) from the
-      dashboard as `STRIPE_WEBHOOK_SECRET`.
-
-### 6.2 Required webhook events
-
-The Stripe webhook must be subscribed to at least:
-
-- `checkout.session.completed`
-- `customer.subscription.created`
-- `customer.subscription.updated`
-- `customer.subscription.deleted`
-- `invoice.payment_succeeded`
-- `invoice.payment_failed`
-
-Additional events (e.g. `charge.dispute.created`) are optional but
-recommended for ops visibility.
-
-### 6.3 URLs
-
-Verify each of these is set exactly to the svaultai.com domain:
-
-```
-STRIPE_CHECKOUT_SUCCESS_URL=https://app.svaultai.com/storage?checkout=success
-STRIPE_CHECKOUT_CANCEL_URL=https://app.svaultai.com/storage?checkout=cancel
-STRIPE_PORTAL_RETURN_URL=https://app.svaultai.com/storage
-```
-
-### 6.4 Verify before launch
-
-- [ ] Checkout opens from `https://app.svaultai.com/storage`.
-- [ ] Test-mode success → `?checkout=success` return path.
-- [ ] Test-mode cancel  → `?checkout=cancel` return path.
-- [ ] Test-mode webhook delivery lands and is signature-verified
-      (backend logs `[STRIPE] verified event ...`).
-- [ ] Storage quota increases after a successful test payment.
-- [ ] **Failed payment does NOT grant storage** — tested with
-      Stripe's `4000000000000341` (attaches successfully then
-      fails on charge).
-- [ ] Portal opens and returns to `/storage`.
-- [ ] Once verified in test mode, flip to live keys and rerun the
-      full checkout with a small real transaction, then refund.
+- [ ] Finish the safe retirement checklist in `STORE_ONLY_BILLING.md` before
+      severing any old recurring subscription connection.
+- [ ] Apple signed transactions and server notifications verify correctly.
+- [ ] Google Play bridge, account binding, acknowledgement and RTDN verify.
+- [ ] Verified store storage appears on the same account on web.
+- [ ] Expired/revoked/missing-expiry records never grant indefinite paid storage.
+- [ ] Web exposes no card checkout or billing portal.
 
 ---
 
@@ -427,10 +376,9 @@ after a production deploy. **Every checkbox is a go/no-go item.**
       USDC / SOL / TRX / USDT-TRC20 without errors.
 - [ ] Crypto Vault → **XMR screen shows the "scanner-gated"
       messaging**; no balance is fabricated.
-- [ ] Storage page → upgrade / manage buttons open Stripe checkout.
-- [ ] Complete a small test-mode payment; storage quota increases.
-- [ ] Stripe webhook delivery visible in backend logs, signature-
-      verified.
+- [ ] Storage page uses Apple/Play only, and verified store purchases restore
+      across devices. Web has no card checkout.
+- [ ] Duplicate store notifications do not duplicate entitlement.
 - [ ] Log out → session cleared, back button does not re-enter
       authenticated routes.
 - [ ] Log back in → previous data intact.

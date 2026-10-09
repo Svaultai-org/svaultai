@@ -16,8 +16,8 @@ from psycopg2.extras import Json, RealDictCursor
 from vault_core import get_db
 
 
-PROVIDERS = frozenset({"apple", "google_play", "web_card", "stripe_legacy"})
-PUBLIC_PROVIDERS = frozenset({"apple", "google_play", "web_card", "free"})
+PROVIDERS = frozenset({"apple", "google_play"})
+PUBLIC_PROVIDERS = PROVIDERS | {"free"}
 VERIFICATION_STATES = frozenset({"unverified", "verified", "rejected", "error"})
 NORMALIZED_STATUSES = frozenset({
     "pending", "active", "reactivated", "grace_period", "delinquent",
@@ -131,7 +131,6 @@ class NormalizedAccountEntitlement:
     current_provider: str = "free"
     target_provider: Optional[str] = None
     migration_status: str = "none"
-    web_card_purchase_allowed: bool = True
 
 
 CANONICAL_STORAGE_TIER_LABELS = {
@@ -162,8 +161,6 @@ def canonical_storage_display_tier(storage_bytes: int) -> str:
 
 def _public_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
-    if normalized == "stripe_legacy":
-        return "web_card"
     return normalized if normalized in PUBLIC_PROVIDERS else "free"
 
 
@@ -548,6 +545,24 @@ def reconcile_google_play_storage_entitlement(
                     "linked purchase is bound to another account"
                 )
 
+        # Retain lapsed records, but release the one-tier unique index before
+        # verifying a new purchase. A stale active status must never block a
+        # customer who legitimately subscribes again after expiry.
+        cur.execute(
+            """
+            UPDATE billing_entitlements
+               SET status = CASE WHEN current_period_end IS NULL
+                                 THEN 'pending' ELSE 'expired' END,
+                   updated_at = NOW()
+             WHERE account_id = %s
+               AND provider = 'google_play'
+               AND entitlement_family = 'storage'
+               AND verification_state = 'verified'
+               AND status IN ('active', 'reactivated', 'grace_period')
+               AND (current_period_end IS NULL OR current_period_end <= NOW())
+            """,
+            (account_id,),
+        )
         cur.execute(
             """
             SELECT entitlement_id, external_purchase_id
@@ -557,6 +572,7 @@ def reconcile_google_play_storage_entitlement(
                AND entitlement_family = 'storage'
                AND verification_state = 'verified'
                AND status IN ('active', 'reactivated', 'grace_period')
+               AND current_period_end > NOW()
              FOR UPDATE
             """,
             (account_id,),
@@ -1054,17 +1070,16 @@ def get_normalized_account_entitlement(
 ) -> Optional[NormalizedAccountEntitlement]:
     """Resolve one authoritative storage owner from the verified ledger.
 
-    Multiple active rows are never added together.  A migration's current
-    provider remains authoritative; otherwise the oldest verified granting row
-    is retained deterministically and the account is surfaced as a conflict for
-    operator reconciliation.
+    Only verified store subscriptions with a future expiry can grant paid
+    storage. Multiple active rows are never added together. A current store
+    owner remains authoritative; otherwise the oldest verified granting row is
+    retained deterministically and surfaced as a conflict for reconciliation.
     """
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            WITH ownership_candidates AS (
                 SELECT e.entitlement_id, e.provider, e.entitlement_family,
                        e.external_purchase_id, e.product_id, e.plan_id,
                        e.status, e.quantity, e.entitlement_bytes,
@@ -1072,67 +1087,25 @@ def get_normalized_account_entitlement(
                        e.metadata_jsonb, e.created_at, e.updated_at,
                        o.current_provider AS ownership_current_provider,
                        o.current_entitlement_id
-                           AS ownership_current_entitlement_id,
-                       o.legacy_subscription_account_id
-                           AS ownership_legacy_subscription_account_id,
-                       o.legacy_source_subscription_id
-                           AS ownership_legacy_source_subscription_id,
-                       o.target_provider AS ownership_target_provider,
-                       o.migration_status AS ownership_migration_status,
-                       o.reason_code AS ownership_reason_code,
-                       'billing_entitlements'::TEXT AS entitlement_source
+                           AS ownership_current_entitlement_id
                   FROM billing_entitlements e
                   LEFT JOIN billing_provider_ownership o
                     ON o.account_id = e.account_id
                    AND o.entitlement_family = e.entitlement_family
+                   AND o.current_provider IN ('apple', 'google_play')
                  WHERE e.account_id = %s
                    AND e.verification_state = 'verified'
                    AND e.entitlement_family = 'storage'
-
-                UNION ALL
-
-                SELECT NULL::UUID, 'stripe_legacy'::TEXT, 'storage'::TEXT,
-                       COALESCE(
-                           s.source_subscription_id,
-                           'legacy-account:' || s.account_id::TEXT
-                       ),
-                       NULL::TEXT, NULL::TEXT,
-                       CASE
-                           WHEN s.status = 'in_grace' THEN 'grace_period'
-                           ELSE 'active'
-                       END,
-                       s.block_count, s.purchased_bytes,
-                       s.current_period_end, s.cancel_at_period_end,
-                       jsonb_build_object(
-                           'billing_period', s.billing_period,
-                           'legacy_status', s.status
-                       ),
-                       s.created_at, s.updated_at,
-                       o.current_provider,
-                       o.current_entitlement_id,
-                       o.legacy_subscription_account_id,
-                       o.legacy_source_subscription_id,
-                       o.target_provider, o.migration_status, o.reason_code,
-                       'account_subscriptions'::TEXT
-                  FROM account_subscriptions s
-                  LEFT JOIN billing_provider_ownership o
-                    ON o.account_id = s.account_id
-                   AND o.entitlement_family = 'storage'
-                 WHERE s.account_id = %s
-                   AND s.source = 'stripe'
-                   AND s.status IN (
-                       'active', 'in_grace', 'canceled_pending'
-                   )
-                   AND s.purchased_bytes > 0
-            )
-            SELECT *
-              FROM ownership_candidates
-             ORDER BY created_at ASC, provider ASC,
-                      external_purchase_id ASC
+                   AND e.provider IN ('apple', 'google_play')
+             ORDER BY e.created_at ASC, e.provider ASC,
+                      e.external_purchase_id ASC
             """,
-            (account_id, account_id),
+            (account_id,),
         )
-        rows = cur.fetchall() or []
+        rows = [
+            row for row in (cur.fetchall() or [])
+            if str(row["provider"]) in PROVIDERS
+        ]
     finally:
         conn.close()
     if not rows:
@@ -1142,17 +1115,12 @@ def get_normalized_account_entitlement(
     active = [
         r for r in rows
         if str(r["status"]) in GRANTING_STATUSES
+        and r["current_period_end"] is not None
         and (
-            str(r.get("entitlement_source") or "")
-            == "account_subscriptions"
-            or
-            r["current_period_end"] is None
-            or (
-                r["current_period_end"]
-                if r["current_period_end"].tzinfo
-                else r["current_period_end"].replace(tzinfo=timezone.utc)
-            ) > now
-        )
+            r["current_period_end"]
+            if r["current_period_end"].tzinfo
+            else r["current_period_end"].replace(tzinfo=timezone.utc)
+        ) > now
     ]
     latest = rows[-1]
     if active:
@@ -1167,15 +1135,6 @@ def get_normalized_account_entitlement(
                 and row.get("entitlement_id")
                 == row.get("ownership_current_entitlement_id")
             ]
-            exact_legacy_owner = [
-                row for row in active
-                if (
-                    str(row.get("entitlement_source") or "")
-                    == "account_subscriptions"
-                    and row.get("ownership_legacy_subscription_account_id")
-                    is not None
-                )
-            ]
             provider_owner = [
                 row for row in active
                 if _public_provider(str(row["provider"]))
@@ -1183,8 +1142,6 @@ def get_normalized_account_entitlement(
             ]
             if exact_ledger_owner:
                 ownership = exact_ledger_owner[0]
-            elif exact_legacy_owner:
-                ownership = exact_legacy_owner[0]
             elif provider_owner:
                 ownership = provider_owner[0]
         status = (
@@ -1206,31 +1163,24 @@ def get_normalized_account_entitlement(
         display_tier = str(meta.get("display_capacity") or "") or (
             canonical_storage_display_tier(purchased)
         )
-        migration_status = str(
-            ownership.get("ownership_migration_status") or "none"
-        )
-        target_provider = str(
-            ownership.get("ownership_target_provider") or ""
-        ) or None
-        stored_reason_code = str(
-            ownership.get("ownership_reason_code") or ""
-        ) or None
-        conflict = (
-            len(active) > 1
-            or migration_status == "conflict"
-            or stored_reason_code is not None
-        )
-        ownership_status = "conflict" if conflict else (
-            "migration_pending" if migration_status == "pending" else "owned"
-        )
+        # Derive conflicts from live verified purchases, never stale owner
+        # metadata left after natural expiry or retiring another provider.
+        conflict = len(active) > 1
+        migration_status = "conflict" if conflict else "none"
+        target_provider = None
+        ownership_status = "conflict" if conflict else "owned"
         reason_code = (
             "multiple_active_storage_entitlements"
-            if len(active) > 1
-            else stored_reason_code
+            if conflict else None
         )
     else:
         mapped = str(latest["status"])
         latest_period_end = latest["current_period_end"]
+        if mapped in GRANTING_STATUSES and latest_period_end is None:
+            # A verified signature alone does not establish an unlimited
+            # subscription. Keep the record for restore/reconciliation while
+            # granting only the included storage until expiry is verified.
+            mapped = "pending"
         if (
             mapped in GRANTING_STATUSES
             and latest_period_end is not None
@@ -1257,23 +1207,11 @@ def get_normalized_account_entitlement(
         base_plan_id = None
         billing_period = None
         display_tier = "1 GB"
-        current_provider = _public_provider(str(
-            latest.get("ownership_current_provider") or "free"
-        ))
-        migration_status = str(
-            latest.get("ownership_migration_status") or "none"
-        )
-        target_provider = str(
-            latest.get("ownership_target_provider") or ""
-        ) or None
-        reason_code = str(
-            latest.get("ownership_reason_code") or ""
-        ) or None
-        conflict = migration_status == "conflict"
-        ownership_status = (
-            "conflict" if conflict else
-            ("migration_pending" if migration_status == "pending" else "free")
-        )
+        current_provider = "free"
+        migration_status = "none"
+        target_provider = None
+        reason_code = None
+        ownership_status = "free"
     return NormalizedAccountEntitlement(
         purchased_bytes=purchased,
         block_count=blocks,
@@ -1295,19 +1233,4 @@ def get_normalized_account_entitlement(
         current_provider=current_provider,
         target_provider=target_provider,
         migration_status=migration_status,
-        web_card_purchase_allowed=(
-            not active
-            and not conflict
-            and migration_status != "pending"
-        ),
     )
-
-
-def web_card_purchase_allowed_for_account(account_id: str) -> bool:
-    """Durable checkout guard; store ownership or conflict always blocks."""
-    try:
-        normalized = get_normalized_account_entitlement(account_id)
-    except Exception:
-        # A checkout guard must fail closed during migrations or DB faults.
-        return False
-    return normalized is None or normalized.web_card_purchase_allowed

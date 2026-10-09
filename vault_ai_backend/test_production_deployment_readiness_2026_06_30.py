@@ -148,7 +148,7 @@ class ProductionFailClosedBootTests(unittest.TestCase):
         self._set_prod()
         os.environ["VAULT_SESSION_SECRET"] = "x" * 64
         os.environ["CORS_ALLOWED_ORIGIN_REGEX"] = r"https://app\.example\.com"
-        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_stub"
+        self.assertNotIn("STRIPE_WEBHOOK_SECRET", os.environ)
         from vault_config import get_config, reset_for_tests
         reset_for_tests()
         cfg = get_config()
@@ -159,6 +159,33 @@ class ProductionFailClosedBootTests(unittest.TestCase):
         flat = repr(described).lower()
         self.assertNotIn("vault_session_secret", flat)
         self.assertNotIn(("x" * 64).lower(), flat)
+
+
+class StoreOnlyPaymentIntegrationTests(unittest.TestCase):
+    def test_retired_provider_has_no_sdk_routes_or_service(self) -> None:
+        requirements = (_BACKEND_ROOT / "requirements.txt").read_text()
+        self.assertFalse(any(
+            line.strip().lower().split("=")[0] == "stripe"
+            for line in requirements.splitlines()
+        ))
+        self.assertFalse((_BACKEND_ROOT / "stripe_service.py").exists())
+        self.assertFalse((_BACKEND_ROOT / "routes/stripe_routes.py").exists())
+        source = (_BACKEND_ROOT / "main.py").read_text()
+        self.assertNotIn("stripe_router", source)
+        self.assertNotIn("from routes.stripe_routes", source)
+
+    def test_store_verification_and_notification_routes_remain_registered(self) -> None:
+        from routes.provider_billing_routes import router
+        paths = {route.path for route in router.routes}
+        self.assertTrue({
+            "/billing/providers", "/billing/apple/verify-transaction",
+            "/billing/apple/notifications-v2", "/billing/google-play/verify",
+            "/billing/google-play/reconcile", "/billing/google-play/rtdn",
+        }.issubset(paths))
+        self.assertFalse(any(
+            "stripe" in path or path == "/billing/web/checkout-session"
+            for path in paths
+        ))
 
 
 class HealthEndpointSourceGuardTests(unittest.TestCase):

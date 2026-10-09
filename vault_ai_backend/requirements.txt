@@ -23,7 +23,6 @@ python-docx
 openpyxl
 alembic
 sqlalchemy
-stripe>=7.0
 httpx==0.28.1
 # Store billing verification stays server-side. Google credentials are loaded
 # through Application Default Credentials; Apple signed data is verified with

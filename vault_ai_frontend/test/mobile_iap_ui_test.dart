@@ -44,6 +44,37 @@ Map<String, dynamic> _billing({
     };
 
 void main() {
+  testWidgets('web keeps free storage and points to stores, without checkout',
+      (tester) async {
+    await _enlarge(tester);
+    await tester.pumpWidget(_wrap(StorageBody(
+      data: _billing(),
+      showStorePurchaseNotice: true,
+    )));
+    expect(find.text('Free Tier'), findsOneWidget);
+    expect(find.text('Buy storage'), findsNothing);
+    expect(find.text('Upgrade storage'), findsNothing);
+    expect(find.textContaining('Web card checkout is not available'),
+        findsOneWidget);
+    expect(find.byKey(const Key('google_play_download_badge')), findsOneWidget);
+    expect(find.byKey(const Key('app_store_download_badge')), findsOneWidget);
+  });
+
+  testWidgets('web manages verified Play billing without a disabled Buy button',
+      (tester) async {
+    await _enlarge(tester);
+    var manages = 0;
+    await tester.pumpWidget(_wrap(StorageBody(
+      data: _billing(source: 'google_play', status: 'active', blocks: 1),
+      onManageSubscription: () => manages++,
+      showStorePurchaseNotice: true,
+    )));
+    expect(find.text('Upgrade storage'), findsNothing);
+    expect(find.text('Buy storage'), findsNothing);
+    await tester.tap(find.byKey(const Key('manage_subscription_button')));
+    expect(manages, 1);
+  });
+
   testWidgets('mobile Buy storage control is responsive', (tester) async {
     await _enlarge(tester);
     var taps = 0;

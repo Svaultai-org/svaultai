@@ -111,19 +111,20 @@ class AppleIapService {
 
   Future<bool> buy({
     required ProductDetails product,
-    required String accountId,
+    required String appAccountToken,
   }) {
-    // accountId is an opaque UUID and becomes StoreKit 2's appAccountToken.
+    // Use the backend-issued opaque binding token, not the raw account UUID.
+    // The verifier checks this exact value against the authenticated account.
     return _store.buyNonConsumable(
       purchaseParam: Sk2PurchaseParam(
         productDetails: product,
-        applicationUserName: accountId,
+        applicationUserName: appAccountToken,
       ),
     );
   }
 
-  Future<void> restore({required String accountId}) =>
-      _store.restorePurchases(applicationUserName: accountId);
+  Future<void> restore({required String appAccountToken}) =>
+      _store.restorePurchases(applicationUserName: appAccountToken);
 
   Future<void> finish(PurchaseDetails purchase) async {
     await _store.completePurchase(purchase);

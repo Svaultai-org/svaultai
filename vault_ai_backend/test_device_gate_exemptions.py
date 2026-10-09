@@ -58,10 +58,10 @@ class DeviceGateExemptionTests(unittest.TestCase):
         )
 
                                                                         
-    def test_stripe_webhook_is_exempt(self):
+    def test_retired_stripe_webhook_is_not_exempt(self):
                                                                      
                                                                       
-        self.assertIn(
+        self.assertNotIn(
             "/billing/stripe/webhook", ROUTES_EXEMPT_FROM_DEVICE_GATE,
         )
 
@@ -106,7 +106,6 @@ class DeviceGateExemptionTests(unittest.TestCase):
                 "/devices/diagnose-trust",
                 "/devices/dev/cleanup-pending",
                 "/devices/dev/reset-trust-state",
-                "/billing/stripe/webhook",
             }),
         )
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import pathlib
 import unittest
+from contextlib import contextmanager
 from dataclasses import fields as dataclass_fields
+from datetime import datetime, timezone
 
 from billing import (
     DEFAULT_BLOCK_BYTES,
@@ -316,7 +318,6 @@ class StorageEntitlementShape(unittest.TestCase):
         "current_provider",
         "target_provider",
         "migration_status",
-        "web_card_purchase_allowed",
     })
 
     def test_field_set_matches_spec(self):
@@ -436,7 +437,8 @@ class EntitlementCalculationModelTests(unittest.TestCase):
         import billing
         billing.reset_pricing_cache()
 
-    def _patched_get_db(self, row: dict | None):
+    @contextmanager
+    def _patched_get_db(self, row: dict | None, *, normalized=None):
 
 
         from unittest.mock import MagicMock, patch
@@ -447,15 +449,24 @@ class EntitlementCalculationModelTests(unittest.TestCase):
         conn.cursor.return_value = cursor
                                                                       
                                                                  
-        grant_cursor = MagicMock()
-        grant_cursor.fetchone.return_value = (False,)
-        grant_conn = MagicMock()
-        grant_conn.cursor.return_value = grant_cursor
-                                                               
-                                                                     
-        return patch(
-            "billing.get_db",
-            side_effect=[conn, grant_conn, grant_conn, grant_conn],
+        with patch("billing.get_db", return_value=conn), patch(
+            "billing_entitlements.get_normalized_account_entitlement",
+            return_value=normalized,
+        ):
+            yield
+
+    def _store_entitlement(self, block_count: int, *, provider="apple"):
+        from billing_entitlements import NormalizedAccountEntitlement
+        return NormalizedAccountEntitlement(
+            purchased_bytes=block_count * self.BLOCK,
+            block_count=block_count,
+            status="active", source=provider,
+            current_period_end=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            cancel_at_period_end=False, has_active_subscription=True,
+            provider=provider, current_provider=provider,
+            storage_bytes=block_count * self.BLOCK,
+            display_tier=f"{block_count * 50} GB",
+            subscription_status="active", ownership_status="owned",
         )
 
     def _row(self, *, block_count: int, status: str = "active",
@@ -488,7 +499,9 @@ class EntitlementCalculationModelTests(unittest.TestCase):
     def test_paid_one_block_returns_exactly_fifty_gigabytes(self):
                                                                     
         from billing import get_entitlement
-        with self._patched_get_db(self._row(block_count=1)):
+        with self._patched_get_db(
+            self._row(block_count=1), normalized=self._store_entitlement(1),
+        ):
             ent = get_entitlement("acct-test")
         self.assertEqual(ent.block_count, 1)
         self.assertEqual(ent.purchased_bytes, self.BLOCK)
@@ -507,14 +520,19 @@ class EntitlementCalculationModelTests(unittest.TestCase):
 
     def test_paid_two_blocks_returns_exactly_one_hundred_gigabytes(self):
         from billing import get_entitlement
-        with self._patched_get_db(self._row(block_count=2)):
+        with self._patched_get_db(
+            self._row(block_count=2),
+            normalized=self._store_entitlement(2, provider="google_play"),
+        ):
             ent = get_entitlement("acct-test")
         self.assertEqual(ent.effective_limit_bytes, 2 * self.BLOCK)
         self.assertEqual(ent.effective_limit_bytes, 107_374_182_400)
 
     def test_paid_three_blocks_returns_exactly_one_hundred_fifty_gigabytes(self):
         from billing import get_entitlement
-        with self._patched_get_db(self._row(block_count=3)):
+        with self._patched_get_db(
+            self._row(block_count=3), normalized=self._store_entitlement(3),
+        ):
             ent = get_entitlement("acct-test")
         self.assertEqual(ent.effective_limit_bytes, 3 * self.BLOCK)
         self.assertEqual(ent.effective_limit_bytes, 161_061_273_600)
@@ -549,6 +567,7 @@ class EntitlementCalculationModelTests(unittest.TestCase):
         from billing import get_entitlement
         with self._patched_get_db(
             self._row(block_count=1, status="active", grant=ten_gb),
+            normalized=self._store_entitlement(1),
         ):
             ent = get_entitlement("acct-test")
                                                             
@@ -558,9 +577,28 @@ class EntitlementCalculationModelTests(unittest.TestCase):
                                                                       
                                                                 
         from billing import get_entitlement
-        with self._patched_get_db(self._row(block_count=1)):
+        with self._patched_get_db(
+            self._row(block_count=1), normalized=self._store_entitlement(1),
+        ):
             ent = get_entitlement("acct-test")
         self.assertEqual(ent.included_bytes, self.INC)
+
+    def test_active_legacy_subscription_without_expiry_cannot_grant_storage(self):
+        from billing import get_entitlement
+        with self._patched_get_db(self._row(block_count=1, status="active")):
+            ent = get_entitlement("acct-test")
+        self.assertEqual(ent.effective_limit_bytes, self.INC)
+        self.assertEqual(ent.purchased_bytes, 0)
+        self.assertEqual(ent.source, "none")
+        self.assertEqual(ent.provider, "free")
+        self.assertFalse(ent.has_active_subscription)
+
+    def test_legacy_delinquency_cannot_lock_store_only_free_account(self):
+        from billing import get_entitlement
+        with self._patched_get_db(self._row(block_count=1, status="past_due")):
+            ent = get_entitlement("acct-test")
+        self.assertEqual(ent.status, "none")
+        self.assertEqual(ent.effective_limit_bytes, self.INC)
 
 
 if __name__ == "__main__":

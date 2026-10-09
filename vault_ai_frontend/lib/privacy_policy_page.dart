@@ -129,9 +129,9 @@ class _PrivacyPolicyContent extends StatelessWidget {
                 'services. These providers process information only as needed '
                 'to operate Svaultai, comply with law, or provide requested '
                 'features.',
-            'Payment information is handled by payment processors such as '
-                'Stripe or mobile app store billing providers. Svaultai does '
-                'not intentionally store full payment card numbers.',
+            'Subscription payment information is handled by Apple App Store '
+                'or Google Play billing. Svaultai does not intentionally store '
+                'full payment card numbers.',
           ],
         ),
         _PolicySection(

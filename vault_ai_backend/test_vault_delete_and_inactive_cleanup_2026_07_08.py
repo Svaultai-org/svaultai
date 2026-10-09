@@ -1,5 +1,4 @@
-"""Regression tests for user-requested vault deletion + automatic
-deletion of unpaid-inactive-6-months vaults.
+"""Regression tests for owner-requested vault deletion and retired cleanup.
 
 Covers the 20 acceptance items from the operator brief:
   1.  user-requested delete requires auth
@@ -8,15 +7,14 @@ Covers the 20 acceptance items from the operator brief:
   4.  user-requested delete requires exact phrase DELETE MY VAULT
   5.  user-requested delete deletes vault data only after final
       confirmation
-  6.  unpaid inactive user > 6 months is auto-deleted
+  6.  unpaid inactive user > 6 months is NOT auto-deleted
   7.  unpaid inactive user < 6 months is NOT deleted
   8.  unpaid active user is NOT deleted
   9.  paid inactive user is NOT deleted
   10. paid active user is NOT deleted
-  11. cancelled paid user becomes eligible only after entitlement
-      ends and 6-month inactivity passes
-  12. auto-delete job re-checks billing before deletion
-  13. auto-delete job re-checks activity before deletion
+  11. cancelled/expired subscriptions never authorize automatic deletion
+  12. the retired job performs no database work
+  13. the retired job performs no payment-provider work
   14. deleted vault removes files, secure items, IDs, and crypto
       wallet records (via DB cascade in the deletion SQL)
   15. deletion never broadcasts crypto transactions
@@ -250,104 +248,29 @@ def _mk_now() -> datetime:
 
 
 class TestPart4_CleanupEligibility(unittest.TestCase):
-    """(6)-(11) — the 6-month + unpaid predicate combinations."""
+    """(6)-(11) — no account is eligible for operator-driven cleanup."""
 
-    def test_unpaid_over_6_months_is_deleted(self):
-        from inactive_unpaid_cleanup import run_once
+    def test_no_account_is_selected_or_deleted_at_any_inactivity_age(self):
+        from inactive_unpaid_cleanup import CleanupResult, run_once
 
-        now = _mk_now()
-        very_old = now - timedelta(days=200)
-
-        with mock.patch(
-            "inactive_unpaid_cleanup._find_candidate_vault_ids",
-            return_value=[TEST_VAULT_ID],
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_unpaid",
-            return_value=(True, "none"),
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_inactive",
-            return_value=True,
-        ), mock.patch(
-            "inactive_unpaid_cleanup.delete_vault_and_all_data",
-        ) as mock_del:
-            result = run_once(now)
-
-        mock_del.assert_called_once()
-        self.assertEqual(
-            mock_del.call_args.kwargs.get("reason"),
-            "unpaid_inactive_6_months",
-        )
-        self.assertEqual(result.deleted, 1)
-
-    def test_unpaid_under_6_months_is_not_deleted(self):
-        from inactive_unpaid_cleanup import run_once
-
-        with mock.patch(
-            "inactive_unpaid_cleanup._find_candidate_vault_ids",
-            return_value=[],
-        ), mock.patch(
-            "inactive_unpaid_cleanup.delete_vault_and_all_data",
-        ) as mock_del:
-            result = run_once(_mk_now())
-
-        mock_del.assert_not_called()
-        self.assertEqual(result.deleted, 0)
-
-    def test_unpaid_but_active_recently_is_not_deleted(self):
-        from inactive_unpaid_cleanup import run_once
-
-        with mock.patch(
-            "inactive_unpaid_cleanup._find_candidate_vault_ids",
-            return_value=[TEST_VAULT_ID],
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_unpaid",
-            return_value=(True, "none"),
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_inactive",
-            return_value=False,
-        ), mock.patch(
-            "inactive_unpaid_cleanup.delete_vault_and_all_data",
-        ) as mock_del:
-            result = run_once(_mk_now())
-
-        mock_del.assert_not_called()
-        self.assertEqual(result.skipped_now_active, 1)
-
-    def test_paid_inactive_is_not_deleted(self):
-        from inactive_unpaid_cleanup import run_once
-
-        with mock.patch(
-            "inactive_unpaid_cleanup._find_candidate_vault_ids",
-            return_value=[TEST_VAULT_ID],
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_unpaid",
-            return_value=(False, "active"),
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_inactive",
-            return_value=True,
-        ), mock.patch(
-            "inactive_unpaid_cleanup.delete_vault_and_all_data",
-        ) as mock_del:
-            result = run_once(_mk_now())
-
-        mock_del.assert_not_called()
-        self.assertEqual(result.skipped_now_paid, 1)
-
-    def test_paid_active_is_not_deleted(self):
-        from inactive_unpaid_cleanup import run_once
-        with mock.patch(
-            "inactive_unpaid_cleanup._find_candidate_vault_ids",
-            return_value=[],
-        ):
-            result = run_once(_mk_now())
-        self.assertEqual(result.deleted, 0)
+        with mock.patch("vault_core.get_db") as mock_db, mock.patch(
+            "vault_deletion_service.delete_vault_and_all_data",
+        ) as mock_delete:
+            for days in (0, 183, 200, 3650):
+                with self.subTest(inactivity_days=days):
+                    self.assertEqual(
+                        run_once(_mk_now() + timedelta(days=days)),
+                        CleanupResult(0, 0, 0, 0, 0),
+                    )
+        mock_db.assert_not_called()
+        mock_delete.assert_not_called()
 
     def test_paid_subscription_statuses_never_eligible(self):
         from inactive_unpaid_cleanup import PAID_SUBSCRIPTION_STATUSES
         self.assertIn("active", PAID_SUBSCRIPTION_STATUSES)
         self.assertIn("in_grace", PAID_SUBSCRIPTION_STATUSES)
 
-    def test_cancelled_paid_user_eligible_only_after_entitlement_ends(
+    def test_legacy_status_constants_are_compatibility_metadata_only(
         self,
     ):
         from inactive_unpaid_cleanup import (
@@ -359,27 +282,27 @@ class TestPart4_CleanupEligibility(unittest.TestCase):
 
 
 class TestPart5_JobRechecks(unittest.TestCase):
-    """(12) re-checks billing; (13) re-checks activity."""
+    """(12)-(13) — old entry points cannot resume automatic deletion."""
 
-    def test_job_calls_recheck_unpaid_and_recheck_inactive(self):
-        from inactive_unpaid_cleanup import run_once
-
-        with mock.patch(
-            "inactive_unpaid_cleanup._find_candidate_vault_ids",
-            return_value=[TEST_VAULT_ID],
-        ), mock.patch(
-            "inactive_unpaid_cleanup._recheck_unpaid",
-            return_value=(True, "none"),
-        ) as mock_billing, mock.patch(
-            "inactive_unpaid_cleanup._recheck_inactive",
-            return_value=True,
-        ) as mock_activity, mock.patch(
-            "inactive_unpaid_cleanup.delete_vault_and_all_data",
+    def test_retired_job_cannot_contact_database_or_payment_provider(self):
+        import inspect
+        import inactive_unpaid_cleanup
+        source = inspect.getsource(inactive_unpaid_cleanup)
+        for forbidden in (
+            "get_db(", "import stripe", "from stripe_service",
+            "delete_vault_and_all_data(", "DELETE FROM", "SELECT ",
         ):
-            run_once(_mk_now())
+            self.assertNotIn(forbidden, source)
 
-        mock_billing.assert_called_once_with(TEST_VAULT_ID)
-        mock_activity.assert_called_once()
+    def test_retired_daily_entry_point_exits_without_sleep_or_deletion(self):
+        import asyncio
+        from inactive_unpaid_cleanup import run_forever_daily
+        with mock.patch("asyncio.sleep") as mock_sleep, mock.patch(
+            "vault_deletion_service.delete_vault_and_all_data",
+        ) as mock_delete:
+            asyncio.run(run_forever_daily(initial_delay_seconds=0))
+        mock_sleep.assert_not_called()
+        mock_delete.assert_not_called()
 
     def test_job_uses_cutoff_matching_6_months(self):
         from inactive_unpaid_cleanup import (

@@ -246,14 +246,18 @@ class TestBillingRoutesMounted(unittest.TestCase):
         import main
         self.paths = {r.path for r in main.app.routes}
 
-    def test_stripe_webhook_route_registered(self) -> None:
-        self.assertIn(
-            "/billing/stripe/webhook", self.paths,
-            msg=(
-                "Stripe webhook must be at /billing/stripe/webhook"
-                " — Stripe is configured to POST that exact path."
-            ),
-        )
+    def test_only_store_payment_verification_and_notifications_are_registered(self) -> None:
+        for path in (
+            "/billing/apple/verify-transaction", "/billing/apple/notifications-v2",
+            "/billing/google-play/verify", "/billing/google-play/reconcile",
+            "/billing/google-play/rtdn",
+        ):
+            self.assertIn(path, self.paths)
+        for path in (
+            "/billing/stripe/webhook", "/billing/checkout-session",
+            "/billing/web/checkout-session", "/billing/portal-session",
+        ):
+            self.assertNotIn(path, self.paths)
 
     def test_billing_me_route_registered(self) -> None:
         self.assertIn(

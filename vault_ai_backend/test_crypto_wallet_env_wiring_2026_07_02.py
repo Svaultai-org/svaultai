@@ -118,8 +118,8 @@ class EnvExampleFilesPresentAndSafeTests(unittest.TestCase):
             "VAULTAI_CRYPTO_XMR_ENABLED",
             "VAULTAI_CRYPTO_XMR_SCANNER_MODE",
             "VAULTAI_CRYPTO_HEALTH_ADMIN_TOKEN",
-            "STRIPE_API_KEY",
-            "STRIPE_WEBHOOK_SECRET",
+            "VAULTAI_APPLE_BUNDLE_ID",
+            "VAULTAI_GOOGLE_PLAY_PACKAGE_NAME",
         ):
             self.assertIn(k, text, f".env.production.example missing {k}")
 
@@ -516,27 +516,27 @@ class ProductionBootStillGuardedTests(unittest.TestCase):
     def test_production_boot_refuses_without_session_secret(self):
         os.environ["VAULTAI_ENV"] = "production"
         os.environ["CORS_ALLOWED_ORIGIN_REGEX"] = "^https://app\\.example$"
-        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
         import vault_config
         vault_config.reset_for_tests()
         with self.assertRaises(RuntimeError) as cm:
             vault_config.get_config()
         self.assertIn("VAULT_SESSION_SECRET", str(cm.exception))
 
-    def test_production_boot_refuses_without_stripe_webhook_secret(self):
+    def test_production_boot_does_not_require_retired_stripe_configuration(self):
         os.environ["VAULTAI_ENV"] = "production"
         os.environ["VAULT_SESSION_SECRET"] = "x" * 48
         os.environ["CORS_ALLOWED_ORIGIN_REGEX"] = "^https://app\\.example$"
         import vault_config
         vault_config.reset_for_tests()
-        with self.assertRaises(RuntimeError) as cm:
-            vault_config.get_config()
-        self.assertIn("STRIPE_WEBHOOK_SECRET", str(cm.exception))
+        cfg = vault_config.get_config()
+        self.assertTrue(cfg.is_production)
+        self.assertNotIn("STRIPE_WEBHOOK_SECRET", os.environ)
+        for name in (".env.example", ".env.production.example"):
+            self.assertNotIn("STRIPE_", (Path(__file__).parent / name).read_text())
 
     def test_production_boot_refuses_without_cors(self):
         os.environ["VAULTAI_ENV"] = "production"
         os.environ["VAULT_SESSION_SECRET"] = "x" * 48
-        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
         import vault_config
         vault_config.reset_for_tests()
         with self.assertRaises(RuntimeError) as cm:
@@ -547,7 +547,6 @@ class ProductionBootStillGuardedTests(unittest.TestCase):
         os.environ["VAULTAI_ENV"] = "production"
         os.environ["VAULT_SESSION_SECRET"] = "x" * 48
         os.environ["CORS_ALLOWED_ORIGIN_REGEX"] = "^https://app\\.example$"
-        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
         os.environ["VAULTAI_DEBUG_ENDPOINTS_ENABLED"] = "true"
         import vault_config
         vault_config.reset_for_tests()
@@ -559,7 +558,6 @@ class ProductionBootStillGuardedTests(unittest.TestCase):
         os.environ["VAULTAI_ENV"] = "production"
         os.environ["VAULT_SESSION_SECRET"] = "x" * 48
         os.environ["CORS_ALLOWED_ORIGIN_REGEX"] = "^https://app\\.example$"
-        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
         os.environ["VAULTAI_DEVICE_GATE_DEV_AUTO_TRUST"] = "true"
         import vault_config
         vault_config.reset_for_tests()

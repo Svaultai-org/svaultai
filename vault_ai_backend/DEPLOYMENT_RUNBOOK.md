@@ -24,9 +24,9 @@ The backend **refuses to boot** in production when any of the following are miss
 
 | Variable                          | Purpose                                                        | Failure mode                                  |
 |-----------------------------------|----------------------------------------------------------------|-----------------------------------------------|
-| `STRIPE_API_KEY`                  | Live Stripe secret key. Must start with `sk_live_` in prod.    | Billing endpoints return 503 `stripe_unconfigured`. |
-| `STRIPE_WEBHOOK_SECRET`           | `whsec_...` for the live webhook endpoint.                     | Webhook returns 400 on every event.            |
-| `STRIPE_STORAGE_BLOCK_PRICE_ID`   | Live Price ID for the $25 / 50GB storage block.                | Checkout-session creation fails.               |
+Store billing requires Apple signature-verification settings and Google Play
+bridge/RTDN settings from `.env.production.example`. No card-provider credentials
+are loaded. Store purchase verification fails closed when misconfigured.
 
 ### 1.3 Optional tunables (safe defaults; document overrides per environment)
 
@@ -47,7 +47,7 @@ The backend **refuses to boot** in production when any of the following are miss
 
 - `VAULTAI_DEBUG_ENDPOINTS_ENABLED=true` — boot refuses.
 - Wildcard CORS regex (`.*`) — explicit source guard rejects this.
-- Stripe **test** keys (`sk_test_...` / `whsec_test_...`) on the live host.
+- Any retired card-provider key on the live host.
 
 ### 1.5 Boot-time verification
 
@@ -123,37 +123,13 @@ Encrypted blob columns (`vault_items.encrypted_data`, `uploaded_files.encrypted_
 
 ---
 
-## 4. Stripe production setup
+## 4. Store-only billing
 
-Webhook handler: `routes/stripe_routes.py:463`. Signature verification: `stripe_service.py:1161`. Idempotency: `provider_event_log(source, source_event_id)` composite PK in `stripe_service.py:1213-1252`. Tests: `test_stripe_p1.py`.
-
-### 4.1 Live-keys checklist
-
-1. Generate a **separate** Stripe restricted key for production. Never reuse the staging key.
-2. Set `STRIPE_API_KEY=sk_live_...`.
-3. In the Stripe dashboard → Developers → Webhooks → add endpoint **exactly** `https://api.vaultai.com/billing/stripe/webhook`. The path is enforced by `test_production_release_hardening_2026_06_30.py::P5`.
-4. Subscribe to: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`.
-5. Copy the signing secret to `STRIPE_WEBHOOK_SECRET=whsec_...`.
-6. In Stripe → Products → create the live `Storage Block — 50 GB / $25` price and set `STRIPE_STORAGE_BLOCK_PRICE_ID`.
-
-### 4.2 Checkout return URLs
-
-`success_url` and `cancel_url` must point to the production frontend, not staging. Verified at runtime — the resolver reads `FRONTEND_BASE_URL` (set by the platform) or the `Origin` header on the request.
-
-### 4.3 Smoke
-
-```bash
-# 1. Hit /billing/me with a valid session token. Expected: 200 with
-#    {status, account_id, tier_name, storage_limit_bytes, ...}.
-curl -H "Authorization: Bearer $SESSION" https://api.vaultai.com/billing/me
-
-# 2. From the Stripe dashboard, click "Send test webhook" → checkout.session.completed.
-#    Verify the request shows 200 in Stripe's delivery log.
-#    Verify provider_event_log has the new row.
-
-# 3. Resend the same test event. Verify the second delivery still returns 200
-#    (idempotent) but does NOT mutate billing state — only the first wins.
-```
+Follow `../docs/STORE_ONLY_BILLING.md` for retiring recurring card billing safely.
+Apple transaction verification and server notifications remain signed/verified;
+Google Play uses the existing keyless bridge and authenticated RTDN. Verify
+purchase, renewal, expiry, revocation and restore using controlled store tests.
+Never accept a paid plan from client-supplied bytes or price.
 
 ---
 
@@ -244,8 +220,8 @@ Run these from a fresh browser session and a fresh device.
 - [ ] Create vault, save a login, save a secure item, log out, log in, items still readable.
 - [ ] Upload a 5 MB file. Storage page shows the new total.
 - [ ] Upload a 200 MB file fails with `upload_safety_cap_exceeded`.
-- [ ] Stripe checkout: free tier → buy 1 storage block → return to `/storage?checkout=success` → `/billing/me` reflects the new limit.
-- [ ] Webhook log shows `checkout.session.completed` row in `provider_event_log`.
+- [ ] Verified Apple/Play purchase or restore updates `/billing/me` and the same account on web.
+- [ ] Expired/revoked store subscriptions resolve to included storage; vault data stays intact.
 - [ ] Crypto Vault unlocks for the upgraded user.
 - [ ] Save wallet profile → receive QR renders with the public address.
 - [ ] Save a sensitive backup (recovery phrase) → reveal flow asks PIN re-check + warning, then shows the cleartext panel; Hide wipes state; Copy requires a 2nd confirm.
@@ -262,7 +238,7 @@ Run these from a fresh browser session and a fresh device.
 2. **Roll back the migrations** ONLY if a destructive operation was applied. Otherwise leave the schema forward and let the previous app version see the new columns/tables (Alembic migrations are designed to be additive-compatible across two app versions).
 3. **Restore the pre-deploy DB snapshot** taken in §3.2 if migrations are non-recoverable. See `BACKUP_AND_RECOVERY.md` §3 for the restore procedure.
 4. **Revert the Flutter web bundle** by re-uploading the previous `build/web/` artifact to the CDN.
-5. **Stripe webhooks remain pointed at the same URL** — no action needed unless the rollback URL changed.
+5. Do not reactivate retired card credentials or recurring billing during rollback.
 
 ---
 
@@ -271,9 +247,6 @@ Run these from a fresh browser session and a fresh device.
 ```bash
 # Tail the backend log for fail-closed boot diagnostics.
 journalctl -u vaultai-backend -f | grep -E 'vault_config|RuntimeError|ERROR'
-
-# Verify Stripe webhook signatures are passing.
-journalctl -u vaultai-backend -f | grep stripe_webhook
 
 # Hit the health endpoint from inside the cluster.
 curl https://api.vaultai.com/health

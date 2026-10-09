@@ -48,11 +48,7 @@ def _account_id(principal: dict) -> str:
 @router.get("/billing/providers")
 async def billing_providers(principal=Depends(verify_trusted_device)):
     account_id = _account_id(principal)
-    from billing_entitlements import (
-        canonical_storage_display_tier,
-        web_card_purchase_allowed_for_account,
-    )
-    web_card_purchase_allowed = web_card_purchase_allowed_for_account(account_id)
+    from billing_entitlements import canonical_storage_display_tier
     from apple_billing import (
         AppleBillingConfigurationError,
         apple_app_account_token,
@@ -86,14 +82,6 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
         key=lambda tier: tier.tier_rank,
     )
     return {
-        "web_card": {
-            "checkout_enabled": False,
-            "purchase_allowed": web_card_purchase_allowed,
-            "message": (
-                "Storage upgrades are temporarily unavailable on the web "
-                "while we update our payment provider."
-            ),
-        },
         "google_play": {
             "product_id": GOOGLE_PLAY_PRODUCT_50GB,
             "product_ids": [tier.product_id for tier in google_play_tiers],
@@ -157,35 +145,7 @@ async def billing_providers(principal=Depends(verify_trusted_device)):
             ),
             "app_account_token": apple_app_account_token(account_id),
         },
-        "stripe_legacy": {"checkout_enabled": False, "history_preserved": True},
     }
-
-
-@router.post("/billing/web/checkout-session")
-async def web_checkout_disabled(principal=Depends(verify_trusted_device)):
-    account_id = _account_id(principal)
-    from billing_entitlements import web_card_purchase_allowed_for_account
-    if not web_card_purchase_allowed_for_account(account_id):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "active_store_billing_owner",
-                "message": (
-                    "Storage billing is owned by an active app-store "
-                    "subscription. Provider migration is not available yet."
-                ),
-            },
-        )
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "code": "web_billing_provider_unavailable",
-            "message": (
-                "Storage upgrades are temporarily unavailable on the web "
-                "while we update our payment provider."
-            ),
-        },
-    )
 
 
 @router.post("/billing/google-play/verify")
