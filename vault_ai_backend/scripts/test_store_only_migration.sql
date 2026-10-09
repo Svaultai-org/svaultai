@@ -280,7 +280,7 @@ CREATE TEMP TABLE expected_encrypted AS SELECT to_jsonb(p) AS payload FROM synth
 
             -- A single family lock also serializes Apple against Google Play.
             PERFORM pg_advisory_xact_lock(hashtextextended(
-                NEW.account_id::TEXT || ':storage', 0
+                NEW.account_id::TEXT || chr(58) || 'storage', 0
             ));
             new_grants := NEW.provider IN ('apple', 'google_play')
                 AND NEW.verification_state = 'verified'

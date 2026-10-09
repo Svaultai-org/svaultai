@@ -381,3 +381,25 @@ def test_database_owner_constraint_has_safe_domain_error():
 
     with pytest.raises(ent.StorageBillingOwnerConflictError, match="active_storage_billing_owner"):
         ent._raise_storage_owner_conflict(ConstraintViolation())
+
+
+def test_retirement_migration_has_no_accidental_sqlalchemy_bind_parameters():
+    import importlib.util
+    from types import SimpleNamespace
+
+    from sqlalchemy import text
+
+    path = Path(__file__).parent / "migrations/versions/0046_store_only_billing.py"
+    spec = importlib.util.spec_from_file_location("store_only_migration_test", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    statements = []
+    migration.op = SimpleNamespace(execute=statements.append)
+    migration.upgrade()
+    assert len(statements) == 3
+    for statement in statements:
+        # Alembic wraps string SQL with sqlalchemy.text(). A colon inside an
+        # SQL literal can otherwise become an unintended required bind value.
+        assert text(statement).compile().params == {}
+    lock_statement = statements[-1]
+    assert "NEW.account_id::TEXT || chr(58) || 'storage'" in lock_statement
