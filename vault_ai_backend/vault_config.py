@@ -512,6 +512,7 @@ _TOKEN_UNIT_LABEL: dict[str, str] = {
     "USDT_ERC20": "USDT",
     "USDC_ERC20": "USDC",
     "PAXG_ERC20": "PAXG",
+    "KAG_ERC20": "KAG",
 }
 
 
@@ -659,7 +660,7 @@ _ETH_MAINNET_TOKEN_DECIMALS_ENV: dict[str, tuple[str, int]] = {
 def ethereum_mainnet_token_decimals(asset: str) -> int:
 
 
-    if asset == "PAXG_ERC20":
+    if asset in {"PAXG_ERC20", "KAG_ERC20"}:
         # Issuer-verified precision cannot be overridden by runtime config.
         return 18
     entry = _ETH_MAINNET_TOKEN_DECIMALS_ENV.get(asset)

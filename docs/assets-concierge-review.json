@@ -1,12 +1,13 @@
 {
   "schema": "svaultai_feature_review_v1",
-  "checked_at_utc": "2026-10-09T14:29:08Z",
+  "checked_at_utc": "2026-10-09T18:20:28Z",
   "branch": "codex/assets-concierge",
   "base_commit": "6fecfb30bdeb2da551855377147ff5c08b4f8f02",
-  "status": "local_review_candidate",
+  "status": "native_verified_scoped_rollout_pending",
   "goal_complete": false,
   "production_changed": false,
-  "production_push_requires_user_review": true,
+  "production_push_requires_user_review": false,
+  "release_authorization": "Latest user request explicitly authorizes implementing and making supported assets live; no purchases or real funds test transfers are authorized.",
   "previous_goal_turn_classification": "progress",
   "scope": ["Assets", "Concierge exposure monitoring"],
   "assets": {
@@ -16,7 +17,8 @@
       "Cryptocurrency", "Digital Gold", "Digital Silver",
       "Tokenized Real Estate", "Tokenized Diamonds and Gemstones",
       "Tokenized Artwork", "Tokenized Watches and Collectibles",
-      "Tokenized Vehicles and Equipment"
+      "Tokenized Vehicles and Equipment", "Inventory and Supply Chain",
+      "Securities and Equities"
     ],
     "new_supported_token": {
       "asset": "PAXG_ERC20", "symbol": "PAXG",
@@ -27,9 +29,28 @@
       "supported_flows": ["balance", "receive", "send", "transaction_history"],
       "live_read_only_provider_probe": ["chain_id_1", "contract_code_present", "decimals_18", "pinned_contract_history_query"],
       "real_funds_moved_for_testing": false,
-      "signed_broadcast_and_idempotency_tests": "synthetic_injected_rpc_only"
+      "signed_broadcast_and_idempotency_tests": "real_signature_and_migrated_isolated_SQL_with_injected_RPC_only",
+      "encrypted_draft_migration": "0048_paxg_encrypted_draft_binding_required_before_new_workers",
+      "encrypted_draft_binding": "server_generated_random_draft_ID_plus_domain_separated_complete_public_transaction_commitment_not_encryption_or_name_privacy",
+      "old_unbound_encrypted_drafts": "fail_closed_require_new_review",
+      "exact_fee_authorization": "positive_coherent_amount_matched_quote_and_fresh_integer_token_ETH_balances_before_wallet_secret",
+      "ambiguous_broadcast_reply": "retain_local_signed_hash_as_uncertain_never_invite_duplicate_send"
     },
-    "other_new_categories": "explicitly_unavailable_no_verified_integration",
+    "additional_supported_token": {
+      "asset": "KAG_ERC20", "symbol": "KAG", "network": "ethereum_mainnet",
+      "chain_id": 1, "decimals": 18,
+      "contract": "0x56Ba8B58B7d1f6d384A1C4dD553F39ebc8741B8e",
+      "source": "https://kmslabs.money/documents/",
+      "holder_eligibility_terms": "https://kmslabs.money/kms-labs-tcs/",
+      "backing": "issuer-described native Kinesis-token reserves, not direct bullion title",
+      "supported_flows": ["balance", "receive", "send", "transaction_history"],
+      "default_enabled": false, "deployment_flag_requires_live_pinned_probe": true,
+      "migration": "0049_kag_encrypted_draft_binding",
+      "fresh_verification": "same-block chain/code/implementation/registry/pause/access; exact gas simulation before new signing intent",
+      "durable_replay": "same-signed submitted or uncertain outcomes remain readable through pause/upgrade/disabled flags and consumed-draft TTL without re-relay",
+      "real_funds_moved_for_testing": false
+    },
+    "other_new_categories": "Coming soon; no verified issuer asset connection, no receive/send actions",
     "trading_fiat_or_custody_added": false,
     "session_guards": ["pre_post_key_use", "pre_post_wallet_http", "registered_only_ui_revocation", "no_cross_vault_gold_cache", "draft_and_cached_outcome_asset_binding"]
   },
@@ -77,6 +98,10 @@
     "migration": "0047_additive_only_no_existing_rows_transformed"
   },
   "verification": {
+    "gold_silver_final_backend": {"offline_passed": 525, "isolated_postgres_passed": 15, "independent_focused_passed": 308, "failed": 0, "full_migrations": "baseline_to_0049", "scope": "selected registered-token and legacy crypto safety suites, not a whole-project green claim"},
+    "gold_silver_final_frontend": {"focused_passed": 204, "shared_loader_activity_passed": 67, "analysis_errors": 0, "analysis_warnings": 0, "preexisting_info_lints": 11},
+    "gold_silver_current_iphone": {"device": "dedicated iPhone 17 Pro iOS 26.5", "silver_safety_passed": 5, "gold_safety_passed": 11, "gold_real_isolated_SQL_bridge_passed": 1, "fake_broadcast_count": 1, "plaintext_draft_metadata_absent": true, "real_funds_sent": false, "dashboard_rerun": "pending"},
+    "scoped_rollout_safety_review": {"mock_handoff_branches_passed": 8, "candidate_targets": "empty schema-only staging database", "rollback": "immutable prior image; prior environment plus startup migrations disabled; no live schema downgrade"},
     "integrated_flutter": {"passed": 166, "failed": 0, "log": "../../work/assets-concierge-free-flutter-2026-10-09.log", "includes": ["phone_sized_actual_dashboard_free_only", "Assets_PAXG", "Concierge_free_policy_and_withdrawal", "sidebar_labels", "mainnet_gating", "billing_state"]},
     "backend_new_and_selected_existing": {"passed": 239, "failed": 0, "log": "/private/tmp/svaultai-free-policy-backend-20261009.log"},
     "disposable_postgres": {"passed": 8, "failed": 0, "log": "/private/tmp/svaultai-concierge-pg.8IIjYq/free-policy-rerun.log", "scope": "real_0047_SQL_on_minimal_synthetic_baseline_not_full_pgvector_Alembic_chain", "daemon": "stopped_cluster_preserved"},
@@ -84,6 +109,20 @@
     "independent_wallet_access_regressions": {"passed": 98, "failed": 0, "scope": "unchanged_Assets_prior_candidate_run"},
     "web_release_compile": {"result": "passed", "api_url": "https://api.svaultai.com", "directory": "vault_ai_frontend/build/web", "log": "../../work/assets-concierge-free-web-compile-2026-10-09.log", "shipping_release_marker": false, "deployed": false},
     "ios_simulator_compile": {"result": "passed", "candidate_policy": "free_only", "version": "1.0.20", "build": 60, "api_url": "http://127.0.0.1:9", "directory": "vault_ai_frontend/build/ios/iphonesimulator/Runner.app", "runtime_end_to_end": false, "uploaded": false},
+    "iphone_manual_live_account": {"device": "iPhone 17 Pro iOS 26.5", "sign_in": "passed", "existing_ethereum_wallet": "read_only_loaded", "new_feature_backend": "not_deployed_so_unavailable", "saved_items_changed": false, "funds_sent": false, "account_left_locked": true},
+    "iphone_native_synthetic": {"passed": 1, "failed": 0, "scope": "strictly_intercepted_native_dashboard_assets_navigation_consent_encrypted_state_and_lock_fences", "real_account_or_provider": false, "log": "../../work/assets-concierge-native-fixtures-2026-10-09.log"},
+    "iphone_native_real_isolated_backend": {"passed": 1, "failed": 0, "runtime_seconds": 63, "scope": "genuine_native_OPAQUE_Keychain_trusted_device_encrypted_login_password_only_consent_public_sample_HIBP_encrypted_findings_signout_relogin_and_lock", "signup_form_tapping": false, "fresh_free_assets_upgrade_gate": "passed", "funded_gold_transfer": false, "production_account": false, "full_alembic_chain": "0047_concierge_exposure", "screenshots": "../../work/assets-concierge-simulator-2026-10-09/", "log": "../../work/assets-concierge-real-native-2026-10-09.log"},
+    "focused_assets_navigation_fix": {"passed": 17, "failed": 0, "scope": "new_Assets_wrapper_Back_only_existing_wallet_unchanged"},
+    "paxg_history_failure_fix": {"passed": 179, "failed": 0, "new_regressions": 40, "scope": "strict_PAXG_provider_failure_empty_and_malformed_record_handling_plus_selected_existing_tests_other_crypto_defaults_unchanged"},
+    "paxg_transfer_offline_final": {"backend_passed": 382, "backend_expected_opt_in_skips": 25, "independent_backend_passed": 251, "flutter_passed": 159, "failed": 0, "scope": "selected_not_whole_project_targets_exact_encrypted_intent_fee_amount_fresh_balances_session_fences_malformed_responses_history_and_existing_wallet_regressions"},
+    "paxg_migrated_postgres_final": {"passed": 9, "failed": 0, "full_alembic_chain": "baseline_to_0048_paxg_encrypted_draft_binding", "scope": "real_SQL_real_ECDSA_and_injected_RPC_only_tamper_refusal_ciphertext_preservation_replay_receipts_concurrent_claims_and_plaintext_legacy_compatibility", "production_changed": false},
+    "paxg_iphone_native_final": {"device": "dedicated_iPhone_17_Pro_iOS_26_5", "safety_passed": 12, "separately_enabled_bridge_skipped_in_safety_suite": 1, "real_isolated_SQL_bridge_passed": 1, "failed": 0, "scope": "actual_native_client_PIN_encrypted_key_decryption_EIP155_signing_exact_PAXG_calldata_real_SQL_draft_binding_single_claim_and_fake_broadcast", "actual_mainnet_broadcast": false, "actual_recipient_delivery": false, "log": "../../work/paxg-native-safety-final-2026-10-09.log", "bridge_log": "../../work/paxg-native-database-2026-10-09.log", "evidence": "../../work/paxg-transaction-verification-2026-10-09.json"},
+    "paxg_live_provider_readonly": {"result": "passed", "rpc": "existing_Alchemy", "indexer": "existing_Etherscan", "pinned_contract_and_decimals": "verified", "one_existing_public_transfer": "successful_receipt_and_exact_transfer_log_crosschecked", "new_paid_API_required_for_verified_read_capabilities": false, "funded_PAXG_gas_estimate_or_send_tested": false, "candidate_API_deployed": false, "evidence": "../../work/assets-concierge-public-provider-evidence-2026-10-09.json"},
+    "paxg_final_web_compile": {"result": "passed", "runtime_seconds": 26.1, "production_privacy_settings_preserved": true, "shipping_release_marker": false, "deployed": false, "log": "../../work/paxg-final-web-compile-2026-10-09.log"},
+    "paxg_final_static_analysis": {"errors": 0, "warnings": 0, "preexisting_info_lints": 11, "native_test_info_lints": 0, "CLI_exit_code": 1, "exit_note": "default_analyzer_exit_for_existing_info_lints_not_a_clean_zero_issue_claim", "log": "../../work/paxg-final-analyze-2026-10-09.log"},
+    "paxg_qa_cleanup": {"result": "completed", "database_removed": "svaultai_paxg_transaction_qa_on_127.0.0.1_55438_only", "removed": "one_synthetic_encrypted_transaction_draft_and_its_QA_control_state", "actual_account_vault_session_counts_before_removal": [0, 0, 0], "production_changed": false, "backup_or_recovery_copy_created": false, "local_backend_and_pg_stopped": true, "dedicated_QA_iPhone_shut_down": true},
+    "isolated_native_cleanup": {"result": "completed", "removed": "one_synthetic_account_encrypted_login_and_Concierge_state_in_svaultai_native_qa_only", "production_changed": false, "local_backend_and_pg_stopped": true, "synthetic_data_recoverable": false, "evidence": "/private/tmp/svaultai-qa-native.hDoW21/qa_cleanup_result.json"},
+    "scoped_flutter_static_analysis": "four_changed_source_and_test_files_no_issues",
     "full_project_tests_claimed_green": false,
     "known_unchanged_baseline_failures": "Two admin-grant tests also fail at base_commit because their DB patch target predates billing_entitlements delegation; no unrelated implementation fix included.",
     "diff_check": "clean"
@@ -106,8 +145,14 @@
     "human_review_before_push",
     "reconcile_current_release_baselines_to_avoid_unrelated_web_billing_changes",
     "release_commit_and_shipping_build_marker",
-    "reviewed_migration_and_feature_flag_enablement",
+    "apply_additive_0047_and_0048_migrations_before_new_backend_workers_then_reviewed_feature_flag_enablement",
     "production_deployment",
     "live_authenticated_feature_verification_without_unapproved_real_fund_movements"
-  ]
+  ],
+  "rollout_safeguards": {
+    "live_web_vs_candidate_base": "live_d2a9199_is_not_candidate_6fecfb3_do_not_ship_whole_bundle_without_reviewing_prior_billing_UI_delta",
+    "new_native_upload": "build_number_must_be_incremented_build_60_already_used",
+    "feature_flags": "enable_only_reviewed_Concierge_free_mode_and_PAXG_preserve_existing_send_pause_entitlement_and_privacy_settings",
+    "rollback": "prefer_feature_off_and_frontend_rollback_retain_new_backend_schema_compatibility_do_not_downgrade_0048_or_delete_feature_data"
+  }
 }

@@ -52,7 +52,7 @@ Map<String, dynamic> paxgDraftFixture(
 }
 
 void main() {
-  test('eight exact categories with no trading category', () {
+  test('ten exact categories with no trading category', () {
     expect(VaultAssetCategory.values.map((v) => v.label), [
       'Cryptocurrency',
       'Digital Gold',
@@ -62,6 +62,8 @@ void main() {
       'Tokenized Artwork',
       'Tokenized Watches and Collectibles',
       'Tokenized Vehicles and Equipment',
+      'Inventory and Supply Chain Goods',
+      'Securities and Equities',
     ]);
   });
 
@@ -75,7 +77,8 @@ void main() {
     expect(asset.verificationSource,
         startsWith('https://github.com/paxosglobal/'));
     expect(asset.transferNote, contains('freeze'));
-    expect(asset.transferNote, contains('reduce the received amount'));
+    expect(asset.transferNote, contains('ETH pays network fees'));
+    expect(asset.transferNote, contains('redemption fees may apply'));
   });
 
   test('server cannot replace the contract, symbol, chain, network or decimals',

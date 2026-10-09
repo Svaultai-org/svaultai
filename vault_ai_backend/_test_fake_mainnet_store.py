@@ -204,6 +204,8 @@ class FakeMainnetStore:
         gas_price: int,
         chain_id: int,
         ttl_secs: int = 300,
+        paxg_intent_fields: Optional[dict[str, Any]] = None,
+        kag_intent_fields: Optional[dict[str, Any]] = None,
     ) -> Optional[str]:
         if self.fail_register:
             raise RuntimeError("simulated register-draft DB failure")
@@ -284,6 +286,22 @@ class FakeMainnetStore:
                 "draft_payload_ciphertext":   draft_payload_ciphertext,
                 "sender_address_lookup_hash": sender_address_lookup_hash,
             }
+            if paxg_intent_fields is not None:
+                from paxg_draft_binding import paxg_intent_commitment
+                self._drafts[draft_id]["value_wei"] = None
+                self._drafts[draft_id]["paxg_intent_commitment"] = paxg_intent_commitment(
+                    draft_id=draft_id, vault_id=str(vault_id), network_id=network_id,
+                    nonce=int(nonce), gas_limit=int(gas_limit), gas_price=int(gas_price),
+                    chain_id=int(chain_id), **paxg_intent_fields,
+                )
+            if kag_intent_fields is not None:
+                from paxg_draft_binding import kag_intent_commitment
+                self._drafts[draft_id]["value_wei"] = None
+                self._drafts[draft_id]["kag_intent_commitment"] = kag_intent_commitment(
+                    draft_id=draft_id, vault_id=str(vault_id), network_id=network_id,
+                    nonce=int(nonce), gas_limit=int(gas_limit), gas_price=int(gas_price),
+                    chain_id=int(chain_id), **kag_intent_fields,
+                )
             return draft_id
 
     def load_draft_readonly(
@@ -296,13 +314,35 @@ class FakeMainnetStore:
             d = self._drafts.get(draft_id)
             if d is None:
                 return None, "unknown_or_expired_draft"
-            if d.get("expires_at", 0) <= now:
+            registered_consumed = d.get("consumed_at") is not None and (
+                d.get("asset") in {"PAXG_ERC20", "KAG_ERC20"}
+                or d.get("paxg_intent_commitment") is not None or d.get("kag_intent_commitment") is not None)
+            if d.get("expires_at", 0) <= now and not registered_consumed:
                 return None, "unknown_or_expired_draft"
             if d.get("vault_id") != str(vault_id):
                 return None, "draft_vault_mismatch"
             if d.get("network_id") != network_id:
                 return None, "draft_network_mismatch"
             consumed = d.get("consumed_at") is not None
+            if d.get("draft_payload_ciphertext") is not None and d["sender_address_lower"] is None:
+                commitment = d.get("paxg_intent_commitment")
+                kag_commitment = d.get("kag_intent_commitment")
+                if commitment is None and kag_commitment is None:
+                    return None, "paxg_encrypted_draft_binding_missing"
+                if commitment is not None and kag_commitment is not None:
+                    return None, "ambiguous_registered_asset_intent"
+                from verified_assets import PAXG_ASSET, KAG_ASSET
+                prefix = "paxg" if commitment is not None else "kag"
+                return {
+                    "draft_id": d["draft_id"], "vault_id": d["vault_id"],
+                    "network_id": d["network_id"], "asset": PAXG_ASSET if commitment is not None else KAG_ASSET,
+                    prefix + "_ciphertext_bound": True,
+                    prefix + "_intent_commitment": commitment if commitment is not None else kag_commitment,
+                    "nonce": int(d["nonce"]), "gas_limit": int(d["gas_limit"]),
+                    "gas_price": int(d["gas_price"]), "chain_id": int(d["chain_id"]),
+                    "consumed": consumed, "local_tx_hash": d.get("local_tx_hash"),
+                    "broadcast_outcome": d.get("broadcast_outcome"),
+                }, None
             return {
                 "draft_id":            d["draft_id"],
                 "vault_id":            d["vault_id"],
@@ -438,6 +478,8 @@ class FakeMainnetStore:
                 if d.get("network_id") != network_id:
                     continue
                 if d.get("local_tx_hash") in (None, ""):
+                    continue
+                if d.get("paxg_intent_commitment") is not None or d.get("kag_intent_commitment") is not None:
                     continue
                 candidates.append(d)
             candidates.sort(

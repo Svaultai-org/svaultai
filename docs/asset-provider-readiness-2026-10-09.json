@@ -1,0 +1,211 @@
+{
+  "schema": "svaultai_asset_provider_readiness_v1",
+  "compiled_at_utc": "2026-10-09T20:39:47Z",
+  "purpose": "Research genuine hold/receive/send integrations using free infrastructure, not investment recommendations or acquisition services.",
+  "status": "gold_and_silver_implemented_simulator_verified_pending_scoped_deployment",
+  "production_changed": false,
+  "shipping_application_code_changed_this_turn": true,
+  "provider_accounts_created": false,
+  "provider_contacts_sent": false,
+  "agreements_accepted": false,
+  "funds_moved": false,
+  "categories": [
+    {
+      "id": "digital_gold",
+      "provider": "Paxos / PAX Gold",
+      "token": "PAXG",
+      "network": "ethereum_mainnet",
+      "contract": "0x45804880De22913dAFE09f4980848ECE6EcbAf78",
+      "decimals": 18,
+      "application_status": "wallet_adapter_implemented_native_and_real_SQL_verified_pending_deployment",
+      "verification": "Prior local native, SQL and signing safety tests passed with injected broadcast; public provider reads and an existing public receipt were crosschecked. No funded candidate transaction was broadcast.",
+      "additional_paid_api_required_for_basic_wallet": false,
+      "limitations": [
+        "Issuer can pause/freeze transfers; Ethereum gas applies. Check current token fee settings; separate issuer purchase/redemption fees may apply.",
+        "Issuer page says PAXG is unavailable in the EU; clarify whether this covers issuer purchase/redemption or third-party wallet support before broad availability claims.",
+        "Do not claim universal availability or guaranteed redemption."
+      ],
+      "sources": [
+        "https://github.com/paxosglobal/paxos-gold-contract",
+        "https://www.paxos.com/pax-gold",
+        "https://www.paxos.com/terms-and-conditions/pax-gold-terms-conditions"
+      ]
+    },
+    {
+      "id": "digital_silver",
+      "provider": "KMS Labs",
+      "token": "KAG Ethereum ERC-20, not native Kinesis-network KAG",
+      "network": "ethereum_mainnet",
+      "contract": "0x56Ba8B58B7d1f6d384A1C4dD553F39ebc8741B8e",
+      "decimals": 18,
+      "application_status": "wallet_adapter_implemented_native_and_real_SQL_verified_default_disabled_until_scoped_deployment",
+      "live_readonly_observation": {
+        "source": "Independent agent public RPC and published source assessment, approximately 2026-10-09T20:33Z",
+        "block_range": [26157252, 26157267],
+        "chain_id": 1,
+        "paused": false,
+        "token_implementation": "0x0f25045d15c163478bb67c56c5d9d602628f4f62",
+        "access_registry": "0x25f604795215fc9468f8d2cc60e96330110b4861",
+        "registry_implementation": "0x0d7d2f28ab186cd706878c9943221b001bcfc3d7",
+        "registry_behavior": "denylist_at_observed_blocks_not_mandatory_allowlist",
+        "synthetic_zero_value_eth_call_transfer": "returned_true_no_signature_or_broadcast",
+        "funded_transfer_verified": false
+      },
+      "additional_issuer_api_credential_required_for_basic_wallet": false,
+      "readiness": "Pinned token, token implementation, registry and registry implementation; fresh same-block pause/access checks; exact transaction simulation and encrypted intent commitment; native iPhone and real PostgreSQL safety tests passed. Issuer eligibility applies; no claim of universal legal availability or funded recipient delivery.",
+      "rights": "Issuer describes backing by native Kinesis-token reserves, not direct bullion title; do not advertise direct ownership of silver bars.",
+      "before_enable": [
+        "Confirm intended countries and issuer eligibility without promising worldwide availability.",
+        "Validate live token and access-registry implementations, pause state, sender and recipient access.",
+        "Bind exact contract, chain, amount, recipient and fee quote to local signing; simulate exact transfer, not only a zero-value call.",
+        "Suspend unsupported implementation or registry changes rather than continuing blind signing.",
+        "Test encrypted keys, balances, history, denial, lock/session fences, replays and ambiguous sends on web and iPhone.",
+        "Separately verify a user-controlled funded workflow; never buy or move funds automatically."
+      ],
+      "sources": [
+        "https://kmslabs.money/kms-labs-tcs/",
+        "https://kmslabs.money/documents/",
+        "https://kinesis.money/company-news/kag-listed-on-mexc-exchange/",
+        "https://github.com/fireblocks/fireblocks-smart-contracts/blob/main/contracts/ERC20F.sol",
+        "https://github.com/fireblocks/fireblocks-smart-contracts/blob/main/contracts/library/AccessRegistry/DenyList.sol",
+        "https://eth.blockscout.com/api/v2/smart-contracts/0x0f25045d15c163478bb67c56c5d9d602628f4f62"
+      ]
+    },
+    {
+      "id": "tokenized_real_estate",
+      "provider": "Lofty research candidate",
+      "network": "algorand_mainnet",
+      "example_asset_id": 3686994105,
+      "example_property": "LFTY0001 / 917 Pawnee Ave",
+      "application_status": "new_network_adapter_required_not_enabled",
+      "live_readonly_observation": {
+        "source": "One root public Nodely algod GET, 2026-10-09T20:39Z approximately",
+        "asset_id": 3686994105,
+        "name": "Lofty 917 Pawnee LFTY0001",
+        "unit_name": "LFTY0001",
+        "decimals": 6,
+        "default_frozen": false,
+        "total_base_units": 2160000000,
+        "document_url": "https://asset.lofty.ai/LFTY0001",
+        "user_wallets_queried": false,
+        "ownership_or_member_rights_verified": false,
+        "funded_transfer_verified": false
+      },
+      "readiness": "Issuer permits external wallet/protocol use; a public token exists, but ownership recognition, current catalog and commercial metadata permissions are unresolved.",
+      "before_enable": [
+        "Obtain current issuer-maintained ASA registry and written clarification of ownership recognition, recipient registration and any restrictions.",
+        "Confirm permitted commercial use of catalog/API/materials; third-party wallet support is not a blanket scraping or image license.",
+        "Implement Algorand-specific keys, encryption, network identity, asset opt-in, minimum balances, signing, receipt verification and history.",
+        "Keep trading, brokerage, rental-income claims and property redemption outside this integration."
+      ],
+      "alternative_realt": "Issuer wallet docs require property-specific whitelist approval; dated U.S. eligibility guidance excludes U.S. investors. Current issuer availability was not established, so it is not a rollout recommendation.",
+      "sources": [
+        "https://www.lofty.ai/terms",
+        "https://asset.lofty.ai/LFTY0001",
+        "https://algorand.co/case-studies/lofty-transform-real-estate-industry",
+        "https://faq.realt.co/en/article/protecting-my-tokens-with-a-hardware-wallet-1lkhihs/",
+        "https://faq.realt.co/en/article/secondary-market-what-is-the-yam-how-does-the-whitelisting-work-mp71wo/"
+      ]
+    },
+    {
+      "id": "tokenized_diamonds_gemstones",
+      "provider": "Historical Tiamonds / LCX, current Toto Finance",
+      "application_status": "blocked_no_current_verified_diamond_contract",
+      "readiness": "Historical diamond-ownership ERC-721s are distinct from TIA/TOTO utility tokens. Current site focuses on copper, with new copper products marked in development.",
+      "before_enable": [
+        "Request actual current diamond NFT contract/token-ID registry, custody/redemption status, transfer restrictions and commercial integration permission.",
+        "Build verified ERC-721 adapter only after current asset and issuer mapping is established.",
+        "Do not place ecosystem utility tokens in Diamond holdings or treat a certificate as an owned blockchain token."
+      ],
+      "sources": [
+        "https://lcx.com/en/tiamonds-token",
+        "https://www.lcx.com/wp-content/uploads/Tiamonds_White_Paper.pdf",
+        "https://totofinance.com/"
+      ]
+    },
+    {
+      "id": "tokenized_artwork",
+      "provider_candidates": ["Artfi", "Maecenas"],
+      "application_status": "blocked_no_current_verified_artwork_asset_tuple",
+      "readiness": "Artfi describes specific artwork-share NFTs on Sui, distinct from ARTFI utility coin. Maecenas distinguishes artwork shares from its ART platform token; current asset contracts were not verified.",
+      "before_enable": [
+        "Get current official artwork token/package IDs, transfer-policy documentation and issuer-permitted metadata.",
+        "If selecting Sui, implement that network's wallet and transfer policies rather than reusing ERC-20 signing.",
+        "Do not claim fractional tokens entitle holders to collect the physical painting."
+      ],
+      "sources": [
+        "https://artfishare.com/faq",
+        "https://artfi.world/",
+        "https://www.sui.io/blog/artfi-fine-art-investing",
+        "https://www.maecenas.co/faq/"
+      ]
+    },
+    {
+      "id": "tokenized_watches_collectibles",
+      "provider": "4K research candidate",
+      "network": "ethereum_mainnet",
+      "watch_contract": "0x927a51275a610Cd93e23b176670c88157bC48AF2",
+      "example_token_id": 43,
+      "application_status": "not_implemented_not_enabled",
+      "live_readonly_observation": {
+        "checked_at_utc": "2026-10-09T20:37:55.525387+00:00",
+        "block_number": 26157291,
+        "chain_id": 1,
+        "nonempty_contract_code": true,
+        "erc1155_interface_supported": true,
+        "token_id_current_supply_or_ownership_verified": false,
+        "physical_backing_verified": false,
+        "issuer_service_operational_verified": false,
+        "funded_transfer_verified": false,
+        "signed_or_broadcast": false,
+        "probe": "../work/probe_watch_candidate_readonly.py"
+      },
+      "readiness": "Public contract/interface exists. Indexed issuer item identifies a watch, but live issuer operational/custody status was not verified because requests failed or timed out; this is not proof of a worldwide outage.",
+      "before_enable": [
+        "Verify actual token ID, custody status, issuer service and current permitted metadata/API access.",
+        "Account for storage-fee restrictions and any transfer locks; a free blockchain API does not eliminate issuer charges.",
+        "Implement exact ERC-1155 token-ID/quantity signing, receipt checks, history and truthful unavailable states.",
+        "Classify assets per token ID; a mixed collection is not automatically all watches or artwork."
+      ],
+      "sources": [
+        "https://app.4k.com/collectible/ethereum/0x927a51275a610Cd93e23b176670c88157bC48AF2/43",
+        "https://app.4k.com/collectible/ethereum/0x298dC446457897374d24F3B1f21D6BBfdd6487f0/12",
+        "https://app.4k.com/Terms%20and%20Conditions.pdf"
+      ]
+    },
+    {
+      "id": "tokenized_vehicles_equipment",
+      "provider": "CurioInvest research lead",
+      "application_status": "blocked_no_current_verified_vehicle_asset_tuple",
+      "readiness": "Issuer describes fractional SPV interests and onboarding, not unrestricted vehicle-title transfer. Current asset-specific contract and live transfer conditions were not verified.",
+      "before_enable": [
+        "Request authoritative live asset identifiers, supported chains, holder rights, eligibility and transfer restrictions.",
+        "Verify permitted commercial integration and actual asset custody before any provider-specific implementation.",
+        "Do not treat CUR or another platform token as ownership of a particular car."
+      ],
+      "sources": ["https://curioinvest.com/"]
+    }
+  ],
+  "free_infrastructure": [
+    {
+      "provider": "Existing Alchemy Ethereum connection",
+      "capability": "Free plan documents node, token, NFT and transfer data APIs within quotas; current SVaultAI NFT endpoint access was not separately tested.",
+      "sources": ["https://www.alchemy.com/docs/reference/pricing-plans", "https://www.alchemy.com/docs/reference/nft-api-faq"]
+    },
+    {
+      "provider": "PublicNode Ethereum",
+      "capability": "No-key public RPC used for bounded watch-contract reads. No SLA or unlimited-production guarantee asserted.",
+      "source": "https://ethereum.publicnode.com/"
+    },
+    {
+      "provider": "Nodely Algorand",
+      "capability": "No-key algod/indexer; documented quotas and backoff requirements apply. One public issuer-linked property asset query succeeded.",
+      "documented_daily_request_limit": 200000,
+      "documented_daily_response_byte_limit_gb": 5,
+      "sources": ["https://nodely.io/docs/free/start", "https://nodely.io/docs/free/policy/", "https://nodely.io/legal/terms-of-service"]
+    }
+  ],
+  "user_action_now": "No paid API, token purchase or credential sharing is required for this research. Approve issuer choices/customer-country scope before enabling a particular asset; issuer confirmations are needed where current registry, rights or integration permission are missing.",
+  "safest_next_implementation": "Extend closed Ethereum ERC-20 support for explicitly selected KMS KAG, with live issuer controls and upgrade fencing; keep other categories unavailable until their specific verification/integration requirements are satisfied.",
+  "rollout_boundary": "User explicitly authorized implementation and making connectable assets live. Preserve existing crypto and other features, use scoped tested rollback, and independently verify the deployed release. No buying, selling, swaps, fiat, custody, physical-token minting or issuer redemption is added."
+}

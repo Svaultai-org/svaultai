@@ -1,0 +1,6 @@
+# Scoped Assets/Concierge rollout: retain the deployed, audited dependency and
+# native OPAQUE runtime. requirements.txt must match the deployed base exactly.
+FROM svaultai-backend:apple-billing-f801c25
+USER root
+COPY --chown=vaultai:vaultai . /app
+USER vaultai

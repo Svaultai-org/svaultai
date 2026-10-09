@@ -184,10 +184,14 @@ Future<DashboardAssetLiveState> loadAssetWalletState({
 
   Map<String, dynamic> receive;
   try {
+    // A paused verified silver token retains balance/history access. Read its
+    // existing parent address, but never surface a token receive action.
+    final receiveAsset = registeredAsset?.id == kKagAssetId &&
+        registeredAsset?.receiveEnabled == false ? 'ETH' : asset;
     receive = await apiClient
         .getCryptoWalletReceiveNetwork(
           network: network,
-          asset: asset,
+          asset: receiveAsset,
           authToken: authToken,
         )
         .timeout(receiveTimeout);

@@ -262,6 +262,8 @@ def register_draft_ciphertext_first(
     gas_price: int,
     chain_id: int,
     ttl_secs: int = 300,
+    paxg_intent_fields: Optional[dict[str, Any]] = None,
+    kag_intent_fields: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     """Ciphertext-first mainnet (EVM) draft creation.
 
@@ -290,6 +292,24 @@ def register_draft_ciphertext_first(
         sender_address_lookup_hash.hex()
     )
     draft_id = secrets.token_urlsafe(_DRAFT_ID_LEN_BYTES)
+    commitment = None
+    kag_commitment = None
+    if paxg_intent_fields is not None and kag_intent_fields is not None:
+        raise ValueError("ambiguous_registered_asset_intent")
+    if paxg_intent_fields is not None:
+        from paxg_draft_binding import paxg_intent_commitment
+        commitment = paxg_intent_commitment(
+            draft_id=draft_id, vault_id=str(vault_id), network_id=network_id,
+            nonce=int(nonce), gas_limit=int(gas_limit), gas_price=int(gas_price),
+            chain_id=int(chain_id), **paxg_intent_fields,
+        )
+    if kag_intent_fields is not None:
+        from paxg_draft_binding import kag_intent_commitment
+        kag_commitment = kag_intent_commitment(
+            draft_id=draft_id, vault_id=str(vault_id), network_id=network_id,
+            nonce=int(nonce), gas_limit=int(gas_limit), gas_price=int(gas_price),
+            chain_id=int(chain_id), **kag_intent_fields,
+        )
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -367,7 +387,8 @@ def register_draft_ciphertext_first(
                 destination_address, value_wei_str, data_hex,
                 nonce, gas_limit, gas_price_str, chain_id,
                 transaction_to, expires_at,
-                draft_payload_ciphertext, sender_address_lookup_hash
+                draft_payload_ciphertext, sender_address_lookup_hash,
+                paxg_intent_commitment, kag_intent_commitment
             ) VALUES (
                 %s, %s, %s,
                 NULL, NULL,
@@ -375,7 +396,7 @@ def register_draft_ciphertext_first(
                 %s, %s, %s, %s,
                 NULL,
                 NOW() + (INTERVAL '1 second' * %s),
-                %s, %s
+                %s, %s, %s, %s
             )
             """,
             (
@@ -383,7 +404,7 @@ def register_draft_ciphertext_first(
                 int(nonce), int(gas_limit),
                 str(int(gas_price)), int(chain_id),
                 int(ttl_secs), draft_payload_ciphertext,
-                sender_address_lookup_hash,
+                sender_address_lookup_hash, commitment, kag_commitment,
             ),
         )
         conn.commit()
@@ -420,10 +441,17 @@ def load_draft_readonly(
                    destination_address, value_wei_str, data_hex,
                    nonce, gas_limit, gas_price_str, chain_id,
                    transaction_to, consumed_at, local_tx_hash,
-                   broadcast_outcome, outcome_recorded_at
+                   broadcast_outcome, outcome_recorded_at,
+                   draft_payload_ciphertext, paxg_intent_commitment, kag_intent_commitment
               FROM crypto_mainnet_drafts
              WHERE draft_id = %s
-               AND expires_at > NOW()
+               AND (expires_at > NOW() OR (
+                    consumed_at IS NOT NULL AND (
+                        paxg_intent_commitment IS NOT NULL
+                        OR kag_intent_commitment IS NOT NULL
+                        OR asset IN ('PAXG_ERC20', 'KAG_ERC20')
+                    )
+               ))
             """,
             (draft_id,),
         )
@@ -435,6 +463,28 @@ def load_draft_readonly(
             return None, "draft_vault_mismatch"
         if row["network_id"] != network_id:
             return None, "draft_network_mismatch"
+        if row.get("draft_payload_ciphertext") is not None and row["sender_address"] is None:
+            commitment = row.get("paxg_intent_commitment")
+            kag_commitment = row.get("kag_intent_commitment")
+            if commitment is None and kag_commitment is None:
+                return None, "paxg_encrypted_draft_binding_missing"
+            if commitment is not None and kag_commitment is not None:
+                return None, "ambiguous_registered_asset_intent"
+            # The dedicated binding column is populated only by the closed
+            # PAXG registration path. Never cast encrypted NULL metadata.
+            from verified_assets import PAXG_ASSET, KAG_ASSET
+            prefix = "paxg" if commitment is not None else "kag"
+            return {
+                "draft_id": row["draft_id"], "vault_id": row["vault_id"],
+                "network_id": row["network_id"], "asset": PAXG_ASSET if commitment is not None else KAG_ASSET,
+                prefix + "_ciphertext_bound": True,
+                prefix + "_intent_commitment": commitment if commitment is not None else kag_commitment,
+                "nonce": int(row["nonce"]), "gas_limit": int(row["gas_limit"]),
+                "gas_price": int(row["gas_price_str"]), "chain_id": int(row["chain_id"]),
+                "consumed": row["consumed_at"] is not None,
+                "local_tx_hash": row["local_tx_hash"],
+                "broadcast_outcome": row["broadcast_outcome"],
+            }, None
         if row["consumed_at"] is not None:
             return {
                 "draft_id":            row["draft_id"],
@@ -801,6 +851,7 @@ def list_outgoing_history(
              WHERE vault_id = %s
                AND network_id = %s
                AND local_tx_hash IS NOT NULL
+               AND paxg_intent_commitment IS NULL AND kag_intent_commitment IS NULL
              ORDER BY consumed_at DESC NULLS LAST, draft_id ASC
              LIMIT %s
             """,
@@ -814,6 +865,9 @@ def list_outgoing_history(
     finally:
         conn.close()
 
+    # Bound PAXG metadata is client-encrypted, not a plaintext-history record.
+    # Its separate encrypted client history/on-chain history remain authoritative;
+    # never fabricate a zero amount or cast its deliberately NULL public fields.
     out: list[dict[str, Any]] = []
     for r in rows:
         out.append({

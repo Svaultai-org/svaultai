@@ -22,6 +22,7 @@ ALLOWED_RPC_METHODS: frozenset[str] = frozenset({
     "eth_getBalance",
     "eth_call",
     "eth_getCode",
+    "eth_getStorageAt",
     "eth_getTransactionCount",
     "eth_gasPrice",
     "eth_estimateGas",
@@ -194,6 +195,50 @@ def _emit_rpc_at_url(rpc_url: str, method: str, params: list) -> dict:
         )
         raise EvmRpcError("upstream_json", is_ambiguous=True)
     return body
+
+
+def emit_readonly_rpc_batch_at_url(rpc_url: str, calls: list[tuple[str, list]]) -> list[dict]:
+    """Bounded read-only issuer snapshot. Existing single-call flows unchanged.
+
+    Only these five non-mutating methods are allowed; transfer/estimate/signing
+    cannot enter this helper. Each result must have a unique exact integer ID
+    and JSON-RPC2 envelope. Provider messages/URLs are never returned in errors.
+    """
+    readonly = {"eth_chainId", "eth_blockNumber", "eth_getCode", "eth_getStorageAt", "eth_call"}
+    if (not isinstance(calls, list) or not 1 <= len(calls) <= 16
+            or any(method not in readonly or not isinstance(params, list) for method, params in calls)):
+        raise EvmRpcError("method_forbidden")
+    if not rpc_url:
+        raise EvmRpcError("not_configured")
+    payload = [{"jsonrpc": "2.0", "id": i, "method": method, "params": params}
+               for i, (method, params) in enumerate(calls, 1)]
+    try:
+        with httpx.Client(timeout=_TIMEOUT_SECS) as client:
+            response = client.post(rpc_url, json=payload,
+                                   headers={"content-type": "application/json", "accept": "application/json"})
+        if response.status_code != 200:
+            raise EvmRpcError("upstream_http")
+        body = response.json()
+    except httpx.TimeoutException:
+        raise EvmRpcError("upstream_timeout") from None
+    except (httpx.HTTPError, OSError):
+        raise EvmRpcError("upstream_io") from None
+    except (ValueError, json.JSONDecodeError):
+        raise EvmRpcError("upstream_json") from None
+    if not isinstance(body, list) or len(body) != len(calls):
+        raise EvmRpcError("upstream_json")
+    results: dict[int, dict] = {}
+    for row in body:
+        if (not isinstance(row, dict) or row.get("jsonrpc") != "2.0"
+                or type(row.get("id")) is not int or not 1 <= row["id"] <= len(calls)
+                or row["id"] in results):
+            raise EvmRpcError("upstream_json")
+        if "error" in row:
+            raise EvmRpcError("upstream_rpc")
+        if "result" not in row:
+            raise EvmRpcError("upstream_json")
+        results[row["id"]] = row
+    return [results[i] for i in range(1, len(calls) + 1)]
 
 
 def _parse_hex_int(result: object) -> int:

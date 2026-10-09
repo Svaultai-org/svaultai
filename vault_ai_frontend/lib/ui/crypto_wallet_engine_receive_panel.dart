@@ -9,6 +9,7 @@ import '../services/asset_catalog.dart';
 import '../services/ethereum_wallet.dart';
 import '../services/evm_networks.dart';
 import 'crypto_wallet_engine_design.dart';
+import 'kag_issuer_notice.dart';
 
 
 const String kEthReceivePanelTitle = 'Receive Ethereum';
@@ -140,7 +141,7 @@ class _CryptoWalletEngineReceivePanelState
       widget.registeredAsset!.receiveEnabled;
 
   Future<void> _load() async {
-    if (widget.asset == kPaxgAssetId && !_isRegisteredToken) {
+    if (isRegisteredVaultAssetId(widget.asset) && !_isRegisteredToken) {
       setState(() {
         _loading = false;
         _error = 'Receiving is unavailable for this asset.';
@@ -177,7 +178,7 @@ class _CryptoWalletEngineReceivePanelState
   }
 
   Future<void> _createWallet() async {
-    if (_creating || (widget.asset == kPaxgAssetId && !_isRegisteredToken)) return;
+    if (_creating || (isRegisteredVaultAssetId(widget.asset) && !_isRegisteredToken)) return;
     if (!widget.isVaultKeyAvailable()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -436,7 +437,9 @@ class _CryptoWalletEngineReceivePanelState
           ),
           const SizedBox(height: 14),
           if (_isRegisteredToken) ...[
-            const Text('Create an Ethereum Mainnet wallet to receive PAXG. '
+            if (widget.registeredAsset!.id == kKagAssetId)
+              const KagIssuerNotice(),
+            Text('Create an Ethereum Mainnet wallet to receive ${widget.registeredAsset!.symbol}. '
                 'Its private key is generated and encrypted on this device.',
                 style: kWalletBodyStyle),
             const SizedBox(height: 12),
@@ -553,6 +556,8 @@ class _CryptoWalletEngineReceivePanelState
           ),
           const SizedBox(height: 14),
           if (_isToken) ...[
+            if (widget.registeredAsset?.id == kKagAssetId)
+              const KagIssuerNotice(),
             Container(
               key: const Key('eth_receive_panel_token_shared_banner'),
               padding: const EdgeInsets.all(12),
@@ -565,7 +570,7 @@ class _CryptoWalletEngineReceivePanelState
                   Expanded(
                     child: Text(
                       _isRegisteredToken
-                          ? 'PAXG uses your Ethereum Mainnet wallet address. '
+                          ? '${widget.registeredAsset!.symbol} uses your Ethereum Mainnet wallet address. '
                             'Do not send it on another network.'
                           : receivePanelTokenSharedBannerFor(
                         widget.effectiveNetwork,

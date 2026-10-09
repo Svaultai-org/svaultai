@@ -4,7 +4,13 @@ const kAssetCatalogSchema = 'svaultai_asset_catalog_v1';
 const kPaxgAssetId = 'PAXG_ERC20';
 const kPaxgContractAddress = '0x45804880De22913dAFE09f4980848ECE6EcbAf78';
 const kPaxgTransferNote = 'Issuer rules may pause or freeze transfers. '
-    'Token-level fees can reduce the received amount; ETH pays network fees.';
+    'ETH pays network fees. Separate issuer purchase or redemption fees may apply.';
+const kKagAssetId = 'KAG_ERC20';
+const kKagContractAddress = '0x56Ba8B58B7d1f6d384A1C4dD553F39ebc8741B8e';
+const kKagTransferNote =
+    'KMS Labs KAG provides indirect silver exposure backed '
+    'by native Kinesis-token reserves, not direct ownership of silver bars. '
+    'Issuer restrictions may pause or deny transfers; ETH pays network fees.';
 
 enum VaultAssetCategory {
   cryptocurrency('cryptocurrency', 'Cryptocurrency'),
@@ -15,7 +21,10 @@ enum VaultAssetCategory {
   artwork('tokenized_artwork', 'Tokenized Artwork'),
   collectibles(
       'tokenized_watches_collectibles', 'Tokenized Watches and Collectibles'),
-  equipment('tokenized_vehicles_equipment', 'Tokenized Vehicles and Equipment');
+  equipment('tokenized_vehicles_equipment', 'Tokenized Vehicles and Equipment'),
+  inventory(
+      'tokenized_inventory_supply_chain', 'Inventory and Supply Chain Goods'),
+  securities('tokenized_securities_equities', 'Securities and Equities');
 
   const VaultAssetCategory(this.id, this.label);
   final String id;
@@ -35,7 +44,29 @@ const _erc20Specs = <String, Erc20AssetSpec>{
   'USDT_ERC20': Erc20AssetSpec._('USDT_ERC20', 'USDT', 6),
   'USDC_ERC20': Erc20AssetSpec._('USDC_ERC20', 'USDC', 6),
   kPaxgAssetId: Erc20AssetSpec._(kPaxgAssetId, 'PAXG', 18),
+  kKagAssetId: Erc20AssetSpec._(kKagAssetId, 'KAG', 18),
 };
+
+class _RegisteredAssetSpec {
+  const _RegisteredAssetSpec(this.id, this.symbol, this.name, this.category,
+      this.contractAddress, this.transferNote);
+  final String id;
+  final String symbol;
+  final String name;
+  final VaultAssetCategory category;
+  final String contractAddress;
+  final String transferNote;
+}
+
+const _registeredSpecs = <String, _RegisteredAssetSpec>{
+  kPaxgAssetId: _RegisteredAssetSpec(kPaxgAssetId, 'PAXG', 'PAX Gold',
+      VaultAssetCategory.digitalGold, kPaxgContractAddress, kPaxgTransferNote),
+  kKagAssetId: _RegisteredAssetSpec(kKagAssetId, 'KAG', 'KMS Labs KAG Silver',
+      VaultAssetCategory.digitalSilver, kKagContractAddress, kKagTransferNote),
+};
+
+bool isRegisteredVaultAssetId(String asset) =>
+    _registeredSpecs.containsKey(asset);
 
 Erc20AssetSpec? erc20AssetSpec(String asset) => _erc20Specs[asset];
 String walletAssetSymbol(String asset) =>
@@ -69,20 +100,23 @@ BigInt parseAssetBaseUnits(String amount, int decimals) {
 /// The server controls availability, never the contract or precision we sign.
 class RegisteredVaultAsset {
   const RegisteredVaultAsset._({
+    required _RegisteredAssetSpec spec,
     required this.balanceEnabled,
     required this.receiveEnabled,
     required this.sendEnabled,
     required this.activityConnected,
     required this.transferNote,
     required this.verificationSource,
-  });
-  String get id => kPaxgAssetId;
-  String get symbol => 'PAXG';
-  String get name => 'PAX Gold';
+  }) : _spec = spec;
+  final _RegisteredAssetSpec _spec;
+  String get id => _spec.id;
+  String get symbol => _spec.symbol;
+  String get name => _spec.name;
+  VaultAssetCategory get category => _spec.category;
   String get network => kEvmNetworkEthereumMainnet;
   int get chainId => 1;
   int get decimals => 18;
-  String get contractAddress => kPaxgContractAddress;
+  String get contractAddress => _spec.contractAddress;
   final bool balanceEnabled;
   final bool receiveEnabled;
   final bool sendEnabled;
@@ -152,12 +186,22 @@ class RegisteredVaultAsset {
 }
 
 class VaultAssetCatalog {
-  const VaultAssetCatalog._(this.digitalGold, this.digitalGoldAvailable);
+  const VaultAssetCatalog._(this._assets, this._available);
   const VaultAssetCatalog.unavailable()
-      : digitalGold = null,
-        digitalGoldAvailable = false;
-  final RegisteredVaultAsset? digitalGold;
-  final bool digitalGoldAvailable;
+      : _assets = const {},
+        _available = const {};
+  final Map<VaultAssetCategory, RegisteredVaultAsset> _assets;
+  final Set<VaultAssetCategory> _available;
+  RegisteredVaultAsset? assetFor(VaultAssetCategory category) =>
+      _assets[category];
+  bool available(VaultAssetCategory category) => _available.contains(category);
+  RegisteredVaultAsset? get digitalGold =>
+      assetFor(VaultAssetCategory.digitalGold);
+  bool get digitalGoldAvailable => available(VaultAssetCategory.digitalGold);
+  RegisteredVaultAsset? get digitalSilver =>
+      assetFor(VaultAssetCategory.digitalSilver);
+  bool get digitalSilverAvailable =>
+      available(VaultAssetCategory.digitalSilver);
 
   factory VaultAssetCatalog.fromJson(Map<String, dynamic> raw) {
     if (raw['schema'] != kAssetCatalogSchema ||
@@ -165,56 +209,73 @@ class VaultAssetCatalog {
         raw['assets'] is! List) {
       return const VaultAssetCatalog.unavailable();
     }
-    final categories = (raw['categories'] as List)
-        .whereType<Map>()
-        .where((v) => v['id'] == VaultAssetCategory.digitalGold.id)
-        .toList();
-    final candidates = (raw['assets'] as List)
-        .whereType<Map>()
-        .where((v) => v['id'] == kPaxgAssetId)
-        .toList();
-    if (categories.length != 1 || candidates.length != 1) {
-      return const VaultAssetCatalog.unavailable();
+    final assets = <VaultAssetCategory, RegisteredVaultAsset>{};
+    final available = <VaultAssetCategory>{};
+    for (final spec in _registeredSpecs.values) {
+      final categories = (raw['categories'] as List)
+          .whereType<Map>()
+          .where((v) => v['id'] == spec.category.id)
+          .toList();
+      final candidates = (raw['assets'] as List)
+          .whereType<Map>()
+          .where((v) => v['id'] == spec.id)
+          .toList();
+      if (categories.length != 1 || candidates.length != 1) continue;
+      final asset = _parseAsset(candidates.single, spec);
+      if (asset == null) continue;
+      assets[spec.category] = asset;
+      if (categories.single['available'] == true &&
+          asset.balanceEnabled &&
+          (asset.id == kKagAssetId || asset.receiveEnabled)) {
+        available.add(spec.category);
+      }
     }
-    final token = candidates.single;
+    return VaultAssetCatalog._(
+        Map.unmodifiable(assets), Set.unmodifiable(available));
+  }
+
+  static RegisteredVaultAsset? _parseAsset(
+      Map token, _RegisteredAssetSpec spec) {
     if (token['verified'] != true ||
-        token['category'] != VaultAssetCategory.digitalGold.id ||
-        token['symbol'] != 'PAXG' ||
-        token['name'] != 'PAX Gold' ||
+        token['category'] != spec.category.id ||
+        token['symbol'] != spec.symbol ||
+        token['name'] != spec.name ||
         token['standard'] != 'ERC20' ||
         token['network'] != kEvmNetworkEthereumMainnet ||
         token['chainId'] != 1 ||
         token['decimals'] != 18 ||
         token['contractAddress'] is! String ||
         (token['contractAddress'] as String).toLowerCase() !=
-            kPaxgContractAddress.toLowerCase()) {
-      return const VaultAssetCatalog.unavailable();
+            spec.contractAddress.toLowerCase()) {
+      return null;
     }
     // URLs are informational only and limited to the issuer's HTTPS site.
     final source = token['verificationSource'];
     final uri = source is String ? Uri.tryParse(source) : null;
-    final safeSource = uri != null &&
-            uri.scheme == 'https' &&
-            (uri.host == 'paxos.com' ||
+    final issuerSource = uri != null &&
+        (spec.id == kPaxgAssetId
+            ? (uri.host == 'paxos.com' ||
                 uri.host.endsWith('.paxos.com') ||
                 (uri.host == 'github.com' &&
                     (uri.path == '/paxosglobal/paxos-gold-contract' ||
-                        uri.path.startsWith(
-                            '/paxosglobal/paxos-gold-contract/')))) &&
+                        uri.path
+                            .startsWith('/paxosglobal/paxos-gold-contract/'))))
+            : (uri.host == 'kmslabs.money' ||
+                uri.host.endsWith('.kmslabs.money')));
+    final safeSource = uri != null &&
+            uri.scheme == 'https' &&
+            issuerSource &&
             uri.userInfo.isEmpty
         ? uri.toString()
         : null;
-    final asset = RegisteredVaultAsset._(
+    return RegisteredVaultAsset._(
+      spec: spec,
       balanceEnabled: token['balanceEnabled'] == true,
       receiveEnabled: token['receiveEnabled'] == true,
       sendEnabled: token['sendEnabled'] == true,
       activityConnected: token['activityConnected'] == true,
-      transferNote: kPaxgTransferNote,
+      transferNote: spec.transferNote,
       verificationSource: safeSource,
     );
-    final available = categories.single['available'] == true &&
-        asset.balanceEnabled &&
-        asset.receiveEnabled;
-    return VaultAssetCatalog._(asset, available);
   }
 }

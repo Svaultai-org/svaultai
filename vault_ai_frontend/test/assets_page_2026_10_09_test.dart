@@ -192,6 +192,24 @@ class _Client extends VaultAIClient {
       };
 
   @override
+  Future<Map<String, dynamic>> postCryptoWalletPaxgSendFeeEstimateNetwork({
+    required String fromAddress,
+    required String destinationAddress,
+    required String amountEth,
+    required String authToken,
+  }) async => {
+    'status': 'fee_estimate_ready',
+    'asset': kPaxgAssetId,
+    'network': 'ethereum_mainnet',
+    'chainId': 1,
+    'amountBaseUnits': '${parseAssetBaseUnits(amountEth, 18)}',
+    'gasLimit': '60000',
+    'gasPriceWei': '1000000000',
+    'authorizedMaxFeeBaseUnits': '60000000000000',
+    'feeSource': 'synthetic-test-fixture',
+  };
+
+  @override
   Future<Map<String, dynamic>> broadcastCryptoWalletSignedTransactionNetwork({
     required String network,
     required String asset,
@@ -205,7 +223,8 @@ class _Client extends VaultAIClient {
   }
 }
 
-Widget _app(Widget child) => MaterialApp(
+Widget _app(Widget child, {TargetPlatform? platform}) => MaterialApp(
+      theme: platform == null ? null : ThemeData(platform: platform),
       localizationsDelegates: const [
         AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
@@ -219,8 +238,7 @@ Widget _app(Widget child) => MaterialApp(
 AssetsPage _page(_Client client, {String token = 'test-session'}) => AssetsPage(
       authToken: token,
       apiClient: client,
-      cryptocurrency: Scaffold(
-          appBar: AppBar(), body: const Text('Existing cryptocurrency page')),
+      cryptocurrency: const Text('Existing cryptocurrency page'),
       encryptForVault: (_) async => 'test-ciphertext',
       isVaultKeyAvailable: () => true,
       decryptForVault: (_) async => 'not-used',
@@ -278,6 +296,43 @@ Future<void> _startPaxgPin(WidgetTester tester) async {
 }
 
 void main() {
+  for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+    testWidgets(
+        'mobile ${platform.name} Cryptocurrency has Back and returns to Assets',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final client = _Client();
+      await tester.pumpWidget(_app(_page(client), platform: platform));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('assets_category_cryptocurrency')));
+      await tester.pumpAndSettle();
+      expect(
+          find.byKey(const Key('assets_cryptocurrency_route')), findsOneWidget);
+      expect(find.text('Cryptocurrency'), findsOneWidget);
+      expect(find.text('Existing cryptocurrency page'), findsOneWidget);
+      expect(find.byType(BackButton), findsOneWidget);
+      expect(find.byTooltip('Back'), findsOneWidget);
+      expect(
+          Theme.of(tester.element(find.byType(BackButton))).platform, platform);
+      expect(client.receiveCalls, 0);
+      expect(client.createCalls, 0);
+      expect(client.broadcastCalls, 0);
+
+      await tester.tap(find.byKey(const Key('assets_cryptocurrency_back')));
+      await tester.pumpAndSettle();
+      expect(find.text('Assets'), findsOneWidget);
+      expect(find.byKey(const Key('assets_category_cryptocurrency')),
+          findsOneWidget);
+      expect(
+          find.byKey(const Key('assets_cryptocurrency_route')), findsNothing);
+      expect(find.text('Existing cryptocurrency page'), findsNothing);
+    });
+  }
+
   testWidgets(
       'PAXG Max uses all 18 decimal token units without subtracting ETH gas',
       (tester) async {
@@ -350,7 +405,7 @@ void main() {
   });
 
   testWidgets(
-      'eight categories preserve Cryptocurrency and unavailable categories have no actions',
+      'ten categories preserve Cryptocurrency and Coming soon categories have no actions',
       (tester) async {
     final client = _Client();
     await tester.pumpWidget(_app(_page(client)));
@@ -365,7 +420,7 @@ void main() {
         .ensureVisible(find.byKey(const Key('assets_category_digital_silver')));
     await tester.tap(find.byKey(const Key('assets_category_digital_silver')));
     await tester.pumpAndSettle();
-    expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.text('Coming soon'), findsOneWidget);
     expect(find.text('Receive'), findsNothing);
     expect(find.text('Send'), findsNothing);
     expect(client.receiveCalls, 0);
@@ -380,7 +435,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('assets_category_digital_gold')));
     await tester.pumpAndSettle();
-    expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.text('Coming soon'), findsOneWidget);
     expect(client.receiveCalls, 0);
     expect(find.text('0 PAXG'), findsNothing);
   });
@@ -435,7 +490,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('assets_category_digital_gold')));
     await tester.pumpAndSettle();
-    expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.text('Coming soon'), findsOneWidget);
   });
 
   testWidgets(
@@ -644,7 +699,7 @@ void main() {
         expect(find.byType(AssetsPage), findsOneWidget);
         await tester.tap(find.byKey(const Key('assets_category_digital_gold')));
         await tester.pumpAndSettle();
-        expect(find.text('Unavailable'), findsOneWidget);
+        expect(find.text('Coming soon'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
           () => MockClient((request) async {

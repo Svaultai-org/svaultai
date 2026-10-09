@@ -72,7 +72,7 @@ REASON_INVALID_ADDRESS:        str = "invalid_address"
                                                                
 LIVE_ETH_ASSET:  str = "ETH"
 LIVE_TOKEN_ASSETS: frozenset[str] = frozenset({
-    "USDT_ERC20", "USDC_ERC20", "PAXG_ERC20",
+    "USDT_ERC20", "USDC_ERC20", "PAXG_ERC20", "KAG_ERC20",
 })
 
 
@@ -183,13 +183,13 @@ def envelope_token_contract_not_configured(
 
 
     nid, label = _network_id_and_label(network_id)
-    if asset == "PAXG_ERC20":
+    if asset in {"PAXG_ERC20", "KAG_ERC20"}:
         return {
             "status": STATUS_OK, "transactionsStatus": STATUS_UNAVAILABLE,
             "reason": "verified_token_integration_unavailable",
             "asset": asset, "network": nid, "networkLabel": label,
             "transactions": [],
-            "message": "PAX Gold activity is unavailable for this verified token/network integration.",
+            "message": "Registered-token activity is unavailable for this verified token/network integration.",
         }
     if nid == NETWORK_MAINNET_ID:
         env_var = (
@@ -398,6 +398,40 @@ def _network_indexer_configured(network_id: str) -> bool:
     return ethereum_sepolia_tx_indexer_configured()
 
 
+def _strict_indexer_rows(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Closed-issuer classification: provider failures are never empty activity.
+
+    Etherscan-compatible providers report genuine empty history with explicit
+    no-records markers. Do not expose or log their arbitrary error text, which
+    can contain request details or credentials.
+    """
+    status = str(body.get("status", "")).strip()
+    result = body.get("result")
+    message = str(body.get("message", "")).strip().lower()
+    empty_markers = {"no transactions found", "no records found"}
+    if body.get("error") is not None:
+        raise TxIndexerError("upstream_rpc")
+    if status == "1":
+        if message == "notok":
+            raise TxIndexerError("upstream_rpc")
+        if not isinstance(result, list) or any(
+            not isinstance(row, dict) for row in result
+        ):
+            raise TxIndexerError("upstream_json")
+        return result
+    if status == "0":
+        if isinstance(result, list) and not result and message in empty_markers:
+            return []
+        if (
+            isinstance(result, str)
+            and result.strip().lower() in empty_markers
+            and message in empty_markers | {"notok"}
+        ):
+            return []
+        raise TxIndexerError("upstream_rpc")
+    raise TxIndexerError("upstream_json")
+
+
 def _etherscan_query(
     *,
     address: str,
@@ -405,6 +439,7 @@ def _etherscan_query(
     contract_address: Optional[str],
     limit: int,
     network_id: str = NETWORK_SEPOLIA_ID,
+    strict_upstream: bool = False,
 ) -> list[dict[str, Any]]:
 
 
@@ -422,6 +457,8 @@ def _etherscan_query(
     if contract_address:
         params["contractaddress"] = contract_address
     body = _http_get(base, params=params)
+    if strict_upstream:
+        return _strict_indexer_rows(body)
                                                                     
     status = str(body.get("status", "")).strip()
     result = body.get("result")
@@ -449,6 +486,7 @@ def _blockscout_query(
     contract_address: Optional[str],
     limit: int,
     network_id: str = NETWORK_SEPOLIA_ID,
+    strict_upstream: bool = False,
 ) -> list[dict[str, Any]]:
 
 
@@ -464,6 +502,8 @@ def _blockscout_query(
     if contract_address:
         params["contractaddress"] = contract_address
     body = _http_get(base, params=params)
+    if strict_upstream:
+        return _strict_indexer_rows(body)
     status = str(body.get("status", "")).strip()
     result = body.get("result")
     if status == "0":
@@ -482,6 +522,7 @@ def _query_provider(
     contract_address: Optional[str],
     limit: int,
     network_id: str = NETWORK_SEPOLIA_ID,
+    strict_upstream: bool = False,
 ) -> list[dict[str, Any]]:
 
 
@@ -491,12 +532,14 @@ def _query_provider(
             address=address, action=action,
             contract_address=contract_address, limit=limit,
             network_id=network_id,
+            **({"strict_upstream": True} if strict_upstream else {}),
         )
     if provider == PROVIDER_BLOCKSCOUT:
         return _blockscout_query(
             address=address, action=action,
             contract_address=contract_address, limit=limit,
             network_id=network_id,
+            **({"strict_upstream": True} if strict_upstream else {}),
         )
     raise TxIndexerError("provider_not_supported")
 
@@ -512,6 +555,19 @@ def _safe_int(raw: object) -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+def _paxg_history_value_valid(raw: object) -> bool:
+    # Strict new-asset policy only. A token Transfer value is uint256, never a
+    # signed quantity, JSON boolean, float, or arbitrary-length decimal input.
+    # Check the string length before integer parsing to bound upstream work.
+    if type(raw) is int:
+        return 0 <= raw < 2**256
+    if not isinstance(raw, str) or not 1 <= len(raw) <= 78:
+        return False
+    if not raw.isascii() or not raw.isdecimal():
+        return False
+    return int(raw) < 2**256
 
 
 def _row_to_raw_eth(row: dict[str, Any]) -> Optional[_RawEvmTx]:
@@ -651,7 +707,7 @@ def list_erc20_transactions(
 
     if asset not in LIVE_TOKEN_ASSETS:
         return envelope_indexer_not_configured(asset, network_id=network_id)
-    if asset == "PAXG_ERC20" and network_id != NETWORK_MAINNET_ID:
+    if asset in {"PAXG_ERC20", "KAG_ERC20"} and network_id != NETWORK_MAINNET_ID:
         return envelope_indexer_not_configured(asset, network_id=network_id)
     if not is_valid_eth_address(address):
         return envelope_invalid_address(asset, network_id=network_id)
@@ -670,6 +726,7 @@ def list_erc20_transactions(
             address=address, action="tokentx",
             contract_address=contract, limit=bounded_limit,
             network_id=network_id,
+            **({"strict_upstream": True} if asset in {"PAXG_ERC20", "KAG_ERC20"} else {}),
         )
     except TxIndexerError as exc:
         logger.info(
@@ -681,8 +738,25 @@ def list_erc20_transactions(
         )
     rows: list[dict[str, Any]] = []
     for r in raw_rows[:bounded_limit]:
+        if asset in {"PAXG_ERC20", "KAG_ERC20"} and r.get("error") is not None:
+            return envelope_upstream_error(
+                asset, code="upstream_rpc", network_id=network_id,
+            )
+        if asset in {"PAXG_ERC20", "KAG_ERC20"} and not _paxg_history_value_valid(r.get("value")):
+            return envelope_upstream_error(
+                asset, code="upstream_json", network_id=network_id,
+            )
         raw = _row_to_raw_erc20(r, expected_contract=contract)
         if raw is None:
+            if asset in {"PAXG_ERC20", "KAG_ERC20"} and (
+                not is_valid_eth_address(str(r.get("contractAddress") or ""))
+                or _row_to_raw_erc20(r, expected_contract="") is None
+            ):
+                return envelope_upstream_error(
+                    asset, code="upstream_json", network_id=network_id,
+                )
+            # A well-formed row for a different token is safely filtered. A
+            # malformed registered-token record must not imply empty history.
             continue
         rows.append(_build_normalised_row(
             raw=raw, asset=asset, user_address=address,

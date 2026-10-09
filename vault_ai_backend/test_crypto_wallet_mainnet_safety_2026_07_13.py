@@ -845,6 +845,8 @@ class MainnetRpcMethodContract(unittest.TestCase):
                 "eth_call",
                 # Read-only deployed-code verification for pinned real assets.
                 "eth_getCode",
+                # Read-only issuer proxy implementation verification.
+                "eth_getStorageAt",
                 "eth_getTransactionCount",
                 "eth_gasPrice",
                 "eth_estimateGas",

@@ -17,6 +17,7 @@ import '../services/evm_networks.dart';
 import '../services/local_outgoing_tx_store.dart';
 import '../services/recipient_qr_parser.dart';
 import 'crypto_wallet_engine_design.dart';
+import 'kag_issuer_notice.dart';
 import 'crypto_wallet_engine_send_layout.dart';
 import 'scan_recipient_qr_sheet.dart';
 
@@ -195,6 +196,8 @@ String mainnetSendConfirmPhraseFor(String asset) {
       return 'SEND USDC';
     case kPaxgAssetId:
       return 'SEND PAXG';
+    case kKagAssetId:
+      return 'SEND KAG';
   }
   return 'SEND';
 }
@@ -1165,14 +1168,38 @@ class _CryptoWalletEngineSendPanelState
 
   Future<_FeeQuote?> _refreshFeeQuoteForDraft(_DraftFields draft) async {
     try {
-      final resp = await widget.client.postCryptoWalletSendFeeEstimateNetwork(
-        network: widget.network,
-        fromAddress: draft.fromAddress,
-        destinationAddress: draft.destinationAddress,
-        asset: widget.asset,
-        authToken: widget.authToken,
-      );
+      final resp = _isRegisteredMainnetToken
+          ? widget.asset == kKagAssetId
+            ? await widget.client.postCryptoWalletKagSendFeeEstimateNetwork(
+                fromAddress: draft.fromAddress,
+                destinationAddress: draft.destinationAddress,
+                amountEth: draft.amount,
+                authToken: widget.authToken,
+              )
+            : await widget.client.postCryptoWalletPaxgSendFeeEstimateNetwork(
+              fromAddress: draft.fromAddress,
+              destinationAddress: draft.destinationAddress,
+              amountEth: draft.amount,
+              authToken: widget.authToken,
+            )
+          : await widget.client.postCryptoWalletSendFeeEstimateNetwork(
+              network: widget.network,
+              fromAddress: draft.fromAddress,
+              destinationAddress: draft.destinationAddress,
+              asset: widget.asset,
+              authToken: widget.authToken,
+            );
+      if (_registeredAssetAccessExpired()) return null;
       if (resp['status'] != 'fee_estimate_ready') return null;
+      if (_isRegisteredMainnetToken &&
+          (resp['asset'] != widget.asset ||
+              resp['network'] != widget.network ||
+              resp['chainId'] != 1 ||
+              _positivePaxgQuoteInteger(resp['amountBaseUnits']) !=
+                  parseAssetBaseUnits(draft.amount, 18) ||
+              !_validPaxgQuoteGas(resp))) {
+        return null;
+      }
       return _feeQuoteFromDraft(
         draft,
         sourceBody: resp,
@@ -1181,6 +1208,35 @@ class _CryptoWalletEngineSendPanelState
     } catch (_) {
       return null;
     }
+  }
+
+  bool get _isRegisteredMainnetToken =>
+      isRegisteredVaultAssetId(widget.asset) &&
+      widget.network == 'ethereum_mainnet' &&
+      (widget.registeredAsset?.matches(widget.asset, widget.network) ?? false);
+
+  BigInt? _positivePaxgQuoteInteger(Object? value) {
+    if (value is! String || !RegExp(r'^\d+$').hasMatch(value)) return null;
+    final parsed = BigInt.tryParse(value);
+    return parsed != null && parsed > BigInt.zero ? parsed : null;
+  }
+
+  bool _validPaxgQuoteGas(Map<String, dynamic> response) {
+    final limit = _positivePaxgQuoteInteger(response['gasLimit']);
+    final price = _positivePaxgQuoteInteger(response['gasPriceWei']);
+    if (limit == null || price == null) return false;
+    final actualFee = limit * price;
+    if (_positivePaxgQuoteInteger(response['authorizedMaxFeeBaseUnits']) !=
+        actualFee) {
+      return false;
+    }
+    for (final field in ['estimatedFeeWei', 'maximumFeeWei']) {
+      if (response.containsKey(field) &&
+          _positivePaxgQuoteInteger(response[field]) != actualFee) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<_BalanceQuote?> _buildBalanceQuote({
@@ -2212,11 +2268,12 @@ class _CryptoWalletEngineSendPanelState
       }
     }
     if (draftForGate != null &&
-        !widget.isMainnet &&
-        widget.fetchAvailableBalanceWei != null) {
+        (_isRegisteredMainnetToken ||
+            (!widget.isMainnet && widget.fetchAvailableBalanceWei != null))) {
       final gateError = await _verifyExactFeeAuthorization(
         draft: draftForGate,
       );
+      if (_registeredAssetAccessExpired()) return;
       if (gateError != null) {
         _broadcastInFlight = false;
         setState(() {
@@ -2320,6 +2377,15 @@ class _CryptoWalletEngineSendPanelState
       txHash: localHashAtBroadcast,
       draft: _draft!,
     );
+    final registeredAtDispatch = _isRegisteredMainnetToken;
+    final tokenAtDispatch = widget.authToken;
+    final clientAtDispatch = widget.client;
+    final mvkAtDispatch = zk_mvk_store.ZkActiveMvk.current();
+    bool responseIsCurrent() => !registeredAtDispatch ||
+        (mounted && widget.isVaultKeyAvailable() &&
+            widget.authToken == tokenAtDispatch &&
+            identical(widget.client, clientAtDispatch) &&
+            identical(zk_mvk_store.ZkActiveMvk.current(), mvkAtDispatch));
 
     try {
       final Map<String, dynamic> body = widget.isMainnet
@@ -2336,17 +2402,28 @@ class _CryptoWalletEngineSendPanelState
               authToken: widget.authToken,
               signedTransaction: signedTx,
             );
+      // A dispatched registered-token transfer may reach the network after locking.
+      // Keep its pre-dispatch local row nonterminal, but never publish results
+      // into a disposed or different vault's UI/store.
+      if (!responseIsCurrent()) {
+        return;
+      }
       final status = (body['status'] ?? '').toString();
       final walletEngine = (body['wallet_engine'] ?? '').toString();
       final reason = (body['reason'] ?? '').toString();
       final message = (body['message'] ?? '').toString();
       final txHashRaw = (body['txHash'] ?? '').toString();
+      final contradictoryPaxgPrecheck = registeredAtDispatch &&
+          (walletEngine == 'mainnet_send_paused' || status == 'mainnet_send_paused' ||
+              walletEngine == 'rate_limited' || status == 'rate_limited') &&
+          (txHashRaw.isNotEmpty || status == 'submitted' ||
+              status == 'already_submitted' || status == 'submission_uncertain');
       // For pause / rate-limit / auth-side pre-checks the backend
       // NEVER attempted broadcast — no on-chain tx exists.
       // Downgrade the local row to `dropped` and take the user
       // back to Review to try again cleanly.
-      if (walletEngine == 'mainnet_send_paused' ||
-          status == 'mainnet_send_paused') {
+      if ((walletEngine == 'mainnet_send_paused' ||
+          status == 'mainnet_send_paused') && !contradictoryPaxgPrecheck) {
         _cancelOutgoingSubmittingRow(localHashAtBroadcast);
         setState(() {
           _stage = _Stage.review;
@@ -2354,11 +2431,37 @@ class _CryptoWalletEngineSendPanelState
         });
         return;
       }
-      if (walletEngine == 'rate_limited' || status == 'rate_limited') {
+      if ((walletEngine == 'rate_limited' || status == 'rate_limited') &&
+          !contradictoryPaxgPrecheck) {
         _cancelOutgoingSubmittingRow(localHashAtBroadcast);
         setState(() {
           _stage = _Stage.review;
           _error = kMainnetSendRateLimitedError;
+        });
+        return;
+      }
+      if (_isRegisteredMainnetToken &&
+          (contradictoryPaxgPrecheck || !const {
+                'submitted', 'already_submitted', 'submission_uncertain',
+                'broadcast_rejected', 'broadcast_unavailable',
+              }.contains(status) ||
+              (txHashRaw.isNotEmpty &&
+                  txHashRaw.toLowerCase() != localHashAtBroadcast.toLowerCase()) ||
+              ((status == 'submitted' || status == 'already_submitted') &&
+                  txHashRaw.isEmpty))) {
+        // An opaque reply is not proof that dispatch failed. Retain the exact
+        // signed transaction hash and offer status checking, never a new send.
+        _clearApprovalEnvelope();
+        _updateOutgoingRow(localHashAtBroadcast,
+            LocalOutgoingTxStatus.submissionUncertain,
+            reason: 'broadcast_response_unverified');
+        setState(() {
+          _submittedTxHash = localHashAtBroadcast;
+          _broadcastStatus = 'submission_uncertain';
+          _broadcastReason = 'broadcast_response_unverified';
+          _broadcastMessage = null;
+          _stage = _Stage.submitted;
+          _error = null;
         });
         return;
       }
@@ -2455,6 +2558,9 @@ class _CryptoWalletEngineSendPanelState
             : '$kEthSendErrorBroadcastFailed (${body['reason'] ?? 'unknown'})';
       });
     } catch (e) {
+      if (!responseIsCurrent()) {
+        return;
+      }
       // Network error DURING the broadcast HTTP roundtrip. The
       // backend MAY have accepted and marked the draft consumed,
       // or the request may have never landed. We cannot know; the
@@ -2492,14 +2598,22 @@ class _CryptoWalletEngineSendPanelState
     required _DraftFields draft,
   }) async {
     final isToken = widget.asset != 'ETH';
-    final BigInt feeWei = _feeQuote?.maximumFeeWei ?? draft.feeWei;
+    final quotedFee = _feeQuote?.maximumFeeWei ?? draft.feeWei;
+    // Registered tokens sign the original gas fields. A lower refreshed quote must
+    // never authorize less ETH than that exact signed transaction can consume.
+    final BigInt feeWei = _isRegisteredMainnetToken && draft.feeWei > quotedFee
+        ? draft.feeWei : quotedFee;
     BigInt? availableBaseUnits;
     try {
       availableBaseUnits = await widget.fetchAvailableBalanceWei!();
     } catch (_) {
       availableBaseUnits = null;
     }
-    if (availableBaseUnits == null) {
+    if (_isRegisteredMainnetToken && _registeredAssetAccessExpired()) {
+      return kMainnetSendExactFeeUnverifiedError;
+    }
+    if (availableBaseUnits == null ||
+        (_isRegisteredMainnetToken && availableBaseUnits < BigInt.zero)) {
       return kMainnetSendExactFeeUnverifiedError;
     }
     if (!isToken) {
@@ -2537,7 +2651,8 @@ class _CryptoWalletEngineSendPanelState
     } catch (_) {
       ethBalanceWei = null;
     }
-    if (ethBalanceWei == null) {
+    if (ethBalanceWei == null ||
+        (_isRegisteredMainnetToken && ethBalanceWei < BigInt.zero)) {
       return kMainnetSendExactFeeUnverifiedError;
     }
     if (feeWei > ethBalanceWei) {
@@ -2646,8 +2761,17 @@ class _CryptoWalletEngineSendPanelState
     try {
       final draft = _draft;
       if (draft == null || signature.isEmpty) return;
+      final registered = _isRegisteredMainnetToken;
+      final activeMvk = zk_mvk_store.ZkActiveMvk.current();
+      final token = widget.authToken;
+      final client = widget.client;
+      bool accessCurrent() => !registered ||
+          (mounted && widget.isVaultKeyAvailable() &&
+              identical(activeMvk, zk_mvk_store.ZkActiveMvk.current()) &&
+              widget.authToken == token && widget.client == client);
+      if (!accessCurrent()) return;
       final env = await zk_history_helper.buildZkOutgoingHistoryEnvelope(
-        activeMvk: zk_mvk_store.ZkActiveMvk.current(),
+        activeMvk: activeMvk,
         signature: signature,
         senderAddress: draft.fromAddress,
         destinationAddress: draft.destinationAddress,
@@ -2655,13 +2779,30 @@ class _CryptoWalletEngineSendPanelState
         amount: draft.amount,
         outcome: outcome,
       );
-      if (env == null) return;
-      await widget.client.postCryptoOutgoingHistoryCiphertext(
-        authToken: widget.authToken,
-        network: widget.isMainnet ? 'mainnet' : 'sepolia',
-        signatureLookupHash: env.signatureLookupHash,
-        outcomePayloadCiphertext: env.outcomePayloadCiphertext,
-      );
+      if (env == null || !accessCurrent()) return;
+      if (registered) {
+        if (widget.asset == kKagAssetId) {
+          await client.postCryptoWalletKagOutgoingHistoryCiphertext(
+            authToken: token,
+            signatureLookupHash: env.signatureLookupHash,
+            outcomePayloadCiphertext: env.outcomePayloadCiphertext,
+          );
+        } else {
+          await client.postCryptoWalletPaxgOutgoingHistoryCiphertext(
+          authToken: token,
+          signatureLookupHash: env.signatureLookupHash,
+          outcomePayloadCiphertext: env.outcomePayloadCiphertext,
+          );
+        }
+        if (!accessCurrent()) return;
+      } else {
+        await client.postCryptoOutgoingHistoryCiphertext(
+          authToken: token,
+          network: widget.isMainnet ? 'mainnet' : 'sepolia',
+          signatureLookupHash: env.signatureLookupHash,
+          outcomePayloadCiphertext: env.outcomePayloadCiphertext,
+        );
+      }
     } catch (_) {
       // Silently ignored — see method doc.
     }
@@ -2901,6 +3042,8 @@ class _CryptoWalletEngineSendPanelState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (widget.registeredAsset?.id == kKagAssetId)
+          const KagIssuerNotice(),
         TextField(
           key: const Key('eth_send_panel_destination_input'),
           controller: _destCtrl,
@@ -3385,6 +3528,8 @@ class _CryptoWalletEngineSendPanelState
       mainAxisSize: MainAxisSize.min,
       children: [
         walletSendSectionHeading('Review send'),
+        if (widget.registeredAsset?.id == kKagAssetId)
+          const KagIssuerNotice(),
         if (widget.registeredAsset != null) ...[
           Text(widget.registeredAsset!.transferNote,
               key: const Key('send_asset_issuer_transfer_note'),

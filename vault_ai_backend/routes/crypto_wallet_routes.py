@@ -295,6 +295,13 @@ def _register_mainnet_draft(
     """
     if ciphertext_first_pair is not None:
         payload_ct, sender_lh = ciphertext_first_pair
+        from verified_assets import PAXG_ASSET, REGISTERED_TOKEN_ASSETS
+        public_intent_fields = ({
+            "asset": asset, "sender_address": sender_address,
+            "destination_address": destination_address,
+            "value_wei": int(value_wei), "data_hex": data_hex,
+            "transaction_to": transaction_to,
+        } if asset in REGISTERED_TOKEN_ASSETS else None)
         return _mainnet_store.register_draft_ciphertext_first(
             vault_id=str(vault_id),
             network_id=network_id,
@@ -305,6 +312,8 @@ def _register_mainnet_draft(
             gas_price=int(gas_price),
             chain_id=int(chain_id),
             ttl_secs=_MAINNET_DRAFT_TTL_SECS,
+            **({("paxg_intent_fields" if asset == PAXG_ASSET else "kag_intent_fields"): public_intent_fields}
+               if public_intent_fields is not None else {}),
         )
     return _mainnet_store.register_draft(
         vault_id=str(vault_id),
@@ -659,12 +668,25 @@ ERC20_TOKEN_ASSETS: frozenset[str] = frozenset({
 })
 
 # Mainnet-only verified real assets must never expand the legacy Sepolia set.
-MAINNET_ERC20_TOKEN_ASSETS = ERC20_TOKEN_ASSETS | frozenset({"PAXG_ERC20"})
+MAINNET_ERC20_TOKEN_ASSETS = ERC20_TOKEN_ASSETS | frozenset({"PAXG_ERC20", "KAG_ERC20"})
 
 
 def _mainnet_asset_gate(asset: str, capability: str):
     from verified_assets import new_asset_gate
     return new_asset_gate(_normalize_asset(asset), "ethereum_mainnet", capability)
+
+
+def _paxg_rpc_fee_valid(gas_limit: Any, gas_price: Any, nonce: Any = 0) -> bool:
+    # Closed new tokens only: malformed/zero RPC quantities cannot become a signed draft
+    # or an apparent zero-cost fee quote. BIGINT-backed fields must fit the DB.
+    return (
+        isinstance(gas_limit, int) and not isinstance(gas_limit, bool)
+        and 0 < gas_limit < 2**63
+        and isinstance(gas_price, int) and not isinstance(gas_price, bool)
+        and 0 < gas_price < 2**256
+        and isinstance(nonce, int) and not isinstance(nonce, bool)
+        and 0 <= nonce < 2**63
+    )
 
 
 def _underlying_eth_asset(norm_asset: str) -> str:
@@ -798,6 +820,9 @@ class SendFeeEstimatePayload(BaseModel):
     fromAddress:        str
     destinationAddress: str
     asset:              str
+    # Exact token amount is required only by the new closed-issuer signing flow.
+    # Existing ETH/USDT/USDC callers keep their original no-amount semantics.
+    amountEth:          Optional[str] = None
 
     model_config = {"extra": "forbid"}
 
@@ -2498,6 +2523,10 @@ def _mainnet_receive(
                 ),
             }
         from vault_config import ethereum_mainnet_token_unit
+        from verified_assets import kag_address_gate
+        issuer_error = kag_address_gate(norm, "receive", recipient=record.get("publicAddress"))
+        if issuer_error is not None:
+            return issuer_error
         token_unit = ethereum_mainnet_token_unit(norm)
         return {
             "wallet_engine":   "receive_ready",
@@ -2677,7 +2706,7 @@ def _get_mainnet_balance(
             )
         except EvmRpcError as exc:
             return _unavailable(exc.code)
-        if norm == "PAXG_ERC20":
+        if norm in {"PAXG_ERC20", "KAG_ERC20"}:
             from verified_assets import paxg_base_units_to_decimal
             try:
                 amount_string = paxg_base_units_to_decimal(base_units)
@@ -2806,7 +2835,7 @@ def _list_mainnet_transactions(
             "transactions":       [],
             "message": (
                 "Mainnet transaction history is only enabled for ETH, "
-                "USDT_ERC20, USDC_ERC20 and verified PAXG_ERC20 in this build."
+                "USDT_ERC20, USDC_ERC20 and verified PAXG_ERC20/KAG_ERC20 in this build."
             ),
         }
     if is_eth and not is_receive_enabled(NETWORK_ETHEREUM_MAINNET):
@@ -3098,7 +3127,7 @@ def _create_mainnet_send_draft(
             "reason":  "asset_not_enabled_on_mainnet",
             "message": (
                 "Mainnet send is only enabled for ETH, USDT_ERC20, "
-                "USDC_ERC20 and verified PAXG_ERC20 in this build."
+                "USDC_ERC20 and verified PAXG_ERC20/KAG_ERC20 in this build."
             ),
         }
 
@@ -3181,7 +3210,7 @@ def _create_mainnet_send_draft(
     if is_token:
         decimals = ethereum_mainnet_token_decimals(norm)
         try:
-            if norm == "PAXG_ERC20":
+            if norm in {"PAXG_ERC20", "KAG_ERC20"}:
                 from verified_assets import paxg_amount_base_units
                 base_units = paxg_amount_base_units(payload.amountEth)
             else:
@@ -3302,6 +3331,12 @@ def _create_mainnet_send_draft(
         token_contract if is_token else payload.destinationAddress
     )
 
+    from verified_assets import kag_address_gate
+    issuer_error = kag_address_gate(norm, "send_draft", sender=payload.fromAddress,
+                                    recipient=payload.destinationAddress, data_hex=data_hex)
+    if issuer_error is not None:
+        return issuer_error
+
     try:
         nonce = eth_get_transaction_count_at_url(
             rpc_url, payload.fromAddress,
@@ -3329,6 +3364,14 @@ def _create_mainnet_send_draft(
                 "Cannot draft a mainnet send: the upstream Ethereum "
                 "Mainnet RPC returned an error."
             ),
+        }
+
+    from verified_assets import REGISTERED_TOKEN_ASSETS
+    if norm in REGISTERED_TOKEN_ASSETS and not _paxg_rpc_fee_valid(gas_limit, gas_price, nonce):
+        return {
+            "status": "draft_unavailable", "asset": norm, "network": "Ethereum Mainnet",
+            "reason": norm.split("_")[0].lower() + "_fee_parameters_invalid",
+            "message": "The Ethereum provider could not supply valid registered-token transfer parameters.",
         }
 
     # 2026-07-13: hard backend balance check. The mainnet draft used
@@ -3601,7 +3644,11 @@ def broadcast_signed_transaction_network(
     principal=Depends(require_crypto_entitlement),
 ):
     _refuse_plaintext_keys(payload)
-    if not crypto_wallet_engine_enabled():
+    from verified_assets import REGISTERED_TOKEN_ASSETS
+    from evm_networks import NETWORK_ETHEREUM_MAINNET, normalize_network_id
+    registered_mainnet = (_normalize_asset(asset) in REGISTERED_TOKEN_ASSETS
+                          and normalize_network_id(network) == NETWORK_ETHEREUM_MAINNET)
+    if not crypto_wallet_engine_enabled() and not registered_mainnet:
         return _engine_off_response()
     nid, err = _resolve_network_for_route(network)
     if err is not None:
@@ -3620,7 +3667,7 @@ def broadcast_signed_transaction_network(
         )
     if nid == NETWORK_MONERO_MAINNET:
         return _xmr_send_not_enabled_envelope(asset)
-    if not is_send_enabled(nid):
+    if not is_send_enabled(nid) and not registered_mainnet:
         if nid == NETWORK_ETHEREUM_MAINNET:
             return _mainnet_send_disabled_envelope(asset)
         return _network_not_enabled_envelope(
@@ -3655,25 +3702,25 @@ def _broadcast_mainnet_signed_transaction(
         ethereum_mainnet_send_paused,
     )
     norm = _normalize_asset(asset)
-    integration_error = _mainnet_asset_gate(norm, "send_broadcast")
-    if integration_error is not None:
-        return integration_error
+    from verified_assets import REGISTERED_TOKEN_ASSETS
+    registered = norm in REGISTERED_TOKEN_ASSETS
     vault_id = principal["vault_id"]
 
     def check_registered_draft_asset(record_asset: Any) -> dict[str, Any] | None:
         # Only the new verified token is affected. Its stored draft/cached
         # outcome cannot bypass its capability gate through an ETH route.
-        from verified_assets import PAXG_ASSET
-        if norm == PAXG_ASSET or record_asset == PAXG_ASSET:
+        from verified_assets import REGISTERED_TOKEN_ASSETS
+        if norm in REGISTERED_TOKEN_ASSETS or record_asset in REGISTERED_TOKEN_ASSETS:
             if record_asset != norm:
                 raise HTTPException(status_code=400, detail={
                     "wallet_engine": "draft_asset_mismatch",
                     "message": "Use the asset route matching the server-issued draft.",
                 })
-            return _mainnet_asset_gate(PAXG_ASSET, "send_broadcast")
+            # Persisted exact outcomes are read-only, even after an issuer
+            # pause/upgrade. Capability checks guard only a NEW relay below.
         return None
 
-    if ethereum_mainnet_send_paused():
+    if not registered and ethereum_mainnet_send_paused():
         return _mainnet_send_paused_envelope(norm)
                                       
     if norm != "ETH" and norm not in MAINNET_ERC20_TOKEN_ASSETS:
@@ -3684,7 +3731,7 @@ def _broadcast_mainnet_signed_transaction(
             "reason":  "asset_not_enabled_on_mainnet",
             "message": (
                 "Mainnet broadcast is only enabled for ETH, "
-                "USDT_ERC20, USDC_ERC20 and verified PAXG_ERC20 in this build."
+                "USDT_ERC20, USDC_ERC20 and verified PAXG_ERC20/KAG_ERC20 in this build."
             ),
         }
     if not is_valid_signed_tx_hex(payload.signedTransaction):
@@ -3700,7 +3747,7 @@ def _broadcast_mainnet_signed_transaction(
         )
                          
     rpc_url = ethereum_mainnet_rpc_url()
-    if not rpc_url:
+    if not registered and not rpc_url:
         return {
             "status":  "broadcast_unavailable",
             "asset":   norm,
@@ -3749,7 +3796,7 @@ def _broadcast_mainnet_signed_transaction(
             )
             return cached
                               
-    rate_blocked = _check_mainnet_broadcast_rate_limit(vault_id)
+    rate_blocked = _check_mainnet_broadcast_rate_limit(vault_id) if not registered else None
     if rate_blocked is not None:
         raise HTTPException(
             status_code=429,
@@ -3840,6 +3887,24 @@ def _broadcast_mainnet_signed_transaction(
     stored_gate = check_registered_draft_asset(draft.get("asset"))
     if stored_gate is not None:
         return stored_gate
+
+    if draft.get("paxg_ciphertext_bound") or draft.get("kag_ciphertext_bound"):
+        from evm_signed_tx_verify import decode_and_recover
+        from paxg_draft_binding import bind_decoded_paxg_draft, bind_decoded_kag_draft
+        decoded = decode_and_recover(str(payload.signedTransaction))
+        try:
+            if decoded is None:
+                raise ValueError(norm.split("_")[0].lower() + "_encrypted_draft_binding_failed")
+            binder = bind_decoded_kag_draft if draft.get("kag_ciphertext_bound") else bind_decoded_paxg_draft
+            draft = binder(draft, decoded)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={
+                "wallet_engine": str(exc), "status": "signed_tx_binding_failed",
+                "asset": norm, "message": (
+                    "The signed transfer does not match its encrypted reviewed draft. "
+                    "Review a fresh draft before retrying."
+                ),
+            }) from None
 
     if draft.get("consumed"):
         # 2026-07-13 CONSUMED replay dispatch.
@@ -3986,6 +4051,31 @@ def _broadcast_mainnet_signed_transaction(
         )
 
     local_tx_hash = verify.decoded.local_tx_hash
+
+    if registered:
+        # A durable submitted/uncertain/rejected exact replay has already
+        # returned above. No newer issuer/config condition can erase its hash.
+        integration_error = _mainnet_asset_gate(norm, "send_broadcast")
+        if integration_error is not None:
+            return integration_error
+        if ethereum_mainnet_send_paused():
+            return _mainnet_send_paused_envelope(norm)
+        if not rpc_url:
+            return {"status": "broadcast_unavailable", "asset": norm,
+                    "network": "Ethereum Mainnet", "reason": "rpc_not_configured",
+                    "message": "No configured Ethereum RPC is available for a new transfer."}
+        rate_blocked = _check_mainnet_broadcast_rate_limit(vault_id)
+        if rate_blocked is not None:
+            raise HTTPException(status_code=429, detail=rate_blocked["envelope"],
+                                headers={"Retry-After": str(rate_blocked["retry_after"])})
+
+    # No claim/consume/network relay until fresh exact issuer controls pass.
+    from verified_assets import kag_address_gate
+    issuer_error = kag_address_gate(norm, "send_broadcast", sender=sender_address,
+                                    recipient=draft.get("destination_address"),
+                                    data_hex=draft.get("data_hex", "0x"))
+    if issuer_error is not None:
+        return issuer_error
 
 
 
@@ -4814,6 +4904,17 @@ def _get_mainnet_send_fee_estimate(
     integration_error = _mainnet_asset_gate(norm, "fee_estimate")
     if integration_error is not None:
         return integration_error
+    from verified_assets import REGISTERED_TOKEN_ASSETS, paxg_amount_base_units, kag_address_gate
+    exact_paxg_units = None
+    if norm in REGISTERED_TOKEN_ASSETS:
+        try:
+            exact_paxg_units = paxg_amount_base_units(payload.amountEth)
+        except (TypeError, ValueError):
+            return {
+                "status": "fee_estimate_unavailable", "network": "ethereum_mainnet",
+                "reason": "exact_" + norm.split("_")[0].lower() + "_amount_required",
+                "message": "Review an exact positive token amount before estimating its network fee.",
+            }
     if norm != "ETH" and norm not in MAINNET_ERC20_TOKEN_ASSETS:
         return {
             "status":  "fee_estimate_unavailable",
@@ -4893,7 +4994,7 @@ def _get_mainnet_send_fee_estimate(
         try:
             data_hex = encode_erc20_transfer_calldata(
                 destination_address=payload.destinationAddress,
-                amount_base_units=1,
+                amount_base_units=exact_paxg_units if exact_paxg_units is not None else 1,
             )
         except EvmRpcError as exc:
             return {
@@ -4909,6 +5010,10 @@ def _get_mainnet_send_fee_estimate(
         # Use `value_wei=0` for the estimate — the estimated gas
         # for a plain ETH transfer does not depend on the value.
         value_wei = 0
+    issuer_error = kag_address_gate(norm, "fee_estimate", sender=payload.fromAddress,
+                                    recipient=payload.destinationAddress, data_hex=data_hex)
+    if issuer_error is not None:
+        return issuer_error
     try:
         gas_limit = eth_estimate_gas_at_url(
             rpc_url,
@@ -4928,6 +5033,12 @@ def _get_mainnet_send_fee_estimate(
                 "again."
             ),
         }
+    if norm in REGISTERED_TOKEN_ASSETS and not _paxg_rpc_fee_valid(gas_limit, gas_price):
+        return {
+            "status": "fee_estimate_unavailable", "asset": norm, "network": "ethereum_mainnet",
+            "reason": norm.split("_")[0].lower() + "_fee_parameters_invalid",
+            "message": "The Ethereum provider could not supply a valid registered-token network fee.",
+        }
     fee_wei = int(gas_limit) * int(gas_price)
     return {
         "status":                   "fee_estimate_ready",
@@ -4941,6 +5052,7 @@ def _get_mainnet_send_fee_estimate(
         "estimatedFeeWei":          str(fee_wei),
         "maximumFeeWei":            str(fee_wei),
         "feeSource":                "eth_estimateGas_x_gasPrice",
+        **({"amountBaseUnits": str(exact_paxg_units)} if exact_paxg_units is not None else {}),
     }
 
 

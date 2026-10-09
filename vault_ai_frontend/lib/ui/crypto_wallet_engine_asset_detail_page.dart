@@ -23,6 +23,7 @@ import '../services/monero_scanner_status.dart';
 import '../services/monero_wallet.dart';
 import 'crypto_wallet_engine_monero_scanner_card.dart';
 import 'crypto_wallet_engine_receive_panel.dart';
+import 'kag_issuer_notice.dart';
 import 'crypto_wallet_engine_sheet_chrome.dart';
 import 'crypto_wallet_engine_solana_activity_card.dart';
 import 'crypto_wallet_engine_solana_receive_panel.dart';
@@ -346,7 +347,7 @@ class _CryptoWalletEngineAssetDetailPageState
     final token = widget.registeredAsset;
     final features = widget.features;
     return token != null && token.matches(widget.asset, widget.effectiveNetwork) &&
-        token.balanceEnabled && token.receiveEnabled &&
+        token.balanceEnabled && (token.id == kKagAssetId || token.receiveEnabled) &&
         features?.walletEngineEnabled == true &&
         features?.effectiveMainnetReceiveEnabled == true &&
         features?.effectiveMainnetErc20ReceiveEnabled == true;
@@ -356,6 +357,9 @@ class _CryptoWalletEngineAssetDetailPageState
       (_registeredTokenEnabled && widget.registeredAsset!.sendEnabled &&
         widget.features?.effectiveMainnetSendEnabled == true &&
         widget.features?.mainnetSendPaused != true);
+
+  bool get _registeredReceiveEnabled => widget.registeredAsset == null ||
+      (_registeredTokenEnabled && widget.registeredAsset!.receiveEnabled);
 
   bool get _isMonero => widget.asset == 'XMR';
 
@@ -802,6 +806,58 @@ class _CryptoWalletEngineAssetDetailPageState
     }
   }
 
+  /// Registered-token sends authorize against fresh verified integer balances,
+  /// not the balance that happened to be displayed before Review was opened.
+  /// No last-known balance is returned on failure or after the vault changes.
+  Future<BigInt?> _fetchPaxgSendBalance({
+    required String address,
+    required int accessGeneration,
+    required bool parentEth,
+  }) async {
+    if (!_registeredOperationCurrent(accessGeneration)) return null;
+    final registered = widget.registeredAsset;
+    final api = widget.apiClient;
+    final token = widget.authToken;
+    if (registered == null ||
+        !registered.matches(widget.asset, widget.effectiveNetwork) ||
+        !isRegisteredVaultAssetId(widget.asset) ||
+        api == null || token == null || token.isEmpty) {
+      return null;
+    }
+    try {
+      final body = await api.getCryptoWalletBalanceNetwork(
+        network: registered.network,
+        asset: parentEth ? 'ETH' : registered.id,
+        authToken: token,
+        address: address,
+      ).timeout(kAssetDetailBalanceTimeout);
+      if (!_registeredOperationCurrent(accessGeneration) ||
+          widget.apiClient != api || widget.authToken != token) {
+        return null;
+      }
+      if (!parentEth) {
+        if (!registered.validatesBalance(body, address)) return null;
+        final balance = BigInt.tryParse('${body['baseUnits']}');
+        return balance != null && balance >= BigInt.zero ? balance : null;
+      }
+      if (body['balanceStatus'] != 'available' ||
+          body['asset'] != 'ETH' ||
+          body['networkId'] != registered.network ||
+          body['chainId'] != registered.chainId ||
+          body['unit'] != 'ETH' ||
+          body['publicAddress'] is! String ||
+          (body['publicAddress'] as String).toLowerCase() != address.toLowerCase()) {
+        return null;
+      }
+      final value = body['spendableBalanceWei'] ??
+          body['confirmedBalanceWei'] ?? body['weiAmount'];
+      if (value is! String || !RegExp(r'^\d+$').hasMatch(value)) return null;
+      return BigInt.tryParse(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
 
 
 
@@ -939,7 +995,7 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   void _openReceivePanel() {
-    if (!_registeredAccessCurrent) return;
+    if (!_registeredAccessCurrent || !_registeredReceiveEnabled) return;
     if (!_isSupported || !_hasReceiveWiring) {
       _showSnackBar(kAssetDetailReceiveNotReadyBanner);
       return;
@@ -1179,6 +1235,9 @@ class _CryptoWalletEngineAssetDetailPageState
     // Round-4 integer-exact gate never fired on the ETH send path
     // and only the backend gate caught misauthorized attempts.
     final isToken = _isToken;
+    final freshPaxgAuthorization = isRegisteredVaultAssetId(widget.asset) &&
+        (widget.registeredAsset?.matches(widget.asset, widget.effectiveNetwork) ?? false);
+    final reviewedFromAddress = fromAddress;
 
     // ignore: discarded_futures
     showCryptoWalletSheet<void>(
@@ -1208,7 +1267,13 @@ class _CryptoWalletEngineAssetDetailPageState
           if (s == null || s.isEmpty) return null;
           return double.tryParse(s);
         },
-        fetchAvailableBalanceWei: () async => _balanceBaseUnits,
+        fetchAvailableBalanceWei: freshPaxgAuthorization
+            ? () => _fetchPaxgSendBalance(
+                  address: reviewedFromAddress,
+                  accessGeneration: accessGeneration,
+                  parentEth: false,
+                )
+            : () async => _balanceBaseUnits,
         fetchEthBalance: isToken
             ? () async {
                 final w = _ethBalanceWei;
@@ -1216,7 +1281,13 @@ class _CryptoWalletEngineAssetDetailPageState
                 return w / BigInt.from(1000000000000000000);
               }
             : null,
-        fetchEthBalanceWei: isToken ? () async => _ethBalanceWei : null,
+        fetchEthBalanceWei: freshPaxgAuthorization
+            ? () => _fetchPaxgSendBalance(
+                  address: reviewedFromAddress,
+                  accessGeneration: accessGeneration,
+                  parentEth: true,
+                )
+            : isToken ? () async => _ethBalanceWei : null,
         onSuccessfulBroadcast: (
           {required String txHash,
            required BigInt debitBaseUnits}) {
@@ -1536,7 +1607,8 @@ class _CryptoWalletEngineAssetDetailPageState
         ),
       ),
       const SizedBox(height: 14),
-      
+      if (widget.registeredAsset?.id == kKagAssetId)
+        const KagIssuerNotice(),
       Wrap(
         key: const Key('crypto_wallet_engine_asset_detail_actions'),
         spacing: 10,
@@ -1546,7 +1618,7 @@ class _CryptoWalletEngineAssetDetailPageState
             key: const Key(
               'crypto_wallet_engine_asset_detail_receive_btn',
             ),
-            onPressed: _openReceivePanel,
+            onPressed: _registeredReceiveEnabled ? _openReceivePanel : null,
             icon: const Icon(Icons.south_rounded, size: 18),
             label: const Text(kAssetDetailReceiveLabel),
             style: walletPrimaryButtonStyle(),
@@ -1630,6 +1702,11 @@ class _CryptoWalletEngineAssetDetailPageState
         Text(widget.registeredAsset!.transferNote,
             key: const Key('asset_issuer_transfer_note'),
             style: kWalletMutedStyle),
+        if (!_registeredReceiveEnabled) ...[
+          const SizedBox(height: 8),
+          const Text('Receiving is unavailable under the current issuer rules.',
+              style: kWalletMutedStyle),
+        ],
         if (!_registeredSendEnabled) ...[
           const SizedBox(height: 8),
           const Text('Sending is unavailable for this asset.',

@@ -55,6 +55,7 @@ def enabled(monkeypatch):
     flags = {
         "VAULTAI_CRYPTO_WALLET_ENGINE_ENABLED": "true",
         "VAULTAI_ASSETS_PAXG_ENABLED": "true",
+        "VAULTAI_ASSETS_KAG_ENABLED": "false",
         "VAULTAI_CRYPTO_ETH_MAINNET_RECEIVE_ENABLED": "true",
         "VAULTAI_CRYPTO_ETH_MAINNET_ERC20_RECEIVE_ENABLED": "true",
         "VAULTAI_CRYPTO_ETH_MAINNET_SEND_ENABLED": "true",
@@ -208,17 +209,18 @@ def test_fastapi_catalog_exact_categories_closed_verified_tuple_and_issuer_note(
     catalog = _catalog(routes)
     assert catalog["schema"] == "svaultai_asset_catalog_v1"
     assert [(c["id"], c["label"]) for c in catalog["categories"]] == list(verified_assets.CATEGORIES)
-    assert len(catalog["categories"]) == 8
+    assert len(catalog["categories"]) == 10
     assert all(c["available"] is False for c in catalog["categories"][2:])
-    assert all(c["reason"] == "no_verified_token_integration" for c in catalog["categories"][2:])
-    assert len(catalog["assets"]) == 1
+    assert catalog["categories"][2]["reason"] == "asset_integration_disabled"
+    assert all(c["reason"] == "no_verified_token_integration" for c in catalog["categories"][3:])
+    assert len(catalog["assets"]) == 2
     asset = catalog["assets"][0]
     for key, expected in {"id": ASSET, "symbol": "PAXG", "standard": "ERC20", "network": NETWORK,
                           "chainId": 1, "contractAddress": CONTRACT, "decimals": 18,
                           "category": "digital_gold", "verified": True}.items():
         assert asset[key] == expected
     assert all(asset[key] is True for key in ("receiveEnabled", "balanceEnabled", "sendEnabled", "activityConnected"))
-    assert "freeze" in asset["transferNote"] and "reduce" in asset["transferNote"] and "ETH" in asset["transferNote"]
+    assert "freeze" in asset["transferNote"] and "gas" in asset["transferNote"] and "ETH" in asset["transferNote"]
     assert asset["verificationSource"] == "https://github.com/paxosglobal/paxos-gold-contract"
 
 
@@ -446,15 +448,21 @@ def test_draft_simulation_revert_or_provider_failure_is_fail_closed(routes, func
     ("VAULTAI_CRYPTO_MAINNET_SEND_PAUSED", "true"),
 ])
 def test_send_draft_and_broadcast_flags_cannot_be_bypassed(routes, monkeypatch, flag, value):
+    # Gate a genuine reviewed new attempt, not a malformed no-draft request.
+    # An already-consumed exact replay must retain its authoritative hash.
+    from test_paxg_encrypted_draft_2026_10_09 import prepared
+    fixture, draft_id = prepared(routes)
+    routes.rpc["eth_estimate_gas_at_url"].reset_mock()
     monkeypatch.setenv(flag, value)
     draft = _draft(routes).json()
     assert draft.get("status") != "draft_ready"
-    response = routes.client.post(ROOT_PATH + "/send/broadcast", json={"signedTransaction": "0x" + "ee" * 120})
+    response = routes.client.post(ROOT_PATH + "/send/broadcast", json={
+        "signedTransaction": fixture["signed_tx_hex"], "draftId": draft_id})
     assert response.status_code == 200
     assert response.json().get("status") != "submitted"
     routes.rpc["eth_send_raw_transaction_at_url"].assert_not_called()
     routes.rpc["eth_estimate_gas_at_url"].assert_not_called()
-    assert routes.state.store._drafts == {}
+    assert routes.state.store._drafts[draft_id]["consumed_at"] is None
 
 
 @pytest.mark.parametrize("suffix", ["/receive", "/balance", "/transactions"])

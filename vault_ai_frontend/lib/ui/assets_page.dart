@@ -70,7 +70,9 @@ class _AssetsPageState extends State<AssetsPage> {
     var features = const CryptoWalletFeatures.unknown();
     if (api != null && token != null && token.isNotEmpty) {
       try {
-        bool current() => mounted && generation == _loadGeneration &&
+        bool current() =>
+            mounted &&
+            generation == _loadGeneration &&
             token == widget.authToken &&
             (widget.isVaultKeyAvailable?.call() ?? true);
         final responses = await Future.wait([
@@ -99,8 +101,8 @@ class _AssetsPageState extends State<AssetsPage> {
     });
   }
 
-  bool get _goldAvailable =>
-      _catalog.digitalGoldAvailable &&
+  bool _categoryAvailable(VaultAssetCategory category) =>
+      _catalog.available(category) &&
       _features.walletEngineEnabled &&
       _features.effectiveMainnetReceiveEnabled &&
       _features.effectiveMainnetErc20ReceiveEnabled;
@@ -108,16 +110,20 @@ class _AssetsPageState extends State<AssetsPage> {
   void _openCategory(VaultAssetCategory category) {
     if (category == VaultAssetCategory.cryptocurrency) {
       Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => widget.cryptocurrency,
+        builder: (_) => _CryptocurrencyAssetCategoryPage(
+          cryptocurrency: widget.cryptocurrency,
+        ),
       ));
       return;
     }
-    if (category == VaultAssetCategory.digitalGold && _goldAvailable &&
+    final asset = _catalog.assetFor(category);
+    if (asset != null &&
+        _categoryAvailable(category) &&
         (widget.isVaultKeyAvailable?.call() ?? true)) {
       Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => CryptoWalletEngineAssetDetailPage(
-          asset: kPaxgAssetId,
-          registeredAsset: _catalog.digitalGold,
+          asset: asset.id,
+          registeredAsset: asset,
           accessChanges: widget.accessChanges,
           authToken: widget.authToken,
           apiClient: widget.registeredAssetApiClient ?? widget.apiClient,
@@ -126,7 +132,7 @@ class _AssetsPageState extends State<AssetsPage> {
           decryptForVault: widget.decryptForVault,
           verifyPin: widget.verifyPin,
           loadFromAddress: widget.loadFromAddress,
-          network: _catalog.digitalGold!.network,
+          network: asset.network,
           features: _features,
         ),
       ));
@@ -176,19 +182,22 @@ class _AssetsPageState extends State<AssetsPage> {
 
   Widget _categoryCard(VaultAssetCategory category) {
     final crypto = category == VaultAssetCategory.cryptocurrency;
-    final gold = category == VaultAssetCategory.digitalGold;
-    final available = crypto || (gold && _goldAvailable);
-    final status = gold && _loading
+    final supported = category == VaultAssetCategory.digitalGold ||
+        category == VaultAssetCategory.digitalSilver;
+    final asset = _catalog.assetFor(category);
+    final available = crypto || _categoryAvailable(category);
+    final status = supported && _loading
         ? 'Checking availability…'
         : available
-            ? (gold
-                ? 'PAX Gold · PAXG · Ethereum Mainnet'
+            ? (asset != null
+                ? '${asset.name} · ${asset.symbol} · Ethereum Mainnet'
+                    '${asset.id == kKagAssetId && !asset.receiveEnabled ? ' · Transfers unavailable' : ''}'
                 : 'Your existing cryptocurrency wallets')
-            : 'Unavailable';
+            : 'Coming soon';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Container(
-        decoration: walletAssetCard(gold ? kPaxgAssetId : 'ETH'),
+        decoration: walletAssetCard(asset?.id ?? 'ETH'),
         child: ListTile(
           key: Key('assets_category_${category.id}'),
           contentPadding: const EdgeInsets.all(16),
@@ -201,7 +210,7 @@ class _AssetsPageState extends State<AssetsPage> {
             child: Text(status, style: kWalletMutedStyle),
           ),
           trailing: const Icon(Icons.chevron_right, color: kWalletTextMuted),
-          onTap: gold && _loading ? null : () => _openCategory(category),
+          onTap: supported && _loading ? null : () => _openCategory(category),
         ),
       ),
     );
@@ -217,7 +226,35 @@ IconData _categoryIcon(VaultAssetCategory category) => switch (category) {
       VaultAssetCategory.artwork => Icons.palette_outlined,
       VaultAssetCategory.collectibles => Icons.watch_outlined,
       VaultAssetCategory.equipment => Icons.directions_car_outlined,
+      VaultAssetCategory.inventory => Icons.inventory_2_outlined,
+      VaultAssetCategory.securities => Icons.account_balance_outlined,
     };
+
+/// The original cryptocurrency dashboard is embedded content, so only this
+/// Assets route supplies its navigation chrome. Wallet behavior stays unchanged.
+class _CryptocurrencyAssetCategoryPage extends StatelessWidget {
+  const _CryptocurrencyAssetCategoryPage({required this.cryptocurrency});
+
+  final Widget cryptocurrency;
+
+  @override
+  Widget build(BuildContext context) => Theme(
+        data: walletDarkPanelTheme(context),
+        child: Scaffold(
+          key: const Key('assets_cryptocurrency_route'),
+          backgroundColor: kWalletBgBase,
+          appBar: AppBar(
+            leading: const BackButton(
+              key: Key('assets_cryptocurrency_back'),
+            ),
+            title: Text(VaultAssetCategory.cryptocurrency.label),
+            backgroundColor: kWalletBgBase,
+            foregroundColor: kWalletTextPrimary,
+          ),
+          body: SafeArea(top: false, child: cryptocurrency),
+        ),
+      );
+}
 
 class _UnavailableAssetCategoryPage extends StatelessWidget {
   const _UnavailableAssetCategoryPage({required this.category});
@@ -237,7 +274,7 @@ class _UnavailableAssetCategoryPage extends StatelessWidget {
             children: [
               Icon(_categoryIcon(category), size: 48, color: kWalletTextMuted),
               const SizedBox(height: 16),
-              const Text('Unavailable', style: kWalletHeadingStyle),
+              const Text('Coming soon', style: kWalletHeadingStyle),
               const SizedBox(height: 12),
               Text(
                   '${category.label} is not connected to a supported token '

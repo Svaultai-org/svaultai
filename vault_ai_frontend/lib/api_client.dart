@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import 'services/apple_purchase_recovery.dart';
+import 'services/asset_catalog.dart' show parseAssetBaseUnits;
 import 'services/session_termination.dart' as st;
 import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
@@ -5073,7 +5074,45 @@ class VaultAIClient {
     required String network,
     required String signatureLookupHash,
     required String outcomePayloadCiphertext,
+  }) => _postCryptoOutgoingHistoryCiphertext(
+    authToken: authToken, network: network,
+    signatureLookupHash: signatureLookupHash,
+    outcomePayloadCiphertext: outcomePayloadCiphertext,
+  );
+
+  /// Only the new PAXG flow opts into the captured wallet-response lease.
+  /// Legacy history persistence keeps its existing dispatch semantics.
+  Future<Map<String, dynamic>> postCryptoWalletPaxgOutgoingHistoryCiphertext({
+    required String authToken,
+    required String signatureLookupHash,
+    required String outcomePayloadCiphertext,
+  }) => _postCryptoOutgoingHistoryCiphertext(
+    authToken: authToken, network: 'mainnet',
+    signatureLookupHash: signatureLookupHash,
+    outcomePayloadCiphertext: outcomePayloadCiphertext,
+    scopedPaxg: true,
+  );
+
+  /// KAG uses the same captured private-operation lease as PAXG.
+  Future<Map<String, dynamic>> postCryptoWalletKagOutgoingHistoryCiphertext({
+    required String authToken,
+    required String signatureLookupHash,
+    required String outcomePayloadCiphertext,
+  }) => _postCryptoOutgoingHistoryCiphertext(
+    authToken: authToken, network: 'mainnet',
+    signatureLookupHash: signatureLookupHash,
+    outcomePayloadCiphertext: outcomePayloadCiphertext,
+    scopedPaxg: true,
+  );
+
+  Future<Map<String, dynamic>> _postCryptoOutgoingHistoryCiphertext({
+    required String authToken,
+    required String network,
+    required String signatureLookupHash,
+    required String outcomePayloadCiphertext,
+    bool scopedPaxg = false,
   }) async {
+    if (scopedPaxg) _assertWalletResponseCurrent();
     final uri = Uri.parse('$baseUrl/vault/ciphertext/crypto-history');
     final response = await http.post(
       uri,
@@ -5084,6 +5123,7 @@ class VaultAIClient {
         'outcome_payload_ciphertext': outcomePayloadCiphertext,
       }),
     );
+    if (scopedPaxg) _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       throw Exception(_formatBackendError(
         prefix: 'Crypto history ciphertext-write failed',
@@ -5829,6 +5869,65 @@ class VaultAIClient {
     required String destinationAddress,
     required String asset,
     required String authToken,
+  }) =>
+      _postCryptoWalletSendFeeEstimateNetwork(
+        network: network,
+        fromAddress: fromAddress,
+        destinationAddress: destinationAddress,
+        asset: asset,
+        authToken: authToken,
+      );
+
+  /// PAXG gas simulation must use the exact reviewed 18-decimal token debit.
+  /// This closed helper cannot select another chain or an arbitrary contract;
+  /// existing cryptocurrency fee-estimate requests retain their old payload.
+  Future<Map<String, dynamic>> postCryptoWalletPaxgSendFeeEstimateNetwork({
+    required String fromAddress,
+    required String destinationAddress,
+    required String amountEth,
+    required String authToken,
+  }) {
+    if (parseAssetBaseUnits(amountEth, 18) <= BigInt.zero) {
+      throw const FormatException('Invalid PAXG amount');
+    }
+    return _postCryptoWalletSendFeeEstimateNetwork(
+      network: 'ethereum_mainnet',
+      fromAddress: fromAddress,
+      destinationAddress: destinationAddress,
+      asset: 'PAXG_ERC20',
+      amountEth: amountEth,
+      authToken: authToken,
+    );
+  }
+
+  /// Closed issuer-verified Ethereum KAG fee quote. Exact debit is mandatory;
+  /// neither a different chain nor an arbitrary silver contract is accepted.
+  Future<Map<String, dynamic>> postCryptoWalletKagSendFeeEstimateNetwork({
+    required String fromAddress,
+    required String destinationAddress,
+    required String amountEth,
+    required String authToken,
+  }) {
+    if (parseAssetBaseUnits(amountEth, 18) <= BigInt.zero) {
+      throw const FormatException('Invalid KAG amount');
+    }
+    return _postCryptoWalletSendFeeEstimateNetwork(
+      network: 'ethereum_mainnet',
+      fromAddress: fromAddress,
+      destinationAddress: destinationAddress,
+      asset: 'KAG_ERC20',
+      amountEth: amountEth,
+      authToken: authToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> _postCryptoWalletSendFeeEstimateNetwork({
+    required String network,
+    required String fromAddress,
+    required String destinationAddress,
+    required String asset,
+    required String authToken,
+    String? amountEth,
   }) async {
     _assertWalletResponseCurrent();
     final uri = Uri.parse(
@@ -5841,6 +5940,7 @@ class VaultAIClient {
         'fromAddress': fromAddress,
         'destinationAddress': destinationAddress,
         'asset': asset,
+        if (amountEth != null) 'amountEth': amountEth,
       }),
     );
     _assertWalletResponseCurrent();
