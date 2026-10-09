@@ -2,7 +2,7 @@
   "schema": "svaultai_asset_provider_readiness_v1",
   "compiled_at_utc": "2026-10-09T20:39:47Z",
   "purpose": "Research genuine hold/receive/send integrations using free infrastructure, not investment recommendations or acquisition services.",
-  "status": "gold_and_silver_implemented_simulator_verified_pending_scoped_deployment",
+  "status": "gold_and_silver_live_web_and_backend_simulator_verified_native_store_upload_pending",
   "production_changed": false,
   "shipping_application_code_changed_this_turn": true,
   "provider_accounts_created": false,
@@ -17,7 +17,7 @@
       "network": "ethereum_mainnet",
       "contract": "0x45804880De22913dAFE09f4980848ECE6EcbAf78",
       "decimals": 18,
-      "application_status": "wallet_adapter_implemented_native_and_real_SQL_verified_pending_deployment",
+      "application_status": "wallet_adapter_live_backend_and_web_native_verified_store_upload_pending",
       "verification": "Prior local native, SQL and signing safety tests passed with injected broadcast; public provider reads and an existing public receipt were crosschecked. No funded candidate transaction was broadcast.",
       "additional_paid_api_required_for_basic_wallet": false,
       "limitations": [
@@ -38,7 +38,7 @@
       "network": "ethereum_mainnet",
       "contract": "0x56Ba8B58B7d1f6d384A1C4dD553F39ebc8741B8e",
       "decimals": 18,
-      "application_status": "wallet_adapter_implemented_native_and_real_SQL_verified_default_disabled_until_scoped_deployment",
+      "application_status": "wallet_adapter_live_backend_and_web_with_pinned_issuer_checks_native_verified_store_upload_pending",
       "live_readonly_observation": {
         "source": "Independent agent public RPC and published source assessment, approximately 2026-10-09T20:33Z",
         "block_range": [26157252, 26157267],
