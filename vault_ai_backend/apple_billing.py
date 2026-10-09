@@ -17,11 +17,14 @@ from typing import Any, Mapping, Optional
 
 from billing_entitlements import (
     PurchaseAlreadyBoundError,
+    StaleProviderEventError,
     VerifiedEntitlementUpdate,
     canonical_storage_display_tier,
     normalize_apple_transaction_state,
     upsert_verified_entitlement,
 )
+from psycopg2.extras import RealDictCursor
+from vault_core import get_db
 
 
 class AppleBillingConfigurationError(RuntimeError):
@@ -36,9 +39,123 @@ class AppleTransactionOwnershipError(AppleTransactionVerificationError):
     """A valid Apple purchase is bound to a different SVaultAI account."""
 
 
+class AppleAccountBindingPendingError(RuntimeError):
+    """A verified notification needs an existing account or authenticated restore."""
+
+
+def _normalized_uuid(value: Any) -> Optional[str]:
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def apple_app_account_token(account_id: str) -> str:
     """StoreKit-compatible opaque UUID; it reveals no vault identifier."""
+    account_id = _normalized_uuid(account_id) or account_id
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"svaultai:billing:{account_id}"))
+
+
+def apple_token_matches_account(token: Any, account_id: str) -> bool:
+    """Accept the opaque token and the exact UUID used by older iOS clients.
+
+    This compatibility is only for Apple's signed transaction appAccountToken;
+    a name, arbitrary client string, or another account's UUID is not authority.
+    """
+    normalized_token = _normalized_uuid(token)
+    if normalized_token is None:
+        return False
+    normalized_account = _normalized_uuid(account_id)
+    return normalized_token == apple_app_account_token(account_id) or (
+        normalized_account is not None and normalized_token == normalized_account
+    )
+
+
+def find_live_account_for_apple_token(token: Any) -> Optional[str]:
+    """Resolve a cryptographically verified token using account UUIDs only.
+
+    Opaque UUIDv5 tokens cannot be inverted. Stream just live account UUIDs,
+    never vault names, authentication material, or vault contents. Deleted
+    accounts retained for subscription history are ineligible for first binding.
+    Ambiguous legacy/opaque matches fail closed rather than choosing an owner.
+    """
+    normalized_token = _normalized_uuid(token)
+    if normalized_token is None:
+        return None
+    conn = get_db()
+    try:
+        cur = conn.cursor(name="apple_account_token_lookup")
+        cur.itersize = 500
+        cur.execute(
+            """
+            SELECT a.account_id
+              FROM accounts a
+             WHERE EXISTS (
+                   SELECT 1 FROM vaults v WHERE v.account_id = a.account_id
+             )
+            """
+        )
+        matched_account = None
+        for row in cur:
+            account_id = str(row[0])
+            if apple_token_matches_account(normalized_token, account_id):
+                if matched_account is not None and matched_account != account_id:
+                    raise AppleTransactionOwnershipError(
+                        "Apple account token has an ambiguous account binding"
+                    )
+                matched_account = account_id
+        return matched_account
+    finally:
+        conn.close()
+
+
+def _persisted_apple_transaction_result(
+    account_id: str, update: VerifiedEntitlementUpdate,
+) -> dict[str, Any]:
+    """Acknowledge an older genuine receipt without reverting newer authority.
+
+    The upsert rejected it only after checking immutable purchase ownership.
+    Re-read that exact verified Apple binding, not the account's current other
+    provider. A refund, lapse, or newer renewal must never be overwritten by a
+    restored historical JWS, but the device can safely finish that receipt.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT entitlement_id, product_id, status, current_period_end
+              FROM billing_entitlements
+             WHERE account_id = %s AND provider = 'apple'
+               AND verification_state = 'verified'
+               AND (external_purchase_id = %s OR original_transaction_id = %s)
+             LIMIT 1
+            """,
+            (account_id, update.external_purchase_id, update.original_transaction_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise AppleTransactionVerificationError(
+                "Newer verified Apple purchase binding is not available"
+            )
+        status = str(row["status"])
+        expiry = row.get("current_period_end")
+        if status in {"active", "reactivated", "grace_period"}:
+            if expiry is None:
+                status = "pending"
+            elif expiry <= datetime.now(timezone.utc):
+                status = "expired"
+        return {
+            "verified": True,
+            "provider": "apple",
+            "product_id": str(row["product_id"]),
+            "status": status,
+            "entitlement_id": str(row["entitlement_id"]),
+            "transition": "ignored_stale",
+            "already_recorded": True,
+        }
+    finally:
+        conn.close()
 
 
 def configured_apple_catalog() -> dict[str, dict[str, Any]]:
@@ -283,7 +400,7 @@ def verify_and_apply_apple_transaction(
     # present token remains mandatory authority and must match exactly.
     if (
         supplied_account
-        and supplied_account.lower() != apple_app_account_token(account_id)
+        and not apple_token_matches_account(supplied_account, account_id)
     ):
         raise AppleTransactionOwnershipError(
             "Apple purchase is not associated with this SVaultAI account"
@@ -297,6 +414,8 @@ def verify_and_apply_apple_transaction(
         entitlement_id, transition = upsert_verified_entitlement(
             account_id, update,
         )
+    except StaleProviderEventError:
+        return _persisted_apple_transaction_result(account_id, update)
     except PurchaseAlreadyBoundError as exc:
         raise AppleTransactionOwnershipError(
             "Apple purchase is already bound to another SVaultAI account"

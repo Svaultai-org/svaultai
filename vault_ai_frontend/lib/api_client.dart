@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
+import 'services/apple_purchase_recovery.dart';
 import 'services/session_termination.dart' as st;
 import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
@@ -1086,27 +1087,56 @@ class VaultAIClient {
     final uri = Uri.parse('$baseUrl/billing/apple/verify-transaction');
     final headers = _defaultHeaders(authToken: authToken, json: true);
     _vlogRequest('billing.apple.verify', uri, headers);
-    final response = await _runWithNetLog(
-      'billing.apple.verify',
-      uri,
-      () => http.post(
+    final http.Response response;
+    try {
+      response = await _runWithNetLog(
+        'billing.apple.verify',
         uri,
-        headers: headers,
-        body: jsonEncode({'signed_transaction': signedTransaction}),
-      ),
-    );
+        () => http
+            .post(
+              uri,
+              headers: headers,
+              body: jsonEncode({'signed_transaction': signedTransaction}),
+            )
+            .timeout(const Duration(seconds: 15)),
+      );
+    } on http.ClientException {
+      throw const ApplePurchaseVerificationException();
+    } on TimeoutException {
+      throw const ApplePurchaseVerificationException();
+    }
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
-      throw Exception(_formatBackendError(
-        prefix: 'App Store purchase verification failed',
+      String? code;
+      try {
+        final error = jsonDecode(response.body);
+        final detail = error is Map ? error['detail'] : null;
+        if (detail is Map && detail['code'] is String) {
+          code = detail['code'] as String;
+        }
+      } on FormatException {
+        // Reverse proxies may return HTML. Do not expose it or the receipt.
+      }
+      throw ApplePurchaseVerificationException(
         statusCode: response.statusCode,
-        responseBody: response.body,
-      ));
+        code: code,
+      );
     }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw Exception('Invalid App Store verification response format');
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw const ApplePurchaseVerificationException(
+        statusCode: 200,
+        code: 'invalid_verification_response',
+      );
+    }
+    if (decoded is! Map<String, dynamic> || decoded['verified'] != true) {
+      throw const ApplePurchaseVerificationException(
+        statusCode: 200,
+        code: 'unconfirmed_verification',
+      );
     }
     return decoded;
   }

@@ -1,0 +1,43 @@
+name: Apple billing compatibility
+
+on:
+  push:
+    paths:
+      - 'vault_ai_backend/**'
+      - 'vault_ai_frontend/lib/services/apple*'
+      - '.github/workflows/apple-billing-contract.yml'
+  pull_request:
+    paths:
+      - 'vault_ai_backend/**'
+      - 'vault_ai_frontend/lib/services/apple*'
+      - '.github/workflows/apple-billing-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verified-purchase-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://unused:unused@127.0.0.1:1/unused
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            vault_ai_backend/requirements.txt
+            vault_ai_backend/requirements-dev.txt
+      - name: Install test dependencies
+        run: python -m pip install -r vault_ai_backend/requirements.txt -r vault_ai_backend/requirements-dev.txt
+      - name: Verify signed purchase, restore, expiry and catalogue contracts
+        working-directory: vault_ai_backend
+        run: >-
+          python -m pytest -q
+          test_apple_legacy_purchase_repair_2026_10_08.py
+          test_apple_billing_release_gate.py
+          test_provider_neutral_billing_2026_08_14.py
+          test_store_only_billing_2026_10_08.py
+          test_apple_final_vault_deletion_lifecycle_2026_08_24.py

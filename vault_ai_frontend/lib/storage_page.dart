@@ -11,6 +11,7 @@ import 'public_download_badges.dart';
 import 'l10n/app_localizations.dart';
 import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes;
 import 'services/apple_iap_service.dart';
+import 'services/apple_purchase_recovery.dart';
 import 'ui/tokens.dart';
 
 class StoragePage extends StatefulWidget {
@@ -20,10 +21,13 @@ class StoragePage extends StatefulWidget {
   State<StoragePage> createState() => _StoragePageState();
 }
 
-class _StoragePageState extends State<StoragePage> {
+class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
   late final VaultAIClient _client;
   bool _loading = true;
   bool _busyPurchase = false;
+  bool _appleActionInProgress = false;
+  final Set<String> _processingAppleTransactions = {};
+  final Set<String> _reportedActivationErrors = {};
   String? _error;
   Map<String, dynamic>? _data;
 
@@ -37,11 +41,13 @@ class _StoragePageState extends State<StoragePage> {
     super.initState();
     _client = VaultAIClient(baseUrl: backendBaseUrl);
     if (supportsAppleIap) {
+      WidgetsBinding.instance.addObserver(this);
       AppleIapService.instance.initialize();
       _applePurchaseSubscription = AppleIapService.instance.transactions.listen(
         _handleAppleTransactions,
         onError: (_) => _showApplePurchaseError(
-          'The App Store purchase could not be completed. Please try again.',
+          'The App Store connection was interrupted. If Apple accepted a purchase, '
+          'use Restore Purchases; do not purchase again.',
         ),
       );
     }
@@ -50,70 +56,136 @@ class _StoragePageState extends State<StoragePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _applePurchaseSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        supportsAppleIap &&
+        !_busyPurchase &&
+        mounted) {
+      AppleIapService.instance.replayPendingTransactions();
+      _refresh();
+    }
   }
 
   Future<void> _handleAppleTransactions(
     List<PurchaseDetails> purchases,
   ) async {
+    if (!mounted) return;
     final token = context.read<AppState>().sessionToken;
     if (token == null) return;
     for (final purchase in purchases) {
-      if (blocksForAppleProduct(purchase.productID) == null) continue;
+      if (!isAppleStorageProduct(purchase.productID)) continue;
       if (purchase.status == PurchaseStatus.pending) {
         if (mounted) setState(() => _busyPurchase = true);
         continue;
       }
       if (purchase.status == PurchaseStatus.error) {
-        if (mounted) setState(() => _busyPurchase = false);
+        if (mounted) {
+          setState(
+              () => _busyPurchase = _processingAppleTransactions.isNotEmpty);
+        }
         await _showApplePurchaseError(
           purchase.error?.message ?? 'The App Store purchase failed.',
         );
         continue;
       }
       if (purchase.status == PurchaseStatus.canceled) {
-        if (mounted) setState(() => _busyPurchase = false);
+        if (mounted) {
+          setState(
+              () => _busyPurchase = _processingAppleTransactions.isNotEmpty);
+        }
         continue;
       }
       if (purchase.status != PurchaseStatus.purchased &&
           purchase.status != PurchaseStatus.restored) {
         continue;
       }
-
+      final transactionKey = appleTransactionKey(purchase);
+      final signedTransaction =
+          purchase.verificationData.serverVerificationData;
+      if (!_processingAppleTransactions.add(transactionKey)) continue;
+      if (mounted) setState(() => _busyPurchase = true);
       try {
-        await _client.verifyAppleStoragePurchase(
-          authToken: token,
-          signedTransaction: purchase.verificationData.serverVerificationData,
+        final result = await AppleIapService.instance.recovery.recover(
+          accountKey: token,
+          transactionKey: transactionKey,
+          verify: () => _client.verifyAppleStoragePurchase(
+            authToken: token,
+            signedTransaction: signedTransaction,
+          ),
+          finish: () => AppleIapService.instance.finish(purchase),
         );
-        if (purchase.pendingCompletePurchase) {
-          await AppleIapService.instance.finish(purchase);
-        }
+        if (!mounted || context.read<AppState>().sessionToken != token) return;
+        if (!result.handled) continue;
+        _reportedActivationErrors.remove(transactionKey);
         await _refresh();
-        if (!mounted) return;
-        setState(() => _busyPurchase = false);
-        final blocks = blocksForAppleProduct(purchase.productID) ?? 0;
+        if (!mounted || context.read<AppState>().sessionToken != token) return;
+        if (_error != null) {
+          await _showApplePurchaseError(
+            'Apple verified your purchase, but the storage display could not refresh. '
+            'Refresh this page or use Restore Purchases. Do not purchase again.',
+            title: 'Storage refresh pending',
+          );
+          continue;
+        }
+        if (_data?['source'] != 'apple' || !hasActiveSubscription(_data!)) {
+          await _showApplePurchaseError(
+            'Your App Store purchase was verified and your storage was refreshed. '
+            'This restored subscription is not currently active.',
+            title: 'Subscription restored',
+          );
+          continue;
+        }
+        // Only the verified server quota is displayed, never a local SKU guess.
+        final limitBytes =
+            (_data?['effective_limit_bytes'] as num?)?.toInt() ?? 0;
         await showDialog<void>(
           context: context,
-          builder: (_) => _UpgradeSuccessDialog(newLimitGb: blocks * 50),
+          builder: (_) => _UpgradeSuccessDialog(
+            newLimitGb: limitBytes ~/ (1024 * 1024 * 1024),
+          ),
         );
-      } catch (_) {
-        if (mounted) setState(() => _busyPurchase = false);
+      } catch (error) {
+        if (!mounted || context.read<AppState>().sessionToken != token) return;
         // Do not finish an unverified transaction. StoreKit can redeliver it
         // after the backend/configuration problem is corrected.
-        await _showApplePurchaseError(
-          'Your purchase was received by Apple but could not yet be verified. '
-          'You have not lost it; use Restore Purchases and try again.',
-        );
+        if (_reportedActivationErrors.add(transactionKey)) {
+          final failure = error is ApplePurchaseVerificationException
+              ? error
+              : error is AuthExpiredException ||
+                      error is SessionTerminatedException ||
+                      error is DeviceNotTrustedException
+                  ? const ApplePurchaseVerificationException(statusCode: 403)
+                  : const ApplePurchaseVerificationException(
+                      statusCode: 200, code: 'activation_unconfirmed');
+          await _showApplePurchaseError(
+            failure.userMessage,
+            title: failure.userTitle,
+          );
+        }
+      } finally {
+        _processingAppleTransactions.remove(transactionKey);
+        if (mounted) {
+          setState(() => _busyPurchase = _appleActionInProgress ||
+              _processingAppleTransactions.isNotEmpty);
+        }
       }
     }
   }
 
-  Future<void> _showApplePurchaseError(String message) async {
+  Future<void> _showApplePurchaseError(
+    String message, {
+    String title = "Upgrade couldn't start",
+  }) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (_) => _UpgradeErrorDialog(message: message),
+      builder: (_) => _UpgradeErrorDialog(message: message, title: title),
     );
   }
 
@@ -150,7 +222,7 @@ class _StoragePageState extends State<StoragePage> {
     }
     try {
       final data = await _client.getBillingMe(authToken: token);
-      if (!mounted) return;
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
       context.read<AppState>().applyBillingPayload(data);
       setState(() {
         _data = data;
@@ -159,7 +231,7 @@ class _StoragePageState extends State<StoragePage> {
       });
       _maybeAutoOpenPicker();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
       setState(() {
         _loading = false;
         _error = 'Could not load storage: $e';
@@ -171,9 +243,7 @@ class _StoragePageState extends State<StoragePage> {
     if (supportsAppleIap) await _onAppleBuyStorage();
   }
 
-  Future<String> _appleAppAccountToken() async {
-    final token = context.read<AppState>().sessionToken;
-    if (token == null) throw StateError('Sign in before purchasing storage.');
+  Future<String> _appleAppAccountToken(String token) async {
     final providers = await _client.getBillingProviders(authToken: token);
     final apple = providers['apple'];
     final appAccountToken =
@@ -185,8 +255,19 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Future<void> _onAppleBuyStorage() async {
+    if (_busyPurchase || _appleActionInProgress) return;
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
     final data = _data;
     if (data == null) return;
+    if (AppleIapService.instance.hasPendingActivation) {
+      await _showApplePurchaseError(
+        'An existing App Store purchase is awaiting activation. '
+        'Use Restore Purchases; do not purchase again.',
+        title: 'Purchase activation pending',
+      );
+      return;
+    }
     if (data['source'] == 'google_play' && hasActiveSubscription(data)) {
       await _showApplePurchaseError(
         'Your current storage plan is billed through Google Play. '
@@ -194,57 +275,69 @@ class _StoragePageState extends State<StoragePage> {
       );
       return;
     }
+    _appleActionInProgress = true;
     setState(() => _busyPurchase = true);
-    final catalog = await AppleIapService.instance.loadCatalog();
-    if (!mounted) return;
-    setState(() => _busyPurchase = false);
-    if (!catalog.canPurchase) {
-      await _showApplePurchaseError(
-        catalog.error ?? 'Storage plans are unavailable from the App Store.',
-      );
-      return;
-    }
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: VaultColors.canvas,
-      isScrollControlled: true,
-      builder: (_) => StoragePlanPicker(
-        currentBlockCount: (data['block_count'] as num?)?.toInt() ?? 0,
-        usedBytes: (data['used_bytes'] as num?)?.toInt() ?? 0,
-        blockBytes: (data['block_bytes'] as num?)?.toInt() ?? 53687091200,
-        blockPriceCentsUsd: 0,
-        selfServiceMaxBlocks:
-            (data['self_service_max_blocks'] as num?)?.toInt() ?? 100,
-        hasActiveSubscription: hasActiveSubscription(data),
-        storePrices: {
-          for (final entry in catalog.products.entries)
-            entry.key: entry.value.price,
-        },
-        applePurchase: true,
-      ),
-    );
-    if (picked == null) return;
-    final product = catalog.products[picked];
-    if (product == null) {
-      await _showApplePurchaseError('That storage plan is unavailable.');
-      return;
-    }
-    setState(() => _busyPurchase = true);
+    var checkoutStarted = false;
     try {
-      final appAccountToken = await _appleAppAccountToken();
-      final started = await AppleIapService.instance.buy(
+      final catalog = await AppleIapService.instance.loadCatalog();
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
+      if (!catalog.canPurchase) {
+        await _showApplePurchaseError(
+          catalog.error ?? 'Storage plans are unavailable from the App Store.',
+        );
+        return;
+      }
+      final picked = await showModalBottomSheet<int>(
+        context: context,
+        backgroundColor: VaultColors.canvas,
+        isScrollControlled: true,
+        builder: (_) => StoragePlanPicker(
+          currentBlockCount: (data['block_count'] as num?)?.toInt() ?? 0,
+          usedBytes: (data['used_bytes'] as num?)?.toInt() ?? 0,
+          blockBytes: (data['block_bytes'] as num?)?.toInt() ?? 53687091200,
+          blockPriceCentsUsd: 0,
+          selfServiceMaxBlocks:
+              (data['self_service_max_blocks'] as num?)?.toInt() ?? 100,
+          hasActiveSubscription: hasActiveSubscription(data),
+          storePrices: {
+            for (final entry in catalog.products.entries)
+              entry.key: entry.value.price,
+          },
+          applePurchase: true,
+        ),
+      );
+      if (!mounted ||
+          context.read<AppState>().sessionToken != token ||
+          picked == null) return;
+      final product = catalog.products[picked];
+      if (product == null) {
+        await _showApplePurchaseError('That storage plan is unavailable.');
+        return;
+      }
+      final appAccountToken = await _appleAppAccountToken(token);
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
+      checkoutStarted = await AppleIapService.instance.buy(
         product: product,
         appAccountToken: appAccountToken,
       );
-      if (!started && mounted) {
-        setState(() => _busyPurchase = false);
-        await _showApplePurchaseError('The App Store did not start checkout.');
+      if (!checkoutStarted && mounted) {
+        await _showApplePurchaseError(
+          'An App Store request is already in progress. Wait for it to complete. '
+          'If Apple accepted a purchase, use Restore Purchases; do not purchase again.',
+        );
       }
     } catch (_) {
-      if (mounted) setState(() => _busyPurchase = false);
       await _showApplePurchaseError(
-        'The App Store checkout could not be opened. Please try again.',
+        'The App Store checkout could not be opened. If Apple accepted a purchase, '
+        'use Restore Purchases; do not purchase again.',
       );
+    } finally {
+      _appleActionInProgress = false;
+      if (mounted) {
+        setState(() => _busyPurchase =
+            _processingAppleTransactions.isNotEmpty ||
+                AppleIapService.instance.hasPendingStoreRequest);
+      }
     }
   }
 
@@ -269,18 +362,32 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Future<void> _onRestoreApplePurchases() async {
-    if (!supportsAppleIap) return;
+    if (!supportsAppleIap || _busyPurchase || _appleActionInProgress) return;
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
+    _appleActionInProgress = true;
+    _reportedActivationErrors.clear();
     setState(() => _busyPurchase = true);
     try {
-      final appAccountToken = await _appleAppAccountToken();
+      final appAccountToken = await _appleAppAccountToken(token);
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
       await AppleIapService.instance.restore(
         appAccountToken: appAccountToken,
       );
+      if (mounted) await _refresh();
     } catch (_) {
-      if (mounted) setState(() => _busyPurchase = false);
       await _showApplePurchaseError(
-        'Purchases could not be restored from the App Store.',
+        'Purchases could not be restored from the App Store. '
+        'The existing purchase remains recoverable. Do not purchase again.',
+        title: 'Restore unavailable',
       );
+    } finally {
+      _appleActionInProgress = false;
+      // Restore may legitimately return no transactions; do not leave the
+      // screen busy forever while waiting for a callback that will not arrive.
+      if (mounted) {
+        setState(() => _busyPurchase = _processingAppleTransactions.isNotEmpty);
+      }
     }
   }
 
@@ -1390,19 +1497,20 @@ class _UpgradeSuccessDialog extends StatelessWidget {
 
 class _UpgradeErrorDialog extends StatelessWidget {
   final String message;
-  const _UpgradeErrorDialog({required this.message});
+  final String title;
+  const _UpgradeErrorDialog({required this.message, required this.title});
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: VaultColors.surface,
       title: Row(
-        children: const [
-          Icon(Icons.error_outline, color: VaultColors.severityCrit),
-          SizedBox(width: VaultSpacing.sm),
+        children: [
+          const Icon(Icons.error_outline, color: VaultColors.severityCrit),
+          const SizedBox(width: VaultSpacing.sm),
           Expanded(
             child: Text(
-              "Upgrade couldn't start",
+              title,
               style: VaultText.title,
             ),
           ),

@@ -668,6 +668,7 @@ async def google_play_rtdn(request: Request):
     return {"outcome": "applied", "status": result.normalized_status}
 
 
+@router.post("/billing/apple/transactions", include_in_schema=False)
 @router.post("/billing/apple/verify-transaction")
 async def verify_apple_transaction(
     payload: AppleTransactionRequest,
@@ -760,12 +761,16 @@ async def verify_apple_transaction(
 @router.post("/billing/apple/notifications-v2")
 async def apple_notifications_v2(request: Request):
     from apple_billing import (
+        AppleAccountBindingPendingError,
         AppleBillingConfigurationError,
+        AppleTransactionOwnershipError,
         AppleTransactionVerificationError,
         _attr,
         _transaction_update,
         decode_verified_apple_notification,
         enum_text,
+        apple_token_matches_account,
+        find_live_account_for_apple_token,
     )
     from billing_entitlements import (
         StaleProviderEventError,
@@ -817,10 +822,32 @@ async def apple_notifications_v2(request: Request):
             "[APPLE-BILLING] notification_rejected reason=missing_event_id"
         )
         raise HTTPException(status_code=400, detail="Apple notification identity missing")
+    data = _attr(notification, "data")
+    signed_transaction = str(_attr(data, "signedTransactionInfo") or "")
+    signed_renewal_info = str(_attr(data, "signedRenewalInfo") or "")
+    transaction = renewal_info = None
+    if signed_transaction:
+        # Do not claim or reclaim a notification UUID until the nested purchase
+        # and any renewal JWS have also passed the environment-specific verifier.
+        try:
+            transaction = verifier.verify_transaction(signed_transaction)
+            renewal_info = (
+                verifier.verify_renewal_info(signed_renewal_info)
+                if signed_renewal_info else None
+            )
+        except AppleBillingConfigurationError as exc:
+            raise HTTPException(
+                status_code=503, detail="Apple notification verification unavailable",
+            ) from exc
+        except AppleTransactionVerificationError as exc:
+            raise HTTPException(
+                status_code=400, detail="Apple notification transaction invalid",
+            ) from exc
     inserted = claim_provider_event(
         source="apple", event_id=event_id, signature_verified=True,
         environment=environment,
         sanitized_payload={"notification_type": event_type, "subtype": subtype or None},
+        retry_unbound_apple=True,
     )
     if not inserted:
         logger.info(
@@ -830,9 +857,6 @@ async def apple_notifications_v2(request: Request):
             hashlib.sha256(event_id.encode("utf-8")).hexdigest()[:12],
         )
         return {"outcome": "duplicate"}
-    data = _attr(notification, "data")
-    signed_transaction = str(_attr(data, "signedTransactionInfo") or "")
-    signed_renewal_info = str(_attr(data, "signedRenewalInfo") or "")
     if not signed_transaction:
         finish_provider_event(source="apple", event_id=event_id, outcome="verified_no_transaction")
         logger.info(
@@ -843,20 +867,8 @@ async def apple_notifications_v2(request: Request):
         )
         return {"outcome": "verified_no_transaction"}
     try:
-        transaction = verifier.verify_transaction(signed_transaction)
-        renewal_info = (
-            verifier.verify_renewal_info(signed_renewal_info)
-            if signed_renewal_info else None
-        )
         transaction_id = str(_attr(transaction, "transactionId") or "")
         original_id = str(_attr(transaction, "originalTransactionId") or "")
-        account_id = (
-            find_account_for_original_transaction("apple", original_id)
-            or find_account_for_purchase("apple", transaction_id)
-        )
-        if not account_id:
-            finish_provider_event(source="apple", event_id=event_id, outcome="ignored_unbound")
-            return {"outcome": "ignored_unbound"}
         update = _transaction_update(
             transaction,
             environment=environment,
@@ -865,6 +877,34 @@ async def apple_notifications_v2(request: Request):
             event_id=event_id,
             renewal_info=renewal_info,
         )
+        original_account = find_account_for_original_transaction("apple", original_id)
+        transaction_account = find_account_for_purchase("apple", transaction_id)
+        if (
+            original_account and transaction_account
+            and original_account != transaction_account
+        ):
+            raise AppleTransactionOwnershipError(
+                "Apple purchase identities have conflicting account bindings"
+            )
+        account_id = original_account or transaction_account
+        signed_account_token = str(_attr(transaction, "appAccountToken") or "")
+        if account_id and signed_account_token and not apple_token_matches_account(
+            signed_account_token, account_id,
+        ):
+            raise AppleTransactionOwnershipError(
+                "Apple purchase token does not match its existing account binding"
+            )
+        if not account_id:
+            # The outer notification and nested transaction have both passed
+            # Apple's signature/bundle/environment validation. Only that signed
+            # token may establish a first binding; never an unsigned account ID.
+            account_id = find_live_account_for_apple_token(signed_account_token)
+        if not account_id:
+            # A missing token can be resolved by an authenticated device restore.
+            # Do not acknowledge it permanently before that binding is available.
+            raise AppleAccountBindingPendingError(
+                "Apple purchase account binding is not available yet"
+            )
         _entitlement_id, transition = upsert_verified_entitlement(account_id, update)
         finish_provider_event(source="apple", event_id=event_id, outcome="applied")
         return {"outcome": "applied", "status": update.status, "transition": transition}

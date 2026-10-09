@@ -239,8 +239,14 @@ def claim_provider_event(
     signature_verified: bool,
     environment: str,
     sanitized_payload: Mapping[str, Any],
+    retry_unbound_apple: bool = False,
 ) -> bool:
-    """Insert an audit event once. False means the event is a safe replay."""
+    """Claim once, or retry an error / explicitly enabled unbound Apple event.
+
+    Applied and stale events remain terminal. Older Apple notifications could
+    have been acknowledged before a device established their purchase binding;
+    only a newly signature-verified Apple delivery may reclaim that outcome.
+    """
     conn = get_db()
     try:
         cur = conn.cursor()
@@ -253,11 +259,15 @@ def claim_provider_event(
             ON CONFLICT (source, source_event_id) DO UPDATE
                SET outcome = 'processing', error_text = NULL
              WHERE provider_event_log.outcome = 'error'
+                OR (%s AND provider_event_log.source = 'apple'
+                       AND provider_event_log.signature_verified = TRUE
+                       AND provider_event_log.outcome = 'ignored_unbound')
             RETURNING source_event_id
             """,
             (
                 source, event_id, bool(signature_verified), environment,
                 Json(dict(sanitized_payload)),
+                bool(retry_unbound_apple and source == "apple" and signature_verified),
             ),
         )
         inserted = cur.fetchone() is not None
