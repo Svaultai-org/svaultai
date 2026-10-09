@@ -356,7 +356,7 @@ class _VaultOverviewCard extends StatelessWidget {
           const SizedBox(height: 6),
           if (!available)
             const Text(
-              'Files, secure items, logins, ID documents, Crypto Vault, '
+              'Files, secure items, logins, ID documents, Assets, '
               'storage, and recent activity. Values are masked by '
               'default — open an item to reveal it.',
               style: kWalletBodyStyle,
@@ -2802,7 +2802,7 @@ class _FaqCard extends StatelessWidget {
       case kVcrFaqActionOpenIdDocs:
         return 'Open IDs';
       case kVcrFaqActionOpenCryptoVault:
-        return 'Open Crypto Vault';
+        return 'Open Assets';
       case kVcrFaqActionOpenBilling:
         return 'Open Billing';
       case kVcrFaqActionOpenStorage:

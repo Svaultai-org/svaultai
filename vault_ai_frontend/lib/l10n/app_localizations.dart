@@ -369,7 +369,7 @@ abstract class AppLocalizations {
   /// No description provided for @sidebarCryptoVault.
   ///
   /// In en, this message translates to:
-  /// **'Crypto Vault'**
+  /// **'Assets'**
   String get sidebarCryptoVault;
 
   /// No description provided for @sidebarConcierge.
@@ -1803,7 +1803,7 @@ abstract class AppLocalizations {
   /// No description provided for @cryptoOpenCryptoVault.
   ///
   /// In en, this message translates to:
-  /// **'Open Crypto Vault'**
+  /// **'Open Assets'**
   String get cryptoOpenCryptoVault;
 
   /// No description provided for @cryptoCopyAddress.

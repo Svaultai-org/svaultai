@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api_client.dart';
+import '../services/asset_catalog.dart';
 import '../services/asset_live_store.dart';
 import 'responsive.dart' show vrDisplay;
 import '../services/crypto_wallet_dashboard_reason.dart';
@@ -128,7 +129,7 @@ String assetDetailNetworkLabel({
   required String? network,
 }) {
   final isEthereumFamily =
-      asset == 'ETH' || asset == 'USDT_ERC20' || asset == 'USDC_ERC20';
+      asset == 'ETH' || erc20AssetSpec(asset) != null;
   if (isEthereumFamily) {
     if (network == kEvmNetworkEthereumSepolia) {
       return kAssetDetailEthereumSepoliaLabel;
@@ -152,19 +153,23 @@ bool assetDetailIsSepolia({
   required String? network,
 }) {
   final isEthereumFamily =
-      asset == 'ETH' || asset == 'USDT_ERC20' || asset == 'USDC_ERC20';
+      asset == 'ETH' || erc20AssetSpec(asset) != null;
   return isEthereumFamily && network == kEvmNetworkEthereumSepolia;
 }
 
 
 class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
   final String asset;
+  final RegisteredVaultAsset? registeredAsset;
 
 
   final String? authToken;
   final VaultAIClient? apiClient;
   final Future<String> Function(String plaintext)? encryptForVault;
   final bool Function()? isVaultKeyAvailable;
+  /// Only the opt-in registered-asset route observes its captured vault lease.
+  /// Existing Cryptocurrency callers keep their current behavior.
+  final Listenable? accessChanges;
 
 
   final Future<String> Function(String ciphertext)? decryptForVault;
@@ -184,10 +189,12 @@ class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
   const CryptoWalletEngineAssetDetailPage({
     super.key,
     required this.asset,
+    this.registeredAsset,
     this.authToken,
     this.apiClient,
     this.encryptForVault,
     this.isVaultKeyAvailable,
+    this.accessChanges,
     this.decryptForVault,
     this.verifyPin,
     this.loadFromAddress,
@@ -207,6 +214,51 @@ class CryptoWalletEngineAssetDetailPage extends StatefulWidget {
 
 class _CryptoWalletEngineAssetDetailPageState
     extends State<CryptoWalletEngineAssetDetailPage> {
+  bool _registeredAccessRevoked = false;
+  int _registeredAccessGeneration = 0;
+
+  bool get _registeredAccessCurrent => widget.registeredAsset == null ||
+      (mounted && !_registeredAccessRevoked &&
+       (widget.isVaultKeyAvailable?.call() ?? false));
+
+  bool _registeredOperationCurrent(int generation) => mounted &&
+      _registeredAccessCurrent &&
+      (widget.registeredAsset == null ||
+       generation == _registeredAccessGeneration);
+
+  void _onRegisteredAccessChanged() {
+    if (widget.registeredAsset == null || _registeredAccessCurrent) return;
+    _registeredAccessRevoked = true;
+    _registeredAccessGeneration++;
+    _mainnetSendApprovalSession.clear();
+    if (!mounted) return;
+    setState(() {
+      _address = null;
+      _balance = null;
+      _balanceUnit = null;
+      _balanceReason = null;
+      _balanceBaseUnits = null;
+      _ethBalanceWei = null;
+      _balanceUpdatedAt = null;
+      _pendingDebitWei = null;
+      _pendingDebitBaseUnits = null;
+      _addressLoading = false;
+      _balanceLoading = false;
+    });
+  }
+
+  Widget _registeredPanel(Widget child) {
+    if (widget.registeredAsset == null) return child;
+    Widget currentPanel() => _registeredAccessCurrent
+        ? child
+        : const SizedBox.shrink(key: Key('registered_asset_sheet_locked'));
+    final changes = widget.accessChanges;
+    return changes == null ? currentPanel() : AnimatedBuilder(
+      animation: changes,
+      builder: (_, __) => currentPanel(),
+    );
+  }
+
   String? _address;
   bool _addressLoading = false;
   String? _balance;
@@ -254,6 +306,8 @@ class _CryptoWalletEngineAssetDetailPageState
   // to their short symbol so the sheet title reads "Send USDT" instead
   // of "Send USDT_ERC20". Called only from send sheet callers.
   String _shortAssetLabel(String asset) {
+    final token = erc20AssetSpec(asset);
+    if (token != null) return token.symbol;
     switch (asset) {
       case 'USDT_ERC20':
         return 'USDT';
@@ -278,6 +332,7 @@ class _CryptoWalletEngineAssetDetailPageState
       && widget.network == 'monero_mainnet';
 
   bool get _isSupported =>
+      _registeredTokenEnabled ||
       kAssetsWithLiveReceive.contains(widget.asset) ||
       kAssetsWithLiveSend.contains(widget.asset) ||
       _isSolana ||
@@ -285,7 +340,22 @@ class _CryptoWalletEngineAssetDetailPageState
       _isMoneroLive;
 
   bool get _isToken =>
-      widget.asset == 'USDT_ERC20' || widget.asset == 'USDC_ERC20';
+      erc20AssetSpec(widget.asset) != null;
+
+  bool get _registeredTokenEnabled {
+    final token = widget.registeredAsset;
+    final features = widget.features;
+    return token != null && token.matches(widget.asset, widget.effectiveNetwork) &&
+        token.balanceEnabled && token.receiveEnabled &&
+        features?.walletEngineEnabled == true &&
+        features?.effectiveMainnetReceiveEnabled == true &&
+        features?.effectiveMainnetErc20ReceiveEnabled == true;
+  }
+
+  bool get _registeredSendEnabled => widget.registeredAsset == null ||
+      (_registeredTokenEnabled && widget.registeredAsset!.sendEnabled &&
+        widget.features?.effectiveMainnetSendEnabled == true &&
+        widget.features?.mainnetSendPaused != true);
 
   bool get _isMonero => widget.asset == 'XMR';
 
@@ -303,6 +373,9 @@ class _CryptoWalletEngineAssetDetailPageState
   @override
   void initState() {
     super.initState();
+    if (widget.registeredAsset != null) {
+      widget.accessChanges?.addListener(_onRegisteredAccessChanged);
+    }
     if (_isSupported && _hasReceiveWiring) {
       _loadAddressAndBalance();
     }
@@ -313,7 +386,26 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   @override
+  void didUpdateWidget(covariant CryptoWalletEngineAssetDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.accessChanges != widget.accessChanges) {
+      oldWidget.accessChanges?.removeListener(_onRegisteredAccessChanged);
+      if (widget.registeredAsset != null) {
+        widget.accessChanges?.addListener(_onRegisteredAccessChanged);
+      }
+    }
+    if (widget.registeredAsset != null &&
+        (oldWidget.authToken != widget.authToken ||
+         oldWidget.apiClient != widget.apiClient ||
+         oldWidget.registeredAsset != widget.registeredAsset)) {
+      _registeredAccessRevoked = true;
+      _onRegisteredAccessChanged();
+    }
+  }
+
+  @override
   void dispose() {
+    widget.accessChanges?.removeListener(_onRegisteredAccessChanged);
     _mainnetSendApprovalSession.clear();
     _pageScrollCtrl.dispose();
     super.dispose();
@@ -349,7 +441,7 @@ class _CryptoWalletEngineAssetDetailPageState
     required BigInt debitBaseUnits,
     required bool isToken,
   }) {
-    if (!mounted) return;
+    if (!mounted || !_registeredAccessCurrent) return;
     setState(() {
       if (isToken) {
         _pendingDebitBaseUnits = debitBaseUnits;
@@ -473,6 +565,8 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   Future<void> _loadAddressAndBalance() async {
+    if (!_registeredAccessCurrent) return;
+    final accessGeneration = _registeredAccessGeneration;
     if (!_isSupported || widget.apiClient == null ||
         widget.authToken == null) {
       return;
@@ -491,7 +585,10 @@ class _CryptoWalletEngineAssetDetailPageState
 
     final asset = widget.asset;
     final network = widget.effectiveNetwork;
-    final seq = AssetLiveStore.instance.claimSeq(asset);
+    // The legacy shared store is keyed only by asset, not vault. New registered
+    // asset details stay page-local rather than retaining another vault's data.
+    final seq = widget.registeredAsset == null
+        ? AssetLiveStore.instance.claimSeq(asset) : null;
 
     if (mounted) {
       setState(() {
@@ -501,13 +598,15 @@ class _CryptoWalletEngineAssetDetailPageState
       });
     }
 
-    AssetLiveStore.instance.applyState(
-      source: 'detail',
-      asset: asset,
-      seq: seq,
-      state: const DashboardAssetLiveState.loading(),
-      network: network,
-    );
+    if (seq != null) {
+      AssetLiveStore.instance.applyState(
+        source: 'detail',
+        asset: asset,
+        seq: seq,
+        state: const DashboardAssetLiveState.loading(),
+        network: network,
+      );
+    }
 
     final result = await loadAssetWalletState(
       apiClient: widget.apiClient!,
@@ -516,17 +615,22 @@ class _CryptoWalletEngineAssetDetailPageState
       asset: asset,
       receiveTimeout: kAssetDetailReceiveTimeout,
       balanceTimeout: kAssetDetailBalanceTimeout,
+      registeredAsset: widget.registeredAsset,
+      responseIsCurrent: widget.registeredAsset == null ? null :
+          () => _registeredOperationCurrent(accessGeneration),
     );
 
-    if (!mounted) return;
+    if (!_registeredOperationCurrent(accessGeneration)) return;
 
-    AssetLiveStore.instance.applyState(
-      source: 'detail',
-      asset: asset,
-      seq: seq,
-      state: result,
-      network: network,
-    );
+    if (seq != null) {
+      AssetLiveStore.instance.applyState(
+        source: 'detail',
+        asset: asset,
+        seq: seq,
+        state: result,
+        network: network,
+      );
+    }
 
     setState(() {
       _addressLoading = false;
@@ -591,6 +695,8 @@ class _CryptoWalletEngineAssetDetailPageState
   // can wire `fetchAvailableBalanceWei` / `fetchEthBalanceWei` to a
   // synchronous getter that returns the last-known value.
   Future<void> _loadRawBalanceIntegers(String address) async {
+    if (!_registeredAccessCurrent) return;
+    final accessGeneration = _registeredAccessGeneration;
     final api = widget.apiClient;
     final token = widget.authToken;
     if (api == null || token == null || token.isEmpty) return;
@@ -603,8 +709,13 @@ class _CryptoWalletEngineAssetDetailPageState
         authToken: token,
         address: address,
       ).timeout(kAssetDetailBalanceTimeout);
+      if (!_registeredOperationCurrent(accessGeneration)) return;
       final status = (body['balanceStatus'] ?? '').toString();
       if (status != 'available') return;
+      if (widget.registeredAsset != null &&
+          !widget.registeredAsset!.validatesBalance(body, address)) {
+        return;
+      }
       // 2026-07-14 (Round 7 hardening): pick the raw-integer field
       // matching the asset. ETH: weiAmount. ERC-20: baseUnits.
       // SOL: lamports OR availableAmount * 1e9. TRON: baseUnits
@@ -623,7 +734,7 @@ class _CryptoWalletEngineAssetDetailPageState
         final b = body['baseUnits'] ?? body['availableBaseUnits'];
         if (b != null) primary = BigInt.tryParse(b.toString());
       }
-      if (!mounted) return;
+      if (!_registeredOperationCurrent(accessGeneration)) return;
       setState(() {
         _balanceBaseUnits = primary;
       });
@@ -633,7 +744,7 @@ class _CryptoWalletEngineAssetDetailPageState
       // parent-chain TRX balance in sun for the TRON fee gate —
       // same reuse of the `_ethBalanceWei` slot as parent-chain
       // integer balance (semantic overload documented here).
-      if (asset == 'USDT_ERC20' || asset == 'USDC_ERC20') {
+      if (_isToken) {
         try {
           final ethBody = await api.getCryptoWalletBalanceNetwork(
             network: widget.effectiveNetwork,
@@ -641,6 +752,7 @@ class _CryptoWalletEngineAssetDetailPageState
             authToken: token,
             address: address,
           ).timeout(kAssetDetailBalanceTimeout);
+          if (!_registeredOperationCurrent(accessGeneration)) return;
           final ethStatus =
               (ethBody['balanceStatus'] ?? '').toString();
           if (ethStatus == 'available') {
@@ -733,6 +845,8 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   Future<void> _loadBalance(String address) async {
+    if (!_registeredAccessCurrent) return;
+    final accessGeneration = _registeredAccessGeneration;
     if (widget.apiClient == null || widget.authToken == null) return;
     if (mounted) {
       setState(() {
@@ -755,6 +869,12 @@ class _CryptoWalletEngineAssetDetailPageState
               authToken: widget.authToken!,
               address: address,
             ).timeout(kAssetDetailBalanceTimeout);
+      if (!_registeredOperationCurrent(accessGeneration)) return;
+      if (widget.registeredAsset != null &&
+          !widget.registeredAsset!.validatesBalance(body, address)) {
+        reason = 'rpc_error';
+        return;
+      }
       final status = (body['balanceStatus'] ?? '').toString();
       if (status == 'available') {
         final raw = body['availableAmount'] ?? body['balance'];
@@ -779,7 +899,7 @@ class _CryptoWalletEngineAssetDetailPageState
       bal = null;
       reason = 'rpc_error';
     } finally {
-      if (mounted) {
+      if (_registeredOperationCurrent(accessGeneration)) {
         setState(() {
           _balance = bal;
           _balanceUnit = unit;
@@ -791,6 +911,11 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   Future<void> _refreshBalance() async {
+    if (!_registeredAccessCurrent) return;
+    if (widget.registeredAsset != null) {
+      await _loadAddressAndBalance();
+      return;
+    }
     final addr = _address;
     if (addr == null || addr.isEmpty) {
       setState(() {
@@ -814,6 +939,7 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   void _openReceivePanel() {
+    if (!_registeredAccessCurrent) return;
     if (!_isSupported || !_hasReceiveWiring) {
       _showSnackBar(kAssetDetailReceiveNotReadyBanner);
       return;
@@ -829,7 +955,7 @@ class _CryptoWalletEngineAssetDetailPageState
       context: context,
       title: sheetTitle,
       sheetKey: 'crypto_wallet_engine_asset_detail_receive_sheet',
-      child: _isSolana
+      child: _registeredPanel(_isSolana
           ? CryptoWalletEngineSolanaReceivePanel(
               key: const Key(
                 'crypto_wallet_engine_asset_detail_solana_receive_panel',
@@ -871,14 +997,21 @@ class _CryptoWalletEngineAssetDetailPageState
                       encryptForVault: widget.encryptForVault!,
                       isVaultKeyAvailable: widget.isVaultKeyAvailable!,
                       asset: widget.asset,
+                      registeredAsset: widget.registeredAsset,
                       network: widget.network,
-                    ),
+                    )),
     ).whenComplete(() {
-      if (mounted) _loadAddressAndBalance();
+      if (mounted && _registeredAccessCurrent) _loadAddressAndBalance();
     });
   }
 
   Future<void> _openSendPanel() async {
+    if (!_registeredAccessCurrent) return;
+    final accessGeneration = _registeredAccessGeneration;
+    if (!_registeredSendEnabled) {
+      _showSnackBar('Sending is unavailable for this asset.');
+      return;
+    }
     if (_isMoneroLive) {
       _showSnackBar(kAssetDetailMoneroSendDisabledMessage);
       return;
@@ -1028,6 +1161,7 @@ class _CryptoWalletEngineAssetDetailPageState
     if (fromAddress == null || fromAddress.isEmpty) {
       fromAddress = await widget.loadFromAddress!(widget.effectiveNetwork);
     }
+    if (!_registeredOperationCurrent(accessGeneration)) return;
     if (fromAddress == null || fromAddress.isEmpty) {
       _showSnackBar(
         'No Ethereum wallet exists yet. Tap Receive to create one '
@@ -1044,8 +1178,7 @@ class _CryptoWalletEngineAssetDetailPageState
     // Previously the asset-detail Send opener wired NEITHER, so the
     // Round-4 integer-exact gate never fired on the ETH send path
     // and only the backend gate caught misauthorized attempts.
-    final isToken =
-        widget.asset == 'USDT_ERC20' || widget.asset == 'USDC_ERC20';
+    final isToken = _isToken;
 
     // ignore: discarded_futures
     showCryptoWalletSheet<void>(
@@ -1053,7 +1186,7 @@ class _CryptoWalletEngineAssetDetailPageState
       title: 'Send ${_shortAssetLabel(widget.asset)}',
       sheetKey: 'crypto_wallet_engine_asset_detail_send_sheet',
       bodyOwnsLayout: true,
-      child: CryptoWalletEngineSendPanel(
+      child: _registeredPanel(CryptoWalletEngineSendPanel(
         key: Key(
           'crypto_wallet_engine_asset_detail_send_panel_${widget.asset}',
         ),
@@ -1064,6 +1197,7 @@ class _CryptoWalletEngineAssetDetailPageState
         isVaultKeyAvailable: widget.isVaultKeyAvailable!,
         verifyPin: widget.verifyPin,
         asset: widget.asset,
+        registeredAsset: widget.registeredAsset,
         network: widget.effectiveNetwork,
         mainnetSendEnabled:
             widget.features?.effectiveMainnetSendEnabled ?? false,
@@ -1090,7 +1224,7 @@ class _CryptoWalletEngineAssetDetailPageState
             debitBaseUnits: debitBaseUnits, isToken: isToken,
           );
         },
-      ),
+      )),
     ).whenComplete(() {
       _mainnetSendApprovalSession.clear();
       // 2026-07-13 (Round 5 hardening): mirror the Receive-sheet
@@ -1098,7 +1232,7 @@ class _CryptoWalletEngineAssetDetailPageState
       // balance refresh — even the "cancelled" case, because the
       // user may have already triggered a broadcast in a background
       // browser tab.
-      if (mounted) {
+      if (mounted && _registeredAccessCurrent) {
         _loadAddressAndBalance();
         _restoreScrollToBalanceAnchor();
       }
@@ -1106,16 +1240,25 @@ class _CryptoWalletEngineAssetDetailPageState
   }
 
   Future<void> _copyAddress() async {
+    if (!_registeredAccessCurrent) return;
     final addr = _address;
     if (addr == null || addr.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: addr));
-    if (!mounted) return;
+    if (!mounted || !_registeredAccessCurrent) return;
     _showSnackBar(kAssetDetailCopyDoneSnackbar);
   }
 
   @override
   Widget build(BuildContext context) {
-    final label = kCryptoWalletEngineAssetLabels[widget.asset] ?? widget.asset;
+    if (widget.registeredAsset != null && !_registeredAccessCurrent) {
+      return Scaffold(
+        key: const Key('registered_asset_access_locked'),
+        appBar: AppBar(title: const Text('Digital Gold')),
+        body: const Center(child: Text('Unlock your vault to view this asset.')),
+      );
+    }
+    final label = widget.registeredAsset?.name ??
+        kCryptoWalletEngineAssetLabels[widget.asset] ?? widget.asset;
     final network = kCryptoWalletEngineNetworkLabels[widget.asset] ?? '';
     return Theme(
       data: walletDarkPanelTheme(context),
@@ -1185,6 +1328,16 @@ class _CryptoWalletEngineAssetDetailPageState
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _buildHeader(label, network),
+                        if (widget.registeredAsset != null) ...[
+                          const SizedBox(height: 12),
+                          Text('Token: ${widget.registeredAsset!.symbol} · ERC20',
+                              style: kWalletBodyStyle),
+                          const SizedBox(height: 4),
+                          const Text('Issuer contract', style: kWalletMutedStyle),
+                          SelectableText(widget.registeredAsset!.contractAddress,
+                              key: const Key('asset_issuer_contract'),
+                              style: kWalletMonoStyle),
+                        ],
                         const SizedBox(height: 18),
 
                         if (!_isSupported)
@@ -1403,7 +1556,7 @@ class _CryptoWalletEngineAssetDetailPageState
               key: const Key(
                 'crypto_wallet_engine_asset_detail_send_btn',
               ),
-              onPressed: _openSendPanel,
+              onPressed: _registeredSendEnabled ? _openSendPanel : null,
               icon: const Icon(Icons.north_rounded, size: 18),
               label: const Text(kAssetDetailSendLabel),
               style: walletSecondaryButtonStyle(),
@@ -1471,6 +1624,17 @@ class _CryptoWalletEngineAssetDetailPageState
             ],
           ),
         ),
+      ],
+      if (widget.registeredAsset != null) ...[
+        const SizedBox(height: 12),
+        Text(widget.registeredAsset!.transferNote,
+            key: const Key('asset_issuer_transfer_note'),
+            style: kWalletMutedStyle),
+        if (!_registeredSendEnabled) ...[
+          const SizedBox(height: 8),
+          const Text('Sending is unavailable for this asset.',
+              style: kWalletMutedStyle),
+        ],
       ],
       const SizedBox(height: 16),
       _buildActivityPanel(),
@@ -1733,6 +1897,23 @@ class _CryptoWalletEngineAssetDetailPageState
 
 
   Widget _buildActivityPanel() {
+    if (widget.registeredAsset != null &&
+        !widget.registeredAsset!.activityConnected) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: walletAssetCard(widget.asset),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Activity', style: kWalletHeadingStyle),
+            SizedBox(height: 8),
+            Text('Transaction history is not connected yet.',
+                key: Key('asset_activity_unavailable'),
+                style: kWalletBodyStyle),
+          ],
+        ),
+      );
+    }
 
 
 
@@ -1798,6 +1979,8 @@ class _CryptoWalletEngineAssetDetailPageState
         authToken: widget.authToken,
         apiClient: widget.apiClient,
         network: widget.network,
+        responseIsCurrent: widget.registeredAsset == null ? null :
+            () => _registeredAccessCurrent,
       ),
     );
   }

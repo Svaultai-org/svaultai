@@ -138,7 +138,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sidebarLogins => 'تسجيلات الدخول';
 
   @override
-  String get sidebarCryptoVault => 'Crypto Vault';
+  String get sidebarCryptoVault => 'الأصول';
 
   @override
   String get sidebarConcierge => 'المساعد الذكي';
@@ -935,7 +935,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get cryptoRetryFailed => 'أعد المحاولة';
 
   @override
-  String get cryptoOpenCryptoVault => 'فتح Crypto Vault';
+  String get cryptoOpenCryptoVault => 'فتح الأصول';
 
   @override
   String get cryptoCopyAddress => 'نسخ العنوان';

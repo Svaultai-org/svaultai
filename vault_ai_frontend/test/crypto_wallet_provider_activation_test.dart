@@ -18,6 +18,7 @@ class _ReadinessSpyClient extends VaultAIClient {
   @override
   Future<Map<String, dynamic>> getCryptoWalletFeatures({
     required String authToken,
+    bool Function()? responseIsCurrent,
   }) async {
     return nextFeatures;
   }

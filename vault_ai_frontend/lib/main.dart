@@ -86,6 +86,9 @@ import 'ui/secure_item_detail.dart';
 import 'ui/chat/vault_file_view_messages.dart';
 
 import 'ui/dashboards/concierge_page.dart';
+import 'ui/dashboards/concierge_private_dialog.dart';
+import 'services/concierge_exposure.dart';
+import 'services/pwned_password_check.dart';
 import 'ui/dashboards/expiry_page.dart';
 
 import 'ui/dashboards/memory_page.dart';
@@ -95,6 +98,7 @@ import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
 import 'ui/crypto_wallet_engine_page.dart';
+import 'ui/assets_page.dart';
 
 import 'ui/crypto_wallet_engine_receive_panel.dart';
 import 'ui/crypto_wallet_engine_send_panel.dart';
@@ -6747,6 +6751,150 @@ bool isClientSecureItemDeleteCancellationPhrase(String message) {
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
   bool _cryptoBillingBannerDismissed = false;
   BillingLoadState? _cryptoBillingBannerLastState;
+  late final VaultAIClient _assetsApiClient =
+      VaultAIClient(baseUrl: backendBaseUrl);
+  ConciergeExposureBindings? _conciergeExposureBindings;
+  ConciergeVaultRepository? _conciergeExposureRepository;
+  bool _conciergeLoginEditBusy = false;
+  String? _conciergeExposureSession;
+  String? _conciergeExposureDeviceId;
+  VaultCryptoContext? _conciergeExposureKeyContext;
+  SecretKey? _conciergeExposureMvk;
+  http.Client? _conciergeExposureHttp;
+
+  void _clearConciergeExposureBindings() {
+    _conciergeExposureBindings = null;
+    _conciergeExposureRepository = null;
+    _conciergeExposureSession = null;
+    _conciergeExposureDeviceId = null;
+    _conciergeExposureKeyContext = null;
+    _conciergeExposureMvk = null;
+    _conciergeExposureHttp?.close();
+    _conciergeExposureHttp = null;
+  }
+
+  ConciergeExposureBindings? _exposureBindingsFor(AppState app) {
+    final token = app.sessionToken;
+    final deviceId = apiClientDeviceId();
+    final vaultId = app.vaultId;
+    final keyContext = VaultCryptoRegistry.current;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (!app.authed || !app.unlocked || token == null || vaultId == null ||
+        deviceId == null || deviceId.isEmpty ||
+        keyContext == null || keyContext.vaultId != vaultId || mvk == null ||
+        zk_mvk_store.ZkActiveMvk.currentVaultId() != vaultId) {
+      _clearConciergeExposureBindings();
+      return null;
+    }
+    if (_conciergeExposureSession == token &&
+        _conciergeExposureDeviceId == deviceId &&
+        identical(_conciergeExposureKeyContext, keyContext) &&
+        identical(_conciergeExposureMvk, mvk)) {
+      return _conciergeExposureBindings;
+    }
+    _clearConciergeExposureBindings();
+    final transport = http.Client();
+    _conciergeExposureHttp = transport;
+    _conciergeExposureSession = token;
+    _conciergeExposureDeviceId = deviceId;
+    _conciergeExposureKeyContext = keyContext;
+    _conciergeExposureMvk = mvk;
+    final repository = ConciergeVaultRepository(
+      baseUrl: backendBaseUrl, authToken: token, vaultId: vaultId,
+      deviceId: deviceId,
+      client: transport,
+    );
+    _conciergeExposureRepository = repository;
+    _conciergeExposureBindings = ConciergeExposureBindings(
+      accessChanges: app,
+      captureAccess: () => ConciergeAccessLease(isCurrent: () =>
+          mounted && app.authed && app.unlocked &&
+          app.sessionToken == token && app.vaultId == vaultId &&
+          apiClientDeviceId() == deviceId &&
+          identical(VaultCryptoRegistry.current, keyContext) &&
+          identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+          identical(_conciergeExposureHttp, transport)),
+      loadLogins: repository.loadLogins,
+      readEncryptedState: repository.readEncryptedState,
+      writeEncryptedState: repository.writeEncryptedState,
+      provider: ConciergeBackendProvider(
+        baseUrl: backendBaseUrl, authToken: token, deviceId: deviceId,
+        client: transport,
+      ),
+      passwordChecker: PwnedPasswordChecker(client: transport),
+      onUpdateLogin: (loginId, title, itemType) =>
+          _openConciergeLoginEditor(loginId, itemType),
+    );
+    return _conciergeExposureBindings;
+  }
+
+  Future<void> _openConciergeLoginEditor(String loginId, String itemType) async {
+    if (_conciergeLoginEditBusy) return;
+    final bindings = _conciergeExposureBindings;
+    final repository = _conciergeExposureRepository;
+    if (bindings == null || repository == null) return;
+    final access = bindings.captureAccess();
+    final app = context.read<AppState>();
+    _conciergeLoginEditBusy = true;
+    try {
+      access.assertCurrent();
+      final item = await repository.loadLoginForEdit(loginId, access);
+      access.assertCurrent();
+      if (!mounted || item.itemType != itemType) return;
+      await showConciergeLeaseDialog<bool>(
+        context: context,
+        sessionChanges: app,
+        access: access,
+        builder: (_) => SecureItemEditDialog(
+          title: item.title,
+          itemType: item.itemType,
+          dialogTitle: 'Update saved login',
+          initialFields: {
+            for (final field in item.fields.entries)
+              if (field.value is String) field.key: field.value as String,
+          },
+          onSave: ({
+            required String oldTitle,
+            required String itemType,
+            required String newTitle,
+            required Map<String, String> fields,
+          }) async {
+            try {
+              access.assertCurrent();
+              await repository.updateLoginById(
+                loginId, newTitle, fields, access,
+                expectedItemType: item.itemType,
+              );
+              access.assertCurrent();
+              _showSnack('Saved vault entry updated.');
+              // Refresh through the normal Logins page only when opened;
+              // Concierge never invokes the legacy PIN-reading list fallback.
+              setState(() {
+                hasLoadedSecureItems = false;
+                secureItemsError = null;
+              });
+              return true;
+            } on ConciergeAccessExpired {
+              return false;
+            } catch (_) {
+              if (access.isCurrent && mounted) {
+                _showSnack('Could not update this entry. Refresh and try again.');
+              }
+              return false;
+            }
+          },
+        ),
+      );
+    } on ConciergeAccessExpired {
+      // Stale private UI is dismissed by the lease-bound dialog.
+    } catch (_) {
+      if (access.isCurrent && mounted) {
+        _showSnack('This saved login is unavailable. Refresh and try again.');
+      }
+    } finally {
+      _conciergeLoginEditBusy = false;
+    }
+  }
 
   Future<void> _openSecureItemView(String service, String itemType) async {
     final app = context.read<AppState>();
@@ -10735,7 +10883,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               ),
                               SizedBox(height: 2),
                               Text(
-                                'Answers about Svaultai, Crypto Vault, '
+                                'Answers about Svaultai, Assets, '
                                 'Monero, billing, and support.',
                                 style: TextStyle(
                                   color: Color(0xFFB4B4B4),
@@ -11630,6 +11778,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
   @override
   void dispose() {
+    _clearConciergeExposureBindings();
     _chatMainnetSendApprovalSession.clear();
     if (_speech.isListening) {
       _speech.cancel();
@@ -17255,7 +17404,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         );
 
     if (kCryptoWalletEngineEnabled) {
-      return Builder(
+      final cryptocurrency = Builder(
         builder: (engineCtx) => CryptoWalletEnginePage(
           key: const Key('crypto_wallet_engine_page_root'),
           onSendChatPrompt: (prompt) {
@@ -17263,7 +17412,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             _sendQuickPrompt(prompt);
           },
           authToken: authToken,
-          apiClient: VaultAIClient(baseUrl: backendBaseUrl),
+          apiClient: _assetsApiClient,
           encryptForVault: (plaintext) => _VaultCrypto.encrypt(plaintext),
           isVaultKeyAvailable: () => hasVaultKey,
           decryptForVault: (ciphertext) => _VaultCrypto.decrypt(ciphertext),
@@ -17310,6 +17459,63 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           moneroScannerAdapter: const NullMoneroScannerAdapter(),
         ),
       );
+      final sessionContext = VaultCryptoRegistry.current;
+      final assetVaultId = app.vaultId;
+      final assetDeviceId = apiClientDeviceId();
+      bool keyAvailable() => mounted && sessionContext != null &&
+          app.authed && app.unlocked &&
+          app.sessionToken == authToken &&
+          app.vaultId == assetVaultId &&
+          apiClientDeviceId() == assetDeviceId &&
+          identical(VaultCryptoRegistry.current, sessionContext) &&
+          app.vaultId != null && app.vaultName != null &&
+          _VaultCrypto.hasKeyFor(
+            vaultId: app.vaultId!, vaultName: app.vaultName!,
+          );
+      final registeredAssetClient = VaultAIClient(
+        baseUrl: backendBaseUrl,
+        walletResponseIsCurrent: keyAvailable,
+      );
+      return AssetsPage(
+        key: ValueKey('assets-${sessionContext?.generation}'),
+        cryptocurrency: cryptocurrency,
+        accessChanges: app,
+        registeredAssetApiClient: registeredAssetClient,
+        authToken: authToken,
+        apiClient: _assetsApiClient,
+        encryptForVault: (plaintext) async {
+          if (!keyAvailable()) throw StateError('Vault access changed.');
+          final ciphertext = await _VaultCrypto.encrypt(plaintext);
+          if (!keyAvailable()) throw StateError('Vault access changed.');
+          return ciphertext;
+        },
+        isVaultKeyAvailable: keyAvailable,
+        decryptForVault: (ciphertext) async {
+          if (!keyAvailable()) throw StateError('Vault access changed.');
+          final plaintext = await _VaultCrypto.decrypt(ciphertext);
+          if (!keyAvailable()) throw StateError('Vault access changed.');
+          return plaintext;
+        },
+        verifyPin: (pin) async => keyAvailable() &&
+            _VaultCrypto.cachedPinFor(
+              vaultId: app.vaultId ?? '', vaultName: app.vaultName ?? '',
+            ) == pin,
+        loadFromAddress: (network) async {
+          if (!keyAvailable()) return null;
+          try {
+            final body = await registeredAssetClient.getCryptoWalletReceiveNetwork(
+              network: network, asset: 'ETH', authToken: authToken ?? '',
+            );
+            if (!keyAvailable() || body['wallet_engine'] != 'receive_ready') {
+              return null;
+            }
+            final address = body['publicAddress'];
+            return address is String && address.isNotEmpty ? address : null;
+          } catch (_) {
+            return null;
+          }
+        },
+      );
     }
 
     return SingleChildScrollView(
@@ -17322,7 +17528,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Svaultai Crypto Wallet',
+                'Svaultai Assets',
                 key: const Key('crypto_vault_engine_disabled_heading'),
                 style: TextStyle(
                   fontSize: vrHeadline(context),
@@ -17346,7 +17552,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.watch<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
-    if (token == null || vaultName == null || vaultName.isEmpty) {
+    if (!app.unlocked || token == null || vaultName == null || vaultName.isEmpty) {
+      _clearConciergeExposureBindings();
       return Center(
         child: Padding(
           padding:
@@ -17359,6 +17566,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
     }
     return ConciergePage(
+      exposureBindings: _exposureBindingsFor(app),
       client: VaultAIClient(baseUrl: backendBaseUrl),
       authToken: token,
       vaultName: vaultName,

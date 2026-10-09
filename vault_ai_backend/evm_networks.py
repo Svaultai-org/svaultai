@@ -75,6 +75,7 @@ _ASSET_NETWORKS: dict[str, frozenset[str]] = {
     "ETH":        frozenset({NETWORK_ETHEREUM_SEPOLIA, NETWORK_ETHEREUM_MAINNET}),
     "USDT_ERC20": frozenset({NETWORK_ETHEREUM_SEPOLIA, NETWORK_ETHEREUM_MAINNET}),
     "USDC_ERC20": frozenset({NETWORK_ETHEREUM_SEPOLIA, NETWORK_ETHEREUM_MAINNET}),
+    "PAXG_ERC20": frozenset({NETWORK_ETHEREUM_MAINNET}),
 }
 
 
@@ -87,6 +88,7 @@ _TOKEN_CONTRACT_SUFFIX: dict[str, str] = {
 DEFAULT_TOKEN_DECIMALS: dict[str, int] = {
     "USDT_ERC20": 6,
     "USDC_ERC20": 6,
+    "PAXG_ERC20": 18,
 }
 
 
@@ -167,6 +169,9 @@ def token_contract_for(network_id: str, asset: str) -> str:
     cfg = network_config(network_id)
     if cfg is None:
         return ""
+    if asset == "PAXG_ERC20":
+        from verified_assets import PAXG_CONTRACT, PAXG_NETWORK
+        return PAXG_CONTRACT if cfg.id == PAXG_NETWORK else ""
     suffix = _TOKEN_CONTRACT_SUFFIX.get(asset)
     if not suffix:
         return ""

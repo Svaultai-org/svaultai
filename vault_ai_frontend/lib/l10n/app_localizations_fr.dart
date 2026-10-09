@@ -138,7 +138,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get sidebarLogins => 'Identifiants';
 
   @override
-  String get sidebarCryptoVault => 'Crypto Vault';
+  String get sidebarCryptoVault => 'Actifs';
 
   @override
   String get sidebarConcierge => 'Concierge';
@@ -955,7 +955,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get cryptoRetryFailed => 'Réessayer';
 
   @override
-  String get cryptoOpenCryptoVault => 'Ouvrir Crypto Vault';
+  String get cryptoOpenCryptoVault => 'Ouvrir les actifs';
 
   @override
   String get cryptoCopyAddress => 'Copier l\'adresse';

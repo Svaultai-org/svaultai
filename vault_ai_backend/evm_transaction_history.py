@@ -72,7 +72,7 @@ REASON_INVALID_ADDRESS:        str = "invalid_address"
                                                                
 LIVE_ETH_ASSET:  str = "ETH"
 LIVE_TOKEN_ASSETS: frozenset[str] = frozenset({
-    "USDT_ERC20", "USDC_ERC20",
+    "USDT_ERC20", "USDC_ERC20", "PAXG_ERC20",
 })
 
 
@@ -183,6 +183,14 @@ def envelope_token_contract_not_configured(
 
 
     nid, label = _network_id_and_label(network_id)
+    if asset == "PAXG_ERC20":
+        return {
+            "status": STATUS_OK, "transactionsStatus": STATUS_UNAVAILABLE,
+            "reason": "verified_token_integration_unavailable",
+            "asset": asset, "network": nid, "networkLabel": label,
+            "transactions": [],
+            "message": "PAX Gold activity is unavailable for this verified token/network integration.",
+        }
     if nid == NETWORK_MAINNET_ID:
         env_var = (
             "ETHEREUM_MAINNET_USDT_CONTRACT_ADDRESS"
@@ -642,6 +650,8 @@ def list_erc20_transactions(
 
 
     if asset not in LIVE_TOKEN_ASSETS:
+        return envelope_indexer_not_configured(asset, network_id=network_id)
+    if asset == "PAXG_ERC20" and network_id != NETWORK_MAINNET_ID:
         return envelope_indexer_not_configured(asset, network_id=network_id)
     if not is_valid_eth_address(address):
         return envelope_invalid_address(asset, network_id=network_id)

@@ -19,7 +19,7 @@ const String kReadinessPanelSummaryChipKey =
     'crypto_wallet_readiness_panel_summary_chip';
 
 
-const String kReadinessPanelTitle = 'Crypto Vault — provider readiness';
+const String kReadinessPanelTitle = 'Assets — provider readiness';
 const String kReadinessPanelSubtitle =
     'Per-asset operator readiness. Booleans and env-var names only — '
     'never raw RPC URLs, API keys, contract values, wallet addresses, '

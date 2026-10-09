@@ -138,7 +138,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get sidebarLogins => 'ログイン';
 
   @override
-  String get sidebarCryptoVault => 'Crypto Vault';
+  String get sidebarCryptoVault => '資産';
 
   @override
   String get sidebarConcierge => 'コンシェルジュ';
@@ -917,7 +917,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get cryptoRetryFailed => '再試行';
 
   @override
-  String get cryptoOpenCryptoVault => 'Crypto Vault を開く';
+  String get cryptoOpenCryptoVault => '資産を開く';
 
   @override
   String get cryptoCopyAddress => 'アドレスをコピー';

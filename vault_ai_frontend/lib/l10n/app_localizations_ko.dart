@@ -138,7 +138,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get sidebarLogins => '로그인';
 
   @override
-  String get sidebarCryptoVault => 'Crypto Vault';
+  String get sidebarCryptoVault => '자산';
 
   @override
   String get sidebarConcierge => '컨시어지';
@@ -918,7 +918,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get cryptoRetryFailed => '다시 시도';
 
   @override
-  String get cryptoOpenCryptoVault => 'Crypto Vault 열기';
+  String get cryptoOpenCryptoVault => '자산 열기';
 
   @override
   String get cryptoCopyAddress => '주소 복사';

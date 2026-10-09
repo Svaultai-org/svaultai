@@ -508,7 +508,7 @@ class _ReceiveCard extends StatelessWidget {
           const SizedBox(height: 6),
           if (!receiveReady)
             const Text(
-              'No wallet yet. Create one in Crypto Vault to get a '
+              'No wallet yet. Create one in Assets to get a '
               'real receive address.',
               key: Key('crypto_vault_chat_receive_no_wallet'),
               style: kWalletBodyStyle,
@@ -594,7 +594,7 @@ class _ReceiveQrCard extends StatelessWidget {
           const SizedBox(height: 6),
           if (!receiveReady)
             const Text(
-              'No wallet yet. Create one in Crypto Vault to view '
+              'No wallet yet. Create one in Assets to view '
               'the QR for your receive address.',
               key: Key('crypto_vault_chat_qr_no_wallet'),
               style: kWalletBodyStyle,
@@ -1003,7 +1003,7 @@ class _ActivityCardState extends State<_ActivityCard> {
             _buildEntriesList(entries)
           else
             const Text(
-              'Open Crypto Vault to see real transaction history. '
+              'Open Assets to see real transaction history. '
               'Svaultai never invents activity.',
               style: kWalletBodyStyle,
             ),
@@ -1417,7 +1417,7 @@ class _ShowVaultCardState extends State<_ShowVaultCard> {
 
             const SizedBox(height: 10),
             Text(
-              "You can't access Crypto Vault on your current "
+              "You can't access Assets on your current "
               "plan. Upgrade to unlock the real, non-custodial "
               "wallet — receive, send, and view balance on "
               "supported networks, with keys that stay on your "

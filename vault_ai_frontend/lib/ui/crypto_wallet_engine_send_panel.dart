@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:pointycastle/digests/keccak.dart';
 
 import '../api_client.dart';
+import '../services/asset_catalog.dart';
 import '../l10n/app_localizations.dart';
 import '../services/app_release_controller_scope.dart';
 import '../services/ethereum_transaction.dart';
@@ -192,6 +193,8 @@ String mainnetSendConfirmPhraseFor(String asset) {
       return 'SEND USDT';
     case 'USDC_ERC20':
       return 'SEND USDC';
+    case kPaxgAssetId:
+      return 'SEND PAXG';
   }
   return 'SEND';
 }
@@ -528,6 +531,7 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   final Future<bool> Function(String pin)? verifyPin;
 
   final String asset;
+  final RegisteredVaultAsset? registeredAsset;
 
   final String? prefilledDestination;
   final String? prefilledAmount;
@@ -633,6 +637,7 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
     required this.isVaultKeyAvailable,
     this.verifyPin,
     this.asset = 'ETH',
+    this.registeredAsset,
     this.prefilledDestination,
     this.prefilledAmount,
     this.network = kCompileTimeDefaultNetworkResolved,
@@ -654,6 +659,14 @@ class CryptoWalletEngineSendPanel extends StatefulWidget {
   });
 
   bool get isMainnet => network == kEvmNetworkEthereumMainnet;
+
+  bool get assetIsSupported {
+    if (asset == 'ETH' || asset == 'USDT_ERC20' || asset == 'USDC_ERC20') {
+      return true;
+    }
+    return registeredAsset != null &&
+        registeredAsset!.matches(asset, network) && registeredAsset!.sendEnabled;
+  }
 
   @override
   State<CryptoWalletEngineSendPanel> createState() =>
@@ -715,6 +728,7 @@ class _CryptoWalletEngineSendPanelState
   bool _suppressMaxQuoteClear = false;
 
   bool _broadcastInFlight = false;
+  bool _registeredPinInFlight = false;
   bool _updatedQuoteAcceptInFlight = false;
   String? _idempotencyKey;
   late final CryptoWalletMainnetSendApprovalSession _ownedApprovalSession =
@@ -1564,13 +1578,7 @@ class _CryptoWalletEngineSendPanelState
 
   // 2026-07-14 (Round 7 hardening): decimals per asset.
   int _amountDecimalsForAsset(String asset) {
-    switch (asset) {
-      case 'USDT_ERC20':
-      case 'USDC_ERC20':
-        return 6;
-      default:
-        return 18;
-    }
+    return asset == 'ETH' ? 18 : erc20AssetSpec(asset)?.decimals ?? 0;
   }
 
   // 2026-07-14 (Round 7 hardening): strict amount validation.
@@ -1652,25 +1660,17 @@ class _CryptoWalletEngineSendPanelState
       if (baseUnits > uint256Max) {
         return kEthSendFormValidationOverflowError;
       }
-    } on FormatException {
+    } on FormatException catch (error) {
+      if (error.message == 'Token amount exceeds transfer range') {
+        return kEthSendFormValidationOverflowError;
+      }
       return kEthSendFormValidationBadAmount;
     }
     return null;
   }
 
   BigInt _amountToBaseUnitsBigInt(String amount, int decimals) {
-    final dotIdx = amount.indexOf('.');
-    if (dotIdx < 0) {
-      final v = BigInt.parse(amount);
-      return v * BigInt.from(10).pow(decimals);
-    }
-    final whole = amount.substring(0, dotIdx);
-    var frac = amount.substring(dotIdx + 1);
-    if (frac.length > decimals) frac = frac.substring(0, decimals);
-    frac = frac.padRight(decimals, '0');
-    final wholeBi = whole.isEmpty ? BigInt.zero : BigInt.parse(whole);
-    final fracBi = frac.isEmpty ? BigInt.zero : BigInt.parse(frac);
-    return wholeBi * BigInt.from(10).pow(decimals) + fracBi;
+    return parseAssetBaseUnits(amount, decimals);
   }
 
   Future<void> _onReview() async {
@@ -1715,6 +1715,10 @@ class _CryptoWalletEngineSendPanelState
   }
 
   Future<void> _onReviewInner() async {
+    if (!widget.assetIsSupported) {
+      setState(() => _error = 'Sending is unavailable for this asset.');
+      return;
+    }
     if (widget.isMainnet && widget.mainnetSendPaused) {
       setState(() => _error = kMainnetSendPausedBanner);
       return;
@@ -1963,6 +1967,18 @@ class _CryptoWalletEngineSendPanelState
       }
 
       final isToken = widget.asset != 'ETH';
+      if (widget.registeredAsset != null &&
+          !widget.registeredAsset!.validatesTransferDraft(body,
+              fromAddress: widget.fromAddress,
+              destination: destination,
+              amount: amount)) {
+        setState(() {
+          _stage = _Stage.form;
+          _error = 'The token transfer could not be verified. '
+              'No transaction was signed. Try again later.';
+        });
+        return;
+      }
       final draft = _DraftFields(
         fromAddress: body['fromAddress'].toString(),
         destinationAddress: body['destinationAddress'].toString(),
@@ -2073,7 +2089,27 @@ class _CryptoWalletEngineSendPanelState
     await _onConfirmAndPin();
   }
 
+  // Only the newly registered asset path uses this additional session fence;
+  // existing Cryptocurrency behavior is intentionally unchanged.
+  bool _registeredAssetAccessExpired() {
+    if (widget.registeredAsset == null) return false;
+    if (mounted && widget.isVaultKeyAvailable()) return false;
+    _broadcastInFlight = false;
+    _clearApprovalEnvelope();
+    if (mounted) {
+      setState(() {
+        _stage = _Stage.review;
+        _error = kEthSendErrorSigningKeyUnavailable;
+      });
+    }
+    return true;
+  }
+
   Future<void> _onConfirmAndPin() async {
+    if (!widget.assetIsSupported) {
+      setState(() => _error = 'Sending is unavailable for this asset.');
+      return;
+    }
     if (!_canConfirmReview) {
       if (_canRetryReadinessFromReview) {
         await _retryReviewFromFreshQuote();
@@ -2085,10 +2121,17 @@ class _CryptoWalletEngineSendPanelState
       return;
     }
 
-    if (_broadcastInFlight || _submittedTxHash != null) {
+    if (_broadcastInFlight || _registeredPinInFlight || _submittedTxHash != null) {
       return;
     }
-    final pin = await _showPinDialog();
+    if (widget.registeredAsset != null) _registeredPinInFlight = true;
+    String? pin;
+    try {
+      pin = await _showPinDialog();
+    } finally {
+      _registeredPinInFlight = false;
+    }
+    if (_registeredAssetAccessExpired()) return;
     if (pin == null) {
       if (mounted) setState(_clearApprovalEnvelope);
       return;
@@ -2105,7 +2148,9 @@ class _CryptoWalletEngineSendPanelState
       bool ok;
       try {
         ok = await widget.verifyPin!(pin);
+        if (_registeredAssetAccessExpired()) return;
       } catch (_) {
+        if (_registeredAssetAccessExpired()) return;
         _broadcastInFlight = false;
         setState(() {
           _stage = _Stage.review;
@@ -2150,6 +2195,7 @@ class _CryptoWalletEngineSendPanelState
     final draftForGate = _draft;
     if (draftForGate != null) {
       final quoteError = await _refreshQuotesBeforeSigning(draftForGate);
+      if (_registeredAssetAccessExpired()) return;
       if (quoteError != null) {
         _traceMainnetSend('confirm_return_review', {
           'branch': 'quote_gate',
@@ -2181,6 +2227,7 @@ class _CryptoWalletEngineSendPanelState
       }
     }
 
+    if (_registeredAssetAccessExpired()) return;
     String? encryptedSecret;
     try {
       final Map<String, dynamic> body = widget.isMainnet
@@ -2193,6 +2240,7 @@ class _CryptoWalletEngineSendPanelState
               asset: widget.asset,
               authToken: widget.authToken,
             );
+      if (_registeredAssetAccessExpired()) return;
       final status = (body['status'] ?? '').toString();
       if (status != 'encrypted_secret_ready') {
         _broadcastInFlight = false;
@@ -2204,6 +2252,7 @@ class _CryptoWalletEngineSendPanelState
       }
       encryptedSecret = body['encryptedWalletSecret'].toString();
     } catch (e) {
+      if (_registeredAssetAccessExpired()) return;
       _broadcastInFlight = false;
       setState(() {
         _stage = _Stage.review;
@@ -2215,7 +2264,13 @@ class _CryptoWalletEngineSendPanelState
     String? privateKeyHex;
     try {
       privateKeyHex = await widget.decryptForVault(encryptedSecret);
+      if (_registeredAssetAccessExpired()) {
+        privateKeyHex = null;
+        encryptedSecret = null;
+        return;
+      }
     } catch (e) {
+      if (_registeredAssetAccessExpired()) return;
       _broadcastInFlight = false;
       setState(() {
         _stage = _Stage.review;
@@ -2239,6 +2294,7 @@ class _CryptoWalletEngineSendPanelState
       );
     } catch (e) {
       privateKeyHex = null;
+      if (_registeredAssetAccessExpired()) return;
       _broadcastInFlight = false;
       setState(() {
         _stage = _Stage.review;
@@ -2247,6 +2303,11 @@ class _CryptoWalletEngineSendPanelState
       return;
     }
     privateKeyHex = null;
+    encryptedSecret = null;
+    if (_registeredAssetAccessExpired()) {
+      signedTx = null;
+      return;
+    }
 
     // 2026-07-13 canary correctness: STAMP a local Activity row
     // BEFORE the broadcast completes so the user always sees the
@@ -2494,31 +2555,9 @@ class _CryptoWalletEngineSendPanelState
   /// = 6 decimals in this build; overrideable per asset if new
   /// tokens are added.
   BigInt _tokenAmountToBaseUnits(String amount, String unit) {
-    int decimals;
-    switch (widget.asset) {
-      case 'USDT_ERC20':
-      case 'USDC_ERC20':
-        decimals = 6;
-        break;
-      default:
-        decimals = 18;
-    }
-    final normalized = amount.trim();
-    if (normalized.isEmpty) return BigInt.zero;
-    final dotIdx = normalized.indexOf('.');
-    if (dotIdx < 0) {
-      return BigInt.parse(normalized) * BigInt.from(10).pow(decimals);
-    }
-    final whole = normalized.substring(0, dotIdx);
-    var frac = normalized.substring(dotIdx + 1);
-    if (frac.length > decimals) {
-      frac = frac.substring(0, decimals);
-    } else {
-      frac = frac.padRight(decimals, '0');
-    }
-    final wholeBi = whole.isEmpty ? BigInt.zero : BigInt.parse(whole);
-    final fracBi = frac.isEmpty ? BigInt.zero : BigInt.parse(frac);
-    return wholeBi * BigInt.from(10).pow(decimals) + fracBi;
+    final spec = erc20AssetSpec(widget.asset);
+    if (spec == null) throw const FormatException('Unsupported token');
+    return parseAssetBaseUnits(amount.trim(), spec.decimals);
   }
 
   // ------------------------------------------------------------
@@ -2690,7 +2729,7 @@ class _CryptoWalletEngineSendPanelState
           text: widget.asset == 'ETH'
               ? kEvmNetworkMainnetSendRealFundsHeadline
               : kEvmNetworkMainnetTokenSendRealFundsHeadline.replaceAll(
-                  '{token}', widget.asset == 'USDT_ERC20' ? 'USDT' : 'USDC'),
+                  '{token}', walletAssetSymbol(widget.asset)),
         );
       }
     }
@@ -2891,7 +2930,8 @@ class _CryptoWalletEngineSendPanelState
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           onSubmitted: (_) => _amountFocus.unfocus(),
           decoration: InputDecoration(
-            labelText: kEthSendAmountLabel,
+            labelText: widget.asset == 'ETH' ? kEthSendAmountLabel
+                : 'Amount (${walletAssetSymbol(widget.asset)})',
             hintText: '0.01',
             isDense: true,
             // 2026-07-13 (Round 5 hardening): Max action that
@@ -2950,13 +2990,7 @@ class _CryptoWalletEngineSendPanelState
               );
             }
             final bal = snap.data;
-            final unit = widget.asset == 'ETH'
-                ? 'ETH'
-                : (widget.asset == 'USDT_ERC20'
-                    ? 'USDT'
-                    : widget.asset == 'USDC_ERC20'
-                        ? 'USDC'
-                        : widget.asset);
+            final unit = walletAssetSymbol(widget.asset);
             if (bal == null) {
               return Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -3055,6 +3089,10 @@ class _CryptoWalletEngineSendPanelState
   // For ERC-20: sets the amount to the full token balance. Gas is
   // paid in ETH (checked separately by the exact-fee gate).
   Future<void> _onMaxTap() async {
+    if (!widget.assetIsSupported) {
+      setState(() => _error = 'Sending is unavailable for this asset.');
+      return;
+    }
     // 2026-07-14 (Round 10 — Max UX): Max no longer requires a
     // persisted draft. Flow:
     //
@@ -3131,8 +3169,7 @@ class _CryptoWalletEngineSendPanelState
       });
       return;
     }
-    final decimals =
-        (widget.asset == 'USDT_ERC20' || widget.asset == 'USDC_ERC20') ? 6 : 18;
+    final decimals = _amountDecimalsForAsset(widget.asset);
     _suppressMaxQuoteClear = true;
     _amountCtrl.text = _formatMaxBaseUnits(wei, decimals);
     _suppressMaxQuoteClear = false;
@@ -3338,7 +3375,7 @@ class _CryptoWalletEngineSendPanelState
         ? (isToken
             ? kEvmNetworkMainnetTokenSendRealFundsHeadline.replaceAll(
                 '{token}',
-                widget.asset == 'USDT_ERC20' ? 'USDT' : 'USDC',
+                walletAssetSymbol(widget.asset),
               )
             : kEvmNetworkMainnetSendRealFundsHeadline)
         : kEthSendReviewWarning;
@@ -3348,6 +3385,12 @@ class _CryptoWalletEngineSendPanelState
       mainAxisSize: MainAxisSize.min,
       children: [
         walletSendSectionHeading('Review send'),
+        if (widget.registeredAsset != null) ...[
+          Text(widget.registeredAsset!.transferNote,
+              key: const Key('send_asset_issuer_transfer_note'),
+              style: kWalletMutedStyle),
+          const SizedBox(height: 12),
+        ],
         WalletSendKvRow(label: 'From', value: d.fromAddress, mono: true),
         if (isMainnet)
           _buildDestinationWarningCard(d.destinationAddress)

@@ -138,7 +138,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarLogins => '登录';
 
   @override
-  String get sidebarCryptoVault => 'Crypto Vault';
+  String get sidebarCryptoVault => '资产';
 
   @override
   String get sidebarConcierge => '智能助理';
@@ -910,7 +910,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cryptoRetryFailed => '重试';
 
   @override
-  String get cryptoOpenCryptoVault => '打开 Crypto Vault';
+  String get cryptoOpenCryptoVault => '打开资产';
 
   @override
   String get cryptoCopyAddress => '复制地址';

@@ -658,6 +658,14 @@ ERC20_TOKEN_ASSETS: frozenset[str] = frozenset({
     "USDC_ERC20",
 })
 
+# Mainnet-only verified real assets must never expand the legacy Sepolia set.
+MAINNET_ERC20_TOKEN_ASSETS = ERC20_TOKEN_ASSETS | frozenset({"PAXG_ERC20"})
+
+
+def _mainnet_asset_gate(asset: str, capability: str):
+    from verified_assets import new_asset_gate
+    return new_asset_gate(_normalize_asset(asset), "ethereum_mainnet", capability)
+
 
 def _underlying_eth_asset(norm_asset: str) -> str:
 
@@ -1023,6 +1031,12 @@ def _summarize_for_listing(record: dict[str, Any]) -> dict[str, Any]:
         "signingMode":   record.get("signingMode"),
         "backupStatus":  record.get("backupStatus"),
     }
+
+
+@router.get("/crypto/wallet/asset-catalog")
+def get_asset_catalog(principal=Depends(require_crypto_entitlement)):
+    from verified_assets import build_asset_catalog
+    return build_asset_catalog()
 
 
 @router.get("/crypto/wallet/assets")
@@ -2300,7 +2314,10 @@ def get_wallet_account_network(
     if nid == NETWORK_ETHEREUM_MAINNET:
         from vault_config import ethereum_mainnet_erc20_receive_enabled
         norm = _normalize_asset(asset)
-        if norm in ERC20_TOKEN_ASSETS:
+        integration_error = _mainnet_asset_gate(norm, "account_detail")
+        if integration_error is not None:
+            return integration_error
+        if norm in MAINNET_ERC20_TOKEN_ASSETS:
             if not ethereum_mainnet_erc20_receive_enabled():
                 body = _network_not_enabled_envelope(
                     network_id=nid, asset=norm,
@@ -2412,6 +2429,9 @@ def _mainnet_receive(
     from evm_networks import NETWORK_ETHEREUM_MAINNET, is_receive_enabled
     from vault_config import ethereum_mainnet_erc20_receive_enabled
     norm = _normalize_asset(asset)
+    integration_error = _mainnet_asset_gate(norm, "receive")
+    if integration_error is not None:
+        return integration_error
     if norm == "ETH":
         if not is_receive_enabled(NETWORK_ETHEREUM_MAINNET):
             return _network_not_enabled_envelope(
@@ -2445,7 +2465,7 @@ def _mainnet_receive(
                 "transactions cannot be reversed."
             ),
         }
-    if norm in ERC20_TOKEN_ASSETS:
+    if norm in MAINNET_ERC20_TOKEN_ASSETS:
         if not ethereum_mainnet_erc20_receive_enabled():
             body = _network_not_enabled_envelope(
                 network_id=NETWORK_ETHEREUM_MAINNET, asset=norm,
@@ -2477,9 +2497,8 @@ def _mainnet_receive(
                     "address holds USDT and USDC on Ethereum Mainnet."
                 ),
             }
-        token_unit = (
-            "USDT" if norm == "USDT_ERC20" else "USDC"
-        )
+        from vault_config import ethereum_mainnet_token_unit
+        token_unit = ethereum_mainnet_token_unit(norm)
         return {
             "wallet_engine":   "receive_ready",
             "asset":           norm,
@@ -2562,8 +2581,11 @@ def _get_mainnet_balance(
         ethereum_mainnet_token_unit,
     )
     norm = _normalize_asset(asset)
+    integration_error = _mainnet_asset_gate(norm, "balance")
+    if integration_error is not None:
+        return integration_error
     is_eth = norm == "ETH"
-    is_token = norm in ERC20_TOKEN_ASSETS
+    is_token = norm in MAINNET_ERC20_TOKEN_ASSETS
     expected_chain_id = chain_id_for(NETWORK_ETHEREUM_MAINNET) or 1
 
     if not is_eth and not is_token:
@@ -2655,8 +2677,16 @@ def _get_mainnet_balance(
             )
         except EvmRpcError as exc:
             return _unavailable(exc.code)
-        scale = Decimal(10) ** decimals
-        token_value = (Decimal(base_units) / scale).normalize()
+        if norm == "PAXG_ERC20":
+            from verified_assets import paxg_base_units_to_decimal
+            try:
+                amount_string = paxg_base_units_to_decimal(base_units)
+            except ValueError:
+                return _unavailable("token_balance_invalid")
+        else:
+            scale = Decimal(10) ** decimals
+            token_value = (Decimal(base_units) / scale).normalize()
+            amount_string = format(token_value, "f")
         return {
             "schema":          SCHEMA_CRYPTO_WALLET_BALANCE_V1,
             "asset":           norm,
@@ -2664,7 +2694,7 @@ def _get_mainnet_balance(
             "networkId":       NETWORK_ETHEREUM_MAINNET,
             "publicAddress":   address,
             "balanceStatus":   WALLET_BALANCE_STATUS_AVAILABLE,
-            "availableAmount": format(token_value, "f"),
+            "availableAmount": amount_string,
             "unit":            token_unit,
             "updatedAt":       fetched_at_s,
             "fetchedAt":       fetched_at_s,
@@ -2760,8 +2790,11 @@ def _list_mainnet_transactions(
     )
     from vault_config import ethereum_mainnet_erc20_receive_enabled
     norm = _normalize_asset(asset)
+    integration_error = _mainnet_asset_gate(norm, "transactions")
+    if integration_error is not None:
+        return integration_error
     is_eth = norm == "ETH"
-    is_token = norm in ERC20_TOKEN_ASSETS
+    is_token = norm in MAINNET_ERC20_TOKEN_ASSETS
     if not is_eth and not is_token:
         return {
             "status":             "ok",
@@ -2773,7 +2806,7 @@ def _list_mainnet_transactions(
             "transactions":       [],
             "message": (
                 "Mainnet transaction history is only enabled for ETH, "
-                "USDT_ERC20, and USDC_ERC20 in this build."
+                "USDT_ERC20, USDC_ERC20 and verified PAXG_ERC20 in this build."
             ),
         }
     if is_eth and not is_receive_enabled(NETWORK_ETHEREUM_MAINNET):
@@ -2883,7 +2916,10 @@ def _create_mainnet_wallet_account(
     from evm_networks import NETWORK_ETHEREUM_MAINNET, is_receive_enabled
     from vault_config import ethereum_mainnet_erc20_receive_enabled
     norm = _normalize_asset(asset)
-    if norm in ERC20_TOKEN_ASSETS:
+    integration_error = _mainnet_asset_gate(norm, "create")
+    if integration_error is not None:
+        return integration_error
+    if norm in MAINNET_ERC20_TOKEN_ASSETS:
         if not ethereum_mainnet_erc20_receive_enabled():
             body = _network_not_enabled_envelope(
                 network_id=NETWORK_ETHEREUM_MAINNET, asset=norm,
@@ -3045,12 +3081,15 @@ def _create_mainnet_send_draft(
         ethereum_mainnet_token_unit,
     )
     norm = _normalize_asset(asset)
+    integration_error = _mainnet_asset_gate(norm, "send_draft")
+    if integration_error is not None:
+        return integration_error
                                                                      
                                                                     
     if ethereum_mainnet_send_paused():
         return _mainnet_send_paused_envelope(norm)
     is_eth = norm == "ETH"
-    is_token = norm in ERC20_TOKEN_ASSETS
+    is_token = norm in MAINNET_ERC20_TOKEN_ASSETS
     if not is_eth and not is_token:
         return {
             "status":  "draft_unavailable",
@@ -3059,7 +3098,7 @@ def _create_mainnet_send_draft(
             "reason":  "asset_not_enabled_on_mainnet",
             "message": (
                 "Mainnet send is only enabled for ETH, USDT_ERC20, "
-                "and USDC_ERC20 in this build."
+                "USDC_ERC20 and verified PAXG_ERC20 in this build."
             ),
         }
 
@@ -3142,9 +3181,13 @@ def _create_mainnet_send_draft(
     if is_token:
         decimals = ethereum_mainnet_token_decimals(norm)
         try:
-            base_units = _parse_amount_to_base_units(
-                payload.amountEth, decimals,
-            )
+            if norm == "PAXG_ERC20":
+                from verified_assets import paxg_amount_base_units
+                base_units = paxg_amount_base_units(payload.amountEth)
+            else:
+                base_units = _parse_amount_to_base_units(
+                    payload.amountEth, decimals,
+                )
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,
@@ -3612,12 +3655,28 @@ def _broadcast_mainnet_signed_transaction(
         ethereum_mainnet_send_paused,
     )
     norm = _normalize_asset(asset)
+    integration_error = _mainnet_asset_gate(norm, "send_broadcast")
+    if integration_error is not None:
+        return integration_error
     vault_id = principal["vault_id"]
+
+    def check_registered_draft_asset(record_asset: Any) -> dict[str, Any] | None:
+        # Only the new verified token is affected. Its stored draft/cached
+        # outcome cannot bypass its capability gate through an ETH route.
+        from verified_assets import PAXG_ASSET
+        if norm == PAXG_ASSET or record_asset == PAXG_ASSET:
+            if record_asset != norm:
+                raise HTTPException(status_code=400, detail={
+                    "wallet_engine": "draft_asset_mismatch",
+                    "message": "Use the asset route matching the server-issued draft.",
+                })
+            return _mainnet_asset_gate(PAXG_ASSET, "send_broadcast")
+        return None
 
     if ethereum_mainnet_send_paused():
         return _mainnet_send_paused_envelope(norm)
                                       
-    if norm != "ETH" and norm not in ERC20_TOKEN_ASSETS:
+    if norm != "ETH" and norm not in MAINNET_ERC20_TOKEN_ASSETS:
         return {
             "status":  "broadcast_unavailable",
             "asset":   norm,
@@ -3625,7 +3684,7 @@ def _broadcast_mainnet_signed_transaction(
             "reason":  "asset_not_enabled_on_mainnet",
             "message": (
                 "Mainnet broadcast is only enabled for ETH, "
-                "USDT_ERC20, and USDC_ERC20 in this build."
+                "USDT_ERC20, USDC_ERC20 and verified PAXG_ERC20 in this build."
             ),
         }
     if not is_valid_signed_tx_hex(payload.signedTransaction):
@@ -3680,6 +3739,9 @@ def _broadcast_mainnet_signed_transaction(
                 },
             )
         if cached is not None:
+            stored_gate = check_registered_draft_asset(cached.get("asset"))
+            if stored_gate is not None:
+                return stored_gate
             logger.info(
                 "[WALLET-ENGINE] mainnet_broadcast_idem_hit "
                 "vault=%s asset=%s",
@@ -3774,6 +3836,10 @@ def _broadcast_mainnet_signed_transaction(
 
 
 
+
+    stored_gate = check_registered_draft_asset(draft.get("asset"))
+    if stored_gate is not None:
+        return stored_gate
 
     if draft.get("consumed"):
         # 2026-07-13 CONSUMED replay dispatch.
@@ -4745,7 +4811,10 @@ def _get_mainnet_send_fee_estimate(
     )
     from vault_config import ethereum_mainnet_rpc_url
     norm = _normalize_asset(payload.asset)
-    if norm not in ("ETH", "USDT_ERC20", "USDC_ERC20"):
+    integration_error = _mainnet_asset_gate(norm, "fee_estimate")
+    if integration_error is not None:
+        return integration_error
+    if norm != "ETH" and norm not in MAINNET_ERC20_TOKEN_ASSETS:
         return {
             "status":  "fee_estimate_unavailable",
             "network": "ethereum_mainnet",
@@ -4808,7 +4877,7 @@ def _get_mainnet_send_fee_estimate(
                 "Ethereum Mainnet."
             ),
         }
-    is_token = norm in ("USDT_ERC20", "USDC_ERC20")
+    is_token = norm in MAINNET_ERC20_TOKEN_ASSETS
     if is_token:
         token_contract = token_contract_for(
             NETWORK_ETHEREUM_MAINNET, norm,
@@ -5088,7 +5157,7 @@ def get_outgoing_history_network(
     out: list[dict[str, Any]] = []
     for r in rows:
         asset = (r.get("asset") or "").strip()
-        is_token = asset in ERC20_TOKEN_ASSETS
+        is_token = asset in MAINNET_ERC20_TOKEN_ASSETS
         unit = (
             ethereum_mainnet_token_unit(asset) if is_token
             else "ETH"
@@ -5170,6 +5239,9 @@ def get_encrypted_wallet_secret_network(
     if nid == NETWORK_ETHEREUM_MAINNET:
         from vault_config import ethereum_mainnet_erc20_receive_enabled
         norm = _normalize_asset(asset)
+        integration_error = _mainnet_asset_gate(norm, "encrypted_secret")
+        if integration_error is not None:
+            return integration_error
                                                                    
                                                                   
         if norm == "ETH":
@@ -5178,7 +5250,7 @@ def get_encrypted_wallet_secret_network(
                     network_id=nid, asset=norm,
                     capability="encrypted_secret",
                 )
-        elif norm in ERC20_TOKEN_ASSETS:
+        elif norm in MAINNET_ERC20_TOKEN_ASSETS:
             if not (
                 ethereum_mainnet_erc20_receive_enabled()
                 or is_send_enabled(nid)
@@ -5200,7 +5272,7 @@ def get_encrypted_wallet_secret_network(
             principal["vault_id"], "ETH", NETWORK_ETHEREUM_MAINNET,
         )
         if record is None:
-            if norm in ERC20_TOKEN_ASSETS:
+            if norm in MAINNET_ERC20_TOKEN_ASSETS:
                 return {
                     "status":          "create_eth_mainnet_wallet_first",
                     "asset":           norm,

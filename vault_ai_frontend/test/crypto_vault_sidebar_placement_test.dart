@@ -44,7 +44,7 @@ void main() {
       final src = await _readMain();
       expect(
         src,
-        contains('tile(_DashboardSection.cryptoVault'),
+        contains(RegExp(r'tile\(\s*_DashboardSection\.cryptoVault')),
         reason:
             'the Drawer must expose a tile(...) call for the '
             'Crypto Vault section so the sidebar surface lists it',
@@ -68,7 +68,7 @@ void main() {
         () async {
       final src = await _readMain();
       final m = RegExp(
-        r'tile\(_DashboardSection\.cryptoVault\s*,\s*'
+        r'tile\(\s*_DashboardSection\.cryptoVault\s*,\s*'
         r'Icons\.(\w+)\s*,',
       ).firstMatch(src);
       expect(
@@ -106,11 +106,13 @@ void main() {
       '(after Logins or after Memory)',
       () async {
         final src = await _readMain();
-        final cryptoIdx  = src.indexOf('tile(_DashboardSection.cryptoVault');
-        final loginsIdx  = src.indexOf('tile(_DashboardSection.logins');
-        final memoryIdx  = src.indexOf('tile(_DashboardSection.memory');
-        final inheritanceIdx =
-            src.indexOf('tile(_DashboardSection.inheritance');
+        int tileIndex(String section) => RegExp(
+            'tile\\(\\s*_DashboardSection\\.$section\\b')
+            .firstMatch(src)?.start ?? -1;
+        final cryptoIdx = tileIndex('cryptoVault');
+        final loginsIdx = tileIndex('logins');
+        final memoryIdx = tileIndex('memory');
+        final inheritanceIdx = tileIndex('inheritance');
         expect(cryptoIdx, greaterThan(-1));
         expect(loginsIdx, greaterThan(-1));
         expect(
@@ -122,8 +124,7 @@ void main() {
         );
         
         
-        final settingsIdx =
-            src.indexOf('tile(_DashboardSection.settings');
+        final settingsIdx = tileIndex('settings');
         if (settingsIdx > -1) {
           expect(
             cryptoIdx < settingsIdx,
@@ -269,11 +270,11 @@ void main() {
         );
         
         expect(
-          find.text('Crypto Vault'),
+          find.text('Assets'),
           findsAtLeastNWidgets(2),
           reason:
               'the page heading + the card title both render '
-              '"Crypto Vault"',
+              '"Assets"',
         );
         
         
@@ -356,9 +357,10 @@ void main() {
 
 
   group('Localization', () {
-    test('en locale getter returns Crypto Vault', () {
+    test('en locale getter returns Assets without changing the internal key', () {
       final loc = AppLocalizationsEn();
-      expect(loc.sidebarCryptoVault, 'Crypto Vault');
+      expect(loc.sidebarCryptoVault, 'Assets');
+      expect(loc.cryptoOpenCryptoVault, 'Open Assets');
     });
 
     test('every locale .arb file carries a sidebarCryptoVault entry',

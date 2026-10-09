@@ -382,9 +382,12 @@ async def lifespan(app: FastAPI):
         _startup_tasks = None
 
                                                            
+    from concierge_scheduler import start_concierge_scheduler, stop_concierge_scheduler
+    _concierge_task = start_concierge_scheduler()
     try:
         yield
     finally:
+        await stop_concierge_scheduler(_concierge_task)
                                                                     
                                                                   
         if _startup_tasks is not None:
@@ -440,6 +443,9 @@ app.include_router(security_center_router)
                                                           
 from routes.expiry_routes import router as expiry_router
 app.include_router(expiry_router)
+
+from routes.concierge_routes import router as concierge_router
+app.include_router(concierge_router)
 
                                                                      
 from routes.memory_routes import router as memory_router

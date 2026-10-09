@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_client.dart';
+import '../services/asset_catalog.dart';
 import '../services/ethereum_wallet.dart';
 import '../services/evm_networks.dart';
 import 'crypto_wallet_engine_design.dart';
@@ -95,6 +96,7 @@ class CryptoWalletEngineReceivePanel extends StatefulWidget {
 
   final String asset;
   final String? network;
+  final RegisteredVaultAsset? registeredAsset;
 
   const CryptoWalletEngineReceivePanel({
     super.key,
@@ -104,6 +106,7 @@ class CryptoWalletEngineReceivePanel extends StatefulWidget {
     required this.isVaultKeyAvailable,
     this.asset = _kEthAsset,
     this.network,
+    this.registeredAsset,
   });
 
   String get effectiveNetwork =>
@@ -130,9 +133,20 @@ class _CryptoWalletEngineReceivePanelState
   }
 
   bool get _isToken =>
-      kReceivePanelTokenAssets.contains(widget.asset);
+      kReceivePanelTokenAssets.contains(widget.asset) || _isRegisteredToken;
+
+  bool get _isRegisteredToken => widget.registeredAsset != null &&
+      widget.registeredAsset!.matches(widget.asset, widget.effectiveNetwork) &&
+      widget.registeredAsset!.receiveEnabled;
 
   Future<void> _load() async {
+    if (widget.asset == kPaxgAssetId && !_isRegisteredToken) {
+      setState(() {
+        _loading = false;
+        _error = 'Receiving is unavailable for this asset.';
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -163,6 +177,7 @@ class _CryptoWalletEngineReceivePanelState
   }
 
   Future<void> _createWallet() async {
+    if (_creating || (widget.asset == kPaxgAssetId && !_isRegisteredToken)) return;
     if (!widget.isVaultKeyAvailable()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -197,6 +212,18 @@ class _CryptoWalletEngineReceivePanelState
     
     
     wallet = null;
+    // The new registered-token flow must not persist a generated wallet after
+    // an asynchronous encryption completes for an expired vault session.
+    if (_isRegisteredToken && (!mounted || !widget.isVaultKeyAvailable())) {
+      encryptedSecret = null;
+      if (mounted) {
+        setState(() {
+          _creating = false;
+          _error = kEthReceiveCreateBlockedNoVaultKey;
+        });
+      }
+      return;
+    }
     try {
       if (widget.network != null) {
         await widget.client.createCryptoWalletAccountNetwork(
@@ -228,6 +255,14 @@ class _CryptoWalletEngineReceivePanelState
     
     encryptedSecret = null;
     if (!mounted) return;
+    if (_isRegisteredToken && !widget.isVaultKeyAvailable()) {
+      setState(() {
+        _creating = false;
+        _state = null;
+        _error = kEthReceiveCreateBlockedNoVaultKey;
+      });
+      return;
+    }
     setState(() {
       _creating = false;
     });
@@ -326,13 +361,14 @@ class _CryptoWalletEngineReceivePanelState
     if (status == 'no_account') {
       
       
-      if (_isToken) {
+      if (_isToken && !_isRegisteredToken) {
         return _buildCreateEthFirstState(context);
       }
       return _buildCreateState(context);
     }
     if (status == 'create_eth_wallet_first') {
-      return _buildCreateEthFirstState(context);
+      return _isRegisteredToken ? _buildCreateState(context)
+          : _buildCreateEthFirstState(context);
     }
     if (status == 'receive_ready') {
       return _buildReadyState(context, body);
@@ -382,9 +418,10 @@ class _CryptoWalletEngineReceivePanelState
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            kEthReceivePanelTitle,
-            style: TextStyle(
+          Text(
+            _isRegisteredToken ? 'Receive ${widget.registeredAsset!.symbol}'
+                : kEthReceivePanelTitle,
+            style: const TextStyle(
               color: kWalletTextPrimary,
               fontSize: 20,
               fontWeight: FontWeight.w800,
@@ -398,6 +435,12 @@ class _CryptoWalletEngineReceivePanelState
             style: kWalletBodyStyle,
           ),
           const SizedBox(height: 14),
+          if (_isRegisteredToken) ...[
+            const Text('Create an Ethereum Mainnet wallet to receive PAXG. '
+                'Its private key is generated and encrypted on this device.',
+                style: kWalletBodyStyle),
+            const SizedBox(height: 12),
+          ],
           Container(
             padding: const EdgeInsets.all(12),
             decoration: walletSuccessPanel(),
@@ -452,9 +495,10 @@ class _CryptoWalletEngineReceivePanelState
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            kEthReceivePanelTitle,
-            style: TextStyle(
+          Text(
+            _isRegisteredToken ? 'Receive ${widget.registeredAsset!.symbol}'
+                : kEthReceivePanelTitle,
+            style: const TextStyle(
               color: kWalletTextPrimary,
               fontSize: 20,
               fontWeight: FontWeight.w800,
@@ -520,7 +564,10 @@ class _CryptoWalletEngineReceivePanelState
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      receivePanelTokenSharedBannerFor(
+                      _isRegisteredToken
+                          ? 'PAXG uses your Ethereum Mainnet wallet address. '
+                            'Do not send it on another network.'
+                          : receivePanelTokenSharedBannerFor(
                         widget.effectiveNetwork,
                       ),
                       style: const TextStyle(

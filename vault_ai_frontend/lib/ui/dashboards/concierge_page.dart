@@ -1,13 +1,13 @@
-
-
 import 'package:flutter/material.dart';
 import '../../api_client.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/concierge_exposure.dart';
 import '../motion.dart';
 import '../primitives.dart';
 import '../responsive.dart';
 import '../tokens.dart';
 import 'dashboard_shell.dart';
+import 'concierge_exposure_panel.dart';
 
 class ConciergePage extends StatefulWidget {
   final VaultAIClient client;
@@ -18,6 +18,7 @@ class ConciergePage extends StatefulWidget {
   final VoidCallback? onOpenSecurityCenter;
   final VoidCallback? onOpenExpiry;
   final VoidCallback? onOpenInheritance;
+  final ConciergeExposureBindings? exposureBindings;
 
   const ConciergePage({
     super.key,
@@ -29,6 +30,7 @@ class ConciergePage extends StatefulWidget {
     this.onOpenSecurityCenter,
     this.onOpenExpiry,
     this.onOpenInheritance,
+    this.exposureBindings,
   });
 
   @override
@@ -40,6 +42,7 @@ class _ConciergePageState extends State<ConciergePage> {
   Map<String, dynamic>? _expiry;
   bool _loading = true;
   String? _error;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -58,26 +61,41 @@ class _ConciergePageState extends State<ConciergePage> {
 
   Future<void> _load() async {
     if (!mounted) return;
+    final generation = ++_loadGeneration;
+    final token = widget.authToken;
+    final vault = widget.vaultName;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      
       final futures = await Future.wait([
         _safeLoadSecurity(),
         _safeLoadExpiry(),
       ]);
-      if (!mounted) return;
+      if (!mounted ||
+          generation != _loadGeneration ||
+          token != widget.authToken ||
+          vault != widget.vaultName) {
+        return;
+      }
       setState(() {
         _security = futures[0];
         _expiry = futures[1];
+        if (_security == null ||
+            _expiry == null ||
+            _security?['engine'] == 'empty' ||
+            _expiry?['engine'] == 'off' ||
+            _expiry?['engine'] == 'unavailable') {
+          _error =
+              'Some vault-health checks are unavailable. No all-clear result has been confirmed.';
+        }
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
-        _error = '$e';
+        _error = 'Vault-health checks are unavailable. Please try again.';
         _loading = false;
       });
     }
@@ -125,10 +143,16 @@ class _ConciergePageState extends State<ConciergePage> {
   }
 
   Widget _buildBody(AppLocalizations l) {
-    if (_loading && _security == null && _expiry == null) {
+    if (_loading &&
+        _security == null &&
+        _expiry == null &&
+        widget.exposureBindings == null) {
       return DashboardLoading(message: l.conciergeLoading);
     }
-    if (_error != null && _security == null && _expiry == null) {
+    if (_error != null &&
+        _security == null &&
+        _expiry == null &&
+        widget.exposureBindings == null) {
       return DashboardError(
         message: '${l.conciergeErrorPrefix} $_error',
         onRetry: _load,
@@ -143,18 +167,23 @@ class _ConciergePageState extends State<ConciergePage> {
     final warning = allAlerts
         .where((a) => (a['severity'] as String?) == 'warning')
         .toList();
-    final timeline = allAlerts
-        .where((a) {
-          final d = a['days_until'];
-          return d is int && d >= 0 && d <= 90;
-        })
-        .toList()
+    final timeline = allAlerts.where((a) {
+      final d = a['days_until'];
+      return d is int && d >= 0 && d <= 90;
+    }).toList()
       ..sort(
           (a, b) => (a['days_until'] as int).compareTo(b['days_until'] as int));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (widget.exposureBindings != null)
+          ConciergeExposurePanel(bindings: widget.exposureBindings!),
+        if (_error != null)
+          Padding(
+              padding: const EdgeInsets.only(bottom: VaultSpacing.md),
+              child: Text(_error!,
+                  style: const TextStyle(color: VaultColors.severityWarn))),
         _PostureRow(
           security: _security,
           expiry: _expiry,
@@ -185,7 +214,6 @@ class _ConciergePageState extends State<ConciergePage> {
               ],
             ),
           ),
-
         if (warning.isNotEmpty)
           DashboardSection(
             title: l.conciergeComingUp,
@@ -209,7 +237,6 @@ class _ConciergePageState extends State<ConciergePage> {
               ],
             ),
           ),
-
         if (recs.isNotEmpty)
           DashboardSection(
             title: l.conciergeRecommendations,
@@ -233,7 +260,6 @@ class _ConciergePageState extends State<ConciergePage> {
               ],
             ),
           ),
-
         DashboardSection(
           title: l.conciergeTravelReadiness,
           icon: Icons.flight_takeoff,
@@ -242,15 +268,17 @@ class _ConciergePageState extends State<ConciergePage> {
             onAskVaultAI: widget.onAskVaultAI,
           ),
         ),
-
         if (timeline.isNotEmpty)
           DashboardSection(
             title: l.conciergeRenewalTimeline,
             icon: Icons.timeline,
             child: _RenewalTimeline(items: timeline),
           ),
-
-        if (critical.isEmpty && warning.isEmpty && recs.isEmpty)
+        if (!_loading &&
+            _error == null &&
+            critical.isEmpty &&
+            warning.isEmpty &&
+            recs.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: VaultSpacing.lg),
             child: DashboardEmpty(
@@ -263,23 +291,16 @@ class _ConciergePageState extends State<ConciergePage> {
     );
   }
 
-  
   List<Map<String, dynamic>> get _allExpiryAlerts {
     if (_expiry == null) return const [];
     final raw = (_expiry!['alerts'] as List?) ?? const [];
-    return raw
-        .whereType<Map>()
-        .map((m) => m.cast<String, dynamic>())
-        .toList();
+    return raw.whereType<Map>().map((m) => m.cast<String, dynamic>()).toList();
   }
 
   List<Map<String, dynamic>> get _recommendations {
     if (_security == null) return const [];
     final raw = (_security!['recommendations'] as List?) ?? const [];
-    return raw
-        .whereType<Map>()
-        .map((m) => m.cast<String, dynamic>())
-        .toList();
+    return raw.whereType<Map>().map((m) => m.cast<String, dynamic>()).toList();
   }
 
   void _routeRecommendation(Map<String, dynamic> rec) {
@@ -292,11 +313,10 @@ class _ConciergePageState extends State<ConciergePage> {
       Navigator.pushNamed(context, route);
       return;
     }
-    
+
     widget.onOpenSecurityCenter?.call();
   }
 }
-
 
 class _PostureRow extends StatelessWidget {
   final Map<String, dynamic>? security;
@@ -361,7 +381,9 @@ class _PostureRow extends StatelessWidget {
                 : l.conciergeInheritanceUnset),
         accent: inhFrozen
             ? VaultColors.severityWarn
-            : (inhConfigured ? VaultColors.accentBright : VaultColors.textTertiary),
+            : (inhConfigured
+                ? VaultColors.accentBright
+                : VaultColors.textTertiary),
         icon: Icons.family_restroom_outlined,
         footer: inhFrozen
             ? l.conciergePostureFrozen
@@ -386,8 +408,7 @@ class _PostureRow extends StatelessWidget {
         ],
       );
     }
-    
-    
+
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -403,10 +424,14 @@ class _PostureRow extends StatelessWidget {
 
   Color _accentForBand(String band) {
     switch (band.toLowerCase()) {
-      case 'strong':   return VaultColors.severityOk;
-      case 'moderate': return VaultColors.severityWarn;
-      case 'weak':     return VaultColors.severityCrit;
-      default:         return VaultColors.textSecondary;
+      case 'strong':
+        return VaultColors.severityOk;
+      case 'moderate':
+        return VaultColors.severityWarn;
+      case 'weak':
+        return VaultColors.severityCrit;
+      default:
+        return VaultColors.textSecondary;
     }
   }
 
@@ -496,7 +521,6 @@ class _PostureCard extends StatelessWidget {
   }
 }
 
-
 class _AlertActionRow extends StatelessWidget {
   final Map<String, dynamic> row;
   final void Function(String prompt)? onAskVaultAI;
@@ -567,20 +591,29 @@ class _AlertActionRow extends StatelessWidget {
 
   IconData _iconForType(String t) {
     switch (t) {
-      case 'passport':       return Icons.book_outlined;
-      case 'visa':           return Icons.flight_takeoff;
-      case 'id_card':        return Icons.badge_outlined;
-      case 'driver_license': return Icons.directions_car_outlined;
-      case 'insurance':      return Icons.shield_outlined;
-      case 'tax':            return Icons.account_balance_outlined;
-      case 'contract':       return Icons.handshake_outlined;
-      case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
-      default:               return Icons.event_outlined;
+      case 'passport':
+        return Icons.book_outlined;
+      case 'visa':
+        return Icons.flight_takeoff;
+      case 'id_card':
+        return Icons.badge_outlined;
+      case 'driver_license':
+        return Icons.directions_car_outlined;
+      case 'insurance':
+        return Icons.shield_outlined;
+      case 'tax':
+        return Icons.account_balance_outlined;
+      case 'contract':
+        return Icons.handshake_outlined;
+      case 'subscription':
+        return Icons.autorenew;
+      case 'inheritance':
+        return Icons.family_restroom_outlined;
+      default:
+        return Icons.event_outlined;
     }
   }
 }
-
 
 class _RecommendationRow extends StatelessWidget {
   final Map<String, dynamic> rec;
@@ -625,35 +658,49 @@ class _RecommendationRow extends StatelessWidget {
 
   String _severityFromPriority(String p) {
     switch (p) {
-      case 'high':     return 'critical';
-      case 'moderate': return 'warning';
-      case 'low':      return 'info';
-      default:         return 'info';
+      case 'high':
+        return 'critical';
+      case 'moderate':
+        return 'warning';
+      case 'low':
+        return 'info';
+      default:
+        return 'info';
     }
   }
 
   String _priorityLabel(AppLocalizations l, String p) {
     switch (p) {
-      case 'high':     return l.priorityHigh;
-      case 'moderate': return l.priorityMedium;
-      case 'low':      return l.priorityLow;
-      default:         return p.toUpperCase();
+      case 'high':
+        return l.priorityHigh;
+      case 'moderate':
+        return l.priorityMedium;
+      case 'low':
+        return l.priorityLow;
+      default:
+        return p.toUpperCase();
     }
   }
 
   IconData _iconForId(String id) {
     switch (id) {
-      case 'weak_passwords':       return Icons.password_outlined;
-      case 'pending_device':       return Icons.devices_other;
-      case 'pending_self_approval': return Icons.hourglass_top;
-      case 'inactive_devices':     return Icons.device_unknown_outlined;
-      case 'enable_inheritance':   return Icons.family_restroom_outlined;
-      case 'unanalyzed_passwords': return Icons.analytics_outlined;
-      default:                     return Icons.lightbulb_outline;
+      case 'weak_passwords':
+        return Icons.password_outlined;
+      case 'pending_device':
+        return Icons.devices_other;
+      case 'pending_self_approval':
+        return Icons.hourglass_top;
+      case 'inactive_devices':
+        return Icons.device_unknown_outlined;
+      case 'enable_inheritance':
+        return Icons.family_restroom_outlined;
+      case 'unanalyzed_passwords':
+        return Icons.analytics_outlined;
+      default:
+        return Icons.lightbulb_outline;
     }
   }
 }
-
 
 class _TravelReadiness extends StatelessWidget {
   final List<Map<String, dynamic>> alerts;
@@ -673,9 +720,8 @@ class _TravelReadiness extends StatelessWidget {
       orElse: () => const <String, dynamic>{},
     );
 
-    final passportDays = passport['days_until'] is int
-        ? passport['days_until'] as int
-        : null;
+    final passportDays =
+        passport['days_until'] is int ? passport['days_until'] as int : null;
     final visaDays =
         visa['days_until'] is int ? visa['days_until'] as int : null;
 
@@ -727,9 +773,7 @@ class _TravelReadiness extends StatelessWidget {
                 ),
               ),
               SeverityChip(
-                level: overall
-                    ? 'ok'
-                    : (partial ? 'warning' : 'critical'),
+                level: overall ? 'ok' : (partial ? 'warning' : 'critical'),
                 label: overall ? 'OK' : (partial ? 'PARTIAL' : 'CHECK'),
               ),
             ],
@@ -858,7 +902,6 @@ class _TravelTile extends StatelessWidget {
   }
 }
 
-
 class _RenewalTimeline extends StatelessWidget {
   final List<Map<String, dynamic>> items;
   const _RenewalTimeline({required this.items});
@@ -869,7 +912,8 @@ class _RenewalTimeline extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       child: Row(
         children: items.map((item) {
-          final severity = ((item['severity'] as String?) ?? 'info').toLowerCase();
+          final severity =
+              ((item['severity'] as String?) ?? 'info').toLowerCase();
           final accent = VaultColors.forSeverity(severity);
           final days = item['days_until'] as int;
           final label = (item['doc_label'] as String?) ?? '';
@@ -929,16 +973,26 @@ class _RenewalTimeline extends StatelessWidget {
 
   IconData _iconForType(String t) {
     switch (t) {
-      case 'passport':       return Icons.book_outlined;
-      case 'visa':           return Icons.flight_takeoff;
-      case 'id_card':        return Icons.badge_outlined;
-      case 'driver_license': return Icons.directions_car_outlined;
-      case 'insurance':      return Icons.shield_outlined;
-      case 'tax':            return Icons.account_balance_outlined;
-      case 'contract':       return Icons.handshake_outlined;
-      case 'subscription':   return Icons.autorenew;
-      case 'inheritance':    return Icons.family_restroom_outlined;
-      default:               return Icons.event_outlined;
+      case 'passport':
+        return Icons.book_outlined;
+      case 'visa':
+        return Icons.flight_takeoff;
+      case 'id_card':
+        return Icons.badge_outlined;
+      case 'driver_license':
+        return Icons.directions_car_outlined;
+      case 'insurance':
+        return Icons.shield_outlined;
+      case 'tax':
+        return Icons.account_balance_outlined;
+      case 'contract':
+        return Icons.handshake_outlined;
+      case 'subscription':
+        return Icons.autorenew;
+      case 'inheritance':
+        return Icons.family_restroom_outlined;
+      default:
+        return Icons.event_outlined;
     }
   }
 }

@@ -189,7 +189,7 @@ const String kCryptoWalletEngineTransactionsEmptyBanner =
     'the asset is wired to its RPC / indexer endpoint.';
 
 const String kCryptoWalletEngineSavedRecordsHint =
-    'Tip: Crypto Vault keeps your saved public addresses, encrypted '
+    'Tip: Assets keeps your saved public addresses, encrypted '
     'backups, and manual notes alongside live wallet accounts. Switch '
     'to the Saved records tab below.';
 
@@ -271,7 +271,7 @@ const String kCryptoWalletEngineSecurityOpenLabel = 'Open security';
 
 class CryptoWalletEnginePage extends StatefulWidget {
   // 2026-07-12: onOpenLite parameter removed — CryptoVaultLitePage
-  // is retired. The engine page is the sole Crypto Vault surface;
+  // is retired. The engine page is the sole Assets surface;
   // this parameter was never invoked from production callers
   // (guarded by test_crypto_wallet_engine_dashboard_cleanup CL13).
   final void Function(String prompt)? onSendChatPrompt;

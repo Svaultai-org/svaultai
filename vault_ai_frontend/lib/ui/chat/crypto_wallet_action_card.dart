@@ -147,7 +147,7 @@ class CryptoWalletActionCard extends StatelessWidget {
       case kCryptoWalletActionIntentOpenCryptoWallet:
       case kCryptoWalletActionIntentShowWallet:
       default:
-        return 'Open Crypto Vault';
+        return 'Open Assets';
     }
   }
 
@@ -192,7 +192,7 @@ class CryptoWalletActionCard extends StatelessWidget {
       case kCryptoWalletActionIntentOpenCryptoWallet:
       case kCryptoWalletActionIntentShowWallet:
       default:
-        return 'Crypto Vault';
+        return 'Assets';
     }
   }
 

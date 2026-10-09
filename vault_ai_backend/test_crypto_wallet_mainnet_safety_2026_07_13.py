@@ -843,6 +843,8 @@ class MainnetRpcMethodContract(unittest.TestCase):
                 "eth_chainId",
                 "eth_blockNumber",
                 "eth_call",
+                # Read-only deployed-code verification for pinned real assets.
+                "eth_getCode",
                 "eth_getTransactionCount",
                 "eth_gasPrice",
                 "eth_estimateGas",

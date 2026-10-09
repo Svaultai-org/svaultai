@@ -951,6 +951,8 @@ class SourceGuardTests(unittest.TestCase):
             "eth_chainId",
             "eth_blockNumber",
             "eth_getBalance", "eth_call",
+            # Read-only deployed-code verification for pinned real assets.
+            "eth_getCode",
             "eth_getTransactionCount", "eth_gasPrice",
             "eth_estimateGas", "eth_sendRawTransaction",
             # 2026-07-13 canary hardening: post-broadcast visibility

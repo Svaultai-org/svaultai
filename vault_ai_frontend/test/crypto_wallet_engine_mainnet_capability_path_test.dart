@@ -19,6 +19,7 @@ class _CapabilityClient extends VaultAIClient {
   @override
   Future<Map<String, dynamic>> getCryptoWalletFeatures({
     required String authToken,
+    bool Function()? responseIsCurrent,
   }) async {
     featuresCalls += 1;
     final error = featuresError;

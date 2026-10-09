@@ -21,6 +21,7 @@ ALLOWED_RPC_METHODS: frozenset[str] = frozenset({
     "eth_blockNumber",
     "eth_getBalance",
     "eth_call",
+    "eth_getCode",
     "eth_getTransactionCount",
     "eth_gasPrice",
     "eth_estimateGas",

@@ -2,32 +2,32 @@ import 'package:flutter/material.dart';
 
 const String kCryptoVaultLockedType = 'crypto_vault_locked';
 
-const String kCryptoVaultDefaultTitle = 'Crypto Vault';
+const String kCryptoVaultDefaultTitle = 'Assets';
 const String kCryptoVaultDefaultStatus = 'Upgrade required';
 const String kCryptoVaultActiveStatus = 'Active';
 
 const String kCryptoVaultLoadingStatus = 'Checking access…';
 const String kCryptoVaultDefaultBody =
-    "Crypto Vault is a real, non-custodial wallet — receive, "
+    "Assets is a real, non-custodial wallet — receive, "
     "send, and view balance on supported networks, with keys "
     "that stay on your device. It's not available on your "
     "current plan. Upgrade your account to unlock it.";
 
 const String kCryptoVaultActiveBody =
-    "Crypto Vault is active on your account. Open it to pick "
+    "Assets is active on your account. Open it to pick "
     "a supported asset, use Receive for the wallet address and "
     "QR code, use Send to enter a recipient and amount, and "
     "view balance and transaction history where supported.";
 
-const String kCryptoVaultLoadingBody = 'Loading your Crypto Vault access.';
+const String kCryptoVaultLoadingBody = 'Loading your Assets access.';
 const String kCryptoVaultLearnMoreLabel = 'Learn more';
 const String kCryptoVaultUpgradeRequiredLabel = 'Upgrade required';
-const String kCryptoVaultOpenCryptoVaultLabel = 'Open Crypto Vault';
+const String kCryptoVaultOpenCryptoVaultLabel = 'Open Assets';
 
 const String kCryptoVaultLearnMoreBody =
-    "Crypto Vault is a real, non-custodial wallet built into "
+    "Assets is a real, non-custodial wallet built into "
     "Svaultai. Upgrade your account to unlock it, then open "
-    "Crypto Vault to pick a supported asset, use Receive for "
+    "Assets to pick a supported asset, use Receive for "
     "the wallet address and QR code, use Send to enter a "
     "recipient and amount, and view balance and transaction "
     "history where supported. Every send requires PIN unlock "

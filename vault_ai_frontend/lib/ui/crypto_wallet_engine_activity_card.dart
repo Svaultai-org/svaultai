@@ -197,6 +197,8 @@ class CryptoWalletActivityCard extends StatefulWidget {
   final VaultAIClient? apiClient;
   final int limit;
   final String? network;
+  /// Optional registered-asset lease; ordinary Crypto callers leave it unset.
+  final bool Function()? responseIsCurrent;
 
   /// 2026-07-13 canary correctness: optional local outgoing store.
   /// Rows in the store are merged with indexer results (dedup by
@@ -219,6 +221,7 @@ class CryptoWalletActivityCard extends StatefulWidget {
     this.apiClient,
     this.limit = 20,
     this.network,
+    this.responseIsCurrent,
     this.localStore,
     this.durableStore,
   });
@@ -300,6 +303,7 @@ class _CryptoWalletActivityCardState extends State<CryptoWalletActivityCard> {
       widget.authToken != null && widget.apiClient != null;
 
   Future<void> _load() async {
+    if (widget.responseIsCurrent != null && !widget.responseIsCurrent!()) return;
     if (!_hasWiring) {
       setState(() {
         _state = _ActivityFetchState.ok;
@@ -325,7 +329,10 @@ class _CryptoWalletActivityCardState extends State<CryptoWalletActivityCard> {
               authToken: widget.authToken!,
               limit: widget.limit,
             );
-      if (!mounted) return;
+      if (!mounted ||
+          (widget.responseIsCurrent != null && !widget.responseIsCurrent!())) {
+        return;
+      }
       final status = (body['transactionsStatus'] ?? '').toString();
       final reason = (body['reason'] ?? '').toString();
       final txsRaw = body['transactions'];
@@ -347,7 +354,10 @@ class _CryptoWalletActivityCardState extends State<CryptoWalletActivityCard> {
         _rows = rows;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted ||
+          (widget.responseIsCurrent != null && !widget.responseIsCurrent!())) {
+        return;
+      }
       setState(() {
         _state = _ActivityFetchState.error;
       });

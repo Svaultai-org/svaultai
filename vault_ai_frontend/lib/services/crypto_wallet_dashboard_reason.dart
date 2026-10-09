@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart' show kDebugMode;
 
 import '../api_client.dart';
+import 'asset_catalog.dart';
 import 'crypto_wallet_features.dart';
 
 const String kDashboardReasonAuthExpired = 'auth_expired';
@@ -169,9 +170,14 @@ Future<DashboardAssetLiveState> loadAssetWalletState({
   required String authToken,
   required String network,
   required String asset,
+  RegisteredVaultAsset? registeredAsset,
+  bool Function()? responseIsCurrent,
   Duration receiveTimeout = const Duration(seconds: 8),
   Duration balanceTimeout = const Duration(seconds: 10),
 }) async {
+  if (responseIsCurrent != null && !responseIsCurrent()) {
+    return DashboardAssetLiveState.reason(reason: 'vault_access_changed');
+  }
   _walletBalanceDevLog(
     'live_refresh_started asset=$asset network=$network',
   );
@@ -195,6 +201,9 @@ Future<DashboardAssetLiveState> loadAssetWalletState({
     return DashboardAssetLiveState.reason(reason: classified);
   }
 
+  if (responseIsCurrent != null && !responseIsCurrent()) {
+    return DashboardAssetLiveState.reason(reason: 'vault_access_changed');
+  }
   final receiveEngineStatus = (receive['wallet_engine'] ?? '').toString();
   final rawAddr = receive['publicAddress'];
   final walletExists = receiveEngineStatus == 'receive_ready' &&
@@ -223,6 +232,9 @@ Future<DashboardAssetLiveState> loadAssetWalletState({
           address: address,
         )
         .timeout(balanceTimeout);
+    if (responseIsCurrent != null && !responseIsCurrent()) {
+      return DashboardAssetLiveState.reason(reason: 'vault_access_changed');
+    }
 
     final sortedKeys = (balance.keys.toList()..sort()).join(',');
     final balanceStatus = (balance['balanceStatus'] ?? '').toString();
@@ -241,6 +253,13 @@ Future<DashboardAssetLiveState> loadAssetWalletState({
     );
 
     if (balanceStatus == 'available') {
+      if (registeredAsset != null &&
+          (!registeredAsset.matches(asset, network) ||
+           !registeredAsset.validatesBalance(balance, address))) {
+        return DashboardAssetLiveState.reason(
+          reason: 'rpc_error', publicAddress: address,
+        );
+      }
       final amt = balance['availableAmount'] ?? balance['balance'];
       final unit = balance['unit'];
       final amount = amt?.toString() ?? '0';

@@ -552,8 +552,17 @@ String? apiClientDeviceId() => _apiClientDeviceId;
 
 class VaultAIClient {
   final String baseUrl;
+  /// Captured key/session lease used only by the new registered-asset client.
+  /// Existing clients omit this and retain their normal request behavior.
+  final bool Function()? walletResponseIsCurrent;
 
-  const VaultAIClient({required this.baseUrl});
+  const VaultAIClient({required this.baseUrl, this.walletResponseIsCurrent});
+
+  void _assertWalletResponseCurrent() {
+    if (walletResponseIsCurrent != null && !walletResponseIsCurrent!()) {
+      throw StateError('Asset wallet access changed');
+    }
+  }
 
   Map<String, String> _defaultHeaders({
     String? authToken,
@@ -5199,6 +5208,7 @@ class VaultAIClient {
     required String asset,
     required String authToken,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/receive',
     );
@@ -5206,6 +5216,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5232,6 +5243,7 @@ class VaultAIClient {
     int? restoreHeight,
     String? scannerMode,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/create',
     );
@@ -5252,6 +5264,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5274,6 +5287,7 @@ class VaultAIClient {
     required String authToken,
     required String address,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/balance?address=$address',
     );
@@ -5281,6 +5295,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5303,6 +5318,7 @@ class VaultAIClient {
     required String authToken,
     int limit = 20,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/transactions?limit=$limit',
     );
@@ -5310,6 +5326,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5392,6 +5409,7 @@ class VaultAIClient {
     String? draftPayloadCiphertext,
     String? senderAddressLookupHash,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/send/draft',
     );
@@ -5413,6 +5431,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5437,6 +5456,7 @@ class VaultAIClient {
     String? idempotencyKey,
     String? draftId,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/send/broadcast',
     );
@@ -5454,6 +5474,7 @@ class VaultAIClient {
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5475,6 +5496,7 @@ class VaultAIClient {
     required String asset,
     required String authToken,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/encrypted-secret',
     );
@@ -5482,6 +5504,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5498,8 +5521,34 @@ class VaultAIClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> getCryptoWalletAssetCatalog({
+    required String authToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    final uri = Uri.parse('$baseUrl/crypto/wallet/asset-catalog').replace(
+      queryParameters: {'_': DateTime.now().millisecondsSinceEpoch.toString()},
+    );
+    final headers = _defaultHeaders(authToken: authToken, json: false);
+    headers['Cache-Control'] = 'no-cache, no-store';
+    final response = await http.get(uri, headers: headers);
+    if (responseIsCurrent != null && !responseIsCurrent()) {
+      throw StateError('Asset catalog access changed');
+    }
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw Exception('Asset catalog is unavailable');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid asset catalog response');
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> getCryptoWalletFeatures({
     required String authToken,
+    bool Function()? responseIsCurrent,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/features').replace(
       queryParameters: <String, String>{
@@ -5513,6 +5562,9 @@ class VaultAIClient {
       uri,
       headers: headers,
     );
+    if (responseIsCurrent != null && !responseIsCurrent()) {
+      throw StateError('Asset availability access changed');
+    }
     _vlog('crypto_wallet.features.response', {
       'status': response.statusCode,
     });
@@ -5670,6 +5722,7 @@ class VaultAIClient {
     required String txHash,
     required String authToken,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/transaction/$txHash',
     );
@@ -5677,6 +5730,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5702,6 +5756,7 @@ class VaultAIClient {
     required String network,
     required String authToken,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/outgoing/history',
     );
@@ -5709,6 +5764,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5774,6 +5830,7 @@ class VaultAIClient {
     required String asset,
     required String authToken,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/send/fee_estimate',
     );
@@ -5786,6 +5843,7 @@ class VaultAIClient {
         'asset': asset,
       }),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -5807,6 +5865,7 @@ class VaultAIClient {
     required String draftId,
     required String authToken,
   }) async {
+    _assertWalletResponseCurrent();
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/draft/$draftId/expiry',
     );
@@ -5814,6 +5873,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
+    _assertWalletResponseCurrent();
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
