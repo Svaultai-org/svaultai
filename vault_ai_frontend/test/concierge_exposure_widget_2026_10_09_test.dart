@@ -7,7 +7,7 @@ import 'package:vault_ai_frontend/ui/dashboards/concierge_exposure_panel.dart';
 import 'package:vault_ai_frontend/ui/dashboards/concierge_page.dart';
 import 'package:vault_ai_frontend/ui/dashboards/concierge_private_dialog.dart';
 
-import 'concierge_exposure_2026_10_09_test.dart' show Harness;
+import 'concierge_exposure_2026_10_09_test.dart' show Harness, freeCapabilities;
 
 class HealthClient extends VaultAIClient {
   final bool fail;
@@ -43,6 +43,172 @@ Widget app(Widget child) => MaterialApp(
     home: Scaffold(body: SingleChildScrollView(child: child)));
 
 void main() {
+  testWidgets(
+      'free-only panel completes password checks without deferred email controls',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    h.passwords.count = 5;
+    await tester.pumpWidget(app(ConciergeExposurePanel(bindings: h.bindings)));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining(
+            'Free checks for exposed, weak and reused passwords'),
+        findsOneWidget);
+    expect(find.textContaining('are not enabled in this release.'),
+        findsOneWidget);
+    expect(find.textContaining('Email status:'), findsNothing);
+    expect(find.textContaining('Last successful email check:'), findsNothing);
+    expect(find.textContaining('Provider not configured'), findsNothing);
+    await tester.tap(find.text('Manage checks'));
+    await tester.pumpAndSettle();
+    expect(find.text('Allow password exposure checks'), findsOneWidget);
+    expect(find.text('Email exposure checks'), findsNothing);
+    expect(find.text('Authorize background email monitoring'), findsNothing);
+    expect(find.text('Include supported stealer-log checks'), findsNothing);
+    expect(find.text('owner@example.test'), findsNothing);
+    await tester.tap(find.text('Allow password exposure checks'));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Save choices'));
+    await tester.tap(find.text('Save choices'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Check now'));
+    await tester.pumpAndSettle();
+    expect(find.text('Password status: Checked against known data'),
+        findsOneWidget);
+    expect(find.textContaining('appears 5 times'), findsOneWidget);
+    expect(h.passwords.calls, 1);
+    expect(h.provider.emails, 0);
+    expect(h.provider.creates, 0);
+    expect(tester.takeException(), null);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'real provider and password outages remain visible, not policy-deferred',
+      (tester) async {
+    final h = Harness();
+    h.provider.caps = const ConciergeProviderCapabilities(
+        providerMode: 'free',
+        emailRangeStatus: 'unavailable',
+        emailMonitoringStatus: 'deferred',
+        stealerStatus: 'deferred');
+    h.passwords.fail = true;
+    h.state = {
+      'schema': 1,
+      'consent': const ConciergeConsent(enabled: true).toJson()
+    };
+    await tester.pumpWidget(app(ConciergeExposurePanel(bindings: h.bindings)));
+    await tester.pumpAndSettle();
+    expect(find.text('Email status: Unavailable — not confirmed clear'),
+        findsOneWidget);
+    expect(
+        find.textContaining('are not enabled in this release.'), findsNothing);
+    await tester.tap(find.text('Check now'));
+    await tester.pumpAndSettle();
+    expect(find.text('Password status: Incomplete — some checks unavailable'),
+        findsOneWidget);
+    expect(find.textContaining('No password findings'), findsNothing);
+    expect(tester.takeException(), null);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'free policy preserves past email findings and permits background withdrawal',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    h.state = {
+      'schema': 1,
+      'consent': const ConciergeConsent(
+              enabled: true,
+              approvedEmails: {'owner@example.test'},
+              backgroundEmails: true)
+          .toJson(),
+      'monitor_ids': {'owner@example.test': 'old-monitor'}
+    };
+    h.provider.rows = [
+      {
+        'id': 'old-monitor',
+        'source_item_id': '1',
+        'status': 'found',
+        'successful_at': '2026-09-30T00:00:00Z',
+        'breaches': [
+          {'title': 'Past example breach'}
+        ],
+        'stealer_domains': <String>[]
+      }
+    ];
+    await tester.pumpWidget(app(ConciergeExposurePanel(bindings: h.bindings)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Past email coverage only'), findsOneWidget);
+    expect(find.textContaining('Past example breach'), findsOneWidget);
+    expect(find.textContaining('Earlier result — latest check unavailable'),
+        findsOneWidget);
+    expect(find.text('Withdraw background email permission'), findsOneWidget);
+    await tester
+        .ensureVisible(find.text('Withdraw background email permission'));
+    await tester.tap(find.text('Withdraw background email permission'));
+    await tester.pumpAndSettle();
+    expect(h.provider.deleted, ['old-monitor']);
+    expect(h.state?['consent']['enabled'], true);
+    expect(h.state?['consent']['background_emails'], false);
+    expect(find.text('Withdraw background email permission'), findsNothing);
+    expect(h.provider.emails, 0);
+    expect(h.provider.creates, 0);
+    expect(tester.takeException(), null);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'free-mode failed withdrawal keeps retry reachable and old permission can be disabled in settings',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    h.state = {
+      'schema': 1,
+      'consent': const ConciergeConsent(enabled: true, backgroundEmails: true)
+          .toJson(),
+      'monitor_ids': {'owner@example.test': 'old-monitor'}
+    };
+    h.provider.rows = [
+      {'id': 'old-monitor', 'status': 'not_checked'}
+    ];
+    h.provider.failDelete = true;
+    await tester.pumpWidget(app(ConciergeExposurePanel(bindings: h.bindings)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manage checks'));
+    await tester.pumpAndSettle();
+    final oldPermission =
+        find.text('Previously authorized background email monitoring');
+    final checkbox = tester.widget<CheckboxListTile>(find.ancestor(
+        of: oldPermission, matching: find.byType(CheckboxListTile)));
+    expect(checkbox.onChanged, isNotNull);
+    await tester.ensureVisible(oldPermission);
+    await tester.tap(oldPermission);
+    await tester.pump();
+    await tester.ensureVisible(find.text('Save choices'));
+    await tester.tap(find.text('Save choices'));
+    await tester.pumpAndSettle();
+    expect(h.state?['consent']['background_emails'], false);
+    expect(find.text('Retry consent withdrawal'), findsOneWidget);
+    expect(find.textContaining('withdrawal is pending'), findsOneWidget);
+    h.provider.failDelete = false;
+    await tester.ensureVisible(find.text('Retry consent withdrawal'));
+    await tester.tap(find.text('Retry consent withdrawal'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry consent withdrawal'), findsNothing);
+    expect(h.provider.deleted, ['old-monitor']);
+    expect(tester.takeException(), null);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
       'real panel exposes honest opt-in, missing provider and unsupported file coverage on phone',
       (tester) async {

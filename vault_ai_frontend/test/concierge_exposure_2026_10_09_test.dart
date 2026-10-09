@@ -11,6 +11,12 @@ import 'package:vault_ai_frontend/services/pwned_password_check.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 
+const freeCapabilities = ConciergeProviderCapabilities(
+    providerMode: 'free',
+    emailRangeStatus: 'deferred',
+    emailMonitoringStatus: 'deferred',
+    stealerStatus: 'deferred');
+
 class FixturePasswords implements PasswordExposureChecker {
   int calls = 0;
   int count = 0;
@@ -113,6 +119,216 @@ class Harness {
 
 void main() {
   tearDown(ZkActiveMvk.clear);
+
+  for (final enabled in [true, false]) {
+    test(
+        'explicit free policy preserves deferred capability fields enabled=$enabled',
+        () async {
+      final provider = ConciergeBackendProvider(
+          baseUrl: 'https://example.invalid',
+          authToken: 'fixture',
+          deviceId: 'fixture-device',
+          client: MockClient((_) async => http.Response(
+              jsonEncode({
+                'enabled': enabled,
+                'provider_mode': 'free',
+                'email_range': {'status': 'deferred'},
+                'email_monitoring': {'status': 'deferred'},
+                'stealer_logs': {'status': 'deferred'}
+              }),
+              200)));
+      final caps = await provider
+          .capabilities(ConciergeAccessLease(isCurrent: () => true));
+      expect(caps.providerMode, 'free');
+      expect(caps.emailDeferred, true);
+      expect(caps.emailRangeStatus, 'deferred');
+      expect(caps.emailMonitoringStatus, 'deferred');
+      expect(caps.stealerStatus, 'deferred');
+      expect(
+          caps.emailRange || caps.emailMonitoring || caps.stealerLogs, false);
+    });
+  }
+
+  test(
+      'real HIBP mode and legacy/outage capabilities are not hidden as deferred',
+      () async {
+    final provider = ConciergeBackendProvider(
+        baseUrl: 'https://example.invalid',
+        authToken: 'fixture',
+        deviceId: 'fixture-device',
+        client: MockClient((_) async => http.Response(
+            jsonEncode({
+              'enabled': true,
+              'provider_mode': 'hibp',
+              'email_range': {'status': 'unavailable'},
+              'email_monitoring': {'status': 'available'},
+              'stealer_logs': {'status': 'unsupported_domain'}
+            }),
+            200)));
+    final caps = await provider
+        .capabilities(ConciergeAccessLease(isCurrent: () => true));
+    expect(caps.providerMode, 'hibp');
+    expect(caps.emailDeferred, false);
+    expect(caps.emailRangeStatus, 'unavailable');
+    expect(const ConciergeProviderCapabilities().providerMode, 'unknown');
+    expect(const ConciergeProviderCapabilities().emailDeferred, false);
+    expect(
+        const ConciergeProviderCapabilities(
+                providerMode: 'free',
+                emailRangeStatus: 'unavailable',
+                emailMonitoringStatus: 'deferred',
+                stealerStatus: 'deferred')
+            .emailDeferred,
+        false);
+  });
+
+  test(
+      'free password check completes without email queries or monitor creation',
+      () async {
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    h.passwords.count = 8;
+    final c = ConciergeExposureController(h.bindings);
+    addTearDown(c.dispose);
+    await c.hydrate();
+    await c.configure(const ConciergeConsent(enabled: true));
+    await c.checkNow();
+    expect(c.passwordStatus, 'checked');
+    expect(c.emailStatus, 'deferred');
+    expect(c.checkedPasswords, 1);
+    expect(c.lastPasswordCheckAt, isNotNull);
+    expect(c.lastEmailCheckAt, isNull);
+    expect(c.findings.any((f) => f.kind == 'pwned'), true);
+    expect(h.passwords.calls, 1);
+    expect(h.provider.emails, 0);
+    expect(h.provider.creates, 0);
+    expect(h.state?['consent']['background_emails'], false);
+  });
+
+  test('free policy retains past email coverage without refreshing it',
+      () async {
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    final past = DateTime.utc(2026, 9, 30);
+    h.state = {
+      'schema': 1,
+      'consent': const ConciergeConsent(enabled: true).toJson(),
+      'last_email_check_at': past.toIso8601String(),
+      'findings': [
+        ConciergeFinding(
+                loginId: '1',
+                title: 'Example',
+                kind: 'email_breach',
+                checkedAt: past,
+                detail: 'Past example')
+            .toJson(),
+        ConciergeFinding(
+                loginId: 'deleted-id',
+                title: 'Deleted fixture',
+                kind: 'email_breach',
+                checkedAt: past,
+                detail: 'Old deleted result')
+            .toJson()
+      ]
+    };
+    final c = ConciergeExposureController(h.bindings);
+    addTearDown(c.dispose);
+    await c.hydrate();
+    expect(c.hasPastEmailCoverage, true);
+    expect(c.findings.every((f) => f.stale), true);
+    await c
+        .configure(const ConciergeConsent(enabled: true, checkOnUnlock: true));
+    await c.checkNow();
+    final prior = c.findings.singleWhere((f) => f.kind == 'email_breach');
+    expect(prior.loginId, '1');
+    expect(prior.stale, true);
+    expect(prior.checkedAt, past);
+    expect(c.lastEmailCheckAt, past);
+    expect(h.provider.emails, 0);
+    expect(h.provider.creates, 0);
+  });
+
+  test(
+      'old background authorization can be withdrawn with deferred capabilities',
+      () async {
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    h.state = {
+      'schema': 1,
+      'consent': const ConciergeConsent(
+              enabled: true,
+              checkOnUnlock: true,
+              approvedEmails: {'owner@example.test'},
+              backgroundEmails: true,
+              stealerLogs: true)
+          .toJson(),
+      'monitor_ids': {'owner@example.test': 'old-monitor'}
+    };
+    h.provider.rows = [
+      {'id': 'old-monitor', 'status': 'not_checked'}
+    ];
+    final c = ConciergeExposureController(h.bindings);
+    addTearDown(c.dispose);
+    await c.hydrate();
+    expect(c.hasBackgroundAuthorization, true);
+    await c.withdrawBackgroundConsent();
+    expect(h.provider.deleted, ['old-monitor']);
+    expect(c.consent.enabled, true);
+    expect(c.consent.checkOnUnlock, true);
+    expect(c.consent.backgroundEmails, false);
+    expect(c.consent.stealerLogs, false);
+    expect(c.hasBackgroundAuthorization, false);
+    expect(c.revocationPending, false);
+    expect(h.provider.emails, 0);
+    expect(h.provider.creates, 0);
+  });
+
+  test('deferred policy preserves failed withdrawal for explicit retry',
+      () async {
+    final h = Harness();
+    h.provider.caps = freeCapabilities;
+    h.state = {
+      'schema': 1,
+      'consent': const ConciergeConsent(enabled: true, backgroundEmails: true)
+          .toJson(),
+      'monitor_ids': {'owner@example.test': 'old-monitor'}
+    };
+    h.provider.rows = [
+      {'id': 'old-monitor', 'status': 'not_checked'}
+    ];
+    h.provider.failDelete = true;
+    final c = ConciergeExposureController(h.bindings);
+    addTearDown(c.dispose);
+    await c.hydrate();
+    await c.withdrawBackgroundConsent();
+    expect(c.consent.backgroundEmails, false);
+    expect(c.revocationPending, true);
+    expect(c.hasBackgroundAuthorization, true);
+    expect(c.issue, contains('withdrawal is pending'));
+    h.provider.failDelete = false;
+    await c.retryRevocation();
+    expect(c.revocationPending, false);
+    expect(c.hasBackgroundAuthorization, false);
+    expect(h.provider.deleted, ['old-monitor']);
+  });
+
+  test('stale paid-route response distinguishes explicit deferral from outage',
+      () async {
+    final provider = ConciergeBackendProvider(
+        baseUrl: 'https://example.invalid',
+        authToken: 'fixture',
+        deviceId: 'fixture-device',
+        client: MockClient((_) async => http.Response(
+            jsonEncode({
+              'detail': {'code': 'provider_deferred', 'status': 'deferred'}
+            }),
+            403)));
+    await expectLater(
+        provider.checkEmail(
+            'owner@example.test', ConciergeAccessLease(isCurrent: () => true)),
+        throwsA(isA<ConciergeUnavailable>()
+            .having((e) => e.code, 'code', 'provider_deferred')));
+  });
 
   test(
       'password request sends only five-hex prefix with padding, no token/password/full hash',

@@ -75,7 +75,7 @@ def db(monkeypatch):
     with connect() as connection:
         with connection.cursor() as cur:
             cur.execute("INSERT INTO vaults VALUES(%s),(%s)", (vault_id, other_id))
-    settings = ex.Settings(True, True, True, "1" * 32, {"v1": bytes(range(32))}, "v1", 5, 86400)
+    settings = ex.Settings(True, True, True, "1" * 32, {"v1": bytes(range(32))}, "v1", 5, 86400, provider_mode="hibp")
     monkeypatch.setattr(ex, "get_db", connect)
     monkeypatch.setattr(routes, "get_db", connect)
     monkeypatch.setattr(ex.Settings, "from_environment", lambda: settings)

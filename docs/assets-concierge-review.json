@@ -1,6 +1,6 @@
 {
   "schema": "svaultai_feature_review_v1",
-  "checked_at_utc": "2026-10-09T10:55:44Z",
+  "checked_at_utc": "2026-10-09T14:29:08Z",
   "branch": "codex/assets-concierge",
   "base_commit": "6fecfb30bdeb2da551855377147ff5c08b4f8f02",
   "status": "local_review_candidate",
@@ -37,25 +37,53 @@
     "password_provider": "HIBP_Pwned_Passwords",
     "password_provider_source": "https://haveibeenpwned.com/API/v3",
     "password_disclosure": "five_SHA1_hex_prefix_characters_only",
+    "local_checks": ["weak_passwords", "reused_passwords"],
+    "budget_policy": {
+      "default_provider_mode": "free",
+      "paid_subscription_or_api_key_required": false,
+      "paid_requests_blocked_even_with_configured_key_and_enable_flags": true,
+      "free_mode_background_scheduler": "no_start_no_claim",
+      "unknown_modes": "fail_closed",
+      "email_monitoring_and_stealer_capabilities": "deferred_not_provider_outage",
+      "existing_state_and_consent_withdrawal": "preserved",
+      "paid_mode": "retained_for_later_explicitly_reviewed_hibp_configuration"
+    },
     "public_synthetic_live_password_probe": "actual_checker_HTTP_200_and_CORS_headers_verified_not_browser_enforcement",
-    "foreground_email_disclosure": "six_SHA1_hex_prefix_characters_only_local_match_unmatched_rows_discarded",
-    "background_email_disclosure": "separate_explicit_full_email_consent_operational_key_encryption_not_zero_knowledge",
-    "stealer_logs": "requires_provider_plan_and_verified_email_domain_no_comprehensive_dark_web_claim",
+    "foreground_email_disclosure": "deferred_in_free_mode_future_hibp_uses_six_SHA1_hex_prefix_only_local_match",
+    "background_email_disclosure": "deferred_in_free_mode_future_hibp_requires_separate_full_email_consent_operational_key_not_zero_knowledge",
+    "stealer_logs": "deferred_in_free_mode_future_hibp_requires_plan_and_verified_email_domain",
     "files": "explicitly_unsupported_no_verified_provider",
     "settings_and_findings": "client_encrypted_separate_CAS_state",
     "password_change_guidance": "original_service_then_exact_saved_entry_editor",
     "failure_status": "attempt_and_success_timestamps_separate_no_false_clear",
     "legacy_or_unreadable_login_formats": "explicitly_unavailable_no_plaintext_fallback",
     "paid_provider_access_verified": false,
+    "free_email_provider_assessment": {
+      "enabled": false,
+      "LeakCheck": {
+        "api_source": "https://docs.leakcheck.io/public-api/lookup",
+        "terms_source": "https://leakcheck.io/tos",
+        "verified_public_sample": "HTTP_200_no_key_documented_vendor_hash_only_no_customer_data",
+        "technical_capability": "24_hex_SHA256_email_hash_known_source_lookup_1_request_per_second",
+        "privacy": "stable_dictionary_matchable_hash_not_encryption_or_range_anonymity",
+        "gate": "clarify_documented_commercial_permission_versus_general_redistribution_restriction"
+      },
+      "XposedOrNot": {
+        "api_source": "https://xposedornot.com/api_doc",
+        "terms_source": "https://xposedornot.com/terms",
+        "gate": "plaintext_email_and_written_commercial_redistribution_permission"
+      }
+    },
     "migration": "0047_additive_only_no_existing_rows_transformed"
   },
   "verification": {
-    "integrated_flutter": {"passed": 170, "failed": 0, "log": "../../work/assets-concierge-final-flutter-2026-10-09.log", "includes": ["phone_sized_actual_dashboard", "Assets_PAXG", "Concierge", "sidebar_labels", "mainnet_gating", "billing_state"]},
-    "backend_new_and_selected_existing": {"passed": 188, "failed": 0, "log": "/private/tmp/svaultai-backend-final-regressions-20261009.log"},
-    "disposable_postgres": {"passed": 8, "failed": 0, "log": "/private/tmp/svaultai-concierge-postgres-final-20261009.log", "scope": "real_0047_SQL_on_minimal_synthetic_baseline_not_full_pgvector_Alembic_chain", "daemon": "stopped_cluster_preserved"},
-    "independent_wallet_access_regressions": {"passed": 98, "failed": 0},
-    "web_release_compile": {"result": "passed", "api_url": "https://api.svaultai.com", "directory": "vault_ai_frontend/build/web", "shipping_release_marker": false, "deployed": false},
-    "ios_simulator_compile": {"result": "passed", "version": "1.0.20", "build": 60, "api_url": "http://127.0.0.1:9", "directory": "vault_ai_frontend/build/ios/iphonesimulator/Runner.app", "runtime_end_to_end": false, "uploaded": false},
+    "integrated_flutter": {"passed": 166, "failed": 0, "log": "../../work/assets-concierge-free-flutter-2026-10-09.log", "includes": ["phone_sized_actual_dashboard_free_only", "Assets_PAXG", "Concierge_free_policy_and_withdrawal", "sidebar_labels", "mainnet_gating", "billing_state"]},
+    "backend_new_and_selected_existing": {"passed": 239, "failed": 0, "log": "/private/tmp/svaultai-free-policy-backend-20261009.log"},
+    "disposable_postgres": {"passed": 8, "failed": 0, "log": "/private/tmp/svaultai-concierge-pg.8IIjYq/free-policy-rerun.log", "scope": "real_0047_SQL_on_minimal_synthetic_baseline_not_full_pgvector_Alembic_chain", "daemon": "stopped_cluster_preserved"},
+    "independent_concierge_free_policy": {"backend_passed": 97, "flutter_passed": 54, "failed": 0},
+    "independent_wallet_access_regressions": {"passed": 98, "failed": 0, "scope": "unchanged_Assets_prior_candidate_run"},
+    "web_release_compile": {"result": "passed", "api_url": "https://api.svaultai.com", "directory": "vault_ai_frontend/build/web", "log": "../../work/assets-concierge-free-web-compile-2026-10-09.log", "shipping_release_marker": false, "deployed": false},
+    "ios_simulator_compile": {"result": "passed", "candidate_policy": "free_only", "version": "1.0.20", "build": 60, "api_url": "http://127.0.0.1:9", "directory": "vault_ai_frontend/build/ios/iphonesimulator/Runner.app", "runtime_end_to_end": false, "uploaded": false},
     "full_project_tests_claimed_green": false,
     "known_unchanged_baseline_failures": "Two admin-grant tests also fail at base_commit because their DB patch target predates billing_entitlements delegation; no unrelated implementation fix included.",
     "diff_check": "clean"
@@ -68,14 +96,14 @@
     "CONCIERGE_MONITORING_KEY_present": false
   },
   "external_requirement": {
-    "user_required": "Obtain HIBP Pro access supporting IncludesKAnon and securely provision CONCIERGE_HIBP_API_KEY; do not send secrets through chat.",
-    "stealer_optional": "IncludesStealerLogs plus provider_verified_domains",
-    "agent_can_provision_after_review": "Independent random 32-byte CONCIERGE_MONITORING_KEY through production secret configuration",
+    "free_password_release": "No paid subscription or API key required; human review remains required before push.",
+    "future_free_email_optional": "Clarify provider commercial integration permission and implement separately consented adapter before enabling.",
+    "future_paid_email_optional": "Only after a separate budget and release approval; not a launch requirement for free password checks.",
+    "monitoring_key": "Not required for free password checks; only a future background email integration.",
     "not_supported": "private_file_scanning_or_comprehensive_dark_web_search"
   },
   "remaining_delivery": [
     "human_review_before_push",
-    "secure_paid_provider_provisioning_and_real_plan_capability_check",
     "reconcile_current_release_baselines_to_avoid_unrelated_web_billing_changes",
     "release_commit_and_shipping_build_marker",
     "reviewed_migration_and_feature_flag_enablement",

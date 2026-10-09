@@ -57,8 +57,21 @@ def _require_enabled() -> exposure.Settings:
 
 
 def _provider_http_error(exc: exposure.ProviderError) -> HTTPException:
+    if exc.code == "provider_deferred":
+        return HTTPException(403, detail={"code": exc.code, "status": "deferred",
+                                          "retry_after_seconds": None})
+    if exc.code == "provider_mode_invalid":
+        return HTTPException(503, detail={"code": exc.code, "status": "not_configured",
+                                          "retry_after_seconds": None})
     status = 429 if exc.code in ("concierge_rate_limited", "monitor_check_rate_limited", "monitor_check_in_progress") else 503
     return HTTPException(status, detail={"code": exc.code, "retry_after_seconds": exc.retry_after_seconds})
+
+
+def _require_paid_provider(settings: exposure.Settings) -> None:
+    try:
+        exposure.require_paid_provider(settings)
+    except exposure.ProviderError as exc:
+        raise _provider_http_error(exc) from None
 
 
 @router.get("/capabilities")
@@ -69,6 +82,7 @@ def get_capabilities(principal: SessionPrincipal = Depends(verify_trusted_device
 @router.post("/email-range")
 def email_range(payload: EmailRangeRequest, principal: SessionPrincipal = Depends(verify_trusted_device)):
     settings = _require_enabled()
+    _require_paid_provider(settings)
     if payload.consent_version != exposure.CONSENT_VERSION or not payload.prefix_disclosure_consent:
         raise HTTPException(400, detail={"code": "prefix_consent_required"})
     attempted = exposure.now_utc()
@@ -86,6 +100,7 @@ def email_range(payload: EmailRangeRequest, principal: SessionPrincipal = Depend
 @router.get("/breaches/{name}")
 def breach_metadata(name: str, principal: SessionPrincipal = Depends(verify_trusted_device)):
     settings = _require_enabled()
+    _require_paid_provider(settings)
     attempted = exposure.now_utc()
     try:
         exposure.consume_vault_budget(principal["vault_id"])
@@ -101,6 +116,7 @@ def breach_metadata(name: str, principal: SessionPrincipal = Depends(verify_trus
 @router.post("/monitors", status_code=201)
 def create_monitor(payload: MonitorRequest, principal: SessionPrincipal = Depends(verify_trusted_device)):
     settings = _require_enabled()
+    _require_paid_provider(settings)
     try:
         exposure.consume_vault_budget(principal["vault_id"])
         return exposure.create_monitor(principal["vault_id"], payload.email, payload.source_item_id,
@@ -121,9 +137,10 @@ def get_monitors(principal: SessionPrincipal = Depends(verify_trusted_device)):
 @router.post("/monitors/{monitor_id}/check")
 def check_monitor(monitor_id: UUID, principal: SessionPrincipal = Depends(verify_trusted_device)):
     settings = _require_enabled()
+    _require_paid_provider(settings)
     try:
         exposure.consume_vault_budget(principal["vault_id"])
-        claim = exposure.claim_monitor(vault_id=principal["vault_id"], monitor_id=str(monitor_id))
+        claim = exposure.claim_monitor(vault_id=principal["vault_id"], monitor_id=str(monitor_id), settings=settings)
         if claim is None:
             raise HTTPException(404, detail={"code": "monitor_not_found"})
         result = exposure.perform_monitor_check(*claim, settings=settings)

@@ -33,7 +33,7 @@ async def _run(stopping: asyncio.Event) -> None:
 
 def start_concierge_scheduler() -> SchedulerHandle | None:
     settings = Settings.from_environment()
-    if not settings.enabled or not settings.background_enabled:
+    if not settings.paid_provider_allowed or not settings.enabled or not settings.background_enabled:
         return None
     stopping = asyncio.Event()
     task = asyncio.create_task(_run(stopping), name="concierge-consented-monitoring")

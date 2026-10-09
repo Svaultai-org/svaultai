@@ -105,6 +105,7 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
         'no_eligible_passwords' => 'No eligible encrypted passwords',
         'not_selected' => 'No email addresses selected',
         'off' => 'Off',
+        'deferred' => 'Not enabled in this release',
         'locked' => 'Paused — unlock your vault',
         _ => 'Not checked',
       };
@@ -159,69 +160,92 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
                                       ? (v) =>
                                           update(() => automatic = v == true)
                                       : null),
-                              const Divider(),
-                              const Text('Email exposure checks',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.w700)),
-                              const SizedBox(height: 8),
-                              const Text(
-                                  'Select only addresses you own or are authorized to check. One-time checks send a 6-character hash prefix, not your full email, to our breach provider.'),
-                              if (!controller.capabilities.emailRange)
-                                Padding(
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 8),
-                                    child: Text(
-                                        'Email checks cannot run: ${_status(controller.emailStatus)}.')),
-                              if (emails.isEmpty)
-                                const Padding(
-                                    padding: EdgeInsets.symmetric(vertical: 8),
-                                    child: Text(
-                                        'No email addresses found in eligible encrypted saved logins.')),
-                              for (final email in emails)
+                              if (controller.capabilities.emailDeferred) ...[
+                                const Divider(),
+                                const Text(
+                                    'Email breach monitoring, background email checks and stealer-log checks are not enabled in this release. Free password checks remain available.'),
+                                if (background)
+                                  CheckboxListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      value: background,
+                                      title: const Text(
+                                          'Previously authorized background email monitoring'),
+                                      subtitle: const Text(
+                                          'Turn this off to withdraw your previous full-email monitoring permission. No new monitoring can be enabled in this release.'),
+                                      onChanged: (v) => update(() {
+                                            if (v != true) {
+                                              background = false;
+                                              stealer = false;
+                                            }
+                                          })),
+                              ] else ...[
+                                const Divider(),
+                                const Text('Email exposure checks',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w700)),
+                                const SizedBox(height: 8),
+                                const Text(
+                                    'Select only addresses you own or are authorized to check. One-time checks send a 6-character hash prefix, not your full email, to our breach provider.'),
+                                if (!controller.capabilities.emailRange)
+                                  Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 8),
+                                      child: Text(
+                                          'Email checks cannot run: ${_status(controller.emailStatus)}.')),
+                                if (emails.isEmpty)
+                                  const Padding(
+                                      padding:
+                                          EdgeInsets.symmetric(vertical: 8),
+                                      child: Text(
+                                          'No email addresses found in eligible encrypted saved logins.')),
+                                for (final email in emails)
+                                  CheckboxListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      value: selected.contains(email),
+                                      title: Text(email),
+                                      onChanged: enabled &&
+                                              controller.capabilities.emailRange
+                                          ? (v) => update(() {
+                                                if (v == true) {
+                                                  selected.add(email);
+                                                } else {
+                                                  selected.remove(email);
+                                                }
+                                              })
+                                          : null),
+                                const Divider(),
                                 CheckboxListTile(
                                     contentPadding: EdgeInsets.zero,
-                                    value: selected.contains(email),
-                                    title: Text(email),
-                                    onChanged: enabled &&
-                                            controller.capabilities.emailRange
+                                    value: background,
+                                    title: const Text(
+                                        'Authorize background email monitoring'),
+                                    subtitle: const Text(
+                                        'Separate permission: selected full email addresses will be sent to SVaultAI and Have I Been Pwned. SVaultAI’s monitoring service can read these approved addresses; they are encrypted with its operational key, not your vault-only key, so checks can run while your vault is locked. You can withdraw this permission here.'),
+                                    onChanged: background ||
+                                            (enabled &&
+                                                selected.isNotEmpty &&
+                                                controller.capabilities
+                                                    .emailMonitoring)
                                         ? (v) => update(() {
-                                              if (v == true) {
-                                                selected.add(email);
-                                              } else {
-                                                selected.remove(email);
-                                              }
+                                              background = v == true;
+                                              if (!background) stealer = false;
                                             })
                                         : null),
-                              const Divider(),
-                              CheckboxListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  value: background,
-                                  title: const Text(
-                                      'Authorize background email monitoring'),
-                                  subtitle: const Text(
-                                      'Separate permission: selected full email addresses will be sent to SVaultAI and Have I Been Pwned. SVaultAI’s monitoring service can read these approved addresses; they are encrypted with its operational key, not your vault-only key, so checks can run while your vault is locked. You can withdraw this permission here.'),
-                                  onChanged: enabled &&
-                                          selected.isNotEmpty &&
-                                          controller
-                                              .capabilities.emailMonitoring
-                                      ? (v) => update(() {
-                                            background = v == true;
-                                            if (!background) stealer = false;
-                                          })
-                                      : null),
-                              CheckboxListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  value: stealer,
-                                  title: const Text(
-                                      'Include supported stealer-log checks'),
-                                  subtitle: Text(controller
-                                          .capabilities.stealerLogs
-                                      ? 'Requires separate full-email disclosure permission and a provider-verified email domain. Unsupported addresses will not be queried.'
-                                      : '${_status(controller.capabilities.stealerStatus == 'not_configured' ? 'provider_not_configured' : controller.capabilities.stealerStatus)}. This is not a comprehensive dark-web search.'),
-                                  onChanged: background &&
-                                          controller.capabilities.stealerLogs
-                                      ? (v) => update(() => stealer = v == true)
-                                      : null),
+                                CheckboxListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    value: stealer,
+                                    title: const Text(
+                                        'Include supported stealer-log checks'),
+                                    subtitle: Text(controller
+                                            .capabilities.stealerLogs
+                                        ? 'Requires separate full-email disclosure permission and a provider-verified email domain. Unsupported addresses will not be queried.'
+                                        : '${_status(controller.capabilities.stealerStatus == 'not_configured' ? 'provider_not_configured' : controller.capabilities.stealerStatus)}. This is not a comprehensive dark-web search.'),
+                                    onChanged: background &&
+                                            controller.capabilities.stealerLogs
+                                        ? (v) =>
+                                            update(() => stealer = v == true)
+                                        : null),
+                              ],
                             ]))),
                     actions: [
                       TextButton(
@@ -308,8 +332,9 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
           const Text('Login exposure checks',
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 20)),
           const SizedBox(height: 8),
-          const Text(
-              'Optional, privacy-conscious checks for eligible encrypted saved logins. Results cover known breach data, not the entire internet or dark web.'),
+          Text(controller.capabilities.emailDeferred
+              ? 'Free checks for exposed, weak and reused passwords in eligible encrypted saved logins. Password exposure checks use known breach data; they do not search the entire internet or dark web.'
+              : 'Optional, privacy-conscious checks for eligible encrypted saved logins. Results cover known breach data, not the entire internet or dark web.'),
           const SizedBox(height: 16),
           Wrap(spacing: 12, runSpacing: 8, children: [
             FilledButton.icon(
@@ -328,6 +353,10 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
               OutlinedButton(
                   onPressed: busy ? null : controller.retryRevocation,
                   child: const Text('Retry consent withdrawal')),
+            if (controller.hasBackgroundAuthorization)
+              OutlinedButton(
+                  onPressed: busy ? null : controller.withdrawBackgroundConsent,
+                  child: const Text('Withdraw background email permission')),
           ]),
           if (busy)
             const Padding(
@@ -338,11 +367,24 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
               ? 'Checks: enabled with your permission'
               : 'Checks: off — opt in to begin'),
           Text('Password status: ${_status(controller.passwordStatus)}'),
-          Text('Email status: ${_status(controller.emailStatus)}'),
+          if (controller.capabilities.emailDeferred)
+            const Text(
+                'Email breach monitoring, background email checks and stealer-log checks are not enabled in this release.'),
+          if (!controller.capabilities.emailDeferred)
+            Text('Email status: ${_status(controller.emailStatus)}'),
           Text(
               'Last successful password check: ${_time(controller.lastPasswordCheckAt)}'),
-          Text(
-              'Last successful email check: ${_time(controller.lastEmailCheckAt)}'),
+          if (!controller.capabilities.emailDeferred)
+            Text(
+                'Last successful email check: ${_time(controller.lastEmailCheckAt)}'),
+          if (controller.capabilities.emailDeferred &&
+              controller.hasPastEmailCoverage) ...[
+            const Text(
+                'Past email coverage only — earlier findings are not a current email check.'),
+            if (controller.lastEmailCheckAt != null)
+              Text(
+                  'Last recorded email check (past coverage): ${_time(controller.lastEmailCheckAt)}'),
+          ],
           if (controller.lastAttemptAt != null)
             Text('Last attempt: ${_time(controller.lastAttemptAt)}'),
           Text(
@@ -350,7 +392,8 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
           if (controller.consent.checkOnUnlock)
             const Text(
                 'Automatic checks: when Concierge opens, while unlocked.'),
-          if (controller.consent.backgroundEmails)
+          if (controller.consent.backgroundEmails &&
+              !controller.capabilities.emailDeferred)
             Text(controller.revocationPending
                 ? 'Background monitoring: consent withdrawal pending.'
                 : 'Background monitoring: ${controller.monitorRows.isEmpty ? 'awaiting provider status' : 'see latest provider status below'}.'),
@@ -382,11 +425,13 @@ class _ConciergeExposurePanelState extends State<ConciergeExposurePanel> {
                 padding: EdgeInsets.only(top: 12),
                 child: Text(
                     'No password findings in the completed password check. Email coverage is shown separately. This is not a guarantee that an account or password is safe.')),
-          for (final row in controller.monitorRows)
+          for (final row in controller.monitorRows.where((row) =>
+              !controller.capabilities.emailDeferred ||
+              row['successful_at'] != null))
             Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Text(
-                    'Background email check: ${row['status'] ?? 'not_checked'} • Last successful check: ${row['successful_at'] ?? 'Never'}${row['status'] == 'unavailable' ? ' • Earlier findings may be out of date' : ''}${row['error_code'] == 'source_item_no_longer_available' ? ' • The linked saved login was removed. Withdraw and re-enable background checks to choose a current login.' : ''}')),
+                    '${controller.capabilities.emailDeferred ? 'Past background email check' : 'Background email check'}: ${row['status'] ?? 'not_checked'} • Last successful check: ${row['successful_at'] ?? 'Never'}${row['status'] == 'unavailable' || controller.capabilities.emailDeferred ? ' • Earlier findings may be out of date' : ''}${row['error_code'] == 'source_item_no_longer_available' ? ' • The linked saved login was removed. Withdraw background checks to remove its monitoring permission.' : ''}')),
           const Divider(height: 32),
           const Text(
               'Files and full dark-web scanning: not supported. We do not upload your files, images, documents, seed phrases or private keys to a breach service.'),

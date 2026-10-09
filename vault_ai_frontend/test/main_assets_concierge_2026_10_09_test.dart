@@ -121,9 +121,11 @@ class _NetworkFixture {
       case 'GET /concierge/capabilities':
         return json({
           'enabled': true,
-          'email_range': {'status': 'not_configured'},
-          'email_monitoring': {'status': 'not_configured'},
-          'stealer_logs': {'status': 'not_configured'},
+          'provider_mode': 'free',
+          'password_breaches': {'status': 'available', 'mode': 'client_range'},
+          'email_range': {'status': 'deferred'},
+          'email_monitoring': {'status': 'deferred'},
+          'stealer_logs': {'status': 'deferred'},
         });
       case 'GET /concierge/monitors':
         return json({'monitors': []});
@@ -295,6 +297,11 @@ void main() {
       expect(bindings.captureAccess().isCurrent, isTrue);
       expect(network.count('/concierge/state'), 1);
       expect(network.count('/concierge/capabilities'), 1);
+      expect(find.textContaining('Free checks for exposed, weak and reused'),
+          findsOneWidget);
+      expect(find.textContaining('Email breach monitoring, background email checks'),
+          findsOneWidget);
+      expect(find.textContaining('Provider not configured'), findsNothing);
       await _enableChecks(tester);
       final state = await tester.runAsync(network.savedState);
       expect(state!['consent']['enabled'], isTrue);
@@ -320,6 +327,10 @@ void main() {
       expect(
           network.requests.where((r) => r.url.host == 'api.pwnedpasswords.com'),
           hasLength(1));
+      expect(network.count('/concierge/email-range'), 0);
+      expect(network.count('/concierge/monitors', method: 'POST'), 0);
+      expect(find.text('Password status: Checked against known data'),
+          findsOneWidget);
       network.assertPrivateWire();
 
       app.unlocked = false;

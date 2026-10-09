@@ -1,4 +1,6 @@
-"""Opt-in HIBP checks; never accepts a vault PIN, password or private file.
+"""Free password-only policy by default; paid HIBP checks require explicit mode.
+
+Never accepts a vault PIN, password or private file.
 
 Email range results are transient and matched on the unlocked client. Only
 separately consented full email monitoring is decryptable by this service.
@@ -36,6 +38,13 @@ COVERAGE = (
     "No finding does not establish that an account is safe. Stealer logs are "
     "limited to provider-verified email domains, not a comprehensive dark-web scan. "
     "Private-file exposure is unsupported."
+)
+FREE_COVERAGE = (
+    "Free password-only checks against known HIBP Pwned Passwords records, "
+    "matched on the unlocked client. Email exposure, background email monitoring "
+    "and stealer-log intelligence are deferred under the free-provider policy. "
+    "No comprehensive dark-web scan or private-file exposure detection. "
+    "No finding does not establish that a password or account is safe."
 )
 MAX_STATE_BYTES = 200 * 1024
 MAX_PROVIDER_BYTES = 2 * 1024 * 1024
@@ -86,9 +95,14 @@ class Settings:
     active_key_id: str
     rpm: int
     interval_seconds: int
+    provider_mode: str = "free"
 
     @classmethod
     def from_environment(cls) -> "Settings":
+        provider_mode = os.getenv("VAULTAI_CONCIERGE_PROVIDER_MODE", "free").strip().lower()
+        if provider_mode not in ("free", "hibp"):
+            # Never silently enable a paid provider or echo arbitrary env data.
+            provider_mode = "invalid"
         key = os.getenv("CONCIERGE_HIBP_API_KEY", "").strip()
         # A test/placeholder key must not masquerade as a configured paid provider.
         if not re.fullmatch(r"[0-9a-fA-F]{32}", key) or set(key) == {"0"}:
@@ -117,11 +131,16 @@ class Settings:
             key, keyring, active,
             _bounded_int("VAULTAI_CONCIERGE_HIBP_RPM", 5, 1, 1000),
             _bounded_int("VAULTAI_CONCIERGE_POLL_SECONDS", 86400, 3600, 604800),
+            provider_mode,
         )
 
     @property
     def encryption_available(self) -> bool:
         return self.active_key_id in self.keyring
+
+    @property
+    def paid_provider_allowed(self) -> bool:
+        return self.provider_mode == "hibp"
 
 
 def decode_b64(value: str, *, max_bytes: int) -> bytes:
@@ -179,6 +198,13 @@ class ProviderError(Exception):
         super().__init__(code)
 
 
+def require_paid_provider(settings: Settings) -> None:
+    """Budget policy is checked before any provider budget, DB or HTTP work."""
+    if not settings.paid_provider_allowed:
+        raise ProviderError("provider_deferred" if settings.provider_mode == "free"
+                            else "provider_mode_invalid")
+
+
 def open_db(factory=None):
     """Feature-only bounded statements/locks; never alters global DB settings."""
     conn = (factory or get_db)()
@@ -201,6 +227,7 @@ def _retry_after(value: str | None) -> int:
 
 def reserve_provider_slot(settings: Settings) -> None:
     """A durable shared-key budget, including web requests and background workers."""
+    require_paid_provider(settings)
     conn = open_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -259,6 +286,7 @@ class HibpProvider:
         self.allow_rate_wait = allow_rate_wait
 
     def _request(self, path: str, *, allow_not_found: bool = False) -> Any:
+        require_paid_provider(self.settings)
         if not self.settings.enabled:
             raise ProviderError("concierge_disabled")
         if not self.settings.api_key:
@@ -405,9 +433,17 @@ _caps_cache: tuple[float, tuple, dict] | None = None
 def capabilities(settings: Settings | None = None) -> dict:
     settings = settings or Settings.from_environment()
     basic = {"enabled": settings.enabled, "provider": "hibp", "consent_version": CONSENT_VERSION,
+             "provider_mode": settings.provider_mode if settings.provider_mode in ("free", "hibp") else "invalid",
              "attribution_url": ATTRIBUTION_URL, "coverage": COVERAGE,
              "password_breaches": {"status": "available", "mode": "client_range"},
              "file_exposure": {"status": "unsupported"}}
+    if not settings.paid_provider_allowed:
+        status = "deferred" if settings.provider_mode == "free" else "not_configured"
+        detail = {} if status == "deferred" else {"error_code": "provider_mode_invalid"}
+        return {**basic, "coverage": FREE_COVERAGE, "policy": "free_password_only",
+                "email_range": {"status": status, **detail},
+                "email_monitoring": {"status": status, **detail},
+                "stealer_logs": {"status": status, "verified_email_domains": [], **detail}}
     status = "disabled" if not settings.enabled else "not_configured"
     base = {**basic, "email_range": {"status": status}, "email_monitoring": {"status": status},
             "stealer_logs": {"status": status, "verified_email_domains": []}}
@@ -416,7 +452,7 @@ def capabilities(settings: Settings | None = None) -> dict:
     global _caps_cache
     # Keys never appear in logs/response. Cache partitions by actual config, and
     # failures are short-lived so provider recovery can be observed.
-    identity = (settings.api_key, settings.background_enabled, settings.stealer_enabled,
+    identity = (settings.provider_mode, settings.api_key, settings.background_enabled, settings.stealer_enabled,
                 settings.encryption_available, settings.rpm)
     with _caps_lock:
         if _caps_cache and _caps_cache[0] > time.monotonic() and _caps_cache[1] == identity:
@@ -480,6 +516,7 @@ def _source_owned(cur, vault_id: str, source_item_id: str | None) -> bool:
 def create_monitor(vault_id: str, email: str, source_item_id: str | None, *,
                    stealer_logs: bool, settings: Settings | None = None) -> dict:
     settings = settings or Settings.from_environment()
+    require_paid_provider(settings)
     email = normalize_email(email)
     caps = capabilities(settings)
     require_capability(caps, "email_monitoring")
@@ -564,7 +601,9 @@ def delete_monitor(vault_id: str, monitor_id: str) -> bool:
         conn.close()
 
 
-def claim_monitor(*, vault_id: str | None = None, monitor_id: str | None = None) -> tuple[str, str] | None:
+def claim_monitor(*, vault_id: str | None = None, monitor_id: str | None = None,
+                  settings: Settings | None = None) -> tuple[str, str] | None:
+    require_paid_provider(settings or Settings.from_environment())
     conn = open_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -594,6 +633,7 @@ def claim_monitor(*, vault_id: str | None = None, monitor_id: str | None = None)
 
 def perform_monitor_check(monitor_id: str, lease_token: str, *, settings: Settings | None = None) -> dict | None:
     settings = settings or Settings.from_environment()
+    require_paid_provider(settings)
     caps = capabilities(settings)
     conn = open_db()
     try:
@@ -660,10 +700,11 @@ def perform_monitor_check(monitor_id: str, lease_token: str, *, settings: Settin
 
 def run_background_iteration() -> int:
     settings = Settings.from_environment()
-    if not settings.enabled or not settings.background_enabled or not settings.api_key or not settings.encryption_available:
+    if (not settings.paid_provider_allowed or not settings.enabled or not settings.background_enabled
+            or not settings.api_key or not settings.encryption_available):
         return 0
     # One bounded job per iteration; shared leases/budget coordinate replicas.
-    claim = claim_monitor()
+    claim = claim_monitor(settings=settings)
     if claim is None:
         return 0
     perform_monitor_check(*claim, settings=settings)

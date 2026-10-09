@@ -395,6 +395,7 @@ class ConciergeVaultRepository {
 }
 
 class ConciergeProviderCapabilities {
+  final String providerMode;
   final bool emailRange;
   final bool emailMonitoring;
   final bool stealerLogs;
@@ -403,13 +404,22 @@ class ConciergeProviderCapabilities {
   final String emailMonitoringStatus;
   final String stealerStatus;
   const ConciergeProviderCapabilities(
-      {this.emailRange = false,
+      {this.providerMode = 'unknown',
+      this.emailRange = false,
       this.emailMonitoring = false,
       this.stealerLogs = false,
       this.verifiedEmailDomains = const {},
       this.emailRangeStatus = 'not_configured',
       this.emailMonitoringStatus = 'not_configured',
       this.stealerStatus = 'not_configured'});
+
+  // Only an explicit release policy may hide planned-deferred tools. A real
+  // provider outage, or an older response without this policy, stays visible.
+  bool get emailDeferred =>
+      providerMode == 'free' &&
+      emailRangeStatus == 'deferred' &&
+      emailMonitoringStatus == 'deferred' &&
+      stealerStatus == 'deferred';
 }
 
 class ConciergeEmailExposure {
@@ -475,6 +485,13 @@ class ConciergeBackendProvider implements ConciergeExposureProvider {
         }
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        final error = jsonDecode(response.body);
+        if (error is Map &&
+            error['detail'] is Map &&
+            (error['detail'] as Map)['code'] == 'provider_deferred' &&
+            (error['detail'] as Map)['status'] == 'deferred') {
+          throw const ConciergeUnavailable('provider_deferred');
+        }
         throw const ConciergeUnavailable();
       }
       if (method == 'DELETE' && response.statusCode == 204) return {};
@@ -482,6 +499,8 @@ class ConciergeBackendProvider implements ConciergeExposureProvider {
       if (decoded is! Map) throw const ConciergeUnavailable();
       return Map<String, dynamic>.from(decoded);
     } on ConciergeAccessExpired {
+      rethrow;
+    } on ConciergeUnavailable {
       rethrow;
     } catch (_) {
       throw const ConciergeUnavailable();
@@ -493,6 +512,9 @@ class ConciergeBackendProvider implements ConciergeExposureProvider {
       ConciergeAccessLease access) async {
     final result = await _call('GET', '/concierge/capabilities', access);
     String status(String key) {
+      if (result[key] is Map && (result[key] as Map)['status'] == 'deferred') {
+        return 'deferred';
+      }
       if (result['enabled'] != true) return 'disabled';
       if (result[key] is! Map) return 'unavailable';
       final value = (result[key] as Map)['status'];
@@ -501,6 +523,7 @@ class ConciergeBackendProvider implements ConciergeExposureProvider {
         'conditional',
         'disabled',
         'not_configured',
+        'deferred',
         'unavailable',
         'unsupported_plan',
         'unsupported_domain',
@@ -515,6 +538,9 @@ class ConciergeBackendProvider implements ConciergeExposureProvider {
         : const {};
     final domains = stealer['verified_email_domains'];
     return ConciergeProviderCapabilities(
+        providerMode: const {'free', 'hibp'}.contains(result['provider_mode'])
+            ? result['provider_mode'] as String
+            : 'unknown',
         emailRange: status('email_range') == 'available',
         emailMonitoring: status('email_monitoring') == 'available',
         stealerLogs:
@@ -746,6 +772,10 @@ class ConciergeExposureController extends ChangeNotifier {
       : clock = clock ?? DateTime.now;
   bool get revocationPending =>
       _pendingRevocations.isNotEmpty || _revocationUnknown;
+  bool get hasBackgroundAuthorization =>
+      consent.backgroundEmails || _monitorIds.isNotEmpty || revocationPending;
+  bool get hasPastEmailCoverage =>
+      lastEmailCheckAt != null || findings.any(_isEmailFinding);
   void _notify() {
     if (!_disposed) notifyListeners();
   }
@@ -810,6 +840,9 @@ class ConciergeExposureController extends ChangeNotifier {
   bool _isMonitorFinding(ConciergeFinding finding) =>
       finding.kind == 'email_monitor_breach' ||
       finding.kind == 'stealer_domain';
+
+  bool _isEmailFinding(ConciergeFinding finding) =>
+      finding.kind == 'email_breach' || _isMonitorFinding(finding);
 
   List<ConciergeFinding> _monitorFindings(
       List<Map<String, dynamic>> rows, ConciergeInventory inventory) {
@@ -947,6 +980,10 @@ class ConciergeExposureController extends ChangeNotifier {
               'Background monitoring status is unavailable. Earlier results may be out of date.';
         }
       }
+      if (capabilities.emailDeferred) {
+        findings =
+            findings.map((f) => _isEmailFinding(f) ? f.asStale() : f).toList();
+      }
       if (consent.enabled &&
           consent.checkOnUnlock &&
           (lastPasswordCheckAt == null ||
@@ -979,6 +1016,7 @@ class ConciergeExposureController extends ChangeNotifier {
   }
 
   String _providerEmailStatus() => switch (capabilities.emailRangeStatus) {
+        'deferred' => 'deferred',
         'not_configured' => 'provider_not_configured',
         'disabled' => 'provider_disabled',
         'unsupported_plan' => 'provider_plan_unavailable',
@@ -1070,7 +1108,9 @@ class ConciergeExposureController extends ChangeNotifier {
         monitorRows = [];
         passwordStatus = emailStatus = 'off';
       } else {
-        findings = [];
+        findings = capabilities.emailDeferred
+            ? findings.where(_isEmailFinding).map((f) => f.asStale()).toList()
+            : [];
         passwordStatus = 'not_checked';
         emailStatus =
             capabilities.emailRange ? 'not_checked' : _providerEmailStatus();
@@ -1090,6 +1130,11 @@ class ConciergeExposureController extends ChangeNotifier {
   }
 
   Future<void> retryRevocation() => configure(consent);
+
+  Future<void> withdrawBackgroundConsent() => configure(ConciergeConsent(
+      enabled: consent.enabled,
+      checkOnUnlock: consent.checkOnUnlock,
+      approvedEmails: consent.approvedEmails));
 
   Future<void> checkNow() async {
     if (checking || loading || !consent.enabled || !stateReady) return;
@@ -1203,6 +1248,14 @@ class ConciergeExposureController extends ChangeNotifier {
                 .map((f) => f.asStale()));
           }
         }
+      } else if (capabilities.emailDeferred) {
+        // Keep prior coverage honest without querying the deferred provider.
+        // Deleted or no-longer-eligible login IDs must not reappear as results.
+        next.addAll(findings
+            .where((f) =>
+                f.kind == 'email_breach' &&
+                inventory.logins.any((login) => login.id == f.loginId))
+            .map((f) => f.asStale()));
       }
       if (_monitorIds.isNotEmpty || revocationPending) {
         try {
@@ -1225,7 +1278,9 @@ class ConciergeExposureController extends ChangeNotifier {
         }
       }
       _assert(access, run);
-      findings = next;
+      findings = capabilities.emailDeferred
+          ? next.map((f) => _isEmailFinding(f) ? f.asStale() : f).toList()
+          : next;
       checkedPasswords = checked;
       unavailablePasswords = unavailable;
       unreadableRecords = inventory.unreadableRecords;

@@ -33,7 +33,7 @@ API_KEY = "1" * 32
 
 
 def settings(**changes):
-    value = ex.Settings(True, True, True, API_KEY, {"v1": KEY}, "v1", 5, 86400)
+    value = ex.Settings(True, True, True, API_KEY, {"v1": KEY}, "v1", 5, 86400, provider_mode="hibp")
     return replace(value, **changes)
 
 
@@ -121,7 +121,8 @@ class Connection:
 
 def test_settings_default_off_and_no_secrets_in_repr(monkeypatch):
     for name in ("VAULTAI_CONCIERGE_ENABLED", "CONCIERGE_HIBP_API_KEY",
-                 "CONCIERGE_MONITORING_KEY", "CONCIERGE_MONITORING_KEYRING_JSON"):
+                 "CONCIERGE_MONITORING_KEY", "CONCIERGE_MONITORING_KEYRING_JSON",
+                 "VAULTAI_CONCIERGE_BACKGROUND_ENABLED", "VAULTAI_CONCIERGE_PROVIDER_MODE"):
         monkeypatch.delenv(name, raising=False)
     value = ex.Settings.from_environment()
     assert not value.enabled and not value.background_enabled
@@ -129,7 +130,8 @@ def test_settings_default_off_and_no_secrets_in_repr(monkeypatch):
     assert API_KEY not in repr(settings())
     assert KEY.decode() not in repr(settings())
     caps = ex.capabilities(value)
-    assert caps["email_range"]["status"] == "disabled"
+    assert value.provider_mode == "free"
+    assert caps["email_range"]["status"] == "deferred"
     assert caps["file_exposure"]["status"] == "unsupported"
 
 
@@ -472,6 +474,7 @@ def test_status_without_successful_evidence_never_looks_clean():
 
 
 def test_claim_has_cross_worker_lease_and_manual_cooldown(monkeypatch):
+    monkeypatch.setattr(ex.Settings, "from_environment", lambda: settings())
     row = {"id": UUID(MONITOR), "lease_until": ex.now_utc() + timedelta(seconds=100), "attempted_at": None}
     cursor = Cursor([row])
     monkeypatch.setattr(ex, "get_db", lambda: Connection(cursor))
