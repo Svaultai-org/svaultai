@@ -1,3 +1,4 @@
+# CI template: move to .github/workflows using a workflow-authorized maintainer.
 name: Apple billing compatibility
 
 on:
