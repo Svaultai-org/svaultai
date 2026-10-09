@@ -94,6 +94,16 @@ def upgrade() -> None:
                migration_status = EXCLUDED.migration_status,
                reason_code = EXCLUDED.reason_code, updated_at = NOW();
 
+        -- Flush deferred ownership FK events before ALTER TABLE. PostgreSQL
+        -- rejects DDL on a table with queued deferred trigger events (55006).
+        -- Restore these originally-deferred pointers after the DDL; unrelated
+        -- constraint modes and schema deferrability remain unchanged.
+        SET CONSTRAINTS
+            billing_provider_ownership_current_entitlement_id_fkey,
+            billing_provider_ownership_legacy_subscription_account_id_fkey,
+            billing_provider_ownership_target_entitlement_id_fkey
+            IMMEDIATE;
+
         ALTER TABLE billing_provider_ownership
             ADD CONSTRAINT storage_owner_store_only_provider
                 CHECK (current_provider IN ('free', 'apple', 'google_play')),
@@ -104,6 +114,12 @@ def upgrade() -> None:
                 CHECK (legacy_subscription_account_id IS NULL
                        AND legacy_source_subscription_id IS NULL
                        AND legacy_provider IS NULL);
+
+        SET CONSTRAINTS
+            billing_provider_ownership_current_entitlement_id_fkey,
+            billing_provider_ownership_legacy_subscription_account_id_fkey,
+            billing_provider_ownership_target_entitlement_id_fkey
+            DEFERRED;
         """
     )
     op.execute(

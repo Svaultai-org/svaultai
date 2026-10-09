@@ -361,6 +361,9 @@ def test_retirement_migration_keeps_history_and_enforces_one_future_store_owner(
     assert "same_live_purchase" in migration
     assert "one_active_storage_billing_owner" in migration
     assert "storage_owner_no_legacy_connection" in migration
+    ddl_index = migration.index("ALTER TABLE billing_provider_ownership")
+    assert migration.index("IMMEDIATE;") < ddl_index < migration.index("DEFERRED;")
+    assert "SET CONSTRAINTS\n            billing_provider_ownership_current_entitlement_id_fkey" in migration
     assert "DELETE FROM" not in migration
     assert "DROP TABLE" not in migration
     assert "UPDATE account_subscriptions" not in migration

@@ -235,6 +235,16 @@ CREATE TEMP TABLE expected_encrypted AS SELECT to_jsonb(p) AS payload FROM synth
                migration_status = EXCLUDED.migration_status,
                reason_code = EXCLUDED.reason_code, updated_at = NOW();
 
+        -- Flush deferred ownership FK events before ALTER TABLE. PostgreSQL
+        -- rejects DDL on a table with queued deferred trigger events (55006).
+        -- Restore these originally-deferred pointers after the DDL; unrelated
+        -- constraint modes and schema deferrability remain unchanged.
+        SET CONSTRAINTS
+            billing_provider_ownership_current_entitlement_id_fkey,
+            billing_provider_ownership_legacy_subscription_account_id_fkey,
+            billing_provider_ownership_target_entitlement_id_fkey
+            IMMEDIATE;
+
         ALTER TABLE billing_provider_ownership
             ADD CONSTRAINT storage_owner_store_only_provider
                 CHECK (current_provider IN ('free', 'apple', 'google_play')),
@@ -245,6 +255,12 @@ CREATE TEMP TABLE expected_encrypted AS SELECT to_jsonb(p) AS payload FROM synth
                 CHECK (legacy_subscription_account_id IS NULL
                        AND legacy_source_subscription_id IS NULL
                        AND legacy_provider IS NULL);
+
+        SET CONSTRAINTS
+            billing_provider_ownership_current_entitlement_id_fkey,
+            billing_provider_ownership_legacy_subscription_account_id_fkey,
+            billing_provider_ownership_target_entitlement_id_fkey
+            DEFERRED;
         
 
 
@@ -367,6 +383,28 @@ CREATE TEMP TABLE expected_encrypted AS SELECT to_jsonb(p) AS payload FROM synth
 
 DO $$
 BEGIN
+    IF (SELECT COUNT(*) FROM pg_constraint
+        WHERE conrelid = 'billing_provider_ownership'::regclass
+          AND conname IN (
+              'billing_provider_ownership_current_entitlement_id_fkey',
+              'billing_provider_ownership_legacy_subscription_account_id_fkey',
+              'billing_provider_ownership_target_entitlement_id_fkey')
+          AND condeferrable AND condeferred) <> 3 THEN
+        RAISE EXCEPTION 'Migration changed originally deferred ownership FK schema';
+    END IF;
+    -- A temporary forward pointer must remain legal until transaction end.
+    -- Restoring it proves SET CONSTRAINTS returned to DEFERRED, not merely
+    -- that the pg_constraint declaration remained initially deferred.
+    BEGIN
+        UPDATE billing_provider_ownership
+           SET current_entitlement_id = '40000000-0000-0000-0000-000000000001'
+         WHERE account_id = '00000000-0000-0000-0000-000000000002';
+        UPDATE billing_provider_ownership
+           SET current_entitlement_id = '20000000-0000-0000-0000-000000000012'
+         WHERE account_id = '00000000-0000-0000-0000-000000000002';
+    EXCEPTION WHEN foreign_key_violation THEN
+        RAISE EXCEPTION 'Migration did not restore ownership FK transaction mode to deferred';
+    END;
     IF EXISTS ((SELECT payload FROM expected_legacy)
                EXCEPT (SELECT to_jsonb(s) FROM account_subscriptions s))
        OR EXISTS ((SELECT to_jsonb(s) FROM account_subscriptions s)
@@ -577,4 +615,3 @@ $$;
 -- No COMMIT: passing/failing this file never keeps staging fixture data.
 ROLLBACK;
 SELECT 'PASS: store-only migration, expiry, ownership, Apple renewal, conflict lifecycle and preserved history/encrypted data' AS result;
-
