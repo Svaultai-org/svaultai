@@ -4,7 +4,7 @@ publish_to: 'none'
 # Store-facing marketing version + build number. Bump the +N build
 # number for EVERY submission (App Store Connect + Play Console
 # reject a duplicate build number for the same marketing version).
-version: 1.0.19+59
+version: 1.0.21+64
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -36,6 +36,10 @@ dependencies:
 
   # External links (optional, safe to keep)
   url_launcher: ^6.3.2
+  # Native store-owned updates and occasional system review requests.
+  package_info_plus: 8.3.1
+  in_app_update: ^5.0.0
+  in_app_review: ^2.0.12
 
   # Apple digital-goods subscriptions. Product metadata and localized prices
   # come from StoreKit; purchases are verified by the SVaultAI backend before
