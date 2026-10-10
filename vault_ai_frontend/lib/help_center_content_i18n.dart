@@ -3,8 +3,11 @@
 // vault_ai_backend/vault_faq_content_i18n.py and are copied here for
 // the Help Center's offline rendering. FAQ IDs and category IDs are
 // stable across every locale.
+// Reviewed current-release capability answers are selected from the canonical
+// native content by localizedFaqEntry; preserve that override when regenerating.
 
-import 'help_center_content.dart' show FaqEntry, kFaqEntries, faqEntryById;
+import 'help_center_content.dart'
+    show FaqEntry, kFaqEntries, faqEntryById, kCurrentReleaseCapabilityFaqIds;
 
 const Map<String, Map<String, FaqEntry>> kFaqTranslations = {
   'en': {
@@ -2802,7 +2805,7 @@ const Map<String, Map<String, String>> kFaqCategoryLabelsI18n = {
     'files': 'Files',
     'secure_items': 'Secure items',
     'ids': 'IDs',
-    'crypto': 'Crypto Vault',
+    'crypto': 'Assets',
     'billing': 'Billing',
     'troubleshooting': 'Troubleshooting',
   },
@@ -2875,13 +2878,31 @@ String _normaliseFaqLocale(String? locale) {
 }
 
 FaqEntry? localizedFaqEntry(String faqId, String? locale) {
+  final base = _normaliseFaqLocale(locale);
+  // Preserve current release limits rather than display an older translation
+  // that omits Gold/Silver or implies unavailable monitoring is active.
+  if (kCurrentReleaseCapabilityFaqIds.contains(faqId)) {
+    final canonical = faqEntryById(faqId);
+    if (canonical == null) return null;
+    final translated = kFaqTranslations[base]?[faqId];
+    // Keep already-translated questions unless the old question itself uses
+    // the retired top-level Crypto Vault name. The answer remains reviewed.
+    return FaqEntry(
+      id: canonical.id,
+      category: canonical.category,
+      question: base == 'en' || faqId == 'what-is-crypto-vault' ||
+              faqId == 'is-crypto-custodial'
+          ? canonical.question
+          : translated?.question ?? canonical.question,
+      answer: canonical.answer,
+    );
+  }
   // These legacy IDs used to describe automatic inactivity deletion.
   // Account deletion is now user-only, so always use the reviewed canonical
   // copy and never surface stale translated promises from older bundles.
   if (faqId == 'why-inactive-unpaid-deleted' || faqId == 'how-to-prevent-auto-deletion') {
     return faqEntryById(faqId);
   }
-  final base = _normaliseFaqLocale(locale);
   final table = kFaqTranslations[base] ?? const <String, FaqEntry>{};
   final hit = table[faqId];
   if (hit != null) return hit;

@@ -107,9 +107,10 @@ void main() {
           reason: 'frontend kFaqEntries is missing IDs: $missing');
     });
 
-    test('frontend has no orphaned IDs not shipped by backend', () {
+    test('legacy IDs remain shared and new local capability IDs are explicit', () {
 
-      final backendSet = _kBackendFaqIds.toSet();
+      final backendSet = _kBackendFaqIds.toSet()
+        ..addAll(kFrontendCapabilityFaqIds);
       final orphans = kFaqEntries
           .map((e) => e.id)
           .where((id) => !backendSet.contains(id))
@@ -245,7 +246,7 @@ void main() {
       final labels = kFaqCategories.map((c) => c.label).toSet();
       expect(labels, containsAll(<String>[
         'Getting started', 'Security', 'Files', 'Secure items',
-        'IDs', 'Crypto Vault', 'Billing', 'Troubleshooting',
+        'IDs', 'Assets', 'Billing', 'Troubleshooting',
       ]));
     });
 

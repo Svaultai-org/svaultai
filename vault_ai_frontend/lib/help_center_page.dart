@@ -24,8 +24,7 @@ const String kHelpCenterTitle    = 'Help & FAQ';
 const String kHelpCenterHeading  = kHelpCenterTitle;
 const String kHelpCenterSubtitle =
     'Answers to common questions about Svaultai. Search below or '
-    'browse by category — the AI assistant answers from the same '
-    'set of topics.';
+    'browse by category for the features and limits of your digital vault.';
 const String kHelpCenterEmpty     = 'No matching help topics';
 const String kHelpCenterEmptyBody =
     'Try a different search term, or pick a category chip.';

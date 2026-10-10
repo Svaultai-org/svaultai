@@ -63,7 +63,7 @@ void main() {
       for (final k in <String>[
         'files', 'documents', 'photos', 'videos', 'audio',
         'passwords', 'secure notes', 'id documents',
-        'crypto vault',
+        'assets',
       ]) {
         expect(lower.contains(k), isTrue,
             reason: 'answer must list "$k"');
@@ -122,9 +122,11 @@ void main() {
       }
     });
 
-    test('mentions Crypto Vault assets', () {
+    test('mentions supported Assets', () {
       final lower = _requireAnswer('what-can-i-save').toLowerCase();
-      expect(lower.contains('crypto vault assets'), isTrue);
+      expect(lower.contains('assets'), isTrue);
+      expect(lower.contains('paxg'), isTrue);
+      expect(lower.contains('kag'), isTrue);
     });
   });
 

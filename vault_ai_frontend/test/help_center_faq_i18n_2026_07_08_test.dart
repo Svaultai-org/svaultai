@@ -50,14 +50,16 @@ void main() {
         'en', 'ar', 'fr', 'es', 'ja', 'ko', 'zh',
       ];
       final canonicalIds = kFaqEntries.map((e) => e.id).toSet();
-      expect(canonicalIds.length, 66,
-          reason: 'expected 66 canonical FAQ entries');
+      expect(canonicalIds.length, 66 + kFrontendCapabilityFaqIds.length,
+          reason: 'legacy topics plus explicit native capability additions');
       for (final loc in supported) {
         final table = kFaqTranslations[loc];
         expect(table, isNotNull,
             reason: 'no i18n table for $loc');
         for (final id in canonicalIds) {
-          final entry = table![id];
+          final entry = kCurrentReleaseCapabilityFaqIds.contains(id)
+              ? localizedFaqEntry(id, loc)
+              : table![id];
           expect(entry, isNotNull,
               reason: 'missing $loc translation for $id');
           expect(entry!.question.trim(), isNotEmpty,
@@ -156,7 +158,7 @@ void main() {
 
     test('empty query returns all entries in the given locale', () {
       final all = localizedFaqEntriesMatchingQuery('ko', '');
-      expect(all.length, 66);
+      expect(all.length, kFaqEntries.length);
 
       final delete = all.firstWhere(
         (e) => e.id == 'delete-my-vault',

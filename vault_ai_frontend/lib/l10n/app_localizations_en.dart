@@ -652,7 +652,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get helpCenterSubtitle =>
-      'Answers to common questions about Svaultai. Search below or browse by category — the AI assistant answers from the same set of topics.';
+      'Answers to common questions about Svaultai. Search below or browse by category for the features and limits of your digital vault.';
 
   @override
   String get helpCenterEmpty => 'No matching help topics';
@@ -723,7 +723,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get helpCategoryIds => 'IDs';
 
   @override
-  String get helpCategoryCrypto => 'Crypto Vault';
+  String get helpCategoryCrypto => 'Assets';
 
   @override
   String get helpCategoryBilling => 'Billing';

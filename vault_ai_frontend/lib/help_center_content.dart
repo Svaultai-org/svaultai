@@ -13,7 +13,7 @@ const FaqCategory kFaqCategorySecureItems =
     FaqCategory(id: 'secure_items', label: 'Secure items');
 const FaqCategory kFaqCategoryIds = FaqCategory(id: 'ids', label: 'IDs');
 const FaqCategory kFaqCategoryCrypto =
-    FaqCategory(id: 'crypto', label: 'Crypto Vault');
+    FaqCategory(id: 'crypto', label: 'Assets');
 const FaqCategory kFaqCategoryBilling =
     FaqCategory(id: 'billing', label: 'Billing');
 const FaqCategory kFaqCategoryTroubleshooting =
@@ -43,24 +43,43 @@ class FaqEntry {
   });
 }
 
+// Current native help topics without a legacy backend FAQ identifier. Keep the
+// existing IDs stable; these entries are rendered and searched locally.
+const kFrontendCapabilityFaqIds = <String>{
+  'what-is-memory', 'how-inheritance-works', 'what-is-concierge',
+  'concierge-password-checks', 'gold-and-silver-tokens', 'assets-coming-soon',
+};
+
+// Reviewed release coverage takes precedence over older generated translations.
+// Until these answers are translated, use accurate English rather than stale
+// claims about asset support or privacy-check availability.
+const kCurrentReleaseCapabilityFaqIds = <String>{
+  ...kFrontendCapabilityFaqIds,
+  'what-is-vaultai', 'what-can-i-save', 'what-is-crypto-vault',
+  'supported-assets', 'is-crypto-custodial', 'usdc-uses-eth-address',
+  'erc20-needs-eth-gas', 'buy-sell-swap', 'receive-when-balance-zero',
+  'what-happens-when-i-delete-my-vault', 'why-chat-searches-files',
+};
+
 const List<FaqEntry> kFaqEntries = <FaqEntry>[
   FaqEntry(
     id: 'what-is-vaultai',
     category: 'getting_started',
     question: 'What is Svaultai?',
-    answer: 'Svaultai is your private digital vault. Think of a '
-        'bank vault or a safe at home: people use those to '
-        'protect important papers, drives, cash, gold, IDs, '
-        'and private records. Svaultai gives you that idea in '
-        'digital form. You can keep files, documents, photos, '
-        'videos, audio, passwords, secure notes, ID '
-        'documents, and Crypto Vault assets in one protected '
-        'place. Instead of saving passwords or private '
-        'records in emails, notes, screenshots, or random '
-        'folders, Svaultai helps you keep them organized and '
-        'protected inside your vault. Svaultai Chat helps you '
-        'search, understand, and manage what is inside your '
-        'vault without treating everything as just a file.',
+    answer: 'Svaultai is your private digital vault. Imagine a physical '
+        'vault in digital form — a bank vault or '
+        'safe at home for the digital versions of things that matter to you. '
+        'Svaultai is more than a password manager: keep files, documents, '
+        'private photos, videos, audio, passwords, secure notes, ID documents '
+        'and memories together. Assets adds non-custodial wallets for supported '
+        'cryptocurrencies and verified Gold and Silver tokens. Inheritance '
+        'helps you arrange future vault access for a chosen beneficiary. '
+        'Concierge brings together available reminders and optional password '
+        'checks. Instead of scattering records across emails, notes, '
+        'screenshots or random folders, keep their supported digital versions '
+        'in your vault. Ask Svaultai Chat to find, understand or manage what '
+        'you have saved. This does not turn a physical object or cash into '
+        'a digital asset.',
   ),
   FaqEntry(
     id: 'what-can-i-save',
@@ -68,10 +87,34 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'What can I save in Svaultai?',
     answer: 'You can save files, documents, photos, videos, '
         'audio, passwords, generated logins, secure notes, '
-        'codes, device details, ID documents, and Crypto '
-        'Vault assets. Internal wallet records are managed '
-        'by Crypto Vault and are not shown as normal secure '
-        'items.',
+        'codes, device details, ID documents and memories. If something you '
+        'would keep in a physical vault has a supported digital version, '
+        'you can keep that version here, within your storage limit. Assets '
+        'also supports selected on-chain cryptocurrencies, PAXG and KAG; '
+        'the tokens stay on their blockchains. Internal wallet records are '
+        'managed by Assets and are not shown as normal secure items.',
+  ),
+  FaqEntry(
+    id: 'what-is-memory',
+    category: 'getting_started',
+    question: 'What is Memory for?',
+    answer: 'Memory keeps personal facts and notes you want to remember, '
+        'such as a name, an important detail or an instruction. Ask Svaultai '
+        'Chat to save a memory, retrieve it later or delete it. You can also '
+        'browse and manage saved memories in Memory. A memory is a personal '
+        'record, not a login or a cryptocurrency transaction.',
+  ),
+  FaqEntry(
+    id: 'what-is-concierge',
+    category: 'getting_started',
+    question: 'What does Concierge do?',
+    answer: 'Concierge brings together available vault reminders, document '
+        'expiry information and items that may need attention. Its optional '
+        'free password checks flag exposed, weak or reused passwords in '
+        'eligible encrypted saved logins while your vault is unlocked. '
+        'Email breach monitoring, background email checks and stealer-log '
+        'checks are not enabled in this release. Concierge is not a '
+        'continuous or comprehensive dark-web monitoring service.',
   ),
   FaqEntry(
     id: 'how-do-i-create-my-vault',
@@ -193,9 +236,10 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'What happens when I delete my vault?',
     answer: 'Deleting your vault permanently deletes your Svaultai '
         'vault data, including files, secure items, logins, ID '
-        'documents, Crypto Vault encrypted wallet records, and '
-        'related vault metadata. Any active storage '
-        'subscription is closed. Deletion does not move or '
+        'documents, Assets encrypted wallet records, and '
+        'related vault metadata. Manage or cancel any storage subscription '
+        'in the Apple App Store or Google Play account that purchased it. '
+        'Deletion does not move or '
         'delete crypto assets on the blockchain — those remain '
         'wherever the corresponding wallets exist. If you have '
         'not backed up your wallet outside Svaultai, deleting '
@@ -342,27 +386,61 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
         'country, and issuing state — not on the raw ID number.',
   ),
   FaqEntry(
+    id: 'how-inheritance-works',
+    category: 'security',
+    question: 'How does Inheritance work?',
+    answer: 'Inheritance lets you pair a chosen beneficiary with your vault '
+        'and save the encrypted access credentials needed for that arrangement. '
+        'The beneficiary can request access; you can approve or reject the '
+        'request. The app shows the applicable countdown before access can '
+        'be claimed without your response. Review pairing and credentials '
+        'in Inheritance before relying on it. It does not make a legal will '
+        'or automatically send cryptocurrency to a beneficiary.',
+  ),
+  FaqEntry(
+    id: 'concierge-password-checks',
+    category: 'security',
+    question: 'How do the free Concierge password checks protect my privacy?',
+    answer: 'Choose your privacy checks in Concierge before enabling them. '
+        'Weakness and reuse checks run on your device. For exposure checks, '
+        'only the first 5 characters of a password hash go to Have I Been '
+        'Pwned; your password and full hash stay on the device. Eligible '
+        'saved logins are checked only while the vault is unlocked. The '
+        'optional automatic check runs when Concierge opens, at most once '
+        'every 24 hours — it is not continuous background scanning. '
+        'A clean result is not a guarantee of safety, and an unavailable '
+        'check is not treated as clear. You can turn the checks off.',
+  ),
+  FaqEntry(
     id: 'what-is-crypto-vault',
     category: 'crypto',
-    question: 'What is Crypto Vault?',
-    answer: 'Crypto Vault is the non-custodial wallet feature of '
-        'Svaultai. It stores your public receive addresses, '
-        'shows live balances from public providers, and lets '
-        'you prepare sends that you sign locally.',
+    question: 'What is Assets?',
+    answer: 'Assets is the wallet area of your digital vault. Cryptocurrency '
+        'is one category; Digital Gold and Digital Silver hold supported '
+        'Ethereum tokens. For enabled assets, view your balance, network, '
+        'receive address and transaction history, or prepare a send you '
+        'confirm and sign on your device. Assets is non-custodial and is '
+        'not a marketplace, bank or exchange. Categories marked Coming soon '
+        'do not yet have a working wallet integration.',
   ),
   FaqEntry(
     id: 'supported-assets',
     category: 'crypto',
     question: 'Which assets are supported?',
-    answer: 'ETH, USDT ERC20, USDC ERC20 on Ethereum; SOL on '
-        'Solana; USDT TRC20 on TRON; XMR on Monero (receive '
-        'only in this release).',
+    answer: 'Cryptocurrency includes ETH, USDT ERC20 and USDC ERC20 on '
+        'Ethereum, SOL on Solana, USDT TRC20 on TRON and XMR on Monero '
+        '(receive only; local scanning and sending remain gated). Digital '
+        'Gold supports PAXG, and Digital Silver supports the KMS Labs KAG '
+        'ERC20 token, both on Ethereum mainnet. Only the actions enabled '
+        'for that asset and network are available. Network, provider and '
+        'issuer restrictions can make transfers unavailable. Other '
+        'categories remain Coming soon, not live holdings integrations.',
   ),
   FaqEntry(
     id: 'is-crypto-custodial',
     category: 'crypto',
-    question: 'Is Crypto Vault custodial?',
-    answer: 'No. Crypto Vault is non-custodial. Your keys are on '
+    question: 'Is Assets custodial?',
+    answer: 'No. Assets is non-custodial. Your keys are on '
         'your device; Svaultai cannot move your crypto without '
         'your local signature.',
   ),
@@ -395,9 +473,9 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'usdc-uses-eth-address',
     category: 'crypto',
     question: 'Why does USDC use my Ethereum address?',
-    answer: 'USDC and USDT ERC20 are ERC20 tokens on Ethereum. '
+    answer: 'USDC, USDT ERC20, PAXG and KAG are ERC20 tokens on Ethereum. '
         'Your Ethereum wallet address can receive ETH, USDT '
-        'ERC20, and USDC ERC20. Sending an ERC20 token spends '
+        'ERC20, USDC ERC20, PAXG and KAG. Sending an ERC20 token spends '
         'ETH as gas.',
   ),
   FaqEntry(
@@ -406,7 +484,36 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why do token transfers need ETH for gas?',
     answer: 'Ethereum charges gas in ETH for every transaction, '
         'including ERC20 token transfers. Without a small ETH '
-        'balance, USDT ERC20 and USDC ERC20 sends will fail.',
+        'balance, token sends such as USDT ERC20, USDC ERC20, PAXG or KAG '
+        'cannot cover their network fees.',
+  ),
+  FaqEntry(
+    id: 'gold-and-silver-tokens',
+    category: 'crypto',
+    question: 'What are Digital Gold and Digital Silver?',
+    answer: 'Digital Gold supports Paxos PAX Gold (PAXG). Digital Silver '
+        'supports the KMS Labs KAG token on Ethereum, which provides indirect '
+        'silver exposure backed by native Kinesis-token reserves, not direct '
+        'ownership of a silver bar. These are specific supported tokens, '
+        'not a way to upload physical bullion or mint it into a token. '
+        'Use Ethereum mainnet and the supported token only; native '
+        'Kinesis-network KAG is not interchangeable. ETH pays network fees. '
+        'Issuer eligibility, sanctions and transfer restrictions apply and '
+        'can pause or freeze transfers. Read the issuer notices before '
+        'receiving or sending. Svaultai does not buy, redeem or guarantee '
+        'the value of these tokens.',
+  ),
+  FaqEntry(
+    id: 'assets-coming-soon',
+    category: 'crypto',
+    question: 'What does Coming soon mean in Assets?',
+    answer: 'Tokenized Real Estate, Diamonds and Gemstones, Artwork, Watches '
+        'and Collectibles, Vehicles and Equipment, Inventory and Supply '
+        'Chain Goods, and Securities and Equities do not yet have verified '
+        'wallet integrations in this release. Their Coming soon pages do '
+        'not show a balance, receive address, send action or transaction '
+        'history. Saving a photo, document or certificate in Files does not '
+        'create ownership of a tokenized asset.',
   ),
   FaqEntry(
     id: 'why-monero-different',
@@ -438,10 +545,10 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'buy-sell-swap',
     category: 'crypto',
     question: 'Can I buy, sell, swap, or trade crypto in Svaultai?',
-    answer: 'No. Crypto Vault is for storing, receiving, and '
+    answer: 'No. Assets is for holding, receiving, and '
         'sending supported assets where enabled. It is not an '
         'exchange and does not support buy, sell, swap, trade, '
-        'stake, bridge, or exchange features.',
+        'stake, bridge, banking, fiat deposit or cash-out features.',
   ),
   FaqEntry(
     id: 'provider-unavailable',
@@ -463,7 +570,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     id: 'receive-when-balance-zero',
     category: 'crypto',
     question: 'Can I receive crypto even if balance is 0?',
-    answer: 'Yes. Receive works regardless of balance. Share your '
+    answer: 'Yes, when Receive is enabled for the asset and network. Share your '
         'public receive address to accept funds; incoming '
         'transfers show up when your provider reports them.',
   ),
@@ -577,7 +684,7 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'Why is chat searching files when I asked about '
         'something else?',
     answer: 'That is a bug. Chat should route to the correct vault '
-        'category — Crypto Vault, logins, IDs, billing, '
+        'category — Assets, logins, IDs, billing, '
         'storage, or activity — before falling back to file '
         'search. If a specific phrase misroutes, please tell '
         'the assistant so it can be fixed.',
