@@ -1,0 +1,305 @@
+{
+  "schema": "svaultai_android_opaque_16kb_verification_v1",
+  "checked_at": "2026-10-10T02:44:57.844875+00:00",
+  "ndk_revision": "28.2.13676358",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "rust_source_sha256": "b99ea18833e097e5c653f7f0c15dadf71d0487d1f2fd243196a6c08d1f27bf7b",
+  "cargo_lock_sha256": "d108fb80e34364504dba62592fdb17c5e88d6cf42ad2109668d3d38c3d3a4ab3",
+  "page_size": 16384,
+  "all_four_abis_verified": true,
+  "libraries": [
+    {
+      "abi": "arm64-v8a",
+      "bytes": 575520,
+      "sha256": "7cd837821f24569f29eb52c48f13c24607de3c6c296fc13696b731d20328f4d7",
+      "bits": 64,
+      "machine": 183,
+      "load_segments": [
+        {
+          "offset": 0,
+          "virtual_address": 0,
+          "memory_size": 91816,
+          "alignment": 16384,
+          "flags": 4
+        },
+        {
+          "offset": 91816,
+          "virtual_address": 108200,
+          "memory_size": 347960,
+          "alignment": 16384,
+          "flags": 5
+        },
+        {
+          "offset": 439776,
+          "virtual_address": 472544,
+          "memory_size": 18976,
+          "alignment": 16384,
+          "flags": 6
+        },
+        {
+          "offset": 447376,
+          "virtual_address": 496528,
+          "memory_size": 4688,
+          "alignment": 16384,
+          "flags": 6
+        }
+      ],
+      "relro_segments": [
+        {
+          "virtual_address": 472544,
+          "memory_size": 18976,
+          "end_modulo_16384": 0
+        }
+      ],
+      "ffi_exports": [
+        "vaultai_opaque_client_finish_login",
+        "vaultai_opaque_client_finish_registration",
+        "vaultai_opaque_client_free_string",
+        "vaultai_opaque_client_link_anchor",
+        "vaultai_opaque_client_start_login",
+        "vaultai_opaque_client_start_registration",
+        "vaultai_pbkdf2_hmac_sha256"
+      ]
+    },
+    {
+      "abi": "armeabi-v7a",
+      "bytes": 485996,
+      "sha256": "f764bb71a4e31e2212dd9a92d0892614573d9fb018e15f976b04593a4dafa7fc",
+      "bits": 32,
+      "machine": 40,
+      "load_segments": [
+        {
+          "offset": 0,
+          "virtual_address": 0,
+          "memory_size": 50192,
+          "alignment": 16384,
+          "flags": 4
+        },
+        {
+          "offset": 50192,
+          "virtual_address": 66576,
+          "memory_size": 322688,
+          "alignment": 16384,
+          "flags": 5
+        },
+        {
+          "offset": 372880,
+          "virtual_address": 405648,
+          "memory_size": 20336,
+          "alignment": 16384,
+          "flags": 6
+        },
+        {
+          "offset": 377688,
+          "virtual_address": 426840,
+          "memory_size": 1485,
+          "alignment": 16384,
+          "flags": 6
+        }
+      ],
+      "relro_segments": [
+        {
+          "virtual_address": 405648,
+          "memory_size": 20336,
+          "end_modulo_16384": 0
+        }
+      ],
+      "ffi_exports": [
+        "vaultai_opaque_client_finish_login",
+        "vaultai_opaque_client_finish_registration",
+        "vaultai_opaque_client_free_string",
+        "vaultai_opaque_client_link_anchor",
+        "vaultai_opaque_client_start_login",
+        "vaultai_opaque_client_start_registration",
+        "vaultai_pbkdf2_hmac_sha256"
+      ]
+    },
+    {
+      "abi": "x86_64",
+      "bytes": 640048,
+      "sha256": "cf0cf9caf8ed1d8fbe25026fd64430b9ad1bfeb22967ec7fda72c600106d51cf",
+      "bits": 64,
+      "machine": 62,
+      "load_segments": [
+        {
+          "offset": 0,
+          "virtual_address": 0,
+          "memory_size": 92516,
+          "alignment": 16384,
+          "flags": 4
+        },
+        {
+          "offset": 92528,
+          "virtual_address": 108912,
+          "memory_size": 447856,
+          "alignment": 16384,
+          "flags": 5
+        },
+        {
+          "offset": 540384,
+          "virtual_address": 573152,
+          "memory_size": 16672,
+          "alignment": 16384,
+          "flags": 6
+        },
+        {
+          "offset": 548216,
+          "virtual_address": 597368,
+          "memory_size": 4712,
+          "alignment": 16384,
+          "flags": 6
+        }
+      ],
+      "relro_segments": [
+        {
+          "virtual_address": 573152,
+          "memory_size": 16672,
+          "end_modulo_16384": 0
+        }
+      ],
+      "ffi_exports": [
+        "vaultai_opaque_client_finish_login",
+        "vaultai_opaque_client_finish_registration",
+        "vaultai_opaque_client_free_string",
+        "vaultai_opaque_client_link_anchor",
+        "vaultai_opaque_client_start_login",
+        "vaultai_opaque_client_start_registration",
+        "vaultai_pbkdf2_hmac_sha256"
+      ]
+    },
+    {
+      "abi": "x86",
+      "bytes": 686684,
+      "sha256": "233a6a56553b90d97cc14b49187d60955e5f73d7d32ec17f42d4efd0ac63a75f",
+      "bits": 32,
+      "machine": 3,
+      "load_segments": [
+        {
+          "offset": 0,
+          "virtual_address": 0,
+          "memory_size": 90804,
+          "alignment": 16384,
+          "flags": 4
+        },
+        {
+          "offset": 90816,
+          "virtual_address": 107200,
+          "memory_size": 506544,
+          "alignment": 16384,
+          "flags": 5
+        },
+        {
+          "offset": 597360,
+          "virtual_address": 630128,
+          "memory_size": 8848,
+          "alignment": 16384,
+          "flags": 6
+        },
+        {
+          "offset": 602324,
+          "virtual_address": 651476,
+          "memory_size": 2520,
+          "alignment": 16384,
+          "flags": 6
+        }
+      ],
+      "relro_segments": [
+        {
+          "virtual_address": 630128,
+          "memory_size": 8848,
+          "end_modulo_16384": 0
+        }
+      ],
+      "ffi_exports": [
+        "vaultai_opaque_client_finish_login",
+        "vaultai_opaque_client_finish_registration",
+        "vaultai_opaque_client_free_string",
+        "vaultai_opaque_client_link_anchor",
+        "vaultai_opaque_client_start_login",
+        "vaultai_opaque_client_start_registration",
+        "vaultai_pbkdf2_hmac_sha256"
+      ]
+    }
+  ],
+  "remaining_gate": "Final APK/AAB native dependencies and zip alignment, plus actual 16KB Android runtime testing. No app signing, store upload or functional auth result is claimed by ELF checks.",
+  "original_backups": {
+    "directory": "/private/tmp/svaultai-android-native.ZqfkaV/originals",
+    "retained": true,
+    "libraries": [
+      {
+        "abi": "arm64-v8a",
+        "sha256": "a36d3a54ed6c5b5b257c84406025248bc6b4401020708f976c5d4fccdcd922ca",
+        "original_ffi_exports": [
+          "vaultai_opaque_client_finish_login",
+          "vaultai_opaque_client_finish_registration",
+          "vaultai_opaque_client_free_string",
+          "vaultai_opaque_client_start_login",
+          "vaultai_opaque_client_start_registration",
+          "vaultai_pbkdf2_hmac_sha256"
+        ],
+        "all_original_ffi_exports_preserved": true
+      },
+      {
+        "abi": "armeabi-v7a",
+        "sha256": "3accf964074ffedfefb567173245760d58a316e6386a924bc66744b0a7e79562",
+        "original_ffi_exports": [
+          "vaultai_opaque_client_finish_login",
+          "vaultai_opaque_client_finish_registration",
+          "vaultai_opaque_client_free_string",
+          "vaultai_opaque_client_start_login",
+          "vaultai_opaque_client_start_registration",
+          "vaultai_pbkdf2_hmac_sha256"
+        ],
+        "all_original_ffi_exports_preserved": true
+      },
+      {
+        "abi": "x86_64",
+        "sha256": "389085828dda570d03eab6c3e3fdbe2e0bb891aa2f82ba863df9bb729460dc02",
+        "original_ffi_exports": [
+          "vaultai_opaque_client_finish_login",
+          "vaultai_opaque_client_finish_registration",
+          "vaultai_opaque_client_free_string",
+          "vaultai_opaque_client_start_login",
+          "vaultai_opaque_client_start_registration",
+          "vaultai_pbkdf2_hmac_sha256"
+        ],
+        "all_original_ffi_exports_preserved": true
+      },
+      {
+        "abi": "x86",
+        "sha256": "18c8a3b329eee723b0d15707798126f0160b6b5e8ce507736a157256bd88d8d7",
+        "original_ffi_exports": [
+          "vaultai_opaque_client_finish_login",
+          "vaultai_opaque_client_finish_registration",
+          "vaultai_opaque_client_free_string",
+          "vaultai_opaque_client_start_login",
+          "vaultai_opaque_client_start_registration",
+          "vaultai_pbkdf2_hmac_sha256"
+        ],
+        "all_original_ffi_exports_preserved": true
+      }
+    ]
+  },
+  "implementation_unchanged_against_head": {
+    "vault_ai_frontend/native/opaque_client/src/lib.rs": true,
+    "vault_ai_frontend/native/opaque_client/Cargo.toml": true,
+    "vault_ai_frontend/native/opaque_client/Cargo.lock": true
+  },
+  "export_provenance": "All six original Android exports remain. The seventh link_anchor export is already present in unchanged current Rust source; no authentication or key-derivation algorithm was edited.",
+  "validation": {
+    "binary_verifier_unit_tests": 12,
+    "existing_host_rust_tests": 3,
+    "all_passed": true,
+    "existing_test_scope": [
+      "web-compatible OPAQUE KSF login",
+      "PBKDF2 fixed vectors",
+      "FFI invalid-input handling"
+    ],
+    "bash_syntax": "passed",
+    "android_runtime_test": "not_run",
+    "final_signed_apk_aab_alignment": "not_run",
+    "no_signing_key_or_store_actions": true
+  },
+  "reference": "https://developer.android.com/guide/practices/page-sizes"
+}
