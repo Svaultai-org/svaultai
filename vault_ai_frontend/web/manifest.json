@@ -1,7 +1,7 @@
 {
     "name": "SVaultAI",
     "short_name": "SVaultAI",
-    "description": "SVaultAI private AI-powered digital vault",
+    "description": "SVaultAI: your private Digital Vault, supported non-custodial Assets and optional Concierge password checks.",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0F1115",
