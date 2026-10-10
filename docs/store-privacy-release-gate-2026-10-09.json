@@ -1,0 +1,122 @@
+{
+  "schema": "svaultai_store_privacy_release_gate_v1",
+  "observed_on": "2026-10-09",
+  "status": "submission_held_pending_complete_source_backed_declaration_correction",
+  "current_release": {
+    "native_source_commit": "251d15ecf8b8ce46e460fc54ab894384dd76e551",
+    "native_version": "1.0.21+65",
+    "web_source_commit": "f3e4f9b5dfaebdbc7fdedee7b2d246f2e87f10d6",
+    "web_status": "LIVE; hash-pinned atomic release verified22 public files, connected API/database and matched privacy contract. Previous6cbe118 remains retained.",
+    "apple_status": "Build65 passed signature/FFI/production-marker/Apple validation and upload, processed and is attached to saved draft1.0.21. Standard encryption in addition to Apple OS and FranceNo compliance answers are SAVED; build65 is Ready to Submit, with version Prepare for Submission, Save disabled and Add for Review enabled. Build64's recoverable version association was removed and the build remains retained in TestFlight. Ten images per each of three Apple sizes are saved. No App Review submission occurred; privacy correction and reviewer access remain open gates.",
+    "google_play_status": "Eight safe Android screenshots and updated listing descriptions are saved as draft. Production59 is unchanged; original authorized upload key remains missing.",
+    "synthetic_qa": "iPhone qa11, iPad qa03 and Android qa02 PASS with27 screenshots each and production_requests=0. No real authentication, billing, asset transfers or store prompt display was tested by these journeys."
+  },
+  "saved_store_answers": {
+    "apple": "App Privacy published two months ago: Data Not Collected; Data Types: data is not collected from this app.",
+    "google_play": "Saved Data Safety Step2 answers No to collection or sharing. Financial Features separately declares Cryptocurrency wallet and non-custodial software wallet; those financial answers were not changed."
+  },
+  "declaration_correction": {
+    "both_existing_no_data_answers_are_incorrect": true,
+    "revised_declaration_published": false,
+    "status": "Source-backed category draft only; final store selections remain a release gate.",
+    "general_basis": "Confirmed retained operational/account-linked data and server-readable selected content must be assessed as collected, not ephemeral and not covered by a blanket end-to-end encryption exemption. Treat provider disclosure/sharing, precise linkage, optionality and purpose fields separately; do not infer them from a column name or a synthetic UI test.",
+    "minimal_source_backed_categories": [
+      {
+        "apple": ["Identifiers: User ID", "Identifiers: Device ID"],
+        "google_play": ["Personal info: User IDs", "Device or other IDs"],
+        "data": "Account/vault identifiers and device/session-security metadata",
+        "collection": "Confirmed retained account-linked collection; required for current vault authentication and security.",
+        "purposes": ["App functionality", "Account management", "Fraud prevention, security and compliance"],
+        "sources": ["vault_ai_backend/routes/auth_zk_routes.py:414", "vault_ai_backend/auth_local.py:364", "vault_ai_backend/device_monitor.py:98"]
+      },
+      {
+        "apple": ["Purchases: Purchase History"],
+        "google_play": ["Financial info: Purchase history"],
+        "data": "Apple/Google subscription purchase ledger",
+        "collection": "Confirmed retained account-linked data when the optional store subscription is used; no card-detail collection is established.",
+        "purposes": ["App functionality", "Account management"],
+        "sources": ["vault_ai_backend/billing_entitlements.py:411"]
+      },
+      {
+        "apple": ["Financial Info: Other Financial Info"],
+        "google_play": ["Financial info: Other financial info"],
+        "data": "Public wallet addresses and linked wallet/asset/balance/transaction metadata",
+        "collection": "Confirmed retained account-linked wallet metadata; optional wallet functionality. Public chain visibility is not a collection exemption.",
+        "purposes": ["App functionality"],
+        "sources": ["vault_ai_backend/routes/crypto_wallet_routes.py:953", "vault_ai_backend/routes/crypto_wallet_routes.py:3026"]
+      },
+      {
+        "apple": ["User Content: Other User Content"],
+        "google_play": ["Messages: Other in-app messages", "App activity: Other user-generated content"],
+        "data": "Authorized chat/selected AI context, notes, memories and credential content processed or retained through current server paths",
+        "collection": "Confirmed server processing and retained account-linked content when the optional features are used; assess actual transport/provider paths rather than assuming all content remains client-only.",
+        "purposes": ["App functionality"],
+        "sources": ["vault_ai_backend/main.py:13540", "vault_ai_backend/main.py:13568", "vault_ai_backend/vault_chat_state_store.py:53", "vault_ai_backend/vault_chat_memory.py:61", "vault_ai_backend/vault_chat_memory.py:76", "vault_ai_backend/vault_chat_memory.py:127"]
+      },
+      {
+        "apple": ["User Content: Other User Content", "User Content: Photos or Videos", "User Content: Audio Data"],
+        "google_play": ["Files and docs", "Photos and videos: Photos", "Photos and videos: Videos", "Audio files: Other audio files"],
+        "data": "Supported documents, photos, videos and audio submitted through dedicated file upload features",
+        "collection": "Current optional upload sends raw bytes, filename and PIN to the server, where file content is processed/encrypted. Include the actual supported media types; category selections are not proof of end-to-end encryption.",
+        "purposes": ["App functionality"],
+        "sources": ["vault_ai_frontend/lib/api_client.dart:3378", "vault_ai_backend/main.py:11465", "vault_ai_backend/main.py:11495"]
+      },
+      {
+        "apple": ["Usage Data: Product Interaction", "Usage Data: Other Usage Data"],
+        "google_play": ["App activity: App interactions"],
+        "data": "Retained security and last-seen interaction events",
+        "collection": "Confirmed retained operational events for current security/functionality; verify the exact applicable usage subcategory and retention before final selection.",
+        "purposes": ["App functionality", "Account management", "Fraud prevention, security and compliance"],
+        "sources": ["vault_ai_backend/device_monitor.py:98", "vault_ai_backend/auth_local.py:364"]
+      }
+    ],
+    "concierge_scope": "Free Pwned Passwords checks disclose only a five-character SHA1 prefix, not a full password/hash, email or SVaultAI account identifier. Local weakness/reuse checks are not server collection. Encrypted finding state is not server-readable. Do not declare deferred email/background services as active or assume prefix requests are ephemeral without provider evidence.",
+    "unproven_categories_not_added": ["Health", "Contacts", "Card payment details", "Crash data solely because server logs exist"],
+    "tracking_and_sharing_boundary": "No advertising/tracking use was found in inspected source, but this does not confirm provider behavior. Confirm actual AI/RPC/indexer/HIBP terms, instructions and applicable user-initiated/service-provider exceptions before final tracking or Google sharing answers. No provider retention or No Sharing assumption is made."
+  },
+  "confirmed_boundaries": [
+    {
+      "data": "Retained account/vault identifiers, device identifiers and session/security metadata",
+      "purpose": "Account management, functionality and security",
+      "source": ["vault_ai_backend/routes/auth_zk_routes.py:414", "vault_ai_backend/auth_local.py:364", "vault_ai_backend/device_monitor.py:98"],
+      "requirement": "Account-linked operational identifiers are not covered by a ciphertext-only content exception."
+    },
+    {
+      "data": "Apple and Google subscription purchase ledger",
+      "source": ["vault_ai_backend/billing_entitlements.py:411"],
+      "requirement": "Assess purchase-history disclosure; do not invent card payment-information collection merely for store payments."
+    },
+    {
+      "data": "Readable public wallet address, asset and network metadata linked to the account",
+      "source": ["vault_ai_backend/routes/crypto_wallet_routes.py:963", "vault_ai_backend/routes/crypto_wallet_routes.py:3026"],
+      "requirement": "Assess wallet/financial data and RPC/indexer transfers; encrypted_data column naming does not prove the complete JSON payload is encrypted."
+    },
+    {
+      "data": "Authorized chat text and selected AI prompt/context",
+      "source": ["vault_ai_backend/main.py:13540", "vault_ai_backend/main.py:13568", "vault_ai_backend/main.py:1645", "vault_ai_backend/vault_chat_state_store.py:53"],
+      "requirement": "Assess user-content collection and provider processing; no blanket end-to-end exception."
+    },
+    {
+      "data": "Current file upload sends raw bytes, filename and PIN to the authenticated server route, then encrypts server-side",
+      "source": ["vault_ai_frontend/lib/main.dart:12066", "vault_ai_frontend/lib/api_client.dart:3329", "vault_ai_frontend/lib/api_client.dart:3378", "vault_ai_backend/main.py:11465", "vault_ai_backend/main.py:8518"],
+      "requirement": "Assess files/documents, photos/videos and supported audio as applicable. Client-encrypted filename metadata does not make file bytes end-to-end encrypted. Do not confuse this shipping route with the separate ciphertext-only file-v2 endpoint."
+    },
+    {
+      "data": "Concierge sends a five-character SHA1 password-hash prefix to HIBP with padding; weakness/reuse checks stay local",
+      "source": ["vault_ai_frontend/lib/services/pwned_password_check.dart:40", "vault_ai_backend/migrations/versions/0047_concierge_exposure.py:15"],
+      "requirement": "No full password or full hash is sent for this check. Do not declare new email/background monitoring or assert proven ephemeral provider handling."
+    }
+  ],
+  "remaining_checks": [
+    "Current AI provider account retention and operational logging settings.",
+    "Production upload debug logging flag and filename/log retention.",
+    "HIBP range-request retention beyond its general privacy policy.",
+    "Complete store category, required/optional, linkage, purpose, provider-transfer and tracking answers before saving/publishing a precise declaration."
+  ],
+  "actions_taken": "Apple and Google listing description drafts with accurate server/provider-processing boundaries are SAVED. Four neutral copy/public-guide fixes were applied to both branches: the main.dart semantic-unavailable banner and security_center_page.dart note now state that semantic content search is unavailable while filename search works; web/guides/private-encrypted-vault/index.html and web/features/zero-knowledge-security/index.html now describe encryption/PIN-based access and explicit server/provider processing, without blanket zero-knowledge or all-file-unreadability claims. The existing feature URL is preserved for stability. No authentication, encryption, billing, country access or production-data behavior was changed by these copy fixes or this audit. No revised privacy declaration has been published.",
+  "sources": [
+    "https://developer.apple.com/app-store/app-privacy-details/",
+    "https://support.google.com/googleplay/android-developer/answer/10787469?hl=en",
+    "https://haveibeenpwned.com/Privacy"
+  ]
+}

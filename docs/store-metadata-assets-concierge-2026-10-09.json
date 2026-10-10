@@ -1,0 +1,592 @@
+{
+  "schema": "svaultai_store_metadata_assets_concierge_v1",
+  "prepared_on": "2026-10-09",
+  "status": "web_f3e4f9b_live_apple65_processed_attached_compliance_saved_store_drafts_saved_privacy_correction_gate_unpublished",
+  "source_commit_at_audit": "6fdc1cc",
+  "scope": "The original metadata audit and its initial gates are retained below as historical observations. Current execution status is recorded separately: the latest web release is live, Apple65 is processed and attached to the saved unsubmitted1.0.21 draft with compliance saved, and Apple64 remains retained in TestFlight after its recoverable version association was removed. Listing text and screenshot drafts are saved for both stores, and current iPhone/iPad/Android synthetic UI journeys passed. Privacy declarations still require an unpublished correction. No App Review submission or new production store release is implied.",
+  "release_execution": {
+    "observed_on": "2026-10-09",
+    "native_commit_before_final_qa": "cb1c0b8",
+    "native_source_commit": "251d15ecf8b8ce46e460fc54ab894384dd76e551",
+    "native_pubspec": "1.0.21+65",
+    "saved_apple_description_boundary": "The portal-saved description is3263characters with737remaining; its closing label is Terms of Use (EULA). The proposal field below uses Apple Standard EULA and is3278characters. The processing disclosure and linked standard EULA are otherwise the same; proposal counts are not portal counts.",
+    "web": "f3e4f9b5dfaebdbc7fdedee7b2d246f2e87f10d6 is LIVE through a hash-pinned immutable frontend release and atomic symlink.22 public files, unchanged production API contract, healthy database and matched privacy contract were verified. Previous6cbe1186554206fb28e7771dbe4707b2a1a7f8a2 remains available for rollback. No authentication, billing or encryption behavior was changed by the final neutral-copy corrections.",
+    "apple": "1.0.20 build60 remains Ready for Distribution. Draft1.0.21 has saved Digital Vault title, subtitle, keywords, detailed description, release notes and accurate server/provider-processing boundaries. Build65 at source251d15ecf8b8ce46e460fc54ab894384dd76e551 passed archive/export signature, required auth FFI, production-marker and Apple validation checks, uploaded successfully and processed. Standard encryption in addition to Apple OS and FranceNo compliance answers are SAVED; build65 is Ready to Submit and selected in the saved draft. Build64's recoverable version association was removed; the build remains retained in TestFlight. Fresh portal evidence shows build65, Save disabled, Add for Review enabled and version Prepare for Submission. Ten medium iPhone, ten large iPhone and ten iPad images are saved. Replaced old image associations retain their originals in Asset Library. Automatic release after approval and existing ratings are preserved. No App Review submission occurred; privacy correction and review-access gates remain.",
+    "apple65_upload": {
+      "uploaded": true,
+      "processed": true,
+      "attached": true,
+      "compliant": true,
+      "compliance": "Standard encryption in addition to Apple OS; FranceNo; answers SAVED.",
+      "build_status": "Ready to Submit",
+      "version_status": "Prepare for Submission",
+      "portal_save_disabled": true,
+      "portal_add_for_review_enabled": true,
+      "submitted_for_review": false,
+      "errors": 0,
+      "warnings": 1,
+      "warning": "Existing90068: iOS13 deployment target must become15 for uploads from April2027; this rollout does not change the deployment target.",
+      "delivery_uuid": "12bf1832-160e-46a5-82d1-f677dc9eee1f",
+      "upload_received_bytes": 15644918,
+      "evidence_source": "Authorized release owner's Apple uploader result and fresh portal accessibility evidence for processed build65, saved compliance and selected draft association; no store action performed by this documentation task."
+    },
+    "google_play": "Production59(1.0.23) remains unchanged. Digital Vault title, short and full descriptions, including accurate server/provider-processing boundaries, are SAVED as draft. Eight safe Android phone screenshots are SAVED in order09,11,12,14,17,03,06,08. No signed release or upload was created because the original authorized upload signing material is missing; no replacement key was generated. Planned Android versionName1.0.24 still requires a verified unused versionCode and the authorized key.",
+    "shared_parity": "Shared Assets/Concierge navigation, Help/FAQs, public copy, backend, release contract and saved-item implementations carry the upgrades on web and native. Four final neutral copy/public-guide corrections were applied to both source branches. The web-specific payment baseline remains unchanged apart from the native captured-session guards on storage refresh. Native-only store update/review APIs remain disabled on web. This is shared-feature source parity, not complete Android checkout or real-store runtime parity.",
+    "android_payment_boundary": "The inherited native StoragePage exposes purchase and restore UI only for Apple (storage_page.dart:454,458; supportsAppleIap is iOS-only). Google Play entitlement and management are recognized, but no Google purchase/restore client path is established. The restriction exists in released baseline d2a9199 and candidate base6fecfb3, not an Assets/Concierge regression. Assets is paid-plan gated (main.dart:17451), so a fresh free Android vault lacks an evidenced in-app route to buy the plan needed for paid Assets. Treat this as a known release blocker, not complete billing parity; synthetic paid-session screenshots do not verify billing.",
+    "current_submission_gates": "Apple private review account access is unverified: synthetic screenshot journeys do not submit authentication forms. Apple65 processing, attachment and compliance are complete; the draft is saved and remains unsubmitted. Apple App Privacy says Data Not Collected, and the saved Google Data Safety form answers No collection/sharing; confirmed retained operational identifiers, purchases and current server-content processing invalidate the No Data answers. A complete source-backed privacy/data-safety correction is required; provider-sharing conclusions remain unresolved. Android original upload signing material and a working fresh-vault Google checkout path for paid Assets remain known blockers.",
+    "screenshot_boundary": "Current iPhone qa11, iPad qa03 and Android qa02 synthetic UI journeys all PASS, each with27 genuine captures and production_requests=0. Ten privacy-reviewed images per Apple size and eight selected Android images are saved in store drafts. Authentication is a directly installed synthetic test session, file transport is a strict local fixture and provider findings are mocked test data. Mock provider findings and exposed synthetic passwords are excluded from listing selections. This does not verify real authentication, purchases, store prompts, asset transfers or inheritance execution.",
+    "privacy_correction_status": "Both existing No Data declarations are incorrect for confirmed retained operational and server-processed data. Source-backed categories are drafted in docs/store-privacy-release-gate-2026-10-09.json; corrections remain UNPUBLISHED pending precise required/optional, linkage, purpose, retention and provider-sharing review."
+  },
+  "locale": "en-US",
+  "positioning": {
+    "brand": "SVaultAI",
+    "core": "A physical vault in digital form, not only a password manager.",
+    "scope_of_physical_vault_comparison": "Digital files and records can be saved within supported formats and storage allowance. The app does not digitize a physical object or establish legal ownership of it.",
+    "evidence": [
+      "docs/assets-concierge-review.json",
+      "docs/asset-provider-readiness-2026-10-09.json",
+      "vault_ai_frontend/lib/main.dart",
+      "vault_ai_frontend/lib/storage_page.dart",
+      "vault_ai_frontend/lib/services/asset_catalog.dart"
+    ],
+    "accurate_current_features": [
+      "Encrypted files and private media",
+      "Saved logins and reviewed login drafts",
+      "Personal memories and notes",
+      "Vault chat for supported lookup and actions",
+      "Existing supported non-custodial cryptocurrency wallets",
+      "PAXG Ethereum balance, receive, send and history",
+      "KMS Labs KAG Ethereum balance, receive, send and history",
+      "Beneficiary and inheritance settings",
+      "Opt-in known password exposure, weakness and reuse checks while unlocked"
+    ],
+    "coming_soon_token_integrations": [
+      "Real estate and property",
+      "Diamonds and gemstones",
+      "Artwork",
+      "Watches and collectibles",
+      "Vehicles and equipment",
+      "Inventory and supply chain",
+      "Securities and equities"
+    ],
+    "do_not_claim": [
+      "Every asset category is connected",
+      "In-app buying, selling, swaps or trading",
+      "Guaranteed return, yield or savings interest",
+      "Direct legal title to bullion or other physical goods",
+      "Worldwide issuer eligibility",
+      "Continuous or background password scanning",
+      "Live email exposure monitoring",
+      "Private-file exposure scanning",
+      "Comprehensive dark-web search",
+      "Protection against every breach",
+      "Biometric authentication or the unfinished private-identity/session foundation",
+      "Operator blindness to every account or operational metadata field",
+      "A legal will, automatic probate or guaranteed inheritance",
+      "Guaranteed keyword rank, review publication or immediate worldwide update"
+    ]
+  },
+  "identity": {
+    "ios_bundle_id": "com.svaultai.app",
+    "app_store_apple_id": "6800601455",
+    "android_application_id": "com.svaultai.app",
+    "android_namespace": "com.svaultai.app",
+    "native_launcher_display_name": "Svaultai",
+    "listing_brand_proposal": "SVaultAI",
+    "identifiers_verified_in": [
+      "vault_ai_frontend/android/app/build.gradle.kts:64",
+      "vault_ai_frontend/android/app/build.gradle.kts:78",
+      "vault_ai_frontend/android/app/src/main/AndroidManifest.xml",
+      "vault_ai_frontend/ios/Runner/Info.plist",
+      "vault_ai_frontend/ios/Runner.xcodeproj/project.pbxproj",
+      "vault_ai_backend/google_play_billing.py",
+      "google_play_billing_bridge/publisher.py"
+    ],
+    "developer_or_seller_name": "Preserve the authorized legal entity already registered with each store. A listing title change does not change Apple's developer/seller name.",
+    "candidate_native_artifact_evidence": "docs/assets-concierge-review.json records signed iOS 1.0.21 build63; it is not proof of App Store upload, approval or Android version-code availability.",
+    "pubspec_at_audit": "1.0.20+60",
+    "version_gate": "Read current live and in-flight store versions before choosing the release. Explicit build overrides must match archive/AAB manifests; do not infer Play's next available versionCode from an iOS build number.",
+    "release_owner_store_observation": {
+      "apple": "The release owner verified 1.0.20 build60 Ready for Distribution and created 1.0.21 Prepare for Submission.",
+      "google_play": "The release owner verified production versionCode59, versionName1.0.23. Proposed Android versionName1.0.24 requires an unused versionCode of at least60; other-track/build history remains to be checked.",
+      "boundary": "Reported by the release owner through its authorized console session; this metadata task did not call store APIs or operate the browser."
+    },
+    "links": {
+      "website": "https://app.svaultai.com/",
+      "marketing": "https://app.svaultai.com/features/",
+      "privacy": "https://app.svaultai.com/privacy/",
+      "apple_listing": "https://apps.apple.com/app/id6800601455",
+      "apple_write_review": "https://apps.apple.com/app/id6800601455?action=write-review",
+      "google_play_listing": "https://play.google.com/store/apps/details?id=com.svaultai.app",
+      "support_url_candidate": "https://app.svaultai.com/help-and-faq-public",
+      "support_email_from_existing_policy": "vaultai@svaultai.com",
+      "link_validation": "Listing URLs follow verified IDs. The public Google Play listing was read through the web tool, but its cached response is not proof of the current track/versionCode. Apple availability was not checked. Confirm support URL exposes actual contact details and inbox delivery before submission. Do not replace existing custom terms with an invented URL."
+    }
+  },
+  "apple": {
+    "limits": {
+      "name_characters": 30,
+      "subtitle_characters": 30,
+      "keywords_utf8_bytes": 100,
+      "promotional_text_characters": 170,
+      "description_characters": 4000,
+      "whats_new_characters": 4000,
+      "app_review_notes_utf8_bytes": 4000
+    },
+    "name": "SVaultAI: Digital Vault",
+    "subtitle": "Files, assets and inheritance",
+    "keywords": "encrypted,photos,videos,documents,passwords,memory,notes,private,storage,wallet,secure,assistant",
+    "promotional_text": "Your physical vault, reimagined digitally. Keep important files, memories and logins together, manage supported digital assets, and plan beneficiary access.",
+    "description": "Imagine a physical vault in digital form.\n\nSVaultAI is a personal digital vault, not just a password manager. If something you would keep in a physical vault has a digital version, you can keep that file here: private photos and videos, important documents, certificates, personal records and more, within your storage allowance.\n\nFILES, MEMORIES AND LOGINS\nSave and organize documents and media. Create or save login details, review a generated login before saving it, and retrieve or delete saved entries. Keep personal notes and memories you want to find again, and remove them when you no longer need them.\n\nASK YOUR VAULT\nUse SVaultAI Chat to find supported saved items and manage them in everyday language. Ask questions, retrieve a memory, find a file or open the right part of your vault. Sensitive wallet keys are not revealed through chat.\n\nDIGITAL ASSETS UNDER YOUR CONTROL\nOpen Cryptocurrency inside Assets to use non-custodial wallet features for supported cryptocurrencies. Assets also includes Ethereum wallet support for PAX Gold (PAXG) and KMS Labs KAG Silver (KAG): view balances, receive, send and review transaction history where available. These are specific issuer tokens, not an SVaultAI promise of direct ownership or delivery of physical gold or silver.\n\nSVaultAI is not an exchange. There is no in-app buying, selling or trading. Ethereum transfers require ETH for network fees. Issuer terms, country eligibility and transfer restrictions apply; an issuer or unavailable network service can prevent a transfer. Token integrations for property, diamonds, artwork, collectibles, vehicles, inventory and securities remain Coming soon.\n\nINHERITANCE\nPrepare beneficiary access through SVaultAI's inheritance settings. Pair beneficiaries and manage the arrangements offered in the app. This is a digital access feature, not a legal will or a substitute for estate advice.\n\nCONCIERGE PASSWORD CHECKS\nOpt in to check eligible saved passwords for known exposure using Have I Been Pwned's Pwned Passwords service, alongside on-device weakness and reuse checks. Checks run while your vault is unlocked; the provider receives only a five-character password-hash prefix, not the full password. Review findings, change an affected password on its original service, then update the saved login.\n\nThese checks do not prove that an account is safe. Email and background monitoring are not included in this release; private-file exposure scanning and comprehensive dark-web searching are not supported.\n\nYOUR VAULT, YOUR RESPONSIBILITY\nSVaultAI uses encryption and PIN-based controls to protect vault data. AI and document features may process content on our servers and with service providers when you use them. Public wallet addresses and blockchain activity are not private vault content. Keep your vault name and PIN safe: SVaultAI cannot recover a forgotten vault name or PIN. Use the same vault on supported web and mobile platforms.\n\nOptional monthly storage plans are billed through your app store and renew automatically unless canceled. Manage or cancel a plan in the store's subscription settings. Available storage and current prices are shown in the app.\n\nTerms of Use (Apple Standard EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/",
+    "whats_new": "We added Assets for supported cryptocurrency wallets, PAX Gold (PAXG) and KMS Labs KAG Silver (KAG) on Ethereum, with balances, receive, send and transaction history. Other token categories are clearly marked Coming soon.\n\nConcierge now offers opt-in password exposure, weakness and reuse checks while the vault is unlocked. Email and background monitoring are not included.\n\nWe improved Cryptocurrency navigation, restored a clear Back button and safe spacing on iPhone, and improved the chat balance lookup with clear retry messages when live data is unavailable.\n\nWe added store-confirmed update prompts and occasional review requests.",
+    "review_notes": "We added Assets support for PAX Gold (PAXG) and KMS Labs KAG Silver (KAG) on Ethereum alongside the existing Cryptocurrency screen. Balances, receive, send and history use the supported wallet/network services. This is a non-custodial wallet integration, not a purchase, exchange, investment or physical-redemption service. The app does not sell tokens or offer yield. ETH is required for Ethereum gas; issuer terms, eligibility, pause and access restrictions apply.\n\nOther token categories are visible as Coming soon and do not offer unsupported balance, receive, send or history actions.\n\nConcierge checks eligible saved passwords only after opt-in while the vault is unlocked. Known exposure checks use the free HIBP Pwned Passwords service with five-character hash-prefix disclosure, plus local weakness and reuse checks. Email and background monitoring are deferred. Private-file exposure and comprehensive dark-web searching are not supported.\n\nThe vault name and PIN sign-in, encrypted files/logins/memories, inheritance and store storage subscriptions remain available. Use the separately supplied App Review credentials in the sign-in fields; no production customer's credentials are included in these notes. Review can use zero-balance wallet screens without buying or sending funds.\n\nThe new iPhone Cryptocurrency route has a Back button and correct safe-area spacing. Chat balance lookup reports unavailable with Retry rather than a fabricated zero when the live lookup fails.",
+    "app_review_access_gate": "Provide a working authorized review account through App Store Connect's private review fields and verify it before submission. Do not use Brain, real financial balances, private recovery phrases or customer records in screenshots or public metadata.",
+    "categories": "Preserve existing approved primary/secondary categories unless release owner deliberately changes them; do not relabel this as an exchange or investment platform.",
+    "ratings": "Do not reset the overview rating by default. Listing copy or build submission does not force publication of customer reviews.",
+    "metadata_edit_gate": "Inspect current version/review state after sign-in. A new version requires the current version to be Ready for Distribution. If replacing a version still in review, use Apple's documented withdrawal/edit process knowingly; do not silently cancel a pending submission."
+  },
+  "google_play": {
+    "limits": {
+      "app_name_characters": 30,
+      "short_description_characters": 80,
+      "full_description_characters": 4000,
+      "release_notes_unicode_characters_per_language": 500
+    },
+    "app_name": "SVaultAI: Digital Vault",
+    "short_description": "A digital vault for files, memories, logins, assets and inheritance",
+    "full_description": "Imagine a physical vault in digital form.\n\nSVaultAI is a personal digital vault, not just a password manager. If something you would keep in a physical vault has a digital version, you can keep that file here: private photos and videos, important documents, certificates, personal records and more, within your storage allowance.\n\nFILES, MEMORIES AND LOGINS\nSave and organize documents and media. Create or save login details, review a generated login before saving it, and retrieve or delete saved entries. Keep personal notes and memories you want to find again, and remove them when you no longer need them.\n\nASK YOUR VAULT\nUse SVaultAI Chat to find supported saved items and manage them in everyday language. Ask questions, retrieve a memory, find a file or open the right part of your vault. Sensitive wallet keys are not revealed through chat.\n\nDIGITAL ASSETS UNDER YOUR CONTROL\nOpen Cryptocurrency inside Assets to use non-custodial wallet features for supported cryptocurrencies. Assets also includes Ethereum wallet support for PAX Gold (PAXG) and KMS Labs KAG Silver (KAG): view balances, receive, send and review transaction history where available. These are specific issuer tokens, not an SVaultAI promise of direct ownership or delivery of physical gold or silver.\n\nSVaultAI is not an exchange. There is no in-app buying, selling or trading. Ethereum transfers require ETH for network fees. Issuer terms, country eligibility and transfer restrictions apply; an issuer or unavailable network service can prevent a transfer. Token integrations for property, diamonds, artwork, collectibles, vehicles, inventory and securities remain Coming soon.\n\nINHERITANCE\nPrepare beneficiary access through SVaultAI's inheritance settings. Pair beneficiaries and manage the arrangements offered in the app. This is a digital access feature, not a legal will or a substitute for estate advice.\n\nCONCIERGE PASSWORD CHECKS\nOpt in to check eligible saved passwords for known exposure using Have I Been Pwned's Pwned Passwords service, alongside on-device weakness and reuse checks. Checks run while your vault is unlocked; the provider receives only a five-character password-hash prefix, not the full password. Review findings, change an affected password on its original service, then update the saved login.\n\nThese checks do not prove that an account is safe. Email and background monitoring are not included in this release; private-file exposure scanning and comprehensive dark-web searching are not supported.\n\nYOUR VAULT, YOUR RESPONSIBILITY\nSVaultAI uses encryption and PIN-based controls to protect vault data. AI and document features may process content on our servers and with service providers when you use them. Public wallet addresses and blockchain activity are not private vault content. Keep your vault name and PIN safe: SVaultAI cannot recover a forgotten vault name or PIN. Use the same vault on supported web and mobile platforms.\n\nOptional monthly storage plans are billed through your app store and renew automatically unless canceled. Manage or cancel a plan in the store's subscription settings. Available storage and current prices are shown in the app.",
+    "release_notes": "Added Assets with Ethereum support for PAX Gold (PAXG) and KMS Labs KAG Silver (KAG): balances, receive, send and history. Other token categories show Coming soon.\nConcierge adds opt-in password exposure, weakness and reuse checks while unlocked; email and background monitoring are not included.\nImproved Cryptocurrency navigation and chat balance lookup, with clear retry messages when live data is unavailable.\nAdded store-confirmed update prompts and occasional review requests.",
+    "keyword_field": "Google Play has no Apple-style hidden keyword field. Use relevant plain language in the title and descriptions without repetition, rank claims or competitor names.",
+    "content_review": "Review Data safety, financial features, privacy policy, app access and age/content answers against the current binary. Declare the cryptocurrency-wallet capability accurately; do not declare securities trading or NFT sales merely because unavailable categories are visible.",
+    "country_gate": "Preserve the previously authorized country exclusions, including France, unless separately reviewed. Google currently states non-custodial wallets are outside its specific Exchanges and Software Wallets policy; this does not waive the financial declaration or other local/issuer requirements.",
+    "testing_gate": "Build/sign the correct application ID with an available versionCode and the authorized upload key, test the install/update path and store purchase restore in an eligible test track, then submit the reviewed release. No Android release binary or upload was produced by this task."
+  },
+  "screenshots": {
+    "status": "apple_ten_per_three_device_sizes_saved_google_eight_safe_android_images_saved_as_draft",
+    "capture_policy": "Capture the real shipping app on each target device with an authorized synthetic demo vault. Keep genuine UI, use harmless sample records, mask passwords through the app's normal UI, and show no live account identifiers, wallet addresses, recovery material or real balances. Do not repaint controls, fabricate successful transfers/findings, or remove Coming soon/unavailable labels. Headline overlays may explain a genuine captured feature without changing its UI.",
+    "base_capture_requirement": "Replace generic hello-only screenshots. Show saved-item workflows plus crypto, supported gold/silver, inheritance and free Concierge. Re-capture iPad and Android layouts rather than uploading iPhone screens as other devices.",
+    "apple_spec": {
+      "count_per_device_size": {
+        "minimum": 1,
+        "maximum": 10
+      },
+      "formats": [
+        "JPEG",
+        "PNG"
+      ],
+      "alpha_allowed": false,
+      "required_device_families": "Current Apple specification lists Dynamic Island medium-display iPhone and 13-inch iPad when iPadOS is supported. Verify the actual media slots in App Store Connect before upload.",
+      "proposed_iphone_capture": {
+        "device": "iPhone 17 Pro",
+        "portrait_pixels": [
+          1206,
+          2622
+        ]
+      },
+      "proposed_ipad_capture": {
+        "device": "13-inch iPad Pro",
+        "portrait_pixels": [
+          2064,
+          2752
+        ],
+        "accepted_alternative": [
+          2048,
+          2732
+        ]
+      },
+      "gate": "Inspect image dimensions and visible content. Populate every required slot; don't stretch an image to a different aspect ratio."
+    },
+    "apple_sequence": [
+      {
+        "order": 1,
+        "headline": "Your physical vault, in digital form",
+        "screen": "Vault chat or overview with a completed harmless saved-item lookup, not just hello",
+        "message": "Files, memories, logins and supported digital assets together"
+      },
+      {
+        "order": 2,
+        "headline": "Create, save and manage logins",
+        "screen": "Reviewed login draft and saved-login screen",
+        "workflow": "Use actual captures for create, Save/Cancel and saved-entry Delete; one genuine state or clearly separated real UI panels, never synthetic buttons"
+      },
+      {
+        "order": 3,
+        "headline": "Keep private files and media",
+        "screen": "Files screen with sample document, photo and video",
+        "workflow": "Capture upload/save state and real delete control or confirmation using harmless files"
+      },
+      {
+        "order": 4,
+        "headline": "Save the details you want to remember",
+        "screen": "Memory save and retrieval using harmless text",
+        "workflow": "Show a saved memory and its actual removal action; if using panels each must come from the shipping app"
+      },
+      {
+        "order": 5,
+        "headline": "Crypto, with keys under your control",
+        "screen": "Cryptocurrency wallet with supported network and actual receive/send/activity controls",
+        "caution": "No invented savings yield, bank balance or confirmed transfer"
+      },
+      {
+        "order": 6,
+        "headline": "PAX Gold on Ethereum",
+        "screen": "PAXG detail with balance/receive/send/history capability",
+        "caution": "Use genuine zero balance if unfunded; retain network/gas/issuer wording"
+      },
+      {
+        "order": 7,
+        "headline": "KMS Labs KAG Silver on Ethereum",
+        "screen": "KAG detail with accurate token identity and issuer eligibility notice",
+        "caution": "Not native Kinesis KAG or a promise of silver-bar ownership"
+      },
+      {
+        "order": 8,
+        "headline": "Plan beneficiary access",
+        "screen": "Inheritance settings using a synthetic beneficiary",
+        "caution": "No promise of a legal will, guaranteed estate transfer or fictitious completed inheritance"
+      },
+      {
+        "order": 9,
+        "headline": "Check passwords with Concierge",
+        "screen": "Opt-in and genuine known-exposure/weakness/reuse findings or check status",
+        "caution": "Only harmless synthetic passwords; include unlocked/foreground scope and don't fabricate all-clear results"
+      },
+      {
+        "order": 10,
+        "headline": "Explore supported digital assets",
+        "screen": "Assets overview showing Cryptocurrency, Digital Gold and Digital Silver, with other categories visibly Coming soon",
+        "caution": "Do not crop off Coming soon labels or show buying actions"
+      }
+    ],
+    "google_spec": {
+      "count_per_supported_device_type_maximum": 8,
+      "minimum_listing_total": 2,
+      "recommended_phone": {
+        "count_at_least": 4,
+        "portrait_canvas_pixels": [
+          1080,
+          1920
+        ],
+        "note": "Use actual Android UI within an accurately labeled 9:16 store artwork canvas if the native display ratio differs; don't distort the UI."
+      },
+      "formats": [
+        "JPEG",
+        "24-bit PNG without alpha"
+      ],
+      "min_dimension_pixels": 320,
+      "max_dimension_pixels": 3840,
+      "max_long_to_short_dimension_ratio": 2,
+      "feature_graphic": {
+        "pixels": [
+          1024,
+          500
+        ],
+        "format": "JPEG or 24-bit PNG without alpha",
+        "headline": "Your vault, in digital form",
+        "visual": "SVaultAI's own brand artwork and genuine app context, without issuer/store logos or ranking/price claims"
+      },
+      "tablet_requirement": "Provide genuine 7-inch/10-inch tablet captures where the app is distributed and those slots are used; validate readable large-screen layout."
+    },
+    "google_sequence": [
+      {
+        "order": 1,
+        "headline": "Your vault, in digital form",
+        "source": "Actual Android vault chat/overview"
+      },
+      {
+        "order": 2,
+        "headline": "Create, save and delete logins",
+        "source": "Actual Android reviewed draft and saved-entry controls"
+      },
+      {
+        "order": 3,
+        "headline": "Files, photos and videos together",
+        "source": "Actual Android upload/list/delete UI"
+      },
+      {
+        "order": 4,
+        "headline": "Keep memories. Find them again.",
+        "source": "Actual Android memory save/retrieve/delete UI"
+      },
+      {
+        "order": 5,
+        "headline": "Non-custodial cryptocurrency wallets",
+        "source": "Actual Android Cryptocurrency UI"
+      },
+      {
+        "order": 6,
+        "headline": "Gold and silver tokens on Ethereum",
+        "source": "Clearly separated actual PAXG and KMS KAG detail captures plus visible issuer/network notes"
+      },
+      {
+        "order": 7,
+        "headline": "Plan beneficiary access",
+        "source": "Actual Android inheritance settings"
+      },
+      {
+        "order": 8,
+        "headline": "Password checks with Concierge",
+        "source": "Actual Android opted-in foreground check/status; Coming soon asset labels must remain visible wherever category overview is used"
+      }
+    ],
+    "existing_evidence": "work/store-upgrade-2026-10-09 contains current iphone/qa11, ipad/qa03 and android/qa02 manifests and integration reports, each PASS with27 captures and zero production requests. Apple retains ten saved privacy-reviewed images per medium iPhone, large iPhone and iPad size. Google Play retains eight safe Android images in order09,11,12,14,17,03,06,08, saved as draft only. Earlier qa10, qa-max01, qa02 iPad and docs/assets-concierge-review.json remain explicitly historical evidence. Neither current nor historical screenshot fixtures prove live authentication, billing, transfer settlement or store prompt display.",
+    "saved_google_phone_capture_order": ["09", "11", "12", "14", "17", "03", "06", "08"],
+    "preview_video": "Optional. If produced later, demonstrate the current app and supported flows; symbols can explain vault concepts but must not portray Coming soon integrations, continuous scanning, fake funds or unimplemented features as working."
+  },
+  "reviews_and_update_policy": {
+    "implementation_at_audit": "At the initial read-only audit these prompt/update integrations were absent. The release owner is now adding native review requests and store-confirmed update handling. Validate the final implementation on both platforms before using the drafted release notes; this metadata task changes no app behavior.",
+    "review_prompt_proposal": "Use the official StoreKit/Google Play system flow at a natural pause after meaningful engagement, never at first launch or during a transfer, PIN entry or deletion. Choose eligibility by neutral usage, not whether feedback is positive. No rewards, paid reviews, rating prerequisite or 5-star pre-screening. A system request may not show and does not prove a review was submitted/published.",
+    "manual_review_links": "A user-selected Rate SVaultAI item may open the store listing/review URL; do not attach the quota-controlled prompt API to a button that promises a prompt.",
+    "apple_prompt_limits": "Apple controls display; its documented maximum is three occurrences within 365 days. TestFlight cannot verify public review publication.",
+    "google_prompt_limits": "Google uses an undisclosed time-based quota. Completion does not reveal whether a user rated/reviewed. Do not infer a rating or repeatedly prompt after no display.",
+    "force_update_proposal": "A required-update flow must be store-confirmed and downloadable for that installed user, device and country before blocking access. Never gate a pending, ineligible or inaccessible build. Retain failure recovery, data preservation and a rollback switch; metadata alone cannot update an installed app.",
+    "apple_update_boundary": "Automatic updates are user-controlled; App Store delivery is not a remotely forced install. During Apple's phased release anyone can manually download the update. The release owner's in-app required-update handling must remain a store-availability-checked navigation flow, not a promise of remote installation.",
+    "google_update_boundary": "Immediate updates are a client API flow for critical cases, not a Play Console forced-update switch. Require UPDATE_AVAILABLE and isUpdateTypeAllowed for the installed user's device/account. Google requires matching app ID/signing key, Play ownership and a higher eligible versionCode. Existing installed versions without the new client integration cannot be given that flow retroactively.",
+    "availability_gate": "Never raise a hard minimum version while the replacement is pending review, only on a test track, unavailable in that user's country/device, or inaccessible through a partial Play rollout. A staged Play release reaches only selected users. Network/check failure must not delete local credentials, ciphertext or wallet keys. Any future gate needs a rollback switch and offline/unsupported-device policy."
+  },
+  "release_tooling_audit": {
+    "activity": "Initial audit used read-only filenames/config/source inspection without secret contents or store/API actions. The release owner subsequently authorized a scoped offline Android native-library rebuild; its independent evidence is linked below. No signing keys, signed Android package, store submission or production data were changed by this task.",
+    "ios": {
+      "local_key_filename_present": "/Users/chosenbrain/.private_keys/AuthKey_8MHGWJU2V9.p8",
+      "key_contents_read": false,
+      "issuer_metadata": "Earlier exact backend check found only Apple verification certificates/config, no matching signing key ID/PEM or App Store Connect issuer. File presence is not usable release auth.",
+      "cli_filename_available": "/usr/bin/xcrun",
+      "reusable_exports": [
+        "vault_ai_frontend/ios/ExportOptionsProduction.plist",
+        "../work/ios-1.0.20-build60-local-export.plist"
+      ],
+      "session_gate": "The release owner reports store sign-ins are ready and owns portal interaction. This task did not inspect a session or call a store API; verify the active organization, role and version before submission.",
+      "build_gate": "Use the established production API, pinned release-contract JSON, full source marker and explicit mainnet Dart flags. Preserve Apple billing repair and verify archive identity/version/signature/auth FFI symbols before upload."
+    },
+    "android": {
+      "signing_config_path": "vault_ai_frontend/android/key.properties",
+      "signing_config_present_in_candidate": false,
+      "signing_config_present_in_original_desktop_checkout": false,
+      "authorized_key_discovery": {
+        "locations_scanned_for_filenames_only": [
+          "Current parent workspace, excluding generated builds, dependency caches and Git internals",
+          "/Users/chosenbrain/Desktop/svaultai/vault_ai_frontend/android",
+          "/Users/chosenbrain/.gradle, excluding generated caches and workers",
+          "/Users/chosenbrain/Library/Android/sdk, excluding system images and sources"
+        ],
+        "result": "No key.properties, upload keystore, .jks or .keystore file was found in these legitimate project/toolchain locations. The example properties file is only a template. No password or private-key contents were read, and no replacement key was generated.",
+        "boundary": "This is not a whole-computer search or proof that the original key no longer exists. The existing authorized key/config must be supplied from the developer's actual previous release material or recovered through an authorized process, not guessed or replaced."
+      },
+      "behavior": "Current Gradle release signing fails closed when upload-key properties are missing; it does not use the debug key.",
+      "downloadable_service_key_read": false,
+      "bridge": "google_play_billing_bridge/publisher.py is a fixed-package keyless ADC subscription verifier/acknowledger. It is not a release CLI, and its presence does not establish edit/track/upload permission.",
+      "cli_audit": "fastlane, altool, transporter and gcloud were not found by command-v on this task's PATH. adb/emulator were not on PATH, but their files exist under the configured SDK. No SDK, Gradle, signing or emulator executable was invoked by this audit.",
+      "toolchain": {
+        "configured_sdk": "/Users/chosenbrain/Library/Android/sdk",
+        "configured_flutter": "/Users/chosenbrain/development/flutter",
+        "android_gradle_plugin": "8.9.1",
+        "compile_sdk": 36,
+        "target_sdk": 36,
+        "min_sdk": 24,
+        "ndk": "Derived from flutter.ndkVersion; installed/active version was not executed or resolved.",
+        "version": "The original desktop local.properties contains historical 1.0.11/code12 overrides; this is not current Play Console state. Confirm the maximum uploaded/used versionCode and build explicit current overrides."
+      },
+      "native_ffi": {
+        "source": "vault_ai_frontend/native/opaque_client/src/lib.rs",
+        "cargo_manifest": "vault_ai_frontend/native/opaque_client/Cargo.toml",
+        "existing_android_script": "vault_ai_frontend/native/opaque_client/build-android.ps1",
+        "script_boundary": "The checked-in script is Windows-specific, uses the NDK windows-x86_64 clang.cmd toolchain, and copies four ABI libraries. No macOS Android native rebuild script was found; do not treat the iOS build script as an Android build.",
+        "loader": "vault_ai_frontend/lib/services/opaque_client_native.dart loads libvaultai_opaque_client.so",
+        "prebuilt_directory": "vault_ai_frontend/android/app/src/main/jniLibs",
+        "original_prebuilt_static_elf_alignment": {
+          "method": "Read-only Python standard-library ELF program-header parsing, not an SDK or build invocation.",
+          "arm64_v8a": {
+            "load_segment_alignment_bytes": 16384,
+            "gnu_relro_end_modulo_16384": 8192
+          },
+          "x86_64": {
+            "load_segment_alignment_bytes": 16384,
+            "gnu_relro_end_modulo_16384": 12288
+          },
+          "armeabi_v7a": {
+            "load_segment_alignment_bytes": 4096,
+            "gnu_relro_end_modulo_16384": 0
+          },
+          "x86": {
+            "load_segment_alignment_bytes": 4096,
+            "gnu_relro_end_modulo_16384": 0
+          },
+          "finding_before_rebuild": "The original two 64-bit prebuilts passed PT_LOAD alignment but not the current Android guide's GNU_RELRO virtual end formula. These historical values do not describe the replacements verified below."
+        },
+        "authorized_local_rebuild": {
+          "script": "vault_ai_frontend/native/opaque_client/build-android-macos.sh",
+          "evidence": "vault_ai_frontend/native/opaque_client/android-16kb-verification-2026-10-09.json",
+          "result": "All four rebuilt and installed ABIs have actual 16KB PT_LOAD alignment and GNU_RELRO virtual end modulo 16KB=0, verified with binary-header checks and pinned NDK llvm-readelf. All six original FFI exports are preserved plus the link anchor already present in unchanged current Rust source. 12 verifier regressions and 3 existing host Rust tests passed.",
+          "preserved": "Rust authentication/key-derivation source, Cargo.toml and Cargo.lock remain byte-identical to HEAD. Original binaries remain in the dedicated temporary backup directory recorded in evidence.",
+          "remaining_gate": "Check all native dependencies and final AAB/APK zip alignment, then test the installed app on a 16KB Android environment. Native ELF checks and host tests are not full app/runtime or store acceptance proof."
+        }
+      },
+      "available_emulator_config": {
+        "name": "SvaultAI_API_36",
+        "config": "/Users/chosenbrain/.android/avd/SvaultAI_API_36.avd/config.ini",
+        "hardware": "Pixel 8",
+        "abi": "arm64-v8a",
+        "image": "system-images/android-36/google_apis/arm64-v8a/",
+        "play_store_enabled": false,
+        "boundary": "A configured native UI/FFI emulator, not a verified running device. This Google APIs image cannot prove Play-installed ownership, real Play billing/review prompts or immediate-update eligibility. Use an authorized Play-enabled test environment for those release gates."
+      },
+      "screenshot_boundary": "MainActivity blocks release screenshots with FLAG_SECURE and disables recent-task snapshots. Do not weaken that privacy protection for marketing. Use an approved synthetic demonstration/debug capture method with the real shipping UI and no production data, and validate the final release separately.",
+      "public_listing_read": {
+        "url": "https://play.google.com/store/apps/details?id=com.svaultai.app",
+        "visible_name": "Svaultai",
+        "cached_updated_on": "2026-08-24",
+        "authoritative_version_available": false,
+        "boundary": "The web-tool response was cached from last month and exposed no version name/code. Public cached dates varied across reads and must not choose the next release number. Read the current signed-in Play Console track/build history instead.",
+        "data_safety_review": "The returned public listing says no data collected/shared. Review the actual current declarations and Google's applicable encrypted-data exceptions against the shipping architecture and opt-in provider prefix request; do not assume this draft validates those answers."
+      },
+      "gate": "Obtain the existing authorized signing configuration and Play Console release access; do not create/reuse a different key or assume a working subscription bridge can publish releases."
+    },
+    "stale_document": "docs/mobile_packaging_readiness.md predates current identifiers and contains obsolete Stripe/inactive-cleanup privacy claims and incorrect screenshot limits. Do not use it as current submission truth."
+  },
+  "release_gates": [
+    {
+      "id": "apple_access_and_version",
+      "status": "required",
+      "action": "Verify the release owner's current App Store Connect session/organization and inspect live/in-flight version and used builds; resolve review state before attaching a new binary."
+    },
+    {
+      "id": "android_upload_key_and_access",
+      "status": "required",
+      "action": "Restore authorized Android release signing config and establish Play Console release permission; verify current versionCode before building."
+    },
+    {
+      "id": "store_screenshot_packs",
+      "status": "saved_as_store_drafts",
+      "action": "Ten privacy-reviewed images are saved in each of three Apple sizes; eight safe Android images are saved in Google Play draft. Current iPhone/iPad/Android synthetic journeys passed with27 captures each and zero production requests. Preserve the fixture/no-live-auth/billing/transfer boundary; screenshots do not clear the remaining release gates."
+    },
+    {
+      "id": "android_native_and_store_readiness",
+      "status": "required_before_release",
+      "action": "The scoped OPAQUE rebuild now passes actual ELF/RELRO/export checks. Still check final AAB/APK packaging and every native dependency, then run a 16KB device test. The configured Google APIs emulator is not a Play Store environment; also validate Play ownership, purchases/restore and updates on an eligible test installation."
+    },
+    {
+      "id": "support_privacy_terms",
+      "status": "required_before_submission",
+      "action": "Correct both stores' inaccurate No Data answers using docs/store-privacy-release-gate-2026-10-09.json before submission. The source-backed correction remains unpublished; provider retention/sharing and precise required fields still need confirmation. Listing description drafts already state server/provider processing. Confirm actual support inbox, terms and encryption answers separately."
+    },
+    {
+      "id": "financial_and_country_review",
+      "status": "required_before_submission",
+      "action": "Declare non-custodial wallet accurately, retain prior exclusions including France, confirm issuer eligibility/country scope. No agreements/licenses were accepted by this task."
+    },
+    {
+      "id": "store_test_and_production",
+      "status": "required_before_release",
+      "action": "Test signed native install/update, review account, mainnet capability/unavailable states, subscriptions/restore and feature navigation; release only the inspected native binary."
+    },
+    {
+      "id": "aso_expectations",
+      "status": "informational",
+      "action": "Relevant copy improves clarity and relevance, not guaranteed ranking; don't buy/fabricate/incentivize reviews or reset summary ratings unintentionally."
+    }
+  ],
+  "sources": [
+    {
+      "purpose": "Apple name/subtitle limits",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/app-information/app-information"
+    },
+    {
+      "purpose": "Apple description/promo/keyword/notes limits",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/app-information/platform-version-information"
+    },
+    {
+      "purpose": "Apple screenshot count/upload states",
+      "url": "https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots/"
+    },
+    {
+      "purpose": "Apple current required screenshots and sizes",
+      "url": "https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications"
+    },
+    {
+      "purpose": "Apple new version and build gating",
+      "url": "https://developer.apple.com/help/app-store-connect/update-your-app/create-a-new-version"
+    },
+    {
+      "purpose": "Apple reviews/system prompts",
+      "url": "https://developer.apple.com/documentation/StoreKit/requesting-app-store-reviews"
+    },
+    {
+      "purpose": "Apple review rules and organization wallet submissions",
+      "url": "https://developer.apple.com/app-store/review/guidelines/"
+    },
+    {
+      "purpose": "Apple user-controlled updates",
+      "url": "https://support.apple.com/en-gb/guide/iphone/iph98709f167/ios"
+    },
+    {
+      "purpose": "Apple phased update availability",
+      "url": "https://developer.apple.com/help/app-store-connect/update-your-app/release-a-version-update-in-phases"
+    },
+    {
+      "purpose": "Google listing limits",
+      "url": "https://support.google.com/googleplay/android-developer/answer/9859152?hl=en"
+    },
+    {
+      "purpose": "Google screenshots and feature graphic",
+      "url": "https://support.google.com/googleplay/android-developer/answer/9866151?hl=en"
+    },
+    {
+      "purpose": "Google release notes limit",
+      "url": "https://support.google.com/googleplay/android-developer/answer/9859348?hl=en"
+    },
+    {
+      "purpose": "Google review prompts",
+      "url": "https://developer.android.com/guide/playcore/in-app-review"
+    },
+    {
+      "purpose": "Google update flows",
+      "url": "https://developer.android.com/guide/playcore/in-app-updates"
+    },
+    {
+      "purpose": "Google current-user update availability",
+      "url": "https://developer.android.com/guide/playcore/in-app-updates/kotlin-java"
+    },
+    {
+      "purpose": "Google update identity/ownership/version requirements",
+      "url": "https://developer.android.com/guide/playcore/in-app-updates/test"
+    },
+    {
+      "purpose": "Google staged user/country availability",
+      "url": "https://support.google.com/googleplay/android-developer/answer/6346149?hl=en"
+    },
+    {
+      "purpose": "Google financial declaration",
+      "url": "https://support.google.com/googleplay/android-developer/answer/13849271?hl=en"
+    },
+    {
+      "purpose": "Google current non-custodial policy distinction",
+      "url": "https://support.google.com/googleplay/android-developer/answer/16329703?hl=en"
+    },
+    {
+      "purpose": "Google public package listing; cached response is not current version-code evidence",
+      "url": "https://play.google.com/store/apps/details?id=com.svaultai.app"
+    },
+    {
+      "purpose": "Android 16KB ELF, RELRO, APK/AAB alignment and runtime validation",
+      "url": "https://developer.android.com/guide/practices/page-sizes"
+    }
+  ],
+  "validation": {
+    "apple": {
+      "name_characters": 23,
+      "subtitle_characters": 29,
+      "keywords_utf8_bytes": 96,
+      "promotional_text_characters": 156,
+      "description_characters": 3278,
+      "whats_new_characters": 638,
+      "review_notes_utf8_bytes": 1488
+    },
+    "google_play": {
+      "app_name_characters": 23,
+      "short_description_characters": 67,
+      "full_description_characters": 3175,
+      "release_notes_unicode_characters": 482
+    },
+    "scope": "All public copy uses ASCII; byte and code-point counts are identical. JSON syntax, field bounds and nonsecret content checked locally. No portal validation or store acceptance claimed."
+  }
+}
