@@ -222,7 +222,7 @@
   "priorityLow":             "LOW",
 
   "helpCenterTitle":         "Help & FAQ",
-  "helpCenterSubtitle":      "Answers to common questions about Svaultai. Search below or browse by category — the AI assistant answers from the same set of topics.",
+  "helpCenterSubtitle":      "Answers to common questions about Svaultai. Search below or browse by category for the features and limits of your digital vault.",
   "helpCenterEmpty":         "No matching help topics",
   "helpCenterEmptyBody":     "Try a different search term, or pick a category chip.",
   "helpCenterSupportNote":   "Live customer support is not available yet. Use this Help Center or ask Svaultai Chat for help.",
@@ -245,7 +245,7 @@
   "helpCategoryFiles":          "Files",
   "helpCategorySecureItems":    "Secure items",
   "helpCategoryIds":            "IDs",
-  "helpCategoryCrypto":         "Crypto Vault",
+  "helpCategoryCrypto":         "Assets",
   "helpCategoryBilling":        "Billing",
   "helpCategoryTroubleshooting":"Troubleshooting",
 

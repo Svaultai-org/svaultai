@@ -1281,7 +1281,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpCenterSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Answers to common questions about Svaultai. Search below or browse by category — the AI assistant answers from the same set of topics.'**
+  /// **'Answers to common questions about Svaultai. Search below or browse by category for the features and limits of your digital vault.'**
   String get helpCenterSubtitle;
 
   /// No description provided for @helpCenterEmpty.
@@ -1401,7 +1401,7 @@ abstract class AppLocalizations {
   /// No description provided for @helpCategoryCrypto.
   ///
   /// In en, this message translates to:
-  /// **'Crypto Vault'**
+  /// **'Assets'**
   String get helpCategoryCrypto;
 
   /// No description provided for @helpCategoryBilling.
