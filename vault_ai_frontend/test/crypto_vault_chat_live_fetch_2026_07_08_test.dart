@@ -357,7 +357,7 @@ void main() {
       expect(find.text('999 ETH'), findsNothing);
     });
 
-    testWidgets('fetcher NOT called if publicAddress missing',
+    testWidgets('missing publicAddress is passed once to the safe live resolver',
         (tester) async {
       final calls = <String>[];
       final c = _card({
@@ -377,13 +377,17 @@ void main() {
         CryptoVaultChatCardView(
           card: c,
           onFetchBalance: _fixedBalanceFetcher(
-            {'balanceStatus': 'available', 'availableAmount': '0'},
+            {'balanceStatus': 'unavailable', 'reason': 'no_wallet'},
             callsSink: calls,
           ),
         ),
       ));
       await tester.pumpAndSettle();
-      expect(calls.isEmpty, isTrue);
+      expect(calls, ['ETH|']);
+      expect(find.byKey(const Key('crypto_vault_chat_balance_loading')),
+          findsNothing);
+      expect(find.byKey(const Key('crypto_vault_chat_balance_retry')),
+          findsOneWidget);
     });
   });
 

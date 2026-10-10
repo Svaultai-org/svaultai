@@ -16,6 +16,8 @@ typedef CryptoBalanceFetcher = Future<Map<String, dynamic>> Function({
   required String address,
 });
 
+const kCryptoChatBalanceFetchTimeout = Duration(seconds: 15);
+
 
 typedef CryptoActivityFetcher = Future<Map<String, dynamic>> Function({
   required String asset,
@@ -242,6 +244,7 @@ class _BalanceCardState extends State<_BalanceCard> {
   String? _liveUnit;
   String? _liveReason;
   bool _fetchInFlight = false;
+  int _requestGeneration = 0;
 
   @override
   void initState() {
@@ -278,7 +281,11 @@ class _BalanceCardState extends State<_BalanceCard> {
   @override
   void didUpdateWidget(covariant _BalanceCard old) {
     super.didUpdateWidget(old);
-    if (old.card.asset != widget.card.asset) {
+    if (old.card.asset != widget.card.asset ||
+        old.card.data?['publicAddress'] != widget.card.data?['publicAddress'] ||
+        old.card.data?['balanceStatus'] != widget.card.data?['balanceStatus']) {
+      _requestGeneration++;
+      _fetchInFlight = false;
       _liveStatus = null;
       _liveAmount = null;
       _liveUnit = null;
@@ -297,14 +304,21 @@ class _BalanceCardState extends State<_BalanceCard> {
     final address = (data?['publicAddress'] ?? '').toString();
 
     if (status != 'pending_live_fetch' && !bypassCache) return;
-    if (asset.isEmpty || address.isEmpty) return;
+    if (asset.isEmpty) return;
 
     if (asset == 'XMR') return;
     _fetchInFlight = true;
+    final generation = ++_requestGeneration;
+    bool current() => mounted && generation == _requestGeneration;
+    Future<Map<String, dynamic>> run() =>
+        fetcher(asset: asset, address: address)
+            .timeout(kCryptoChatBalanceFetchTimeout);
     try {
       final cache = widget.cache;
       final Future<Map<String, dynamic>> future;
-      if (cache != null) {
+      // A missing address is resolved by the authenticated fetcher. Never use
+      // a shared empty-address cache key for different vaults' wallets.
+      if (cache != null && address.isNotEmpty) {
         if (bypassCache) {
           cache.invalidate(
             type:    kCryptoChatCacheRequestBalance,
@@ -316,13 +330,15 @@ class _BalanceCardState extends State<_BalanceCard> {
           type:    kCryptoChatCacheRequestBalance,
           asset:   asset,
           address: address,
-          run:     () => fetcher(asset: asset, address: address),
+          // Bound the underlying cache work too, so Retry is not held by a
+          // never-completing old cache in-flight entry.
+          run: run,
         );
       } else {
-        future = fetcher(asset: asset, address: address);
+        future = run();
       }
       final res = await future;
-      if (!mounted) return;
+      if (!current()) return;
       setState(() {
         _liveStatus = (res['balanceStatus'] ?? '').toString();
 
@@ -334,14 +350,18 @@ class _BalanceCardState extends State<_BalanceCard> {
         _liveUnit = (res['unit'] ?? '').toString();
         _liveReason = (res['reason'] ?? '').toString();
       });
-    } catch (_) {
-      if (!mounted) return;
+    } catch (error) {
+      if (!current()) return;
       setState(() {
         _liveStatus = 'unavailable';
-        _liveReason = 'network_error';
+        _liveReason = error is TimeoutException
+            ? 'request_timed_out'
+            : 'network_error';
       });
     } finally {
-      _fetchInFlight = false;
+      if (current()) {
+        setState(() => _fetchInFlight = false);
+      }
     }
   }
 

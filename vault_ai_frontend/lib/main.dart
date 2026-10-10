@@ -99,6 +99,7 @@ import 'ui/app_release_update_banner.dart';
 import 'ui/crypto_vault_locked_card.dart';
 import 'ui/crypto_wallet_engine_page.dart';
 import 'ui/assets_page.dart';
+import 'ui/crypto_vault_chat_cards.dart' show kCryptoChatBalanceFetchTimeout;
 
 import 'ui/crypto_wallet_engine_receive_panel.dart';
 import 'ui/crypto_wallet_engine_send_panel.dart';
@@ -157,6 +158,73 @@ String get backendBaseUrl {
   if (_kHasBackendBaseUrlOverride) return _kBackendBaseUrlFromEnv;
   if (kReleaseMode) return _kProductionApiBaseUrl;
   return _kBackendBaseUrlFromEnv;
+}
+
+/// Read-only balance refresh. Resolves only an already-existing wallet, and
+/// invalidates late work before it can issue a second request or cache a result.
+Future<Map<String, dynamic>> resolveCryptoChatBalance({
+  required String baseUrl,
+  required String network,
+  required String asset,
+  required String address,
+  required String authToken,
+  required bool Function() accessIsCurrent,
+  Duration timeout = kCryptoChatBalanceFetchTimeout,
+}) async {
+  bool active = true;
+  bool current() => active && accessIsCurrent();
+  void requireCurrent() {
+    if (!current()) throw StateError('Vault access changed.');
+  }
+  Map<String, dynamic> unavailable(String reason) => {
+        'balanceStatus': 'unavailable',
+        'reason': reason,
+        'availableAmount': null,
+      };
+  final client = VaultAIClient(
+    baseUrl: baseUrl,
+    walletResponseIsCurrent: current,
+  );
+  try {
+    return await (() async {
+      requireCurrent();
+      var resolvedAddress = address.trim();
+      if (resolvedAddress.isEmpty) {
+        final receive = await client.getCryptoWalletReceiveNetwork(
+          network: network,
+          asset: asset,
+          authToken: authToken,
+        );
+        requireCurrent();
+        final value = receive['publicAddress'];
+        if (receive['wallet_engine'] != 'receive_ready' ||
+            value is! String || value.trim().isEmpty) {
+          return unavailable(receive['wallet_engine'] == 'no_account'
+              ? 'no_wallet'
+              : 'receive_unavailable');
+        }
+        resolvedAddress = value.trim();
+      }
+      requireCurrent();
+      final balance = await client.getCryptoWalletBalanceNetwork(
+        network: network,
+        asset: asset,
+        authToken: authToken,
+        address: resolvedAddress,
+      );
+      requireCurrent();
+      return balance;
+    })().timeout(timeout);
+  } on TimeoutException {
+    if (!accessIsCurrent()) rethrow;
+    return unavailable('request_timed_out');
+  } catch (_) {
+    // Stale work must not resolve successfully into the shared live cache.
+    if (!accessIsCurrent()) rethrow;
+    return unavailable('network_error');
+  } finally {
+    active = false;
+  }
 }
 
 const int kVaultStorageLimitBytes = 1024 * 1024 * 1024;
@@ -14601,7 +14669,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     required String asset,
     required String address,
   }) async {
-    if (asset.isEmpty || address.isEmpty) {
+    if (asset.isEmpty) {
       return _unavailableBalance('missing_input');
     }
     if (asset == 'XMR') {
@@ -14616,18 +14684,27 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null) {
       return _unavailableBalance('not_authenticated');
     }
-    try {
-      final client = VaultAIClient(baseUrl: backendBaseUrl);
-      final result = await client.getCryptoWalletBalanceNetwork(
-        network: network,
-        asset: asset,
-        authToken: token,
-        address: address,
-      );
-      return result;
-    } catch (e) {
-      return _unavailableBalance('network_error');
-    }
+    final vaultId = app.vaultId;
+    final cryptoContext = VaultCryptoRegistry.current;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final sessionGeneration = st.SessionTermination.instance.generation;
+    final deviceId = apiClientDeviceId();
+    bool current() => mounted &&
+        app.authed && app.unlocked &&
+        app.sessionToken == token && app.vaultId == vaultId &&
+        apiClientDeviceId() == deviceId && cryptoContext != null &&
+        identical(VaultCryptoRegistry.current, cryptoContext) &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        st.SessionTermination.instance.generation == sessionGeneration &&
+        !st.SessionTermination.instance.isTerminated;
+    return resolveCryptoChatBalance(
+      baseUrl: backendBaseUrl,
+      network: network,
+      asset: asset,
+      authToken: token,
+      address: address,
+      accessIsCurrent: current,
+    );
   }
 
   Map<String, dynamic> _unavailableActivity(String reason) => {
