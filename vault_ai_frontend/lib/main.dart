@@ -17408,6 +17408,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         builder: (engineCtx) => CryptoWalletEnginePage(
           key: const Key('crypto_wallet_engine_page_root'),
           onSendChatPrompt: (prompt) {
+            // Cryptocurrency is a pushed Assets route. Close that exact route
+            // before switching the underlying dashboard to the chat response.
+            if (!mounted) return;
+            final route = ModalRoute.of(engineCtx);
+            if (route?.settings.name == kAssetsCryptocurrencyRouteName &&
+                route?.isCurrent == true) {
+              Navigator.of(engineCtx).pop();
+            }
             setState(() => selectedSection = _DashboardSection.chat);
             _sendQuickPrompt(prompt);
           },

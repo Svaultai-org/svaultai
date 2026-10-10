@@ -6,6 +6,8 @@ import '../services/crypto_wallet_features.dart';
 import 'crypto_wallet_engine_asset_detail_page.dart';
 import 'crypto_wallet_engine_design.dart';
 
+const kAssetsCryptocurrencyRouteName = '/assets/cryptocurrency';
+
 /// Category navigation only. The existing Cryptocurrency page is passed in
 /// unchanged; unavailable real-world asset categories have no wallet actions.
 class AssetsPage extends StatefulWidget {
@@ -110,6 +112,7 @@ class _AssetsPageState extends State<AssetsPage> {
   void _openCategory(VaultAssetCategory category) {
     if (category == VaultAssetCategory.cryptocurrency) {
       Navigator.of(context).push(MaterialPageRoute<void>(
+        settings: const RouteSettings(name: kAssetsCryptocurrencyRouteName),
         builder: (_) => _CryptocurrencyAssetCategoryPage(
           cryptocurrency: widget.cryptocurrency,
         ),
