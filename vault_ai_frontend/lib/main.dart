@@ -96,6 +96,7 @@ import 'ui/dashboards/memory_page.dart';
 import 'services/crypto_chat_live_cache.dart';
 import 'services/app_release_controller_scope.dart';
 import 'ui/app_release_update_banner.dart';
+import 'ui/native_store_experience.dart';
 import 'ui/crypto_vault_locked_card.dart';
 import 'ui/crypto_wallet_engine_page.dart';
 import 'ui/assets_page.dart';
@@ -272,6 +273,7 @@ class UploadCancelledException implements Exception {
 }
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+final nativeStoreRouteObserver = NativeStoreRouteObserver();
 
 final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
     GlobalKey<ScaffoldMessengerState>();
@@ -1142,6 +1144,37 @@ class AppState extends ChangeNotifier {
   DateTime _lastActivityAt = DateTime.now();
 
   final List<bool Function()> _keepAliveProbes = [];
+  final List<bool Function()> _storeInterruptionProbes = [];
+
+  void registerStoreInterruptionProbe(bool Function() probe) {
+    if (!_storeInterruptionProbes.contains(probe)) {
+      _storeInterruptionProbes.add(probe);
+    }
+  }
+
+  void unregisterStoreInterruptionProbe(bool Function() probe) {
+    _storeInterruptionProbes.remove(probe);
+  }
+
+  /// Store UI must not interrupt ongoing work. This is separate from the
+  /// inactivity timeout: choosing a dashboard tab must not keep a vault open.
+  bool get storeInterruptionAllowed {
+    if (_hasActiveKeepAlive() || _viewInFlight.isNotEmpty ||
+        _downloadInFlight.isNotEmpty ||
+        (supportsAppleIap &&
+            (AppleIapService.instance.hasPendingStoreRequest ||
+                AppleIapService.instance.hasPendingActivation))) {
+      return false;
+    }
+    for (final probe in _storeInterruptionProbes) {
+      try {
+        if (probe()) return false;
+      } catch (_) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   // Native document/photo/camera pickers temporarily hand control to an
   // Apple-owned view controller. A user can legitimately spend longer than
@@ -2787,10 +2820,17 @@ class SvaultaiApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       scaffoldMessengerKey: rootScaffoldMessengerKey,
-      navigatorObservers: [appRouteObserver],
+      navigatorObservers: [appRouteObserver, nativeStoreRouteObserver],
       builder: (context, child) {
         if (child == null) return const SizedBox.shrink();
-        return _ActivityWrapper(child: child);
+        return NativeStoreExperience(
+          routeObserver: nativeStoreRouteObserver,
+          updateAllowed: () => app.storeInterruptionAllowed &&
+              nativeStoreRouteObserver.updateAllowed,
+          reviewAllowed: () => app.unlocked && app.storeInterruptionAllowed &&
+              nativeStoreRouteObserver.reviewAllowed,
+          child: _ActivityWrapper(child: child),
+        );
       },
       debugShowCheckedModeBanner: false,
       title: 'Svaultai',
@@ -7755,6 +7795,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   late final FolderPickerService _folderPicker;
 
   bool Function()? _uploadKeepAliveProbe;
+  bool Function()? _storeInterruptionProbe;
   void Function()? _uploadShutdownHook;
   bool _wasUploadQueueBusy = false;
 
@@ -11153,8 +11194,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final app = context.read<AppState>();
 
       _uploadKeepAliveProbe ??= () => _uploadQueue.isBusy;
+      _storeInterruptionProbe ??= () =>
+          selectedSection != _DashboardSection.chat ||
+          sending || _sendDispatchInFlight || thinking ||
+          _isListening || _isRecording || _isVideoRecording ||
+          _conciergeLoginEditBusy || loadingFiles || loadingLogins ||
+          loadingBeneficiaries || loadingInheritances ||
+          _generatedLoginDraftActionsInFlight.isNotEmpty ||
+          _pendingLocalDelete != null ||
+          _pendingClientSecureItemDeleteService != null ||
+          activeDeepScanStatus == 'scanning';
       _uploadShutdownHook ??= () => _uploadQueue.cancelAll();
       app.registerKeepAliveProbe(_uploadKeepAliveProbe!);
+      app.registerStoreInterruptionProbe(_storeInterruptionProbe!);
       app.registerShutdownHook(_uploadShutdownHook!);
 
       if (!app.unlocked || app.vaultName == null) {
@@ -11864,6 +11916,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       final app = context.read<AppState>();
       if (_uploadKeepAliveProbe != null) {
         app.unregisterKeepAliveProbe(_uploadKeepAliveProbe!);
+      }
+      if (_storeInterruptionProbe != null) {
+        app.unregisterStoreInterruptionProbe(_storeInterruptionProbe!);
       }
       if (_uploadShutdownHook != null) {
         app.unregisterShutdownHook(_uploadShutdownHook!);
