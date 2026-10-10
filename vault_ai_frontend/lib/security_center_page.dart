@@ -655,10 +655,8 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
               key: const Key('zk_semantic_search_unavailable_note'),
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                'This is a private (zero-knowledge) vault. Svaultai '
-                'cannot read your files\' content, so it cannot '
-                'build a semantic search index. Filename search '
-                'still works.',
+                'Semantic content search is unavailable for this '
+                'private vault. Filename search still works.',
                 style: const TextStyle(
                   color: Color(0xFF90CAF9),
                   fontSize: 12,

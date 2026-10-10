@@ -15,6 +15,28 @@ String _readSecurity() =>
 Widget _wrap(Widget w) => MaterialApp(home: Scaffold(body: w));
 
 void main() {
+  test('search notices do not claim all uploaded bytes are client-only', () {
+    for (final source in [_readMain(), _readSecurity()]) {
+      expect(source, isNot(contains('Your files are encrypted end-to-end')));
+      expect(source, isNot(contains("cannot read your files\\' content")));
+      expect(source, contains('Semantic content search is unavailable'));
+      expect(source, contains('private vault. Filename search still works.'));
+    }
+  });
+
+  test('public security pages disclose authorized server processing', () {
+    for (final path in [
+      'web/guides/private-encrypted-vault/index.html',
+      'web/features/zero-knowledge-security/index.html',
+    ]) {
+      final source = File(path).readAsStringSync();
+      expect(source, contains('AI and document features may process content'));
+      expect(source, contains('on our servers and with service providers'));
+      expect(source, isNot(contains('uses user-controlled, zero-knowledge access')));
+      expect(source, isNot(contains('Zero-knowledge encrypted vault access')));
+    }
+  });
+
   setUp(() {
     // Reset the process-global ZK MVK holder between tests.
     zk_mvk_store.ZkActiveMvk.clear();

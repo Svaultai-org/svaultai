@@ -3444,9 +3444,7 @@ class ZkSemanticSearchUnavailableBanner extends StatelessWidget {
           Expanded(
             child: Text(
               'Semantic content search is unavailable for this '
-              'private vault. Your files are encrypted end-to-end, '
-              'and Svaultai cannot read their content to build a '
-              'search index. Filename search still works.',
+              'private vault. Filename search still works.',
               style: TextStyle(
                 color: Color(0xFFCFE2FF),
                 fontSize: 12,
