@@ -1,0 +1,236 @@
+{
+  "scope": "real-native-pixels-synthetic-demo-only",
+  "device": {
+    "name": "SVaultAI-Store-QA-Large-iPhone-2026-10-09",
+    "device": "626C14EC-E852-475D-B857-60A56A66F9D9",
+    "kind": "ios"
+  },
+  "exit_code": 0,
+  "screenshots": [
+    {
+      "checkpoint": "01-create-vault-demo-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/01-create-vault-demo-form-not-submitted.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "c254d6ce49ad87029666aeba9891ef32020ffbf6a3eb4c93019e5ec1471181b7",
+      "bytes": 241189
+    },
+    {
+      "checkpoint": "02-create-menu-digital-vault",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/02-create-menu-digital-vault.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "52799ddab7e68e25a58188113743ba5997941a4e08aea51a12c51d5cc8b24892",
+      "bytes": 300856
+    },
+    {
+      "checkpoint": "03-create-login-demo",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/03-create-login-demo.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "b7ce1f83d02fbbdd3e7c6fdb6e984974adc8aebbfbedc6c84526681bf6b440c2",
+      "bytes": 223267
+    },
+    {
+      "checkpoint": "04-login-saved-dashboard",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/04-login-saved-dashboard.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "b519bce3b3cfb166d234df3529350fc716c40bd84ffd0d285fef63e3c4b279ea",
+      "bytes": 288960
+    },
+    {
+      "checkpoint": "05-chat-save-memory-once",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/05-chat-save-memory-once.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "08bd6a91e19d668c2c74233afee42db78f0ebabbf48c3683868834288dd0e14c",
+      "bytes": 387876
+    },
+    {
+      "checkpoint": "06-memory-timeline",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/06-memory-timeline.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "535fccc734073935f7a88f561d4b6b181105217534bbd668a38962d78f1cc371",
+      "bytes": 371694
+    },
+    {
+      "checkpoint": "07-encrypted-demo-file-dashboard",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/07-encrypted-demo-file-dashboard.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "31797e31abb5881d5b639ccaf5b036ff6477dffc3a365714748955ae7cec4922",
+      "bytes": 237744
+    },
+    {
+      "checkpoint": "08-retrieve-demo-file",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/08-retrieve-demo-file.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "1327f00f9caf2cbe7aafeb6c172c5cf6dbfa872a3bbdcf96e8ae4f4d95434975",
+      "bytes": 206413
+    },
+    {
+      "checkpoint": "09-assets-supported-categories",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/09-assets-supported-categories.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "d4e804dcd7a19b9ca6d53cbdd09b06796d149417b274f862c65bad4e65f7ae8c",
+      "bytes": 1764079
+    },
+    {
+      "checkpoint": "10-assets-coming-soon-categories",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/10-assets-coming-soon-categories.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "a45385b9db49fc81e3a4f2f390b655b0431ca3bca889c81003942b8f41fc2329",
+      "bytes": 1967091
+    },
+    {
+      "checkpoint": "11-digital-gold-no-invented-holdings",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/11-digital-gold-no-invented-holdings.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "b65cf8ac707f17f057603bd8675caeaae954c0a9efb604eb62f82094ee461db0",
+      "bytes": 818928
+    },
+    {
+      "checkpoint": "12-digital-silver-issuer-terms",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/12-digital-silver-issuer-terms.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "2952671daf49290a1be4d7c357591a3900dd485ad75922f2bd6104b9517fca0e",
+      "bytes": 891068
+    },
+    {
+      "checkpoint": "13-cryptocurrency-no-wallet-demo",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/13-cryptocurrency-no-wallet-demo.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "78212a1cf4acd2e23c0065331c9fa5fa244be0d37b877e7368aaa29d27e26302",
+      "bytes": 1376877
+    },
+    {
+      "checkpoint": "14-concierge-free-password-checks",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/14-concierge-free-password-checks.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "66b991e2ed516ca6acf00126a6110cabb3ca5df44be651c5e6aa0e1b800fdbb7",
+      "bytes": 516001
+    },
+    {
+      "checkpoint": "15-concierge-password-only-opt-in",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/15-concierge-password-only-opt-in.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "6c8a659c6e793e2cfcd02b54289e032e952544b7d6a90f2bd94462c2f42205b8",
+      "bytes": 607094
+    },
+    {
+      "checkpoint": "16-concierge-demo-findings",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/16-concierge-demo-findings.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "e62f4b0b6d1809efe257f05f8208e059897fe4fa7e9c6f4bbdb8f88c335c81c5",
+      "bytes": 712821
+    },
+    {
+      "checkpoint": "17-inheritance-configuration",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/17-inheritance-configuration.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "4389f281dc5d7fcb39844927d8d6c3a375e500286ac623e237f261410b3880d7",
+      "bytes": 239904
+    },
+    {
+      "checkpoint": "18-inheritance-beneficiary-demo-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/18-inheritance-beneficiary-demo-form-not-submitted.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "ef557526f1c02bf47cc6dfd1788d5e781863c33a666cce0df2bf3350777f5465",
+      "bytes": 241138
+    },
+    {
+      "checkpoint": "19-local-sign-out-auth-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/19-local-sign-out-auth-form-not-submitted.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "afd481b22ae9a7dd5b0fd8cd329eb557ee1081147ba6ad4762846c8675cb3b9d",
+      "bytes": 186175
+    },
+    {
+      "checkpoint": "20-login-restored-after-demo-session",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/20-login-restored-after-demo-session.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "0f1ba37404d64f0ff01f9b354bea38f2268e277a58220e608894d15c684c3473",
+      "bytes": 281007
+    },
+    {
+      "checkpoint": "21-memory-restored-after-demo-session",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/21-memory-restored-after-demo-session.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "f00065bec44fcb2a287b481b2d84121240e37cd7b4ce6d9c43513a17a8ab28df",
+      "bytes": 371092
+    },
+    {
+      "checkpoint": "22-retrieve-login-once",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/22-retrieve-login-once.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "83f0099cac0950514b59d55bb17db3354c46022ca7ebc4d1a59f9013cf8e5349",
+      "bytes": 418322
+    },
+    {
+      "checkpoint": "23-retrieve-memory-chat",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/23-retrieve-memory-chat.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "01b96770d6ab05c4b8e305965d91cbf0dddb68c94c67ca8ee1a4420d4a8dc55d",
+      "bytes": 493577
+    },
+    {
+      "checkpoint": "24-delete-memory-confirmation",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/24-delete-memory-confirmation.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "620a90c518e8fda23f0b835a5e61a6bb4fe1f1748ed2920096b0b1709a0bb484",
+      "bytes": 547569
+    },
+    {
+      "checkpoint": "24-delete-login-confirmation",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/24-delete-login-confirmation.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "dd2bfe0a417559f088b92551b7e8136e12969fd3a898d052d50e524cfbc7d18a",
+      "bytes": 595452
+    },
+    {
+      "checkpoint": "24-delete-file-confirmation",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/24-delete-file-confirmation.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "a08d59e2d8279d64641038e7da90ca0c7be7bf6b7f505bcba4c7e7d7467ae556",
+      "bytes": 561097
+    },
+    {
+      "checkpoint": "25-demo-deletions-completed",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/iphone/qa-max01/25-demo-deletions-completed.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "2ab51a239115307d9041ea4bee691c2e4bd3278da5158a089d0ac43687a92ae6",
+      "bytes": 553968
+    }
+  ],
+  "capture_failures": [],
+  "production_requests": 0,
+  "account_auth_verified": false,
+  "live_holdings_or_transfers_verified": false,
+  "storefront_prompt_verified": false,
+  "release_contract": "config/release-contract.production.json",
+  "crypto_network": "ethereum_mainnet",
+  "mainnet_receive_erc20_receive_send_flags": true,
+  "pixel_transformations": "none"
+}

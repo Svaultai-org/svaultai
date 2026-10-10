@@ -1,0 +1,41 @@
+{
+  "scope": "native-ui-demo-in-process-only",
+  "production_requests": 0,
+  "account_auth_verified": false,
+  "auth_scope": "empty local hydration; unsubmitted real auth forms; directly installed synthetic session",
+  "wallets": "absent-no-holdings-or-public-addresses",
+  "transfer_or_purchase_verified": false,
+  "storefront_prompt_verified": false,
+  "release_contract": {
+    "api": "svaultai-core-v2-2026-08-16",
+    "zk_v2_read": true,
+    "zk_v2_write": false,
+    "memory_v2_read": true,
+    "memory_v2_write": true,
+    "file_v2_read": true,
+    "file_v2_write": true,
+    "private_vault_local_routing": false
+  },
+  "file_memory_protocol_scope": "pinned production defines; actual current client ciphertext memory and compatibility multipart file APIs; no unused V2 protocol simulated",
+  "password_provider_scope": "in-process synthetic HIBP suffix count8; no external provider query; findings screenshot excluded from store selections",
+  "file_content_encryption_scope": "fixture-simulated backend at-rest encryption; real client metadata AES; compatibility upload API, not production E2E proof",
+  "inheritance_scope": "empty fixture; real configuration UI and cancelled beneficiary draft; no scheduling or recovery verification",
+  "checkpoints": [
+    "01-create-vault-demo-form-not-submitted"
+  ],
+  "viewport": {
+    "width": 411.42857142857144,
+    "height": 731.4285714285714,
+    "platform": "android",
+    "tablet": false
+  },
+  "operations": [
+    "POST /vault-stats",
+    "GET /billing/me",
+    "POST /list-files",
+    "GET /folders",
+    "GET /vault/ciphertext/vault-items",
+    "POST /list-secure-items"
+  ],
+  "unexpected_operations": []
+}

@@ -1,0 +1,240 @@
+{
+  "scope": "real-native-pixels-synthetic-demo-only",
+  "device": {
+    "name": "SvaultAI_API_36",
+    "device": "emulator-5554",
+    "kind": "android",
+    "original_display_size": "1080x2400",
+    "original_override_size": null,
+    "capture_viewport": "1080x1920",
+    "display_restore_verified": true
+  },
+  "exit_code": 0,
+  "screenshots": [
+    {
+      "checkpoint": "01-create-vault-demo-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/01-create-vault-demo-form-not-submitted.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "05c78050b428eb133452610172f7045431a92bb49c315e75d54096d3b239fbec",
+      "bytes": 128048
+    },
+    {
+      "checkpoint": "02-create-menu-digital-vault",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/02-create-menu-digital-vault.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "45573afdec952b0b4c73df8c78e94e19c08c8a82354168d253d52623be8058df",
+      "bytes": 154307
+    },
+    {
+      "checkpoint": "03-create-login-demo",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/03-create-login-demo.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "a4685fad8fbbc781a44901e85406f431cec36d3727de05d0a56f9cc0c7ec9579",
+      "bytes": 97961
+    },
+    {
+      "checkpoint": "04-login-saved-dashboard",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/04-login-saved-dashboard.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "9b42999090e1f7e4c09d604ccefc39717b0e0d6df0f3f21b6818ef286beb83af",
+      "bytes": 148034
+    },
+    {
+      "checkpoint": "05-chat-save-memory-once",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/05-chat-save-memory-once.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "2586f12a926606c7b092f5bae1bf67cd4edaf795a25e8bf21a401f134993e8d8",
+      "bytes": 191415
+    },
+    {
+      "checkpoint": "06-memory-timeline",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/06-memory-timeline.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "c6fc8b19fbefe6d9bb1b01a8b249b2fd5b7489dcad7a41631f3b7965cd6eb628",
+      "bytes": 126210
+    },
+    {
+      "checkpoint": "07-encrypted-demo-file-dashboard",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/07-encrypted-demo-file-dashboard.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "c0d3c14cb79c8894cd7112f4734fe083baf6e0db4297c414854e3803a7e10431",
+      "bytes": 139268
+    },
+    {
+      "checkpoint": "08-retrieve-demo-file",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/08-retrieve-demo-file.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "fc253259c0328c36f224de90e1b9c52a30b05dad64d27cc76b75e77f3327c2a5",
+      "bytes": 67317
+    },
+    {
+      "checkpoint": "09-assets-supported-categories",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/09-assets-supported-categories.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "dfbc6b09bd30164a8008cd378e04fa6dceb07ea89baa762ad32b77a3d7af3f31",
+      "bytes": 230823
+    },
+    {
+      "checkpoint": "10-assets-coming-soon-categories",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/10-assets-coming-soon-categories.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "0f1b9c39bb11e86c0e9cd0ea268ca3e3996412f93e9b6b288c57b563e982cf80",
+      "bytes": 214663
+    },
+    {
+      "checkpoint": "11-digital-gold-no-invented-holdings",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/11-digital-gold-no-invented-holdings.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "6bf3b3f50fe84ad7f59af067db311d64610f7c2dffc5998da4d5339cd02ac036",
+      "bytes": 182887
+    },
+    {
+      "checkpoint": "12-digital-silver-issuer-terms",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/12-digital-silver-issuer-terms.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "990ce5366b639c522fb11a213d1767e019a4e5992f411c224c4520b720f24519",
+      "bytes": 212424
+    },
+    {
+      "checkpoint": "13-cryptocurrency-no-wallet-demo",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/13-cryptocurrency-no-wallet-demo.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "18dd4c6d7d796e25ae9040f8a54c72843b2b9e618b4e1cdba94e1b2b8aeef944",
+      "bytes": 194804
+    },
+    {
+      "checkpoint": "14-concierge-free-password-checks",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/14-concierge-free-password-checks.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "40ac86219273ad58cd00750be378914387bea85c5ef1084fca350ba83b6b6e97",
+      "bytes": 254973
+    },
+    {
+      "checkpoint": "15-concierge-password-only-opt-in",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/15-concierge-password-only-opt-in.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "2329c954801b3064d07d2714bf57e4b635356bcaadea3ee1edbbcd490142b9d2",
+      "bytes": 237711
+    },
+    {
+      "checkpoint": "16-concierge-demo-findings",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/16-concierge-demo-findings.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "a3daa0fa8a173b3aa6114e6249ea0171f71d0e67f507af6759b730f5d5fc6e7e",
+      "bytes": 184197
+    },
+    {
+      "checkpoint": "17-inheritance-configuration",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/17-inheritance-configuration.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "4e590994d81dc90133605baa4d9e13805c5c189bdbafb1083900f39741742991",
+      "bytes": 143027
+    },
+    {
+      "checkpoint": "18-inheritance-beneficiary-demo-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/18-inheritance-beneficiary-demo-form-not-submitted.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "3d6a8cae055aed276e39f5a862c2934698a2750abed94095d19f71a0d5a1775e",
+      "bytes": 146156
+    },
+    {
+      "checkpoint": "19-local-sign-out-auth-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/19-local-sign-out-auth-form-not-submitted.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "e4dd52967f217b9be1249fa5aca3d45d4287bb69e7be136c9c1b3b51d682d9a5",
+      "bytes": 91855
+    },
+    {
+      "checkpoint": "20-login-restored-after-demo-session",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/20-login-restored-after-demo-session.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "4fd71115877b85ed6eeed00d6a6420b974c4b32a6c1ab08901e97aa5fdb6a4f6",
+      "bytes": 155812
+    },
+    {
+      "checkpoint": "21-memory-restored-after-demo-session",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/21-memory-restored-after-demo-session.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "1c7d73358bad69ef6ebadf314c807ae7b1dc8e1da2a1227bbce524ad49c31d9c",
+      "bytes": 126155
+    },
+    {
+      "checkpoint": "22-retrieve-login-once",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/22-retrieve-login-once.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "7b1fc8205d676e28b35f670a1586d42d5225f82c9e79bd7385465b65287852ae",
+      "bytes": 146428
+    },
+    {
+      "checkpoint": "23-retrieve-memory-chat",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/23-retrieve-memory-chat.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "20c6652488009d58ab21e2568821cdaa6da861a636ab990fa75a55f38c24587b",
+      "bytes": 138318
+    },
+    {
+      "checkpoint": "24-delete-memory-confirmation",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/24-delete-memory-confirmation.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "01e3ea763867a40aa9b6770f909c8f015f8cc0849c98f7db07c3f172628f78b3",
+      "bytes": 149921
+    },
+    {
+      "checkpoint": "24-delete-login-confirmation",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/24-delete-login-confirmation.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "91dcdb05578a18c62ca7ff595eee0c1f1a7c8ed6dd9dd0f3683077b4a4670471",
+      "bytes": 167492
+    },
+    {
+      "checkpoint": "24-delete-file-confirmation",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/24-delete-file-confirmation.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "d1339b9867e6990323aefb6abae1966df8335867dd870638a59869418db57828",
+      "bytes": 165531
+    },
+    {
+      "checkpoint": "25-demo-deletions-completed",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa02/25-demo-deletions-completed.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "c9c438560654b49ad50c0b96a56041e2fadfa1f87f957f2352e20e783b252145",
+      "bytes": 153751
+    }
+  ],
+  "capture_failures": [],
+  "production_requests": 0,
+  "account_auth_verified": false,
+  "live_holdings_or_transfers_verified": false,
+  "storefront_prompt_verified": false,
+  "release_contract": "config/release-contract.production.json",
+  "crypto_network": "ethereum_mainnet",
+  "mainnet_receive_erc20_receive_send_flags": true,
+  "pixel_transformations": "none"
+}

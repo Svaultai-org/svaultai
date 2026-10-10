@@ -1,0 +1,97 @@
+{
+  "scope": "Real native widgets and genuine pixels with harmless synthetic in-process records only",
+  "native_base_revision": "cb1c0b87c0328560f0347f840b31056b3a9b6d2d",
+  "web_base_revision": "6cbe1186554206fb28e7771dbe4707b2a1a7f8a2",
+  "runtime_change": {
+    "function": "_showCreateMenu",
+    "files": ["vault_ai_frontend/lib/main.dart", "../svaultai-assets-web/vault_ai_frontend/lib/main.dart"],
+    "change": "Wrap unchanged bounded Create-menu Padding/Column in SingleChildScrollView",
+    "native_web_function_identical": true,
+    "actions_labels_keys_padding_width_preserved": true,
+    "unrelated_runtime_or_billing_changes": false
+  },
+  "reproduced_defect": {
+    "run": "android/qa01",
+    "failure": "RenderFlex overflowed by 20 logical pixels at the non-scrollable Create bottom sheet",
+    "pixel_viewport": [1080, 1920],
+    "density": 420,
+    "logical_viewport": [411.42857142857144, 731.4285714285714],
+    "diagnostic": "android/qa01/diagnostic-failed-journey.png",
+    "preexisting_layout_exposed_by_short_viewport": true,
+    "error_suppression_or_density_change": false
+  },
+  "passed_post_fix_runs": [
+    {"run": "android/qa02", "device": "emulator-5554", "avd": "SvaultAI_API_36", "pixels": [1080, 1920], "captures": 27, "exit_code": 0, "responsive_create_menu_verified": true},
+    {"run": "iphone/qa11", "device": "6ED5BC7E-4CA7-4965-A72E-886577659524", "pixels": [1206, 2622], "captures": 27, "exit_code": 0, "responsive_create_menu_verified": true},
+    {"run": "ipad/qa03", "device": "E1A95211-B08A-4EEF-9385-67A1A35EC49B", "pixels": [2064, 2752], "captures": 27, "exit_code": 0, "responsive_create_menu_verified": true}
+  ],
+  "large_iphone_pre_fix_run": {
+    "run": "iphone/qa-max01",
+    "device": "626C14EC-E852-475D-B857-60A56A66F9D9",
+    "pixels": [1320, 2868],
+    "captures": 27,
+    "exit_code": 0,
+    "selected_screens_do_not_show_changed_menu": true,
+    "selected_screens_remain_representative_of_unchanged_ui": true
+  },
+  "workflow_assertions": [
+    "All three Create-menu choices and Cancel reachable after scrolling; no rendering exception; Cancel closes and menu reopens",
+    "Real Login editor saves exactly one client-encrypted login and renders the saved dashboard entry",
+    "Double-tapped memory command makes one ciphertext save; real Memory timeline decrypts title and hides value",
+    "Actual compatibility file upload and client-encrypted metadata; actual file-card tap loads a harmless text preview",
+    "Local sign-out clears session token, MVK and crypto context; directly restored synthetic session decrypts login, memory and file metadata",
+    "Login retrieval double-tap produces one user command; memory retrieval returns the saved harmless fact",
+    "Memory, login and file confirmation/deletion handlers each delete one fixture record; all three fixture collections empty",
+    "Assets shows ten categories: Cryptocurrency, Digital Gold/PAXG and Digital Silver/KAG supported; seven remaining categories Coming soon",
+    "PAXG, KAG and Cryptocurrency render Ethereum Mainnet with no wallet, balances or customer addresses invented",
+    "Concierge opt-in/state encryption is tested against an expressly synthetic provider response; no external provider query",
+    "Inheritance empty configuration and cancelled beneficiary draft only; no recovery or inheritance execution"
+  ],
+  "compile_flags": {
+    "release_contract": "config/release-contract.production.json",
+    "backend": "http://127.0.0.1:18082",
+    "screenshot_demo": true,
+    "debug_build": true,
+    "crypto_default_network": "ethereum_mainnet",
+    "mainnet_receive_erc20_receive_send_flags": true
+  },
+  "limits": {
+    "production_requests": 0,
+    "real_account_registration_or_pin_login_verified": false,
+    "auth_description": "Real unsubmitted auth forms; direct synthetic session installation, not OPAQUE authentication",
+    "live_backend_data_workflows_verified": false,
+    "purchase_subscription_verified": false,
+    "funded_wallet_transfer_or_purchase_verified": false,
+    "storefront_update_or_review_prompt_verified": false,
+    "file_content_description": "Fixture-simulated backend at-rest content encryption; real client metadata AES and compatibility multipart API, not production file E2E proof",
+    "provider_description": "Synthetic HIBP suffix count8 for harmless literal password; findings screenshots excluded from store selections",
+    "inheritance_execution_verified": false,
+    "screenshots_resized_edited_or_fabricated": false,
+    "customer_data_used": false,
+    "user_devices_changed": false
+  },
+  "local_checks": {
+    "new_harness_and_driver_analyzer": "No issues found",
+    "new_harness_and_driver_formatter": "2 files, 0 changes",
+    "native_create_menu_source_interruption_local_command_tests": "16 passed",
+    "native_web_function_diff": "Identical, exit0",
+    "native_and_web_diff_check": "Passed"
+  },
+  "android_cleanup": {
+    "original_physical_viewport": "1080x2400",
+    "original_override": null,
+    "restored_and_verified": true,
+    "incidental_flutter_added_gradle_properties_lines_restored": true,
+    "gradle_plugin_or_kotlin_versions_changed": false,
+    "dependency_validation_bypassed": false
+  },
+  "selected_store_images": {
+    "android": {"directory": "android/qa02", "checkpoints": ["09-assets-supported-categories", "11-digital-gold-no-invented-holdings", "12-digital-silver-issuer-terms", "14-concierge-free-password-checks", "17-inheritance-configuration", "03-create-login-demo", "06-memory-timeline", "08-retrieve-demo-file"], "personally_and_independently_visually_reviewed": true},
+    "iphone_medium_existing_upload": {"directory": "iphone/qa10", "checkpoints": ["09-assets-supported-categories", "11-digital-gold-no-invented-holdings", "12-digital-silver-issuer-terms", "14-concierge-free-password-checks", "17-inheritance-configuration", "03-create-login-demo", "04-login-saved-dashboard", "06-memory-timeline", "08-retrieve-demo-file", "24-delete-file-confirmation"]},
+    "iphone_large": {"directory": "iphone/qa-max01", "checkpoints": ["09-assets-supported-categories", "11-digital-gold-no-invented-holdings", "12-digital-silver-issuer-terms", "14-concierge-free-password-checks", "17-inheritance-configuration", "04-login-saved-dashboard", "06-memory-timeline", "08-retrieve-demo-file", "24-delete-file-confirmation", "25-demo-deletions-completed"], "personally_and_independently_visually_reviewed": true},
+    "ipad_existing_upload": {"directory": "ipad/qa02", "checkpoints": ["09-assets-supported-categories", "11-digital-gold-no-invented-holdings", "12-digital-silver-issuer-terms", "14-concierge-free-password-checks", "17-inheritance-configuration", "03-create-login-demo", "04-login-saved-dashboard", "06-memory-timeline", "08-retrieve-demo-file", "05-chat-save-memory-once"], "personally_and_independently_visually_reviewed": true},
+    "excluded": ["16 synthetic provider findings on all devices", "22 and23 plaintext harmless retrieved login on all devices", "iPad24/25 showing prior plaintext harmless login", "Large iPhone03 partially scrolled dialog", "Android04 mostly offscreen saved login card"],
+    "ipad_system_corner_handle": "Genuine iPadOS26 window resize handle; not a test-progress overlay; unchanged pixels"
+  },
+  "commit_policy": "Owned source/test/helper/text evidence only; no screenshots, binaries, production artifacts, root metadata or unrelated probes"
+}

@@ -1,0 +1,40 @@
+{
+  "scope": "real-native-pixels-synthetic-demo-only",
+  "device": {
+    "name": "SvaultAI_API_36",
+    "device": "emulator-5554",
+    "kind": "android",
+    "original_display_size": "1080x2400",
+    "original_override_size": null,
+    "capture_viewport": "1080x1920",
+    "display_restore_verified": true
+  },
+  "exit_code": 1,
+  "screenshots": [
+    {
+      "checkpoint": "01-create-vault-demo-form-not-submitted",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa01/01-create-vault-demo-form-not-submitted.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "7c163479b92447e073a0bce96a2bd2acfa2df11d7889d49e51bf25b624774727",
+      "bytes": 128593
+    },
+    {
+      "checkpoint": "diagnostic-failed-journey",
+      "file": "/Users/chosenbrain/Documents/Codex/2026-09-03/referenced-chatgpt-conversation-this-is-an/svaultai-assets-concierge/work/store-upgrade-2026-10-09/android/qa01/diagnostic-failed-journey.png",
+      "width": 1080,
+      "height": 1920,
+      "sha256": "563c8a15394d13dc28c56c354d9119ac4a2adfab1997a95ab69e9d51ae2f0d0f",
+      "bytes": 162274
+    }
+  ],
+  "capture_failures": [],
+  "production_requests": 0,
+  "account_auth_verified": false,
+  "live_holdings_or_transfers_verified": false,
+  "storefront_prompt_verified": false,
+  "release_contract": "config/release-contract.production.json",
+  "crypto_network": "ethereum_mainnet",
+  "mainnet_receive_erc20_receive_send_flags": true,
+  "pixel_transformations": "none"
+}

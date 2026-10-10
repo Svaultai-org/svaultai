@@ -7078,46 +7078,48 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       showDragHandle: true,
       constraints: const BoxConstraints(maxWidth: 520),
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-          child: Column(
-            key: const Key('vault_create_menu'),
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Create',
-                style: Theme.of(ctx).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              _CreateChoiceTile(
-                key: const Key('create_choice_login'),
-                icon: Icons.key_outlined,
-                title: 'Login',
-                subtitle: 'Credentials and access details',
-                onTap: () => Navigator.pop(ctx, 'login'),
-              ),
-              _CreateChoiceTile(
-                key: const Key('create_choice_file'),
-                icon: Icons.upload_file_outlined,
-                title: 'File',
-                subtitle: 'Documents, images, videos, and uploads',
-                onTap: () => Navigator.pop(ctx, 'file'),
-              ),
-              _CreateChoiceTile(
-                key: const Key('create_choice_memory'),
-                icon: Icons.auto_stories_outlined,
-                title: 'Memory',
-                subtitle: 'Notes, facts, keys, Wi-Fi details, and more',
-                onTap: () => Navigator.pop(ctx, 'memory'),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                key: const Key('create_menu_cancel'),
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(AppLocalizations.of(ctx).commonCancel),
-              ),
-            ],
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+            child: Column(
+              key: const Key('vault_create_menu'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Create',
+                  style: Theme.of(ctx).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                _CreateChoiceTile(
+                  key: const Key('create_choice_login'),
+                  icon: Icons.key_outlined,
+                  title: 'Login',
+                  subtitle: 'Credentials and access details',
+                  onTap: () => Navigator.pop(ctx, 'login'),
+                ),
+                _CreateChoiceTile(
+                  key: const Key('create_choice_file'),
+                  icon: Icons.upload_file_outlined,
+                  title: 'File',
+                  subtitle: 'Documents, images, videos, and uploads',
+                  onTap: () => Navigator.pop(ctx, 'file'),
+                ),
+                _CreateChoiceTile(
+                  key: const Key('create_choice_memory'),
+                  icon: Icons.auto_stories_outlined,
+                  title: 'Memory',
+                  subtitle: 'Notes, facts, keys, Wi-Fi details, and more',
+                  onTap: () => Navigator.pop(ctx, 'memory'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  key: const Key('create_menu_cancel'),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(AppLocalizations.of(ctx).commonCancel),
+                ),
+              ],
+            ),
           ),
         ),
       ),
