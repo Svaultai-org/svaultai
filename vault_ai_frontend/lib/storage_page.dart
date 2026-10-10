@@ -150,7 +150,7 @@ class _StoragePageState extends State<StoragePage> {
     }
     try {
       final data = await _client.getBillingMe(authToken: token);
-      if (!mounted) return;
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
       context.read<AppState>().applyBillingPayload(data);
       setState(() {
         _data = data;
@@ -159,7 +159,7 @@ class _StoragePageState extends State<StoragePage> {
       });
       _maybeAutoOpenPicker();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || context.read<AppState>().sessionToken != token) return;
       setState(() {
         _loading = false;
         _error = 'Could not load storage: $e';
