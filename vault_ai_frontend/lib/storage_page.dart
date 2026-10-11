@@ -12,10 +12,16 @@ import 'l10n/app_localizations.dart';
 import 'main.dart' show AppState, backendBaseUrl, kVaultStorageLimitBytes;
 import 'services/apple_iap_service.dart';
 import 'services/apple_purchase_recovery.dart';
+import 'services/google_play_iap_service.dart';
+import 'services/google_play_verification.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'ui/tokens.dart';
 
 class StoragePage extends StatefulWidget {
-  const StoragePage({super.key});
+  const StoragePage({super.key, this.client, this.googlePlayService});
+
+  final VaultAIClient? client;
+  final GooglePlayIapService? googlePlayService;
 
   @override
   State<StoragePage> createState() => _StoragePageState();
@@ -26,6 +32,10 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
   bool _loading = true;
   bool _busyPurchase = false;
   bool _appleActionInProgress = false;
+  bool _googleActionInProgress = false;
+  final Set<String> _processingGoogleTransactions = {};
+  GooglePlayIapService get _google =>
+      widget.googlePlayService ?? GooglePlayIapService.instance;
   final Set<String> _processingAppleTransactions = {};
   final Set<String> _reportedActivationErrors = {};
   String? _error;
@@ -35,11 +45,18 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
   bool _autoOpenPickerFired = false;
 
   StreamSubscription<List<PurchaseDetails>>? _applePurchaseSubscription;
+  StreamSubscription<List<PurchaseDetails>>? _googlePurchaseSubscription;
+  bool _googleRestoring = false;
+  bool _googleSilentRecovery = false;
+  String? _googleNotice;
+  String? _googleCheckoutSession;
+  bool _googleCheckoutDeferred = false;
+  bool _googleInitialRecoveryPending = false;
 
   @override
   void initState() {
     super.initState();
-    _client = VaultAIClient(baseUrl: backendBaseUrl);
+    _client = widget.client ?? VaultAIClient(baseUrl: backendBaseUrl);
     if (supportsAppleIap) {
       WidgetsBinding.instance.addObserver(this);
       AppleIapService.instance.initialize();
@@ -51,13 +68,37 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
         ),
       );
     }
-    _refresh();
+    if (supportsGooglePlayIap) {
+      _googleInitialRecoveryPending = true;
+      WidgetsBinding.instance.addObserver(this);
+      _google.initialize();
+      _googlePurchaseSubscription = _google.transactions.listen(
+        _handleGoogleTransactions,
+        onError: (_) {
+          if (!mounted) return;
+          const message = 'The Google Play connection was interrupted. Use Restore Purchases '
+              'if a purchase was accepted. Do not purchase again.';
+          setState(() => _googleNotice = message);
+          if (_googleCheckoutSession == context.read<AppState>().sessionToken) {
+            _showApplePurchaseError(message, title: 'Google Play connection unavailable');
+          }
+        },
+      );
+    }
+    _refresh().then((_) async {
+      if (mounted && supportsGooglePlayIap && !_busyPurchase) {
+        await _restoreGooglePurchases(automatic: true);
+      }
+      _googleInitialRecoveryPending = false;
+      if (mounted && supportsGooglePlayIap) _maybeAutoOpenPicker();
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _applePurchaseSubscription?.cancel();
+    _googlePurchaseSubscription?.cancel();
     super.dispose();
   }
 
@@ -69,6 +110,10 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
         mounted) {
       AppleIapService.instance.replayPendingTransactions();
       _refresh();
+    }
+    if (state == AppLifecycleState.resumed && supportsGooglePlayIap &&
+        !_googleActionInProgress && mounted) {
+      _restoreGooglePurchases(automatic: true);
     }
   }
 
@@ -189,6 +234,299 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
     );
   }
 
+  bool _googleSessionCurrent(String token) =>
+      mounted && context.read<AppState>().sessionToken == token;
+
+  Future<GooglePlayProviderCatalog> _googleProviderCatalog(String token) async {
+    final providers = await _client.getGooglePlayBillingProviders(authToken: token,
+        responseIsCurrent: () => _googleSessionCurrent(token));
+    if (!_googleSessionCurrent(token)) {
+      throw const GooglePlayPurchaseVerificationException(statusCode: 403);
+    }
+    return GooglePlayProviderCatalog.fromProviders(providers);
+  }
+
+  Future<void> _handleGoogleTransactions(List<PurchaseDetails> purchases,
+      {bool recheckPending = false}) async {
+    if (!mounted) return;
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
+    for (final purchase in purchases) {
+      if (!_googleSessionCurrent(token)) return;
+      if (!isGooglePlayStorageProduct(purchase.productID)) continue;
+      if (purchase.status == PurchaseStatus.pending) {
+        setState(() {
+          _busyPurchase = true;
+          _googleNotice = 'Payment is pending in Google Play. Storage activates '
+              'only after payment and verification complete. Do not purchase again.';
+        });
+        if (recheckPending && purchase is GooglePlayPurchaseDetails &&
+            purchase.verificationData.serverVerificationData.isNotEmpty) {
+          try {
+            final result = await _client.verifyGooglePlayStoragePurchase(
+                authToken: token, productId: purchase.productID,
+                purchaseToken: purchase.verificationData.serverVerificationData,
+                responseIsCurrent: () => _googleSessionCurrent(token));
+            if (!_googleSessionCurrent(token)) return;
+            if (result['verified'] == true && result['provider'] == 'google_play' &&
+                const {'expired', 'refunded', 'revoked', 'canceled'}.contains(result['status'])) {
+              await _google.retireVerifiedTerminal(purchase);
+            }
+          } catch (_) {
+            // No authoritative terminal state: preserve pending, no grant or ACK.
+          }
+        }
+        continue;
+      }
+      if (purchase.status == PurchaseStatus.canceled ||
+          purchase.status == PurchaseStatus.error) {
+        final explicitCheckout = _googleCheckoutSession == token;
+        _googleCheckoutSession = null;
+        setState(() => _busyPurchase = _googleActionInProgress ||
+            _processingGoogleTransactions.isNotEmpty || _google.hasPendingStoreRequest);
+        if (explicitCheckout && purchase.status == PurchaseStatus.error) {
+          await _showApplePurchaseError(
+            'Google Play could not complete the request. If a purchase was accepted, '
+            'use Restore Purchases. Do not purchase again.',
+            title: 'Google Play request unavailable',
+          );
+        }
+        continue;
+      }
+      if (purchase.status != PurchaseStatus.purchased &&
+          purchase.status != PurchaseStatus.restored) {
+        continue;
+      }
+      if (purchase is! GooglePlayPurchaseDetails) continue;
+      final key = googlePlayTransactionKey(purchase);
+      final showActivation = _googleCheckoutSession == token;
+      if (!_processingGoogleTransactions.add(key)) continue;
+      setState(() => _busyPurchase = true);
+      try {
+        final result = await _google.recovery.recover(
+          accountKey: token,
+          transactionKey: key,
+          isCurrent: () => _googleSessionCurrent(token),
+          verify: () => _client.verifyGooglePlayStoragePurchase(
+            authToken: token,
+            purchaseToken: purchase.verificationData.serverVerificationData,
+            productId: purchase.productID,
+            responseIsCurrent: () => _googleSessionCurrent(token),
+          ),
+          finish: () => _google.finish(purchase),
+          retireTerminal: () => _google.retireVerifiedTerminal(purchase),
+        );
+        if (!_googleSessionCurrent(token) || !result.handled) continue;
+        _reportedActivationErrors.remove(key);
+        await _refresh();
+        if (!_googleSessionCurrent(token)) return;
+        if (_error != null || _data?['billing_state'] != 'ok') {
+          setState(() => _googleNotice =
+              'Google Play verified the purchase, but storage could not refresh. '
+              'Refresh or use Restore Purchases. Do not purchase again.');
+          continue;
+        }
+        if (!showActivation) continue;
+        _googleCheckoutSession = null;
+        if (_data?['source'] != 'google_play' || !hasActiveSubscription(_data!)) {
+          await _showApplePurchaseError(
+            'Your Google Play purchase was verified and storage was refreshed. '
+            'This subscription is not currently active.',
+            title: 'Subscription restored',
+          );
+          continue;
+        }
+        final limitBytes = (_data?['effective_limit_bytes'] as num?)?.toInt() ?? 0;
+        if (!mounted || !_googleSessionCurrent(token)) return;
+        await showDialog<void>(context: context, builder: (_) =>
+            _GooglePlanVerifiedDialog(limitGb: limitBytes ~/ (1024 * 1024 * 1024),
+                deferredChange: _googleCheckoutDeferred));
+      } catch (error) {
+        if (!_googleSessionCurrent(token)) return;
+        final failure = error is GooglePlayPurchaseVerificationException
+            ? error : const GooglePlayPurchaseVerificationException(
+                statusCode: 200, code: 'activation_unconfirmed');
+        setState(() => _googleNotice = failure.userMessage);
+        if ((showActivation || (_googleRestoring && !_googleSilentRecovery)) &&
+            _reportedActivationErrors.add(key)) {
+          _googleCheckoutSession = null;
+          await _showApplePurchaseError(failure.userMessage, title: failure.userTitle);
+        }
+      } finally {
+        _processingGoogleTransactions.remove(key);
+        if (mounted) {
+          setState(() => _busyPurchase = _googleActionInProgress ||
+              _processingGoogleTransactions.isNotEmpty || _google.hasPendingStoreRequest);
+        }
+      }
+    }
+  }
+
+  Future<void> _restoreGooglePurchases({bool automatic = false}) async {
+    if (!supportsGooglePlayIap || _googleActionInProgress ||
+        _processingGoogleTransactions.isNotEmpty || !mounted) {
+      return;
+    }
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
+    _googleActionInProgress = true;
+    _googleRestoring = true;
+    _googleSilentRecovery = automatic;
+    _reportedActivationErrors.clear();
+    setState(() => _busyPurchase = true);
+    try {
+      final provider = await _googleProviderCatalog(token);
+      final owned = await _google.queryOwnedPurchases(provider, emit: false);
+      if (!_googleSessionCurrent(token)) return;
+      final candidates = <String, GooglePlayPurchaseDetails>{
+        for (final purchase in [..._google.retainedPurchases, ...owned])
+          googlePlayTransactionKey(purchase): purchase,
+      };
+      await _handleGoogleTransactions(candidates.values.toList(), recheckPending: true);
+      if (!_googleSessionCurrent(token)) return;
+      await _client.reconcileGooglePlayStoragePurchases(authToken: token,
+          responseIsCurrent: () => _googleSessionCurrent(token),
+          purchaseTokens: owned.where((p) => p.status == PurchaseStatus.purchased ||
+              p.status == PurchaseStatus.restored)
+              .map((p) => p.verificationData.serverVerificationData).toSet().toList());
+      if (!_googleSessionCurrent(token)) return;
+      await _refresh();
+      if (!_googleSessionCurrent(token)) return;
+      setState(() => _googleNotice = _data?['billing_state'] == 'ok'
+          ? (_google.hasPendingActivation
+              ? 'A Google Play purchase is still awaiting activation. '
+                  'Retry Restore Purchases. Do not purchase again.'
+              : _google.hasPendingStoreRequest
+              ? 'Payment is still pending in Google Play. Do not purchase again.'
+              : 'Google Play purchases checked. Storage reflects the verified current plan.')
+          : 'Storage verification is unavailable. Retry Restore Purchases; do not purchase again.');
+    } catch (error) {
+      if (!_googleSessionCurrent(token)) return;
+      final failure = error is GooglePlayPurchaseVerificationException ? error
+          : const GooglePlayPurchaseVerificationException();
+      setState(() => _googleNotice = failure.userMessage);
+      if (!automatic) {
+        await _showApplePurchaseError(failure.userMessage, title: 'Restore unavailable');
+      }
+    } finally {
+      _googleActionInProgress = false;
+      _googleRestoring = false;
+      _googleSilentRecovery = false;
+      if (mounted) {
+        setState(() => _busyPurchase =
+            _processingGoogleTransactions.isNotEmpty || _google.hasPendingStoreRequest);
+      }
+    }
+  }
+
+  Future<void> _onGoogleBuyStorage() async {
+    if (_busyPurchase || _googleActionInProgress || !mounted) return;
+    final token = context.read<AppState>().sessionToken;
+    if (token == null) return;
+    final data = _data;
+    if (data == null || data['billing_state'] != 'ok') {
+      await _showApplePurchaseError('Storage ownership could not be verified. '
+          'Refresh this page before buying.', title: 'Storage verification unavailable');
+      return;
+    }
+    if (data['source'] == 'apple' && hasActiveSubscription(data)) {
+      await _showApplePurchaseError('Apple manages this vault\'s active storage plan. '
+          'Manage the existing subscription in the App Store; do not start another plan.',
+          title: 'Subscription managed by Apple');
+      return;
+    }
+    if (_google.hasPendingActivation) {
+      await _showApplePurchaseError('A Google Play purchase is awaiting activation. '
+          'Use Restore Purchases. Do not purchase again.', title: 'Purchase activation pending');
+      return;
+    }
+    _googleActionInProgress = true;
+    setState(() => _busyPurchase = true);
+    try {
+      final provider = await _googleProviderCatalog(token);
+      final catalog = await _google.loadCatalog(provider);
+      if (!_googleSessionCurrent(token)) return;
+      if (!catalog.canPurchase) {
+        await _showApplePurchaseError(catalog.error ?? 'Google Play plans are unavailable.');
+        return;
+      }
+      final owned = await _google.queryOwnedPurchases(provider, emit: false);
+      if (!_googleSessionCurrent(token)) return;
+      if (owned.any((p) => p.status == PurchaseStatus.pending)) {
+        setState(() => _googleNotice = 'Google Play payment is pending. Do not purchase again.');
+        return;
+      }
+      _googleRestoring = true;
+      _googleSilentRecovery = true;
+      await _handleGoogleTransactions(owned);
+      if (!_googleSessionCurrent(token)) return;
+      if (_google.hasPendingActivation) {
+        await _showApplePurchaseError('Restore the existing Google Play purchase '
+            'before changing plans. Do not purchase again.', title: 'Purchase activation pending');
+        return;
+      }
+      await _client.reconcileGooglePlayStoragePurchases(authToken: token,
+          responseIsCurrent: () => _googleSessionCurrent(token),
+          purchaseTokens: owned.map((p) => p.verificationData.serverVerificationData).toSet().toList());
+      if (!_googleSessionCurrent(token)) return;
+      await _refresh();
+      if (!_googleSessionCurrent(token)) return;
+      final current = _data;
+      if (_error != null || current == null || current['billing_state'] != 'ok' ||
+          (current['source'] == 'apple' && hasActiveSubscription(current))) {
+        throw const GooglePlayPurchaseVerificationException(
+            statusCode: 409, code: 'active_storage_billing_owner');
+      }
+      if (!mounted || !_googleSessionCurrent(token)) return;
+      final picked = await showModalBottomSheet<int>(context: context,
+        backgroundColor: VaultColors.canvas, isScrollControlled: true,
+        builder: (_) => StoragePlanPicker(
+          currentBlockCount: (current['block_count'] as num?)?.toInt() ?? 0,
+          usedBytes: (current['used_bytes'] as num?)?.toInt() ?? 0,
+          blockBytes: (current['block_bytes'] as num?)?.toInt() ?? 53687091200,
+          blockPriceCentsUsd: 0,
+          selfServiceMaxBlocks: (current['self_service_max_blocks'] as num?)?.toInt() ?? 100,
+          hasActiveSubscription: hasActiveSubscription(current),
+          googlePlayPurchase: true,
+          storePrices: { for (final entry in catalog.products.entries) entry.key: entry.value.price },
+        ),
+      );
+      if (!_googleSessionCurrent(token) || picked == null) return;
+      final product = catalog.products[picked];
+      if (product == null) return;
+      _googleRestoring = false;
+      _googleSilentRecovery = false;
+      _googleCheckoutSession = token;
+      _googleCheckoutDeferred = picked < ((current['block_count'] as num?)?.toInt() ?? 0);
+      final launched = await _google.buy(provider: provider, product: product,
+          ownedPurchases: owned, currentProductId:
+              current['source'] == 'google_play' && hasActiveSubscription(current)
+                  ? current['product_id'] as String? : null);
+      if (!_googleSessionCurrent(token)) return;
+      if (!launched) {
+        _googleCheckoutSession = null;
+        await _showApplePurchaseError('A Google Play request is already pending '
+            'or this plan is already owned. Use Restore Purchases; do not purchase again.');
+      }
+    } catch (error) {
+      _googleCheckoutSession = null;
+      if (!_googleSessionCurrent(token)) return;
+      final failure = error is GooglePlayPurchaseVerificationException ? error : null;
+      await _showApplePurchaseError(failure?.userMessage ??
+          'Google Play checkout could not be opened safely. Restore Purchases to '
+          'check the existing subscription before trying a plan change.',
+          title: failure?.userTitle ?? 'Google Play unavailable');
+    } finally {
+      _googleActionInProgress = false;
+      _googleRestoring = false;
+      _googleSilentRecovery = false;
+      if (mounted) {
+        setState(() => _busyPurchase =
+            _processingGoogleTransactions.isNotEmpty || _google.hasPendingStoreRequest);
+      }
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -200,8 +538,9 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
   }
 
   void _maybeAutoOpenPicker() {
-    if (!supportsAppleIap || !_autoOpenPickerRequested) return;
+    if (!(supportsAppleIap || supportsGooglePlayIap) || !_autoOpenPickerRequested) return;
     if (_autoOpenPickerFired) return;
+    if (_googleInitialRecoveryPending) return;
     if (_loading || _error != null || _data == null) return;
     _autoOpenPickerFired = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -221,7 +560,10 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
       return;
     }
     try {
-      final data = await _client.getBillingMe(authToken: token);
+      final data = supportsGooglePlayIap
+          ? await _client.getGooglePlayBillingMe(authToken: token,
+              responseIsCurrent: () => _googleSessionCurrent(token))
+          : await _client.getBillingMe(authToken: token);
       if (!mounted || context.read<AppState>().sessionToken != token) return;
       context.read<AppState>().applyBillingPayload(data);
       setState(() {
@@ -241,6 +583,7 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
 
   Future<void> _onBuyStorage() async {
     if (supportsAppleIap) await _onAppleBuyStorage();
+    if (supportsGooglePlayIap) await _onGoogleBuyStorage();
   }
 
   Future<String> _appleAppAccountToken(String token) async {
@@ -415,6 +758,9 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (supportsGooglePlayIap && _googleNotice != null)
+                Padding(padding: const EdgeInsets.all(VaultSpacing.md),
+                    child: Text(_googleNotice!, style: VaultText.body)),
               Expanded(child: _buildBody()),
             ],
           ),
@@ -451,11 +797,12 @@ class _StoragePageState extends State<StoragePage> with WidgetsBindingObserver {
     return StorageBody(
       data: data,
       busy: _busyPurchase,
-      onBuyStorage: supportsAppleIap ? _onBuyStorage : null,
+      onBuyStorage: supportsAppleIap || supportsGooglePlayIap ? _onBuyStorage : null,
       onManageSubscription:
           hasManageableSubscription(data) ? _onManageSubscription : null,
       showStorePurchaseNotice: kIsWeb,
-      onRestorePurchases: supportsAppleIap ? _onRestoreApplePurchases : null,
+      onRestorePurchases: supportsAppleIap ? _onRestoreApplePurchases
+          : supportsGooglePlayIap ? () => _restoreGooglePurchases() : null,
     );
   }
 }
@@ -1159,6 +1506,7 @@ class StoragePlanPicker extends StatelessWidget {
   final bool hasActiveSubscription;
   final Map<int, String>? storePrices;
   final bool applePurchase;
+  final bool googlePlayPurchase;
 
   const StoragePlanPicker({
     super.key,
@@ -1170,6 +1518,7 @@ class StoragePlanPicker extends StatelessWidget {
     this.hasActiveSubscription = false,
     this.storePrices,
     this.applePurchase = false,
+    this.googlePlayPurchase = false,
   });
 
   int _priceCents(int blocks) =>
@@ -1184,6 +1533,7 @@ class StoragePlanPicker extends StatelessWidget {
   String _priceLabel(int blocks) {
     final storePrice = storePrices?[blocks];
     if (storePrice != null) return '$storePrice/month';
+    if (googlePlayPurchase) return 'Price unavailable';
     return _formatUsd(_priceCents(blocks));
   }
 
@@ -1205,7 +1555,8 @@ class StoragePlanPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ladder = kSelfServiceSkuBlockLadder
+    final ladder = (googlePlayPurchase && storePrices != null
+            ? (storePrices!.keys.toList()..sort()) : kSelfServiceSkuBlockLadder)
         .where((b) => b <= selfServiceMaxBlocks)
         .where((b) => storePrices == null || storePrices!.containsKey(b))
         .toList();
@@ -1221,7 +1572,9 @@ class StoragePlanPicker extends StatelessWidget {
         : applePurchase
             ? 'Choose a monthly storage plan. Payment is handled securely '
                 'by the App Store.'
-            : 'Choose a monthly storage plan in the App Store or Google Play.';
+            : googlePlayPurchase
+                ? 'Choose a monthly storage plan. Payment is handled by Google Play.'
+                : 'Choose a monthly storage plan in the App Store or Google Play.';
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -1278,10 +1631,10 @@ class StoragePlanPicker extends StatelessWidget {
                     additionalLabel: _capacityLabel(blocks),
                     monthlyLabel: _priceLabel(blocks),
                     newLimitLabel: _newLimitLabel(blocks),
-                    addedCapacityLabel:
-                        isUpgradeTile ? _capacityLabel(addedBlocks) : null,
-                    addedMonthlyLabel:
-                        isUpgradeTile ? _upgradePriceLabel(blocks) : null,
+                    addedCapacityLabel: isUpgradeTile && !googlePlayPurchase
+                        ? _capacityLabel(addedBlocks) : null,
+                    addedMonthlyLabel: isUpgradeTile && !googlePlayPurchase
+                        ? _upgradePriceLabel(blocks) : null,
                     prorationLabel: isUpgradeTile
                         ? applePurchase
                             ? 'Apple will confirm today\'s charge'
@@ -1459,6 +1812,22 @@ class _ErrorCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _GooglePlanVerifiedDialog extends StatelessWidget {
+  const _GooglePlanVerifiedDialog({required this.limitGb, required this.deferredChange});
+  final int limitGb;
+  final bool deferredChange;
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    backgroundColor: VaultColors.surface,
+    title: const Text('Google Play subscription verified', style: VaultText.title),
+    content: Text(deferredChange
+        ? 'Your current verified storage is $limitGb GB. The lower plan starts '
+            'at the end of the current paid period. Manage Subscription shows the effective date.'
+        : 'Your current verified storage limit is $limitGb GB.', style: VaultText.body),
+    actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done'))],
+  );
 }
 
 class _UpgradeSuccessDialog extends StatelessWidget {

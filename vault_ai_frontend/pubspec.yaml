@@ -46,6 +46,7 @@ dependencies:
   # storage is granted.
   in_app_purchase: ^3.3.0
   in_app_purchase_storekit: ^0.4.12
+  in_app_purchase_android: ^0.5.3
 
   # Auth and crypto utilities — vault_name + PIN model uses convert /
   # pointycastle / crypto for PIN-derived AES-GCM material; the

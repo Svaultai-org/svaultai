@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'services/apple_purchase_recovery.dart';
 import 'services/asset_catalog.dart' show parseAssetBaseUnits;
+import 'services/google_play_verification.dart';
 import 'services/session_termination.dart' as st;
 import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
@@ -1149,6 +1150,357 @@ class VaultAIClient {
       );
     }
     return decoded;
+  }
+
+  /// Google-specific catalog reads guard the captured vault session before
+  /// any response can enter the shared authentication machinery.
+  Future<Map<String, dynamic>> getGooglePlayBillingProviders({
+    required String authToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    final decoded = await _getGooglePlayBilling(
+      authToken: authToken,
+      path: '/billing/providers',
+      label: 'billing.google_play.providers',
+      invalidResponseCode: 'invalid_google_play_providers_response',
+      responseIsCurrent: responseIsCurrent,
+    );
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    return decoded;
+  }
+
+  Future<Map<String, dynamic>> getGooglePlayBillingMe({
+    required String authToken,
+    bool Function()? responseIsCurrent,
+  }) async {
+    final decoded = await _getGooglePlayBilling(
+      authToken: authToken,
+      path: '/billing/me',
+      label: 'billing.google_play.me',
+      invalidResponseCode: 'invalid_google_play_billing_response',
+      responseIsCurrent: responseIsCurrent,
+    );
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    return decoded;
+  }
+
+  /// Verifies the existing BillingClient purchase with the backend before the
+  /// caller can complete it. The backend owns acknowledgement and entitlement.
+  Future<Map<String, dynamic>> verifyGooglePlayStoragePurchase({
+    required String authToken,
+    required String purchaseToken,
+    required String productId,
+    bool Function()? responseIsCurrent,
+  }) async {
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    if (!_validGooglePlayPurchaseToken(purchaseToken) ||
+        !googlePlayStorageProductIdAllowlist.contains(productId)) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 400,
+        code: 'google_play_purchase_invalid',
+      );
+    }
+    final decoded = await _postGooglePlayBilling(
+      authToken: authToken,
+      path: '/billing/google-play/verify',
+      label: 'billing.google_play.verify',
+      body: {'purchase_token': purchaseToken, 'product_id': productId},
+      invalidResponseCode: 'invalid_verification_response',
+      responseIsCurrent: responseIsCurrent,
+    );
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    if (decoded['verified'] != true) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 200,
+        code: 'unconfirmed_verification',
+      );
+    }
+    final status = decoded['status'];
+    final transition = decoded['transition'];
+    if (decoded['provider'] != 'google_play' ||
+        !googlePlayStorageProductIdAllowlist.contains(decoded['product_id']) ||
+        !_googlePlayPurchaseStatuses.contains(status) ||
+        decoded['acknowledged'] is! bool ||
+        !_validGooglePlayTransition(transition, status)) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 200,
+        code: 'invalid_verification_response',
+      );
+    }
+    final rawPeriodEnd = decoded['current_period_end'];
+    DateTime? periodEnd;
+    if (rawPeriodEnd != null) {
+      if (rawPeriodEnd is! String ||
+          !RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$')
+              .hasMatch(rawPeriodEnd) ||
+          (periodEnd = DateTime.tryParse(rawPeriodEnd)) == null) {
+        throw const GooglePlayPurchaseVerificationException(
+          statusCode: 200,
+          code: 'invalid_verification_response',
+        );
+      }
+    }
+    // Return only the documented, validated fields. Unexpected response fields
+    // must not expose purchase tokens or authorize another store's completion.
+    return {
+      'verified': true,
+      'provider': 'google_play',
+      'product_id': decoded['product_id'],
+      'status': status,
+      'acknowledged': decoded['acknowledged'],
+      'transition': transition,
+      if (decoded.containsKey('current_period_end'))
+        'current_period_end': periodEnd?.toIso8601String(),
+    };
+  }
+
+  /// An empty list is meaningful: the backend still rechecks bound purchases
+  /// before it reports the account's current storage entitlement.
+  Future<Map<String, dynamic>> reconcileGooglePlayStoragePurchases({
+    required String authToken,
+    required List<String> purchaseTokens,
+    bool Function()? responseIsCurrent,
+  }) async {
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    if (purchaseTokens.length > 20 ||
+        purchaseTokens.any((token) => !_validGooglePlayPurchaseToken(token))) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 400,
+        code: 'google_play_purchase_invalid',
+      );
+    }
+    final expectedCurrentCount =
+        purchaseTokens.map((token) => token.trim()).toSet().length;
+    final decoded = await _postGooglePlayBilling(
+      authToken: authToken,
+      path: '/billing/google-play/reconcile',
+      label: 'billing.google_play.reconcile',
+      body: {'purchase_tokens': List<String>.of(purchaseTokens)},
+      invalidResponseCode: 'invalid_reconciliation_response',
+      responseIsCurrent: responseIsCurrent,
+    );
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    if (decoded['reconciled'] != true) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 200,
+        code: 'unconfirmed_reconciliation',
+      );
+    }
+    final status = decoded['status'];
+    final reconciledCount = decoded['reconciled_count'];
+    if (decoded['provider'] != 'google_play' ||
+        !_googlePlayAccountStatuses.contains(status) ||
+        decoded['has_active_subscription'] is! bool ||
+        decoded['has_active_subscription'] !=
+            (status == 'active' || status == 'in_grace') ||
+        decoded['current_purchase_count'] is! int ||
+        decoded['current_purchase_count'] != expectedCurrentCount ||
+        reconciledCount is! int ||
+        reconciledCount < 0 ||
+        decoded['cleared_pending'] is! bool) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 200,
+        code: 'invalid_reconciliation_response',
+      );
+    }
+    return {
+      'reconciled': true,
+      'provider': 'google_play',
+      'status': status,
+      'has_active_subscription': decoded['has_active_subscription'],
+      'current_purchase_count': expectedCurrentCount,
+      'reconciled_count': reconciledCount,
+      'cleared_pending': decoded['cleared_pending'],
+    };
+  }
+
+  static const _googlePlayPurchaseStatuses = {
+    'pending',
+    'active',
+    'reactivated',
+    'grace_period',
+    'delinquent',
+    'canceled',
+    'expired',
+    'revoked',
+    'refunded',
+  };
+
+  static const _googlePlayAccountStatuses = {
+    'none',
+    'pending',
+    'active',
+    'in_grace',
+    'past_due',
+    'canceled',
+    'expired',
+    'revoked',
+    'refunded',
+  };
+
+  static bool _validGooglePlayPurchaseToken(String token) =>
+      token.trim().isNotEmpty && token.length <= 4096;
+
+  static bool _validGooglePlayTransition(dynamic transition, dynamic status) {
+    if (transition == 'unchanged') return true;
+    if (transition == 'reactivated') {
+      return const {'active', 'reactivated', 'grace_period'}.contains(status);
+    }
+    return {'none', ..._googlePlayPurchaseStatuses}
+        .any((previous) => transition == '${previous}_to_$status');
+  }
+
+  Future<Map<String, dynamic>> _postGooglePlayBilling({
+    required String authToken,
+    required String path,
+    required String label,
+    required Map<String, dynamic> body,
+    required String invalidResponseCode,
+    bool Function()? responseIsCurrent,
+  }) =>
+      _requestGooglePlayBilling(
+        authToken: authToken,
+        path: path,
+        label: label,
+        body: body,
+        invalidResponseCode: invalidResponseCode,
+        responseIsCurrent: responseIsCurrent,
+      );
+
+  Future<Map<String, dynamic>> _getGooglePlayBilling({
+    required String authToken,
+    required String path,
+    required String label,
+    required String invalidResponseCode,
+    bool Function()? responseIsCurrent,
+  }) =>
+      _requestGooglePlayBilling(
+        authToken: authToken,
+        path: path,
+        label: label,
+        invalidResponseCode: invalidResponseCode,
+        responseIsCurrent: responseIsCurrent,
+      );
+
+  static void _assertGooglePlayResponseCurrent(
+      bool Function()? responseIsCurrent) {
+    var current = true;
+    try {
+      current = responseIsCurrent?.call() ?? true;
+    } catch (_) {
+      current = false;
+    }
+    if (!current) {
+      throw const GooglePlayPurchaseVerificationException(
+        statusCode: 403,
+        code: 'google_play_context_changed',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _requestGooglePlayBilling({
+    required String authToken,
+    required String path,
+    required String label,
+    Map<String, dynamic>? body,
+    required String invalidResponseCode,
+    bool Function()? responseIsCurrent,
+  }) async {
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    if (authToken.isEmpty) throw const AuthExpiredException();
+    final uri = Uri.parse('$baseUrl$path');
+    final headers = _defaultHeaders(authToken: authToken, json: body != null);
+    _vlogRequest(label, uri, headers);
+    final http.Response response;
+    try {
+      response = await (body == null
+              ? http.get(uri, headers: headers)
+              : http.post(uri, headers: headers, body: jsonEncode(body)))
+          .timeout(const Duration(seconds: 15));
+    } on http.ClientException {
+      _assertGooglePlayResponseCurrent(responseIsCurrent);
+      _vlog('http.network_error',
+          {'label': label, 'error_type': 'ClientException'});
+      throw const GooglePlayPurchaseVerificationException();
+    } on TimeoutException {
+      _assertGooglePlayResponseCurrent(responseIsCurrent);
+      _vlog('http.network_error',
+          {'label': label, 'error_type': 'TimeoutException'});
+      throw const GooglePlayPurchaseVerificationException();
+    } catch (_) {
+      _assertGooglePlayResponseCurrent(responseIsCurrent);
+      // Unexpected transport errors are safe to expose but are not classified
+      // as transient network failures. Do not log the exception's raw text.
+      throw const GooglePlayPurchaseVerificationException(
+        code: 'google_play_request_failed',
+      );
+    }
+    // A delayed response from the old vault must never classify a coded 401
+    // against the process-wide session of a vault that has since signed in.
+    _assertGooglePlayResponseCurrent(responseIsCurrent);
+    _vlog('http.response', {
+      'label': label,
+      'url': uri.toString(),
+      'status': response.statusCode,
+      'body_len': response.body.length,
+    });
+    if (response.statusCode != 200) {
+      final code = _googlePlayErrorCode(response.body);
+      // Retain the client's existing session/device classification while
+      // ensuring provider payloads never become raw exception messages.
+      final safeAuthBody = jsonEncode({
+        'detail': {
+          if (const {
+            'session_superseded',
+            'session_expired',
+            'session_revoked',
+            'invalid_session',
+            'invalid_pin',
+            'device_not_trusted',
+            'missing_device_id',
+            'device_revoked',
+          }.contains(code))
+            'code': code,
+          'message': response.statusCode == 403
+              ? 'This device is not trusted.'
+              : 'Request was rejected on authorization grounds.',
+        },
+      });
+      _throwIfAuthExpired(response.statusCode, safeAuthBody);
+      _throwIfDeviceNotTrusted(response.statusCode, safeAuthBody);
+      throw GooglePlayPurchaseVerificationException(
+        statusCode: response.statusCode,
+        code: code,
+      );
+    }
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw GooglePlayPurchaseVerificationException(
+        statusCode: 200,
+        code: invalidResponseCode,
+      );
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw GooglePlayPurchaseVerificationException(
+        statusCode: 200,
+        code: invalidResponseCode,
+      );
+    }
+    return decoded;
+  }
+
+  static String? _googlePlayErrorCode(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      final detail = decoded is Map ? decoded['detail'] : null;
+      return detail is Map && detail['code'] is String
+          ? detail['code'] as String
+          : null;
+    } on FormatException {
+      return null;
+    }
   }
 
   Future<Map<String, dynamic>> getSecurityCenterSummary({

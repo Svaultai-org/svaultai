@@ -39,6 +39,7 @@ import 'services/metadata_migration_client.dart' as mmc;
 import 'services/native_secure_store.dart';
 import 'services/session_termination.dart' as st;
 import 'services/apple_iap_service.dart';
+import 'services/google_play_iap_service.dart';
 import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
 import 'services/vault_handle.dart' as vh;
@@ -841,6 +842,7 @@ Future<void> main() async {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       AppleIapService.instance.initialize();
+      GooglePlayIapService.instance.initialize();
 
       String? webOrigin;
       try {
@@ -1163,7 +1165,10 @@ class AppState extends ChangeNotifier {
         _downloadInFlight.isNotEmpty ||
         (supportsAppleIap &&
             (AppleIapService.instance.hasPendingStoreRequest ||
-                AppleIapService.instance.hasPendingActivation))) {
+                AppleIapService.instance.hasPendingActivation)) ||
+        (supportsGooglePlayIap &&
+            (GooglePlayIapService.instance.hasPendingStoreRequest ||
+                GooglePlayIapService.instance.hasPendingActivation))) {
       return false;
     }
     for (final probe in _storeInterruptionProbes) {
