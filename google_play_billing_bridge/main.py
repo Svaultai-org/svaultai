@@ -26,7 +26,6 @@ from .protocol import (
     response_signature,
 )
 from .publisher import (
-    PRODUCT_ID,
     PublisherConfigurationError,
     PublisherTransientError,
     PublisherVerificationError,
@@ -34,6 +33,7 @@ from .publisher import (
     acknowledge_subscription,
     get_subscription,
     verify_catalog,
+    validate_product_id,
 )
 
 
@@ -190,9 +190,8 @@ async def subscriptions_get(request: Request):
 async def subscriptions_acknowledge(request: Request):
     def operation(body: bytes) -> Mapping[str, Any]:
         payload = _payload(body, allowed={"product_id", "purchase_token"})
-        if payload.get("product_id") != PRODUCT_ID:
-            raise PublisherVerificationError("product is not in the fixed catalog")
-        acknowledge_subscription(PRODUCT_ID, _purchase_token(payload))
+        product_id = validate_product_id(payload.get("product_id"))
+        acknowledge_subscription(product_id, _purchase_token(payload))
         return {"acknowledged": True}
 
     return await _run(request, operation)
@@ -202,8 +201,7 @@ async def subscriptions_acknowledge(request: Request):
 async def catalog_verify(request: Request):
     def operation(body: bytes) -> Mapping[str, Any]:
         payload = _payload(body, allowed={"product_id"})
-        if payload.get("product_id") != PRODUCT_ID:
-            raise PublisherVerificationError("product is not in the fixed catalog")
-        return verify_catalog()
+        product_id = validate_product_id(payload.get("product_id"))
+        return verify_catalog(product_id)
 
     return await _run(request, operation)

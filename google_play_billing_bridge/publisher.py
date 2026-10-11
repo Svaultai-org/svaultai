@@ -15,6 +15,19 @@ SERVICE_ACCOUNT = (
 )
 PACKAGE_NAME = "com.svaultai.app"
 PRODUCT_ID = "svaultai_storage_50gb"
+# This isolated service deliberately duplicates the host's closed catalog; the
+# protocol-contract test requires exact equality. Never accept an arbitrary
+# caller-selected Publisher product or package.
+PRODUCT_IDS = (
+    PRODUCT_ID,
+    "svaultai_storage_100gb",
+    "svaultai_storage_150gb",
+    "svaultai_storage_200gb",
+    "svaultai_storage_250gb",
+    "svaultai_storage_300gb",
+    "svaultai_storage_500gb",
+    "svaultai_storage_1tb",
+)
 BASE_PLAN_ID = "monthly-auto"
 BILLING_PERIOD = "P1M"
 
@@ -121,13 +134,18 @@ def get_subscription(purchase_token: str) -> Mapping[str, Any]:
     return _parse_json_response(response)
 
 
-def acknowledge_subscription(product_id: str, purchase_token: str) -> None:
-    if product_id != PRODUCT_ID:
+def validate_product_id(product_id: str) -> str:
+    if not isinstance(product_id, str) or product_id not in PRODUCT_IDS:
         raise PublisherVerificationError("product is not in the fixed catalog")
+    return product_id
+
+
+def acknowledge_subscription(product_id: str, purchase_token: str) -> None:
+    product_id = validate_product_id(product_id)
     url = (
         "https://androidpublisher.googleapis.com/androidpublisher/v3/"
         f"applications/{quote(PACKAGE_NAME, safe='')}/purchases/subscriptions/"
-        f"{quote(PRODUCT_ID, safe='')}/tokens/"
+        f"{quote(product_id, safe='')}/tokens/"
         f"{quote(purchase_token, safe='')}:acknowledge"
     )
     response = authorized_session().post(url, json={}, timeout=20)
@@ -135,10 +153,13 @@ def acknowledge_subscription(product_id: str, purchase_token: str) -> None:
         _raise_upstream_error(response.status_code)
 
 
-def validate_catalog(payload: Mapping[str, Any]) -> None:
+def validate_catalog(
+    payload: Mapping[str, Any], product_id: str = PRODUCT_ID,
+) -> None:
+    product_id = validate_product_id(product_id)
     if str(payload.get("packageName") or "") != PACKAGE_NAME:
         raise PublisherVerificationError("Google Play package mismatch")
-    if str(payload.get("productId") or "") != PRODUCT_ID:
+    if str(payload.get("productId") or "") != product_id:
         raise PublisherVerificationError("Google Play product mismatch")
     base_plans = payload.get("basePlans")
     if not isinstance(base_plans, list):
@@ -163,22 +184,23 @@ def validate_catalog(payload: Mapping[str, Any]) -> None:
         )
 
 
-def verify_catalog() -> Mapping[str, str]:
+def verify_catalog(product_id: str = PRODUCT_ID) -> Mapping[str, str]:
+    product_id = validate_product_id(product_id)
     url = (
         "https://androidpublisher.googleapis.com/androidpublisher/v3/"
         f"applications/{quote(PACKAGE_NAME, safe='')}/subscriptions/"
-        f"{quote(PRODUCT_ID, safe='')}"
+        f"{quote(product_id, safe='')}"
     )
     response = authorized_session().get(url, timeout=20)
     if response.status_code != 200:
         _raise_upstream_error(response.status_code)
-    validate_catalog(_parse_json_response(response))
+    validate_catalog(_parse_json_response(response), product_id)
     return {
         "adc_resolution": "PASS",
         "adc_identity": SERVICE_ACCOUNT,
         "android_publisher_api_auth": "PASS",
         "package_name": PACKAGE_NAME,
-        "product_id": PRODUCT_ID,
+        "product_id": product_id,
         "base_plan_id": BASE_PLAN_ID,
         "base_plan_type": "AUTO_RENEWING",
         "billing_period": BILLING_PERIOD,

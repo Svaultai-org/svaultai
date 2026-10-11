@@ -142,7 +142,7 @@ def test_catalog_probe_returns_only_fixed_safe_metadata(monkeypatch):
         "base_plan_type": "AUTO_RENEWING",
         "billing_period": publisher.BILLING_PERIOD,
     }
-    monkeypatch.setattr(main, "verify_catalog", lambda: safe_result)
+    monkeypatch.setattr(main, "verify_catalog", lambda _product: safe_result)
     body, timestamp, headers = _request(
         "/v1/catalog:verify", {"product_id": publisher.PRODUCT_ID},
     )
