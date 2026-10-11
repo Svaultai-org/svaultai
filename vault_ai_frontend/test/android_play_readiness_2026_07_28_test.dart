@@ -16,6 +16,19 @@ void main() {
       expect(gradle, contains('minSdk = 24'));
     });
 
+    test('release ABIs all have a Flutter engine and AOT implementation', () {
+      final gradle = _read('android/app/build.gradle.kts');
+      final filters = RegExp(r'abiFilters \+= listOf\(([^)]+)\)')
+          .firstMatch(gradle)!
+          .group(1)!;
+      final abis = RegExp(r'"([^"]+)"')
+          .allMatches(filters)
+          .map((match) => match.group(1))
+          .toList();
+      expect(abis, ['arm64-v8a', 'armeabi-v7a', 'x86_64']);
+      expect(abis, isNot(contains('x86')));
+    });
+
     test('manifest blocks cleartext traffic and Android backups', () {
       final manifest = _read('android/app/src/main/AndroidManifest.xml');
 
