@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../api_client.dart';
 import '../../l10n/app_localizations.dart';
+import '../../services/memory_title_identity.dart';
 import '../motion.dart';
 import '../primitives.dart';
 import '../tokens.dart';
@@ -203,6 +204,7 @@ class _MemoryCustomFieldCtrls {
 Future<Map<String, dynamic>?> showMemoryEditorDialog(
   BuildContext context, {
   Map<String, dynamic>? row,
+  Iterable<Map<String, dynamic>> existingMemories = const [],
 }) async {
   final titleCtrl = TextEditingController(
     text: ((row?['title'] ?? row?['memory_key']) as String?) ?? '',
@@ -400,6 +402,14 @@ Future<Map<String, dynamic>?> showMemoryEditorDialog(
                   final title = titleCtrl.text.trim().isEmpty
                       ? 'Memory'
                       : titleCtrl.text.trim();
+                  if (memoryTitleConflicts(
+                    title: title,
+                    memories: existingMemories,
+                    editingMemoryId: row == null ? null : '${row['id'] ?? ''}',
+                  )) {
+                    setLocal(() => localError = kMemoryTitleConflictMessage);
+                    return;
+                  }
                   final eventDate = dateCtrl.text.trim();
                   final tags = tagsCtrl.text
                       .split(RegExp(r'[,#]'))
@@ -456,6 +466,7 @@ class MemoryPage extends StatefulWidget {
   final String vaultName;
   final bool isMobile;
   final void Function(String prompt)? onAskVaultAI;
+  final void Function(Map<String, dynamic> row, String prompt)? onOpenMemory;
   final Future<String> Function()? pinProvider;
 
   const MemoryPage({
@@ -465,6 +476,7 @@ class MemoryPage extends StatefulWidget {
     required this.vaultName,
     required this.isMobile,
     this.onAskVaultAI,
+    this.onOpenMemory,
     this.pinProvider,
   });
 
@@ -478,6 +490,7 @@ class _MemoryPageState extends State<MemoryPage> {
   bool _loading = true;
   String? _error;
   String? _typeFilter;
+  int _unavailableMemoryCount = 0;
   final TextEditingController _searchCtrl = TextEditingController();
   String _searchQuery = '';
   final Set<String> _revealedMemoryIds = <String>{};
@@ -515,6 +528,7 @@ class _MemoryPageState extends State<MemoryPage> {
     try {
       final res = await widget.client.listZkMemories(
         authToken: widget.authToken,
+        limit: 0,
       );
       if (!mounted) return;
       final raw = (res['items'] as List?) ?? const [];
@@ -525,6 +539,8 @@ class _MemoryPageState extends State<MemoryPage> {
         _items =
             raw.whereType<Map>().map((m) => m.cast<String, dynamic>()).toList();
         _counts = counts;
+        _unavailableMemoryCount =
+            (res['unavailable_count'] as num?)?.toInt() ?? 0;
         _loading = false;
       });
     } catch (e) {
@@ -605,6 +621,13 @@ class _MemoryPageState extends State<MemoryPage> {
     }
     final raw = _items ?? const <Map<String, dynamic>>[];
     if (raw.isEmpty) {
+      if (_unavailableMemoryCount > 0) {
+        return DashboardError(
+          message: 'Your saved memories could not be opened. Unlock again or '
+              'try refreshing. Nothing was deleted.',
+          onRetry: _load,
+        );
+      }
       return DashboardEmpty(
         title: l.memoryEmptyTitle,
         subtitle: l.memoryEmptySub,
@@ -619,6 +642,14 @@ class _MemoryPageState extends State<MemoryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_unavailableMemoryCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: VaultSpacing.md),
+            child: const Text(
+              'Some saved memories could not be opened. Your other memories '
+              'are still available. Nothing was deleted.',
+            ),
+          ),
         _FilterControls(
           counts: _counts,
           totalCount: raw.length,
@@ -643,6 +674,7 @@ class _MemoryPageState extends State<MemoryPage> {
               items: group.items,
               isMobile: isMobile,
               onAskVaultAI: widget.onAskVaultAI,
+              onOpenMemory: widget.onOpenMemory,
               onEdit: (row) => _showMemoryDialog(row: row),
               onDelete: _deleteMemory,
               isRevealed: (row) =>
@@ -660,7 +692,11 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _showMemoryDialog({Map<String, dynamic>? row}) async {
-    final data = await showMemoryEditorDialog(context, row: row);
+    final data = await showMemoryEditorDialog(
+      context,
+      row: row,
+      existingMemories: _items ?? const [],
+    );
     if (data == null) return;
     await _persistMemoryDialog(row: row, data: data);
   }
@@ -682,7 +718,9 @@ class _MemoryPageState extends State<MemoryPage> {
       await _load();
     } catch (e) {
       if (!mounted) return;
-      _showSnack('Could not save memory');
+      _showSnack(e is MemoryTitleConflictException
+          ? kMemoryTitleConflictMessage
+          : 'Could not save memory');
     }
   }
 
@@ -959,6 +997,7 @@ class _YearGroup extends StatelessWidget {
   final List<Map<String, dynamic>> items;
   final bool isMobile;
   final void Function(String prompt)? onAskVaultAI;
+  final void Function(Map<String, dynamic> row, String prompt)? onOpenMemory;
   final void Function(Map<String, dynamic> row)? onEdit;
   final void Function(Map<String, dynamic> row)? onDelete;
   final bool Function(Map<String, dynamic> row) isRevealed;
@@ -975,6 +1014,7 @@ class _YearGroup extends StatelessWidget {
     required this.onHide,
     required this.onCopy,
     this.onAskVaultAI,
+    this.onOpenMemory,
     this.onEdit,
     this.onDelete,
   });
@@ -999,6 +1039,7 @@ class _YearGroup extends StatelessWidget {
                   row: items[i],
                   revealed: isRevealed(items[i]),
                   onAskVaultAI: onAskVaultAI,
+                  onOpenMemory: onOpenMemory,
                   onEdit: onEdit == null ? null : () => onEdit!(items[i]),
                   onDelete: onDelete == null ? null : () => onDelete!(items[i]),
                   onReveal: () => onReveal(items[i]),
@@ -1017,6 +1058,7 @@ class _MemoryRowCard extends StatelessWidget {
   final Map<String, dynamic> row;
   final bool revealed;
   final void Function(String prompt)? onAskVaultAI;
+  final void Function(Map<String, dynamic> row, String prompt)? onOpenMemory;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
   final VoidCallback onReveal;
@@ -1030,6 +1072,7 @@ class _MemoryRowCard extends StatelessWidget {
     required this.onHide,
     required this.onCopy,
     this.onAskVaultAI,
+    this.onOpenMemory,
     this.onEdit,
     this.onDelete,
   });
@@ -1114,6 +1157,7 @@ class _MemoryRowCard extends StatelessWidget {
             ),
           if (onEdit != null)
             IconButton(
+              key: Key('memory_row_edit_${_memoryRowRevealId(row)}'),
               tooltip: 'Edit',
               onPressed: onEdit,
               icon: const Icon(Icons.edit_outlined, size: 18),
@@ -1127,12 +1171,20 @@ class _MemoryRowCard extends StatelessWidget {
         ];
 
     return VaultCard(
+      key: Key('memory_row_card_${_memoryRowRevealId(row)}'),
       color: VaultColors.surfaceElevated,
       accentSide: BorderSide(color: accent, width: 3),
       padding: const EdgeInsets.all(VaultSpacing.lg),
-      onTap: (onAskVaultAI == null || key.isEmpty)
+      onTap: (onOpenMemory == null && onAskVaultAI == null) || key.isEmpty
           ? null
-          : () => onAskVaultAI!(l.memoryAskAbout(key)),
+          : () {
+              final prompt = l.memoryAskAbout(key);
+              if (onOpenMemory != null) {
+                onOpenMemory!(row, prompt);
+              } else {
+                onAskVaultAI!(prompt);
+              }
+            },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

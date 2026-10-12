@@ -10,6 +10,7 @@ import 'package:vault_ai_frontend/services/concierge_exposure.dart';
 import 'package:vault_ai_frontend/services/pwned_password_check.dart';
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
+import 'package:vault_ai_frontend/services/saved_item_mutation_feedback.dart';
 
 const freeCapabilities = ConciergeProviderCapabilities(
     providerMode: 'free',
@@ -1029,6 +1030,7 @@ void main() {
     ];
     var reads = 0;
     var writes = 0;
+    var updateRequired = false;
     final repo = ConciergeVaultRepository(
         baseUrl: 'https://example.invalid',
         authToken: 'fixture',
@@ -1043,7 +1045,8 @@ void main() {
           writes++;
           final body = jsonDecode(request.body);
           expect(body['item_id'], 2);
-          expect(body.keys, hasLength(4));
+          expect(body['mutation_intent'], 'edit');
+          expect(body.keys, hasLength(5));
           expect(request.body, isNot(contains('new-fixture-password')));
           final payload = jsonDecode(utf8.decode(await aesGcmUnwrap(
               key, b64urlDecode(body['payload_ciphertext']))));
@@ -1054,6 +1057,9 @@ void main() {
           });
           expect(payload['unknown_payload']['retain'], true);
           expect(payload['source'], 'fixture');
+          if (updateRequired) {
+            return http.Response('{"detail":{"code":"update_app_required"}}', 409);
+          }
           return http.Response('{"item_id":2,"created":false}', 200);
         }));
     final access = ConciergeAccessLease(isCurrent: () => true);
@@ -1065,6 +1071,12 @@ void main() {
         expectedItemType: 'login');
     expect(reads, 2);
     expect(writes, 1);
+    updateRequired = true;
+    await expectLater(repo.updateLoginById(
+        '2', original.title, {'password': 'new-fixture-password'}, access,
+        expectedItemType: 'login'),
+        throwsA(isA<SavedItemUpdateRequiredException>()));
+    expect(writes, 2);
   });
 
   test(

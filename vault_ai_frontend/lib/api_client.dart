@@ -7,8 +7,12 @@ import 'package:http/http.dart' as http;
 
 import 'services/apple_purchase_recovery.dart';
 import 'services/asset_catalog.dart' show parseAssetBaseUnits;
+import 'services/memory_title_identity.dart';
 import 'services/google_play_verification.dart';
 import 'services/session_termination.dart' as st;
+import 'services/saved_item_mutation_feedback.dart';
+export 'services/saved_item_mutation_feedback.dart'
+    show SavedItemUpdateRequiredException, savedItemUpdateRequiredMessage;
 import 'services/vault_handle.dart' as vault_handle;
 import 'services/vault_key_hierarchy.dart' as vault_key_hierarchy;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
@@ -216,6 +220,15 @@ class InheritanceCredSaveException implements Exception {
   @override
   String toString() => 'InheritanceCredSaveException(statusCode: $statusCode, '
       'backendCode: $backendCode, backendMessage: $backendMessage)';
+}
+
+class SavedItemConflictException implements Exception {
+  final bool duplicate;
+  const SavedItemConflictException({this.duplicate = false});
+  @override
+  String toString() => duplicate
+      ? 'A saved item already uses this title. Choose a different title or edit it.'
+      : 'More than one saved item has this title. Select the specific item from Logins.';
 }
 
 class InvalidCredentialsException implements Exception {
@@ -557,8 +570,15 @@ class VaultAIClient {
   /// Captured key/session lease used only by the new registered-asset client.
   /// Existing clients omit this and retain their normal request behavior.
   final bool Function()? walletResponseIsCurrent;
+  // A remembered session is checked before the vault UI is available. Never
+  // let a stalled auth/me request block startup indefinitely.
+  final Duration authMeTimeout;
 
-  const VaultAIClient({required this.baseUrl, this.walletResponseIsCurrent});
+  const VaultAIClient({
+    required this.baseUrl,
+    this.walletResponseIsCurrent,
+    this.authMeTimeout = const Duration(seconds: 12),
+  });
 
   void _assertWalletResponseCurrent() {
     if (walletResponseIsCurrent != null && !walletResponseIsCurrent!()) {
@@ -795,7 +815,9 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'auth.me',
       uri,
-      () => http.get(uri, headers: _defaultHeaders(authToken: authToken)),
+      () => http
+          .get(uri, headers: _defaultHeaders(authToken: authToken))
+          .timeout(authMeTimeout),
     );
     if (response.statusCode == 401) {
       throw const AuthExpiredException();
@@ -3232,19 +3254,19 @@ class VaultAIClient {
         if (raw is! Map) continue;
         final item = Map<String, dynamic>.from(raw);
         final service = '${item['service'] ?? ''}'.trim();
-        final type = '${item['item_type'] ?? 'other'}'.trim();
         if (service.isEmpty) continue;
-        seen.add('${type.toLowerCase()}\u0000${service.toLowerCase()}');
+        final id = '${item['id'] ?? ''}';
+        if (id.isNotEmpty) seen.add(id);
+        item['storage_engine'] = 'ciphertext';
         combined.add(item);
       }
       for (final raw in (legacy['items'] as List? ?? const [])) {
         if (raw is! Map) continue;
         final item = Map<String, dynamic>.from(raw);
         final service = '${item['service'] ?? ''}'.trim();
-        final type = '${item['item_type'] ?? 'other'}'.trim();
         if (service.isEmpty) continue;
-        final key = '${type.toLowerCase()}\u0000${service.toLowerCase()}';
-        if (seen.add(key)) {
+        final id = '${item['id'] ?? ''}';
+        if (id.isEmpty || seen.add(id)) {
           item['storage_engine'] = 'legacy_compatibility';
           combined.add(item);
         }
@@ -3306,6 +3328,7 @@ class VaultAIClient {
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
+    _requireSavedItemKey(mvk);
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -3352,12 +3375,15 @@ class VaultAIClient {
               ? Map<String, dynamic>.from(rawFields)
               : <String, dynamic>{},
           'notes': payload['notes'],
+          'draft_id': payload['draft_id'],
+          'storage_engine': 'ciphertext',
           'created_at': raw['created_at'],
         });
       } catch (_) {
         // A single corrupt envelope must not hide other saved items.
       }
     }
+    _requireSavedItemKey(mvk);
     return <String, dynamic>{'items': items, 'engine': 'ciphertext'};
   }
 
@@ -3367,16 +3393,17 @@ class VaultAIClient {
     required String itemType,
     required String pin,
     required String authToken,
+    String? itemId,
   }) async {
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
-      final listed = await _listZkVaultItems(authToken: authToken);
-      for (final raw in (listed['items'] as List? ?? const [])) {
-        if (raw is! Map) continue;
-        if ('${raw['item_type']}' == itemType &&
-            '${raw['service']}'.toLowerCase() == service.toLowerCase()) {
-          return Map<String, dynamic>.from(raw);
-        }
-      }
+      final mvk = zk_mvk_store.ZkActiveMvk.current();
+      final item = await _resolveSavedItem(
+        vaultName: vaultName, pin: pin, authToken: authToken,
+        service: service, itemType: itemType, itemId: itemId,
+      );
+      _requireSavedItemKey(mvk);
+      if (item?['storage_engine'] == 'ciphertext') return item!;
+      itemId = item?['id']?.toString() ?? itemId;
       // Older builds and the previous chat-confirmation path wrote to the
       // legacy encrypted table. Fall through so those records stay usable;
       // all new dashboard and chat-card writes remain client-encrypted.
@@ -3391,10 +3418,12 @@ class VaultAIClient {
         'service': service,
         'item_type': itemType,
         'pin': pin,
+        if (itemId != null) 'item_id': itemId,
       }),
     );
 
     if (response.statusCode != 200) {
+      if (response.statusCode == 409) throw const SavedItemConflictException();
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
@@ -3411,6 +3440,43 @@ class VaultAIClient {
     }
 
     return decoded;
+  }
+
+  Future<Map<String, dynamic>?> _resolveSavedItem({
+    required String vaultName,
+    required String pin,
+    required String authToken,
+    required String service,
+    required String itemType,
+    String? itemId,
+    bool creating = false,
+  }) async {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final listed = await listVaultSecureItems(
+      vaultName: vaultName, pin: pin, authToken: authToken,
+    );
+    _requireSavedItemKey(mvk);
+    final matches = (listed['items'] as List? ?? const [])
+        .whereType<Map>()
+        .where((row) => itemId != null
+            ? '${row['id']}' == itemId && '${row['item_type']}' == itemType
+            : '${row['item_type']}'.toLowerCase() == itemType.toLowerCase() &&
+                _savedItemTitleIdentity('${row['service']}') == _savedItemTitleIdentity(service))
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    if (matches.length > 1) throw SavedItemConflictException(duplicate: creating);
+    if (itemId != null && matches.isEmpty) throw StateError('Saved item not found');
+    return matches.isEmpty ? null : matches.single;
+  }
+
+  String _savedItemTitleIdentity(String value) =>
+      value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  void _requireSavedItemKey(Object? expected) {
+    if (expected == null ||
+        !identical(expected, zk_mvk_store.ZkActiveMvk.current())) {
+      throw StateError('Vault encryption key changed. Unlock and try again.');
+    }
   }
 
   Future<Map<String, dynamic>> saveCryptoWalletProfile({
@@ -4595,22 +4661,31 @@ class VaultAIClient {
     required String authToken,
     String? newService,
     Map<String, dynamic>? fields,
+    String? itemId,
+    bool createOnly = false,
   }) async {
     // ZK ciphertext-first fast path. When an unlocked MVK is active
     // (i.e. this is a ZK/adopted vault), the item is written to
     // /vault/ciphertext/vault-items instead of /update-secure-item —
     // no readable item_type / service / payload leaves the client.
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
+      final mvk = zk_mvk_store.ZkActiveMvk.current();
       int? existingItemId;
-      final listed = await _listZkVaultItems(authToken: authToken);
-      for (final raw in (listed['items'] as List? ?? const [])) {
-        if (raw is! Map) continue;
-        if ('${raw['item_type']}' == itemType &&
-            '${raw['service']}'.toLowerCase() == oldService.toLowerCase()) {
-          existingItemId = (raw['id'] as num?)?.toInt();
-          break;
-        }
+      final existing = await _resolveSavedItem(
+        vaultName: vaultName, pin: pin, authToken: authToken,
+        service: createOnly ? (newService ?? oldService) : oldService,
+        itemType: itemType, itemId: createOnly ? null : itemId,
+        creating: createOnly,
+      );
+      _requireSavedItemKey(mvk);
+      if (createOnly && existing != null) {
+        throw const SavedItemConflictException(duplicate: true);
       }
+      final useCiphertext = createOnly || existing == null ||
+          existing['storage_engine'] == 'ciphertext';
+      if (!createOnly) itemId = existing?['id']?.toString() ?? itemId;
+      if (useCiphertext) {
+      existingItemId = createOnly ? null : int.tryParse(itemId ?? '');
       final zkResp = await tryZkVaultItemCiphertextUpsert(
         baseUrl: baseUrl,
         authToken: authToken,
@@ -4621,6 +4696,8 @@ class VaultAIClient {
             : oldService,
         payload: <String, dynamic>{
           'old_service': oldService,
+          if (!createOnly && existing?['draft_id'] is String)
+            'draft_id': existing!['draft_id'],
           if (newService != null && newService.trim().isNotEmpty)
             'new_service': newService.trim(),
           if (fields != null) 'fields': fields,
@@ -4628,6 +4705,7 @@ class VaultAIClient {
       );
       if (zkResp != null) {
         return zkResp;
+      }
       }
     }
 
@@ -4637,6 +4715,8 @@ class VaultAIClient {
       'old_service': oldService,
       'item_type': itemType,
       'pin': pin,
+      if (itemId != null) 'item_id': itemId,
+      if (createOnly) 'create_only': true,
     };
     if (newService != null && newService.trim().isNotEmpty) {
       body['new_service'] = newService.trim();
@@ -4652,6 +4732,10 @@ class VaultAIClient {
     );
 
     if (response.statusCode != 200) {
+      throwIfSavedItemUpdateRequired(response.statusCode, response.body);
+      if (response.statusCode == 409) {
+        throw SavedItemConflictException(duplicate: createOnly);
+      }
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
@@ -4698,6 +4782,9 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) return false;
+    final memoryGeneration = st.SessionTermination.instance.generation;
+    await _checkMemoryTitleAvailable(authToken: authToken, title: memoryKey);
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
     final memoryK = await hierarchy.memoryKey();
     final memoryLookup = await hierarchy.memoryLookupKey();
@@ -4727,6 +4814,7 @@ class VaultAIClient {
     );
 
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final resp = await http.post(
       uri,
       headers: <String, String>{
@@ -4740,6 +4828,8 @@ class VaultAIClient {
         'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
       }),
     );
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
+    if (resp.statusCode == 409) throw const MemoryTitleConflictException();
     return resp.statusCode == 200;
   }
 
@@ -4750,11 +4840,13 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final memoryGeneration = st.SessionTermination.instance.generation;
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     final response = await http.get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
-    );
+    ).timeout(const Duration(seconds: 12));
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -4772,17 +4864,27 @@ class VaultAIClient {
         await vault_key_hierarchy.VaultKeyHierarchy(mvk).memoryKey();
     final items = <Map<String, dynamic>>[];
     final counts = <String, int>{};
-    for (final raw in decoded.take(limit)) {
+    var unavailableCount = 0;
+    // A write preflight must see all records, not just the dashboard's cap.
+    final selected = limit <= 0 ? decoded : decoded.take(limit);
+    for (final raw in selected) {
       if (raw is! Map) continue;
       final envelope = raw['payload_ciphertext'];
-      if (envelope is! String || envelope.isEmpty) continue;
+      if (envelope is! String || envelope.isEmpty) {
+        unavailableCount++;
+        continue;
+      }
       try {
         final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
           memoryKey,
           vault_key_hierarchy.b64urlDecode(envelope),
         );
+        _assertMemoryAccessCurrent(mvk, memoryGeneration);
         final payload = jsonDecode(utf8.decode(plaintext));
-        if (payload is! Map) continue;
+        if (payload is! Map) {
+          unavailableCount++;
+          continue;
+        }
         final type =
             '${raw['memory_type'] ?? payload['memory_type'] ?? 'note'}';
         items.add(<String, dynamic>{
@@ -4794,14 +4896,44 @@ class VaultAIClient {
         });
         counts[type] = (counts[type] ?? 0) + 1;
       } catch (_) {
+        _assertMemoryAccessCurrent(mvk, memoryGeneration);
         // One corrupt/legacy envelope must not hide the user's other memories.
+        unavailableCount++;
       }
     }
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
     return <String, dynamic>{
       'items': items,
       'counts': counts,
       'engine': 'ciphertext',
+      'unavailable_count': unavailableCount,
     };
+  }
+
+  Future<void> _checkMemoryTitleAvailable({
+    required String authToken,
+    required String title,
+    String? editingMemoryId,
+  }) async {
+    final inventory = await listZkMemories(authToken: authToken, limit: 0);
+    final rows = ((inventory['items'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((row) => Map<String, dynamic>.from(row));
+    if (memoryTitleConflicts(
+      title: title,
+      memories: rows,
+      editingMemoryId: editingMemoryId,
+    )) {
+      throw const MemoryTitleConflictException();
+    }
+  }
+
+  void _assertMemoryAccessCurrent(Object mvk, int generation) {
+    if (!identical(zk_mvk_store.ZkActiveMvk.current(), mvk) ||
+        st.SessionTermination.instance.generation != generation ||
+        st.SessionTermination.instance.isTerminated) {
+      throw StateError('Vault memory access changed. Unlock again to continue.');
+    }
   }
 
   Future<void> deleteZkMemory({
@@ -4834,6 +4966,13 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final memoryGeneration = st.SessionTermination.instance.generation;
+    await _checkMemoryTitleAvailable(
+      authToken: authToken,
+      title: '${data['title'] ?? data['memory_key'] ?? 'memory'}',
+      editingMemoryId: memoryId,
+    );
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
     final memoryKey = await hierarchy.memoryKey();
     final lookupKey = await hierarchy.memoryLookupKey();
@@ -4858,6 +4997,7 @@ class VaultAIClient {
     final resolvedMemoryId =
         memoryId ?? 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final response = await http.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -4869,6 +5009,10 @@ class VaultAIClient {
         'replace_existing': memoryId != null,
       }),
     );
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
+    if (response.statusCode == 409) {
+      throw const MemoryTitleConflictException();
+    }
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -4949,6 +5093,9 @@ class VaultAIClient {
     required String service,
     required Map<String, dynamic> payload,
   }) async {
+    if (existingItemId != null && existingItemId <= 0) {
+      throw ArgumentError('A saved-item edit requires a valid existing ID');
+    }
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) return null;
     final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
@@ -4965,8 +5112,10 @@ class VaultAIClient {
       metaKey,
       utf8.encode(jsonEncode(payload)),
     );
+    _requireSavedItemKey(mvk);
     final body = <String, dynamic>{
       if (existingItemId != null) 'item_id': existingItemId,
+      'mutation_intent': existingItemId == null ? 'create' : 'edit',
       'item_type_ciphertext': vault_key_hierarchy.b64urlEncode(itCt),
       'service_ciphertext': vault_key_hierarchy.b64urlEncode(svcCt),
       'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
@@ -4983,6 +5132,7 @@ class VaultAIClient {
     if (resp.statusCode != 200) {
       // Fail closed for ZK — a broken ciphertext write must NOT
       // silently fall back to plaintext.
+      throwIfSavedItemUpdateRequired(resp.statusCode, resp.body);
       throw Exception(
         'ZK ciphertext vault-item write failed (${resp.statusCode})',
       );
@@ -4999,6 +5149,7 @@ class VaultAIClient {
   /// Credential values are never sent to the finalize endpoint.
   Future<Map<String, dynamic>> saveGeneratedLoginDraftCiphertext({
     required String authToken,
+    required String pin,
     required String draftId,
     required String service,
     required Map<String, dynamic> fields,
@@ -5008,25 +5159,44 @@ class VaultAIClient {
     if (safeDraftId.isEmpty || safeService.isEmpty || fields.isEmpty) {
       throw ArgumentError('Generated login draft is incomplete');
     }
-    if (zk_mvk_store.ZkActiveMvk.current() == null) {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk == null) {
       throw StateError('Vault encryption key is unavailable');
     }
 
-    // Retrying after a dropped finalize response must not create duplicates.
+    // Only the same encrypted draft identity is an idempotent retry.
     final current = await _listZkVaultItems(authToken: authToken);
     int? existingItemId;
+    var savedService = safeService;
     for (final raw in (current['items'] as List? ?? const [])) {
       if (raw is! Map) continue;
       final type = '${raw['item_type'] ?? ''}'.trim().toLowerCase();
-      final title = '${raw['service'] ?? ''}'.trim().toLowerCase();
       if ((type == 'login' || type == 'credential') &&
-          title == safeService.toLowerCase()) {
+          raw['draft_id'] == safeDraftId) {
         existingItemId = (raw['id'] as num?)?.toInt();
+        savedService = '${raw['service'] ?? safeService}';
         break;
       }
     }
+    if (existingItemId == null) {
+      final legacy = await _listLegacyVaultSecureItems(
+        vaultName: '', pin: pin, authToken: authToken,
+      );
+      final rows = [
+        ...(current['items'] as List? ?? const []),
+        ...(legacy['items'] as List? ?? const []),
+      ];
+      if (rows.whereType<Map>().any((row) =>
+          const {'login', 'credential'}.contains('${row['item_type']}'.toLowerCase()) &&
+          _savedItemTitleIdentity('${row['service']}') == _savedItemTitleIdentity(safeService))) {
+        throw const SavedItemConflictException(duplicate: true);
+      }
+    }
 
-    final saved = await tryZkVaultItemCiphertextUpsert(
+    _requireSavedItemKey(mvk);
+    final saved = existingItemId != null
+        ? <String, dynamic>{'item_id': existingItemId, 'created': false}
+        : await tryZkVaultItemCiphertextUpsert(
       baseUrl: baseUrl,
       authToken: authToken,
       existingItemId: existingItemId,
@@ -5035,6 +5205,7 @@ class VaultAIClient {
       payload: <String, dynamic>{
         'fields': Map<String, dynamic>.from(fields),
         'source': 'generated_login_draft',
+        'draft_id': safeDraftId,
       },
     );
     final itemId = (saved?['item_id'] as num?)?.toInt();
@@ -5045,6 +5216,7 @@ class VaultAIClient {
     final finalizeUri = Uri.parse(
       '$baseUrl/vault/ciphertext/vault-items/generated-drafts/finalize',
     );
+    _requireSavedItemKey(mvk);
     final finalized = await http.post(
       finalizeUri,
       headers: _defaultHeaders(authToken: authToken, json: true),
@@ -5064,7 +5236,7 @@ class VaultAIClient {
     }
     return <String, dynamic>{
       ...saved!,
-      'service': safeService,
+      'service': savedService,
       'item_type': 'login',
     };
   }
@@ -5075,19 +5247,17 @@ class VaultAIClient {
     required String itemType,
     required String pin,
     required String authToken,
+    String? itemId,
   }) async {
     if (zk_mvk_store.ZkActiveMvk.current() != null) {
-      final listed = await _listZkVaultItems(authToken: authToken);
-      int? itemId;
-      for (final raw in (listed['items'] as List? ?? const [])) {
-        if (raw is! Map) continue;
-        if ('${raw['item_type']}' == itemType &&
-            '${raw['service']}'.toLowerCase() == service.toLowerCase()) {
-          itemId = (raw['id'] as num?)?.toInt();
-          break;
-        }
-      }
-      if (itemId != null) {
+      final mvk = zk_mvk_store.ZkActiveMvk.current();
+      final existing = await _resolveSavedItem(
+        vaultName: vaultName, pin: pin, authToken: authToken,
+        service: service, itemType: itemType, itemId: itemId,
+      );
+      _requireSavedItemKey(mvk);
+      itemId = existing?['id']?.toString() ?? itemId;
+      if (existing?['storage_engine'] == 'ciphertext' && itemId != null) {
         final uri = Uri.parse(
           '$baseUrl/vault/ciphertext/vault-items/$itemId',
         );
@@ -5118,10 +5288,12 @@ class VaultAIClient {
         'service': service,
         'item_type': itemType,
         'pin': pin,
+        if (itemId != null) 'item_id': itemId,
       }),
     );
 
     if (response.statusCode != 200) {
+      if (response.statusCode == 409) throw const SavedItemConflictException();
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
       _throwIfLockOrFrozen(response.statusCode, response.body);
@@ -5174,7 +5346,11 @@ class VaultAIClient {
     required String fileId,
     required String pin,
     required String authToken,
+    bool Function()? responseIsCurrent,
   }) async {
+    if (responseIsCurrent?.call() == false) {
+      throw StateError('File deletion access changed. Select the file again.');
+    }
     final uri = Uri.parse('$baseUrl/manage/file/delete');
 
     final response = await http.post(
@@ -5187,6 +5363,11 @@ class VaultAIClient {
       }),
     );
 
+    // Reject a stale response before coded auth errors can terminate a newer
+    // session. The absent optional lease preserves existing callers.
+    if (responseIsCurrent?.call() == false) {
+      throw StateError('File deletion access changed. Select the file again.');
+    }
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);

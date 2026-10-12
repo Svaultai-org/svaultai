@@ -3,6 +3,7 @@ import 'l10n/app_localizations.dart';
 import 'ui/responsive.dart';
 
 class VaultLoginItem {
+  final String? itemId;
   final String service;
   final String itemType;
   final DateTime? createdAt;
@@ -11,6 +12,7 @@ class VaultLoginItem {
     required this.service,
     this.itemType = 'login',
     this.createdAt,
+    this.itemId,
   });
 
   factory VaultLoginItem.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,7 @@ class VaultLoginItem {
       service: (json['service'] ?? '').toString(),
       itemType: (json['item_type'] ?? 'login').toString(),
       createdAt: created,
+      itemId: json['id']?.toString(),
     );
   }
 }
@@ -270,6 +273,9 @@ class LoginsPage extends StatefulWidget {
   final void Function(String service, String itemType)? onView;
   final void Function(String service, String itemType)? onEdit;
   final void Function(String service, String itemType)? onDelete;
+  final void Function(VaultLoginItem item)? onViewItem;
+  final void Function(VaultLoginItem item)? onEditItem;
+  final void Function(VaultLoginItem item)? onDeleteItem;
   final String vaultLabel;
 
   const LoginsPage({
@@ -284,6 +290,9 @@ class LoginsPage extends StatefulWidget {
     this.onView,
     this.onEdit,
     this.onDelete,
+    this.onViewItem,
+    this.onEditItem,
+    this.onDeleteItem,
   });
 
   @override
@@ -439,7 +448,9 @@ class _LoginsPageState extends State<LoginsPage> {
                   final icon = kSecureItemTypeIcons[itemType] ??
                       Icons.inventory_2_outlined;
                   return _SecureItemCard(
-                    key: Key('secure_item_card_$itemType-$cleanService'),
+                    key: Key(login.itemId == null
+                        ? 'secure_item_card_$itemType-$cleanService'
+                        : 'secure_item_card_id_${login.itemId}'),
                     cleanService: cleanService,
                     rawService: service,
                     label: label,
@@ -447,9 +458,12 @@ class _LoginsPageState extends State<LoginsPage> {
                     itemType: itemType,
                     vaultLabel: widget.vaultLabel,
                     onAskVault: widget.onAskVault,
-                    onView: widget.onView,
-                    onEdit: widget.onEdit,
-                    onDelete: widget.onDelete,
+                    onView: widget.onViewItem == null ? widget.onView
+                        : (_, __) => widget.onViewItem!(login),
+                    onEdit: widget.onEditItem == null ? widget.onEdit
+                        : (_, __) => widget.onEditItem!(login),
+                    onDelete: widget.onDeleteItem == null ? widget.onDelete
+                        : (_, __) => widget.onDeleteItem!(login),
                   );
                 }),
             ],

@@ -61,7 +61,8 @@ class TestHandlerShape(unittest.TestCase):
         return src[start:end]
 
     def test_sql_queries_vault_items_by_composite_key(self):
-        body = self._slice_handler()
+        body = _read_routes()
+        self.assertIn("_select_secure_item(cur, vault_id, item_type, normalized_service, payload.item_id)", self._slice_handler())
         self.assertIn("FROM vault_items", body)
         self.assertIn("vault_id = %s", body)
         self.assertIn("item_type = %s", body)

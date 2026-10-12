@@ -45,10 +45,11 @@ import binascii
 import logging
 import os
 import re
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from psycopg2.errors import UniqueViolation
 from psycopg2.extras import RealDictCursor
 
 from auth_local import (
@@ -60,6 +61,7 @@ from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write
 from taxonomy import ALLOWED_MEMORY_TYPES
 from vault_credential_draft import consume_draft, get_draft
+from saved_item_mutation_policy import saved_item_mutation_intent_required
 
 
 logger = logging.getLogger(__name__)
@@ -114,10 +116,14 @@ def _reject_plaintext_leak(payload_model: BaseModel,
 
 
 class VaultItemUpsertRequest(BaseModel):
+    # Omitted intent is safe create semantics for older no-ID writers.
+    # Updating an existing ID requires a current client explicitly marking it.
+    mutation_intent: Literal["create", "edit"] = "create"
     item_id: Optional[int] = Field(
         default=None,
+        gt=0,
         description=(
-            "Present -> update. Absent -> create a new row with only "
+            "Present plus explicit edit intent -> update. Absent -> create with only "
             "ciphertext columns populated."
         ),
     )
@@ -174,6 +180,19 @@ def vault_item_upsert_ciphertext(
     _reject_plaintext_leak(
         payload, ("item_type", "service", "encrypted_data"),
     )
+    explicit_intent = "mutation_intent" in payload.model_fields_set
+    if payload.item_id is not None and payload.mutation_intent != "edit" and (
+        explicit_intent or saved_item_mutation_intent_required()
+    ):
+        raise HTTPException(status_code=409, detail={
+            "code": "update_app_required",
+            "message": "Update SVaultAI before editing saved items. Your saved data remains available.",
+        })
+    if payload.item_id is None and payload.mutation_intent != "create":
+        raise HTTPException(status_code=400, detail={
+            "code": "saved_item_edit_requires_id",
+            "message": "An edit must select an existing saved item.",
+        })
 
     item_type_ct = _b64url_decode(
         payload.item_type_ciphertext, name="item_type_ciphertext",
@@ -607,6 +626,8 @@ def ai_memory_ciphertext_upsert(
             )
             prev = cur.fetchone()
             superseded_id: Optional[int] = None
+            if prev is not None and str(prev["memory_record_id"]) != payload.memory_id:
+                raise HTTPException(status_code=409, detail="memory_title_conflict")
             if (
                 prev is not None
                 and str(prev["memory_record_id"]) == payload.memory_id
@@ -620,32 +641,33 @@ def ai_memory_ciphertext_upsert(
                     superseded_id=int(prev["id"]),
                     duplicate=True,
                 )
-            # An editor keeps the stable client memory_record_id but may
-            # change the title/normalized key, which intentionally changes
-            # memory_lookup_hash. Update that stable record first; otherwise
-            # an INSERT collides with the record-id uniqueness constraint and
-            # makes ordinary encrypted memory edits fail.
-            cur.execute(
-                """UPDATE vault_ai_memory
-                   SET memory_type = %s,
-                       memory_key = NULL,
-                       memory_value = NULL,
-                       payload_ciphertext = %s,
-                       memory_lookup_hash = %s,
-                       superseded_at = NULL,
-                       superseded_by_id = NULL
-                   WHERE vault_id = %s AND memory_record_id = %s
-                   RETURNING id""",
-                (
-                    payload.memory_type,
-                    payload_ct,
-                    lookup_hash,
-                    principal["vault_id"],
-                    payload.memory_id,
-                ),
-            )
-            updated = cur.fetchone()
-            if updated is not None:
+            # A title hash is a uniqueness check, never permission to replace
+            # another record. Only an explicit edit may update its selected
+            # stable client memory_record_id.
+            if payload.replace_existing:
+                cur.execute(
+                    """UPDATE vault_ai_memory
+                       SET memory_type = %s,
+                           memory_key = NULL,
+                           memory_value = NULL,
+                           payload_ciphertext = %s,
+                           memory_lookup_hash = %s,
+                           superseded_at = NULL,
+                           superseded_by_id = NULL
+                       WHERE vault_id = %s AND memory_record_id = %s
+                         AND superseded_at IS NULL
+                       RETURNING id""",
+                    (
+                        payload.memory_type,
+                        payload_ct,
+                        lookup_hash,
+                        principal["vault_id"],
+                        payload.memory_id,
+                    ),
+                )
+                updated = cur.fetchone()
+                if updated is None:
+                    raise HTTPException(status_code=404, detail="memory_not_found")
                 new_id = int(updated["id"])
             else:
                 cur.execute(
@@ -653,16 +675,7 @@ def ai_memory_ciphertext_upsert(
                     vault_id, memory_record_id, memory_type, memory_key,
                     memory_value, payload_ciphertext, memory_lookup_hash
                 ) VALUES (%s, %s, %s, NULL, NULL, %s, %s)
-                ON CONFLICT (vault_id, memory_lookup_hash)
-                    WHERE superseded_at IS NULL AND memory_lookup_hash IS NOT NULL
-                DO UPDATE SET
-                    memory_record_id = EXCLUDED.memory_record_id,
-                    memory_type = EXCLUDED.memory_type,
-                    memory_key = NULL,
-                    memory_value = NULL,
-                    payload_ciphertext = EXCLUDED.payload_ciphertext,
-                    superseded_at = NULL,
-                    superseded_by_id = NULL
+                ON CONFLICT DO NOTHING
                 RETURNING id""",
                     (
                         principal["vault_id"],
@@ -672,7 +685,25 @@ def ai_memory_ciphertext_upsert(
                         lookup_hash,
                     ),
                 )
-                new_id = int(cur.fetchone()["id"])
+                inserted = cur.fetchone()
+                if inserted is None:
+                    # Another create may have won after the initial SELECT.
+                    # Preserve it. A same-ID retry remains idempotent.
+                    cur.execute(
+                        """SELECT id, memory_record_id FROM vault_ai_memory
+                           WHERE vault_id = %s AND memory_lookup_hash = %s
+                             AND superseded_at IS NULL LIMIT 1""",
+                        (principal["vault_id"], lookup_hash),
+                    )
+                    winner = cur.fetchone()
+                    if winner is not None and str(winner["memory_record_id"]) == payload.memory_id:
+                        return AiMemoryCiphertextResponse(
+                            memory_id=str(winner["id"]),
+                            superseded_id=int(winner["id"]),
+                            duplicate=True,
+                        )
+                    raise HTTPException(status_code=409, detail="memory_title_conflict")
+                new_id = int(inserted["id"])
             if prev is not None:
                 superseded_id = int(prev["id"])
             conn.commit()
@@ -687,6 +718,10 @@ def ai_memory_ciphertext_upsert(
             superseded_id=superseded_id,
             duplicate=False,
         )
+    except UniqueViolation as exc:
+        # Concurrent edits or a stale record ID may hit a uniqueness guard.
+        # Closing the uncommitted connection rolls back the attempted edit.
+        raise HTTPException(status_code=409, detail="memory_title_conflict") from exc
     except HTTPException as exc:
         if qa:
             print("BACKEND_MEMORY_V2_EXCEPTION_CAUGHT=true", flush=True)

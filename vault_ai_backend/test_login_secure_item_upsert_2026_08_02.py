@@ -24,13 +24,21 @@ class _Cursor:
 
     def execute(self, sql: str, params: tuple = ()):
         low = " ".join(sql.lower().split())
-        if low.startswith("select id, service, encrypted_data"):
+        if low.startswith("select id, service, item_type, encrypted_data"):
             self.last = None
+            return
+        if low.startswith("insert into vault_items"):
+            self.store.upsert_payload = dict(zip(
+                ("vault_id", "item_type", "service", "encrypted_data"), params))
+            self.last = {"id": 42}
             return
         raise AssertionError(f"unexpected SQL: {sql}")
 
     def fetchone(self):
         return self.last
+
+    def fetchall(self):
+        return [] if self.last is None else [self.last]
 
 
 class _Conn:
@@ -58,6 +66,7 @@ class _Store:
 
 def test_update_secure_item_creates_missing_login_with_custom_fields(monkeypatch):
     store = _Store()
+    monkeypatch.setattr(login_routes, "require_content_write", lambda *args: None)
     monkeypatch.setattr(login_routes, "get_db", store.get_db)
     monkeypatch.setattr(
         login_routes,
@@ -96,8 +105,8 @@ def test_update_secure_item_creates_missing_login_with_custom_fields(monkeypatch
     )
 
     assert response["created"] is True
-    assert isinstance(response["id"], str)
-    assert store.commits == 0
+    assert response["id"] == 42
+    assert store.commits == 1
     assert store.upsert_payload is not None
     assert store.upsert_payload["vault_id"] == "vault-a"
     assert store.upsert_payload["item_type"] == "login"
@@ -108,7 +117,7 @@ def test_update_secure_item_creates_missing_login_with_custom_fields(monkeypatch
     ))
     assert decoded["category"] == "login"
     assert decoded["title"] == "HBO Max"
-    assert decoded["item_id"] == response["id"]
+    assert isinstance(decoded["item_id"], str)
     assert decoded["fields"] == {
         "username": "test@gmail.com",
         "password": "generated-value",
@@ -117,8 +126,10 @@ def test_update_secure_item_creates_missing_login_with_custom_fields(monkeypatch
     }
 
 
-def test_login_routes_stays_free_of_route_local_vault_item_inserts():
+def test_route_insert_is_only_the_explicit_create_only_encryption_executor():
     from pathlib import Path
 
     src = Path("routes/login_routes.py").read_text(encoding="utf-8")
-    assert "INSERT INTO vault_items" not in src
+    assert src.count("INSERT INTO vault_items") == 1
+    assert "db_executor=insert_only," in src
+    assert "RETURNING id" in src

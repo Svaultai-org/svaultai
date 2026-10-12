@@ -39,7 +39,7 @@ void main() {
 
       expect(
         src,
-        contains('_startSecureItemDeleteConfirmation(service, itemType)'),
+        contains('_startSecureItemDeleteConfirmation(item.service, item.itemType, itemId: item.itemId)'),
         reason: 'The Logins & Secure Items page Delete button must route '
             'through the chat-confirmation helper, not call the delete '
             'API directly.',
@@ -193,7 +193,7 @@ void main() {
     test('Logins page onDelete body does not call deleteVaultSecureItem', () {
       final src = _readMain();
 
-      final clueStart = src.indexOf('onDelete: (service, itemType) {');
+      final clueStart = src.indexOf('onDeleteItem: (item) {');
       expect(
         clueStart,
         greaterThan(-1),

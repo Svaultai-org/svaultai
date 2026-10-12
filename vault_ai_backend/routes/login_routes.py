@@ -4,11 +4,12 @@ from typing import Any, Optional
 
 from psycopg2.extras import RealDictCursor
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from auth_local import verify_session_token
 from device_gate import verify_trusted_device
 from subscription_entitlement import require_content_write, require_crypto_access
+from saved_item_mutation_policy import saved_item_mutation_intent_required
 from vault_core import (
     decrypt_message, encrypt_message, get_db,
     normalize_service, verify_vault_pin,
@@ -33,11 +34,13 @@ class ListLoginNamesRequest(BaseModel):
 class GetLoginRequest(BaseModel):
     service: str
     pin: str
+    item_id: Optional[int] = Field(default=None, gt=0)
 
 
 class DeleteLoginRequest(BaseModel):
     service: str
     pin: str
+    item_id: Optional[int] = Field(default=None, gt=0)
 
 
 class LoginCountRequest(BaseModel):
@@ -48,12 +51,14 @@ class DeleteSecureItemRequest(BaseModel):
     service:   str
     item_type: str
     pin:       str
+    item_id: Optional[int] = Field(default=None, gt=0)
 
 
 class GetSecureItemRequest(BaseModel):
     service:   str
     item_type: str
     pin:       str
+    item_id: Optional[int] = Field(default=None, gt=0)
 
 
 class UpdateSecureItemRequest(BaseModel):
@@ -62,6 +67,37 @@ class UpdateSecureItemRequest(BaseModel):
     pin:         str
     new_service: Optional[str] = None
     fields:      Optional[dict[str, Any]] = None
+    item_id: Optional[int] = Field(default=None, gt=0)
+    create_only: bool = False
+
+
+def _select_secure_item(cur, vault_id, item_type, service, item_id=None):
+    # Titles are labels, not identities. Never select an arbitrary duplicate.
+    if item_id is not None:
+        cur.execute(
+            """SELECT id, service, item_type, encrypted_data, created_at
+               FROM vault_items WHERE vault_id = %s AND item_type = %s
+               AND id = %s FOR UPDATE""",
+            (vault_id, item_type, item_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Saved item not found")
+        return row
+    cur.execute(
+        """SELECT id, service, item_type, encrypted_data, created_at
+           FROM vault_items WHERE vault_id = %s AND item_type = %s
+           AND LOWER(service) = LOWER(%s)
+           ORDER BY created_at DESC, id DESC LIMIT 2 FOR UPDATE""",
+        (vault_id, item_type, service),
+    )
+    rows = cur.fetchall() or []
+    if len(rows) > 1:
+        raise HTTPException(status_code=409, detail={
+            "code": "ambiguous_saved_item",
+            "message": "More than one saved item has this title. Select it from Logins.",
+        })
+    return rows[0] if rows else None
 
 
 @router.post("/list-login-names")
@@ -77,12 +113,11 @@ def list_login_names(
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT service, MAX(created_at) AS last_created_at
+            SELECT id, service, created_at AS last_created_at
             FROM vault_items
             WHERE vault_id = %s
               AND item_type = 'login'
-            GROUP BY service
-            ORDER BY last_created_at DESC
+            ORDER BY last_created_at DESC, id DESC
             """,
             (vault_id,),
         )
@@ -90,7 +125,7 @@ def list_login_names(
 
         return {
             "logins": [
-                {"service": row["service"]}
+                {"id": row["id"], "service": row["service"]}
                 for row in rows
             ]
         }
@@ -114,24 +149,13 @@ def get_login(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            """
-            SELECT service, encrypted_data, created_at
-            FROM vault_items
-            WHERE vault_id = %s
-              AND item_type = 'login'
-              AND LOWER(service) = LOWER(%s)
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (vault_id, normalized_service),
-        )
-        row = cursor.fetchone()
+        row = _select_secure_item(cursor, vault_id, "login", normalized_service, payload.item_id)
 
         if not row:
             raise HTTPException(status_code=404, detail="Login not found")
 
         return {
+            "id": row["id"],
             "service": row["service"],
             "encrypted_data": row["encrypted_data"],
             "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
@@ -156,15 +180,18 @@ def delete_login(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        selected = _select_secure_item(cursor, vault_id, "login", normalized_service, payload.item_id)
+        if selected is None:
+            raise HTTPException(status_code=404, detail="Login not found")
         cursor.execute(
             """
             DELETE FROM vault_items
             WHERE vault_id = %s
               AND item_type = 'login'
-              AND LOWER(service) = LOWER(%s)
+              AND id = %s
             RETURNING service
             """,
-            (vault_id, normalized_service),
+            (vault_id, selected["id"]),
         )
         deleted = cursor.fetchall() or []
         conn.commit()
@@ -203,7 +230,7 @@ def login_count(
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT COUNT(DISTINCT service) AS login_count
+            SELECT COUNT(*) AS login_count
             FROM vault_items
             WHERE vault_id = %s
               AND item_type = 'login'
@@ -243,19 +270,28 @@ def update_secure_item(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            SELECT id, service, encrypted_data
-            FROM vault_items
-            WHERE vault_id = %s
-              AND item_type = %s
-              AND LOWER(service) = LOWER(%s)
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (vault_id, item_type, old_service),
-        )
-        row = cur.fetchone()
+        if payload.create_only and payload.item_id is not None:
+            raise HTTPException(status_code=400, detail="Create cannot target an existing item")
+        if payload.create_only:
+            cur.execute(
+                """SELECT id FROM vault_items WHERE vault_id = %s
+                   AND item_type = %s AND LOWER(service) = LOWER(%s) LIMIT 1""",
+                (vault_id, item_type, new_service_in or old_service),
+            )
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail={
+                    "code": "duplicate_saved_item",
+                    "message": "A saved item already uses this title. Choose a different title or edit it.",
+                })
+            row = None
+        else:
+            row = _select_secure_item(cur, vault_id, item_type, old_service, payload.item_id)
+            if (row and item_type in ("login", "credential") and payload.item_id is None
+                    and saved_item_mutation_intent_required()):
+                raise HTTPException(status_code=409, detail={
+                    "code": "update_app_required",
+                    "message": "Update SVaultAI before editing saved logins. Your saved data remains available.",
+                })
 
                                                               
         existing_blob = row["encrypted_data"] if row else None
@@ -374,6 +410,25 @@ def update_secure_item(
                     pass
         else:
             from vault_secure_item_save import _encrypt_and_write
+            inserted_id = None
+
+            def insert_only(_operation, encrypted_payload):
+                nonlocal inserted_id
+                # Concurrent creates may retain two distinct rows, never overwrite.
+                cur.execute(
+                    """INSERT INTO vault_items (vault_id, item_type, service, encrypted_data)
+                       VALUES (%s, %s, %s, %s) RETURNING id""",
+                    (vault_id, item_type, new_service, encrypted_payload["encrypted_data"]),
+                )
+                inserted_id = cur.fetchone()["id"]
+                conn.commit()
+                try:
+                    from main import bump_vault_total_bytes
+                    blob = encrypted_payload["encrypted_data"]
+                    bump_vault_total_bytes(vault_id, len(blob.encode("utf-8")) if isinstance(blob, str) else len(bytes(blob)))
+                except Exception:
+                    pass
+
             write_result = _encrypt_and_write(
                 vault_id=vault_id,
                 key=key,
@@ -386,14 +441,14 @@ def update_secure_item(
                 field=None,
                 value=None,
                 notes=existing_notes,
-                db_executor=None,
+                db_executor=insert_only,
             )
             if write_result.get("band") != "saved":
                 raise HTTPException(
                     status_code=500,
                     detail="Could not create saved item",
                 )
-            item_id = write_result.get("item_id")
+            item_id = inserted_id
 
                                                             
         try:
@@ -440,19 +495,7 @@ def get_secure_item(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            SELECT id, service, item_type, encrypted_data, created_at
-            FROM vault_items
-            WHERE vault_id = %s
-              AND item_type = %s
-              AND LOWER(service) = LOWER(%s)
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (vault_id, item_type, normalized_service),
-        )
-        row = cur.fetchone()
+        row = _select_secure_item(cur, vault_id, item_type, normalized_service, payload.item_id)
         if not row:
             raise HTTPException(
                 status_code=404, detail="Saved item not found",
@@ -482,6 +525,7 @@ def get_secure_item(
             notes_out  = None
 
         return {
+            "id":         row["id"],
             "service":    title_out,
             "item_type":  row["item_type"] or item_type,
             "fields":     fields_out,
@@ -520,15 +564,18 @@ def delete_secure_item(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        selected = _select_secure_item(cursor, vault_id, item_type, normalized_service, payload.item_id)
+        if selected is None:
+            raise HTTPException(status_code=404, detail="Saved item not found")
         cursor.execute(
             """
             DELETE FROM vault_items
             WHERE vault_id  = %s
               AND item_type = %s
-              AND LOWER(service) = LOWER(%s)
+              AND id = %s
             RETURNING service, encrypted_data
             """,
-            (vault_id, item_type, normalized_service),
+            (vault_id, item_type, selected["id"]),
         )
         deleted = cursor.fetchall() or []
         conn.commit()
@@ -596,14 +643,14 @@ def list_secure_items(
         cursor.execute(
             """
             SELECT
+              id,
               service,
               item_type,
-              MAX(created_at) AS created_at
+              created_at
             FROM vault_items
             WHERE vault_id = %s
               AND item_type NOT IN %s
-            GROUP BY service, item_type
-            ORDER BY MAX(created_at) DESC
+            ORDER BY created_at DESC, id DESC
             """,
             (vault_id, SYSTEM_ITEM_TYPE_SQL_TUPLE),
         )
@@ -611,6 +658,7 @@ def list_secure_items(
         return {
             "items": [
                 {
+                    "id":         row["id"],
                     "service":    row.get("service") or "",
                     "item_type":  row.get("item_type") or "other",
                     "created_at": (

@@ -1,7 +1,48 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vault_ai_frontend/l10n/app_localizations_en.dart';
 import 'package:vault_ai_frontend/services/vault_local_content_command.dart';
 
 void main() {
+  test('actual memory-card question preserves and resolves its exact title',
+      () {
+    const title = 'QA-TEST Memory One';
+    final question = AppLocalizationsEn().memoryAskAbout(title);
+    final command = parseVaultLocalContentCommand(question);
+
+    expect(question, 'What do you remember about $title?');
+    expect(command?.kind, VaultLocalContentKind.memory);
+    expect(command?.action, VaultLocalContentAction.retrieve);
+    expect(command?.query, title);
+    final match = resolveVaultLocalContentMatch(
+      query: command!.query,
+      entries: const [
+        VaultLocalContentEntry(id: 'selected', label: title),
+        VaultLocalContentEntry(id: 'different', label: 'QA-TEST One'),
+      ],
+    );
+    expect(match?.entry.id, 'selected');
+  });
+
+  test('memory-card title words cannot select another kind or deletion', () {
+    for (final title in const [
+      'Login recovery note',
+      'Vacation photo',
+      'Delete checklist',
+      'Launch date?!',
+    ]) {
+      final command = parseVaultLocalContentCommand(
+        AppLocalizationsEn().memoryAskAbout(title),
+      );
+      expect(command?.kind, VaultLocalContentKind.memory, reason: title);
+      expect(command?.action, VaultLocalContentAction.retrieve, reason: title);
+      expect(command?.query, title, reason: title);
+    }
+    expect(
+      parseVaultLocalContentCommand('What do you remember about ?'),
+      isNull,
+    );
+  });
+
   test('parses login retrieval and deletion without misrouting to memory', () {
     final retrieve = parseVaultLocalContentCommand('Show me my GitHub login');
     expect(retrieve?.kind, VaultLocalContentKind.login);
@@ -95,6 +136,39 @@ void main() {
     expect(command?.kind, VaultLocalContentKind.file);
     expect(command?.action, VaultLocalContentAction.delete);
     expect(command?.query, 'Atlas brief.pdf');
+  });
+
+  test('leaves contextual deletion to the selected-item handler', () {
+    for (final phrase in const [
+      'delete it',
+      'Please remove it.',
+      'erase that',
+      'forget this',
+      'delete this one from my vault',
+      'delete the selected item',
+      'remove that record please',
+      'delete',
+    ]) {
+      expect(parseVaultLocalContentCommand(phrase), isNull, reason: phrase);
+    }
+  });
+
+  test('retains explicit and named memory deletion and pending confirmations',
+      () {
+    for (final phrase in const [
+      'Delete my Project Atlas memory',
+      'Delete Project Atlas',
+    ]) {
+      final command = parseVaultLocalContentCommand(phrase);
+      expect(command?.kind, VaultLocalContentKind.memory, reason: phrase);
+      expect(command?.action, VaultLocalContentAction.delete, reason: phrase);
+      expect(command?.query, 'Project Atlas', reason: phrase);
+    }
+    final explicit = parseVaultLocalContentCommand('Delete this memory');
+    expect(explicit?.kind, VaultLocalContentKind.memory);
+    expect(explicit?.explicitKind, isTrue);
+    expect(isVaultLocalDeleteConfirmation('yes, delete it'), isTrue);
+    expect(isVaultLocalDeleteConfirmation('delete'), isTrue);
   });
 
   test('matches a natural question strongly against a memory title', () {

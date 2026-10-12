@@ -56,6 +56,7 @@ import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
 import 'services/vault_local_content_command.dart';
+import 'services/memory_title_identity.dart';
 import 'services/monero_scanner.dart';
 import 'services/monero_wallet.dart';
 import 'services/vault_chat_stream_parser.dart' as vcs_parser;
@@ -79,6 +80,7 @@ import 'file_downloader.dart';
 import 'video_recorder.dart';
 
 import 'ui/theme.dart';
+import 'ui/app_startup_gate.dart';
 import 'ui/responsive.dart';
 import 'ui/chat/ask_brain_handoff.dart';
 import 'ui/chat/chat_message_list.dart';
@@ -706,6 +708,7 @@ class _VaultLocalDeleteTarget {
   final String label;
   final String? service;
   final String? itemType;
+  final bool Function()? accessIsCurrent;
 
   const _VaultLocalDeleteTarget({
     required this.kind,
@@ -713,6 +716,7 @@ class _VaultLocalDeleteTarget {
     required this.label,
     this.service,
     this.itemType,
+    this.accessIsCurrent,
   });
 }
 
@@ -835,74 +839,81 @@ Future<void> main() async {
     web_plugins.setUrlStrategy(web_plugins.PathUrlStrategy());
   }
 
-  late final AppState appState;
+  late AppState appState;
   var appStateReady = false;
 
   runZonedGuarded(
-    () async {
+    () {
       WidgetsFlutterBinding.ensureInitialized();
       AppleIapService.instance.initialize();
       GooglePlayIapService.instance.initialize();
 
-      String? webOrigin;
-      try {
-        if (kIsWeb) {
-          webOrigin = Uri.base.origin;
+      Future<Widget> initializeApp() async {
+        // A retry is offered only before the full app is mounted. Dispose a
+        // failed attempt's notifier before installing the replacement.
+        if (appStateReady) {
+          appState.dispose();
+          appStateReady = false;
         }
-      } catch (_) {
-        webOrigin = null;
-      }
-      vlog('boot', {
-        'backendBaseUrl': backendBaseUrl,
-        'kIsWeb': kIsWeb,
-        'kReleaseMode': kReleaseMode,
-        'webOrigin': webOrigin ?? '-',
-      });
 
-      // Must run before device-id creation: Keychain survives uninstall, so a
-      // fresh install needs to purge stale identity/session records first.
-      await NativeSecureStore.purgeIosKeychainAfterReinstallIfNeeded();
-      final deviceId = await getOrCreateDeviceId();
-      setApiClientDeviceId(deviceId);
-      vlog('device-id-set', {
-        'len': deviceId.length,
-        'first8': deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId
-      });
-
-      appState = AppState();
-      appStateReady = true;
-
-      // Register ONE app-wide session-termination handler before
-      // hydration so any coded 401 raised inside `hydrate()`'s
-      // startup `/auth/me` call routes through this exact flow.
-      // Idempotence lives in SessionTermination.instance itself;
-      // this handler only knows how to clear state and navigate.
-      st.SessionTermination.instance.setHandler((event) async {
+        String? webOrigin;
         try {
-          if (appState.vaultId != null) {
-            _VaultCrypto.clearCache(appState.vaultId!);
+          if (kIsWeb) {
+            webOrigin = Uri.base.origin;
           }
-        } catch (_) {}
-        await appState.clearSession(keepLastVaultName: true);
-        try {
-          rootScaffoldMessengerKey.currentState?.clearSnackBars();
-          rootScaffoldMessengerKey.currentState?.showSnackBar(
-            SnackBar(content: Text(event.userMessage)),
-          );
-        } catch (_) {}
-        try {
-          rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-            appState.lastVaultName != null ? '/unlock' : '/login',
-            (_) => false,
-          );
-        } catch (_) {}
-      });
-      st.SessionTermination.instance.enablePeerTabListener();
+        } catch (_) {
+          webOrigin = null;
+        }
+        vlog('boot', {
+          'backendBaseUrl': backendBaseUrl,
+          'kIsWeb': kIsWeb,
+          'kReleaseMode': kReleaseMode,
+          'webOrigin': webOrigin ?? '-',
+        });
 
-      await appState.hydrate();
+        // Must run before device-id creation: Keychain survives uninstall, so a
+        // fresh install needs to purge stale identity/session records first.
+        await NativeSecureStore.purgeIosKeychainAfterReinstallIfNeeded();
+        final deviceId = await getOrCreateDeviceId();
+        setApiClientDeviceId(deviceId);
+        vlog('device-id-set', {
+          'len': deviceId.length,
+          'first8': deviceId.length >= 8 ? deviceId.substring(0, 8) : deviceId
+        });
 
-      runApp(
-        ChangeNotifierProvider.value(
+        appState = AppState();
+        appStateReady = true;
+
+        // Register ONE app-wide session-termination handler before
+        // hydration so any coded 401 raised inside `hydrate()`'s
+        // startup `/auth/me` call routes through this exact flow.
+        // Idempotence lives in SessionTermination.instance itself;
+        // this handler only knows how to clear state and navigate.
+        st.SessionTermination.instance.setHandler((event) async {
+          try {
+            if (appState.vaultId != null) {
+              _VaultCrypto.clearCache(appState.vaultId!);
+            }
+          } catch (_) {}
+          await appState.clearSession(keepLastVaultName: true);
+          try {
+            rootScaffoldMessengerKey.currentState?.clearSnackBars();
+            rootScaffoldMessengerKey.currentState?.showSnackBar(
+              SnackBar(content: Text(event.userMessage)),
+            );
+          } catch (_) {}
+          try {
+            rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+              appState.lastVaultName != null ? '/unlock' : '/login',
+              (_) => false,
+            );
+          } catch (_) {}
+        });
+        st.SessionTermination.instance.enablePeerTabListener();
+
+        await appState.hydrate();
+
+        return ChangeNotifierProvider.value(
           value: appState,
           child: AppReleaseControllerScope(
             // The release manifest (/release.json) is emitted by
@@ -915,8 +926,10 @@ Future<void> main() async {
             baseUrl: kIsWeb ? Uri.base.origin : backendBaseUrl,
             child: SvaultaiApp(),
           ),
-        ),
-      );
+        );
+      }
+
+      runApp(AppStartupGate(initialize: initializeApp));
     },
     (error, stack) {
       if (appStateReady && appState.handleApiException(error)) return;
@@ -6987,6 +7000,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               return true;
             } on ConciergeAccessExpired {
               return false;
+            } on SavedItemUpdateRequiredException catch (e) {
+              if (access.isCurrent && mounted) _showSnack(e.toString());
+              return false;
             } catch (_) {
               if (access.isCurrent && mounted) {
                 _showSnack('Could not update this entry. Refresh and try again.');
@@ -7007,7 +7023,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
   }
 
-  Future<void> _openSecureItemView(String service, String itemType) async {
+  Future<void> _openSecureItemView(String service, String itemType,
+      {String? itemId}) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
@@ -7019,10 +7036,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
+      if (!mounted || app.sessionToken != token || app.vaultName != vaultName ||
+          !app.unlocked) {
+        return;
+      }
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final fetched = await client.getVaultSecureItem(
         vaultName: vaultName,
         service: safeTitle,
+        itemId: itemId,
         itemType: itemType,
         pin: pin,
         authToken: token,
@@ -7034,7 +7056,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (entry.value is String)
               entry.key.toString(): entry.value as String,
       };
-      if (!mounted) return;
+      if (!mounted || app.sessionToken != token || app.vaultName != vaultName ||
+          !app.unlocked) {
+        return;
+      }
 
       final readableValue = secureItemViewTextFor(itemType, fields);
       await showSecureItemDetailSheet(
@@ -7057,11 +7082,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             title,
             type,
             initialFields: fields,
+            itemId: fetched['id']?.toString() ?? itemId,
           );
         },
         onDelete: (title, type) {
           Navigator.of(context).pop();
-          _startSecureItemDeleteConfirmation(title, type);
+          _startSecureItemDeleteConfirmation(title, type,
+              itemId: fetched['id']?.toString() ?? itemId);
         },
       );
     } catch (e) {
@@ -7149,11 +7176,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Session expired.');
       return;
     }
-    final data = await showMemoryEditorDialog(context);
-    if (data == null) return;
     try {
       await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
+      final inventory = await client.listZkMemories(authToken: token, limit: 0);
+      if (!mounted || app.sessionToken != token) return;
+      final data = await showMemoryEditorDialog(
+        context,
+        existingMemories: ((inventory['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row)),
+      );
+      if (data == null || !mounted || app.sessionToken != token) return;
       await client.upsertZkMemory(
         authToken: token,
         data: data,
@@ -7167,13 +7201,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       unawaited(app.refreshVaultStats());
     } catch (e) {
       if (app.handleApiException(e)) return;
-      _showSnack('Could not save memory: $e');
+      _showSnack(e is MemoryTitleConflictException
+          ? kMemoryTitleConflictMessage
+          : 'Could not save memory: $e');
     }
   }
 
   Future<void> _openSecureItemEditDialog(String service, String itemType,
-      {Map<String, String>? initialFields, bool createMode = false}) async {
+      {Map<String, String>? initialFields, bool createMode = false,
+      String? itemId}) async {
     final app = context.read<AppState>();
+    final dialogToken = app.sessionToken;
+    final dialogVaultId = app.vaultId;
+    bool dialogIsCurrent() => mounted && app.unlocked &&
+        app.sessionToken == dialogToken && app.vaultId == dialogVaultId;
 
     Map<String, String> resolved = initialFields ?? const {};
     // A create dialog has no existing item to fetch. Calling the read endpoint
@@ -7184,15 +7225,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (token != null && app.vaultName != null) {
         try {
           final pin = await _VaultCrypto.currentPinOrThrow();
+          if (!dialogIsCurrent()) return;
           final client = VaultAIClient(baseUrl: backendBaseUrl);
           final fetched = await client.getVaultSecureItem(
             vaultName: app.vaultName!,
             service: service,
+            itemId: itemId,
             itemType: itemType,
             pin: pin,
             authToken: token,
           );
           final raw = fetched['fields'];
+          if (!dialogIsCurrent()) return;
+          itemId = fetched['id']?.toString() ?? itemId;
           if (raw is Map) {
             resolved = <String, String>{
               for (final e in raw.entries)
@@ -7202,11 +7247,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         } catch (e) {
           if (app.handleApiException(e)) return;
 
-          _showSnack('Could not load saved values; you can still edit.');
+          _showSnack('Could not load this saved item. Refresh and try again.');
+          return;
         }
       }
     }
-    if (!mounted) return;
+    if (!mounted || !dialogIsCurrent()) return;
     await showSecureItemEditDialog(
       context,
       title: service,
@@ -7222,24 +7268,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         required Map<String, String> fields,
       }) async {
         final token = app.sessionToken;
-        if (token == null || app.vaultName == null) {
+        if (token == null || app.vaultName == null || !dialogIsCurrent()) {
           _showSnack('Session expired.');
           return false;
         }
         try {
           final pin = await _VaultCrypto.currentPinOrThrow();
+          if (!dialogIsCurrent()) return false;
           final client = VaultAIClient(baseUrl: backendBaseUrl);
           final oldServiceForRequest =
               oldTitle.trim().isEmpty ? newTitle : oldTitle;
           await client.updateVaultSecureItem(
             vaultName: app.vaultName!,
             oldService: oldServiceForRequest,
+            itemId: itemId,
+            createOnly: createMode,
             itemType: itemType,
             newService: newTitle == oldServiceForRequest ? null : newTitle,
             fields: fields.isEmpty ? null : fields,
             pin: pin,
             authToken: token,
           );
+          if (!dialogIsCurrent()) return false;
 
           final isLogin = itemType == 'login' || itemType == 'credential';
           _showSnack(createMode
@@ -7253,6 +7303,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           return true;
         } catch (e) {
           if (app.handleApiException(e)) return false;
+          if (e is SavedItemConflictException ||
+              e is SavedItemUpdateRequiredException) {
+            _showSnack(e.toString());
+            return false;
+          }
           _showSnack('Could not update saved item: $e');
           return false;
         }
@@ -7395,7 +7450,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _startSecureItemDeleteConfirmation(
-      String service, String itemType) async {
+      String service, String itemType, {String? itemId}) async {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
@@ -7436,6 +7491,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         selectedSection = _DashboardSection.chat;
         _pendingClientSecureItemDeleteService = safeService;
         _pendingClientSecureItemDeleteType = itemType;
+        _pendingClientSecureItemDeleteId = itemId;
+        _pendingClientSecureItemDeleteToken = token;
         msgs.add(_Msg('user', visibleBubble));
         msgs.add(_Msg('assistant', question));
       });
@@ -7675,6 +7732,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   Future<bool> _tryResolveClientSecureItemDelete(String text) async {
     final service = _pendingClientSecureItemDeleteService;
     final itemType = _pendingClientSecureItemDeleteType;
+    final itemId = _pendingClientSecureItemDeleteId;
+    final requestToken = _pendingClientSecureItemDeleteToken;
     if (service == null || itemType == null) return false;
 
     final isConfirm = isClientSecureItemDeleteConfirmationPhrase(text);
@@ -7687,6 +7746,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       setState(() {
         _pendingClientSecureItemDeleteService = null;
         _pendingClientSecureItemDeleteType = null;
+        _pendingClientSecureItemDeleteId = null;
+        _pendingClientSecureItemDeleteToken = null;
         msgs.add(_Msg('user', text));
         msgs.add(_Msg('assistant', "Okay — I won't delete it."));
       });
@@ -7697,7 +7758,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     final vaultName = app.vaultName;
-    if (token == null || vaultName == null || !app.unlocked) {
+    if (token == null || vaultName == null || !app.unlocked ||
+        requestToken != token) {
       _appendAssistantMessage('Session expired. Please sign in again.');
       return true;
     }
@@ -7712,19 +7774,23 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
+      if (!mounted || app.sessionToken != token || !app.unlocked) return true;
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.deleteVaultSecureItem(
         vaultName: vaultName,
         service: service,
+        itemId: itemId,
         itemType: itemType,
         pin: pin,
         authToken: token,
       );
-      if (!mounted) return true;
+      if (!mounted || app.sessionToken != token || !app.unlocked) return true;
       final isLogin = itemType == 'login' || itemType == 'credential';
       setState(() {
         _pendingClientSecureItemDeleteService = null;
         _pendingClientSecureItemDeleteType = null;
+        _pendingClientSecureItemDeleteId = null;
+        _pendingClientSecureItemDeleteToken = null;
         thinking = false;
         msgs.add(_Msg(
           'assistant',
@@ -7754,6 +7820,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final input = TextEditingController();
   final List<_Msg> msgs = <_Msg>[];
   final List<_Attachment> attachments = [];
+  bool _filePickerInFlight = false;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -7768,6 +7835,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   final Set<String> _resolvedGeneratedLoginDrafts = <String>{};
   String? _pendingClientSecureItemDeleteService;
   String? _pendingClientSecureItemDeleteType;
+  String? _pendingClientSecureItemDeleteId;
+  String? _pendingClientSecureItemDeleteToken;
   bool loadingFiles = false;
   bool loadingLogins = false;
   Future<void>? _vaultLoginsLoadFuture;
@@ -7833,6 +7902,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   String _folderSearchQuery = '';
   List<VaultLoginItem> vaultLogins = [];
   _VaultLocalDeleteTarget? _pendingLocalDelete;
+  final Set<String> _fileDeletesInFlight = <String>{};
 
   _DashboardSection selectedSection = _DashboardSection.chat;
   int _memoryRefreshGeneration = 0;
@@ -12554,18 +12624,45 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   }
 
   Future<void> _pickFile() async {
+    if (_filePickerInFlight || sending || _sendDispatchInFlight) return;
     final app = context.read<AppState>();
-    final result = await app.runWithNativePickerKeepAlive(
-      () => FilePicker.platform.pickFiles(
-        withData: false,
-        withReadStream: true,
-        allowMultiple: true,
-        type: FileType.any,
-      ),
-    );
-
-    if (result == null || result.files.isEmpty) return;
-    _ingestPickedFiles(result.files, kind: 'file');
+    if (!app.authed || !app.unlocked) {
+      _showSnack('Unlock your vault first.');
+      return;
+    }
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final keyContext = VaultCryptoRegistry.current;
+    if (token == null || vaultId == null) {
+      _showSnack('Session expired. Please sign in again.');
+      return;
+    }
+    bool isCurrent() =>
+        mounted &&
+        app.authed &&
+        app.unlocked &&
+        app.sessionToken == token &&
+        app.vaultId == vaultId &&
+        identical(VaultCryptoRegistry.current, keyContext);
+    _filePickerInFlight = true;
+    try {
+      final result = await app.runWithNativePickerKeepAlive(
+        () => FilePicker.platform.pickFiles(
+          withData: false,
+          withReadStream: true,
+          allowMultiple: true,
+          type: FileType.any,
+        ),
+      );
+      if (!isCurrent() || result == null || result.files.isEmpty) return;
+      _ingestPickedFiles(result.files, kind: 'file');
+    } catch (_) {
+      if (isCurrent()) {
+        _showSnack('Could not open the file picker. Please try again.');
+      }
+    } finally {
+      _filePickerInFlight = false;
+    }
   }
 
   Future<void> _pickImage() async {
@@ -12702,7 +12799,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       ));
     }
     if (accepted.isNotEmpty) {
-      setState(() => attachments.addAll(accepted));
+      setState(() {
+        attachments.addAll(accepted);
+        selectedSection = _DashboardSection.chat;
+      });
     }
     if (skippedReasons.isNotEmpty) {
       _showSnack(
@@ -12794,6 +12894,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       if (saved && mounted) setState(() => _memoryRefreshGeneration++);
       return saved;
+    } on MemoryTitleConflictException {
+      _showSnack(kMemoryTitleConflictMessage);
+      return false;
     } catch (_) {
       return false;
     }
@@ -12818,6 +12921,55 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       input.clear();
       attachments.clear();
       msgs.addAll(handoff);
+    });
+    _scrollToBottom();
+  }
+
+  void _startFileDeleteConfirmation(_VaultStoredFile file) {
+    if (!mounted || file.id.isEmpty || _pendingLocalDelete != null ||
+        _fileDeletesInFlight.contains(file.id)) {
+      return;
+    }
+    if (attachments.isNotEmpty) {
+      _showSnack('Save or remove queued attachments before deleting a file.');
+      return;
+    }
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final vaultName = app.vaultName;
+    final cryptoContext = VaultCryptoRegistry.current;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final generation = st.SessionTermination.instance.generation;
+    final deviceId = apiClientDeviceId();
+    bool current() => mounted && app.authed && app.unlocked &&
+        token != null && vaultId != null && vaultName != null &&
+        app.sessionToken == token && app.vaultId == vaultId &&
+        app.vaultName == vaultName && apiClientDeviceId() == deviceId &&
+        cryptoContext != null &&
+        cryptoContext.vaultId == vaultId && cryptoContext.vaultName == vaultName &&
+        identical(VaultCryptoRegistry.current, cryptoContext) &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        st.SessionTermination.instance.generation == generation &&
+        !st.SessionTermination.instance.isTerminated;
+    if (!current()) {
+      _showSnack('Unlock your vault before deleting a file.');
+      return;
+    }
+    final label = file.savedName?.trim().isNotEmpty == true
+        ? file.savedName!.trim() : file.fileName;
+    setState(() {
+      selectedSection = _DashboardSection.chat;
+      input.clear();
+      _pendingLocalDelete = _VaultLocalDeleteTarget(
+        kind: VaultLocalContentKind.file,
+        id: file.id,
+        label: label,
+        accessIsCurrent: current,
+      );
+      msgs.add(_Msg('user', 'Delete "$label" file from my vault'));
+      msgs.add(_Msg('assistant',
+          'Permanently delete the "$label" file? Reply yes or no.'));
     });
     _scrollToBottom();
   }
@@ -15016,10 +15168,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw StateError('generated_login_draft_incomplete');
     }
     try {
-      await _VaultCrypto.currentPinOrThrow();
+      final pin = await _VaultCrypto.currentPinOrThrow();
       await VaultAIClient(baseUrl: backendBaseUrl)
           .saveGeneratedLoginDraftCiphertext(
         authToken: token,
+        pin: pin,
         draftId: draftId,
         service: service,
         fields: fields,
@@ -15033,6 +15186,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     } on InvalidVaultUnlockException {
       _showSnack('Your vault is locked. Please enter your PIN again.');
       throw StateError('generated_login_vault_locked');
+    } on SavedItemConflictException catch (e) {
+      _showSnack(e.toString());
+      rethrow;
+    } on SavedItemUpdateRequiredException catch (e) {
+      if (mounted && app.sessionToken == token) _showSnack(e.toString());
+      rethrow;
     } catch (_) {
       _showSnack('Could not save login. Please try again.');
       throw StateError('generated_login_save_failed');
@@ -15343,32 +15502,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     try {
       await _VaultCrypto.currentPinOrThrow();
 
-      // "Save my X as Y" updates the one existing memory named X instead
-      // of silently creating duplicates each time the value changes.
-      String? existingId;
-      var ambiguousExistingTitle = false;
-      final existing = await client.listZkMemories(authToken: token);
-      final wanted = normalizeVaultLocalContentText(command.title);
-      for (final raw in (existing['items'] as List?) ?? const <dynamic>[]) {
-        if (raw is! Map) continue;
-        final row = Map<String, dynamic>.from(raw);
-        final title = '${row['title'] ?? row['memory_key'] ?? ''}';
-        if (normalizeVaultLocalContentText(title) != wanted) continue;
-        final id = '${row['id'] ?? ''}'.trim();
-        if (id.isEmpty) continue;
-        if (existingId != null) {
-          // Ambiguous legacy duplicates are never overwritten by guessing.
-          existingId = null;
-          ambiguousExistingTitle = true;
-          break;
-        }
-        existingId = id;
+      // A Save command is a create request, not permission to overwrite a
+      // title-matched record. Only the selected memory's Edit flow has its ID.
+      final existing = await client.listZkMemories(authToken: token, limit: 0);
+      if (memoryTitleConflicts(
+        title: command.title,
+        memories: ((existing['items'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((row) => Map<String, dynamic>.from(row)),
+      )) {
+        _appendLocalVaultReply(text, kMemoryTitleConflictMessage);
+        return true;
       }
 
       await client.upsertZkMemory(
         authToken: token,
         data: command.toMemoryData(),
-        memoryId: ambiguousExistingTitle ? null : existingId,
       );
       if (mounted) setState(() => _memoryRefreshGeneration++);
       unawaited(app.refreshVaultStats());
@@ -15377,6 +15526,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'Memory saved securely. "${command.title}" is now in your vault.',
       );
       _showSnack('Memory saved');
+      return true;
+    } on MemoryTitleConflictException {
+      _appendLocalVaultReply(text, kMemoryTitleConflictMessage);
       return true;
     } on InvalidVaultUnlockException {
       _showSnack('Your vault is locked. Please enter your PIN again.');
@@ -15396,6 +15548,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     final pending = _pendingLocalDelete;
     if (pending != null) {
+      if (pending.accessIsCurrent?.call() == false) {
+        _pendingLocalDelete = null;
+        _appendLocalVaultReply(text,
+            'Your session changed. Select the file again before deleting.');
+        return true;
+      }
       if (isVaultLocalDeleteCancellation(text)) {
         _pendingLocalDelete = null;
         _appendLocalVaultReply(text, 'Okay. I kept "${pending.label}".');
@@ -15441,9 +15599,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 .toList(growable: false),
           );
           if (matchIndex == null) {
+            final normalizedQuery = normalizeVaultLocalContentText(command.query);
+            final duplicateMatches = rows.where((row) =>
+                normalizeVaultLocalContentText('${row['service'] ?? ''}') ==
+                normalizedQuery).length;
             _appendLocalVaultReply(
               text,
-              'No saved login matches "${command.query}".',
+              duplicateMatches > 1
+                  ? 'More than one saved login has this title. Open Logins and select the specific item.'
+                  : 'No saved login matches "${command.query}".',
             );
             return true;
           }
@@ -15520,14 +15684,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           return true;
 
         case VaultLocalContentKind.memory:
-          final result = await client.listZkMemories(authToken: token);
+          final result = await client.listZkMemories(authToken: token, limit: 0);
           final rows = ((result['items'] as List?) ?? const <dynamic>[])
               .whereType<Map>()
               .map((row) => Map<String, dynamic>.from(row))
               .toList();
-          final match = resolveVaultLocalContentMatch(
-            query: command.query,
-            entries: rows.map((row) => VaultLocalContentEntry(
+          final entries = rows.map((row) => VaultLocalContentEntry(
                   id: '${row['id']}',
                   label: '${row['title'] ?? row['memory_key'] ?? ''}',
                   aliases: <String>[
@@ -15536,9 +15698,28 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     if (row['memory_value'] != null) '${row['memory_value']}',
                     if (row['body'] != null) '${row['body']}',
                   ],
-                )),
+                )).toList();
+          final match = resolveMemoryLocalContentMatch(
+            query: command.query,
+            entries: entries,
           );
           if (match == null) {
+            if (memoryQueryIsAmbiguous(query: command.query, entries: entries)) {
+              _appendLocalVaultReply(
+                text,
+                'Several saved memories match "${command.query}". Open Memory '
+                'to reveal, edit or delete the exact one. Nothing was changed.',
+              );
+              return true;
+            }
+            if (((result['unavailable_count'] as num?)?.toInt() ?? 0) > 0) {
+              _appendLocalVaultReply(
+                text,
+                'Some saved memories could not be opened. Unlock again or '
+                'refresh Memory before trying again. Nothing was deleted.',
+              );
+              return true;
+            }
             if (!command.explicitKind &&
                 command.action == VaultLocalContentAction.retrieve) {
               return false;
@@ -15566,13 +15747,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             );
             return true;
           }
-          final value =
-              '${row['value'] ?? row['memory_value'] ?? row['body'] ?? ''}'
-                  .trim();
-          final reply = value.isEmpty
-              ? 'I found the "$label" memory.'
-              : 'I remember "$label": $value';
-          _appendLocalVaultReply(text, reply);
+          _appendLocalVaultReply(text, memoryLocalReply(row));
           return true;
 
         case VaultLocalContentKind.file:
@@ -15629,6 +15804,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null || vaultName == null || vaultName.isEmpty) return false;
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     _pendingLocalDelete = null;
+    if (target.accessIsCurrent?.call() == false) return true;
+    if (target.kind == VaultLocalContentKind.file &&
+        !_fileDeletesInFlight.add(target.id)) {
+      return true;
+    }
     try {
       switch (target.kind) {
         case VaultLocalContentKind.login:
@@ -15649,15 +15829,38 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           if (mounted) setState(() => _memoryRefreshGeneration++);
           break;
         case VaultLocalContentKind.file:
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          if (target.accessIsCurrent?.call() == false) return true;
           await client.deleteVaultFile(
             vaultName: vaultName,
             fileId: target.id,
-            pin: await _VaultCrypto.currentPinOrThrow(),
+            pin: pin,
             authToken: token,
+            responseIsCurrent: target.accessIsCurrent,
           );
-          await _loadVaultFiles();
+          if (target.accessIsCurrent?.call() == false) return true;
+          if (target.accessIsCurrent != null) {
+            // Remove only the confirmed stable ID. A full asynchronous reload
+            // could apply old-vault inventory after a new-device/session switch.
+            setState(() {
+              vaultFiles.removeWhere((file) => file.id == target.id);
+              final tree = _folderTreeData;
+              if (tree != null) {
+                _folderTreeData = FolderTreeData(
+                  path: tree.path,
+                  breadcrumbs: tree.breadcrumbs,
+                  folders: tree.folders,
+                  files: tree.files.where((row) =>
+                      '${row['id']}' != target.id).toList(),
+                );
+              }
+            });
+          } else {
+            await _loadVaultFiles();
+          }
           break;
       }
+      if (target.accessIsCurrent?.call() == false) return true;
       unawaited(app.refreshVaultStats());
       _appendLocalVaultReply(
         userText,
@@ -15665,12 +15868,18 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       );
       return true;
     } catch (e) {
+      if (target.accessIsCurrent?.call() == false) return true;
       if (app.handleApiException(e)) return true;
       _appendLocalVaultReply(
         userText,
         'I could not delete "${target.label}". Nothing was changed.',
       );
       return true;
+    } finally {
+      if (target.kind == VaultLocalContentKind.file) {
+        _fileDeletesInFlight.remove(target.id);
+        if (mounted) setState(() {});
+      }
     }
   }
 
@@ -16952,6 +17161,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             const SizedBox(width: 12),
             Semantics(
               container: true,
+              identifier: 'files_file_delete_${file.id}',
+              button: true,
+              child: IconButton(
+                key: ValueKey('files_file_delete_${file.id}'),
+                tooltip: AppLocalizations.of(context).commonDelete,
+                onPressed: sending || _pendingLocalDelete != null ||
+                        _fileDeletesInFlight.contains(file.id)
+                    ? null : () => _startFileDeleteConfirmation(file),
+                icon: const Icon(Icons.delete_outline),
+                color: Colors.redAccent,
+              ),
+            ),
+            Semantics(
+              container: true,
               identifier: 'files_file_ask_${file.id}',
               button: true,
               child: Tooltip(
@@ -17411,14 +17634,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           onAskVault: (service) async {
             await _sendQuickPrompt('Show my $service login');
           },
-          onView: (service, itemType) {
-            _openSecureItemView(service, itemType);
+          onViewItem: (item) {
+            _openSecureItemView(item.service, item.itemType, itemId: item.itemId);
           },
-          onEdit: (service, itemType) {
-            _openSecureItemEditDialog(service, itemType);
+          onEditItem: (item) {
+            _openSecureItemEditDialog(item.service, item.itemType, itemId: item.itemId);
           },
-          onDelete: (service, itemType) {
-            _startSecureItemDeleteConfirmation(service, itemType);
+          onDeleteItem: (item) {
+            _startSecureItemDeleteConfirmation(item.service, item.itemType, itemId: item.itemId);
           },
         );
 
@@ -17775,6 +17998,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         ),
       );
     }
+    final memoryMvk = zk_mvk_store.ZkActiveMvk.current();
+    final memoryGeneration = st.SessionTermination.instance.generation;
     return MemoryPage(
       key: ValueKey(
         'memory-page-$vaultName-$_memoryRefreshGeneration',
@@ -17784,6 +18009,21 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       vaultName: vaultName,
       isMobile: isMobile,
       pinProvider: _VaultCrypto.currentPinOrThrow,
+      onOpenMemory: (row, prompt) {
+        if (!mounted ||
+            app.sessionToken != token ||
+            !app.unlocked ||
+            memoryMvk == null ||
+            !identical(zk_mvk_store.ZkActiveMvk.current(), memoryMvk) ||
+            st.SessionTermination.instance.generation != memoryGeneration ||
+            st.SessionTermination.instance.isTerminated) {
+          return;
+        }
+        // The selected row is already decrypted on this device. Its stable
+        // identity, not localized prompt text or a duplicate title, controls
+        // recall. No memory plaintext is sent to the server/AI.
+        _appendLocalVaultReply(prompt, memoryLocalReply(row));
+      },
       onAskVaultAI: (prompt) async {
         setState(() => selectedSection = _DashboardSection.chat);
         await _sendQuickPrompt(prompt);
