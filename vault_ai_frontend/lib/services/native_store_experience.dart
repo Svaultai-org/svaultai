@@ -221,23 +221,39 @@ class NativeStoreController extends ChangeNotifier {
   }
 
   Future<void> openUpdate() async {
-    if (_disposed || _opening || !updateRequired) return;
+    if (_disposed || _opening || _checking || !updateRequired) return;
     _opening = true;
     error = null;
     notifyListeners();
     try {
-      if (!await gateway.openUpdate().timeout(openTimeout)) {
+      final opened = await gateway.openUpdate().timeout(openTimeout);
+      if (_disposed) return;
+      if (!opened) {
         error = 'The update did not finish. Please try again.';
-        _update = null;
+        await _recheckIncompleteUpdate();
       }
     } catch (_) {
+      if (_disposed) return;
       error = 'The store could not open the update. Please try again.';
-      _update = null;
+      await _recheckIncompleteUpdate();
     } finally {
       if (!_disposed) {
         _opening = false;
         notifyListeners();
       }
+    }
+  }
+
+  Future<void> _recheckIncompleteUpdate() async {
+    // Cancellation is not proof that an available update was withdrawn.
+    // Keep opening single-flight until a fresh store eligibility check ends;
+    // check() deliberately cannot run during this operation. Unknown or
+    // unavailable eligibility still fails open without changing vault data.
+    try {
+      final value = await gateway.availableUpdate().timeout(checkTimeout);
+      if (!_disposed) _update = value;
+    } catch (_) {
+      if (!_disposed) _update = null;
     }
   }
 

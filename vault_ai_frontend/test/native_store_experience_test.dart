@@ -161,7 +161,7 @@ void main() {
     controller.dispose();
   });
   for (final failure in ['false', 'throw', 'timeout']) {
-    test('update opening $failure releases blocker without altering app data',
+    test('update opening $failure keeps a freshly eligible update required',
         () async {
       final store = _Store()..next = const NativeStoreUpdate('1.0.22');
       if (failure == 'false') store.opened = false;
@@ -172,15 +172,123 @@ void main() {
       await controller.check();
       await Future.wait([controller.openUpdate(), controller.openUpdate()]);
       expect(store.opens, 1);
-      expect(controller.updateRequired, false);
+      expect(store.checks, 2);
+      expect(controller.updateRequired, true);
       expect(controller.opening, false);
       expect(controller.error, isNotNull);
       store.openRead?.complete(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.updateRequired, true);
+      controller.dispose();
+    });
+  }
+  for (final eligibility in ['withdrawn', 'error', 'timeout']) {
+    test(
+        'incomplete update releases gate when fresh eligibility is $eligibility',
+        () async {
+      final store = _Store()
+        ..next = const NativeStoreUpdate('1.0.22')
+        ..opened = false;
+      final controller = NativeStoreController(store,
+          checkTimeout: const Duration(milliseconds: 1));
+      await controller.check();
+      expect(controller.updateRequired, true);
+      if (eligibility == 'withdrawn') store.next = null;
+      if (eligibility == 'error') store.fail = true;
+      if (eligibility == 'timeout') {
+        store.checkRead = Completer<NativeStoreUpdate?>();
+      }
+      await controller.openUpdate();
+      expect(store.checks, 2);
+      expect(store.opens, 1);
+      expect(controller.updateRequired, false);
+      expect(controller.opening, false);
+      expect(controller.error, isNotNull);
+      store.checkRead?.complete(const NativeStoreUpdate('1.0.23'));
       await Future<void>.delayed(Duration.zero);
       expect(controller.updateRequired, false);
       controller.dispose();
     });
   }
+  test('opening waits for an existing eligibility check to finish', () async {
+    final store = _Store()..next = const NativeStoreUpdate('1.0.22');
+    final controller = NativeStoreController(store);
+    await controller.check();
+    store.checkRead = Completer<NativeStoreUpdate?>();
+    final checking = controller.check();
+    await controller.openUpdate();
+    expect(store.opens, 0);
+    expect(store.checks, 2);
+    expect(controller.opening, false);
+    store.checkRead!.complete(null);
+    await checking;
+    expect(controller.updateRequired, false);
+    controller.dispose();
+  });
+  test('cancellation recheck is single-flight and uses fresh eligibility',
+      () async {
+    final store = _Store()
+      ..next = const NativeStoreUpdate('1.0.22')
+      ..opened = false;
+    final controller = NativeStoreController(store);
+    await controller.check();
+    store.checkRead = Completer<NativeStoreUpdate?>();
+    final opening = controller.openUpdate();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.opening, true);
+    expect(store.checks, 2);
+    await Future.wait([controller.check(), controller.openUpdate()]);
+    expect(store.checks, 2);
+    expect(store.opens, 1);
+    store.checkRead!.complete(const NativeStoreUpdate('1.0.23'));
+    await opening;
+    expect(controller.opening, false);
+    expect(controller.update?.label, '1.0.23');
+    controller.dispose();
+  });
+  for (final result in ['false', 'throw']) {
+    test('disposed update opening ignores a late $result result', () async {
+      final store = _Store()
+        ..next = const NativeStoreUpdate('1.0.22')
+        ..openRead = Completer<bool>();
+      final controller = NativeStoreController(store);
+      await controller.check();
+      final before = controller.update;
+      final opening = controller.openUpdate();
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+      controller.dispose();
+      if (result == 'false') {
+        store.openRead!.complete(false);
+      } else {
+        store.openRead!.completeError(StateError('store unavailable'));
+      }
+      await opening;
+      expect(notifications, 0);
+      expect(controller.update, same(before));
+      expect(controller.error, isNull);
+      expect(store.checks, 1);
+    });
+  }
+  test('disposed cancellation recheck cannot rewrite the gate or notify',
+      () async {
+    final store = _Store()
+      ..next = const NativeStoreUpdate('1.0.22')
+      ..opened = false;
+    final controller = NativeStoreController(store);
+    await controller.check();
+    final before = controller.update;
+    store.checkRead = Completer<NativeStoreUpdate?>();
+    final opening = controller.openUpdate();
+    await Future<void>.delayed(Duration.zero);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    controller.dispose();
+    store.checkRead!.complete(const NativeStoreUpdate('1.0.23'));
+    await opening;
+    expect(notifications, 0);
+    expect(controller.update, same(before));
+  });
   test('timed-out check cannot reinstate a late update', () async {
     final store = _Store()..next = const NativeStoreUpdate('1.0.22');
     final controller = NativeStoreController(store,
