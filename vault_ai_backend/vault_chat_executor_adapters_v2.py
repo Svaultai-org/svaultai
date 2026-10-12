@@ -528,6 +528,11 @@ def adapter_confirm_save_login(ctx: ExecutorContextV2) -> None:
             ctx.vault_id, args, bytes(ctx.key), generated=True,
         )
     except Exception as exc:
+        if getattr(exc, "reason", None) == "duplicate_saved_item":
+            ctx.record_outcome(_fail(RESULT_VALIDATION_FAILED,
+                                      underlying_band="duplicate_saved_item"))
+            # Keep held secret/draft for a new title. Never report Saved.
+            raise ExecutorError(RESULT_VALIDATION_FAILED)
         logger.exception("[ADAPTER_V2] save_secret_tool_failed")
         # Held password NOT cleared -- user can retry with fresh auth.
         ctx.record_outcome(_fail(RESULT_EXECUTOR_EXCEPTION,

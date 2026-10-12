@@ -78,7 +78,8 @@ class TestHandlerShape(unittest.TestCase):
             r"WHERE\s+vault_id\s*=\s*%s",
         )
         self.assertIn("item_type = %s", body)
-        self.assertIn("LOWER(service)", body)
+        self.assertIn("_select_secure_item(cursor, vault_id, item_type, normalized_service, payload.item_id)", body)
+        self.assertIn("AND id = %s", body)
 
     def test_response_carries_no_encrypted_blob(self) -> None:
                                                               

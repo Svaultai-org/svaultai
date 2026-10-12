@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'pwned_password_check.dart';
+import 'saved_item_mutation_feedback.dart';
 import 'vault_key_hierarchy.dart';
 import 'zk_active_mvk.dart';
 
@@ -274,6 +275,7 @@ class ConciergeVaultRepository {
               key, utf8.encode(value is String ? value : jsonEncode(value))));
       final body = <String, dynamic>{
         'item_id': int.parse(id),
+        'mutation_intent': 'edit',
         'item_type_ciphertext': await encrypted(original.itemType),
         'service_ciphertext': await encrypted(newTitle.trim()),
         'payload_ciphertext': await encrypted({
@@ -289,6 +291,7 @@ class ConciergeVaultRepository {
       final response =
           await _request(access, 'POST', '/vault/ciphertext/vault-items', body);
       if (response.statusCode != 200) {
+        throwIfSavedItemUpdateRequired(response.statusCode, response.body);
         throw const ConciergeUnavailable('login_update_unavailable');
       }
       final saved = jsonDecode(response.body);
@@ -300,6 +303,8 @@ class ConciergeVaultRepository {
     } on ConciergeAccessExpired {
       rethrow;
     } on ConciergeUnavailable {
+      rethrow;
+    } on SavedItemUpdateRequiredException {
       rethrow;
     } catch (_) {
       throw const ConciergeUnavailable('login_update_unavailable');

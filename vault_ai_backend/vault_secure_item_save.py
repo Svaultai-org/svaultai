@@ -99,6 +99,10 @@ BAND_FOLLOWUP_CLARIFY:    str = "followup_clarify"
 BAND_DELETE_PROMPT:       str = "delete_prompt"
 
 
+class SavedItemTitleConflict(Exception):
+    """A title alone cannot authorize replacing or deleting a saved login."""
+
+
 TIER_FREE:     str = "free"
 TIER_BASIC:    str = "basic"
 TIER_UPGRADED: str = "upgraded"
@@ -311,6 +315,11 @@ def _encrypt_and_write(
             db_executor("upsert", payload)
         else:
             _default_upsert(payload)
+    except SavedItemTitleConflict:
+        return {
+            "band": BAND_NEEDS_CLARIFICATION,
+            "message": "A saved login already uses this title. Choose a different title, or select the existing login in Logins to edit it.",
+        }
     except Exception:
         logger.exception(
             "[SECURE-ITEM] db write failed vault=%s",
@@ -630,6 +639,10 @@ def _default_upsert(payload: dict) -> None:
             ),
         )
         existing = cur.fetchone()
+        if existing and payload["item_type"] in ("login", "credential"):
+            # A natural-language Save is not authority to replace an existing
+            # credential. Explicit dashboard edits already target one DB id.
+            raise SavedItemTitleConflict()
         new_blob_size = _blob_size(payload.get("encrypted_data"))
         old_blob_size = (
             _blob_size(existing["encrypted_data"]) if existing else 0
@@ -900,6 +913,7 @@ def retrieve_secure_items_from_intent(
     db_reader: Optional[Any] = None,
     db_reader_all: Optional[Any] = None,
     reveal: bool = False,
+    exact_item_id: Optional[str] = None,
 ) -> dict:
 
 
@@ -958,6 +972,9 @@ def retrieve_secure_items_from_intent(
         except Exception:
             continue
         if not isinstance(record, dict):
+            continue
+        if (exact_item_id is not None and str(r.get("id")) != exact_item_id
+                and str(record.get("item_id")) != exact_item_id):
             continue
                                                               
                                                                
@@ -1018,7 +1035,8 @@ def retrieve_secure_items_from_intent(
             )
         )
         cards.append(build_secure_item_card(
-            item_id=str(record.get("item_id") or r.get("id") or ""),
+            item_id=str((r.get("id") if row_category in ("login", "credential") else None)
+                        or record.get("item_id") or r.get("id") or ""),
             category=row_category,
             title=row_title,
             preview=preview,
@@ -1303,6 +1321,8 @@ def _resolve_followup_reveal(
         db_reader=db_reader,
         db_reader_all=db_reader_all,
         reveal=reveal,
+        exact_item_id=(str(card.item_id) if card.item_id and
+                       card.item_type in ("login", "credential") else None),
     )
                                                           
               
@@ -1393,7 +1413,13 @@ def _execute_pending_delete(
             service=intent.service,
             item_type=intent.item_type,
             db_executor=db_executor,
+            item_id=intent.item_id,
         )
+    except SavedItemTitleConflict:
+        return {
+            "band": BAND_FOLLOWUP_CLARIFY,
+            "message": "More than one saved login has this title. Select the specific login in Logins before deleting it.",
+        }
     except Exception:
         logger.exception(
             "[SECURE-ITEM-DELETE] db_delete_failed vault=%s type=%s",
@@ -1455,6 +1481,7 @@ def _execute_delete_row(
     service: str,
     item_type: str,
     db_executor: Optional[Any],
+    item_id: Optional[str] = None,
 ) -> int:
 
 
@@ -1462,6 +1489,7 @@ def _execute_delete_row(
         "vault_id":  vault_id,
         "item_type": item_type,
         "service":   service,
+        **({"item_id": item_id} if item_id is not None else {}),
     }
     if db_executor is not None:
         result = db_executor("delete", payload)
@@ -1483,20 +1511,49 @@ def _default_delete(payload: dict) -> int:
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            DELETE FROM vault_items
-            WHERE vault_id  = %s
-              AND item_type = %s
-              AND LOWER(service) = LOWER(%s)
-            RETURNING id, encrypted_data
-            """,
-            (
-                payload["vault_id"],
-                payload["item_type"],
-                payload["service"],
-            ),
-        )
+        if payload["item_type"] in ("login", "credential"):
+            raw_id = payload.get("item_id")
+            if raw_id is not None:
+                # Old UUID-only result cards are not a database row identity.
+                if not str(raw_id).isdigit() or int(raw_id) <= 0:
+                    raise SavedItemTitleConflict()
+                cur.execute(
+                    """SELECT id, encrypted_data FROM vault_items
+                       WHERE vault_id = %s AND item_type = %s AND id = %s FOR UPDATE""",
+                    (payload["vault_id"], payload["item_type"], int(raw_id)),
+                )
+            else:
+                cur.execute(
+                    """SELECT id, encrypted_data FROM vault_items
+                       WHERE vault_id = %s AND item_type = %s
+                       AND LOWER(service) = LOWER(%s) LIMIT 2 FOR UPDATE""",
+                    (payload["vault_id"], payload["item_type"], payload["service"]),
+                )
+            selected = cur.fetchall() or []
+            if len(selected) > 1:
+                raise SavedItemTitleConflict()
+            if not selected:
+                return 0
+            cur.execute(
+                """DELETE FROM vault_items WHERE vault_id = %s AND item_type = %s
+                   AND id = %s RETURNING id, encrypted_data""",
+                (payload["vault_id"], payload["item_type"], selected[0]["id"]),
+            )
+        else:
+            cur.execute(
+                """
+                DELETE FROM vault_items
+                WHERE vault_id  = %s
+                  AND item_type = %s
+                  AND LOWER(service) = LOWER(%s)
+                RETURNING id, encrypted_data
+                """,
+                (
+                    payload["vault_id"],
+                    payload["item_type"],
+                    payload["service"],
+                ),
+            )
         rows = cur.fetchall() or []
         conn.commit()
                                                                

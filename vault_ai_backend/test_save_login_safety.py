@@ -320,6 +320,41 @@ class SaveSecretToolSuccessfulSaveTests(unittest.TestCase):
         self.fake_conn.commit.assert_called()
         self.assertGreaterEqual(self.fake_conn.commit.call_count, 1)
 
+    def test_explicit_unique_title_edit_updates_only_its_selected_id(self):
+        cursor = self.fake_conn.cursor.return_value
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = {
+            "id": 42, "encrypted_data": "original", "matching_count": 1,
+        }
+        with patch("main.decrypt_message", return_value='{"username":"old"}'), \
+             patch("billing.get_account_id_for_vault", return_value=None):
+            save_secret_tool(
+                "00000000-0000-4000-8000-0000000000e1",
+                {"secret_type": "login", "service": "gmail",
+                 "fields": {"username": "edited"}},
+                b"k" * 32, update_existing=True, defer_postprocessing=True,
+            )
+        mutations = [call for call in cursor.execute.call_args_list
+                     if call.args[0].lstrip().startswith("UPDATE")]
+        self.assertEqual(len(mutations), 1)
+        self.assertEqual(mutations[0].args[1][1], 42)
+
+    def test_explicit_title_edit_still_refuses_multiple_matching_ids(self):
+        import main
+        cursor = self.fake_conn.cursor.return_value
+        cursor.fetchone.side_effect = None
+        cursor.fetchone.return_value = {
+            "id": 42, "encrypted_data": "original", "matching_count": 2,
+        }
+        with self.assertRaises(main.SaveSecretDuplicateTitleError):
+            save_secret_tool(
+                "00000000-0000-4000-8000-0000000000e1",
+                {"secret_type": "login", "service": "gmail",
+                 "fields": {"username": "edited"}},
+                b"k" * 32, update_existing=True,
+            )
+        self.fake_conn.commit.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

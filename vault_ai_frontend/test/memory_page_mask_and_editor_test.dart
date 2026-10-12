@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
+import 'package:vault_ai_frontend/services/vault_local_content_command.dart';
 import 'package:vault_ai_frontend/ui/dashboards/memory_page.dart';
 
 const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
@@ -14,7 +15,10 @@ const List<LocalizationsDelegate<Object?>> _testL10nDelegates = [
 ];
 
 class _MemoryFakeClient extends VaultAIClient {
-  _MemoryFakeClient() : super(baseUrl: 'http://localhost.invalid');
+  final String title;
+
+  _MemoryFakeClient({this.title = 'OpenAI API key'})
+      : super(baseUrl: 'http://localhost.invalid');
 
   @override
   Future<Map<String, dynamic>> listZkMemories({
@@ -25,7 +29,7 @@ class _MemoryFakeClient extends VaultAIClient {
       'items': [
         {
           'id': '1',
-          'title': 'OpenAI API key',
+          'title': title,
           'value': 'sk-memory-marker-123',
           'body': 'Project access',
           'memory_type': 'note',
@@ -57,6 +61,45 @@ Future<void> _pump(
 }
 
 void main() {
+  testWidgets('actual MemoryPage card question finds the decrypted memory',
+      (tester) async {
+    const title = 'QA-TEST Memory One';
+    String? emitted;
+    VaultLocalContentCommand? command;
+    await _pump(
+      tester,
+      MemoryPage(
+        client: _MemoryFakeClient(title: title),
+        authToken: 'synthetic-only',
+        vaultName: 'synthetic-only',
+        isMobile: false,
+        onAskVaultAI: (question) {
+          emitted = question;
+          command = parseVaultLocalContentCommand(question);
+        },
+      ),
+    );
+
+    await tester.tap(find.text(title));
+    await tester.pumpAndSettle();
+
+    expect(emitted, 'What do you remember about $title?');
+    expect(command?.kind, VaultLocalContentKind.memory);
+    expect(command?.action, VaultLocalContentAction.retrieve);
+    expect(command?.query, title);
+    // listZkMemories returns client-decrypted records. The existing local
+    // matcher must choose this exact title, not fall through to legacy chat.
+    final match = resolveVaultLocalContentMatch(
+      query: command!.query,
+      entries: const [
+        VaultLocalContentEntry(id: '1', label: title),
+        VaultLocalContentEntry(id: '2', label: 'QA-TEST One'),
+      ],
+    );
+    expect(match?.entry.id, '1');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('MemoryPage saved row does not overflow on narrow iPhones',
       (tester) async {
     await _pump(

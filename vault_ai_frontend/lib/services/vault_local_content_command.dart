@@ -74,6 +74,11 @@ final RegExp _retrieveOpening = RegExp(
   caseSensitive: false,
 );
 
+final RegExp _memoryCardRecallOpening = RegExp(
+  r'^\s*(?:please\s+)?what\s+do\s+you\s+remember\s+about\s+',
+  caseSensitive: false,
+);
+
 final RegExp _loginNoun = RegExp(
   r'\b(?:logins?|credentials?|passwords?|accounts?|sign[\s-]?ins?)\b',
   caseSensitive: false,
@@ -87,6 +92,12 @@ final RegExp _memoryNoun = RegExp(
 final RegExp _fileNoun = RegExp(
   r'\b(?:files?|documents?|docs?|images?|photos?|pictures?|videos?|audio)\b',
   caseSensitive: false,
+);
+
+final RegExp _contextualDeleteTarget = RegExp(
+  r'^(?:(?:it|this|that|them|these|those)(?:\s+(?:one|ones|item|items|'
+  r'entry|entries|record|records))?|(?:selected|current|previous|last)\s+'
+  r'(?:item|entry|record)|delete|remove|erase|forget)(?:\s+please)?$',
 );
 
 final RegExp _explicitPersonalMemorySave = RegExp(
@@ -162,6 +173,23 @@ VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
 VaultLocalContentCommand? parseVaultLocalContentCommand(String message) {
   final text = message.trim();
   if (text.isEmpty) return null;
+  // The Memory dashboard asks about a literal title. Preserve that title
+  // before generic noun/verb inference: a name containing "login", "file"
+  // or "delete" must still retrieve the selected encrypted memory.
+  final memoryCardRecall = _memoryCardRecallOpening.firstMatch(text);
+  if (memoryCardRecall != null) {
+    var query = text.substring(memoryCardRecall.end).trim();
+    if (query.endsWith('?')) {
+      query = query.substring(0, query.length - 1).trim();
+    }
+    if (query.isEmpty) return null;
+    return VaultLocalContentCommand(
+      kind: VaultLocalContentKind.memory,
+      action: VaultLocalContentAction.retrieve,
+      query: query,
+      explicitKind: false,
+    );
+  }
   final deleting = _deleteVerb.hasMatch(text);
   final retrieving = _retrieveOpening.hasMatch(text);
   if (!deleting && !retrieving) return null;
@@ -188,6 +216,13 @@ VaultLocalContentCommand? parseVaultLocalContentCommand(String message) {
       query: _extractQuery(text, _fileNoun),
       explicitKind: true,
     );
+  }
+  if (deleting && !hasMemory) {
+    final query =
+        normalizeVaultLocalContentText(_extractQuery(text, _memoryNoun));
+    // A pronoun refers to chat selection context, not necessarily a memory.
+    // Let the selected-item handler resolve it; never guess a content kind.
+    if (query.isEmpty || _contextualDeleteTarget.hasMatch(query)) return null;
   }
   if (hasMemory || deleting) {
     return VaultLocalContentCommand(

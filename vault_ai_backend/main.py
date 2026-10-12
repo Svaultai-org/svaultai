@@ -7653,6 +7653,8 @@ async def handle_tool_call(
                 return json.dumps({"error": "unavailable"})
 
         return f"Unknown tool: {tool_name}"
+    except SaveSecretDuplicateTitleError:
+        return "A saved login already uses this title. Choose a different title, or select the existing login in Logins to edit it."
     except Exception:
         logger.error("Tool execution failed")
         return "Tool execution failed."
@@ -7704,12 +7706,30 @@ class SaveSecretError(Exception):
     pass
 
 
+def _delete_unique_login_row(cursor, vault_id: str, service: str):
+    from routes.login_routes import _select_secure_item
+    selected = _select_secure_item(cursor, vault_id, "login", service)
+    if selected is None:
+        return None
+    cursor.execute(
+        """DELETE FROM vault_items WHERE vault_id = %s
+           AND item_type = 'login' AND id = %s RETURNING service""",
+        (vault_id, selected["id"]),
+    )
+    return cursor.fetchone()
+
+
 class SaveSecretInvalidPayloadError(SaveSecretError):
 
 
     def __init__(self, reason: str):
         super().__init__(reason)
         self.reason = reason
+
+
+class SaveSecretDuplicateTitleError(SaveSecretInvalidPayloadError):
+    def __init__(self):
+        super().__init__("duplicate_saved_item")
 
 
 class SaveSecretStorageLimitError(SaveSecretError):
@@ -7788,7 +7808,8 @@ def _classify_save_login_payload(args) -> Optional[str]:
 
 def save_secret_tool(vault_id: str, args: dict, key: bytes,
                      *, generated: bool = False,
-                     defer_postprocessing: bool = False):
+                     defer_postprocessing: bool = False,
+                     update_existing: bool = False):
 
 
     ensure_vault_exists(vault_id)
@@ -7807,7 +7828,7 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
 
         cursor.execute(
             """
-            SELECT id, encrypted_data
+            SELECT id, encrypted_data, COUNT(*) OVER() AS matching_count
             FROM vault_items
             WHERE vault_id = %s
               AND item_type = %s
@@ -7818,6 +7839,12 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
             (vault_id, secret_type, service),
         )
         existing = cursor.fetchone()
+        if existing and secret_type in ("login", "credential") and (
+            not update_existing or int(existing.get("matching_count") or 1) > 1
+        ):
+            # Save/create is never permission to overwrite a credential by
+            # label. Explicit edits use the authenticated item-ID route.
+            raise SaveSecretDuplicateTitleError()
 
                                                                 
         _SCHEMA_B_MARKERS = frozenset({
@@ -8031,7 +8058,8 @@ def retrieve_secret_tool(vault_id: str, args: dict, key: bytes):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT id, item_type, service, encrypted_data, created_at
+            SELECT id, item_type, service, encrypted_data, created_at,
+                   COUNT(*) OVER() AS matching_count
             FROM vault_items
             WHERE vault_id = %s
               AND LOWER(service) = LOWER(%s)
@@ -8047,6 +8075,8 @@ def retrieve_secret_tool(vault_id: str, args: dict, key: bytes):
 
     if not result:
         return f"I could not find a saved login for {service.title()}."
+    if int(result.get("matching_count") or 1) > 1:
+        return "More than one saved item has this title. Open Logins and select the specific item."
 
     try:
         decrypted_data = decrypt_message(result["encrypted_data"], key)
@@ -15748,6 +15778,8 @@ async def chat_endpoint(
                         key,
                         generated=True,
                     )
+                except SaveSecretDuplicateTitleError:
+                    return encrypted_reply("A saved login already uses this title. Choose a different title, or edit it in Logins.")
                 except Exception:
                     logger.exception(
                         "[CHAT-DEBUG] confirm_save_credential_draft_failed "
@@ -15829,6 +15861,8 @@ async def chat_endpoint(
                         key,
                         generated=True,
                     )
+                except SaveSecretDuplicateTitleError:
+                    return encrypted_reply("A saved login already uses this title. Choose a different title, or edit it in Logins.")
                 except Exception:
                     logger.exception(
                         "[CHAT-DEBUG] confirm_save_credential_failed "
@@ -16638,6 +16672,8 @@ async def chat_endpoint(
                                 and bool(_sm_draft.get("explicit_password_supplied"))
                             ),
                         )
+                    except SaveSecretDuplicateTitleError:
+                        return encrypted_reply("A saved login already uses this title. Choose a different title, or edit it in Logins.")
                     except Exception:
                         logger.exception(
                             "[CHAT-DEBUG] draft_state_save_failed "
@@ -16807,6 +16843,8 @@ async def chat_endpoint(
                         key,
                         generated=True,
                     )
+                except SaveSecretDuplicateTitleError:
+                    return encrypted_reply("A saved login already uses this title. Choose a different title, or edit it in Logins.")
                 except Exception:
                     logger.exception(
                         "[CHAT-DEBUG] save_picked_username_failed "
@@ -17354,6 +17392,7 @@ async def chat_endpoint(
                         "fields": {pending_field: new_value},
                     },
                     key,
+                    update_existing=True,
                 )
                 memory.pop("pending_edit", None)
                 return encrypted_reply(
@@ -17367,17 +17406,12 @@ async def chat_endpoint(
             conn = get_db()
             try:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
-                cursor.execute(
-                    """
-                    DELETE FROM vault_items
-                    WHERE vault_id = %s
-                      AND item_type = 'login'
-                      AND LOWER(service) = LOWER(%s)
-                    RETURNING service
-                    """,
-                    (vault_id, pending_service),
-                )
-                deleted = cursor.fetchone()
+                try:
+                    deleted = _delete_unique_login_row(cursor, vault_id, pending_service)
+                except HTTPException as exc:
+                    if exc.status_code == 409:
+                        return encrypted_reply("More than one saved login has this title. Open Logins and select the specific item.")
+                    raise
                 conn.commit()
                 memory.pop("pending_delete_login", None)
 
@@ -17422,17 +17456,12 @@ async def chat_endpoint(
             conn = get_db()
             try:
                 cursor = conn.cursor(cursor_factory=RealDictCursor)
-                cursor.execute(
-                    """
-                    DELETE FROM vault_items
-                    WHERE vault_id = %s
-                      AND item_type = 'login'
-                      AND LOWER(service) = LOWER(%s)
-                    RETURNING service
-                    """,
-                    (vault_id, service),
-                )
-                deleted = cursor.fetchone()
+                try:
+                    deleted = _delete_unique_login_row(cursor, vault_id, service)
+                except HTTPException as exc:
+                    if exc.status_code == 409:
+                        return encrypted_reply("More than one saved login has this title. Open Logins and select the specific item.")
+                    raise
                 conn.commit()
 
                 if not deleted:
@@ -17473,7 +17502,8 @@ async def chat_endpoint(
                     "fields": {"password": new_password},
                 },
                 key,
-                generated=True,                                      
+                generated=True,
+                update_existing=True,
             )
 
             return encrypted_reply(
@@ -18029,6 +18059,7 @@ async def chat_endpoint(
                 },
                 key,
                 generated=True,
+                update_existing=True,
             )
 
                                                                     
@@ -18115,6 +18146,11 @@ async def chat_endpoint(
             try:
                 result = save_secret_tool(
                     vault_id, direct_payload, key,
+                )
+            except SaveSecretDuplicateTitleError:
+                return encrypted_reply(
+                    "A saved login already uses this title. Choose a different "
+                    "title, or select the existing login in Logins to edit it."
                 )
             except SaveSecretStorageLimitError as exc:
                                                                      
@@ -19033,9 +19069,9 @@ async def chat_endpoint(
             pass
         return _route_to_ai_planner_stream()
 
+    except SaveSecretDuplicateTitleError:
+        return encrypted_reply("More than one saved login has this title, or it already exists. Open Logins to select it for editing, or choose a different title for a new login.")
     except HTTPException:
-                                                                      
-                                                                  
         raise
     except Exception as _post_decrypt_exc:
                                                                  
