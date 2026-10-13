@@ -37,14 +37,14 @@ class ClientIpExtractionTests(unittest.TestCase):
         req = _fake_request(client_host="10.0.0.1")
         self.assertEqual(rate_limit_auth._client_ip(req), "10.0.0.1")
 
-    def test_x_forwarded_for_wins(self) -> None:
+    def test_untrusted_forwarded_headers_do_not_select_a_budget(self) -> None:
         req = _fake_request(client_host="10.0.0.1", forwarded="9.9.9.9, 8.8.8.8")
-        self.assertEqual(rate_limit_auth._client_ip(req), "9.9.9.9")
+        self.assertEqual(rate_limit_auth._client_ip(req), "10.0.0.1")
 
-    def test_x_real_ip_used_when_no_forwarded(self) -> None:
+    def test_untrusted_real_ip_is_ignored(self) -> None:
         req = _fake_request(client_host="10.0.0.1")
         req.headers["x-real-ip"] = "5.5.5.5"
-        self.assertEqual(rate_limit_auth._client_ip(req), "5.5.5.5")
+        self.assertEqual(rate_limit_auth._client_ip(req), "10.0.0.1")
 
 
 class SignupLimitTests(unittest.TestCase):

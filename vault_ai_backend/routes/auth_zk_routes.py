@@ -136,6 +136,8 @@ from opaque_server_module import (
     registration_start as opaque_registration_start,
 )
 from rate_limit_auth import (
+    enforce_login_credential_rate_limit,
+    enforce_login_finalize_rate_limit,
     enforce_login_rate_limit,
     enforce_signup_rate_limit,
 )
@@ -578,6 +580,14 @@ async def zk_login_init(
     if payload.username_lookup is not None:
         lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
 
+    enforce_login_credential_rate_limit(
+        request, credential_id=handle_bytes, kind="handle",
+    )
+    if lookup_bytes is not None:
+        enforce_login_credential_rate_limit(
+            request, credential_id=lookup_bytes, kind="lookup",
+        )
+
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -769,6 +779,7 @@ async def zk_login_finalize(
     payload: ZkLoginFinalizeRequest,
     request: Request,
 ) -> ZkLoginFinalizeResponse:
+    enforce_login_finalize_rate_limit(request)
     ke3 = _b64url_decode(
         payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
     )

@@ -104,6 +104,20 @@ _SAVE_TRIGGER_RE = re.compile(
     r"(?P<fact>.+?)\s*$",
     re.IGNORECASE,
 )
+_NAMED_MEMORY_SAVE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:save|create|remember)\s+"
+    r"(?:a\s+)?(?:new\s+)?memory\s+"
+    r"(?:with\s+title\s*:?\s*|(?:titled|named|called)\s+)"
+    r"(?P<title>.*?)\s+(?:and|with)\s+(?:content|text|body)\s*:\s*"
+    r"(?P<value>.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_NAMED_MEMORY_PREFIX_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:save|create|remember)\s+"
+    r"(?:a\s+)?(?:new\s+)?memory\s+"
+    r"(?:with\s+title\b|(?:titled|named|called)\b)",
+    re.IGNORECASE,
+)
 _SAVE_PENDING_RE = re.compile(
     r"^\s*(?:save\s+it|save\s+this\s+memory|save\s+that\s+memory|"
     r"save\s+this|save\s+that|save\s+the\s+memory|remember\s+it|"
@@ -389,6 +403,8 @@ class PersonalMemoryIntent:
     needs_clarification: bool = False
     canonical_key_override: Optional[str] = None
     proposal_id: Optional[str] = None
+    literal_named_content: bool = False
+    validation_error: Optional[str] = None
 
     @property
     def canonical_key(self) -> str:
@@ -738,6 +754,10 @@ def _parse_fact_statement(
     return None
 
 
+def is_explicit_named_memory_command(message: str) -> bool:
+    return bool(_NAMED_MEMORY_PREFIX_RE.match(message or ""))
+
+
 def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]:
     text = _clean_message(message)
     if not text:
@@ -767,6 +787,45 @@ def parse_personal_memory_intent(message: str) -> Optional[PersonalMemoryIntent]
             relationship="self",
             attribute="pending",
             title="Pending memory",
+        )
+
+    # An explicit record kind owns its title/content, even when those values
+    # contain words such as "login". Handle the structured memory grammar
+    # before fact inference or the credential/AI fallback. Invalid fields
+    # ask for clarification rather than silently becoming a login draft.
+    raw_named = (message or "").strip()
+    named_memory = _NAMED_MEMORY_SAVE_RE.match(raw_named)
+    if is_explicit_named_memory_command(raw_named):
+        title = named_memory.group("title").strip() if named_memory else ""
+        value = named_memory.group("value").strip() if named_memory else ""
+        validation_error = None
+        if not title or not value:
+            validation_error = "Add a memory title and content first. Nothing was saved."
+        elif len(title) > _MAX_TITLE_LEN:
+            validation_error = "Use a memory title of 120 characters or fewer. Nothing was saved."
+        elif len(value) > _MAX_FIELD_LEN or len(raw_named) > _MAX_MESSAGE_LEN:
+            validation_error = "This chat format supports up to 500 characters of memory content. Use the Memory page for longer notes. Nothing was saved."
+        normalized_title = re.sub(r"\s+", " ", title.lower())
+        named_key = "named-memory:" + hashlib.sha256(normalized_title.encode("utf-8")).hexdigest()
+        valid = validation_error is None
+        return PersonalMemoryIntent(
+            action="save" if valid else "propose",
+            subject="self",
+            subject_display="your",
+            relationship="self",
+            attribute="note",
+            title=title,
+            memory_type="note",
+            category="note",
+            value=value,
+            display_value=value,
+            body=value,
+            tags=("note",),
+            canonical_key_override=named_key,
+            is_correction=False,
+            needs_clarification=not valid,
+            literal_named_content=True,
+            validation_error=validation_error,
         )
 
     m = _FORGET_RE.match(text)
@@ -983,21 +1042,24 @@ def _payload_for_intent(
     source_message_id: Optional[str],
 ) -> dict[str, Any]:
     value = intent.display_value or intent.value
+    # Only internally parsed named fields preserve their literal whitespace.
+    # Their full lengths were validated above; no partial save is permitted.
+    named = intent.literal_named_content
     return {
         "schema": _PAYLOAD_SCHEMA,
         "record_type": "personal_memory",
         "category": intent.category,
         "memory_type": _safe_memory_type(intent.memory_type),
-        "title": _clip(intent.title, _MAX_TITLE_LEN),
-        "value": _clip(value),
-        "body": _clip(intent.body or value),
+        "title": intent.title if named else _clip(intent.title, _MAX_TITLE_LEN),
+        "value": str(value or "") if named else _clip(value),
+        "body": str(intent.body or value or "") if named else _clip(intent.body or value),
         "event_date": intent.event_date,
         "subject": intent.subject,
         "subject_display": intent.subject_display,
         "relationship": intent.relationship,
         "attribute": intent.attribute,
         "normalized_value": intent.normalized_value,
-        "display_value": _clip(value),
+        "display_value": str(value or "") if named else _clip(value),
         "place": intent.place,
         "tags": [t for t in intent.tags if t],
         "custom_fields": [dict(field) for field in intent.custom_fields],
@@ -1157,6 +1219,12 @@ def _score_payload_match(
     q = _normalize_query_text(query)
     terms = _query_terms(query)
     if not q and not terms:
+        # A literal Unicode-only title is a valid exact request, not an
+        # empty query. Keep the existing fuzzy/token policy unchanged.
+        literal_query = re.sub(r"\s+", " ", query.strip().lower())
+        literal_title = re.sub(r"\s+", " ", str(item.get("title") or "").strip().lower())
+        if literal_query and literal_query == literal_title:
+            return 120
         return 0
 
     title_norm = _normalize_query_text(str(item.get("title") or ""))
@@ -1485,6 +1553,8 @@ def _saved_text(intent: PersonalMemoryIntent, verb: str = "Saved") -> str:
 
 
 def _clarification_text(intent: PersonalMemoryIntent) -> str:
+    if intent.validation_error:
+        return intent.validation_error
     if intent.attribute == "birthday":
         return (
             f"What month and day should I save for "
