@@ -157,6 +157,7 @@ class _ZkHttpHarness {
 
   final String vaultHandle;
   final List<String> calls = <String>[];
+  final List<Map<String, dynamic>> initBodies = <Map<String, dynamic>>[];
   final List<Map<String, dynamic>> finalizeBodies = <Map<String, dynamic>>[];
   int initCount = 0;
 
@@ -167,6 +168,7 @@ class _ZkHttpHarness {
   }) async {
     calls.add(path);
     if (path == '/auth/zk-login-init') {
+      initBodies.add(Map<String, dynamic>.from(body));
       initCount += 1;
       return {
         'slot_id': 'slot-$initCount',
@@ -289,6 +291,35 @@ void main() {
         '/auth/zk-login-init',
         '/auth/zk-login-init',
       ]);
+    });
+
+    test('three wrong named PIN submissions use six exchanges of the same distinct H15 and L32 identifiers', () async {
+      const name = 'QA-only';
+      final handle = deriveVaultHandleFromUsername(name);
+      final display = vaultHandleToDisplay(handle);
+      final lookup = deriveUsernameLookupV1(name);
+      final opaque = _StatefulOpaqueClient(
+        modernSucceeds: true,
+        legacySucceeds: true,
+        expectedLegacyIdentifier: vaultHandleCredentialId(handle),
+      );
+      final http = _ZkHttpHarness(vaultHandle: display);
+      final service = ZkAuthService(http.post, opaque: opaque);
+      for (var attempt = 0; attempt < 3; attempt++) {
+        await expectLater(service.loginVault(vaultName: name, pin: '000000'), throwsA(isA<OpaqueAuthenticationFailed>()));
+      }
+      expect(handle.length, 15);
+      expect(lookup.length, 32);
+      expect(http.initBodies.length, 6);
+      expect(http.initBodies.map((body) => body['vault_handle']).toSet(), {display});
+      expect(http.initBodies.map((body) => body['username_lookup']).toSet(), {vaultHandleB64Url(lookup)});
+      expect(opaque.calls.where((call) => call.startsWith('finish:modern:')).length, 3);
+      expect(opaque.calls.where((call) => call.startsWith('finish:legacy:')).length, 3);
+      expect(http.finalizeBodies, isEmpty);
+      for (final body in http.initBodies) {
+        expect(body.containsKey('vault_name'), isFalse);
+        expect(body.containsKey('pin'), isFalse);
+      }
     });
   });
 }

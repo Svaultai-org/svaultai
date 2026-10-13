@@ -33,7 +33,13 @@ void main() {
 
   test('normal dashboard, generated-login and Concierge UI catches show dedicated message', () {
     final source = File('lib/main.dart').readAsStringSync();
-    expect(source, contains('e is SavedItemUpdateRequiredException'));
+    final editor = File('lib/ui/secure_item_detail.dart').readAsStringSync();
+    expect(editor, contains('error is SavedItemUpdateRequiredException'));
+    final editorCallback = source.substring(
+        source.indexOf('Future<void> _openSecureItemEditDialog('),
+        source.indexOf('bool _isCryptoItemType('));
+    expect(editorCallback, contains('if (app.handleApiException(e)) return false;'));
+    expect(editorCallback, contains('rethrow;'));
     expect(source, contains('on SavedItemUpdateRequiredException catch (e)'));
     expect(source, contains('_showSnack(e.toString())'));
     final repository = File('lib/services/concierge_exposure.dart').readAsStringSync();

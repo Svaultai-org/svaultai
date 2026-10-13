@@ -164,6 +164,57 @@
   </script>
 </head>
 <body>
+  <!-- Paint before Flutter/Wasm downloads; no vault data or credentials. -->
+  <div id="svaultai-boot-status" role="status" aria-live="polite">
+    <div>
+      <strong>SVaultAI</strong>
+      <p id="svaultai-boot-message">Opening SVaultAI…</p>
+      <button id="svaultai-boot-retry" type="button" hidden>Try again</button>
+    </div>
+  </div>
+  <style>
+    #svaultai-boot-status {
+      position: fixed; inset: 0; z-index: 2; display: grid;
+      place-items: center; padding: 24px; box-sizing: border-box;
+      background: #0F1115; color: #f6f8fc;
+      font: 16px/1.5 system-ui, sans-serif; text-align: center;
+    }
+    #svaultai-boot-status > div { max-width: 340px; }
+    #svaultai-boot-status strong { font-size: 24px; }
+    #svaultai-boot-retry {
+      padding: 10px 18px; border: 1px solid #5f7488;
+      border-radius: 10px; background: #182633; color: #f6f8fc;
+      font: inherit; cursor: pointer;
+    }
+    #svaultai-boot-retry[hidden] { display: none; }
+  </style>
+  <script id="svaultai-boot-script">
+    (function () {
+      var status = document.getElementById('svaultai-boot-status');
+      var message = document.getElementById('svaultai-boot-message');
+      var retry = document.getElementById('svaultai-boot-retry');
+      var ready = false;
+      function showRetry(failed) {
+        if (ready) return;
+        message.textContent = failed
+          ? 'SVaultAI could not open. Check your connection and try again.'
+          : 'SVaultAI is taking longer than usual to open. Check your connection and try again.';
+        retry.hidden = false;
+      }
+      var timeout = window.setTimeout(function () { showRetry(false); }, 15000);
+      // Glass-pane creation precedes a rendered app. Only the engine's actual
+      // first-frame event may retire this shell; Dart then owns its boot gate.
+      window.addEventListener('flutter-first-frame', function () {
+        if (ready) return;
+        ready = true;
+        window.clearTimeout(timeout);
+        status.remove();
+      }, { once: true });
+      window.addEventListener('error', function () { showRetry(true); }, true);
+      window.addEventListener('unhandledrejection', function () { showRetry(true); });
+      retry.addEventListener('click', function () { window.location.reload(); });
+    })();
+  </script>
   <main id="seo-content" aria-label="SVaultAI product overview">
     <h1>SVaultAI — Digital Vault, Assets &amp; Concierge</h1>
     <p>Imagine a physical vault in digital form. Keep supported digital versions of your important belongings together: private photos, videos, files, documents, logins, memories and inheritance plans. SVaultAI is a digital vault, not simply a password manager.</p>
