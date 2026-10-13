@@ -20,6 +20,7 @@ import 'package:vault_ai_frontend/services/session_termination.dart'
 import 'package:vault_ai_frontend/services/vault_key_hierarchy.dart'
     as hierarchy;
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
+import 'package:vault_ai_frontend/ui/chat/chat_message_list.dart';
 
 class _App extends AppState {
   // Do not connect billing in this isolated saved-login fixture. Stats and
@@ -279,6 +280,72 @@ void main() {
       f.dispose();
     }
   });
+
+  testWidgets(
+      'Saved logins dashboard quick action opens all five encrypted logins without chat',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    final f = _Fixture();
+    await tester.runAsync(f.unlock);
+    await tester.runAsync(() async {
+      for (var id = 101; id <= 105; id++) {
+        await f.row(id, 'Dashboard Service ${id - 100}', 'login');
+      }
+    });
+    final originalRows =
+        f.rows.map((row) => Map<String, dynamic>.from(row)).toList();
+    try {
+      await f.run(() async {
+        await tester.pumpWidget(_dashboard(f.app));
+        await tester.pumpAndSettle();
+        expect(f.app.loginCount, 5);
+        await _section(tester, 'dashboard');
+        final quickAction =
+            find.widgetWithText(OutlinedButton, 'Saved logins');
+        await tester.ensureVisible(quickAction);
+        await tester.pumpAndSettle();
+        expect(quickAction.hitTestable(), findsOneWidget);
+        await tester.tap(quickAction);
+        await tester.pumpAndSettle();
+        expect(find.byType(LoginsPage), findsOneWidget);
+        expect(find.byKey(const Key('logins_page')), findsOneWidget);
+        expect(find.byKey(const Key('chat_composer_field')), findsNothing);
+        final page = tester.widget<LoginsPage>(find.byType(LoginsPage));
+        expect(page.logins, hasLength(5));
+        expect(page.logins.map((item) => item.itemId),
+            unorderedEquals(['101', '102', '103', '104', '105']));
+        for (var id = 101; id <= 105; id++) {
+          expect(find.byKey(ValueKey('secure_item_card_id_$id')), findsOneWidget);
+          expect(find.text('Dashboard Service ${id - 100}'), findsOneWidget);
+        }
+        expect(find.text('No saved login matches "".'), findsNothing);
+        expect(f.requests.where((request) => request.url.path == '/chat'),
+            isEmpty);
+        expect(f.rows, originalRows);
+        // The collection quick action must preserve named retrieval in chat.
+        await _section(tester, 'chat');
+        await _send(tester, 'Show my Dashboard Service 3 login');
+        final chat =
+            tester.widget<ChatMessageList>(find.byType(ChatMessageList));
+        final card = chat.messages.last.payload?['card'] as Map;
+        final login = (card['data'] as Map)['login'] as Map;
+        expect('${login['id']}', '103');
+        expect(login['title'], 'Dashboard Service 3');
+        expect((login['fields'] as Map)['username'], 'synthetic-user');
+        expect(f.requests.where((request) => request.url.path == '/chat'),
+            isEmpty);
+        expect(f.rows, originalRows);
+        expect(tester.takeException(), isNull);
+      });
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      f.dispose();
+      await tester.binding.setSurfaceSize(null);
+    }
+  },
+      variant:
+          TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android}));
 
   testWidgets(
       'actual encrypted inventory counts mixed logins on load and reload',
