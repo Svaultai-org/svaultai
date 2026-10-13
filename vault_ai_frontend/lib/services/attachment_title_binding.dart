@@ -14,6 +14,10 @@ String? attachmentTitleFromComposerText(
 
   candidate = candidate.replaceAll(RegExp(r'\s+'), ' ');
   candidate = _stripMatchingQuotes(candidate);
+  candidate = candidate.replaceFirst(
+    RegExp(r'^save this file in my vault as\s+', caseSensitive: false),
+    'save this file as ',
+  );
 
   final explicit = _stripExplicitNamingCommand(candidate);
   if (explicit != null) {
