@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -69,14 +70,23 @@ Future<AppState> _fixture() async {
     ..billingLoadState = BillingLoadState.loaded
     ..billingIncludedBytes = kVaultStorageLimitBytes
     ..billingEffectiveLimitBytes = kVaultStorageLimitBytes;
-  await deriveAndInstallCryptoContext(
-    vaultId: app.vaultId!,
-    vaultName: app.vaultName!,
-    pin: '123456',
-    pinSaltBase64: base64Encode(List.filled(16, 4)),
-    iterations: 1,
-    source: 'file-picker-regression-fixture',
-  );
+  // This VM fixture runs on macOS, not on an Android device with the native
+  // library. Seed the same synthetic context with the software KDF, then
+  // restore the requested platform BEFORE rendering the actual UI.
+  final fixturePlatform = debugDefaultTargetPlatformOverride;
+  debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+  try {
+    await deriveAndInstallCryptoContext(
+      vaultId: app.vaultId!,
+      vaultName: app.vaultName!,
+      pin: '123456',
+      pinSaltBase64: base64Encode(List.filled(16, 4)),
+      iterations: 1,
+      source: 'file-picker-regression-fixture',
+    );
+  } finally {
+    debugDefaultTargetPlatformOverride = fixturePlatform;
+  }
   ZkActiveMvk.set(
     mvk: SecretKey(List.filled(32, 4)),
     vaultId: app.vaultId!,
@@ -123,11 +133,10 @@ Future<void> _chatFile(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _withDashboard(
-  WidgetTester tester,
-  Future<void> Function(AppState, _Picker, List<String>) action,
-) async {
-  await tester.binding.setSurfaceSize(const Size(430, 932));
+Future<void> _withDashboard(WidgetTester tester,
+    Future<void> Function(AppState, _Picker, List<String>) action,
+    {Size size = const Size(430, 932)}) async {
+  await tester.binding.setSurfaceSize(size);
   final app = (await tester.runAsync(_fixture))!;
   final picker = _Picker();
   FilePicker? previous;
@@ -197,6 +206,28 @@ void main() {
         .setMockMethodCallHandler(
             const MethodChannel('com.llfbandit.record/messages'), null);
   });
+
+  testWidgets('actual Create header opens one menu and File never opens Login',
+      (tester) async {
+    for (final size in [const Size(430, 932), const Size(1280, 900)]) {
+      await _withDashboard(tester, (app, picker, requests) async {
+        await tester.tap(find.byKey(const Key('top_nav_create_button')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('vault_create_menu')), findsOneWidget);
+        expect(find.byKey(const Key('create_choice_login')), findsOneWidget);
+        expect(find.byKey(const Key('create_choice_file')), findsOneWidget);
+        expect(find.byKey(const Key('create_choice_memory')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('create_choice_file')));
+        await tester.pumpAndSettle();
+        expect(picker.calls, 1);
+        expect(find.byKey(const Key('vault_create_menu')), findsNothing);
+        expect(find.text('New Login'), findsNothing);
+        expect(find.text('Save login'), findsNothing);
+      }, size: size);
+    }
+  },
+      variant:
+          TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android}));
 
   testWidgets('Create File from Files reveals the queue in Chat without upload',
       (tester) async {

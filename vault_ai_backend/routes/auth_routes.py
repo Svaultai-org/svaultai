@@ -20,15 +20,14 @@ from auth_local import (
     verify_session_token,
 )
 from rate_limit_auth import (
+    enforce_login_credential_rate_limit,
     enforce_login_rate_limit,
     enforce_signup_rate_limit,
 )
 from vault_core import (
     KDF_LEGACY_ITERATIONS,
     KDF_TARGET_ITERATIONS,
-    MAX_PIN_ATTEMPTS,
     MIN_PIN_LENGTH_NEW_VAULT,
-    PIN_LOCKOUT_HOURS,
     PIN_VERIFIER_PLAINTEXT,
     decrypt_message,
     derive_key,
@@ -265,6 +264,9 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
     enforce_login_rate_limit(request)
     _validate_pin_shape(payload.pin, is_signup=False)
     username_lookup = _decode_username_lookup(payload.username_lookup)
+    enforce_login_credential_rate_limit(
+        request, credential_id=username_lookup, kind="lookup",
+    )
 
     conn = get_db()
     try:
@@ -300,39 +302,10 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
             verifier_ok = False
 
         if not verifier_ok:
-                                                                       
-                                                                   
-            cur.execute("SELECT NOW() AS now")
-            now_row = cur.fetchone() or {}
-            now = now_row.get("now")
-
-            prior_locked_until = row.get("locked_until")
-            prior_attempts = 0 if (
-                prior_locked_until and now and prior_locked_until < now
-            ) else int(row.get("failed_pin_attempts") or 0)
-            new_attempts = prior_attempts + 1
-
-            if new_attempts >= MAX_PIN_ATTEMPTS:
-                cur.execute(
-                    """
-                    UPDATE vaults
-                    SET failed_pin_attempts = 0,
-                        locked_until = NOW() + (INTERVAL '1 hour' * %s)
-                    WHERE vault_id = %s
-                    """,
-                    (PIN_LOCKOUT_HOURS, vault_id),
-                )
-            else:
-                cur.execute(
-                    """
-                    UPDATE vaults
-                    SET failed_pin_attempts = %s,
-                        locked_until = NULL
-                    WHERE vault_id = %s
-                    """,
-                    (new_attempts, vault_id),
-                )
-            conn.commit()
+            # An unauthenticated caller must not lock a vault for everyone
+            # merely by knowing its opaque/name-derived identifier. Both
+            # source and source+identifier budgets above fail closed. Leave
+            # authenticated sensitive-PIN lock state untouched here.
             raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
 
                                                                
@@ -350,13 +323,16 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         now = now_row.get("now")
         locked_until = row.get("locked_until")
         if locked_until and now and locked_until > now:
+            retry = max(1, int((locked_until - now).total_seconds()) + 1)
             raise HTTPException(
                 status_code=423,
                 detail={
                     "code":          "pin_locked",
-                    "message":       "This vault is temporarily locked. Try again later.",
+                    "message":       f"This vault is temporarily locked. Try again in {retry} seconds.",
                     "locked_until":  locked_until.isoformat(),
+                    "reset_in_seconds": retry,
                 },
+                headers={"Retry-After": str(retry)},
             )
 
 

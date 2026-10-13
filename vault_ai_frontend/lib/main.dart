@@ -46,6 +46,7 @@ import 'services/zk_active_mvk.dart' as zk_mvk_store;
 import 'services/zk_active_sk_vault.dart' as zk_sk_store;
 import 'services/vault_key_hierarchy.dart' as vk_hier;
 import 'services/zk_auth_service.dart';
+import 'services/auth_retry.dart';
 import 'services/billing_me_diagnostic.dart';
 import 'services/upload_queue.dart';
 import 'services/attachment_title_binding.dart';
@@ -2279,6 +2280,16 @@ class AppState extends ChangeNotifier {
       });
       lockMessage = null;
       rethrow;
+    } on RateLimitedException catch (e) {
+      lockMessage = authRetryMessage(e.resetInSeconds);
+      notifyListeners();
+      return false;
+    } on VaultLockedException catch (e) {
+      // Preserve an existing authenticated-sensitive-PIN lock. A retryable
+      // server lock is not another wrong PIN and must never be silent.
+      lockMessage = e.message;
+      notifyListeners();
+      return false;
     } catch (e) {
       pinAttempts++;
       vlog('pin.verify.result', {
@@ -4283,6 +4294,27 @@ void _notifyNewDeviceTrustedIfNeeded(bool flag) {
   );
 }
 
+Widget _authAutofillScaffold({
+  required PreferredSizeWidget appBar,
+  required Widget body,
+}) => AutofillGroup(
+      onDisposeAction: AutofillContextAction.cancel,
+      child: Scaffold(appBar: appBar, body: body),
+    );
+
+Widget _authGuardProgress() => const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Preparing sign-in…'),
+          ],
+        ),
+      ),
+    );
+
 Widget _authErrorBox(String text) {
   return Container(
     width: double.infinity,
@@ -4324,6 +4356,12 @@ Future<Map<String, dynamic>> _zkHttpPost(
         body: jsonEncode(requestBody),
       )
       .timeout(const Duration(seconds: 30));
+  if (response.statusCode == 429) {
+    throw AuthRetryException.fromResponse(
+      responseBody: response.body,
+      retryAfter: response.headers['retry-after'],
+    );
+  }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
       'ZK POST $path failed ${response.statusCode}: ${response.body}',
@@ -4500,6 +4538,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   bool _isZkHandleInput = false;
 
   bool _showForm = false;
+  AppState? _guardAppState;
+  bool _guardScheduled = false;
+  bool _guardRedirecting = false;
 
   @override
   void initState() {
@@ -4553,17 +4594,33 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     if (route != null) {
       appRouteObserver.subscribe(this, route);
     }
+    final app = context.read<AppState>();
+    if (!identical(app, _guardAppState)) {
+      _guardAppState?.removeListener(_onGuardStateChanged);
+      _guardAppState = app;
+      app.addListener(_onGuardStateChanged);
+      _scheduleGuard('dependencies');
+    }
+  }
+
+  void _onGuardStateChanged() {
+    if (!mounted || _showForm || _guardRedirecting) return;
+    if (_guardAppState?.hydrated == true) _scheduleGuard('hydration_complete');
   }
 
   @override
   void didPopNext() {
     super.didPopNext();
+    _guardRedirecting = false;
     if (_showForm) setState(() => _showForm = false);
     _scheduleGuard('didPopNext');
   }
 
   void _scheduleGuard(String source) {
+    if (_guardScheduled || _guardRedirecting) return;
+    _guardScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _guardScheduled = false;
       if (!mounted) return;
       final app = context.read<AppState>();
       if (!app.hydrated) return;
@@ -4580,21 +4637,25 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         'redirectFired=${dest != null}',
       );
       if (dest != null) {
+        _guardRedirecting = true;
         Navigator.of(context).pushReplacementNamed(dest);
         return;
       }
 
       if (app.lastVaultName != null && app.lastVaultName!.isNotEmpty) {
+        _guardRedirecting = true;
         Navigator.of(context).pushReplacementNamed('/unlock');
         return;
       }
       if (!_showForm) setState(() => _showForm = true);
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
+    _guardAppState?.removeListener(_onGuardStateChanged);
     vaultNameCtrl.removeListener(_maybeMarkZkHandle);
     vaultNameCtrl.dispose();
     pinCtrl.dispose();
@@ -4866,6 +4927,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         } catch (_) {}
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
+        TextInput.finishAutofillContext(shouldSave: true);
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e, stack) {
@@ -4895,10 +4957,17 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loading = false;
         });
         return;
-      } on RateLimitedException catch (e) {
+      } on AuthRetryException catch (e) {
         if (!mounted) return;
         setState(() {
           err = e.message;
+          loading = false;
+        });
+        return;
+      } on RateLimitedException catch (e) {
+        if (!mounted) return;
+        setState(() {
+          err = authRetryMessage(e.resetInSeconds);
           loading = false;
         });
         return;
@@ -5004,6 +5073,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       await _deriveKeyAndUnlock(app: app, pin: pin);
       pageTiming('key_unwrap_complete');
       if (!mounted) return;
+      if (app.unlocked) TextInput.finishAutofillContext(shouldSave: true);
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
         context: context,
@@ -5024,7 +5094,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     } on RateLimitedException catch (e) {
       if (!mounted) return;
       setState(() {
-        err = e.message;
+        err = authRetryMessage(e.resetInSeconds);
         loading = false;
       });
     } on VaultFrozenException {
@@ -5059,10 +5129,10 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
 
   @override
   Widget build(BuildContext context) {
-    if (!_showForm) return const Scaffold();
+    if (!_showForm) return _authGuardProgress();
     final w = MediaQuery.of(context).size.width;
     final isMobile = w < 760;
-    return Scaffold(
+    return _authAutofillScaffold(
       appBar: TopNavBar(isMobile: isMobile),
       body: Center(
         child: SizedBox(
@@ -5097,6 +5167,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   child: TextField(
                     key: const Key('auth_vault_name_field'),
                     controller: vaultNameCtrl,
+                    autofillHints: const [AutofillHints.username],
                     autocorrect: false,
                     enabled: !loading,
                     decoration: const InputDecoration(labelText: 'Vault name'),
@@ -5110,9 +5181,11 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                   child: TextField(
                     key: const Key('auth_pin_field'),
                     controller: pinCtrl,
+                    autofillHints: const [AutofillHints.password],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: 64,
+                    maxLengthEnforcement: MaxLengthEnforcement.none,
                     enabled: !loading,
                     decoration: const InputDecoration(
                       counterText: '',
@@ -5351,6 +5424,7 @@ class _SignupPageState extends State<SignupPage> {
       // ``ZkAuthService`` for the next ZK login, but never shown to
       // the user — the only user-visible credentials are the
       // username and PIN they just chose.
+      TextInput.finishAutofillContext(shouldSave: true);
       Navigator.of(context).pushReplacementNamed('/chat');
       return;
     } on OpaqueUnavailable catch (e) {
@@ -5364,10 +5438,17 @@ class _SignupPageState extends State<SignupPage> {
         loading = false;
       });
       return;
-    } on RateLimitedException catch (e) {
+    } on AuthRetryException catch (e) {
       if (!mounted) return;
       setState(() {
         err = e.message;
+        loading = false;
+      });
+      return;
+    } on RateLimitedException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        err = authRetryMessage(e.resetInSeconds);
         loading = false;
       });
       return;
@@ -5417,7 +5498,7 @@ class _SignupPageState extends State<SignupPage> {
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
     final isMobile = w < 760;
-    return Scaffold(
+    return _authAutofillScaffold(
       appBar: TopNavBar(isMobile: isMobile),
       body: Center(
         child: SizedBox(
@@ -5481,6 +5562,7 @@ class _SignupPageState extends State<SignupPage> {
                   TextField(
                     key: const Key('signup_vault_name_field'),
                     controller: vaultNameCtrl,
+                    autofillHints: const [AutofillHints.newUsername],
                     autocorrect: false,
                     enabled: !loading,
                     decoration: InputDecoration(
@@ -5503,9 +5585,11 @@ class _SignupPageState extends State<SignupPage> {
                   TextField(
                     key: const Key('signup_pin_field'),
                     controller: pinCtrl,
+                    autofillHints: const [AutofillHints.newPassword],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: _maxPinLength,
+                    maxLengthEnforcement: MaxLengthEnforcement.none,
                     enabled: !loading,
                     decoration: const InputDecoration(
                       counterText: '',
@@ -5517,9 +5601,11 @@ class _SignupPageState extends State<SignupPage> {
                   TextField(
                     key: const Key('signup_confirm_pin_field'),
                     controller: confirmPinCtrl,
+                    autofillHints: const [AutofillHints.newPassword],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     maxLength: _maxPinLength,
+                    maxLengthEnforcement: MaxLengthEnforcement.none,
                     enabled: !loading,
                     decoration: const InputDecoration(
                       counterText: '',
@@ -5802,6 +5888,7 @@ class _UnlockPageState extends State<UnlockPage> {
         }
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
+        TextInput.finishAutofillContext(shouldSave: true);
         Navigator.pushReplacementNamed(context, '/chat');
         return;
       } on OpaqueUnavailable catch (e, stack) {
@@ -5823,6 +5910,13 @@ class _UnlockPageState extends State<UnlockPage> {
         if (!mounted) return;
         setState(() {
           err = 'Wrong username or PIN.';
+          loading = false;
+        });
+        return;
+      } on AuthRetryException catch (e) {
+        if (!mounted) return;
+        setState(() {
+          err = e.message;
           loading = false;
         });
         return;
@@ -5910,6 +6004,7 @@ class _UnlockPageState extends State<UnlockPage> {
       await _deriveKeyAndUnlock(app: app, pin: pin);
       pageTiming('key_unwrap_complete');
       if (!mounted) return;
+      if (app.unlocked) TextInput.finishAutofillContext(shouldSave: true);
       _notifyNewDeviceTrustedIfNeeded(newDeviceTrusted);
       final adoptedNav = await _tryLegacyAdoptionBestEffort(
         context: context,
@@ -5930,7 +6025,7 @@ class _UnlockPageState extends State<UnlockPage> {
     } on RateLimitedException catch (e) {
       if (!mounted) return;
       setState(() {
-        err = e.message;
+        err = authRetryMessage(e.resetInSeconds);
         loading = false;
       });
     } on VaultFrozenException {
@@ -5991,7 +6086,7 @@ class _UnlockPageState extends State<UnlockPage> {
     if (_leavingForLogin) return const Scaffold();
     final w = MediaQuery.of(context).size.width;
     final isMobile = w < 760;
-    return Scaffold(
+    return _authAutofillScaffold(
       appBar: TopNavBar(isMobile: isMobile),
       body: Center(
         child: SizedBox(
@@ -6029,10 +6124,12 @@ class _UnlockPageState extends State<UnlockPage> {
                   child: TextField(
                     key: const Key('auth_unlock_pin_field'),
                     controller: pinCtrl,
+                    autofillHints: const [AutofillHints.password],
                     keyboardType: TextInputType.number,
                     obscureText: true,
                     autofocus: true,
                     maxLength: 64,
+                    maxLengthEnforcement: MaxLengthEnforcement.none,
                     enabled: !loading,
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 22, letterSpacing: 10),
@@ -6242,7 +6339,15 @@ class _PinGatePageState extends State<PinGatePage> {
         'elapsed_ms': DateTime.now().difference(submitStartedAt).inMilliseconds,
         'route': '/chat',
       });
+      TextInput.finishAutofillContext(shouldSave: true);
       Navigator.pushReplacementNamed(context, '/chat');
+    } on RateLimitedException catch (e) {
+      if (!mounted) return;
+      final seconds = (e.resetInSeconds ?? 60).clamp(1, 86400);
+      setState(() => err = 'Too many attempts. Try again in $seconds seconds.');
+    } on AuthRetryException catch (e) {
+      if (!mounted) return;
+      setState(() => err = e.message);
     } catch (e) {
       if (app.handleApiException(e)) return;
       setState(() => err = e.toString().replaceFirst('Exception: ', ''));
@@ -6294,7 +6399,7 @@ class _PinGatePageState extends State<PinGatePage> {
     }
     final title = mode ? 'Create your PIN' : 'Enter your PIN';
 
-    return Scaffold(
+    return _authAutofillScaffold(
       appBar: TopNavBar(showActions: false, isMobile: isMobile),
       body: Center(
         child: SizedBox(
@@ -6433,9 +6538,11 @@ class _PinGatePageState extends State<PinGatePage> {
                 TextField(
                   key: const Key('pin_gate_pin_field'),
                   controller: pinController,
+                  autofillHints: [mode ? AutofillHints.newPassword : AutofillHints.password],
                   keyboardType: TextInputType.number,
                   obscureText: true,
                   maxLength: _maxPinLength,
+                  maxLengthEnforcement: MaxLengthEnforcement.none,
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 22, letterSpacing: 10),
                   decoration: const InputDecoration(
@@ -7300,13 +7407,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           return true;
         } catch (e) {
           if (app.handleApiException(e)) return false;
-          if (e is SavedItemConflictException ||
-              e is SavedItemUpdateRequiredException) {
-            _showSnack(e.toString());
-            return false;
-          }
-          _showSnack('Could not update saved item: $e');
-          return false;
+          // Keep failures inside the still-open editor. Its safe error
+          // mapping preserves entered fields and makes retry feedback visible.
+          rethrow;
         }
       },
     );
@@ -15489,6 +15592,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (_pendingLocalDelete != null) return false;
     final command = parseVaultLocalMemorySaveCommand(text);
     if (command == null) return false;
+
+    if (command.validationError != null) {
+      _appendLocalVaultReply(text, command.validationError!);
+      return true;
+    }
+
+    if (command.title.isEmpty || command.value.isEmpty) {
+      _appendLocalVaultReply(
+        text,
+        'Add a memory title and content first. Nothing was saved.',
+      );
+      return true;
+    }
 
     final app = context.read<AppState>();
     final token = app.sessionToken;

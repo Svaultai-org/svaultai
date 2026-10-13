@@ -254,7 +254,27 @@ Future<Map<String, dynamic>?> showMemoryEditorDialog(
           }
 
           return AlertDialog(
-            title: Text(row == null ? 'New memory' : 'Edit memory'),
+            title: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(row == null ? 'New memory' : 'Edit memory'),
+                if (localError != null) ...[
+                  const SizedBox(height: VaultSpacing.sm),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      localError!,
+                      key: const Key('memory_dialog_validation_error'),
+                      style: const TextStyle(
+                        color: VaultColors.severityCrit,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
             content: SizedBox(
               width: 460,
               child: SingleChildScrollView(
@@ -362,17 +382,6 @@ Future<Map<String, dynamic>?> showMemoryEditorDialog(
                       icon: const Icon(Icons.add, size: 18),
                       label: const Text('Add field'),
                     ),
-                    if (localError != null) ...[
-                      const SizedBox(height: VaultSpacing.md),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          localError!,
-                          style:
-                              const TextStyle(color: VaultColors.severityCrit),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),

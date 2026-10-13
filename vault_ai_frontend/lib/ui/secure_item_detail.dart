@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../api_client.dart'
+    show SavedItemConflictException, SavedItemUpdateRequiredException;
 import '../l10n/app_localizations.dart';
 
 const Map<String, String> kSecureItemTypeLabelsForDetail = <String, String>{
@@ -458,6 +460,7 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
   late final List<SecureItemEditField> _baseFields;
   final List<_SecureItemCustomFieldCtrls> _customFields = [];
   bool _saving = false;
+  String? _saveError;
 
   @override
   void initState() {
@@ -523,7 +526,10 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
 
   Future<void> _handleSave() async {
     if (_saving) return;
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
     final newTitle = _titleCtrl.text.trim();
     final effectiveTitle = newTitle.isEmpty ? widget.title.trim() : newTitle;
     if (effectiveTitle.isEmpty) {
@@ -541,6 +547,8 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
       fields[label] = value;
     }
     bool ok = false;
+    var failureMessage =
+        'Could not save this item. Check your connection and try again.';
     try {
       ok = await widget.onSave(
         oldTitle: widget.title,
@@ -548,7 +556,13 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
         newTitle: effectiveTitle,
         fields: fields,
       );
-    } catch (_) {
+    } catch (error) {
+      // Only these typed exceptions contain fixed, user-safe copy. Never
+      // expose arbitrary transport/server errors or entered secure fields.
+      if (error is SavedItemConflictException ||
+          error is SavedItemUpdateRequiredException) {
+        failureMessage = error.toString();
+      }
       ok = false;
     }
     if (!mounted) return;
@@ -557,7 +571,10 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
       return;
     }
 
-    setState(() => _saving = false);
+    setState(() {
+      _saving = false;
+      _saveError = failureMessage;
+    });
   }
 
   @override
@@ -567,9 +584,26 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
         kSecureItemTypeLabelsForDetail[widget.itemType] ?? 'Saved item';
     return AlertDialog(
       backgroundColor: const Color(0xFF2A2A2A),
-      title: Text(
-        widget.dialogTitle ?? 'Edit $chip',
-        style: const TextStyle(color: Colors.white, fontSize: 18),
+      title: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.dialogTitle ?? 'Edit $chip',
+            style: const TextStyle(color: Colors.white, fontSize: 18),
+          ),
+          if (_saveError != null) ...[
+            const SizedBox(height: 8),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                _saveError!,
+                key: const Key('secure_item_edit_save_error'),
+                style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+              ),
+            ),
+          ],
+        ],
       ),
       content: SingleChildScrollView(
         child: Column(

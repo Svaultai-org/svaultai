@@ -7,12 +7,14 @@ class VaultLocalMemorySaveCommand {
   final String value;
   final String memoryType;
   final String relationship;
+  final String? validationError;
 
   const VaultLocalMemorySaveCommand({
     required this.title,
     required this.value,
     required this.memoryType,
     required this.relationship,
+    this.validationError,
   });
 
   Map<String, dynamic> toMemoryData() => <String, dynamic>{
@@ -107,6 +109,23 @@ final RegExp _explicitPersonalMemorySave = RegExp(
   caseSensitive: false,
 );
 
+final RegExp _namedMemorySave = RegExp(
+  r'^\s*(?:please\s+)?(?:save|create|remember)\s+'
+  r'(?:a\s+)?(?:new\s+)?memory\s+'
+  r'(?:with\s+title\s*:?\s*|(?:titled|named|called)\s+)'
+  r'(?<title>.*?)\s+(?:and|with)\s+(?:content|text|body)\s*:\s*'
+  r'(?<value>[\s\S]*?)\s*$',
+  caseSensitive: false,
+  dotAll: true,
+);
+
+final RegExp _namedMemoryPrefix = RegExp(
+  r'^\s*(?:please\s+)?(?:save|create|remember)\s+'
+  r'(?:a\s+)?(?:new\s+)?memory\s+'
+  r'(?:with\s+title\b|(?:titled|named|called)\b)',
+  caseSensitive: false,
+);
+
 final RegExp _relationshipNameMemorySaveWithoutConnector = RegExp(
   r'^\s*(?:please\s+)?(?:remember|save)\s+(?:that\s+)?my\s+'
   r'(?<relationship>friend|wife|husband|spouse|partner|mother|mom|father|dad|'
@@ -134,6 +153,32 @@ final RegExp _familyRelationship = RegExp(
 VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
   String message,
 ) {
+  // The explicit record kind takes precedence over words in the title or
+  // content. Keep both fields verbatim; do not turn a named memory into a
+  // generated login or silently replace an existing record.
+  final named = _namedMemorySave.firstMatch(message);
+  if (_namedMemoryPrefix.hasMatch(message)) {
+    final title = (named?.namedGroup('title') ?? '').trim();
+    final value = (named?.namedGroup('value') ?? '').trim();
+    String? validationError;
+    if (title.isEmpty || value.isEmpty) {
+      validationError =
+          'Add a memory title and content first. Nothing was saved.';
+    } else if (title.runes.length > 120) {
+      validationError =
+          'Use a memory title of 120 characters or fewer. Nothing was saved.';
+    } else if (value.runes.length > 500 || message.trim().runes.length > 2000) {
+      validationError =
+          'This chat format supports up to 500 characters of memory content. Use the Memory page for longer notes. Nothing was saved.';
+    }
+    return VaultLocalMemorySaveCommand(
+      title: title,
+      value: value,
+      memoryType: 'note',
+      relationship: 'self',
+      validationError: validationError,
+    );
+  }
   final explicit = _explicitPersonalMemorySave.firstMatch(message);
   final relationshipName = explicit == null
       ? _relationshipNameMemorySaveWithoutConnector.firstMatch(message)

@@ -13801,8 +13801,15 @@ async def chat_endpoint(
         # the fast router, the planner, or any tool-selection path can run.
         # This prevents phrases such as "analyze this file and save the
         # credentials" from being reinterpreted as credential generation.
-        _credential_extraction_action = _parse_credential_extraction_action(
-            decrypted_message or ""
+        # Literal named-memory content is not an attachment or credential
+        # instruction, even when those words appear inside the saved note.
+        from durable_personal_memory import is_explicit_named_memory_command
+        _named_memory_owns_turn = is_explicit_named_memory_command(
+            decrypted_message or "",
+        )
+        _credential_extraction_action = (
+            None if _named_memory_owns_turn
+            else _parse_credential_extraction_action(decrypted_message or "")
         )
         if _credential_extraction_action is not None:
             try:
@@ -13857,11 +13864,13 @@ async def chat_endpoint(
             )
             return encrypted_reply(_action_reply)
 
-        _attachment_command_kind = classify_attachment_command(
-            decrypted_message or ""
+        _attachment_command_kind = (
+            None if _named_memory_owns_turn
+            else classify_attachment_command(decrypted_message or "")
         )
         _current_attachment_extraction = bool(
-            req.uploaded_file_ids
+            not _named_memory_owns_turn
+            and req.uploaded_file_ids
             and _user_requested_login_extraction(decrypted_message or "")
         )
         if _current_attachment_extraction:
@@ -13942,17 +13951,19 @@ async def chat_endpoint(
                 "again. No credential draft was created and nothing was saved."
             )
 
+        # An explicit named memory owns its content even if the last word
+        # happens to be "login". It is not a pending credential confirmation.
         try:
             from vault_pending_draft_confirm import (
                 is_pending_draft_confirm_phrase as _cred_save_confirm_phrase,
                 pending_draft_confirm_service as _cred_confirm_service,
                 NO_DRAFT_FRIENDLY_REPLY as _cred_no_draft_reply,
             )
-            _credential_save_preconfirm = _cred_save_confirm_phrase(
+            _credential_save_preconfirm = not _named_memory_owns_turn and _cred_save_confirm_phrase(
                 decrypted_message or "",
             )
             _credential_confirm_selection_hint = req.selection_hint
-            if not _credential_save_preconfirm:
+            if not _named_memory_owns_turn and not _credential_save_preconfirm:
                 _named_confirm_service = _cred_confirm_service(
                     decrypted_message or "",
                 )
