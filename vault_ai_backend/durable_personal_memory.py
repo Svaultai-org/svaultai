@@ -99,6 +99,7 @@ _SAVE_TRIGGER_RE = re.compile(
     r"^\s*(?:please\s+)?(?:remember(?:\s+that)?|save\s+this(?:\s+about\s+me)?|"
     r"save\s+that|save\s+memory|save\s+this\s+memory|"
     r"save(?=\s+my\s+(?:wife|husband|spouse|partner|friend|sister|brother|daughter|son)\b)|"
+    rf"save(?=\s+my\s+{_SUBJECT_RE}(?:{_APOSTROPHE_RE}s)?\s+maiden\s+name\b)|"
     r"don(?:'|\u2019)?t\s+forget|dont\s+forget|"
     r"keep\s+this(?:\s+for\s+me)?|note\s+that)\s*:?\s+"
     r"(?P<fact>.+?)\s*$",
@@ -164,7 +165,12 @@ _FORGET_RE = re.compile(
 )
 _MAIDEN_FACT_RE = re.compile(
     rf"^(?:my\s+)?(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
-    r"maiden\s+name\s*(?:is|=|:)?\s*(?P<value>.+?)\s*$",
+    r"maiden\s+name\s*(?:(?:is|as|to\s+be)\b|[=:])?\s*(?P<value>.*?)\s*$",
+    re.IGNORECASE,
+)
+_MAIDEN_CREDENTIAL_VALUE_RE = re.compile(
+    r"^\s*(?:(?:a|the)\s+)?(?:login|credential|account|password)\b|"
+    r"\b(?:username|password|email|pin|passcode)\s*(?:=|:|is\b)",
     re.IGNORECASE,
 )
 _RELATIONSHIP_NAME_FACT_RE = re.compile(
@@ -180,7 +186,7 @@ _TRAILING_SAVE_TRIGGER_RE = re.compile(
     re.IGNORECASE,
 )
 _MAIDEN_RECALL_RE = re.compile(
-    rf"^\s*(?:what(?:'s|\s+is))\s+(?:my\s+)?"
+    rf"^\s*(?:what(?:['\u2019]?s|\s+is))\s+(?:my\s+)?"
     rf"(?P<subject>{_SUBJECT_RE})(?:{_APOSTROPHE_RE}s)?\s+"
     r"maiden\s+name" + _END_PUNCT_RE,
     re.IGNORECASE,
@@ -593,7 +599,10 @@ def _parse_fact_statement(
     m = _MAIDEN_FACT_RE.match(text)
     if m:
         subject, display, relationship = _subject_parts(m.group("subject"))
-        value = _clip(m.group("value"))
+        raw_value = re.sub(r"[.!?]+$", "", m.group("value")).strip()
+        if _MAIDEN_CREDENTIAL_VALUE_RE.search(raw_value):
+            return None
+        value = _clip(raw_value)
         return PersonalMemoryIntent(
             action=action,
             subject=subject,
@@ -607,7 +616,11 @@ def _parse_fact_statement(
             display_value=value,
             tags=("family", "identity"),
             is_correction=is_correction,
-            needs_clarification=not bool(value),
+            needs_clarification=not bool(value) or len(raw_value) > _MAX_FIELD_LEN,
+            validation_error=(
+                "This chat format supports up to 500 characters of memory content. Use the Memory page for longer notes. Nothing was saved."
+                if len(raw_value) > _MAX_FIELD_LEN else None
+            ),
         )
 
     m = _ANNIVERSARY_FACT_RE.match(text)
@@ -2337,6 +2350,10 @@ def handle_personal_memory_turn(
             return None
         return "Memory proposal cancelled."
     if intent.action == "save":
+        if intent.needs_clarification or intent.validation_error:
+            reply = _clarification_text(intent)
+            _store_pending_clarification(vault_id, session_id, reply)
+            return reply
         if client_owned_storage:
             return _client_owned_save_envelope(
                 _payload_for_intent(

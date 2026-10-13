@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -29,7 +30,7 @@ void main() {
     st.SessionTermination.instance.reset();
   });
 
-  testWidgets('pending initialization paints a loader without mounting the app',
+  testWidgets('pending initialization paints the original logo without copy',
       (tester) async {
     final pending = Completer<Widget>();
     var calls = 0;
@@ -38,8 +39,13 @@ void main() {
       return pending.future;
     }));
     await tester.pump(const Duration(seconds: 60));
-    expect(find.text('Opening SVaultAI…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    final logo = tester.widget<Image>(find.byType(Image));
+    expect((logo.image as AssetImage).assetName,
+        'assets/branding/vaultai-icon-1024.png');
+    expect(logo.semanticLabel, 'SVaultAI logo');
+    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Try again'), findsNothing);
     expect(find.byType(Navigator), findsNothing);
     expect(find.text('Initialized app'), findsNothing);
     expect(calls, 1);
@@ -48,6 +54,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Initialized app'), findsOneWidget);
     expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.byType(Image), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('startup reuses the existing canonical updated branding master', () {
+    expect(
+      sha256
+          .convert(
+              File('assets/branding/vaultai-icon-1024.png').readAsBytesSync())
+          .toString(),
+      '171f3be8c7d1c0d081ed23496dd8bd8b34267cfe07693c72527a9865c47bfcd1',
+    );
+  });
+
+  testWidgets('pending logo is unchanged on iOS and Android', (tester) async {
+    final pending = Completer<Widget>();
+    await tester.pumpWidget(AppStartupGate(initialize: () => pending.future));
+    await tester.pump();
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(Navigator), findsNothing);
+    expect(tester.takeException(), isNull);
+    pending.complete(_readyApp);
+    await tester.pumpAndSettle();
+  },
+      variant:
+          TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android}));
+
+  testWidgets('manual error retry returns to the same logo-only pending state',
+      (tester) async {
+    final pending = Completer<Widget>();
+    var calls = 0;
+    await tester.pumpWidget(AppStartupGate(initialize: () {
+      if (++calls == 1) throw StateError('synthetic-do-not-display');
+      return pending.future;
+    }));
+    await tester.pumpAndSettle();
+    expect(find.text('SVaultAI could not start. Please try again.'),
+        findsOneWidget);
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(find.byType(Image), findsOneWidget);
+    expect(
+        find.text('SVaultAI could not start. Please try again.'), findsNothing);
+    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.text('Try again'), findsNothing);
+    expect(calls, 2);
+    pending.complete(_readyApp);
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsNothing);
+    expect(find.text('Initialized app'), findsOneWidget);
+    expect(calls, 2);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('failed initialization offers one retry without exposing secrets',
