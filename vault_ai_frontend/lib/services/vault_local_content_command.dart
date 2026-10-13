@@ -422,20 +422,28 @@ int? resolveVaultLocalContentLabelIndex({
   required String query,
   required List<String> labels,
 }) {
-  final match = resolveVaultLocalContentMatch(
-    query: query,
-    entries: <VaultLocalContentEntry>[
-      for (var index = 0; index < labels.length; index++)
-        VaultLocalContentEntry(
-          id: '$index',
-          label: labels[index],
-        ),
-    ],
-  );
-  if (match == null) return null;
-  final index = int.tryParse(match.entry.id);
-  if (index == null || index < 0 || index >= labels.length) return null;
-  return index;
+  final normalizedQuery = normalizeVaultLocalContentText(query);
+  final queryTerms = _meaningfulTerms(normalizedQuery);
+  if (queryTerms.isEmpty) return null;
+  final compactQuery = normalizedQuery.replaceAll(' ', '');
+  final exactMatches = <int>[];
+  final partialMatches = <int>[];
+  for (var index = 0; index < labels.length; index++) {
+    final normalizedLabel = normalizeVaultLocalContentText(labels[index]);
+    // Whole-label spacing variants such as NordVPN/Nord VPN are equivalent.
+    // Keep all equivalent rows so even normalized duplicates stay ambiguous.
+    if (normalizedLabel.replaceAll(' ', '') == compactQuery) {
+      exactMatches.add(index);
+    } else if (_meaningfulTerms(normalizedLabel).containsAll(queryTerms)) {
+      partialMatches.add(index);
+    }
+  }
+  if (exactMatches.isNotEmpty) {
+    return exactMatches.length == 1 ? exactMatches.single : null;
+  }
+  // A shorter query may name one longer title, but a missing qualifier in a
+  // more-specific query must never fall back to a shorter or substring title.
+  return partialMatches.length == 1 ? partialMatches.single : null;
 }
 
 String normalizeVaultLocalContentText(String value) {
