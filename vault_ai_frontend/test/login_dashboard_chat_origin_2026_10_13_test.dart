@@ -73,7 +73,8 @@ class _Fixture {
     setApiClientDeviceId('synthetic-login-count-device');
   }
 
-  Future<void> row(int id, String title, String type) async {
+  Future<void> row(int id, String title, String type,
+      {String username = 'synthetic-user'}) async {
     final key = await hierarchy.VaultKeyHierarchy(mvk).metadataKey();
     Future<String> wrap(String text) async => hierarchy
         .b64urlEncode(await hierarchy.aesGcmWrap(key, utf8.encode(text)));
@@ -83,7 +84,7 @@ class _Fixture {
       'service_ciphertext': await wrap(title),
       'payload_ciphertext': await wrap(jsonEncode({
         'fields': {
-          'username': 'synthetic-user',
+          'username': username,
           'password': 'synthetic-secret'
         },
       })),
@@ -335,6 +336,81 @@ void main() {
         expect(f.requests.where((request) => request.url.path == '/chat'),
             isEmpty);
         expect(f.rows, originalRows);
+        expect(tester.takeException(), isNull);
+      });
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      f.dispose();
+      await tester.binding.setSurfaceSize(null);
+    }
+  },
+      variant:
+          TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android}));
+
+
+  testWidgets(
+      'deleted specific login cannot retrieve or delete a shorter surviving title',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    final f = _Fixture();
+    await tester.runAsync(f.unlock);
+    await tester.runAsync(() async {
+      await f.row(201, 'QA-TEST iPhone', 'login',
+          username: 'as-iPhone-edited');
+      await f.row(202, 'QA-TEST iPhone Final', 'login',
+          username: 'final-specific-user');
+      await f.row(203, 'NordVPN', 'login', username: 'nord-specific-user');
+      await f.row(204, 'Facebook', 'login', username: 'facebook-specific-user');
+    });
+    final originalSurvivors = f.rows
+        .where((row) => row['item_id'] != 202)
+        .map((row) => Map<String, dynamic>.from(row))
+        .toList();
+    ChatMessageList chat() =>
+        tester.widget<ChatMessageList>(find.byType(ChatMessageList));
+    Map latestLogin() {
+      final card = chat().messages.last.payload!['card'] as Map;
+      return (card['data'] as Map)['login'] as Map;
+    }
+    try {
+      await f.run(() async {
+        await tester.pumpWidget(_dashboard(f.app));
+        await tester.pumpAndSettle();
+        await _send(tester, 'Show my QA-TEST iPhone Final login');
+        expect('${latestLogin()['id']}', '202');
+        expect((latestLogin()['fields'] as Map)['username'],
+            'final-specific-user');
+        await _send(tester, 'Delete my QA-TEST iPhone Final login');
+        expect(chat().messages.last.text,
+            'Permanently delete the "QA-TEST iPhone Final" login? Reply yes or no.');
+        await _send(tester, 'yes');
+        expect(f.rows, originalSurvivors);
+        final deletes = f.requests.where((request) => request.method == 'DELETE');
+        expect(deletes, hasLength(1));
+        expect(deletes.single.url.path, '/vault/ciphertext/vault-items/202');
+        for (final action in const ['Show', 'Delete']) {
+          await _send(tester, '$action my QA-TEST iPhone Final login');
+          expect(chat().messages.last.text,
+              'No saved login matches "QA-TEST iPhone Final".');
+          expect(chat().messages.last.payload, isNull);
+          expect(find.text('as-iPhone-edited'), findsNothing);
+          expect(f.rows, originalSurvivors);
+          expect(f.requests.where((request) => request.method == 'DELETE'),
+              hasLength(1));
+        }
+        for (final expected in const [
+          ['QA-TEST iPhone', '201', 'as-iPhone-edited'],
+          ['nord vpn', '203', 'nord-specific-user'],
+          ['Facebook', '204', 'facebook-specific-user'],
+        ]) {
+          await _send(tester, 'Show my ${expected[0]} login');
+          expect('${latestLogin()['id']}', expected[1]);
+          expect((latestLogin()['fields'] as Map)['username'], expected[2]);
+        }
+        expect(f.rows, originalSurvivors);
+        expect(f.requests.where((request) => request.url.path == '/chat'),
+            isEmpty);
         expect(tester.takeException(), isNull);
       });
     } finally {

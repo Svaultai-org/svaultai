@@ -240,6 +240,144 @@ void main() {
     expect(noMatch, isNull);
   });
 
+
+  test('missing specific login never falls back to a shorter title', () {
+    final command = parseVaultLocalContentCommand(
+      'Show my QA-TEST iPhone Final login',
+    )!;
+    expect(command.query, 'QA-TEST iPhone Final');
+    for (final labels in const [
+      ['QA-TEST iPhone'],
+      ['QA-TEST iPhone', 'QA-TEST iPhone Backup'],
+    ]) {
+      expect(
+        resolveVaultLocalContentLabelIndex(
+          query: command.query,
+          labels: labels,
+        ),
+        isNull,
+      );
+    }
+  });
+
+  test('specific exact login wins and stays absent after deletion', () {
+    final labels = ['QA-TEST iPhone', 'QA-TEST iPhone Final'];
+    final selected = resolveVaultLocalContentLabelIndex(
+      query: 'QA-TEST iPhone Final',
+      labels: labels,
+    );
+    expect(selected, 1);
+    labels.removeAt(selected!);
+    expect(labels, ['QA-TEST iPhone']);
+    expect(
+      resolveVaultLocalContentLabelIndex(
+        query: 'QA-TEST iPhone Final',
+        labels: labels,
+      ),
+      isNull,
+    );
+    expect(
+      resolveVaultLocalContentLabelIndex(
+        query: 'QA-TEST iPhone',
+        labels: labels,
+      ),
+      0,
+    );
+  });
+
+  test('distinct qualifier and number queries cannot use substring matches',
+      () {
+    for (final query in const [
+      'QA-TEST iPhone Final',
+      'QA-TEST iPhone 1',
+      'QA-TEST iPhone Work',
+    ]) {
+      expect(
+        resolveVaultLocalContentLabelIndex(
+          query: query,
+          labels: const [
+            'QA-TEST iPhone',
+            'QA-TEST iPhone Finalist',
+            'QA-TEST iPhone 12',
+            'QA-TEST iPhone Personal',
+          ],
+        ),
+        isNull,
+        reason: query,
+      );
+    }
+  });
+
+  test('login normalization preserves Nord VPN casing punctuation and spacing',
+      () {
+    for (final message in const [
+      'Show my nord vpn login',
+      'SHOW my "NORD-VPN" login!',
+      'Show my nord_vpn login',
+      'Show my NordVPN login',
+      'Show my Nord  VPN login',
+    ]) {
+      final command = parseVaultLocalContentCommand(message)!;
+      expect(
+        resolveVaultLocalContentLabelIndex(
+          query: command.query,
+          labels: const ['wife', 'NordVPN', 'facebook'],
+        ),
+        1,
+        reason: message,
+      );
+    }
+  });
+
+  test('equivalent normalized login titles stay ambiguous', () {
+    for (final labels in const [
+      ['NordVPN', 'Nord VPN'],
+      ['QA-TEST iPhone Final', 'qa_test iphone final'],
+    ]) {
+      expect(
+        resolveVaultLocalContentLabelIndex(
+          query: labels.first,
+          labels: labels,
+        ),
+        isNull,
+      );
+    }
+  });
+
+  test('unique full-token partial login queries remain supported', () {
+    expect(
+      resolveVaultLocalContentLabelIndex(
+        query: 'GitHub',
+        labels: const ['Personal GitHub', 'Facebook'],
+      ),
+      0,
+    );
+    expect(
+      resolveVaultLocalContentLabelIndex(
+        query: 'the Project Atlas',
+        labels: const ['Project Atlas Work', 'Project Orion'],
+      ),
+      0,
+    );
+  });
+
+  test('ambiguous partial login queries never pick a ranked winner', () {
+    expect(
+      resolveVaultLocalContentLabelIndex(
+        query: 'GitHub',
+        labels: const ['Personal GitHub', 'GitHub Work'],
+      ),
+      isNull,
+    );
+    expect(
+      resolveVaultLocalContentLabelIndex(
+        query: 'QA-TEST',
+        labels: const ['QA-TEST iPhone', 'QA-TEST iPhone Final'],
+      ),
+      isNull,
+    );
+  });
+
   test('recognizes confirmation and cancellation replies exactly', () {
     expect(isVaultLocalDeleteConfirmation('yes, delete it'), isTrue);
     expect(isVaultLocalDeleteConfirmation('delete GitHub'), isFalse);
