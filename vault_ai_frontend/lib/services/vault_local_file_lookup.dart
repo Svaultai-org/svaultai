@@ -35,6 +35,25 @@ class VaultLocalFileLookupMatch {
   });
 }
 
+enum VaultLocalFileLookupStatus { noMatch, matched, ambiguous }
+
+/// A local lookup result, without sending decrypted file names to the server.
+class VaultLocalFileLookupResult {
+  final VaultLocalFileLookupStatus status;
+  final VaultLocalFileLookupMatch? match;
+
+  /// Top-scoring candidates, with at most one entry for each stable file ID.
+  final List<VaultLocalFileLookupMatch> candidates;
+
+  const VaultLocalFileLookupResult._({
+    required this.status,
+    this.match,
+    this.candidates = const [],
+  });
+
+  bool get isAmbiguous => status == VaultLocalFileLookupStatus.ambiguous;
+}
+
 String? extractLocalFileLookupQuery(String message) {
   final text = message.trim();
   if (text.isEmpty) return null;
@@ -73,8 +92,19 @@ VaultLocalFileLookupMatch? resolveLocalVaultFileLookup({
   required String query,
   required Iterable<VaultLocalFileLookupEntry> files,
 }) {
+  return resolveLocalVaultFileLookupResult(query: query, files: files).match;
+}
+
+VaultLocalFileLookupResult resolveLocalVaultFileLookupResult({
+  required String query,
+  required Iterable<VaultLocalFileLookupEntry> files,
+}) {
   final normalizedQuery = normalizeLocalFileLookupText(query);
-  if (normalizedQuery.isEmpty) return null;
+  if (normalizedQuery.isEmpty) {
+    return const VaultLocalFileLookupResult._(
+      status: VaultLocalFileLookupStatus.noMatch,
+    );
+  }
 
   final scored = <VaultLocalFileLookupMatch>[];
   for (final file in files) {
@@ -83,20 +113,41 @@ VaultLocalFileLookupMatch? resolveLocalVaultFileLookup({
       scored.add(VaultLocalFileLookupMatch(entry: file, score: score));
     }
   }
-  if (scored.isEmpty) return null;
+  if (scored.isEmpty) {
+    return const VaultLocalFileLookupResult._(
+      status: VaultLocalFileLookupStatus.noMatch,
+    );
+  }
   scored.sort((a, b) {
     final byScore = b.score.compareTo(a.score);
     if (byScore != 0) return byScore;
-    return a.entry.displayName
+    final byName = a.entry.displayName
         .toLowerCase()
         .compareTo(b.entry.displayName.toLowerCase());
+    if (byName != 0) return byName;
+    return a.entry.id.compareTo(b.entry.id);
   });
-  if (scored.length > 1 &&
-      scored[0].score == scored[1].score &&
-      scored[0].entry.id != scored[1].entry.id) {
-    return null;
+
+  final topScore = scored.first.score;
+  final distinctTopMatches = <String, VaultLocalFileLookupMatch>{};
+  for (final candidate in scored) {
+    if (candidate.score != topScore) break;
+    distinctTopMatches.putIfAbsent(candidate.entry.id, () => candidate);
   }
-  return scored.first;
+  final candidates = List<VaultLocalFileLookupMatch>.unmodifiable(
+    distinctTopMatches.values,
+  );
+  if (candidates.length > 1) {
+    return VaultLocalFileLookupResult._(
+      status: VaultLocalFileLookupStatus.ambiguous,
+      candidates: candidates,
+    );
+  }
+  return VaultLocalFileLookupResult._(
+    status: VaultLocalFileLookupStatus.matched,
+    match: candidates.single,
+    candidates: candidates,
+  );
 }
 
 String normalizeLocalFileLookupText(String value) {

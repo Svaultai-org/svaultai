@@ -55,6 +55,7 @@ import 'services/native_video_viewer.dart';
 import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
+import 'services/saved_file_rename.dart';
 import 'services/vault_local_content_command.dart';
 import 'services/memory_title_identity.dart';
 import 'services/monero_scanner.dart';
@@ -86,6 +87,7 @@ import 'ui/chat/ask_brain_handoff.dart';
 import 'ui/chat/chat_message_list.dart';
 import 'ui/chat/chat_models.dart';
 import 'ui/secure_item_detail.dart';
+import 'ui/saved_file_rename_dialog.dart';
 import 'ui/chat/vault_file_view_messages.dart';
 
 import 'ui/dashboards/concierge_page.dart';
@@ -8027,6 +8029,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
   List<VaultLoginItem> vaultLogins = [];
   _VaultLocalDeleteTarget? _pendingLocalDelete;
   final Set<String> _fileDeletesInFlight = <String>{};
+  final Set<String> _fileRenamesInFlight = <String>{};
+  bool _fileRenameDialogOpen = false;
+  int _savedFileLabelMutationGeneration = 0;
 
   _DashboardSection selectedSection = _DashboardSection.chat;
   int _memoryRefreshGeneration = 0;
@@ -12496,6 +12501,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final token = app.sessionToken;
 
     if (token == null || app.vaultId == null || app.vaultName == null) return;
+    final labelMutationGeneration = _savedFileLabelMutationGeneration;
 
     setState(() {
       loadingFiles = true;
@@ -12524,7 +12530,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         }
       }
 
-      if (!mounted) return;
+      if (!mounted ||
+          labelMutationGeneration != _savedFileLabelMutationGeneration) return;
       setState(() {
         vaultFiles = parsed;
       });
@@ -12546,6 +12553,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null) return;
+    final labelMutationGeneration = _savedFileLabelMutationGeneration;
 
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
@@ -12553,7 +12561,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         authToken: token,
         path: _currentFolderPath.isEmpty ? null : _currentFolderPath,
       );
-      if (!mounted) return;
+      if (!mounted ||
+          labelMutationGeneration != _savedFileLabelMutationGeneration) return;
       setState(() {
         _folderTreeData = FolderTreeData.fromJson(response);
       });
@@ -13054,9 +13063,186 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     _scrollToBottom();
   }
 
+  SavedFileRenameController? _captureSavedFileRename(String fileId) {
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultId = app.vaultId;
+    final vaultName = app.vaultName;
+    final cryptoContext = VaultCryptoRegistry.current;
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    final generation = st.SessionTermination.instance.generation;
+    final deviceId = apiClientDeviceId();
+    bool current() => mounted && app.authed && app.unlocked &&
+        token != null && vaultId != null && vaultName != null &&
+        app.sessionToken == token && app.vaultId == vaultId &&
+        app.vaultName == vaultName && apiClientDeviceId() == deviceId &&
+        cryptoContext != null && mvk != null &&
+        zk_mvk_store.ZkActiveMvk.currentVaultId() == vaultId &&
+        cryptoContext.vaultId == vaultId && cryptoContext.vaultName == vaultName &&
+        identical(VaultCryptoRegistry.current, cryptoContext) &&
+        identical(zk_mvk_store.ZkActiveMvk.current(), mvk) &&
+        st.SessionTermination.instance.generation == generation &&
+        !st.SessionTermination.instance.isTerminated;
+    if (!current() || fileId.isEmpty) return null;
+    return SavedFileRenameController(fileId: fileId, accessIsCurrent: current);
+  }
+
+  void _applyCommittedFileRename(String fileId, String name) {
+    setState(() {
+      _savedFileLabelMutationGeneration++;
+      vaultFiles = [
+        for (final file in vaultFiles)
+          if (file.id == fileId)
+            _VaultStoredFile(
+              id: file.id, fileName: file.fileName, savedName: name,
+              contentType: file.contentType, assetType: file.assetType,
+              fileSize: file.fileSize, needsNaming: false,
+              relativePath: file.relativePath,
+            )
+          else file,
+      ];
+      final tree = _folderTreeData;
+      if (tree != null) {
+        _folderTreeData = FolderTreeData(
+          path: tree.path, breadcrumbs: tree.breadcrumbs, folders: tree.folders,
+          files: [
+            for (final row in tree.files)
+              if ('${row['id']}' == fileId)
+                {...row, 'saved_name': name, 'needs_naming': false}
+              else row,
+          ],
+        );
+      }
+      for (var i = 0; i < msgs.length; i++) {
+        final msg = msgs[i];
+        if (msg.kind == ChatMessage.kVaultFile && msg.fileId == fileId) {
+          msgs[i] = _Msg(
+            msg.role, msg.text, kind: msg.kind, fileId: msg.fileId,
+            fileName: msg.fileName, mimeType: msg.mimeType,
+            payload: {...?msg.payload, 'saved_name': name},
+            attachments: msg.attachments, createdAt: msg.createdAt,
+          );
+        }
+      }
+    });
+  }
+
+  Future<SavedFileRenameOutcome> _commitSavedFileRename(
+    SavedFileRenameController controller, String name,
+  ) async {
+    if (!_fileRenamesInFlight.add(controller.fileId)) {
+      return SavedFileRenameOutcome.inFlight;
+    }
+    if (mounted) setState(() {});
+    final app = context.read<AppState>();
+    final token = app.sessionToken;
+    final vaultName = app.vaultName;
+    try {
+      return await controller.save(
+        name: name,
+        write: (normalizedName) async {
+          if (token == null || vaultName == null ||
+              !controller.accessIsCurrent()) {
+            throw StateError('File rename session changed.');
+          }
+          final pin = await _VaultCrypto.currentPinOrThrow();
+          await VaultAIClient(baseUrl: backendBaseUrl).nameVaultFile(
+            vaultName: vaultName, fileId: controller.fileId,
+            savedName: normalizedName, pin: pin, authToken: token,
+            requireCiphertext: true,
+            responseIsCurrent: controller.accessIsCurrent,
+          );
+        },
+        onCommitted: (normalizedName) =>
+            _applyCommittedFileRename(controller.fileId, normalizedName),
+      );
+    } finally {
+      _fileRenamesInFlight.remove(controller.fileId);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _openSavedFileRename(_VaultStoredFile file) async {
+    if (_fileRenameDialogOpen || sending || _pendingLocalDelete != null ||
+        _fileDeletesInFlight.contains(file.id) ||
+        _fileRenamesInFlight.contains(file.id)) {
+      return;
+    }
+    final controller = _captureSavedFileRename(file.id);
+    if (controller == null) {
+      _showSnack('Unlock your vault before renaming a file.');
+      return;
+    }
+    _fileRenameDialogOpen = true;
+    try {
+      final saved = await showDialog<bool>(
+        context: context, useRootNavigator: false, barrierDismissible: false,
+        builder: (_) => SavedFileRenameDialog(
+          initialName: file.savedName?.trim().isNotEmpty == true
+              ? file.savedName! : file.fileName,
+          controller: controller,
+          onSave: (name) => _commitSavedFileRename(controller, name),
+        ),
+      );
+      if (saved == true && controller.accessIsCurrent()) {
+        _showSnack('File renamed.');
+      }
+    } finally {
+      _fileRenameDialogOpen = false;
+      controller.cancel();
+    }
+  }
+
+  Future<bool> _trySavedFileRenameCommand(String text) async {
+    if (attachments.isNotEmpty) return false;
+    final command = parseSavedFileRenameCommand(text);
+    if (command == null) return false;
+    final error = savedFileNameValidationError(command.name);
+    if (error != null) {
+      _appendLocalVaultReply(text, '$error Nothing was changed.');
+      return true;
+    }
+    if (vaultFiles.isEmpty && !loadingFiles) await _loadVaultFiles();
+    if (!mounted) return true;
+    final result = resolveLocalVaultFileLookupResult(
+      query: command.target,
+      files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
+        id: file.id, fileName: file.fileName, savedName: file.savedName,
+        mimeType: file.contentType, assetType: file.assetType,
+        relativePath: file.relativePath, sizeBytes: file.fileSize,
+      )),
+    );
+    final match = result.match;
+    if (result.isAmbiguous || match == null) {
+      _appendLocalVaultReply(text, result.isAmbiguous
+          ? 'Several files match "${command.target}". Open Files and use '
+              'Rename on the exact file. Nothing was changed.'
+          : 'No saved file matches "${command.target}". Nothing was changed.');
+      return true;
+    }
+    final controller = _captureSavedFileRename(match.entry.id);
+    if (controller == null) {
+      _appendLocalVaultReply(text, 'Unlock your vault before renaming a file.');
+      return true;
+    }
+    try {
+      final outcome = await _commitSavedFileRename(controller, command.name);
+      if (!controller.accessIsCurrent()) return true;
+      _appendLocalVaultReply(text, outcome == SavedFileRenameOutcome.saved
+          ? 'Renamed the file to "${normalizeSavedFileName(command.name)}".'
+          : 'This file is already being renamed. Nothing else was changed.');
+    } catch (_) {
+      if (controller.accessIsCurrent()) {
+        _appendLocalVaultReply(text, 'Could not rename the file. Please try again.');
+      }
+    }
+    return true;
+  }
+
   void _startFileDeleteConfirmation(_VaultStoredFile file) {
     if (!mounted || file.id.isEmpty || _pendingLocalDelete != null ||
-        _fileDeletesInFlight.contains(file.id)) {
+        _fileDeletesInFlight.contains(file.id) ||
+        _fileRenamesInFlight.contains(file.id)) {
       return;
     }
     if (attachments.isNotEmpty) {
@@ -16034,7 +16220,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
     if (!mounted) return true;
 
-    final match = resolveLocalVaultFileLookup(
+    final lookup = resolveLocalVaultFileLookupResult(
       query: query,
       files: vaultFiles.map((file) => VaultLocalFileLookupEntry(
             id: file.id,
@@ -16046,6 +16232,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             sizeBytes: file.fileSize,
           )),
     );
+    if (lookup.isAmbiguous) {
+      _appendLocalVaultReply(
+        text,
+        'Multiple saved files match "$query". '
+        'Open Files and choose the one you want.',
+      );
+      return true;
+    }
+    final match = lookup.match;
     if (match == null) return false;
 
     final file = match.entry;
@@ -16166,6 +16361,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     }
 
     if (await _tryLocalVaultContentCommand(text)) {
+      return;
+    }
+
+    if (await _trySavedFileRenameCommand(text)) {
       return;
     }
 
@@ -17302,13 +17501,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             const SizedBox(width: 12),
             Semantics(
               container: true,
+              identifier: 'files_file_rename_${file.id}',
+              button: true,
+              child: IconButton(
+                key: ValueKey('files_file_rename_${file.id}'),
+                tooltip: 'Rename',
+                onPressed: sending || _pendingLocalDelete != null ||
+                        _fileDeletesInFlight.contains(file.id) ||
+                        _fileRenamesInFlight.contains(file.id)
+                    ? null : () => _openSavedFileRename(file),
+                icon: const Icon(Icons.edit_outlined),
+                color: const Color(0xFF10A37F),
+              ),
+            ),
+            Semantics(
+              container: true,
               identifier: 'files_file_delete_${file.id}',
               button: true,
               child: IconButton(
                 key: ValueKey('files_file_delete_${file.id}'),
                 tooltip: AppLocalizations.of(context).commonDelete,
                 onPressed: sending || _pendingLocalDelete != null ||
-                        _fileDeletesInFlight.contains(file.id)
+                        _fileDeletesInFlight.contains(file.id) ||
+                        _fileRenamesInFlight.contains(file.id)
                     ? null : () => _startFileDeleteConfirmation(file),
                 icon: const Icon(Icons.delete_outline),
                 color: Colors.redAccent,

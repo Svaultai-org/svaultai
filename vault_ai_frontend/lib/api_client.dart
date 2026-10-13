@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'services/asset_catalog.dart' show parseAssetBaseUnits;
 import 'services/memory_title_identity.dart';
+import 'services/saved_file_rename.dart';
 import 'services/session_termination.dart' as st;
 import 'services/saved_item_mutation_feedback.dart';
 export 'services/saved_item_mutation_feedback.dart'
@@ -3675,19 +3676,36 @@ class VaultAIClient {
     required String savedName,
     required String pin,
     required String authToken,
+    bool requireCiphertext = false,
+    bool Function()? responseIsCurrent,
   }) async {
+    if (requireCiphertext) {
+      final error = savedFileNameValidationError(savedName);
+      if (error != null) throw SavedFileRenameValidationException(error);
+    }
     // ZK ciphertext-first fast path. Encrypts saved_name under the
     // vault's metadata subkey and POSTs to
     // /vault/ciphertext/uploaded-files so no readable saved_name
     // touches persistent server storage for an adopted vault.
     final mvk = zk_mvk_store.ZkActiveMvk.current();
+    void checkAccess() {
+      if (responseIsCurrent?.call() == false ||
+          (requireCiphertext &&
+              (mvk == null ||
+                  !identical(zk_mvk_store.ZkActiveMvk.current(), mvk)))) {
+        throw StateError('File rename access changed. Unlock and try again.');
+      }
+    }
+    checkAccess();
     if (mvk != null) {
       final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
       final metaKey = await hierarchy.metadataKey();
       final savedNameCt = await vault_key_hierarchy.aesGcmWrap(
         metaKey,
-        utf8.encode(savedName),
+        utf8.encode(requireCiphertext
+            ? normalizeSavedFileName(savedName) : savedName),
       );
+      checkAccess();
       final zkUri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
       final zkResp = await http.post(
         zkUri,
@@ -3701,6 +3719,7 @@ class VaultAIClient {
               vault_key_hierarchy.b64urlEncode(savedNameCt),
         }),
       );
+      checkAccess();
       if (zkResp.statusCode != 200) {
         throw Exception(
           'ZK ciphertext saved_name write failed '
@@ -3708,8 +3727,22 @@ class VaultAIClient {
         );
       }
       final decoded = jsonDecode(zkResp.body);
-      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map<String, dynamic>) {
+        if (requireCiphertext &&
+            (decoded['file_id'] != fileId ||
+                decoded['updated_columns'] is! List ||
+                (decoded['updated_columns'] as List).length != 1 ||
+                !(decoded['updated_columns'] as List)
+                    .contains('saved_name_ciphertext'))) {
+          throw StateError('File name commit could not be verified.');
+        }
+        return decoded;
+      }
       throw Exception('Invalid /vault/ciphertext/uploaded-files response');
+    }
+    // Saved-file Rename must never fall back to a readable legacy write.
+    if (requireCiphertext) {
+      throw StateError('Unlock your encrypted vault before renaming a file.');
     }
     final uri = Uri.parse('$baseUrl/name-file');
 
