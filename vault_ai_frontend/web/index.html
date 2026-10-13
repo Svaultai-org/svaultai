@@ -71,6 +71,7 @@
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+  <link rel="preload" as="image" href="icons/Icon-512.png">
 
   <link rel="manifest" href="manifest.json">
 
@@ -167,8 +168,9 @@
   <!-- Paint before Flutter/Wasm downloads; no vault data or credentials. -->
   <div id="svaultai-boot-status" role="status" aria-live="polite">
     <div>
-      <strong>SVaultAI</strong>
-      <p id="svaultai-boot-message">Opening SVaultAI…</p>
+      <img id="svaultai-boot-logo" src="icons/Icon-512.png"
+        width="192" height="192" alt="SVaultAI" fetchpriority="high">
+      <p id="svaultai-boot-message" hidden></p>
       <button id="svaultai-boot-retry" type="button" hidden>Try again</button>
     </div>
   </div>
@@ -180,7 +182,8 @@
       font: 16px/1.5 system-ui, sans-serif; text-align: center;
     }
     #svaultai-boot-status > div { max-width: 340px; }
-    #svaultai-boot-status strong { font-size: 24px; }
+    #svaultai-boot-logo { display: block; margin: 0 auto; }
+    #svaultai-boot-message[hidden] { display: none; }
     #svaultai-boot-retry {
       padding: 10px 18px; border: 1px solid #5f7488;
       border-radius: 10px; background: #182633; color: #f6f8fc;
@@ -194,14 +197,29 @@
       var message = document.getElementById('svaultai-boot-message');
       var retry = document.getElementById('svaultai-boot-retry');
       var ready = false;
+      var failed = false;
+      var waitElapsed = false;
       function showRetry(failed) {
         if (ready) return;
         message.textContent = failed
           ? 'SVaultAI could not open. Check your connection and try again.'
           : 'SVaultAI is taking longer than usual to open. Check your connection and try again.';
+        message.hidden = false;
         retry.hidden = false;
       }
-      var timeout = window.setTimeout(function () { showRetry(false); }, 15000);
+      function recordFailure(event) {
+        if (ready) return;
+        // A missing image is not evidence that Flutter failed to start.
+        if (event && event.target && event.target.tagName === 'IMG') return;
+        failed = true;
+        if (waitElapsed) showRetry(true);
+      }
+      // Normal startup keeps the original shield logo without extra copy.
+      // Offer recovery only if the app has not rendered after a bounded wait.
+      var timeout = window.setTimeout(function () {
+        waitElapsed = true;
+        showRetry(failed);
+      }, 15000);
       // Glass-pane creation precedes a rendered app. Only the engine's actual
       // first-frame event may retire this shell; Dart then owns its boot gate.
       window.addEventListener('flutter-first-frame', function () {
@@ -210,9 +228,11 @@
         window.clearTimeout(timeout);
         status.remove();
       }, { once: true });
-      window.addEventListener('error', function () { showRetry(true); }, true);
-      window.addEventListener('unhandledrejection', function () { showRetry(true); });
-      retry.addEventListener('click', function () { window.location.reload(); });
+      window.addEventListener('error', recordFailure, true);
+      window.addEventListener('unhandledrejection', recordFailure);
+      retry.addEventListener('click', function () {
+        if (!ready && !retry.hidden) window.location.reload();
+      });
     })();
   </script>
   <main id="seo-content" aria-label="SVaultAI product overview">

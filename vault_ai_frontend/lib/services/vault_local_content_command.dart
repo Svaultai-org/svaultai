@@ -7,6 +7,7 @@ class VaultLocalMemorySaveCommand {
   final String value;
   final String memoryType;
   final String relationship;
+  final String? attribute;
   final String? validationError;
 
   const VaultLocalMemorySaveCommand({
@@ -14,6 +15,7 @@ class VaultLocalMemorySaveCommand {
     required this.value,
     required this.memoryType,
     required this.relationship,
+    this.attribute,
     this.validationError,
   });
 
@@ -27,7 +29,7 @@ class VaultLocalMemorySaveCommand {
         'subject': relationship == 'self' ? 'self' : relationship,
         'subject_display': relationship == 'self' ? 'your' : relationship,
         'relationship': relationship,
-        'attribute': title,
+        'attribute': attribute ?? title,
       };
 }
 
@@ -150,6 +152,35 @@ final RegExp _familyRelationship = RegExp(
   caseSensitive: false,
 );
 
+const _maidenSubject =
+    r'mother|mom|mum|mama|father|dad|papa|wife|husband|spouse|partner|'
+    r'friend|sister|brother|daughter|son';
+final RegExp _maidenMemorySave = RegExp(
+  r'^\s*(?:please\s+)?(?:save|remember)\s+(?:that\s+)?my\s+'
+  '(?<subject>$_maidenSubject)(?:[\'’]s)?\\s+maiden\\s+name\\s*'
+  r'(?:(?:is|as|to\s+be)\b|[=:])?\s*(?<value>[^\r\n]*?)\s*[.!?]*\s*$',
+  caseSensitive: false,
+);
+final RegExp _maidenMemoryRecall = RegExp(
+  r"^\s*(?:please\s+)?what(?:['’]?s|\s+is)\s+(?:my\s+)?"
+  '(?<subject>$_maidenSubject)(?:[\'’]s)?\\s+maiden\\s+name\\s*[.!?]*\\s*\$',
+  caseSensitive: false,
+);
+final RegExp _maidenCredentialValue = RegExp(
+  r'^\s*(?:(?:a|the)\s+)?(?:login|credential|account|password)\b|'
+  r'\b(?:username|password|email|pin|passcode)\s*(?:=|:|is\b)',
+  caseSensitive: false,
+);
+
+String _maidenSubjectRelationship(String subject) => switch (subject) {
+      'mom' || 'mum' || 'mama' => 'mother',
+      'dad' || 'papa' => 'father',
+      _ => subject,
+    };
+
+String _maidenMemoryTitle(String subject) =>
+    "${subject[0].toUpperCase()}${subject.substring(1)}'s maiden name";
+
 VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
   String message,
 ) {
@@ -177,6 +208,27 @@ VaultLocalMemorySaveCommand? parseVaultLocalMemorySaveCommand(
       memoryType: 'note',
       relationship: 'self',
       validationError: validationError,
+    );
+  }
+  // This explicit personal fact owns incomplete and connector-free forms.
+  // Do not let an omitted surname become a generated login or an empty save.
+  final maiden = _maidenMemorySave.firstMatch(message);
+  if (maiden != null) {
+    final subject = maiden.namedGroup('subject')!.toLowerCase();
+    final value = maiden.namedGroup('value')!.trim();
+    if (_maidenCredentialValue.hasMatch(value)) return null;
+    final title = _maidenMemoryTitle(subject);
+    return VaultLocalMemorySaveCommand(
+      title: title,
+      value: value,
+      memoryType: subject == 'friend' ? 'relationship' : 'family',
+      relationship: _maidenSubjectRelationship(subject),
+      attribute: 'maiden_name',
+      validationError: value.isEmpty
+          ? 'What should I save as ${title[0].toLowerCase()}${title.substring(1)}? Nothing was saved.'
+          : value.runes.length > 500
+              ? 'This chat format supports up to 500 characters of memory content. Use the Memory page for longer notes. Nothing was saved.'
+              : null,
     );
   }
   final explicit = _explicitPersonalMemorySave.firstMatch(message);
@@ -233,6 +285,16 @@ VaultLocalContentCommand? parseVaultLocalContentCommand(String message) {
       action: VaultLocalContentAction.retrieve,
       query: query,
       explicitKind: false,
+    );
+  }
+  final maidenRecall = _maidenMemoryRecall.firstMatch(text);
+  if (maidenRecall != null) {
+    return VaultLocalContentCommand(
+      kind: VaultLocalContentKind.memory,
+      action: VaultLocalContentAction.retrieve,
+      query:
+          _maidenMemoryTitle(maidenRecall.namedGroup('subject')!.toLowerCase()),
+      explicitKind: true,
     );
   }
   final deleting = _deleteVerb.hasMatch(text);

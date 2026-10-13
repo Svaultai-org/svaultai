@@ -56,17 +56,19 @@ class _AppStartupGateState extends State<AppStartupGate> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.shield_outlined, size: 48),
-                      const SizedBox(height: 20),
-                      if (!failed) const CircularProgressIndicator(),
-                      const SizedBox(height: 20),
-                      Text(
-                        failed
-                            ? 'SVaultAI could not start. Please try again.'
-                            : 'Opening SVaultAI…',
-                        textAlign: TextAlign.center,
+                      Image.asset(
+                        'assets/branding/vaultai-icon-1024.png',
+                        width: 192,
+                        height: 192,
+                        fit: BoxFit.contain,
+                        semanticLabel: 'SVaultAI logo',
                       ),
                       if (failed) ...[
+                        const SizedBox(height: 20),
+                        const Text(
+                          'SVaultAI could not start. Please try again.',
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 20),
                         FilledButton(
                           onPressed: _retry,

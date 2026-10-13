@@ -1265,6 +1265,8 @@ class AppState extends ChangeNotifier {
   String? lockMessage;
 
   int loginCount = 0;
+  String? _loginInventoryToken;
+  String? _loginInventoryVaultName;
   int cardCount = 0;
   int idCount = 0;
   int fileCount = 0;
@@ -1647,7 +1649,13 @@ class AppState extends ChangeNotifier {
   }
 
   void applyBackendStats(Map<String, dynamic> stats) {
-    loginCount = (stats['login_count'] as num?)?.toInt() ?? loginCount;
+    // The server cannot classify encrypted item types. Once this session's
+    // inventory has been decrypted, use the same login rows as the Logins
+    // page instead of letting the legacy-only statistic replace that count.
+    if (_loginInventoryToken == null || _loginInventoryToken != sessionToken ||
+        _loginInventoryVaultName != vaultName) {
+      loginCount = (stats['login_count'] as num?)?.toInt() ?? loginCount;
+    }
     cardCount = (stats['card_count'] as num?)?.toInt() ?? cardCount;
     idCount = (stats['id_count'] as num?)?.toInt() ?? idCount;
     fileCount = (stats['file_count'] as num?)?.toInt() ?? fileCount;
@@ -1660,6 +1668,19 @@ class AppState extends ChangeNotifier {
     uploadSafetyCapBytes =
         (stats['upload_safety_cap_bytes'] as num?)?.toInt() ??
             uploadSafetyCapBytes;
+    notifyListeners();
+  }
+
+  void applyLoginInventoryCount(
+    Iterable<VaultLoginItem> items, {
+    required String authToken,
+    required String requestVaultName,
+  }) {
+    if (!unlocked || sessionToken != authToken ||
+        vaultName != requestVaultName) return;
+    _loginInventoryToken = authToken;
+    _loginInventoryVaultName = requestVaultName;
+    loginCount = items.where((item) => isLoginLikeType(item.itemType)).length;
     notifyListeners();
   }
 
@@ -1850,6 +1871,9 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
     sessionToken = null;
     vaultId = null;
+    loginCount = 0;
+    _loginInventoryToken = null;
+    _loginInventoryVaultName = null;
     vaultName = null;
     vaultHandle = null;
     displayName = null;
@@ -12434,6 +12458,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         hasLoadedSecureItems = true;
         secureItemsError = null;
       });
+      app.applyLoginInventoryCount(
+        parsed,
+        authToken: requestToken,
+        requestVaultName: requestVaultName,
+      );
     } catch (e) {
       if (app.sessionToken != requestToken ||
           app.vaultName != requestVaultName) {
@@ -15281,7 +15310,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!mounted) return;
       _appendAssistantMessage('Login saved securely.');
       _showSnack('Login saved');
-      setState(() => selectedSection = _DashboardSection.logins);
       unawaited(app.refreshVaultStats());
     } on InvalidVaultUnlockException {
       _showSnack('Your vault is locked. Please enter your PIN again.');
