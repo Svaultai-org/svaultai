@@ -17724,7 +17724,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 runSpacing: 10,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: () => _sendQuickPrompt('Show my saved logins'),
+                    onPressed: () => setState(
+                        () => selectedSection = _DashboardSection.logins),
                     icon: const Icon(Icons.lock_outline, size: 18),
                     label: Text(
                       AppLocalizations.of(context).chatQuickSavedLogins,
