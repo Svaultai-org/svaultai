@@ -49,11 +49,72 @@ import hashlib
 import logging
 import os
 import secrets
+import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from typing import Optional
 
 from starlette.concurrency import run_in_threadpool
+
+
+_ZK_LOGIN_PHASES = ("limiter", "validation", "db", "opaque", "session", "trust", "metadata")
+_zk_login_timings: ContextVar[Optional[dict[str, float]]] = ContextVar(
+    "zk_login_timings", default=None,
+)
+
+
+def _timed_zk_login(step: str):
+    def decorate(handler):
+        @wraps(handler)
+        def timed(*args, **kwargs):
+            started = time.perf_counter()
+            timings = dict.fromkeys(_ZK_LOGIN_PHASES, 0.0)
+            context_token = _zk_login_timings.set(timings)
+            outcome = 500
+            try:
+                result = handler(*args, **kwargs)
+                outcome = 200
+                return result
+            except HTTPException as exc:
+                outcome = exc.status_code
+                raise
+            finally:
+                _zk_login_timings.reset(context_token)
+                # Closed-set stage, status and durations; never identifiers,
+                # PIN, OPAQUE messages, registration records or session tokens.
+                logger.info(
+                    "[AUTH-ZK-TIMING] step=%s status=%s limiter_ms=%.1f "
+                    "validation_ms=%.1f db_ms=%.1f opaque_ms=%.1f session_ms=%.1f "
+                    "trust_ms=%.1f metadata_ms=%.1f total_ms=%.1f",
+                    step, outcome, *(timings[key] * 1000 for key in _ZK_LOGIN_PHASES),
+                    (time.perf_counter() - started) * 1000,
+                )
+        return timed
+    return decorate
+
+
+@contextmanager
+def _zk_login_phase(phase: str):
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings = _zk_login_timings.get()
+        if timings is not None:
+            timings[phase] += time.perf_counter() - started
+
+
+@contextmanager
+def _zk_login_connection():
+    with _zk_login_phase("db"):
+        conn = get_db()
+        try:
+            yield conn
+        finally:
+            conn.close()
 
 
 def _handle_fingerprint(handle_bytes: bytes) -> str:
@@ -123,6 +184,7 @@ from psycopg2.extras import RealDictCursor
 from auth_local import (
     SessionPrincipal,
     issue_session_token,
+    _vault_meta_snapshot,
     normalize_client_label,
     verify_session_token,
 )
@@ -138,12 +200,12 @@ from opaque_server_module import (
     registration_start as opaque_registration_start,
 )
 from rate_limit_auth import (
-    enforce_login_credential_rate_limit,
     enforce_login_finalize_rate_limit,
+    enforce_login_init_rate_limits,
     enforce_login_rate_limit,
     enforce_signup_rate_limit,
 )
-from vault_core import get_db
+from vault_core import KDF_LEGACY_ITERATIONS, get_db
 from vault_handle import (
     InvalidVaultHandle,
     VAULT_HANDLE_BYTES,
@@ -588,31 +650,34 @@ async def zk_login_init(
     return await run_in_threadpool(_zk_login_init_sync, payload, request)
 
 
+@_timed_zk_login("init")
 def _zk_login_init_sync(
     payload: ZkLoginInitRequest,
     request: Request,
 ) -> ZkLoginInitResponse:
-    enforce_login_rate_limit(request)
+    try:
+        with _zk_login_phase("validation"):
+            handle_bytes = _decode_handle_or_400(payload.vault_handle)
+            ke1 = _b64url_decode(
+                payload.ke1, name="ke1", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
+            )
+            lookup_bytes: Optional[bytes] = None
+            if payload.username_lookup is not None:
+                lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
+    except HTTPException as exc:
+        # Invalid syntax still consumes the coarse source budget; an already
+        # exhausted budget takes precedence over the normal validation 400.
+        if exc.status_code == 400:
+            with _zk_login_phase("limiter"):
+                enforce_login_rate_limit(request)
+        raise
 
-    handle_bytes = _decode_handle_or_400(payload.vault_handle)
-    ke1 = _b64url_decode(
-        payload.ke1, name="ke1", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
-    )
-
-    lookup_bytes: Optional[bytes] = None
-    if payload.username_lookup is not None:
-        lookup_bytes = _decode_lookup_v1_or_400(payload.username_lookup)
-
-    enforce_login_credential_rate_limit(
-        request, credential_id=handle_bytes, kind="handle",
-    )
-    if lookup_bytes is not None:
-        enforce_login_credential_rate_limit(
-            request, credential_id=lookup_bytes, kind="lookup",
+    with _zk_login_phase("limiter"):
+        enforce_login_init_rate_limits(
+            request, handle_bytes=handle_bytes, lookup_bytes=lookup_bytes,
         )
 
-    conn = get_db()
-    try:
+    with _zk_login_connection() as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
@@ -703,9 +768,6 @@ def _zk_login_init_sync(
                     conflict["vault_id"],
                     _lookup_v1_fingerprint(lookup_bytes),
                 )
-    finally:
-        conn.close()
-
     if row is None or row["opaque_registration_record"] is None:
         logger.info(
             "[ZK-LOGIN-INIT] no vault for handle "
@@ -742,11 +804,12 @@ def _zk_login_init_sync(
     )
 
     try:
-        ke2, server_state = opaque_login_start(
-            record_bytes,
-            ke1,
-            _opaque_credential_id(stored_handle_bytes),
-        )
+        with _zk_login_phase("opaque"):
+            ke2, server_state = opaque_login_start(
+                record_bytes,
+                ke1,
+                _opaque_credential_id(stored_handle_bytes),
+            )
     except OpaqueWheelMissing:
         raise HTTPException(
             status_code=503, detail="zk auth not available",
@@ -761,8 +824,7 @@ def _zk_login_init_sync(
         seconds=LOGIN_SLOT_TTL_SECONDS,
     )
 
-    conn = get_db()
-    try:
+    with _zk_login_connection() as conn:
         cur = conn.cursor()
         cur.execute(
             """
@@ -773,9 +835,6 @@ def _zk_login_init_sync(
             (slot_id, row["vault_id"], server_state, expires_at),
         )
         conn.commit()
-    finally:
-        conn.close()
-
     return ZkLoginInitResponse(
         slot_id=slot_id,
         ke2=_b64url_encode(ke2),
@@ -795,6 +854,65 @@ class ZkLoginFinalizeResponse(BaseModel):
     wrapped_mvk: str
     wrapped_sk_vault: str
     display_name_ciphertext: str
+    # Additive hints: old clients ignore these and keep their existing
+    # registration + metadata fetch. False/null always requires fallback.
+    device_trust_complete: bool = False
+    vault_meta: Optional[dict[str, object]] = None
+
+
+def _fresh_login_metadata(
+    token: dict, *, vault_id: str, device_id: str, finalized_vault: dict,
+) -> Optional[dict[str, object]]:
+    """Check the issued session, trusted device and current KDF generation.
+
+    Issuance's locked snapshot alone may become stale during later device
+    trust work. This one joined read retains the effective freshness checks
+    of GET /vault-meta, with no PIN, key or verifier in the result.
+    """
+    snapshot = token.get("vault_meta")
+    if not isinstance(snapshot, dict) or snapshot.get("vault_id") != vault_id:
+        return None
+    if not token.get("token_id") or not isinstance(snapshot.get("pin_salt"), str):
+        return None
+    iterations = snapshot.get("kdf_iterations")
+    if isinstance(iterations, bool) or not isinstance(iterations, int):
+        return None
+    # Wrapped keys and KDF parameters must describe the same finalized
+    # generation, including a rotation that raced with session issuance.
+    # Missing fields in a legacy row/caller keep the ordinary GET fallback.
+    if "pin_salt" not in finalized_vault or "kdf_iterations" not in finalized_vault:
+        return None
+    if finalized_vault["pin_salt"] != snapshot["pin_salt"]:
+        return None
+    if int(finalized_vault["kdf_iterations"] or KDF_LEGACY_ITERATIONS) != iterations:
+        return None
+
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT v.vault_id, v.pin_salt, v.kdf_iterations,
+                   v.total_bytes, v.created_at
+            FROM vaults v
+            JOIN auth_sessions s ON s.vault_id = v.vault_id
+            JOIN trusted_devices d ON d.vault_id = v.vault_id
+            WHERE v.vault_id = %s
+              AND s.token_id = %s
+              AND s.device_id = %s
+              AND s.revoked_at IS NULL
+              AND s.expires_at > NOW()
+              AND d.device_id = %s AND d.status = 'trusted'
+              AND v.pin_salt = %s
+              AND COALESCE(v.kdf_iterations, %s) = %s
+            """,
+            (vault_id, token["token_id"], device_id, device_id,
+             snapshot["pin_salt"], KDF_LEGACY_ITERATIONS, iterations),
+        )
+        current = cur.fetchone()
+        return _vault_meta_snapshot(current) if current is not None else None
+    finally:
+        conn.close()
 
 
 @router.post("/auth/zk-login-finalize", response_model=ZkLoginFinalizeResponse)
@@ -805,17 +923,19 @@ async def zk_login_finalize(
     return await run_in_threadpool(_zk_login_finalize_sync, payload, request)
 
 
+@_timed_zk_login("finalize")
 def _zk_login_finalize_sync(
     payload: ZkLoginFinalizeRequest,
     request: Request,
 ) -> ZkLoginFinalizeResponse:
-    enforce_login_finalize_rate_limit(request)
-    ke3 = _b64url_decode(
-        payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
-    )
+    with _zk_login_phase("limiter"):
+        enforce_login_finalize_rate_limit(request)
+    with _zk_login_phase("validation"):
+        ke3 = _b64url_decode(
+            payload.ke3, name="ke3", max_bytes=MAX_OPAQUE_MESSAGE_BYTES,
+        )
 
-    conn = get_db()
-    try:
+    with _zk_login_connection() as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
@@ -828,9 +948,6 @@ def _zk_login_finalize_sync(
         )
         row = cur.fetchone()
         conn.commit()
-    finally:
-        conn.close()
-
     if row is None:
         logger.info("[ZK-LOGIN-FINALIZE] slot missing or expired")
         raise HTTPException(
@@ -838,9 +955,10 @@ def _zk_login_finalize_sync(
         )
 
     try:
-        _session_key = opaque_login_finish(
-            bytes(row["server_state"]), ke3,
-        )
+        with _zk_login_phase("opaque"):
+            _session_key = opaque_login_finish(
+                bytes(row["server_state"]), ke3,
+            )
     except OpaqueWheelMissing:
         raise HTTPException(
             status_code=503, detail="zk auth not available",
@@ -851,8 +969,7 @@ def _zk_login_finalize_sync(
             status_code=401, detail=GENERIC_ZK_AUTH_ERROR,
         )
 
-    conn = get_db()
-    try:
+    with _zk_login_connection() as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
@@ -863,27 +980,27 @@ def _zk_login_finalize_sync(
                   failed_pin_attempts  = 0
               WHERE vault_id = %s
               RETURNING vault_id, wrapped_mvk, wrapped_sk_vault,
-                        display_name_ciphertext, vault_handle
+                        display_name_ciphertext, vault_handle,
+                        pin_salt, kdf_iterations
             """,
             (row["vault_id"],),
         )
         vault_row = cur.fetchone()
 
         conn.commit()
-    finally:
-        conn.close()
-
     if vault_row is None:
         raise HTTPException(
             status_code=401, detail=GENERIC_ZK_AUTH_ERROR,
         )
 
-    token = issue_session_token(
-        vault_id=str(vault_row["vault_id"]),
-        vault_name="",
-        device_id=payload.device_id,
-        client_label=normalize_client_label(request.headers.get("user-agent")),
-    )
+    with _zk_login_phase("session"):
+        token = issue_session_token(
+            vault_id=str(vault_row["vault_id"]),
+            vault_name="",
+            device_id=payload.device_id,
+            client_label=normalize_client_label(request.headers.get("user-agent")),
+            include_vault_meta=True,
+        )
 
     # Single-active-device: the client that just completed OPAQUE
     # login is the new sole trusted device on this vault. Trust the
@@ -891,20 +1008,31 @@ def _zk_login_finalize_sync(
     # device that was trusted before this login (including the one
     # the user just signed out of on another browser) now gets a
     # device_revoked response on its next protected request.
+    device_trust_complete = False
     if payload.device_id:
         try:
             from device_monitor import (
                 ip_prefix_from,
                 trust_current_and_revoke_others,
             )
-            trust_current_and_revoke_others(
-                vault_id=str(vault_row["vault_id"]),
-                device_id=payload.device_id,
-                label=None,
-                user_agent_brand=(
-                    (request.headers.get("user-agent") or "")[:120] or None
-                ),
-                ip_prefix=ip_prefix_from(request),
+            with _zk_login_phase("trust"):
+                trust_result = trust_current_and_revoke_others(
+                    vault_id=str(vault_row["vault_id"]),
+                    device_id=payload.device_id,
+                    label=None,
+                    user_agent_brand=(
+                        (request.headers.get("user-agent") or "")[:120] or None
+                    ),
+                    ip_prefix=ip_prefix_from(request),
+                )
+            # Confirm the exact device that the caller will use for protected
+            # requests. A successful call alone, or a mismatched header/body
+            # identifier, is insufficient to skip client-side registration.
+            device_trust_complete = bool(
+                isinstance(trust_result, dict)
+                and trust_result.get("status") == "trusted"
+                and trust_result.get("device_id") == payload.device_id
+                and request.headers.get("x-device-id") == payload.device_id
             )
         except Exception:
             logger.exception(
@@ -913,6 +1041,22 @@ def _zk_login_finalize_sync(
                 "/devices/register)",
                 vault_row["vault_id"],
             )
+
+    metadata = None
+    if device_trust_complete:
+        try:
+            with _zk_login_phase("metadata"):
+                metadata = _fresh_login_metadata(
+                    token, vault_id=str(vault_row["vault_id"]),
+                    device_id=payload.device_id,
+                    finalized_vault=vault_row,
+                )
+            # A concurrently rotated/revoked generation, or unavailable
+            # freshness check, must take the existing registration/GET path.
+            device_trust_complete = metadata is not None
+        except Exception:
+            device_trust_complete = False
+            logger.exception("[ZK-LOGIN-FINALIZE] fast-path freshness check failed")
 
     return ZkLoginFinalizeResponse(
         vault_id=str(vault_row["vault_id"]),
@@ -923,6 +1067,8 @@ def _zk_login_finalize_sync(
         display_name_ciphertext=_b64url_encode(
             bytes(vault_row["display_name_ciphertext"]),
         ),
+        device_trust_complete=device_trust_complete,
+        vault_meta=metadata,
     )
 
 

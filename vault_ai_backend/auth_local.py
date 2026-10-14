@@ -9,12 +9,12 @@ import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, TypedDict
+from typing import NotRequired, Optional, TypedDict
 
 from fastapi import HTTPException, Request, status
 from psycopg2.extras import RealDictCursor
 
-from vault_core import get_db
+from vault_core import KDF_LEGACY_ITERATIONS, get_db
 
 
 logger = logging.getLogger(__name__)
@@ -249,6 +249,21 @@ class IssuedSession(TypedDict):
     vault_id: str
     vault_name: str
     client_label: str
+    vault_meta: NotRequired[Optional[dict[str, object]]]
+
+
+def _vault_meta_snapshot(row: dict) -> Optional[dict[str, object]]:
+    """Match authenticated GET /vault-meta without exposing other columns."""
+    if not {"vault_id", "pin_salt", "kdf_iterations", "total_bytes", "created_at"}.issubset(row):
+        return None
+    return {
+        "vault_name": None,
+        "vault_id": str(row["vault_id"]),
+        "pin_salt": row["pin_salt"],
+        "kdf_iterations": int(row.get("kdf_iterations") or KDF_LEGACY_ITERATIONS),
+        "total_bytes": int(row["total_bytes"] or 0),
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+    }
 
 
 class SessionPrincipal(TypedDict):
@@ -265,6 +280,7 @@ def issue_session_token(
     client_label: str,
     vault_name: str = "",
     ttl_hours: Optional[int] = None,
+    include_vault_meta: bool = False,
 ) -> IssuedSession:
     """Mint a session token atomically under the single-session policy.
 
@@ -324,12 +340,20 @@ def issue_session_token(
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         # 1. Serialize per-vault. Blocks any concurrent login for this vault.
-        cur.execute(
-            "SELECT vault_id FROM vaults WHERE vault_id = %s FOR UPDATE",
-            (vault_id,),
+        # Optional login metadata comes from the same locked row that
+        # serializes session issuance. Older callers keep their exact query
+        # and return shape; no extra metadata query or token fields are added.
+        lock_query = (
+            "SELECT vault_id, pin_salt, kdf_iterations, total_bytes, created_at "
+            "FROM vaults WHERE vault_id = %s FOR UPDATE"
+            if include_vault_meta else
+            "SELECT vault_id FROM vaults WHERE vault_id = %s FOR UPDATE"
         )
-        if cur.fetchone() is None:
+        cur.execute(lock_query, (vault_id,))
+        locked_vault = cur.fetchone()
+        if locked_vault is None:
             raise ValueError("issue_session_token: vault_id not found")
+        metadata = _vault_meta_snapshot(locked_vault) if include_vault_meta else None
 
         # 2. Revoke every existing unrevoked session for this vault.
         #    Return the OLD client_label / issued_at so we can name the
@@ -403,7 +427,7 @@ def issue_session_token(
         conn.close()
 
     # Only after successful commit do we compute & return the wire token.
-    return {
+    result: IssuedSession = {
         "token":        _format_token(token_id_bytes),
         "token_id":     token_id,
         "expires_at":   expires_at,
@@ -411,6 +435,9 @@ def issue_session_token(
         "vault_name":   vault_name,
         "client_label": client_label,
     }
+    if include_vault_meta:
+        result["vault_meta"] = metadata
+    return result
 
 
 def revoke_session_token(token_id: str, *, reason: str = "logout") -> bool:

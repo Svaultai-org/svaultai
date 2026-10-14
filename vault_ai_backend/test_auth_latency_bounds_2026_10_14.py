@@ -188,13 +188,13 @@ def test_redis_url_cannot_override_socket_or_retry_bounds():
 
 
 @pytest.mark.parametrize("path,limiter", [
-    ("/auth/zk-login-init", "enforce_login_rate_limit"),
+    ("/auth/zk-login-init", "enforce_login_init_rate_limits"),
     ("/auth/zk-register-init", "enforce_signup_rate_limit"),
 ])
 def test_blocked_auth_dependency_does_not_stall_unrelated_route(monkeypatch, path, limiter):
     entered, release = threading.Event(), threading.Event()
 
-    def blocked(req):
+    def blocked(req, **_kwargs):
         entered.set()
         release.wait(timeout=2)
         raise HTTPException(status_code=429, detail="synthetic limit")

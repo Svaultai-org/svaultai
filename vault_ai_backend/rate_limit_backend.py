@@ -48,7 +48,8 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
-from typing import Deque, Optional
+from dataclasses import dataclass
+from typing import Deque, Optional, Sequence
 
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,16 @@ class RateLimitDecision:
         )
 
 
+@dataclass(frozen=True)
+class RateLimitCheck:
+    """One ordered budget check; identifiers are hashed before storage."""
+
+    user_id: str
+    bucket: str
+    limit_per_window: int
+    window_seconds: int
+
+
 class RateLimitBackend(ABC):
 
     backend_name: str = "abstract"
@@ -152,6 +163,27 @@ class RateLimitBackend(ABC):
         window_seconds: int,
     ) -> RateLimitDecision:
         raise NotImplementedError
+
+    def check_and_increment_many(
+        self, checks: Sequence[RateLimitCheck],
+    ) -> list[RateLimitDecision]:
+        """Check in order, stopping on denial and retaining earlier increments.
+
+        The sequential default preserves behavior for in-memory and custom
+        backends. Redis may batch the same ordered work when enabled.
+        """
+        decisions = []
+        for check in checks:
+            decision = self.check_and_increment(
+                user_id=check.user_id,
+                bucket=check.bucket,
+                limit_per_window=check.limit_per_window,
+                window_seconds=check.window_seconds,
+            )
+            decisions.append(decision)
+            if not decision.allowed:
+                break
+        return decisions
 
     def health(self) -> dict:
         return {"backend": self.backend_name, "ok": True}
@@ -236,6 +268,38 @@ return {1, limit - count - 1, math.ceil(window_ms / 1000)}
 """
 
 
+_REDIS_ORDERED_WINDOWS_LUA: str = """
+local now = tonumber(ARGV[1])
+local member_prefix = ARGV[2]
+local decisions = {}
+for i = 1, #KEYS do
+    local window_ms = tonumber(ARGV[2 * i + 1])
+    local limit = tonumber(ARGV[2 * i + 2])
+    local cutoff = now - window_ms
+    redis.call('ZREMRANGEBYSCORE', KEYS[i], 0, cutoff)
+    local count = redis.call('ZCARD', KEYS[i])
+    if count >= limit then
+        local oldest = redis.call('ZRANGE', KEYS[i], 0, 0, 'WITHSCORES')
+        local reset_ms = window_ms
+        if #oldest >= 2 then
+            reset_ms = (tonumber(oldest[2]) + window_ms) - now
+        end
+        if reset_ms < 0 then reset_ms = 0 end
+        decisions[#decisions + 1] = 0
+        decisions[#decisions + 1] = 0
+        decisions[#decisions + 1] = math.ceil(reset_ms / 1000)
+        return decisions
+    end
+    redis.call('ZADD', KEYS[i], now, member_prefix .. ':' .. i)
+    redis.call('PEXPIRE', KEYS[i], window_ms + 1000)
+    decisions[#decisions + 1] = 1
+    decisions[#decisions + 1] = limit - count - 1
+    decisions[#decisions + 1] = math.ceil(window_ms / 1000)
+end
+return decisions
+"""
+
+
 class RedisRateLimitBackend(RateLimitBackend):
 
     backend_name = "redis"
@@ -245,9 +309,17 @@ class RedisRateLimitBackend(RateLimitBackend):
         *,
         url: str,
         client=None,
+        batch_enabled: Optional[bool] = None,
     ) -> None:
         self._url = url
         self._client = client
+        # Unchanged rl:v1 keys do not share a Redis Cluster hash slot. Enable
+        # only after proving this deployment permits atomic multi-key Lua.
+        self._batch_enabled = (
+            os.getenv("VAULTAI_RATE_LIMIT_REDIS_BATCH_ENABLED", "false")
+            .strip().lower() in {"true", "1", "yes", "on"}
+            if batch_enabled is None else bool(batch_enabled)
+        )
         self._script_sha: Optional[str] = None
         if self._client is None:
             try:
@@ -371,6 +443,67 @@ class RedisRateLimitBackend(RateLimitBackend):
             remaining=remaining,
             reset_in_seconds=reset_in,
         )
+
+    def check_and_increment_many(
+        self, checks: Sequence[RateLimitCheck],
+    ) -> list[RateLimitDecision]:
+        if not self._batch_enabled:
+            return super().check_and_increment_many(checks)
+        checks = tuple(checks)
+        if not checks:
+            return []
+        keys = [_compose_key(check.bucket, check.user_id) for check in checks]
+        now_ms = int(time.time() * 1000)
+        # Each attempt gets a unique member even when several arrive in the
+        # same millisecond or the same storage key appears twice in a batch.
+        argv = [str(now_ms), f"{now_ms}:{uuid.uuid4().hex}"]
+        for check in checks:
+            argv.extend((
+                str(max(1, int(check.window_seconds)) * 1000),
+                str(max(1, int(check.limit_per_window))),
+            ))
+        try:
+            if self._client is None:
+                raise RuntimeError("Redis unavailable")
+            # Direct EVAL is one round trip on both cold and warm clients.
+            # Never retry an uncertain write: the script may already have
+            # incremented earlier budgets before a transport failure.
+            raw = self._client.eval(
+                _REDIS_ORDERED_WINDOWS_LUA, len(keys), *keys, *argv,
+            )
+            if not isinstance(raw, (list, tuple)) or not raw or len(raw) % 3:
+                raise ValueError("invalid Redis batch result")
+            count = len(raw) // 3
+            if count > len(checks):
+                raise ValueError("invalid Redis batch result")
+            decisions = []
+            for i in range(count):
+                allowed, remaining, reset = map(int, raw[i * 3:i * 3 + 3])
+                if allowed not in (0, 1) or remaining < 0 or reset < 0:
+                    raise ValueError("invalid Redis batch decision")
+                if (not allowed and (i != count - 1 or remaining != 0)) or (
+                    allowed and i == count - 1 and count != len(checks)
+                ):
+                    raise ValueError("invalid Redis batch decision order")
+                decisions.append(RateLimitDecision(
+                    allowed=bool(allowed), remaining=remaining,
+                    reset_in_seconds=reset,
+                ))
+            return decisions
+        except Exception as exc:
+            logger.warning(
+                "Redis ordered rate-limit call failed (%s); applying bucket "
+                "failure policy without retry", type(exc).__name__,
+            )
+            decisions = []
+            for check in checks:
+                decision = _failure_decision(
+                    check.bucket, max(1, int(check.window_seconds)),
+                )
+                decisions.append(decision)
+                if not decision.allowed:
+                    break
+            return decisions
 
     def health(self) -> dict:
         ok = False
@@ -515,6 +648,7 @@ __all__ = [
     "BUCKET_RISK_LOW",
     "RateLimitBackend",
     "RateLimitDecision",
+    "RateLimitCheck",
     "InMemoryRateLimitBackend",
     "RedisRateLimitBackend",
     "get_rate_limit_backend",

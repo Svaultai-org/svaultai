@@ -88,6 +88,42 @@ All synchronous Redis, database and OPAQUE work in the async ZK authentication
 handlers runs in the thread pool. The async route interfaces remain unchanged,
 and a stalled dependency does not occupy the application's event loop.
 
+### Optional ordered authentication batch
+
+`enforce_login_init_rate_limits` checks the existing budgets in their original
+order: source IP, source+handle, global handle, then source+lookup and global
+lookup when a lookup was supplied. `check_and_increment_many` has a sequential
+default for in-memory and custom backends. The Redis optimization is disabled
+by default:
+
+```
+VAULTAI_RATE_LIMIT_REDIS_BATCH_ENABLED=false
+```
+
+Enable it only after executing the real multi-key Lua regression against the
+deployment's Redis service using synthetic identifiers. Ordinary Redis Cluster
+requires multi-key scripts to use one hash slot; the existing `rl:v1` counters
+do not share such a slot. Do not change their key namespace or add a new hash
+tag to work around this: that would reset existing budgets and split counters
+between the single-check and batch paths. Upstash documents multi-key Lua under
+its global script lock, but deployment-specific verification is still required.
+References: [Redis scripting](https://redis.io/docs/latest/develop/programmability/eval-intro/),
+[Redis Cluster](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/),
+[Upstash script locking](https://upstash.com/docs/redis/features/key-locking).
+
+When enabled, one direct `EVAL` executes all checks atomically in one network
+round trip, including a cold client. The script stops on the first denial;
+earlier accepted budgets retain their increments, later budgets are untouched,
+and a denied global counter's expiry is not refreshed. It uses the unchanged
+hashed keys and sliding-window operations, so legacy login and modern lookup
+continue sharing counters. No uncertain write, timeout, `CROSSSLOT`, or invalid
+response is retried; authentication remains fail closed. The original
+single-key API and its script cache remain available.
+
+Cheap wire decoding must occur before the valid-identifier batch. Malformed
+wire values still consume the existing source-IP check before returning 400;
+neither validation branch reaches the database or OPAQUE before rate limiting.
+
 ### Key hashing
 
 Both backends hash the caller's `user_id` before it becomes a key:
