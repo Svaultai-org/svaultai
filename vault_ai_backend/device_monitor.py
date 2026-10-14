@@ -76,6 +76,7 @@ def trust_current_and_revoke_others(
     label: Optional[str] = None,
     user_agent_brand: Optional[str] = None,
     ip_prefix: Optional[str] = None,
+    connection=None,
 ) -> dict:
     # Single-active-device invariant, enforced atomically.
     #
@@ -90,7 +91,10 @@ def trust_current_and_revoke_others(
     # Idempotent when called with the same (vault_id, device_id):
     # the UPSERT re-affirms trusted status and the revoke-others UPDATE
     # matches zero rows.
-    conn = get_db()
+    # The optional checked connection is owned by the enclosing auth handler.
+    # Keep this primitive's transaction atomic and close only our own lease.
+    owns_connection = connection is None
+    conn = get_db() if owns_connection else connection
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
@@ -139,7 +143,8 @@ def trust_current_and_revoke_others(
         conn.rollback()
         raise
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
     revoked_ids = [r["device_id"] for r in revoked_rows]
     if revoked_ids:

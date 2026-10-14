@@ -281,6 +281,7 @@ def issue_session_token(
     vault_name: str = "",
     ttl_hours: Optional[int] = None,
     include_vault_meta: bool = False,
+    connection=None,
 ) -> IssuedSession:
     """Mint a session token atomically under the single-session policy.
 
@@ -318,6 +319,10 @@ def issue_session_token(
     :func:`normalize_client_label` applied to
     ``request.headers.get("user-agent")`` at the route boundary. This
     function never trusts client-supplied labels.
+
+    An optional already-checked caller-owned connection avoids another pool
+    checkout. Its transaction must be idle on entry. This function retains
+    its own commit/rollback boundary and only closes connections it borrows.
     """
     if not vault_id:
         raise ValueError("issue_session_token requires vault_id")
@@ -332,7 +337,8 @@ def issue_session_token(
     hours = max(SESSION_TTL_HOURS_MIN, min(SESSION_TTL_HOURS_MAX, hours))
     expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
 
-    conn = get_db()
+    owns_connection = connection is None
+    conn = get_db() if owns_connection else connection
     try:
         # _PooledConnection wraps a psycopg2 connection whose default
         # autocommit is False; the pool's close() rollback keeps that
@@ -424,7 +430,8 @@ def issue_session_token(
         # Never surface the token — the wire value is not even built yet.
         raise
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
     # Only after successful commit do we compute & return the wire token.
     result: IssuedSession = {

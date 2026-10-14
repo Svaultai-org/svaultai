@@ -133,6 +133,40 @@ class GuardDb:
         self.closed = True
 
 
+class FinalizeConnection:
+    """One leased connection, with real SQL execution for the freshness read."""
+    def __init__(self, slot, updated, guard):
+        self.slot, self.updated, self.guard = slot, updated, guard
+        self.active = None
+        self.closed = False
+
+    def cursor(self, **_kwargs):
+        return self
+
+    def execute(self, query, params):
+        normalized = " ".join(query.split())
+        if normalized.startswith("DELETE FROM vault_zk_login_slots"):
+            self.active = self.slot
+        elif normalized.startswith("UPDATE vaults"):
+            self.active = self.updated
+        elif normalized.startswith("SELECT v.vault_id"):
+            self.active = self.guard
+        else:
+            raise AssertionError("unexpected route query")
+        self.active.execute(query, params)
+
+    def fetchone(self):
+        return self.active.fetchone()
+
+    def commit(self):
+        self.active.commit()
+
+    def close(self):
+        self.closed = True
+        for conn in (self.slot, self.updated, self.guard):
+            conn.close()
+
+
 @pytest.fixture
 def guard():
     db = GuardDb()
@@ -147,7 +181,8 @@ def finalizer(monkeypatch, guard):
         wrapped_mvk=b"wrapped-mvk", wrapped_sk_vault=b"wrapped-sk",
         display_name_ciphertext=b"display-ciphertext", pin_salt=SALT,
         kdf_iterations=600_000))
-    db = mock.Mock(side_effect=[slot, updated, guard])
+    connection = FinalizeConnection(slot, updated, guard)
+    db = mock.Mock(return_value=connection)
     finish = mock.Mock(return_value=b"synthetic-opaque-session-key")
     issue = mock.Mock(return_value=issued_token())
     trust = mock.Mock(return_value=dict(status="trusted", device_id=DEVICE_ID))
@@ -158,8 +193,8 @@ def finalizer(monkeypatch, guard):
     monkeypatch.setattr("device_monitor.trust_current_and_revoke_others", trust)
     payload = routes.ZkLoginFinalizeRequest(slot_id="synthetic-slot",
         ke3=routes._b64url_encode(b"synthetic-proof"), device_id=DEVICE_ID)
-    return dict(slot=slot, updated=updated, db=db, finish=finish,
-                issue=issue, trust=trust, payload=payload)
+    return dict(slot=slot, updated=updated, guard=guard, connection=connection,
+                db=db, finish=finish, issue=issue, trust=trust, payload=payload)
 
 
 def run_finalizer(state, *, header=DEVICE_ID):
@@ -192,7 +227,7 @@ def test_unconfirmed_trust_preserves_login_and_uses_fallback(finalizer, trust_re
     response = run_finalizer(finalizer)
     assert response.session_token == "synthetic-signed-token"
     assert response.device_trust_complete is False and response.vault_meta is None
-    assert finalizer["db"].call_count == 2
+    assert finalizer["db"].call_count == 1
 
 
 def test_trust_exception_preserves_login_and_uses_fallback(finalizer):
@@ -200,14 +235,14 @@ def test_trust_exception_preserves_login_and_uses_fallback(finalizer):
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
     assert response.session_token == "synthetic-signed-token"
-    assert finalizer["db"].call_count == 2
+    assert finalizer["db"].call_count == 1
 
 
 @pytest.mark.parametrize("header", [None, "different-device"])
 def test_missing_or_mismatched_request_device_cannot_skip_registration(finalizer, header):
     response = run_finalizer(finalizer, header=header)
     assert response.device_trust_complete is False and response.vault_meta is None
-    assert finalizer["db"].call_count == 2
+    assert finalizer["db"].call_count == 1
 
 
 def test_missing_body_device_uses_fallback(finalizer):
@@ -215,7 +250,7 @@ def test_missing_body_device_uses_fallback(finalizer):
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
     finalizer["trust"].assert_not_called()
-    assert finalizer["db"].call_count == 2
+    assert finalizer["db"].call_count == 1
 
 
 @pytest.mark.parametrize("token", [issued_token(vault_meta=None),
@@ -225,7 +260,7 @@ def test_missing_or_legacy_metadata_keeps_the_existing_fetch_path(finalizer, tok
     finalizer["issue"].return_value = token
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
-    assert finalizer["db"].call_count == 2
+    assert finalizer["db"].call_count == 1
 
 
 @pytest.mark.parametrize("changed", [{"pin_salt": "old-salt"}, {"kdf_iterations": 700_000}])
@@ -234,7 +269,7 @@ def test_rotation_between_wrapped_key_read_and_issuance_requires_fallback(finali
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
     assert response.session_token == "synthetic-signed-token"
-    assert finalizer["db"].call_count == 2
+    assert finalizer["db"].call_count == 1
 
 
 @pytest.mark.parametrize("mutation", [
@@ -261,8 +296,7 @@ def test_rotation_or_revocation_after_issuance_requires_fallback(finalizer, guar
 
 
 def test_unavailable_guard_preserves_login_and_requires_fallback(finalizer):
-    finalizer["db"].side_effect = [finalizer["slot"], finalizer["updated"],
-                                    RuntimeError("synthetic metadata unavailable")]
+    finalizer["guard"].execute = mock.Mock(side_effect=RuntimeError("synthetic metadata unavailable"))
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
     assert response.session_token == "synthetic-signed-token"
@@ -410,7 +444,7 @@ def test_valid_login_init_consumes_ip_once_and_limits_before_db_opaque(monkeypat
         assert client.post("/auth/zk-login-init", json=payload).status_code == 200
         denied = client.post("/auth/zk-login-init", json=payload)
     assert denied.status_code == 429
-    assert db.call_count == 4 and opaque.call_count == 2
+    assert db.call_count == 2 and opaque.call_count == 2
     diagnostics = [record.getMessage() for record in caplog.records
                    if record.getMessage().startswith("[AUTH-ZK-TIMING]")]
     assert len(diagnostics) == 3

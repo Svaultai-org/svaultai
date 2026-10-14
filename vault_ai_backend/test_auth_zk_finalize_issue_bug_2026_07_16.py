@@ -281,6 +281,16 @@ class _FakeConn:
         self.closed = True
 
 
+class _SharedFakeConn(_FakeConn):
+    """Play back successive queries on a single handler-owned lease."""
+    def __init__(self, results):
+        super().__init__(results)
+        self._shared_cursor = _FakeCursor(results)
+
+    def cursor(self, cursor_factory=None):
+        return self._shared_cursor
+
+
 def _make_get_db_playback(*conn_result_sequences: List[Optional[Dict[str, Any]]]):
     """
     Return a callable suitable for ``mock.patch(...).side_effect`` that
@@ -545,12 +555,12 @@ class ZkLoginFinalizeBehavioralTests(_ZkRouteHarness):
         """Return (response, issue_session_token_mock)."""
         from fastapi.testclient import TestClient
 
-        # get_db() is called TWICE by zk_login_finalize:
-        #   1) DELETE FROM vault_zk_login_slots RETURNING vault_id, server_state
-        #   2) UPDATE vaults RETURNING vault_id, vault_name, wrapped_mvk, ...
-        get_db = _make_get_db_playback(
-            [{"vault_id": self._VAULT_ID, "server_state": b"fake-server-state"}],
+        # One checked lease executes the slot DELETE and vault UPDATE in
+        # distinct committed transactions. Remaining real trust SQL sees no
+        # revoked rows after these two playback results have been consumed.
+        connection = _SharedFakeConn(
             [
+                {"vault_id": self._VAULT_ID, "server_state": b"fake-server-state"},
                 {
                     "vault_id":                self._VAULT_ID,
                     "vault_name":              self._VAULT_NAME,
@@ -561,6 +571,7 @@ class ZkLoginFinalizeBehavioralTests(_ZkRouteHarness):
                 }
             ],
         )
+        get_db = lambda: connection
         with mock.patch("routes.auth_zk_routes.get_db", side_effect=get_db), \
              mock.patch(
                  "routes.auth_zk_routes.opaque_login_finish",
