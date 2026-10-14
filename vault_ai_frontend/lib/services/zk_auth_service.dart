@@ -78,6 +78,28 @@ final Pbkdf2 _pinKdf = Pbkdf2(
   bits: 256,
 );
 
+/// Only the production web login exchange uses its existing same-origin
+/// proxy. Native, custom deployments, and every other auth path keep their
+/// configured backend URL.
+Uri zkLoginRequestUri({
+  required String backendBaseUrl,
+  required String path,
+  required bool isWeb,
+  required Uri pageUri,
+}) {
+  const loginPaths = {'/auth/zk-login-init', '/auth/zk-login-finalize'};
+  if (isWeb &&
+      pageUri.scheme == 'https' &&
+      pageUri.host == 'app.svaultai.com' &&
+      pageUri.port == 443 &&
+      pageUri.userInfo.isEmpty &&
+      backendBaseUrl == 'https://api.svaultai.com' &&
+      loginPaths.contains(path)) {
+    return Uri.parse('https://app.svaultai.com/api$path');
+  }
+  return Uri.parse('$backendBaseUrl$path');
+}
+
 class RegisterResult {
   final String vaultId;
   final String vaultHandle;
@@ -97,6 +119,41 @@ class RegisterResult {
   });
 }
 
+/// Fresh, authenticated KDF parameters. Invalid or unrelated response data
+/// cannot become a crypto context through the faster login path.
+class LoginVaultMeta {
+  final String pinSaltBase64;
+  final int kdfIterations;
+
+  const LoginVaultMeta._(this.pinSaltBase64, this.kdfIterations);
+
+  static LoginVaultMeta? fromResponse(
+    Object? response, {
+    required String expectedVaultId,
+  }) {
+    if (response is! Map || response['vault_id'] != expectedVaultId) {
+      return null;
+    }
+    final salt = response['pin_salt'];
+    final iterations = response['kdf_iterations'];
+    if (salt is! String ||
+        salt.isEmpty ||
+        salt.length > 200 ||
+        iterations is! int ||
+        iterations < 100000 ||
+        iterations > 2000000) {
+      return null;
+    }
+    try {
+      final saltBytes = base64Decode(salt);
+      if (saltBytes.length < 16 || saltBytes.length > 64) return null;
+    } on FormatException {
+      return null;
+    }
+    return LoginVaultMeta._(salt, iterations);
+  }
+}
+
 class LoginResult {
   final String vaultId;
   final String vaultHandle;
@@ -112,6 +169,8 @@ class LoginResult {
   /// failing that, the neutral "Svaultai" fallback rendered by
   /// downstream UI + prompt sites.
   final String? vaultName;
+  final bool deviceTrustComplete;
+  final LoginVaultMeta? vaultMeta;
   LoginResult({
     required this.vaultId,
     required this.vaultHandle,
@@ -120,7 +179,32 @@ class LoginResult {
     required this.skVaultPrivate,
     required this.displayName,
     this.vaultName,
+    this.deviceTrustComplete = false,
+    this.vaultMeta,
   });
+}
+
+/// Older servers and incomplete finalization replies retain the original
+/// device-registration and fresh-metadata requests. Only both confirmed facts
+/// together remove those requests; inheritance authorization keeps its order.
+Future<LoginVaultMeta> resolveLoginVaultMeta({
+  required LoginResult loginResult,
+  required Future<void> Function() registerDevice,
+  required Future<void> Function() afterDeviceReady,
+  required Future<Map<String, dynamic>> Function() fetchVaultMeta,
+}) async {
+  final inline = loginResult.deviceTrustComplete ? loginResult.vaultMeta : null;
+  if (inline == null) await registerDevice();
+  await afterDeviceReady();
+  if (inline != null) return inline;
+  final fetched = LoginVaultMeta.fromResponse(
+    await fetchVaultMeta(),
+    expectedVaultId: loginResult.vaultId,
+  );
+  if (fetched == null) {
+    throw StateError('Vault encryption metadata is unavailable.');
+  }
+  return fetched;
 }
 
 class AdoptResult {
@@ -724,6 +808,11 @@ class ZkAuthService {
       displayName: displayName,
       // The readable sign-in name is intentionally device-local.
       vaultName: vaultName,
+      deviceTrustComplete: finalizeResponse['device_trust_complete'] == true,
+      vaultMeta: LoginVaultMeta.fromResponse(
+        finalizeResponse['vault_meta'],
+        expectedVaultId: finalizeResponse['vault_id'] as String,
+      ),
     );
   }
 

@@ -1235,6 +1235,7 @@ class AppState extends ChangeNotifier {
   String? vaultHandle;
 
   String? lastVaultName;
+  Stopwatch? _pendingSuccessfulLoginTiming;
 
   String? _vaultName;
   String? get vaultName => _vaultName;
@@ -1832,6 +1833,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> clearSession({bool keepLastVaultName = true}) async {
+    _pendingSuccessfulLoginTiming?.stop();
+    _pendingSuccessfulLoginTiming = null;
     _runShutdownHooks();
 
     perf_cache.clearCacheOnLogout();
@@ -1907,6 +1910,20 @@ class AppState extends ChangeNotifier {
     pinAttempts = 0;
     lockoutUntil = null;
     notifyListeners();
+  }
+
+  void _recordSuccessfulLoginTiming(Stopwatch timing) {
+    if (!kAuthTimingDiagnosticsEnabled) return;
+    _pendingSuccessfulLoginTiming?.stop();
+    _pendingSuccessfulLoginTiming = timing;
+  }
+
+  void _reportSuccessfulLoginFirstFrame() {
+    final timing = _pendingSuccessfulLoginTiming;
+    _pendingSuccessfulLoginTiming = null;
+    if (timing == null) return;
+    timing.stop();
+    authTimingDiagnosticPrint('submit_to_dashboard_first_frame', timing.elapsed);
   }
 
   Future<LoginResult?> _restoreZkSessionKeysAfterPin({
@@ -4374,7 +4391,12 @@ Future<Map<String, dynamic>> _zkHttpPost(
   Map<String, dynamic> body, {
   String? bearerToken,
 }) async {
-  final uri = Uri.parse('$backendBaseUrl$path');
+  final uri = zkLoginRequestUri(
+    backendBaseUrl: backendBaseUrl,
+    path: path,
+    isWeb: kIsWeb,
+    pageUri: Uri.base,
+  );
   final headers = <String, String>{'Content-Type': 'application/json'};
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
@@ -4847,6 +4869,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         // VLT handle.
         final resolvedVaultName = loginResult.vaultName ??
             (entryIsHandle ? loginResult.displayName : vaultName);
+        app.unlocked = false;
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -4855,11 +4878,21 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           displayNameValue: loginResult.displayName,
         );
         pageTiming('secure_store_complete');
-        await _registerDeviceBestEffort(loginResult.sessionToken);
-        await _autoConsumeInheritanceTokenIfPresent(
-          loginResult.sessionToken,
-          app,
+        final loginMeta = await resolveLoginVaultMeta(
+          loginResult: loginResult,
+          registerDevice: () => _registerDeviceBestEffort(loginResult.sessionToken),
+          afterDeviceReady: () => _autoConsumeInheritanceTokenIfPresent(
+            loginResult.sessionToken, app,
+          ),
+          fetchVaultMeta: () => _API.getVaultMeta(
+            vaultName: resolvedVaultName,
+            authToken: loginResult.sessionToken,
+          ),
         );
+        if (!mounted || app.sessionToken != loginResult.sessionToken ||
+            app.vaultId != loginResult.vaultId) {
+          throw StateError('Sign-in initialization was superseded.');
+        }
         // 2026-07-22 crypto-context refactor. The MVK unwrapped by
         // OPAQUE is preserved in the legacy _keyCache slot for the
         // ZK metadata surface (ZkActiveMvk publish below reads it).
@@ -4892,43 +4925,21 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           vaultId: loginResult.vaultId,
           vaultHandle: loginResult.vaultHandle,
         );
-        try {
-          final _zkLoginMeta = await _API.getVaultMeta(
-            vaultName: resolvedVaultName,
-            authToken: loginResult.sessionToken,
-          );
-          final _zkLoginSalt = _zkLoginMeta['pin_salt']?.toString();
-          final _zkLoginIter =
-              (_zkLoginMeta['kdf_iterations'] as num?)?.toInt();
-          if (_zkLoginSalt != null &&
-              _zkLoginSalt.isNotEmpty &&
-              _zkLoginIter != null) {
-            final _zkLoginCtx = await deriveAndInstallCryptoContext(
-              vaultId: loginResult.vaultId,
-              vaultName: resolvedVaultName,
-              pin: pin,
-              pinSaltBase64: _zkLoginSalt,
-              iterations: _zkLoginIter,
-              source: 'zk_login',
-            );
-            if (_zkLoginCtx == null) {
-              vlog('login.zk.derive.superseded', {
-                'vaultName': resolvedVaultName,
-              });
-            }
-            pageTiming('vault_pbkdf2_complete');
-          } else {
-            vlog('login.zk.meta_missing_fields', {
-              'has_salt': _zkLoginSalt != null,
-              'has_iter': _zkLoginIter != null,
-            });
-          }
-        } catch (e) {
-          vlog('login.zk.pbkdf2_derive_failed', {
-            'error': e.toString(),
-            'vaultName': resolvedVaultName,
-          });
+        final loginContext = await deriveAndInstallCryptoContext(
+          vaultId: loginResult.vaultId,
+          vaultName: resolvedVaultName,
+          pin: pin,
+          pinSaltBase64: loginMeta.pinSaltBase64,
+          iterations: loginMeta.kdfIterations,
+          source: 'zk_login',
+          canInstall: () => mounted &&
+              app.sessionToken == loginResult.sessionToken &&
+              app.vaultId == loginResult.vaultId,
+        );
+        if (loginContext == null) {
+          throw StateError('Sign-in initialization was superseded.');
         }
+        pageTiming('vault_pbkdf2_complete');
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
         // Cleared on logout / vault switch.
@@ -4967,6 +4978,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
         } catch (_) {}
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
+        app._recordSuccessfulLoginTiming(authTiming);
         TextInput.finishAutofillContext(shouldSave: true);
         Navigator.pushReplacementNamed(context, '/chat');
         return;
@@ -5829,6 +5841,7 @@ class _UnlockPageState extends State<UnlockPage> {
             (zkLoginUsesHandle
                 ? (app.vaultName ?? loginResult.displayName)
                 : name);
+        app.unlocked = false;
         await app.setSession(
           token: loginResult.sessionToken,
           vaultIdValue: loginResult.vaultId,
@@ -5837,11 +5850,21 @@ class _UnlockPageState extends State<UnlockPage> {
           displayNameValue: loginResult.displayName,
         );
         pageTiming('secure_store_complete');
-        await _registerDeviceBestEffort(loginResult.sessionToken);
-        await _autoConsumeInheritanceTokenIfPresent(
-          loginResult.sessionToken,
-          app,
+        final loginMeta = await resolveLoginVaultMeta(
+          loginResult: loginResult,
+          registerDevice: () => _registerDeviceBestEffort(loginResult.sessionToken),
+          afterDeviceReady: () => _autoConsumeInheritanceTokenIfPresent(
+            loginResult.sessionToken, app,
+          ),
+          fetchVaultMeta: () => _API.getVaultMeta(
+            vaultName: resolvedVaultName,
+            authToken: loginResult.sessionToken,
+          ),
         );
+        if (!mounted || app.sessionToken != loginResult.sessionToken ||
+            app.vaultId != loginResult.vaultId) {
+          throw StateError('Unlock initialization was superseded.');
+        }
         // 2026-07-22 crypto-context refactor. Preserve MVK in
         // _keyCache for the ZK metadata surface, but install the
         // freshly-derived PBKDF2 VaultCryptoContext for /chat. See
@@ -5862,43 +5885,21 @@ class _UnlockPageState extends State<UnlockPage> {
           vaultId: loginResult.vaultId,
           vaultHandle: loginResult.vaultHandle,
         );
-        try {
-          final _zkUnlockMeta = await _API.getVaultMeta(
-            vaultName: resolvedVaultName,
-            authToken: loginResult.sessionToken,
-          );
-          final _zkUnlockSalt = _zkUnlockMeta['pin_salt']?.toString();
-          final _zkUnlockIter =
-              (_zkUnlockMeta['kdf_iterations'] as num?)?.toInt();
-          if (_zkUnlockSalt != null &&
-              _zkUnlockSalt.isNotEmpty &&
-              _zkUnlockIter != null) {
-            final _zkUnlockCtx = await deriveAndInstallCryptoContext(
-              vaultId: loginResult.vaultId,
-              vaultName: resolvedVaultName,
-              pin: pin,
-              pinSaltBase64: _zkUnlockSalt,
-              iterations: _zkUnlockIter,
-              source: 'zk_unlock',
-            );
-            if (_zkUnlockCtx == null) {
-              vlog('unlock.zk.derive.superseded', {
-                'vaultName': resolvedVaultName,
-              });
-            }
-            pageTiming('vault_pbkdf2_complete');
-          } else {
-            vlog('unlock.zk.meta_missing_fields', {
-              'has_salt': _zkUnlockSalt != null,
-              'has_iter': _zkUnlockIter != null,
-            });
-          }
-        } catch (e) {
-          vlog('unlock.zk.pbkdf2_derive_failed', {
-            'error': e.toString(),
-            'vaultName': resolvedVaultName,
-          });
+        final loginContext = await deriveAndInstallCryptoContext(
+          vaultId: loginResult.vaultId,
+          vaultName: resolvedVaultName,
+          pin: pin,
+          pinSaltBase64: loginMeta.pinSaltBase64,
+          iterations: loginMeta.kdfIterations,
+          source: 'zk_unlock',
+          canInstall: () => mounted &&
+              app.sessionToken == loginResult.sessionToken &&
+              app.vaultId == loginResult.vaultId,
+        );
+        if (loginContext == null) {
+          throw StateError('Unlock initialization was superseded.');
         }
+        pageTiming('vault_pbkdf2_complete');
         // Cache the X25519 private key so the inheritance credential
         // reveal path can decrypt without another OPAQUE round-trip.
         // Cleared on logout / vault switch.
@@ -5928,6 +5929,7 @@ class _UnlockPageState extends State<UnlockPage> {
         }
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
+        app._recordSuccessfulLoginTiming(authTiming);
         TextInput.finishAutofillContext(shouldSave: true);
         Navigator.pushReplacementNamed(context, '/chat');
         return;
@@ -11453,6 +11455,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
           'initial_chat_visible',
           initialChatTiming.elapsed,
         );
+        app._reportSuccessfulLoginFirstFrame();
       }
       await app.refreshVaultStats();
       if (!mounted) return;
@@ -19352,6 +19355,7 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
   required String pinSaltBase64,
   required int iterations,
   required String source,
+  bool Function()? canInstall,
 }) async {
   final opId = VaultCryptoRegistry.nextOperationId();
 
@@ -19360,6 +19364,10 @@ Future<VaultCryptoContext?> deriveAndInstallCryptoContext({
     pinSaltBase64: pinSaltBase64,
     iterations: iterations,
   );
+
+  // A completed derive from a former session must not overwrite the current
+  // context or unlock a vault after sign-out, navigation, or a new login.
+  if (canInstall != null && !canInstall()) return null;
 
   final gen = VaultCryptoRegistry.nextGeneration();
   final context = VaultCryptoContext(
