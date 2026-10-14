@@ -76,6 +76,18 @@ counter, which is the whole point of moving off in-memory. The Lua
 script is loaded once with `SCRIPT LOAD` and reloaded on
 `NoScriptError`.
 
+Redis connections use explicit 0.2-second connect and socket-read timeouts,
+with `Retry(NoBackoff(), 0)`, timeout retries disabled and no health-check
+PING added to the request path. The effective connection-pool settings enforce
+these bounds even if the Redis URL includes conflicting timeout parameters.
+The existing one-time reload on `NoScriptError` remains; network errors are
+not retried. A connect/read bound is not an end-to-end response guarantee:
+TLS, separate commands, worker queueing and database work also consume time.
+
+All synchronous Redis, database and OPAQUE work in the async ZK authentication
+handlers runs in the thread pool. The async route interfaces remain unchanged,
+and a stalled dependency does not occupy the application's event loop.
+
 ### Key hashing
 
 Both backends hash the caller's `user_id` before it becomes a key:
@@ -96,7 +108,7 @@ unreachable, or when SCRIPT LOAD or EVALSHA raises:
 
 | Risk | Buckets | Outage policy |
 |---|---|---|
-| High | `auth_signup`, `auth_login`, `pin_verify`, `delete_vault`, `crypto_reveal`, `upload_burst`, `delete_burst`, `export` | **fail closed** — return a denied decision with `reset_in_seconds = window_seconds` |
+| High | `auth_signup`, `auth_login`, `auth_login_credential`, `auth_login_vault`, `auth_login_finalize`, `pin_verify`, `delete_vault`, `crypto_reveal`, `upload_burst`, `delete_burst`, `export` | **fail closed** — return a denied decision with `reset_in_seconds = window_seconds` |
 | Low | `chat` | **fail open** — allow the request through so a Redis blip does not brick user chat |
 
 Fail-closed prevents a Redis outage from becoming a distributed
@@ -124,9 +136,39 @@ Nothing else in the module logs the raw URL.
 | Bucket | Purpose | Default | Env vars |
 |---|---|---|---|
 | `auth_signup` | Prevent signup floods per IP | 20 / hour | `VAULTAI_AUTH_SIGNUP_LIMIT`, `VAULTAI_AUTH_WINDOW_SECONDS` |
-| `auth_login` | Prevent credential stuffing per IP | 30 / hour | `VAULTAI_AUTH_LOGIN_LIMIT`, `VAULTAI_AUTH_WINDOW_SECONDS` |
+| `auth_login` | Bound login-init and legacy-login requests per IP, including malformed lookups | 10 / minute | `VAULTAI_AUTH_LOGIN_LIMIT`, `VAULTAI_AUTH_LOGIN_WINDOW_SECONDS` |
+| `auth_login_credential` | Shorter budget per source IP and opaque vault identifier | 6 / minute | `VAULTAI_AUTH_CREDENTIAL_LIMIT`, `VAULTAI_AUTH_CREDENTIAL_WINDOW_SECONDS` |
+| `auth_login_vault` | Bound distributed requests for the same opaque identifier across sources | 10 / minute | `VAULTAI_AUTH_VAULT_LIMIT`; fixed 60-second window |
+| `auth_login_finalize` | Bound proof/slot submissions per IP separately from init | 30 / minute | `VAULTAI_AUTH_FINALIZE_LIMIT`, `VAULTAI_AUTH_CREDENTIAL_WINDOW_SECONDS` |
 
-Wired: `routes/auth_routes.py::signup` and `::login`.
+Wired: `routes/auth_routes.py::signup_disabled` and `::login`, plus the
+registration and login endpoints in `routes/auth_zk_routes.py`.
+
+The login IP window is independent of `VAULTAI_AUTH_WINDOW_SECONDS`, which
+continues to control signup's hour-long window. Legacy login checks the cheap
+source budget before decoding the lookup, so malformed probes count toward
+the ten-request limit while avoiding account lookup and PIN derivation.
+The eleventh request receives 429 with `Retry-After`; no artificial delay is
+added. Invalid lookup syntax returns 400 while the source budget is available;
+a valid but unknown identifier receives the same generic 401 as a wrong PIN.
+
+Modern login checks both its handle and optional username lookup. Legacy and
+modern login using the same lookup share both source+identifier and global
+identifier budgets. The six-exchange source budget is preserved because old
+OPAQUE record compatibility can use two init exchanges per submitted PIN.
+These limits count HTTP exchanges, not guesses made by the user interface.
+
+Every authentication budget expires automatically. Rejected global checks
+do not refresh the global window; the preceding allowed source check still
+counts that source's attempt. A busy or abused vault identifier may temporarily
+return 429 to another source for at most the remaining minute. An unrelated
+vault retains its own identifier budget, subject to the caller's IP budget.
+No unauthenticated login attempt writes persistent vault-lock fields.
+
+Legacy login records closed-set phase durations (`limiter_ms`, `validation_ms`,
+`db_ms`, `kdf_ms`, `total_ms`) and status. These diagnostics contain no PIN,
+lookup, account name, device identifier, IP or request body. They measure route
+execution; reverse-proxy queueing, transport and TLS happen outside that total.
 
 ### PIN + unlock
 | Bucket | Purpose | Default | Env vars |
@@ -206,8 +248,8 @@ Wired: `routes/login_routes.py::crypto_reveal_sensitive_backup`.
 
 ## When 429 alone is not enough
 
-Rate limits protect the API. They do not protect the underlying
-account. For anything that could brute-force a secret (PIN, seed,
-etc.), the rate limit MUST compose with an account-level counter
-(vault lockout, session revoke, etc.) so an attacker distributing
-across IPs can't sidestep it.
+Authentication combines source, source+opaque-vault and temporary global
+opaque-vault budgets to bound attempts across IPs without permanently locking
+a victim's vault based on unauthenticated traffic. Authenticated sensitive-PIN
+verification, session revocation and the existing protected lock/freeze flows
+remain separate; changing these login budgets does not remove their safeguards.

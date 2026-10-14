@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -247,46 +249,75 @@ def _do_dummy_derive(pin: str) -> None:
 
 @router.post("/auth/login", response_model=AuthResponse)
 def login(payload: LoginRequest, request: Request) -> AuthResponse:
-                                                                
-                                                                      
-    origin = request.headers.get("origin") or "-"
-    device_id_present = bool(request.headers.get("x-device-id"))
-    client_host = (request.client.host if request.client else "-") or "-"
-    print(
-        f"[AUTH] /auth/login ROUTE_ENTRY "
-        f"origin={origin} client={client_host} "
-        f"device_id_present={device_id_present} "
-        f"lookup_present={bool(payload.username_lookup)} "
-        f"pin_len={len(payload.pin or '')}",
-        flush=True,
-    )
-
-    enforce_login_rate_limit(request)
-    _validate_pin_shape(payload.pin, is_signup=False)
-    username_lookup = _decode_username_lookup(payload.username_lookup)
-    enforce_login_credential_rate_limit(
-        request, credential_id=username_lookup, kind="lookup",
-    )
-
-    conn = get_db()
+    started = time.perf_counter()
+    timings = {"limiter": 0.0, "validation": 0.0, "db": 0.0, "kdf": 0.0}
+    outcome = 500
     try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            SELECT vault_id, pin_salt, pin_verifier, kdf_iterations,
-                   failed_pin_attempts, locked_until, must_reset, display_username,
-                   vault_handle
-            FROM vaults
-            WHERE username_lookup_v1 = %s
-            """,
-            (username_lookup,),
+        result = _login_impl(payload, request, timings)
+        outcome = 200
+        return result
+    except HTTPException as exc:
+        outcome = exc.status_code
+        raise
+    finally:
+        # Closed-set phases and durations only: no PIN, opaque identifier,
+        # account name, IP, device ID or request body enters this diagnostic.
+        logger.info(
+            "[AUTH] login timing status=%s limiter_ms=%.1f validation_ms=%.1f "
+            "db_ms=%.1f kdf_ms=%.1f total_ms=%.1f",
+            outcome, timings["limiter"] * 1000, timings["validation"] * 1000,
+            timings["db"] * 1000, timings["kdf"] * 1000,
+            (time.perf_counter() - started) * 1000,
         )
-        row = cur.fetchone()
+
+
+@contextmanager
+def _login_phase(timings: dict[str, float], phase: str):
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[phase] += time.perf_counter() - started
+
+
+def _login_impl(
+    payload: LoginRequest, request: Request, timings: dict[str, float],
+) -> AuthResponse:
+
+    # Count malformed lookups too, without account lookup or PIN derivation.
+    # The shared limiter's Redis socket waits are bounded and never retried.
+    with _login_phase(timings, "limiter"):
+        enforce_login_rate_limit(request)
+    with _login_phase(timings, "validation"):
+        _validate_pin_shape(payload.pin, is_signup=False)
+        username_lookup = _decode_username_lookup(payload.username_lookup)
+    with _login_phase(timings, "limiter"):
+        enforce_login_credential_rate_limit(
+            request, credential_id=username_lookup, kind="lookup",
+        )
+
+    with _login_phase(timings, "db"):
+        conn = get_db()
+    try:
+        with _login_phase(timings, "db"):
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                """
+                SELECT vault_id, pin_salt, pin_verifier, kdf_iterations,
+                       failed_pin_attempts, locked_until, must_reset, display_username,
+                       vault_handle
+                FROM vaults
+                WHERE username_lookup_v1 = %s
+                """,
+                (username_lookup,),
+            )
+            row = cur.fetchone()
 
         if not row:
 
 
-            _do_dummy_derive(payload.pin)
+            with _login_phase(timings, "kdf"):
+                _do_dummy_derive(payload.pin)
             raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
 
         vault_id = str(row["vault_id"])
@@ -295,7 +326,8 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
         iterations = int(row.get("kdf_iterations") or KDF_LEGACY_ITERATIONS)
 
                                                                     
-        key = derive_key(payload.pin, pin_salt, iterations=iterations)
+        with _login_phase(timings, "kdf"):
+            key = derive_key(payload.pin, pin_salt, iterations=iterations)
         try:
             verifier_ok = decrypt_message(pin_verifier, key) == PIN_VERIFIER_PLAINTEXT
         except Exception:
@@ -318,8 +350,9 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
                 },
             )
 
-        cur.execute("SELECT NOW() AS now")
-        now_row = cur.fetchone() or {}
+        with _login_phase(timings, "db"):
+            cur.execute("SELECT NOW() AS now")
+            now_row = cur.fetchone() or {}
         now = now_row.get("now")
         locked_until = row.get("locked_until")
         if locked_until and now and locked_until > now:
@@ -336,39 +369,42 @@ def login(payload: LoginRequest, request: Request) -> AuthResponse:
             )
 
 
-        cur.execute(
-            """
-            UPDATE vaults
-            SET failed_pin_attempts = 0,
-                locked_until = NULL,
-                last_login_at = NOW(),
-                last_vault_unlock_at = NOW(),
-                last_any_activity_at = NOW()
-            WHERE vault_id = %s
-            """,
-            (vault_id,),
-        )
-        conn.commit()
+        with _login_phase(timings, "db"):
+            cur.execute(
+                """
+                UPDATE vaults
+                SET failed_pin_attempts = 0,
+                    locked_until = NULL,
+                    last_login_at = NOW(),
+                    last_vault_unlock_at = NOW(),
+                    last_any_activity_at = NOW()
+                WHERE vault_id = %s
+                """,
+                (vault_id,),
+            )
+            conn.commit()
     except HTTPException:
         raise
     except Exception:
-        conn.rollback()
+        with _login_phase(timings, "db"):
+            conn.rollback()
         logger.exception("[AUTH] login failed after opaque lookup")
         raise HTTPException(status_code=500, detail="Login failed")
     finally:
-        conn.close()
+        with _login_phase(timings, "db"):
+            conn.close()
 
     device_id = _device_id_from_request(request)
-    newly_trusted = _upsert_trusted_device(
-        vault_id=vault_id, device_id=device_id, request=request,
-    )
-
-    issued = issue_session_token(
-        vault_id=vault_id,
-        vault_name="",
-        device_id=device_id,
-        client_label=normalize_client_label(request.headers.get("user-agent")),
-    )
+    with _login_phase(timings, "db"):
+        newly_trusted = _upsert_trusted_device(
+            vault_id=vault_id, device_id=device_id, request=request,
+        )
+        issued = issue_session_token(
+            vault_id=vault_id,
+            vault_name="",
+            device_id=device_id,
+            client_label=normalize_client_label(request.headers.get("user-agent")),
+        )
     return _build_response(
         issued,
         display_username=row.get("display_username"),

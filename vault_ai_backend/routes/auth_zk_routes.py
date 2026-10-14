@@ -53,6 +53,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from starlette.concurrency import run_in_threadpool
+
 
 def _handle_fingerprint(handle_bytes: bytes) -> str:
     """First 4 bytes of SHA-256(handle_bytes), hex-encoded.
@@ -247,6 +249,12 @@ async def zk_register_init(
     payload: ZkRegisterInitRequest,
     request: Request,
 ) -> ZkRegisterInitResponse:
+    return await run_in_threadpool(_zk_register_init_sync, payload, request)
+
+
+def _zk_register_init_sync(
+    payload: ZkRegisterInitRequest, request: Request,
+) -> ZkRegisterInitResponse:
     enforce_signup_rate_limit(request)
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
     ke1 = _b64url_decode(payload.ke1, name="ke1",
@@ -346,6 +354,12 @@ class ZkRegisterFinalizeResponse(BaseModel):
 async def zk_register_finalize(
     payload: ZkRegisterFinalizeRequest,
     request: Request,
+) -> ZkRegisterFinalizeResponse:
+    return await run_in_threadpool(_zk_register_finalize_sync, payload, request)
+
+
+def _zk_register_finalize_sync(
+    payload: ZkRegisterFinalizeRequest, request: Request,
 ) -> ZkRegisterFinalizeResponse:
     enforce_signup_rate_limit(request)
 
@@ -569,6 +583,15 @@ async def zk_login_init(
     payload: ZkLoginInitRequest,
     request: Request,
 ) -> ZkLoginInitResponse:
+    # Redis, psycopg2 and OPAQUE are synchronous. Keep the whole exchange off
+    # the event loop so a slow dependency cannot stall unrelated requests.
+    return await run_in_threadpool(_zk_login_init_sync, payload, request)
+
+
+def _zk_login_init_sync(
+    payload: ZkLoginInitRequest,
+    request: Request,
+) -> ZkLoginInitResponse:
     enforce_login_rate_limit(request)
 
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
@@ -776,6 +799,13 @@ class ZkLoginFinalizeResponse(BaseModel):
 
 @router.post("/auth/zk-login-finalize", response_model=ZkLoginFinalizeResponse)
 async def zk_login_finalize(
+    payload: ZkLoginFinalizeRequest,
+    request: Request,
+) -> ZkLoginFinalizeResponse:
+    return await run_in_threadpool(_zk_login_finalize_sync, payload, request)
+
+
+def _zk_login_finalize_sync(
     payload: ZkLoginFinalizeRequest,
     request: Request,
 ) -> ZkLoginFinalizeResponse:
@@ -1083,6 +1113,12 @@ async def zk_repair_init(
     request: Request,
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> ZkRepairInitResponse:
+    return await run_in_threadpool(_zk_repair_init_sync, payload, request, principal)
+
+
+def _zk_repair_init_sync(
+    payload: ZkRepairInitRequest, request: Request, principal: SessionPrincipal,
+) -> ZkRepairInitResponse:
     _require_recent_repair_session(principal=principal, request=request)
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
     ke1 = _b64url_decode(
@@ -1127,6 +1163,12 @@ async def zk_repair_finalize(
     payload: ZkRepairFinalizeRequest,
     request: Request,
     principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> ZkRepairFinalizeResponse:
+    return await run_in_threadpool(_zk_repair_finalize_sync, payload, request, principal)
+
+
+def _zk_repair_finalize_sync(
+    payload: ZkRepairFinalizeRequest, request: Request, principal: SessionPrincipal,
 ) -> ZkRepairFinalizeResponse:
     _require_recent_repair_session(principal=principal, request=request)
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
@@ -1243,6 +1285,12 @@ class ZkAdoptResponse(BaseModel):
 async def zk_adopt(
     payload: ZkAdoptRequest,
     principal: SessionPrincipal = Depends(verify_session_token),
+) -> ZkAdoptResponse:
+    return await run_in_threadpool(_zk_adopt_sync, payload, principal)
+
+
+def _zk_adopt_sync(
+    payload: ZkAdoptRequest, principal: SessionPrincipal,
 ) -> ZkAdoptResponse:
     handle_bytes = _decode_handle_or_400(payload.vault_handle)
     record = _b64url_decode(

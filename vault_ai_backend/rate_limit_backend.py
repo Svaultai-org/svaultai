@@ -62,10 +62,17 @@ _KEY_HASH_PREFIX_LEN: int = 16
 
 _KEY_NAMESPACE: str = "rl:v1"
 
+# Redis client defaults vary by version. Explicit socket bounds and zero
+# network retries keep auth waits predictable without abandoning workers.
+_REDIS_SOCKET_TIMEOUT_SECONDS: float = 0.2
+
 
 BUCKET_RISK_HIGH: frozenset[str] = frozenset({
     "auth_signup",
     "auth_login",
+    "auth_login_credential",
+    "auth_login_vault",
+    "auth_login_finalize",
     "pin_verify",
     "delete_vault",
     "upload_burst",
@@ -245,9 +252,27 @@ class RedisRateLimitBackend(RateLimitBackend):
         if self._client is None:
             try:
                 import redis
+                from redis.backoff import NoBackoff
+                from redis.retry import Retry
+
+                connection_limits = {
+                    "socket_connect_timeout": _REDIS_SOCKET_TIMEOUT_SECONDS,
+                    "socket_timeout": _REDIS_SOCKET_TIMEOUT_SECONDS,
+                    "retry": Retry(NoBackoff(), 0),
+                    "retry_on_timeout": False,
+                    "retry_on_error": [],
+                    "health_check_interval": 0,
+                }
                 self._client = redis.Redis.from_url(
                     url, decode_responses=False,
+                    **connection_limits,
                 )
+                # redis-py gives URL query parameters precedence over kwargs.
+                # Apply our hard bounds to the effective pool before its first
+                # connection is created, even for URLs containing timeouts.
+                pool = getattr(self._client, "connection_pool", None)
+                if pool is not None:
+                    pool.connection_kwargs.update(connection_limits)
             except Exception as e:
                 logger.warning(
                     "RedisRateLimitBackend init failed (%s). "

@@ -415,7 +415,25 @@ async def lifespan(app: FastAPI):
         close_pool()
 
 
-app = FastAPI(title="VaultAI Backend", lifespan=lifespan)
+def _create_application() -> FastAPI:
+    """Register interactive API documentation only outside production.
+
+    Removing the routes in the application also protects direct backend
+    access and alternate proxies, rather than relying only on nginx rules.
+    """
+    from vault_config import is_production
+
+    production = is_production()
+    return FastAPI(
+        title="VaultAI Backend",
+        lifespan=lifespan,
+        openapi_url=None if production else "/openapi.json",
+        docs_url=None if production else "/docs",
+        redoc_url=None if production else "/redoc",
+    )
+
+
+app = _create_application()
                                                                         
                                                                          
 app.include_router(auth_router)

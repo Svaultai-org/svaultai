@@ -520,7 +520,7 @@ class ZkFinalizeWiresPrimitiveTests(unittest.TestCase):
     def test_zk_register_finalize_calls_primitive(self):
         import inspect
         from routes import auth_zk_routes
-        src = inspect.getsource(auth_zk_routes.zk_register_finalize)
+        src = inspect.getsource(auth_zk_routes._zk_register_finalize_sync)
         self.assertIn(
             "trust_current_and_revoke_others", src,
             msg="zk_register_finalize must call the single-active-device "
@@ -535,7 +535,7 @@ class ZkFinalizeWiresPrimitiveTests(unittest.TestCase):
     def test_zk_login_finalize_calls_primitive(self):
         import inspect
         from routes import auth_zk_routes
-        src = inspect.getsource(auth_zk_routes.zk_login_finalize)
+        src = inspect.getsource(auth_zk_routes._zk_login_finalize_sync)
         self.assertIn(
             "trust_current_and_revoke_others", src,
             msg="zk_login_finalize must call the single-active-device "

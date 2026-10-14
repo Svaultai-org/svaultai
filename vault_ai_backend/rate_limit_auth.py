@@ -15,6 +15,7 @@ from vault_handle import VAULT_HANDLE_BYTES
 BUCKET_SIGNUP = "auth_signup"
 BUCKET_LOGIN  = "auth_login"
 BUCKET_LOGIN_CREDENTIAL = "auth_login_credential"
+BUCKET_LOGIN_VAULT = "auth_login_vault"
 BUCKET_LOGIN_FINALIZE = "auth_login_finalize"
 
 
@@ -30,12 +31,17 @@ def _env_int(key: str, default: int, *, lo: int = 1, hi: int = 100_000) -> int:
 
 
 SIGNUP_LIMIT_PER_WINDOW = _env_int("VAULTAI_AUTH_SIGNUP_LIMIT", 20,  lo=1, hi=10_000)
-LOGIN_LIMIT_PER_WINDOW  = _env_int("VAULTAI_AUTH_LOGIN_LIMIT",  30,  lo=1, hi=10_000)
+LOGIN_LIMIT_PER_WINDOW  = _env_int("VAULTAI_AUTH_LOGIN_LIMIT",  10,  lo=1, hi=10_000)
 WINDOW_SECONDS          = _env_int("VAULTAI_AUTH_WINDOW_SECONDS", 3600, lo=60, hi=86_400)
+LOGIN_WINDOW_SECONDS = _env_int(
+    "VAULTAI_AUTH_LOGIN_WINDOW_SECONDS", 60, lo=60, hi=600,
+)
 LOGIN_CREDENTIAL_LIMIT = _env_int("VAULTAI_AUTH_CREDENTIAL_LIMIT", 6, lo=2, hi=100)
 LOGIN_CREDENTIAL_WINDOW_SECONDS = _env_int(
     "VAULTAI_AUTH_CREDENTIAL_WINDOW_SECONDS", 60, lo=30, hi=600,
 )
+LOGIN_VAULT_LIMIT = _env_int("VAULTAI_AUTH_VAULT_LIMIT", 10, lo=2, hi=100)
+LOGIN_VAULT_WINDOW_SECONDS = 60
 LOGIN_FINALIZE_LIMIT = _env_int("VAULTAI_AUTH_FINALIZE_LIMIT", 30, lo=2, hi=100)
 
 
@@ -83,14 +89,16 @@ def _normalized_ip(raw: str) -> str:
     return str(ipaddress.ip_address(raw))
 
 
-def _check(request: Request, *, bucket: str, limit: int) -> RateLimitDecision:
+def _check(
+    request: Request, *, bucket: str, limit: int, window_seconds: int,
+) -> RateLimitDecision:
     backend = get_rate_limit_backend()
     ip = _client_ip(request)
     return backend.check_and_increment(
         user_id=f"ip:{ip}",
         bucket=bucket,
         limit_per_window=limit,
-        window_seconds=WINDOW_SECONDS,
+        window_seconds=window_seconds,
     )
 
 
@@ -115,8 +123,8 @@ def enforce_login_credential_rate_limit(
     """Short budget scoped to source AND an opaque client identifier.
 
     The limiter is consulted before account lookup for known/unknown IDs
-    alike. It never locks a vault globally: another source has its own
-    budget, and successful/failed PINs never enter the limiter key. Each
+    alike. Source and vault budgets expire automatically; no persistent
+    account lock is changed, and PINs never enter limiter keys. Each
     wrong modern OPAQUE PIN may use two exchanges for old-record
     compatibility, so the default six exchanges permits three such tries.
     """
@@ -130,6 +138,17 @@ def enforce_login_credential_rate_limit(
         window_seconds=LOGIN_CREDENTIAL_WINDOW_SECONDS,
     )
     _deny_login(decision)
+    # Bound distributed attempts at this opaque vault identifier as well.
+    # Modern and legacy exchanges using the same lookup share this key.
+    # Rejected global checks do not refresh the global window; each source
+    # attempt still counts against its own budget before this shared check.
+    vault_decision = get_rate_limit_backend().check_and_increment(
+        user_id=f"{kind}:{credential_id.hex()}",
+        bucket=BUCKET_LOGIN_VAULT,
+        limit_per_window=LOGIN_VAULT_LIMIT,
+        window_seconds=LOGIN_VAULT_WINDOW_SECONDS,
+    )
+    _deny_login(vault_decision)
 
 
 def enforce_login_finalize_rate_limit(request: Request) -> None:
@@ -146,7 +165,10 @@ def enforce_login_finalize_rate_limit(request: Request) -> None:
 
 def enforce_signup_rate_limit(request: Request) -> None:
 
-    decision = _check(request, bucket=BUCKET_SIGNUP, limit=SIGNUP_LIMIT_PER_WINDOW)
+    decision = _check(
+        request, bucket=BUCKET_SIGNUP, limit=SIGNUP_LIMIT_PER_WINDOW,
+        window_seconds=WINDOW_SECONDS,
+    )
     if not decision.allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -160,15 +182,20 @@ def enforce_signup_rate_limit(request: Request) -> None:
 
 
 def enforce_login_rate_limit(request: Request) -> None:
-    decision = _check(request, bucket=BUCKET_LOGIN, limit=LOGIN_LIMIT_PER_WINDOW)
+    decision = _check(
+        request, bucket=BUCKET_LOGIN, limit=LOGIN_LIMIT_PER_WINDOW,
+        window_seconds=LOGIN_WINDOW_SECONDS,
+    )
     _deny_login(decision)
 
 
 __all__ = [
     "BUCKET_SIGNUP",
     "BUCKET_LOGIN",
+    "BUCKET_LOGIN_VAULT",
     "SIGNUP_LIMIT_PER_WINDOW",
     "LOGIN_LIMIT_PER_WINDOW",
+    "LOGIN_WINDOW_SECONDS",
     "WINDOW_SECONDS",
     "enforce_signup_rate_limit",
     "enforce_login_rate_limit",
