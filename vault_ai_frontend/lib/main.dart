@@ -72,6 +72,7 @@ import 'security_center_page.dart';
 import 'help_center_page.dart' as hc;
 import 'privacy_policy_page.dart';
 import 'public_download_badges.dart';
+import 'public_homepage_marketing.dart';
 import 'delete_vault_flow.dart';
 import 'perf/frontend_cache.dart' as perf_cache;
 import 'storage_page.dart';
@@ -3967,6 +3968,18 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
               ),
             ),
           ),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 18 : 28,
+                  vertical: 24,
+                ),
+                child: const PublicHomepageFinalCta(),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -3982,7 +3995,7 @@ class _HeroText extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Your private AI vault.',
+          kPublicHomepageHeadline,
           style: Theme.of(context)
               .textTheme
               .headlineMedium
@@ -3990,9 +4003,10 @@ class _HeroText extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         const Text(
-          'Svaultai helps you save logins, IDs, cards, files, photos, and notes, then retrieve them naturally in chat.',
+          kPublicHomepageOpening,
           style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 16, height: 1.6),
         ),
+        const PublicHomepageInheritance(),
         const SizedBox(height: 22),
         Wrap(
           spacing: 10,
