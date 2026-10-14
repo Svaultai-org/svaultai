@@ -30,7 +30,7 @@ const String kPublicHomepageCtaHeading =
 const String kPublicHomepageCtaButton = "Create your free vault";
 
 const String kPublicHomepageCtaCaption =
-    "Free base vault · No email required · Optional paid storage plans";
+    "Free base vault · No email address or phone number required · Optional paid storage plans";
 
 class PublicHomepageInheritance extends StatelessWidget {
   const PublicHomepageInheritance({super.key});
