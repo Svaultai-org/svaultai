@@ -10,10 +10,10 @@ library;
 import 'session_termination.dart' show SessionTerminationCode;
 
 typedef PeerTabListener = void Function(
-    int generation, SessionTerminationCode code);
+    String sessionFingerprint, SessionTerminationCode code);
 
 class SessionTerminationChannel {
-  void broadcast(int generation, SessionTerminationCode code) {
+  void broadcast(String sessionFingerprint, SessionTerminationCode code) {
     // no-op on native
   }
 
