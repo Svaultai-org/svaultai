@@ -457,6 +457,7 @@ void main() {
 
   test('coded session expiry retains the existing termination machinery',
       () async {
+    st.SessionTermination.instance.bindSession('test-session');
     await expectLater(
       _reconcileWith(MockClient((_) async => http.Response(
             jsonEncode({

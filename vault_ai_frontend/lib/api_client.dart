@@ -1622,19 +1622,18 @@ class VaultAIClient {
     if (authToken.isEmpty) throw const AuthExpiredException();
     final uri = Uri.parse('$baseUrl$path');
     final headers = _defaultHeaders(authToken: authToken, json: body != null);
+    final requestScope = _requestScopeFor(headers);
+    _assertCurrentRequest(requestScope);
     _vlogRequest(label, uri, headers);
     final http.Response response;
     try {
       response = await (body == null
-              ? _sessionHttp.get(uri, headers: headers)
-              : _sessionHttp.post(uri, headers: headers, body: jsonEncode(body)))
+              ? (_httpClient?.get(uri, headers: headers) ??
+                  http.get(uri, headers: headers))
+              : (_httpClient?.post(uri,
+                      headers: headers, body: jsonEncode(body)) ??
+                  http.post(uri, headers: headers, body: jsonEncode(body))))
           .timeout(const Duration(seconds: 15));
-    } on StaleSessionResponseException {
-      rethrow;
-    } on SessionTerminatedException {
-      rethrow;
-    } on DeviceNotTrustedException {
-      rethrow;
     } on http.ClientException {
       _assertGooglePlayResponseCurrent(responseIsCurrent);
       _vlog('http.network_error',
@@ -1656,6 +1655,9 @@ class VaultAIClient {
     // A delayed response from the old vault must never classify a coded 401
     // against the process-wide session of a vault that has since signed in.
     _assertGooglePlayResponseCurrent(responseIsCurrent);
+    // Preserve the provider's stricter captured-vault guard before shared
+    // session classification, including callers that supplied that guard.
+    _checkSessionResponse(response.statusCode, response.body, requestScope);
     _vlog('http.response', {
       'label': label,
       'url': uri.toString(),
