@@ -48,6 +48,7 @@ def vault_row(**overrides):
 def issued_token(**overrides):
     token = dict(token="synthetic-signed-token", token_id=TOKEN_ID,
                  vault_id=VAULT_ID, vault_name="", client_label="Unknown device",
+                 device_id=DEVICE_ID, new_device_trusted=True,
                  expires_at=NOW + timedelta(hours=1),
                  vault_meta=auth_local._vault_meta_snapshot(vault_row()))
     token.update(overrides)
@@ -185,16 +186,14 @@ def finalizer(monkeypatch, guard):
     db = mock.Mock(return_value=connection)
     finish = mock.Mock(return_value=b"synthetic-opaque-session-key")
     issue = mock.Mock(return_value=issued_token())
-    trust = mock.Mock(return_value=dict(status="trusted", device_id=DEVICE_ID))
     monkeypatch.setattr(routes, "get_db", db)
     monkeypatch.setattr(routes, "opaque_login_finish", finish)
     monkeypatch.setattr(routes, "issue_session_token", issue)
     monkeypatch.setattr(routes, "enforce_login_finalize_rate_limit", lambda _r: None)
-    monkeypatch.setattr("device_monitor.trust_current_and_revoke_others", trust)
     payload = routes.ZkLoginFinalizeRequest(slot_id="synthetic-slot",
         ke3=routes._b64url_encode(b"synthetic-proof"), device_id=DEVICE_ID)
     return dict(slot=slot, updated=updated, guard=guard, connection=connection,
-                db=db, finish=finish, issue=issue, trust=trust, payload=payload)
+                db=db, finish=finish, issue=issue, payload=payload)
 
 
 def run_finalizer(state, *, header=DEVICE_ID):
@@ -220,21 +219,19 @@ def test_successful_api_returns_additive_hints_and_existing_crypto_fields(finali
     assert finalizer["issue"].call_args.kwargs["include_vault_meta"] is True
 
 
-@pytest.mark.parametrize("trust_result", [None, {}, {"status": "pending", "device_id": DEVICE_ID},
-    {"status": "trusted", "device_id": "other-device"}])
-def test_unconfirmed_trust_preserves_login_and_uses_fallback(finalizer, trust_result):
-    finalizer["trust"].return_value = trust_result
+@pytest.mark.parametrize("device_id", [None, "", "other-device"])
+def test_unconfirmed_issuer_binding_preserves_login_and_uses_fallback(finalizer, device_id):
+    finalizer["issue"].return_value = issued_token(device_id=device_id)
     response = run_finalizer(finalizer)
     assert response.session_token == "synthetic-signed-token"
     assert response.device_trust_complete is False and response.vault_meta is None
     assert finalizer["db"].call_count == 1
 
 
-def test_trust_exception_preserves_login_and_uses_fallback(finalizer):
-    finalizer["trust"].side_effect = RuntimeError("synthetic trust unavailable")
-    response = run_finalizer(finalizer)
-    assert response.device_trust_complete is False and response.vault_meta is None
-    assert response.session_token == "synthetic-signed-token"
+def test_atomic_issuer_failure_does_not_return_partially_trusted_login(finalizer):
+    finalizer["issue"].side_effect = RuntimeError("synthetic takeover unavailable")
+    with pytest.raises(RuntimeError, match="synthetic takeover unavailable"):
+        run_finalizer(finalizer)
     assert finalizer["db"].call_count == 1
 
 
@@ -249,7 +246,6 @@ def test_missing_body_device_uses_fallback(finalizer):
     finalizer["payload"].device_id = None
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
-    finalizer["trust"].assert_not_called()
     assert finalizer["db"].call_count == 1
 
 
@@ -285,10 +281,10 @@ def test_rotation_between_wrapped_key_read_and_issuance_requires_fallback(finali
 ])
 def test_rotation_or_revocation_after_issuance_requires_fallback(finalizer, guard, mutation):
     # Models a concurrent change after issuance but before the fresh guard.
-    def trust(**_kwargs):
+    def issue(**_kwargs):
         guard.db.execute(mutation)
-        return dict(status="trusted", device_id=DEVICE_ID)
-    finalizer["trust"].side_effect = trust
+        return issued_token()
+    finalizer["issue"].side_effect = issue
     response = run_finalizer(finalizer)
     assert response.device_trust_complete is False and response.vault_meta is None
     assert response.session_token == "synthetic-signed-token"
@@ -326,7 +322,6 @@ def test_invalid_opaque_proof_still_consumes_slot_before_rejecting(finalizer):
     assert rejected.value.status_code == 401
     assert finalizer["slot"].commits == 1 and finalizer["slot"].closed
     finalizer["issue"].assert_not_called()
-    finalizer["trust"].assert_not_called()
 
 
 @pytest.mark.parametrize("include", [False, True])
@@ -341,7 +336,7 @@ def test_optional_issuance_snapshot_does_not_change_token_or_session_transaction
     assert auth_local._parse_token(result["token"]) == token_bytes
     assert result["token_id"] == TOKEN_ID and result["vault_id"] == VAULT_ID
     assert conn.commits == 1 and conn.rollbacks == 0 and conn.closed
-    assert len(conn.queries) == 4  # existing lock, revoke, insert, audit only
+    assert len(conn.queries) == 7  # lock, session revoke/insert, device read/upsert/revoke, audit
     lock_sql, lock_params = conn.queries[0]
     assert "FOR UPDATE" in lock_sql and lock_params == (VAULT_ID,)
     if include:

@@ -149,57 +149,6 @@ def _device_id_from_request(request: Request) -> Optional[str]:
     return raw or None
 
 
-def _upsert_trusted_device(
-    *, vault_id: str, device_id: Optional[str], request: Request,
-) -> bool:
-
-
-    if not device_id:
-        return False
-    user_agent = (request.headers.get("user-agent") or "")[:200]
-    last_ip = (request.client.host if request.client else "") or ""
-    last_ip_prefix = last_ip.split(".")[0] if "." in last_ip else last_ip[:8]
-    conn = get_db()
-    try:
-        cur = conn.cursor()
-                                                                     
-                                                                   
-        cur.execute(
-            "SELECT status FROM trusted_devices "
-            "WHERE vault_id = %s AND device_id = %s",
-            (vault_id, device_id),
-        )
-        prior = cur.fetchone()
-        was_trusted = bool(prior) and (prior[0] == "trusted")
-
-        cur.execute(
-            """
-            INSERT INTO trusted_devices
-              (vault_id, device_id, user_agent_brand, last_ip_prefix,
-               status, approved_at, last_seen_at)
-            VALUES (%s, %s, %s, %s, 'trusted', NOW(), NOW())
-            ON CONFLICT (vault_id, device_id) DO UPDATE
-            SET status         = 'trusted',
-                approved_at    = COALESCE(trusted_devices.approved_at, NOW()),
-                last_seen_at   = NOW(),
-                last_ip_prefix = EXCLUDED.last_ip_prefix,
-                user_agent_brand = EXCLUDED.user_agent_brand
-            """,
-            (vault_id, device_id, user_agent, last_ip_prefix),
-        )
-        conn.commit()
-        return not was_trusted
-    except Exception:
-        conn.rollback()
-        logger.exception(
-            "[AUTH] trusted-device upsert failed vault_id=%s device_id_prefix=%s",
-            vault_id, (device_id or "")[:8],
-        )
-        return False
-    finally:
-        conn.close()
-
-
 def _build_response(
     token_bundle: dict,
     *,
@@ -396,9 +345,6 @@ def _login_impl(
 
     device_id = _device_id_from_request(request)
     with _login_phase(timings, "db"):
-        newly_trusted = _upsert_trusted_device(
-            vault_id=vault_id, device_id=device_id, request=request,
-        )
         issued = issue_session_token(
             vault_id=vault_id,
             vault_name="",
@@ -409,7 +355,7 @@ def _login_impl(
         issued,
         display_username=row.get("display_username"),
         vault_handle=row.get("vault_handle"),
-        new_device_trusted=newly_trusted,
+        new_device_trusted=bool(issued.get("new_device_trusted", False)),
     )
 
 

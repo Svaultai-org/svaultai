@@ -584,36 +584,7 @@ def _zk_register_finalize_sync(
         client_label=normalize_client_label(request.headers.get("user-agent")),
     )
 
-    # Single-active-device: the client that just proved knowledge of
-    # the PIN gets trusted immediately, and every other device row on
-    # this vault is revoked atomically. On a brand-new vault the
-    # revoke-others UPDATE matches zero rows; on a signup that raced
-    # against a leftover row (imports, staging seeds) any other
-    # row is closed out. If no device_id was supplied we cannot
-    # register anything — the /devices/register call from the client
-    # will do it on next boot.
-    if payload.device_id:
-        try:
-            from device_monitor import (
-                ip_prefix_from,
-                trust_current_and_revoke_others,
-            )
-            trust_current_and_revoke_others(
-                vault_id=vault_id,
-                device_id=payload.device_id,
-                label=None,
-                user_agent_brand=(
-                    (request.headers.get("user-agent") or "")[:120] or None
-                ),
-                ip_prefix=ip_prefix_from(request),
-            )
-        except Exception:
-            logger.exception(
-                "[ZK-REGISTER-FINALIZE] single-active-device trust failed "
-                "vault_id=%s (session issued anyway; client will retry via "
-                "/devices/register)",
-                vault_id,
-            )
+    # Session issuance and device takeover have already committed together.
 
     return ZkRegisterFinalizeResponse(
         vault_id=vault_id,
@@ -1012,46 +983,14 @@ def _zk_login_finalize_sync(
                 connection=conn,
             )
 
-        # Single-active-device: the client that just completed OPAQUE
-        # login is the new sole trusted device on this vault. Trust the
-        # current device_id and revoke every other row atomically. Any
-        # device that was trusted before this login (including the one
-        # the user just signed out of on another browser) now gets a
-        # device_revoked response on its next protected request.
-        device_trust_complete = False
-        if payload.device_id:
-            try:
-                from device_monitor import (
-                    ip_prefix_from,
-                    trust_current_and_revoke_others,
-                )
-                with _zk_login_phase("trust"):
-                    trust_result = trust_current_and_revoke_others(
-                        vault_id=str(vault_row["vault_id"]),
-                        device_id=payload.device_id,
-                        label=None,
-                        user_agent_brand=(
-                            (request.headers.get("user-agent") or "")[:120] or None
-                        ),
-                        ip_prefix=ip_prefix_from(request),
-                        connection=conn,
-                    )
-                # Confirm the exact device that the caller will use for protected
-                # requests. A successful call alone, or a mismatched header/body
-                # identifier, is insufficient to skip client-side registration.
-                device_trust_complete = bool(
-                    isinstance(trust_result, dict)
-                    and trust_result.get("status") == "trusted"
-                    and trust_result.get("device_id") == payload.device_id
-                    and request.headers.get("x-device-id") == payload.device_id
-                )
-            except Exception:
-                logger.exception(
-                    "[ZK-LOGIN-FINALIZE] single-active-device trust failed "
-                    "vault_id=%s (session issued anyway; client will retry via "
-                    "/devices/register)",
-                    vault_row["vault_id"],
-                )
+        # Session issuance and device takeover committed together under the
+        # vault lock. Only the exact bound header/body device can skip the
+        # compatible client-side registration path.
+        device_trust_complete = bool(
+            payload.device_id
+            and token.get("device_id") == payload.device_id
+            and request.headers.get("x-device-id") == payload.device_id
+        )
 
         metadata = None
         if device_trust_complete:

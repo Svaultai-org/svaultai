@@ -8,6 +8,7 @@ import time
 from collections import OrderedDict
 from typing import Any, Optional
 
+from fastapi import HTTPException
 from psycopg2.extras import RealDictCursor
 
 from vault_core import get_db
@@ -39,14 +40,6 @@ def _cache_should_skip(key: tuple[str, Optional[str]]) -> bool:
     return False
 
 
-def _short(s: Optional[str], head: int = 6, tail: int = 4) -> str:
-    if not s:
-        return "?"
-    if len(s) <= head + tail + 3:
-        return s
-    return f"{s[:head]}...{s[-tail:]}"
-
-
 def ip_prefix_from(request) -> Optional[str]:
 
 
@@ -69,95 +62,115 @@ def ip_prefix_from(request) -> Optional[str]:
         return None
 
 
-def trust_current_and_revoke_others(
+def apply_login_device_takeover(
+    cursor,
     *,
     vault_id: str,
     device_id: str,
     label: Optional[str] = None,
     user_agent_brand: Optional[str] = None,
     ip_prefix: Optional[str] = None,
-    connection=None,
 ) -> dict:
-    # Single-active-device invariant, enforced atomically.
-    #
-    # The caller has just proven possession of the vault credentials
-    # (ZK signup, ZK login, or a legacy adoption path calling
-    # /devices/register). We record the current device as trusted
-    # and, in the SAME transaction, revoke every other row for the
-    # same vault_id. When the two statements share a transaction, no
-    # concurrent reader (device gate, /devices/me listing) can
-    # observe an intermediate state with two live devices.
-    #
-    # Idempotent when called with the same (vault_id, device_id):
-    # the UPSERT re-affirms trusted status and the revoke-others UPDATE
-    # matches zero rows.
-    # The optional checked connection is owned by the enclosing auth handler.
-    # Keep this primitive's transaction atomic and close only our own lease.
-    owns_connection = connection is None
-    conn = get_db() if owns_connection else connection
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            INSERT INTO trusted_devices (
-                vault_id, device_id, label, user_agent_brand, last_ip_prefix,
-                status, approved_at, last_seen_at, revoked_at, cooldown_until
-            ) VALUES (
-                %s, %s, %s, %s, %s,
-                'trusted', NOW(), NOW(), NULL, NULL
-            )
-            ON CONFLICT (vault_id, device_id) DO UPDATE
-                SET status           = 'trusted',
-                    approved_at      = NOW(),
-                    last_seen_at     = NOW(),
-                    revoked_at       = NULL,
-                    cooldown_until   = NULL,
-                    last_ip_prefix   = COALESCE(
-                        EXCLUDED.last_ip_prefix,
-                        trusted_devices.last_ip_prefix),
-                    user_agent_brand = COALESCE(
-                        EXCLUDED.user_agent_brand,
-                        trusted_devices.user_agent_brand),
-                    label            = COALESCE(
-                        NULLIF(EXCLUDED.label, ''),
-                        trusted_devices.label)
-            """,
-            (vault_id, device_id, label, user_agent_brand, ip_prefix),
-        )
-        cur.execute(
-            """
-            UPDATE trusted_devices
-               SET status         = 'revoked',
-                   revoked_at     = NOW(),
-                   cooldown_until = NULL
-             WHERE vault_id = %s
-               AND device_id <> %s
-               AND status <> 'revoked'
-            RETURNING device_id
-            """,
-            (vault_id, device_id),
-        )
-        revoked_rows = cur.fetchall() or []
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        if owns_connection:
-            conn.close()
+    """Apply takeover inside the authenticated issuer's vault-lock transaction.
 
-    revoked_ids = [r["device_id"] for r in revoked_rows]
-    if revoked_ids:
-        logger.info(
-            "[SINGLE-ACTIVE-DEVICE] vault=%s trusted=%s revoked_others=%d",
-            _short(vault_id), _short(device_id), len(revoked_ids),
+    This helper deliberately cannot open or commit a transaction. The caller
+    must already hold the vault row lock and either have just verified login
+    credentials or revalidated the current session under that same lock.
+    Device labels and identifiers are metadata, not authentication proof.
+    """
+    cursor.execute(
+        "SELECT status FROM trusted_devices WHERE vault_id = %s AND device_id = %s",
+        (vault_id, device_id),
+    )
+    prior = cursor.fetchone()
+    newly_trusted = not prior or prior.get("status") != "trusted"
+    cursor.execute(
+        """
+        INSERT INTO trusted_devices (
+            vault_id, device_id, label, user_agent_brand, last_ip_prefix,
+            status, approved_at, last_seen_at, revoked_at, cooldown_until
+        ) VALUES (
+            %s, %s, %s, %s, %s,
+            'trusted', NOW(), NOW(), NULL, NULL
         )
+        ON CONFLICT (vault_id, device_id) DO UPDATE
+            SET status           = 'trusted',
+                approved_at      = NOW(),
+                last_seen_at     = NOW(),
+                revoked_at       = NULL,
+                cooldown_until   = NULL,
+                last_ip_prefix   = COALESCE(
+                    EXCLUDED.last_ip_prefix,
+                    trusted_devices.last_ip_prefix),
+                user_agent_brand = COALESCE(
+                    EXCLUDED.user_agent_brand,
+                    trusted_devices.user_agent_brand),
+                label            = COALESCE(
+                    NULLIF(EXCLUDED.label, ''),
+                    trusted_devices.label)
+        """,
+        (vault_id, device_id, label, user_agent_brand, ip_prefix),
+    )
+    cursor.execute(
+        """
+        UPDATE trusted_devices
+           SET status         = 'revoked',
+               revoked_at     = NOW(),
+               cooldown_until = NULL
+         WHERE vault_id = %s
+           AND device_id <> %s
+           AND status <> 'revoked'
+        RETURNING device_id
+        """,
+        (vault_id, device_id),
+    )
+    revoked_rows = cursor.fetchall() or []
+    revoked_ids = [r["device_id"] for r in revoked_rows]
     return {
         "status":                    "trusted",
         "device_id":                 device_id,
+        "new_device_trusted":        newly_trusted,
+        "created":                   prior is None,
         "revoked_other_count":       len(revoked_ids),
         "revoked_other_device_ids":  revoked_ids,
     }
+
+
+def lock_and_validate_current_session(cursor, *, vault_id: str, session_token_id: str) -> dict:
+    """Revalidate a previously authenticated session inside the vault lock.
+
+    Reuse the issuer's lock order before device mutations. An entry-time
+    principal alone is not proof that a request still owns the current login.
+    The caller owns this transaction and must roll it back on any failure.
+    """
+    if not session_token_id:
+        raise HTTPException(status_code=401, detail={"code": "invalid_session"})
+    cursor.execute(
+        "SELECT vault_id FROM vaults WHERE vault_id = %s FOR UPDATE",
+        (vault_id,),
+    )
+    if cursor.fetchone() is None:
+        raise HTTPException(status_code=401, detail={"code": "invalid_session"})
+    cursor.execute(
+        """
+        SELECT device_id, revoked_at, revoked_reason,
+               expires_at > NOW() AS unexpired
+          FROM auth_sessions
+         WHERE token_id = %s AND vault_id = %s
+         FOR UPDATE
+        """,
+        (session_token_id, vault_id),
+    )
+    session = cursor.fetchone()
+    if session is None:
+        raise HTTPException(status_code=401, detail={"code": "invalid_session"})
+    if session["revoked_at"] is not None:
+        code = ("session_superseded" if session["revoked_reason"] ==
+                "superseded-by-new-login" else "session_revoked")
+        raise HTTPException(status_code=401, detail={"code": code})
+    if not session["unexpired"]:
+        raise HTTPException(status_code=401, detail={"code": "session_expired"})
+    return session
 
 
 def register_or_refresh(
@@ -167,92 +180,91 @@ def register_or_refresh(
     label: Optional[str],
     user_agent_brand: Optional[str],
     ip_prefix: Optional[str],
+    session_token_id: str,
 ) -> dict:
-    # Under the single-active-device model, /devices/register no
-    # longer creates a 'pending' row that waits for approval from an
-    # older device. The caller has an authenticated session, which
-    # means they already passed OPAQUE — they hold the master key —
-    # so this device is trusted and every other device is revoked in
-    # one atomic step. The return shape is kept compatible with the
-    # legacy `is_first_device`/`created` fields so existing callers
-    # (test_device_register_idempotency, front-end retry loop)
-    # continue to compile; `is_first_device` now means "there were
-    # no other trusted devices before this call", i.e. no siblings
-    # got revoked.
-    prior_conn = get_db()
+    """Refresh only the still-current session's device, never pivot a bearer.
+
+    A pre-existing session without a device binding may bind once. Subsequent
+    requests must match that binding. Revalidation under the issuer's vault
+    lock prevents an old request from undoing a newer login's takeover.
+    """
+    conn = get_db()
     try:
-        cur = prior_conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(
-            """
-            SELECT status FROM trusted_devices
-             WHERE vault_id = %s AND device_id = %s
-            """,
-            (vault_id, device_id),
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        session = lock_and_validate_current_session(
+            cur, vault_id=vault_id, session_token_id=session_token_id,
         )
-        prior_row = cur.fetchone()
+        if session["device_id"] and session["device_id"] != device_id:
+            raise HTTPException(status_code=403, detail={"code": "device_session_mismatch"})
+        if session["device_id"]:
+            cur.execute(
+                "SELECT status FROM trusted_devices WHERE vault_id = %s AND device_id = %s FOR UPDATE",
+                (vault_id, device_id),
+            )
+            device = cur.fetchone()
+            if device and device["status"] == "revoked":
+                # Explicit revocation requires a fresh credential-verified
+                # login; possession of the old bearer cannot undo it.
+                raise HTTPException(status_code=403, detail={"code": "device_revoked"})
+        if not session["device_id"]:
+            cur.execute(
+                "UPDATE auth_sessions SET device_id = %s WHERE token_id = %s",
+                (device_id, session_token_id),
+            )
+        outcome = apply_login_device_takeover(
+            cur, vault_id=vault_id, device_id=device_id, label=label,
+            user_agent_brand=user_agent_brand, ip_prefix=ip_prefix,
+        )
+        conn.commit()
+        return {
+            "status": "trusted",
+            "is_first_device": outcome["revoked_other_count"] == 0 and outcome["created"],
+            "created": outcome["created"],
+        }
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        prior_conn.close()
-
-    outcome = trust_current_and_revoke_others(
-        vault_id=vault_id,
-        device_id=device_id,
-        label=label,
-        user_agent_brand=user_agent_brand,
-        ip_prefix=ip_prefix,
-    )
-    return {
-        "status":          outcome["status"],
-        "is_first_device": outcome["revoked_other_count"] == 0
-                           and prior_row is None,
-        "created":         prior_row is None,
-    }
+        conn.close()
 
 
-def monitor_best_effort(request, vault_id: str) -> None:
-
-
+def monitor_best_effort(request, principal: dict) -> None:
+    """Record presence only; never grant trust or revoke another device."""
     try:
-        device_id = request.headers.get("x-device-id")
+        vault_id = principal["vault_id"]
+        device_id = (request.headers.get("x-device-id") or "").strip()
+        if not device_id or device_id != principal.get("device_id"):
+            return
         cache_key = (vault_id, device_id)
         if _cache_should_skip(cache_key):
             return
 
-        if not device_id:
-            logger.info(
-                "[DEVICE-MONITOR] vault=%s no X-Device-Id header (legacy client)",
-                _short(vault_id),
-            )
-            return
-
         ip_prefix = ip_prefix_from(request)
-        ua_brand = (request.headers.get("user-agent") or "")[:120] or None
-
-        result = register_or_refresh(
-            vault_id=vault_id,
-            device_id=device_id,
-            label=None,                                                                
-            user_agent_brand=ua_brand,
-            ip_prefix=ip_prefix,
-        )
-
-        status = result.get("status")
-        if status == "trusted":
-            return
-        if status == "pending":
-            logger.warning(
-                "[DEVICE-MONITOR] would-block (pending) vault=%s device=%s",
-                _short(vault_id), _short(device_id),
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            # Recheck the token in this statement: an earlier authentication
+            # success may have been superseded while this request was paused.
+            cur.execute(
+                """
+                UPDATE trusted_devices d
+                   SET last_seen_at = NOW(),
+                       last_ip_prefix = COALESCE(%s, d.last_ip_prefix)
+                  FROM auth_sessions s
+                 WHERE d.vault_id = %s AND d.device_id = %s
+                   AND d.status = 'trusted'
+                   AND s.token_id = %s AND s.vault_id = d.vault_id
+                   AND s.device_id = d.device_id
+                   AND s.revoked_at IS NULL AND s.expires_at > NOW()
+                """,
+                (ip_prefix, vault_id, device_id, principal["token_id"]),
             )
-        elif status == "revoked":
-            logger.warning(
-                "[DEVICE-MONITOR] would-block (revoked) vault=%s device=%s",
-                _short(vault_id), _short(device_id),
-            )
-        else:
-            logger.warning(
-                "[DEVICE-MONITOR] would-block (unknown status=%r) vault=%s device=%s",
-                status, _short(vault_id), _short(device_id),
-            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     except Exception:
         logger.exception("[DEVICE-MONITOR] monitor failed (swallowed)")
 

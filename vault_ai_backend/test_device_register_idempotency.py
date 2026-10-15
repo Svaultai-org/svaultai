@@ -4,8 +4,9 @@
 # leaves an existing 'pending' row 'pending', refresh never touches
 # the ``status`` column — is retired. Under the new model any call
 # to /devices/register (or to the underlying primitive) trusts the
-# current device and revokes every other device on that vault, in
-# one transaction. The tests below lock in the new contract at the
+# authenticated current session's device and revokes prior devices in
+# the same vault-lock transaction; an arbitrary header is not proof.
+# The tests below lock in the new contract at the
 # unit level; the DB-shape end-to-end assertions live in
 # ``test_single_active_device_2026_07_20.py``.
 
@@ -40,6 +41,13 @@ class _FakeCursor:
             # The peek query inside register_or_refresh checks whether
             # a prior row exists for the given (vault_id, device_id).
             self._pending = [self._prior_row] if self._prior_row else []
+        elif stripped.startswith("SELECT VAULT_ID FROM VAULTS"):
+            self._pending = [{"vault_id": "fixture-vault"}]
+        elif stripped.startswith("SELECT DEVICE_ID, REVOKED_AT, REVOKED_REASON"):
+            self._pending = [{
+                "device_id": None, "revoked_at": None,
+                "revoked_reason": None, "unexpired": True,
+            }]
         else:
             self._pending = []
 
@@ -83,14 +91,15 @@ def _swap_get_db(conn):
 
 
 class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
-    # trust_current_and_revoke_others is the primitive; the flow tests
+    # apply_login_device_takeover is the cursor-only primitive; flow tests
     # against a live DB live in test_single_active_device_2026_07_20.
 
     def test_upsert_uses_on_conflict_do_update(self):
         conn = FakeConnection(revoked_ids=[])
         original = _swap_get_db(conn)
         try:
-            device_monitor.trust_current_and_revoke_others(
+            device_monitor.apply_login_device_takeover(
+                conn.cursor(),
                 vault_id="00000000-0000-4000-8000-0000000000a1",
                 device_id="dev-current",
                 label=None,
@@ -128,7 +137,8 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
         conn = FakeConnection(revoked_ids=["dev-old-1", "dev-old-2"])
         original = _swap_get_db(conn)
         try:
-            outcome = device_monitor.trust_current_and_revoke_others(
+            outcome = device_monitor.apply_login_device_takeover(
+                conn.cursor(),
                 vault_id="00000000-0000-4000-8000-0000000000a2",
                 device_id="dev-current",
                 label=None,
@@ -165,11 +175,12 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
                 msg="revoke UPDATE must set status to 'revoked'",
             )
 
-    def test_commit_is_called_after_both_statements(self):
+    def test_primitive_does_not_commit_issuers_transaction(self):
         conn = FakeConnection(revoked_ids=["dev-old"])
         original = _swap_get_db(conn)
         try:
-            device_monitor.trust_current_and_revoke_others(
+            device_monitor.apply_login_device_takeover(
+                conn.cursor(),
                 vault_id="00000000-0000-4000-8000-0000000000a3",
                 device_id="dev-current",
                 label=None,
@@ -179,9 +190,9 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
         finally:
             device_monitor.get_db = original
 
-        self.assertTrue(
+        self.assertFalse(
             conn.committed,
-            msg="single commit must fire after INSERT + UPDATE (atomic op)",
+            msg="only the authenticated issuer or revalidated register commits",
         )
         self.assertFalse(conn.rolled_back)
 
@@ -196,6 +207,7 @@ class RegisterOrRefreshDelegatesToPrimitiveTests(unittest.TestCase):
         original = _swap_get_db(conn)
         try:
             result = device_monitor.register_or_refresh(
+                session_token_id="fixture-current-session",
                 vault_id="00000000-0000-4000-8000-0000000000b1",
                 device_id="dev-new",
                 label="fresh",
@@ -217,6 +229,7 @@ class RegisterOrRefreshDelegatesToPrimitiveTests(unittest.TestCase):
         original = _swap_get_db(conn)
         try:
             result = device_monitor.register_or_refresh(
+                session_token_id="fixture-current-session",
                 vault_id="00000000-0000-4000-8000-0000000000b2",
                 device_id="dev-existing",
                 label="refreshed-label",
@@ -241,6 +254,7 @@ class RegisterOrRefreshDelegatesToPrimitiveTests(unittest.TestCase):
                 original = _swap_get_db(conn)
                 try:
                     result = device_monitor.register_or_refresh(
+                        session_token_id="fixture-current-session",
                         vault_id="00000000-0000-4000-8000-0000000000b3",
                         device_id="dev-any",
                         label=None,

@@ -21,6 +21,7 @@ from device_gate import (
 from device_monitor import (
     ip_prefix_from,
     list_devices_for_vault,
+    lock_and_validate_current_session,
     register_or_refresh,
 )
 from vault_core import get_db, verify_vault_pin
@@ -112,6 +113,9 @@ async def register_device_endpoint(
 
     vault_id = principal["vault_id"]
     device_id = _validate_device_id(payload.device_id)
+    header_device_id = (request.headers.get("x-device-id") or "").strip()
+    if header_device_id and header_device_id != device_id:
+        raise HTTPException(status_code=403, detail={"code": "device_session_mismatch"})
     label = _clean_label(payload.label)
     ua_brand = _clean_label(payload.user_agent_brand)
     ip_prefix = ip_prefix_from(request)
@@ -122,6 +126,7 @@ async def register_device_endpoint(
         label=label,
         user_agent_brand=ua_brand,
         ip_prefix=ip_prefix,
+        session_token_id=principal["token_id"],
     )
 
     return {
@@ -528,11 +533,27 @@ async def revoke_device_endpoint(
 
     vault_id = principal["vault_id"]
     target_id = _validate_device_id(payload.device_id)
-    caller_device_id = request.headers.get("x-device-id") or ""
+    caller_device_id = (request.headers.get("x-device-id") or "").strip()
 
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        session = lock_and_validate_current_session(
+            cur, vault_id=vault_id, session_token_id=principal["token_id"],
+        )
+        if not caller_device_id or session["device_id"] != caller_device_id:
+            raise HTTPException(status_code=403, detail={"code": "device_session_mismatch"})
+        # The dependency checked this at request entry. Recheck under the
+        # issuer's vault lock so a delayed old request cannot revoke the
+        # newer login's device after that login has committed.
+        cur.execute(
+            "SELECT status FROM trusted_devices WHERE vault_id = %s AND device_id = %s FOR UPDATE",
+            (vault_id, caller_device_id),
+        )
+        caller = cur.fetchone()
+        if caller is None or caller["status"] != "trusted":
+            code = "device_revoked" if caller and caller["status"] == "revoked" else "device_not_trusted"
+            raise HTTPException(status_code=403, detail={"code": code})
         cur.execute(
             """
             SELECT device_id, status, label, user_agent_brand
@@ -567,6 +588,9 @@ async def revoke_device_endpoint(
             (vault_id, target_id),
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

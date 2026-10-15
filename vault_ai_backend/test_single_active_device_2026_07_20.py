@@ -40,6 +40,20 @@ class InMemoryTrustedDevicesDb:
 
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], _Row] = {}
+        self.sessions: dict[str, dict] = {}
+
+    def authenticated_session(self, vault_id: str, device_id: str) -> str:
+        """Fixture-only stand-in for a new, credential-verified login."""
+        for session in self.sessions.values():
+            if session["vault_id"] == vault_id:
+                session["revoked_at"] = self.now()
+                session["revoked_reason"] = "superseded-by-new-login"
+        token_id = f"session-{len(self.sessions)}"
+        self.sessions[token_id] = {
+            "vault_id": vault_id, "device_id": device_id,
+            "revoked_at": None, "revoked_reason": None, "unexpired": True,
+        }
+        return token_id
 
     def now(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -91,6 +105,15 @@ class _FakeCursor:
     def execute(self, sql: str, params: Optional[tuple] = None) -> None:
         norm = re.sub(r"\s+", " ", sql).strip().lower()
         params = params or ()
+
+        if norm.startswith("select vault_id from vaults"):
+            self._pending = [{"vault_id": params[0]}]
+            return
+        if norm.startswith("select device_id, revoked_at, revoked_reason"):
+            token_id, vault_id = params
+            session = self.db.sessions.get(token_id)
+            self._pending = [dict(session)] if session and session["vault_id"] == vault_id else []
+            return
 
         # ---- SELECT status FROM trusted_devices WHERE vid AND did ------
         if norm.startswith("select status from trusted_devices"):
@@ -213,6 +236,9 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
         import device_monitor
         self.device_monitor = device_monitor
         self.db = InMemoryTrustedDevicesDb()
+        self.apply_takeover = lambda **kwargs: device_monitor.apply_login_device_takeover(
+            self.db.connect().cursor(), **kwargs,
+        )
         self._originals = _install_fake_db(self.db)
         self.vault_id = "00000000-0000-4000-8000-0000000000a1"
 
@@ -222,7 +248,7 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
     def test_first_signup_trusts_current_device(self):
         # Acceptance item 1: fresh vault + device A → device A is
         # trusted, no other rows.
-        outcome = self.device_monitor.trust_current_and_revoke_others(
+        outcome = self.apply_takeover(
             vault_id=self.vault_id,
             device_id="device-A_fresh_signup_aaaaaaaaaaaaa",
         )
@@ -237,10 +263,10 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
     def test_login_on_device_B_revokes_device_A(self):
         # Acceptance item 2: A trusted, B logs in → A revoked, B
         # trusted, exactly one live row.
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id, device_id="device-A_aaaaaaaaaaaaaaaa",
         )
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id, device_id="device-B_bbbbbbbbbbbbbbbb",
         )
         self.assertEqual(
@@ -256,13 +282,13 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
     def test_re_login_on_A_revokes_B(self):
         # Acceptance item 5: symmetric — user comes back to A, B is
         # revoked.
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id, device_id="device-A_aaaaaaaaaaaaaaaa",
         )
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id, device_id="device-B_bbbbbbbbbbbbbbbb",
         )
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id, device_id="device-A_aaaaaaaaaaaaaaaa",
         )
         self.assertEqual(
@@ -280,7 +306,7 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
         # one non-revoked row exists at any observation point.
         devices = [f"device-{i:02d}_padding_padding_paddingpaddingpad" for i in range(10)]
         for did in devices:
-            self.device_monitor.trust_current_and_revoke_others(
+            self.apply_takeover(
                 vault_id=self.vault_id, device_id=did,
             )
             live = self.db.non_revoked_rows_for_vault(self.vault_id)
@@ -292,10 +318,10 @@ class TrustCurrentAndRevokeOthersTests(unittest.TestCase):
 
     def test_idempotent_on_same_device(self):
         # Calling twice with the same device is a no-op on revocation.
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id, device_id="device-A_aaaaaaaaaaaaaaaa",
         )
-        outcome = self.device_monitor.trust_current_and_revoke_others(
+        outcome = self.apply_takeover(
             vault_id=self.vault_id, device_id="device-A_aaaaaaaaaaaaaaaa",
         )
         self.assertEqual(outcome["revoked_other_count"], 0)
@@ -325,6 +351,8 @@ class DevicesRegisterNeverPendingTests(unittest.TestCase):
         result = self.device_monitor.register_or_refresh(
             vault_id=self.vault_id,
             device_id="device-fresh_paddingpaddingpaddingpad",
+            session_token_id=self.db.authenticated_session(
+                self.vault_id, "device-fresh_paddingpaddingpaddingpad"),
             label="this browser",
             user_agent_brand="Chrome",
             ip_prefix="203.0.113",
@@ -335,6 +363,8 @@ class DevicesRegisterNeverPendingTests(unittest.TestCase):
         self.device_monitor.register_or_refresh(
             vault_id=self.vault_id,
             device_id="device-A_paddingpaddingpaddingpaddingpad",
+            session_token_id=self.db.authenticated_session(
+                self.vault_id, "device-A_paddingpaddingpaddingpaddingpad"),
             label=None,
             user_agent_brand=None,
             ip_prefix=None,
@@ -342,6 +372,8 @@ class DevicesRegisterNeverPendingTests(unittest.TestCase):
         result = self.device_monitor.register_or_refresh(
             vault_id=self.vault_id,
             device_id="device-B_paddingpaddingpaddingpaddingpad",
+            session_token_id=self.db.authenticated_session(
+                self.vault_id, "device-B_paddingpaddingpaddingpaddingpad"),
             label=None,
             user_agent_brand=None,
             ip_prefix=None,
@@ -361,6 +393,8 @@ class DevicesRegisterNeverPendingTests(unittest.TestCase):
             result = self.device_monitor.register_or_refresh(
                 vault_id=self.vault_id,
                 device_id=f"device-{i:02d}_paddingpaddingpaddingpaddingp",
+                session_token_id=self.db.authenticated_session(
+                    self.vault_id, f"device-{i:02d}_paddingpaddingpaddingpaddingp"),
                 label=None,
                 user_agent_brand=None,
                 ip_prefix=None,
@@ -382,6 +416,9 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
         self.device_gate = device_gate
         self.device_monitor = device_monitor
         self.db = InMemoryTrustedDevicesDb()
+        self.apply_takeover = lambda **kwargs: device_monitor.apply_login_device_takeover(
+            self.db.connect().cursor(), **kwargs,
+        )
         self._originals = _install_fake_db(self.db)
         self.vault_id = "00000000-0000-4000-8000-0000000000d1"
         # Ensure the gate is enforced regardless of local env vars.
@@ -409,11 +446,11 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_revoked_device_receives_device_revoked_code(self):
         # Acceptance item 4: device A gets a clear device_revoked
         # response on its next protected request after B logs in.
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id,
             device_id="device-A_paddingpaddingpaddingpaddingpad",
         )
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id,
             device_id="device-B_paddingpaddingpaddingpaddingpad",
         )
@@ -481,7 +518,7 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
         # pending-trust screen. Verified here at the gate layer:
         # a trusted device passes verify_trusted_device with no
         # exception raised.
-        self.device_monitor.trust_current_and_revoke_others(
+        self.apply_takeover(
             vault_id=self.vault_id,
             device_id="device-B_paddingpaddingpaddingpaddingpad",
         )
@@ -512,21 +549,19 @@ class DeviceGateEmitsRevokedCodeTests(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 
 class ZkFinalizeWiresPrimitiveTests(unittest.TestCase):
-    # We assert the source of both zk_register_finalize and
-    # zk_login_finalize invokes trust_current_and_revoke_others. This
-    # is a shape check — the primitive is proven correct above; the
-    # only remaining risk is "we forgot to call it here".
+    # Finalize must use the atomic issuer, never a second, best-effort
+    # transaction that can revoke a later login's winning device.
 
     def test_zk_register_finalize_calls_primitive(self):
         import inspect
         from routes import auth_zk_routes
         src = inspect.getsource(auth_zk_routes._zk_register_finalize_sync)
         self.assertIn(
-            "trust_current_and_revoke_others", src,
-            msg="zk_register_finalize must call the single-active-device "
-                "primitive so the newly-signed-up device is immediately "
-                "trusted",
+            "issue_session_token", src,
+            msg="zk_register_finalize must use the atomic session/device issuer",
         )
+        self.assertNotIn("apply_login_device_takeover", src)
+        self.assertNotIn("trust_current_and_revoke_others", src)
         self.assertIn(
             "payload.device_id", src,
             msg="the primitive must be scoped to the caller's device_id",
@@ -537,11 +572,11 @@ class ZkFinalizeWiresPrimitiveTests(unittest.TestCase):
         from routes import auth_zk_routes
         src = inspect.getsource(auth_zk_routes._zk_login_finalize_sync)
         self.assertIn(
-            "trust_current_and_revoke_others", src,
-            msg="zk_login_finalize must call the single-active-device "
-                "primitive so the newly-logged-in device is trusted and "
-                "any other device is revoked",
+            "issue_session_token", src,
+            msg="zk_login_finalize must use the atomic session/device issuer",
         )
+        self.assertNotIn("apply_login_device_takeover", src)
+        self.assertNotIn("trust_current_and_revoke_others", src)
         self.assertIn(
             "payload.device_id", src,
             msg="the primitive must be scoped to the caller's device_id",

@@ -249,6 +249,8 @@ class IssuedSession(TypedDict):
     vault_id: str
     vault_name: str
     client_label: str
+    device_id: Optional[str]
+    new_device_trusted: bool
     vault_meta: NotRequired[Optional[dict[str, object]]]
 
 
@@ -302,13 +304,16 @@ def issue_session_token(
          audit event without ever surfacing token_id / token_id_hash.
       3. ``INSERT INTO auth_sessions (...)`` with the new token_id and
          its 32-byte token_id_hash (see :func:`_hash_token_id`).
-      4. ``INSERT INTO vault_security_events`` (type
+      4. Trust the new session's device and revoke old device rows using
+         this same cursor while the vault lock is still held. Any failure
+         rolls back both the session and device changes.
+      5. ``INSERT INTO vault_security_events`` (type
          ``'new_session_created'``).
-      5. If step 2 revoked any prior row, ``INSERT INTO
+      6. If step 2 revoked any prior row, ``INSERT INTO
          vault_security_events`` (type ``'previous_session_revoked'``)
          with the OLD row's client_label (or NULL for pre-migration
          legacy rows without a label).
-      6. ``COMMIT``.
+      7. ``COMMIT``.
 
     Race semantics: two concurrent logins for the same vault queue on
     the FOR UPDATE lock. The second to commit revokes the first's
@@ -339,6 +344,7 @@ def issue_session_token(
 
     owns_connection = connection is None
     conn = get_db() if owns_connection else connection
+    new_device_trusted = False
     try:
         # _PooledConnection wraps a psycopg2 connection whose default
         # autocommit is False; the pool's close() rollback keeps that
@@ -403,7 +409,29 @@ def issue_session_token(
             ),
         )
 
-        # 4. new_session_created event.
+        # A current session and its sole trusted device change together.
+        # Never defer this to a best-effort request after returning a token:
+        # concurrent login callbacks could revoke the winning device.
+        if device_id:
+            from device_monitor import apply_login_device_takeover
+            outcome = apply_login_device_takeover(
+                cur, vault_id=vault_id, device_id=device_id,
+                user_agent_brand=client_label,
+            )
+            new_device_trusted = outcome["new_device_trusted"]
+        else:
+            # Old clients may register/bind their device once using the new
+            # current session. Until then no prior device remains trusted.
+            cur.execute(
+                """
+                UPDATE trusted_devices
+                   SET status = 'revoked', revoked_at = NOW(), cooldown_until = NULL
+                 WHERE vault_id = %s AND status <> 'revoked'
+                """,
+                (vault_id,),
+            )
+
+        # 5. new_session_created event.
         cur.execute(
             """
             INSERT INTO vault_security_events
@@ -413,7 +441,7 @@ def issue_session_token(
             (vault_id, client_label),
         )
 
-        # 5. previous_session_revoked event (only when step 2 revoked something).
+        # 6. previous_session_revoked event (only when step 2 revoked something).
         if revoked_rows:
             cur.execute(
                 """
@@ -441,6 +469,8 @@ def issue_session_token(
         "vault_id":     vault_id,
         "vault_name":   vault_name,
         "client_label": client_label,
+        "device_id":    device_id,
+        "new_device_trusted": new_device_trusted,
     }
     if include_vault_meta:
         result["vault_meta"] = metadata
@@ -674,7 +704,7 @@ async def verify_session_token(request: Request) -> SessionPrincipal:
     # Best-effort device presence signal; never blocks or logs the token.
     try:
         from device_monitor import monitor_best_effort
-        monitor_best_effort(request, principal["vault_id"])
+        monitor_best_effort(request, principal)
     except Exception:
         logger.exception("[AUTH] device monitor swallowed exception")
 
