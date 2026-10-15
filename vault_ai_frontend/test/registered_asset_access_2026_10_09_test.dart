@@ -115,11 +115,11 @@ Widget _page(ValueNotifier<bool> access, VaultAIClient client,
 
 void main() {
   setUp(() {
-    SessionTermination.instance.reset();
+    SessionTermination.instance.resetForTests();
     AssetLiveStore.instance.resetForTest();
   });
   tearDown(() {
-    SessionTermination.instance.reset();
+    SessionTermination.instance.resetForTests();
     SessionTermination.instance.setHandler((_) async {});
     AssetLiveStore.instance.resetForTest();
   });
@@ -146,6 +146,9 @@ void main() {
           () async {
         var current = true;
         var terminations = 0;
+        // Keep the same real session binding while only its private wallet
+        // lease changes. A token/epoch fence alone cannot reject this response.
+        SessionTermination.instance.bindSession(_token);
         SessionTermination.instance.setHandler((_) async => terminations++);
         final started = Completer<void>();
         final response = Completer<http.Response>();

@@ -434,15 +434,20 @@ void _checkSessionResponse(
 /// Each invocation captures its own token/epoch and rejects stale responses,
 /// including successes, before existing endpoint-specific decoding runs.
 class _SessionBoundHttp {
-  const _SessionBoundHttp({http.Client? client}) : _client = client;
+  const _SessionBoundHttp({http.Client? client, void Function()? beforeResponse})
+      : _client = client, _beforeResponse = beforeResponse;
 
   final http.Client? _client;
+  final void Function()? _beforeResponse;
 
   Future<http.Response> _send(Map<String, String>? headers,
       Future<http.Response> Function() send) async {
     final scope = _requestScopeFor(headers);
     _assertCurrentRequest(scope);
     final response = await send();
+    // A stricter private-operation lease can change while the bearer remains
+    // current. Preserve its existing rejection before global auth side effects.
+    _beforeResponse?.call();
     _checkSessionResponse(response.statusCode, response.body, scope);
     return response;
   }
@@ -740,6 +745,10 @@ class VaultAIClient {
   }) : _httpClient = httpClient;
 
   _SessionBoundHttp get _sessionHttp => _SessionBoundHttp(client: _httpClient);
+  _SessionBoundHttp _sessionHttpWithGuard(void Function()? beforeResponse) =>
+      _SessionBoundHttp(client: _httpClient, beforeResponse: beforeResponse);
+  _SessionBoundHttp get _walletHttp =>
+      _sessionHttpWithGuard(_assertWalletResponseCurrent);
 
   void _assertWalletResponseCurrent() {
     if (walletResponseIsCurrent != null && !walletResponseIsCurrent!()) {
@@ -3445,12 +3454,14 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    if (zk_mvk_store.ZkActiveMvk.current() != null) {
+    final mvk = zk_mvk_store.ZkActiveMvk.current();
+    if (mvk != null) {
       final ciphertext = await _listZkVaultItems(authToken: authToken);
       final legacy = await _listLegacyVaultSecureItems(
         vaultName: vaultName,
         pin: pin,
         authToken: authToken,
+        beforeResponse: () => _requireSavedItemKey(mvk),
       );
       final combined = <Map<String, dynamic>>[];
       final seen = <String>{};
@@ -3491,10 +3502,11 @@ class VaultAIClient {
     required String vaultName,
     required String pin,
     required String authToken,
+    void Function()? beforeResponse,
   }) async {
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
-    final response = await _sessionHttp.post(
+    final response = await _sessionHttpWithGuard(beforeResponse).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -3528,7 +3540,7 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-    final response = await _sessionHttp.get(
+    final response = await _sessionHttpWithGuard(() => _requireSavedItemKey(mvk)).get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -4298,7 +4310,7 @@ class VaultAIClient {
       );
       checkAccess();
       final zkUri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
-      final zkResp = await _sessionHttp.post(
+      final zkResp = await _sessionHttpWithGuard(checkAccess).post(
         zkUri,
         headers: <String, String>{
           'Content-Type': 'application/json',
@@ -4353,6 +4365,7 @@ class VaultAIClient {
     final response = await (_httpClient?.send(request) ?? request.send());
     _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
+    checkAccess();
     _checkSessionResponse(response.statusCode, responseBody, requestScope);
 
     if (response.statusCode != 200) {
@@ -5067,7 +5080,8 @@ class VaultAIClient {
 
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
-    final resp = await _sessionHttp.post(
+    final resp = await _sessionHttpWithGuard(
+        () => _assertMemoryAccessCurrent(mvk, memoryGeneration)).post(
       uri,
       headers: <String, String>{
         'Content-Type': 'application/json',
@@ -5094,7 +5108,8 @@ class VaultAIClient {
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final memoryGeneration = st.SessionTermination.instance.generation;
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-    final response = await _sessionHttp
+    final response = await _sessionHttpWithGuard(
+        () => _assertMemoryAccessCurrent(mvk, memoryGeneration))
         .get(
           uri,
           headers: _defaultHeaders(authToken: authToken),
@@ -5252,7 +5267,8 @@ class VaultAIClient {
         memoryId ?? 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
-    final response = await _sessionHttp.post(
+    final response = await _sessionHttpWithGuard(
+        () => _assertMemoryAccessCurrent(mvk, memoryGeneration)).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(<String, dynamic>{
@@ -5435,6 +5451,7 @@ class VaultAIClient {
     if (existingItemId == null) {
       final legacy = await _listLegacyVaultSecureItems(
         vaultName: '', pin: pin, authToken: authToken,
+        beforeResponse: () => _requireSavedItemKey(mvk),
       );
       final rows = [
         ...(current['items'] as List? ?? const []),
@@ -5602,12 +5619,15 @@ class VaultAIClient {
     required String authToken,
     bool Function()? responseIsCurrent,
   }) async {
-    if (responseIsCurrent?.call() == false) {
-      throw StateError('File deletion access changed. Select the file again.');
+    void checkAccess() {
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('File deletion access changed. Select the file again.');
+      }
     }
+    checkAccess();
     final uri = Uri.parse('$baseUrl/manage/file/delete');
 
-    final response = await _sessionHttp.post(
+    final response = await _sessionHttpWithGuard(checkAccess).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5901,7 +5921,7 @@ class VaultAIClient {
   }) async {
     if (scopedPaxg) _assertWalletResponseCurrent();
     final uri = Uri.parse('$baseUrl/vault/ciphertext/crypto-history');
-    final response = await _sessionHttp.post(
+    final response = await (scopedPaxg ? _walletHttp : _sessionHttp).post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -6039,7 +6059,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/receive',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6086,7 +6106,7 @@ class VaultAIClient {
     if (scannerMode != null) {
       body['scannerMode'] = scannerMode;
     }
-    final response = await _sessionHttp.post(
+    final response = await _walletHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -6118,7 +6138,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/balance?address=$address',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6149,7 +6169,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/transactions?limit=$limit',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6253,7 +6273,7 @@ class VaultAIClient {
     if (senderAddressLookupHash != null) {
       body['senderAddressLookupHash'] = senderAddressLookupHash;
     }
-    final response = await _sessionHttp.post(
+    final response = await _walletHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -6296,7 +6316,7 @@ class VaultAIClient {
     if (draftId != null && draftId.isNotEmpty) {
       body['draftId'] = draftId;
     }
-    final response = await _sessionHttp.post(
+    final response = await _walletHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -6327,7 +6347,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/encrypted-secret',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6352,12 +6372,18 @@ class VaultAIClient {
     required String authToken,
     bool Function()? responseIsCurrent,
   }) async {
+    void checkAccess() {
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('Asset catalog access changed');
+      }
+    }
+
     final uri = Uri.parse('$baseUrl/crypto/wallet/asset-catalog').replace(
       queryParameters: {'_': DateTime.now().millisecondsSinceEpoch.toString()},
     );
     final headers = _defaultHeaders(authToken: authToken, json: false);
     headers['Cache-Control'] = 'no-cache, no-store';
-    final response = await _sessionHttp.get(uri, headers: headers);
+    final response = await _sessionHttpWithGuard(checkAccess).get(uri, headers: headers);
     if (responseIsCurrent != null && !responseIsCurrent()) {
       throw StateError('Asset catalog access changed');
     }
@@ -6377,6 +6403,12 @@ class VaultAIClient {
     required String authToken,
     bool Function()? responseIsCurrent,
   }) async {
+    void checkAccess() {
+      if (responseIsCurrent?.call() == false) {
+        throw StateError('Asset availability access changed');
+      }
+    }
+
     final uri = Uri.parse('$baseUrl/crypto/wallet/features').replace(
       queryParameters: <String, String>{
         '_': DateTime.now().millisecondsSinceEpoch.toString(),
@@ -6385,7 +6417,7 @@ class VaultAIClient {
     final headers = _defaultHeaders(authToken: authToken, json: false);
     headers['Cache-Control'] = 'no-cache, no-store';
     headers['Pragma'] = 'no-cache';
-    final response = await _sessionHttp.get(
+    final response = await _sessionHttpWithGuard(checkAccess).get(
       uri,
       headers: headers,
     );
@@ -6553,7 +6585,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/transaction/$txHash',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6587,7 +6619,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/outgoing/history',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6720,7 +6752,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/send/fee_estimate',
     );
-    final response = await _sessionHttp.post(
+    final response = await _walletHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -6756,7 +6788,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/draft/$draftId/expiry',
     );
-    final response = await _sessionHttp.get(
+    final response = await _walletHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
