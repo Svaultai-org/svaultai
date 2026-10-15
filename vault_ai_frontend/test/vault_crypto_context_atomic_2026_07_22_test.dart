@@ -352,7 +352,7 @@ void main() {
       // present (log correlation is useful even after enforcement
       // moved to the body).
       final defIdx = src.indexOf('Map<String, String> _defaultHeaders(');
-      final defEnd = src.indexOf('return headers;', defIdx);
+      final defEnd = src.indexOf('Future<Map<String, dynamic>> authSignup', defIdx);
       final defFn = src.substring(defIdx, defEnd);
       expect(defFn.contains("'X-App-Release'"), isTrue,
           reason: 'header is retained for diagnostic correlation '

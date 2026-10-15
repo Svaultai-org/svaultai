@@ -37,6 +37,8 @@ import 'services/inheritance_credentials.dart' as inh_cred;
 import 'services/legacy_adoption.dart' as legacy_adopt;
 import 'services/metadata_migration_client.dart' as mmc;
 import 'services/native_secure_store.dart';
+import 'services/session_persistence_lock.dart'
+    if (dart.library.html) 'services/session_persistence_lock_web.dart' as session_store;
 import 'services/session_termination.dart' as st;
 import 'services/apple_iap_service.dart';
 import 'services/google_play_iap_service.dart';
@@ -183,6 +185,7 @@ Future<Map<String, dynamic>> resolveCryptoChatBalance({
   void requireCurrent() {
     if (!current()) throw StateError('Vault access changed.');
   }
+
   Map<String, dynamic> unavailable(String reason) => {
         'balanceStatus': 'unavailable',
         'reason': reason,
@@ -892,26 +895,7 @@ Future<void> main() async {
         // startup `/auth/me` call routes through this exact flow.
         // Idempotence lives in SessionTermination.instance itself;
         // this handler only knows how to clear state and navigate.
-        st.SessionTermination.instance.setHandler((event) async {
-          try {
-            if (appState.vaultId != null) {
-              _VaultCrypto.clearCache(appState.vaultId!);
-            }
-          } catch (_) {}
-          await appState.clearSession(keepLastVaultName: true);
-          try {
-            rootScaffoldMessengerKey.currentState?.clearSnackBars();
-            rootScaffoldMessengerKey.currentState?.showSnackBar(
-              SnackBar(content: Text(event.userMessage)),
-            );
-          } catch (_) {}
-          try {
-            rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
-              appState.lastVaultName != null ? '/unlock' : '/login',
-              (_) => false,
-            );
-          } catch (_) {}
-        });
+        appState.installSessionTerminationHandler();
         st.SessionTermination.instance.enablePeerTabListener();
 
         await appState.hydrate();
@@ -947,6 +931,266 @@ const String _kAppLocaleStorageKeyV1 = 'app_locale';
 const String _kAppLocaleStorageKeyV2 = 'app_locale_v2';
 
 class AppState extends ChangeNotifier {
+  AppState({
+    Future<Map<String, dynamic>> Function(String token)? sessionValidator,
+    Duration sessionCheckInterval = const Duration(seconds: 15),
+  })  : _sessionValidator = sessionValidator ?? _defaultSessionValidator,
+        _sessionCheckInterval = sessionCheckInterval;
+
+  static Future<Map<String, dynamic>> _defaultSessionValidator(String token) =>
+      VaultAIClient(baseUrl: backendBaseUrl).authMe(authToken: token);
+
+  final Future<Map<String, dynamic>> Function(String token) _sessionValidator;
+  final Duration _sessionCheckInterval;
+  bool _disposed = false;
+  bool _sessionForeground = true;
+  bool _sessionMonitoringEnabled = false;
+  int _sessionEpoch = 0;
+  int _sessionProbeEpoch = 0;
+  Timer? _sessionCheckTimer;
+  Future<void>? _sessionCheckInFlight;
+  bool _sessionCheckRequestedAfterPending = false;
+  String? _checkingSessionToken;
+  int? _checkingSessionEpoch;
+  int? _checkingProbeEpoch;
+  Future<void> _sessionPersistenceTail = Future<void>.value();
+  bool _sessionVerificationBlocked = false;
+  bool _sessionVerificationUnavailable = false;
+  st.SessionTerminationCode? _signedOutCode;
+
+  bool get sessionVerificationBlocked => _sessionVerificationBlocked;
+  bool get sessionVerificationUnavailable => _sessionVerificationUnavailable;
+  st.SessionTerminationCode? get signedOutCode => _signedOutCode;
+
+  void installSessionTerminationHandler() {
+    st.SessionTermination.instance.setHandler((event) async {
+      if (_disposed ||
+          !st.SessionTermination.instance.isCurrentTermination(event)) return;
+      // clearSession removes private state synchronously before awaiting disk.
+      // No delayed handler may navigate away from a newer successful login.
+      await clearSession(signedOutCode: event.code);
+    });
+  }
+
+  bool _isCurrentSession(String token, int epoch) =>
+      !_disposed && sessionToken == token && _sessionEpoch == epoch;
+
+  Future<void> _persistSessionMutation(
+    Future<void> Function() action, {
+    bool requireTokenOwnership = false,
+    String? expectedToken,
+  }) {
+    // The local queue orders old cleanup before a newer local login's writes.
+    // The named web lock extends this ordering across cooperating browser tabs.
+    final operation = _sessionPersistenceTail.then((_) =>
+        session_store.withSessionPersistenceLock((exclusive) async {
+          if (requireTokenOwnership) {
+            // Without a cross-tab lock, keep disk state rather than risk
+            // deleting/relabeling the winning login in a different tab.
+            if (kIsWeb && !exclusive) return;
+            if (kIsWeb) {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.reload();
+            }
+            final stored = await NativeSecureStore.readString('session_token');
+            if (stored != null && stored != expectedToken) return;
+          }
+          await action();
+        }));
+    _sessionPersistenceTail = operation.catchError((Object _) {});
+    return operation;
+  }
+
+  Future<void> _persistSessionIdentity(
+      String key, String value, {required String token}) {
+    final epoch = _sessionEpoch;
+    return _persistSessionMutation(() async {
+      if (!_isCurrentSession(token, epoch)) return;
+      await NativeSecureStore.writeString(key, value);
+    }, requireTokenOwnership: true, expectedToken: token);
+  }
+
+  void _stopSessionChecks() {
+    _sessionCheckTimer?.cancel();
+    _sessionCheckTimer = null;
+  }
+
+  void startSessionMonitoring() {
+    _sessionMonitoringEnabled = true;
+    _startSessionChecks();
+  }
+
+  void stopSessionMonitoring() {
+    _sessionMonitoringEnabled = false;
+    _stopSessionChecks();
+  }
+
+  void _startSessionChecks() {
+    _stopSessionChecks();
+    if (_disposed ||
+        !_sessionMonitoringEnabled ||
+        !_sessionForeground ||
+        sessionToken == null) return;
+    _sessionCheckTimer = Timer.periodic(_sessionCheckInterval, (_) {
+      unawaited(validateCurrentSession());
+    });
+  }
+
+  /// Keep the existing unlock context when backgrounding; the privacy gate
+  /// covers private routes until the existing bearer is validated on resume.
+  /// A picker may continue using its existing keys and completes normally.
+  void sessionLifecycleChanged(AppLifecycleState state) {
+    if (_disposed || sessionToken == null) return;
+    if (state == AppLifecycleState.inactive) return;
+    if (state != AppLifecycleState.resumed) {
+      _sessionForeground = false;
+      _sessionProbeEpoch++;
+      _stopSessionChecks();
+      _sessionVerificationBlocked = true;
+      _sessionVerificationUnavailable = false;
+      notifyListeners();
+      return;
+    }
+    _sessionForeground = true;
+    _startSessionChecks();
+    unawaited(validateCurrentSession());
+  }
+
+  /// Foreground liveness checks never turn an unknown authorization response,
+  /// timeout, or network failure into logout. Resume stays quarantined until
+  /// a successful validation, with retry and the saved token retained.
+  Future<void> validateCurrentSession() {
+    final token = sessionToken;
+    if (_disposed ||
+        !_sessionForeground ||
+        token == null ||
+        _activeNativePickerCount > 0) return Future<void>.value();
+    final pending = _sessionCheckInFlight;
+    if (pending != null) {
+      if (_checkingSessionToken != token ||
+          _checkingSessionEpoch != _sessionEpoch ||
+          _checkingProbeEpoch != _sessionProbeEpoch) {
+        _sessionCheckRequestedAfterPending = true;
+      }
+      return pending;
+    }
+    final epoch = _sessionEpoch;
+    final probeEpoch = _sessionProbeEpoch;
+    _checkingSessionToken = token;
+    _checkingSessionEpoch = epoch;
+    _checkingProbeEpoch = probeEpoch;
+    if (_sessionVerificationBlocked && _sessionVerificationUnavailable) {
+      _sessionVerificationUnavailable = false;
+      notifyListeners();
+    }
+    final operation = _validateCapturedSession(token, epoch, probeEpoch);
+    _sessionCheckInFlight = operation;
+    return operation.whenComplete(() {
+      if (!identical(_sessionCheckInFlight, operation)) return;
+      _sessionCheckInFlight = null;
+      _checkingSessionToken = null;
+      _checkingSessionEpoch = null;
+      _checkingProbeEpoch = null;
+      if (_sessionCheckRequestedAfterPending) {
+        _sessionCheckRequestedAfterPending = false;
+        unawaited(validateCurrentSession());
+      }
+    });
+  }
+
+  Future<void> _validateCapturedSession(
+      String token, int epoch, int probeEpoch) async {
+    try {
+      final me =
+          await _sessionValidator(token).timeout(const Duration(seconds: 8));
+      if (!_isCurrentSession(token, epoch) ||
+          !_sessionForeground ||
+          _sessionProbeEpoch != probeEpoch) return;
+      final validatedVaultId = me['vault_id']?.toString();
+      if (validatedVaultId == null ||
+          validatedVaultId.isEmpty ||
+          (vaultId != null && vaultId != validatedVaultId)) {
+        throw const FormatException('Invalid session validation response');
+      }
+      vaultId = validatedVaultId;
+      final name = me['vault_name']?.toString().trim();
+      if (name != null && name.isNotEmpty) {
+        vaultName = name;
+        lastVaultName = name;
+      }
+      final display = me['display_username']?.toString();
+      if (display != null && display.isNotEmpty) displayName = display;
+      final handle = me['vault_handle']?.toString().trim();
+      if (handle != null && handle.isNotEmpty) vaultHandle = handle;
+      authed = true;
+      _signedOutCode = null;
+      _sessionVerificationBlocked = false;
+      _sessionVerificationUnavailable = false;
+      notifyListeners();
+      await _persistSessionMutation(() async {
+        if (!_isCurrentSession(token, epoch)) return;
+        await NativeSecureStore.deleteString('session_signed_out_code');
+        if (name != null && name.isNotEmpty) {
+          await NativeSecureStore.writeString('last_vault_name', name);
+        }
+        if (display != null && display.isNotEmpty) {
+          await NativeSecureStore.writeString('last_display_name', display);
+        }
+        if (handle != null && handle.isNotEmpty) {
+          await NativeSecureStore.writeString('last_vault_handle', handle);
+        }
+      }, requireTokenOwnership: true, expectedToken: token);
+    } catch (error) {
+      if (!_isCurrentSession(token, epoch)) return;
+      if (error is SessionTerminatedException) {
+        final scope = error.requestScope;
+        if (!error.handledBySessionCore &&
+            scope != null &&
+            st.SessionTermination.instance.isCurrentRequest(scope)) {
+          await st.SessionTermination.instance
+              .handle(error.code, request: scope);
+        }
+        return;
+      }
+      if (error is DeviceNotTrustedException &&
+          error.requestScope != null &&
+          st.SessionTermination.instance
+              .isCurrentRequest(error.requestScope!)) {
+        await st.SessionTermination.instance.handle(
+            st.SessionTerminationCode.revoked,
+            request: error.requestScope);
+        return;
+      }
+      if (_sessionVerificationBlocked &&
+          _sessionForeground &&
+          _sessionProbeEpoch == probeEpoch) {
+        _sessionVerificationUnavailable = true;
+        notifyListeners();
+      }
+    }
+  }
+
+  void requestSignInAfterTermination() {
+    _signedOutCode = null;
+    final epoch = _sessionEpoch;
+    unawaited(_persistSessionMutation(() async {
+      if (_disposed || _sessionEpoch != epoch) return;
+      await NativeSecureStore.deleteString('session_signed_out_code');
+    }, requireTokenOwnership: true, expectedToken: null));
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _sessionEpoch++;
+    _sessionProbeEpoch++;
+    _sessionCheckRequestedAfterPending = false;
+    _stopSessionChecks();
+    _stopInactivityWatch();
+    super.dispose();
+  }
+
   bool authed = false;
 
   // Per-file in-flight state. The chat card widgets watch AppState so
@@ -1462,6 +1706,7 @@ class AppState extends ChangeNotifier {
     // surfaces its own PIN-specific error. Returning true here
     // suppresses the generic error boundary — the caller UX owns
     // the message.
+    if (error is StaleSessionResponseException) return true;
     if (error is PinInvalidException) {
       lockMessage = error.message;
       notifyListeners();
@@ -1517,6 +1762,11 @@ class AppState extends ChangeNotifier {
     }
 
     if (error is DeviceNotTrustedException) {
+      final scope = error.requestScope;
+      if (scope != null &&
+          !st.SessionTermination.instance.isCurrentRequest(scope)) {
+        return true;
+      }
       final activeDeviceId = apiClientDeviceId() ?? '';
       final activeDeviceIdPrefix = activeDeviceId.length >= 8
           ? activeDeviceId.substring(0, 8)
@@ -1587,6 +1837,11 @@ class AppState extends ChangeNotifier {
     } finally {
       _activeNativePickerCount = math.max(0, _activeNativePickerCount - 1);
       resetInactivityTimer();
+      if (_activeNativePickerCount == 0 &&
+          _sessionForeground &&
+          _sessionVerificationBlocked) {
+        unawaited(validateCurrentSession());
+      }
     }
   }
 
@@ -1690,107 +1945,71 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> hydrate() async {
+    final epoch = _sessionEpoch;
     final sp = await SharedPreferences.getInstance();
-    sessionToken = await NativeSecureStore.readString('session_token');
-    lastVaultName = await NativeSecureStore.readString('last_vault_name');
-    // Restore the friendly identity fields FIRST so any UI that
-    // paints before /auth/me returns (or if /auth/me never returns)
-    // shows the user's chosen name and their display name rather
-    // than an internal identifier.
-    //
-    // Back-compat: legacy SharedPreferences keys (`last_display_username`,
-    // `last_canonical_username`, `last_vault_ai_name`) may still be
-    // populated on devices that ran the pre-2026-07-20 build. Read
-    // them as a one-time fallback and migrate the values into the
-    // new keys.
+    final savedToken = await NativeSecureStore.readString('session_token');
+    final savedName = await NativeSecureStore.readString('last_vault_name');
     final persistedDisplay =
         await NativeSecureStore.readString('last_display_name') ??
             sp.getString('last_display_username');
+    final persistedName = savedName ??
+        sp.getString('last_canonical_username') ??
+        sp.getString('last_vault_ai_name');
+    var persistedHandle =
+        await NativeSecureStore.readString('last_vault_handle');
+    if (persistedHandle == null || persistedHandle.isEmpty) {
+      persistedHandle = await legacy_adopt.readCachedVaultHandle();
+    }
+    final signedOutCode = st.parseSessionTerminationCode(
+        await NativeSecureStore.readString('session_signed_out_code'));
+    await _loadAppLocale();
+    // A login may complete while disk hydration is pending. It owns the state.
+    if (_disposed || _sessionEpoch != epoch) return;
+    lastVaultName = savedName;
     if (persistedDisplay != null && persistedDisplay.isNotEmpty) {
       displayName = persistedDisplay;
-      await NativeSecureStore.writeString(
-        'last_display_name',
-        persistedDisplay,
-      );
     }
-    final persistedName =
-        await NativeSecureStore.readString('last_vault_name') ??
-            sp.getString('last_canonical_username') ??
-            sp.getString('last_vault_ai_name');
     if (persistedName != null && persistedName.isNotEmpty) {
       vaultName = persistedName;
-      await NativeSecureStore.writeString('last_vault_name', persistedName);
+      lastVaultName = persistedName;
     }
-    // Drop the retired keys once we've migrated their values so
-    // subsequent hydrates go straight to the new ones. Best-effort;
-    // do not fail hydrate on a remove() error.
-    try {
-      final sp = await SharedPreferences.getInstance();
+    if (persistedHandle != null && persistedHandle.isNotEmpty) {
+      vaultHandle = persistedHandle;
+    }
+    _signedOutCode = signedOutCode;
+    _hydrated = true;
+    sessionToken =
+        savedToken != null && savedToken.isNotEmpty ? savedToken : null;
+    if (sessionToken != null) {
+      st.SessionTermination.instance.bindSession(sessionToken!);
+      _sessionVerificationBlocked = true;
+      _sessionVerificationUnavailable = false;
+    }
+    if (_disposed || _sessionEpoch != epoch) return;
+    // Identity migration uses the same storage queue as login/logout, so an
+    // old startup task cannot overwrite a subsequently established session.
+    await _persistSessionMutation(() async {
+      if (_disposed || _sessionEpoch != epoch) return;
+      if (persistedDisplay != null && persistedDisplay.isNotEmpty) {
+        await NativeSecureStore.writeString(
+            'last_display_name', persistedDisplay);
+      }
+      if (persistedName != null && persistedName.isNotEmpty) {
+        await NativeSecureStore.writeString('last_vault_name', persistedName);
+      }
+      if (persistedHandle != null && persistedHandle.isNotEmpty) {
+        await NativeSecureStore.writeString(
+            'last_vault_handle', persistedHandle);
+      }
       await sp.remove('last_display_username');
       await sp.remove('last_canonical_username');
       await sp.remove('last_vault_ai_name');
-    } catch (_) {}
-    final persistedHandle =
-        await NativeSecureStore.readString('last_vault_handle');
-    if (persistedHandle != null && persistedHandle.isNotEmpty) {
-      vaultHandle = persistedHandle;
-    } else {
-      final adoptedHandle = await legacy_adopt.readCachedVaultHandle();
-      if (adoptedHandle != null && adoptedHandle.isNotEmpty) {
-        vaultHandle = adoptedHandle;
-        await NativeSecureStore.writeString(
-          'last_vault_handle',
-          adoptedHandle,
-        );
-      }
-    }
-    await _loadAppLocale();
-
-    if (sessionToken != null && sessionToken!.isNotEmpty) {
-      try {
-        final client = VaultAIClient(baseUrl: backendBaseUrl);
-        final me = await client.authMe(authToken: sessionToken!);
-        vaultId = me['vault_id']?.toString();
-        // /auth/me returns the SERVER-authoritative vault_name (the
-        // user-chosen identity for both the vault and its AI keeper).
-        // It may be null on existing ZK accounts whose random-hex
-        // placeholder was NULLed by migration 0031 — in that case
-        // KEEP whatever hydrate restored from SharedPreferences (the
-        // user's typed name is safe on-device) rather than clobber it.
-        final rawName = me['vault_name'];
-        if (rawName != null) {
-          final name = rawName.toString().trim();
-          if (name.isNotEmpty) {
-            vaultName = name;
-            lastVaultName = name;
-            await NativeSecureStore.writeString('last_vault_name', name);
-          }
-        }
-        // /auth/me currently returns display_username for legacy
-        // vaults (the plaintext DB column) — ZK vaults leave it
-        // NULL because the human display name lives in the
-        // client-decrypted display_name_ciphertext. Keep the
-        // response-key stability but write to the new AppState
-        // field name.
-        final display = me['display_username']?.toString();
-        if (display != null && display.isNotEmpty) {
-          displayName = display;
-          await NativeSecureStore.writeString('last_display_name', display);
-        }
-        final handle = me['vault_handle']?.toString().trim();
-        if (handle != null && handle.isNotEmpty) {
-          vaultHandle = handle;
-          await NativeSecureStore.writeString('last_vault_handle', handle);
-        }
-      } catch (_) {
-        sessionToken = null;
-        vaultId = null;
-        await NativeSecureStore.deleteString('session_token');
-      }
-    }
-
-    authed = sessionToken != null && vaultId != null;
+    }, requireTokenOwnership: true, expectedToken: savedToken);
+    if (_disposed || _sessionEpoch != epoch) return;
+    if (sessionToken != null) await validateCurrentSession();
+    if (_disposed || _sessionEpoch != epoch) return;
     _hydrated = true;
+    _startSessionChecks();
     notifyListeners();
   }
 
@@ -1801,39 +2020,57 @@ class AppState extends ChangeNotifier {
     String? displayNameValue,
     String? vaultHandleValue,
   }) async {
-    // A successful login clears the "terminated" flag so the api
-    // layer stops short-circuiting authenticated requests. The
-    // generation counter is NOT rewound — any late responses from
-    // the pre-termination session still evaluate as stale to any
-    // caller comparing generations.
-    st.SessionTermination.instance.reset();
+    // Bind before the first await. Late responses/cleanup from an old login
+    // cannot revoke, resurrect, or overwrite this replacement session.
+    final epoch = ++_sessionEpoch;
+    _sessionProbeEpoch++;
+    st.SessionTermination.instance.bindSession(token);
+    _signedOutCode = null;
+    _sessionVerificationBlocked = false;
+    _sessionVerificationUnavailable = false;
     sessionToken = token;
     vaultId = vaultIdValue;
     vaultName = vaultNameValue;
     lastVaultName = vaultNameValue;
     if (vaultHandleValue != null && vaultHandleValue.isNotEmpty) {
       vaultHandle = vaultHandleValue;
-      await NativeSecureStore.writeString(
-        'last_vault_handle',
-        vaultHandleValue,
-      );
     }
     if (displayNameValue != null && displayNameValue.isNotEmpty) {
       displayName = displayNameValue;
-      // Persist the friendly name so the next launch's hydrate() can
-      // paint it BEFORE /auth/me returns (or if it fails).
-      await NativeSecureStore.writeString(
-        'last_display_name',
-        displayNameValue,
-      );
     }
     authed = true;
-    await NativeSecureStore.writeString('session_token', token);
-    await NativeSecureStore.writeString('last_vault_name', vaultNameValue);
+    _hydrated = true;
+    await _persistSessionMutation(() async {
+      if (!_isCurrentSession(token, epoch)) return;
+      if (vaultHandleValue != null && vaultHandleValue.isNotEmpty) {
+        await NativeSecureStore.writeString(
+            'last_vault_handle', vaultHandleValue);
+      }
+      if (displayNameValue != null && displayNameValue.isNotEmpty) {
+        await NativeSecureStore.writeString(
+            'last_display_name', displayNameValue);
+      }
+      await NativeSecureStore.writeString('session_token', token);
+      await NativeSecureStore.writeString('last_vault_name', vaultNameValue);
+      await NativeSecureStore.deleteString('session_signed_out_code');
+    });
+    if (!_isCurrentSession(token, epoch)) return;
+    _startSessionChecks();
     notifyListeners();
   }
 
-  Future<void> clearSession({bool keepLastVaultName = true}) async {
+  Future<void> clearSession({
+    bool keepLastVaultName = true,
+    st.SessionTerminationCode? signedOutCode,
+  }) async {
+    final departingToken = sessionToken;
+    final epoch = ++_sessionEpoch;
+    _sessionProbeEpoch++;
+    _stopSessionChecks();
+    st.SessionTermination.instance.clearSession();
+    _sessionVerificationBlocked = false;
+    _sessionVerificationUnavailable = false;
+    _signedOutCode = signedOutCode;
     _runShutdownHooks();
 
     perf_cache.clearCacheOnLogout();
@@ -1884,24 +2121,34 @@ class AppState extends ChangeNotifier {
     displayName = null;
     authed = false;
     unlocked = false;
-    await NativeSecureStore.deleteString('session_token');
-    if (!keepLastVaultName) {
-      lastVaultName = null;
-      await NativeSecureStore.deleteString('last_vault_name');
-      // "Use another vault" — drop everything about the previous
-      // account so the /login page starts clean. Preserving these
-      // would either pre-fill the wrong vault name or paint the
-      // wrong display name during the fresh session's hydrate.
-      await NativeSecureStore.deleteString('last_vault_handle');
-      await NativeSecureStore.deleteString('last_display_name');
-      final sp = await SharedPreferences.getInstance();
-      // Legacy keys — retired 2026-07-20 but cleared here too in
-      // case a fresh install imported them before hydrate() ran.
-      await sp.remove('last_display_username');
-      await sp.remove('last_canonical_username');
-      await sp.remove('last_vault_ai_name');
-    }
+    if (!keepLastVaultName) lastVaultName = null;
+    // Hide private screens/keys immediately; persistent cleanup is serialized
+    // behind any existing write and before a replacement login's write.
     notifyListeners();
+    await _persistSessionMutation(() async {
+      if (_disposed || _sessionEpoch != epoch) return;
+      await NativeSecureStore.deleteString('session_token');
+      if (signedOutCode != null) {
+        final wire = switch (signedOutCode) {
+          st.SessionTerminationCode.superseded => 'session_superseded',
+          st.SessionTerminationCode.expired => 'session_expired',
+          st.SessionTerminationCode.revoked => 'session_revoked',
+          st.SessionTerminationCode.invalid => 'invalid_session',
+        };
+        await NativeSecureStore.writeString('session_signed_out_code', wire);
+      } else {
+        await NativeSecureStore.deleteString('session_signed_out_code');
+      }
+      if (!keepLastVaultName) {
+        await NativeSecureStore.deleteString('last_vault_name');
+        await NativeSecureStore.deleteString('last_vault_handle');
+        await NativeSecureStore.deleteString('last_display_name');
+        final sp = await SharedPreferences.getInstance();
+        await sp.remove('last_display_username');
+        await sp.remove('last_canonical_username');
+        await sp.remove('last_vault_ai_name');
+      }
+    }, requireTokenOwnership: true, expectedToken: departingToken);
   }
 
   void markUnlocked() {
@@ -2026,12 +2273,14 @@ class AppState extends ChangeNotifier {
 
   Future<void> signOut() async {
     final token = sessionToken;
+    final epoch = _sessionEpoch;
     if (token != null) {
       try {
         await VaultAIClient(baseUrl: backendBaseUrl)
             .authLogout(authToken: token);
       } catch (_) {}
     }
+    if (_disposed || _sessionEpoch != epoch || sessionToken != token) return;
     final currentVaultId = vaultId;
     if (currentVaultId != null) {
       _VaultCrypto.clearCache(currentVaultId);
@@ -2414,6 +2663,7 @@ class AppState extends ChangeNotifier {
         authToken: token,
       );
 
+      if (sessionToken != token) return false;
       final backendVaultName = result['vault_name']?.toString();
       vlog('pin.hasPin', {
         'currentAppVaultName': vaultName,
@@ -2426,7 +2676,7 @@ class AppState extends ChangeNotifier {
       if (backendVaultName != null && backendVaultName.trim().isNotEmpty) {
         vaultName = backendVaultName.trim();
         lastVaultName = vaultName;
-        await NativeSecureStore.writeString('last_vault_name', vaultName!);
+        await _persistSessionIdentity('last_vault_name', vaultName!, token: token);
       }
 
       notifyListeners();
@@ -2459,6 +2709,7 @@ class AppState extends ChangeNotifier {
       );
 
       final hasVault = result['has_vault'] == true;
+      if (sessionToken != token) return;
       final backendVaultName = result['vault_name']?.toString();
       vlog('pin.loadVaultName', {
         'source': 'backend',
@@ -2475,11 +2726,12 @@ class AppState extends ChangeNotifier {
           backendVaultName.trim().isNotEmpty) {
         vaultName = backendVaultName.trim();
         lastVaultName = vaultName;
-        await NativeSecureStore.writeString('last_vault_name', vaultName!);
+        await _persistSessionIdentity('last_vault_name', vaultName!, token: token);
       } else {
         vaultName = null;
       }
     } catch (e) {
+      if (sessionToken != token) return;
       if (localVaultName != null && localVaultName.trim().isNotEmpty) {
         vaultName = localVaultName.trim();
       }
@@ -2728,6 +2980,7 @@ class AppState extends ChangeNotifier {
       _VaultCrypto.clearCache(currentVaultId);
     }
     await signOut();
+    if (_disposed || sessionToken != null) return;
     pinAttempts = 0;
     lockoutUntil = null;
     recoveryInfo = null;
@@ -2752,7 +3005,10 @@ class AppState extends ChangeNotifier {
       } catch (_) {}
     }
 
-    await clearSession(keepLastVaultName: false);
+    final cleanup = clearSession(keepLastVaultName: false);
+    final clearedEpoch = _sessionEpoch;
+    await cleanup;
+    if (_disposed || _sessionEpoch != clearedEpoch) return;
 
     pinAttempts = 0;
     lockoutUntil = null;
@@ -2801,7 +3057,10 @@ class AppState extends ChangeNotifier {
       _VaultCrypto.clearCache(currentVaultId);
     }
 
-    await clearSession(keepLastVaultName: false);
+    final cleanup = clearSession(keepLastVaultName: false);
+    final clearedEpoch = _sessionEpoch;
+    await cleanup;
+    if (_disposed || _sessionEpoch != clearedEpoch) return;
     pinAttempts = 0;
     lockoutUntil = null;
     storageUsedBytes = 0;
@@ -2872,10 +3131,18 @@ class SvaultaiApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    void signIn() => rootNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+        app.lastVaultName != null ? '/unlock' : '/login', (_) => false);
+    Widget privateRoute(Widget page) =>
+        SessionStatusGate(onSignIn: signIn, child: page);
     return MaterialApp(
       navigatorKey: rootNavigatorKey,
       scaffoldMessengerKey: rootScaffoldMessengerKey,
-      navigatorObservers: [appRouteObserver, nativeStoreRouteObserver],
+      navigatorObservers: [
+        appRouteObserver,
+        nativeStoreRouteObserver,
+        sessionPrivacyRouteObserver
+      ],
       builder: (context, child) {
         if (child == null) return const SizedBox.shrink();
         return NativeStoreExperience(
@@ -2884,7 +3151,17 @@ class SvaultaiApp extends StatelessWidget {
               nativeStoreRouteObserver.updateAllowed,
           reviewAllowed: () => app.unlocked && app.storeInterruptionAllowed &&
               nativeStoreRouteObserver.reviewAllowed,
-          child: _ActivityWrapper(child: child),
+          child: ValueListenableBuilder<bool>(
+            valueListenable: sessionPrivacyRouteObserver.publicMarketingVisible,
+            builder: (context, publicVisible, _) => SessionStatusGate(
+              publicMarketingVisible: publicVisible,
+              onSignIn: () => rootNavigatorKey.currentState
+                  ?.pushNamedAndRemoveUntil(
+                      app.lastVaultName != null ? '/unlock' : '/login',
+                      (_) => false),
+              child: _ActivityWrapper(child: child),
+            ),
+          ),
         );
       },
       debugShowCheckedModeBanner: false,
@@ -2896,18 +3173,18 @@ class SvaultaiApp extends StatelessWidget {
       theme: VaultTheme.dark(),
       routes: {
         '/': (_) => const LandingPage(),
-        '/auth': (_) => const LoginPage(),
-        '/login': (_) => const LoginPage(),
-        '/signup': (_) => const SignupPage(),
-        '/unlock': (_) => const UnlockPage(),
-        '/pin': (_) => const PinGatePage(),
-        '/vault-frozen': (_) => const VaultFrozenPage(),
-        '/recover': (_) => const VaultRecoveryPage(),
-        '/chat': (_) => const ChatDashboardPage(),
-        '/device-pending': (_) => const DevicePendingPage(),
-        '/devices': (_) => const DevicesPage(),
-        '/security-center': (_) => const SecurityCenterPage(),
-        '/storage': (_) => const StoragePage(),
+        '/auth': (_) => privateRoute(const LoginPage()),
+        '/login': (_) => privateRoute(const LoginPage()),
+        '/signup': (_) => privateRoute(const SignupPage()),
+        '/unlock': (_) => privateRoute(const UnlockPage()),
+        '/pin': (_) => privateRoute(const PinGatePage()),
+        '/vault-frozen': (_) => privateRoute(const VaultFrozenPage()),
+        '/recover': (_) => privateRoute(const VaultRecoveryPage()),
+        '/chat': (_) => privateRoute(const ChatDashboardPage()),
+        '/device-pending': (_) => privateRoute(const DevicePendingPage()),
+        '/devices': (_) => privateRoute(const DevicesPage()),
+        '/security-center': (_) => privateRoute(const SecurityCenterPage()),
+        '/storage': (_) => privateRoute(const StoragePage()),
         kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
       },
       // Native users should arrive at authentication immediately. Keep `/`
@@ -2915,6 +3192,136 @@ class SvaultaiApp extends StatelessWidget {
       // the promotional landing page the app's startup screen.
       initialRoute: '/login',
     );
+  }
+}
+
+/// Tracks only whether the current navigation stack belongs to the public
+/// marketing shell. Dialogs inherit their underlying route's privacy status.
+class SessionPrivacyRouteObserver extends NavigatorObserver {
+  final ValueNotifier<bool> publicMarketingVisible = ValueNotifier<bool>(false);
+  final Map<Route<dynamic>, bool> _publicRoutes = {};
+  final List<Route<dynamic>> _routes = [];
+
+  void _remember(Route<dynamic> route, Route<dynamic>? inherited) {
+    final name = route.settings.name;
+    _publicRoutes[route] = name == null
+        ? (_publicRoutes[inherited] ?? false)
+        : name == '/' || name == kVaultAiPrivacyRoute;
+  }
+
+  void _publish() {
+    final isPublic =
+        _routes.isNotEmpty && (_publicRoutes[_routes.last] ?? false);
+    // Navigator can report changes during its own build.
+    scheduleMicrotask(() {
+      publicMarketingVisible.value = isPublic;
+    });
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _remember(route, previousRoute);
+    _routes.add(route);
+    _publish();
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _publicRoutes.remove(route);
+    _routes.remove(route);
+    _publish();
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _publicRoutes.remove(route);
+    _routes.remove(route);
+    _publish();
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    final index = oldRoute == null ? -1 : _routes.indexOf(oldRoute);
+    if (newRoute != null) {
+      _remember(newRoute, oldRoute);
+      if (index >= 0) {
+        _routes[index] = newRoute;
+      } else {
+        _routes.add(newRoute);
+      }
+    } else {
+      _routes.remove(oldRoute);
+    }
+    _publicRoutes.remove(oldRoute);
+    _publish();
+  }
+}
+
+final sessionPrivacyRouteObserver = SessionPrivacyRouteObserver();
+
+/// Covers the whole private Navigator (including dialogs) until the existing
+/// session is checked. Removing keys is reserved for confirmed termination.
+class SessionStatusGate extends StatelessWidget {
+  const SessionStatusGate(
+      {super.key,
+      required this.child,
+      required this.onSignIn,
+      this.publicMarketingVisible = false});
+  final Widget child;
+  final VoidCallback onSignIn;
+  final bool publicMarketingVisible;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    if (publicMarketingVisible) return child;
+    final code = app.signedOutCode;
+    if (code == null && !app.sessionVerificationBlocked) return child;
+    final signedOut = code != null;
+    final unavailable = app.sessionVerificationUnavailable;
+    return Stack(fit: StackFit.expand, children: [
+      Offstage(child: TickerMode(enabled: false, child: child)),
+      Scaffold(
+          body: SafeArea(
+              child: Center(
+                  child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_outline, size: 48),
+                const SizedBox(height: 24),
+                Text(signedOut ? 'Signed out' : 'Checking your session',
+                    style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 16),
+                Text(
+                    signedOut
+                        ? st.userMessageFor(code)
+                        : unavailable
+                            ? 'We could not verify your session. Your saved session has '
+                                'been kept. Check your connection and retry.'
+                            : 'Please wait while we check your session.',
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 28),
+                if (signedOut)
+                  FilledButton(
+                      onPressed: () {
+                        app.requestSignInAfterTermination();
+                        onSignIn();
+                      },
+                      child: const Text('Sign in'))
+                else if (unavailable)
+                  FilledButton(
+                      onPressed: () => unawaited(app.validateCurrentSession()),
+                      child: const Text('Retry'))
+                else
+                  const CircularProgressIndicator(),
+              ],
+            )),
+      )))),
+    ]);
   }
 }
 
@@ -2926,17 +3333,38 @@ class _ActivityWrapper extends StatefulWidget {
   State<_ActivityWrapper> createState() => _ActivityWrapperState();
 }
 
-class _ActivityWrapperState extends State<_ActivityWrapper> {
+class _ActivityWrapperState extends State<_ActivityWrapper>
+    with WidgetsBindingObserver {
+  AppState? _monitoredApp;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final app = context.read<AppState>();
+    if (identical(app, _monitoredApp)) return;
+    _monitoredApp?.stopSessionMonitoring();
+    _monitoredApp = app;
+    app.startSessionMonitoring();
+  }
+
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    WidgetsBinding.instance.removeObserver(this);
+    _monitoredApp?.stopSessionMonitoring();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    context.read<AppState>().sessionLifecycleChanged(state);
   }
 
   bool _onKey(KeyEvent event) {
@@ -3179,6 +3607,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         final app = context.read<AppState>();
                         final hadLastVaultName = app.lastVaultName != null;
                         await app.signOutEverywhere();
+                        if (app.sessionToken != null) return;
                         if (context.mounted) {
                           Navigator.pushNamedAndRemoveUntil(
                             context,
@@ -4490,13 +4919,13 @@ Future<bool> _tryLegacyAdoptionBestEffort({
       get: _zkHttpGet,
     );
 
+    if (app.sessionToken != token || app.vaultId != vaultId) return true;
+
     if (result.adopted && result.newVaultHandle != null) {
       app.vaultHandle = result.newVaultHandle;
       try {
-        await NativeSecureStore.writeString(
-          'last_vault_handle',
-          result.newVaultHandle!,
-        );
+        await app._persistSessionIdentity(
+          'last_vault_handle', result.newVaultHandle!, token: token);
       } catch (_) {}
       if (!context.mounted) return true;
       // Adoption completes silently and the user lands in /chat. The
@@ -4949,10 +5378,9 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
               {'step': 'schedule_metadata_migration', 'error': e.toString()});
         }
         try {
-          await NativeSecureStore.writeString(
+          await app._persistSessionIdentity(
             legacy_adopt.prefsVaultHandleKey,
-            loginResult.vaultHandle,
-          );
+            loginResult.vaultHandle, token: loginResult.sessionToken);
         } catch (_) {}
         if (!mounted) return;
         pageTiming('authenticated_route_visible');
@@ -6245,6 +6673,7 @@ class _PinGatePageState extends State<PinGatePage> {
     try {
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.getMyVault(authToken: token);
+      if (app.sessionToken != token) return;
 
       final hasVault = result['has_vault'] == true;
       final isOrphaned = result['is_orphaned'] == true;
@@ -6282,10 +6711,8 @@ class _PinGatePageState extends State<PinGatePage> {
           backendVaultName.trim().isNotEmpty) {
         app.vaultName = backendVaultName.trim();
         app.lastVaultName = backendVaultName.trim();
-        await NativeSecureStore.writeString(
-          'last_vault_name',
-          backendVaultName.trim(),
-        );
+        await app._persistSessionIdentity(
+          'last_vault_name', backendVaultName.trim(), token: token);
       }
 
       if (mounted) {
@@ -6642,7 +7069,7 @@ class VaultFrozenPage extends StatelessWidget {
   Future<void> _signOut(BuildContext context) async {
     final app = context.read<AppState>();
     await app.signOutEverywhere();
-    if (!context.mounted) return;
+    if (app.sessionToken != null || !context.mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
   }
 
@@ -6779,7 +7206,7 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
   Future<void> _signOut(BuildContext context) async {
     final app = context.read<AppState>();
     await app.signOutEverywhere();
-    if (!context.mounted) return;
+    if (app.sessionToken != null || !context.mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
   }
 

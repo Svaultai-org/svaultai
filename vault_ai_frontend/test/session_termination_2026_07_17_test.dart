@@ -40,14 +40,12 @@ Future<AppState> _hydratedAppState({
   if (sessionToken != null) initial['session_token'] = sessionToken;
   if (lastVaultName != null) initial['last_vault_name'] = lastVaultName;
   SharedPreferences.setMockInitialValues(initial);
-  final app = AppState();
-  // hydrate() calls the real backend if a session token is present;
-  // for these tests we don't want a network hit, so we time-box it
-  // and let it fail into the clean-slate path.
-  await app.hydrate().timeout(
-    const Duration(seconds: 5),
-    onTimeout: () {},
-  );
+  final app = AppState(sessionValidator: (_) async =>
+      throw const ApiAuthorizationException());
+  addTearDown(app.dispose);
+  // Startup authorization uncertainty retains the saved token but never
+  // exposes the private UI until a later successful read-only validation.
+  await app.hydrate();
   return app;
 }
 
@@ -212,8 +210,8 @@ void main() {
 
     expect(handlerRuns, 1,
         reason: '8 concurrent 401s must produce ONE termination');
-    expect(st.SessionTermination.instance.generation, 1,
-        reason: 'generation advances by exactly 1');
+    expect(st.SessionTermination.instance.generation, greaterThan(0),
+        reason: 'termination and clearing both invalidate prior requests');
     expect(app.sessionToken, isNull);
   });
 
@@ -309,14 +307,15 @@ void main() {
     expect(app.authed, isFalse);
     expect(captured, isEmpty,
         reason: 'manual logout must NOT fire the coded-401 handler');
-    expect(st.SessionTermination.instance.generation, 0);
+    expect(st.SessionTermination.instance.isTerminated, isFalse);
+    expect(st.SessionTermination.instance.generation, greaterThan(0));
   });
 
   // ==================================================================
   // Scenario 10 — restored stale session never exposes UI
   // ==================================================================
 
-  test('hydrate with unreachable backend never sets authed=true',
+  test('hydrate with unknown authorization retains token without exposing UI',
       () async {
     // hydrate() attempts authMe against backendBaseUrl. In a test
     // environment with no backend, the call fails, and the code
@@ -329,8 +328,9 @@ void main() {
     );
     expect(app.authed, isFalse,
         reason: 'authed must be false until authMe confirms validity');
-    expect(app.sessionToken, isNull,
-        reason: 'a session that failed startup validation must be cleared');
+    expect(app.sessionToken, 'possibly-stale-token',
+        reason: 'uncertain startup validation must retain the saved token');
+    expect(app.sessionVerificationBlocked, isTrue);
     // lastVaultName can survive so the /unlock route can offer it.
     expect(app.lastVaultName, 'alice');
   });
@@ -364,7 +364,7 @@ void main() {
     expect(captured, hasLength(1));
     expect(captured.single.reason, st.SessionTerminationReason.peerTab);
     expect(app.sessionToken, isNull);
-    expect(st.SessionTermination.instance.generation, 1);
+    expect(st.SessionTermination.instance.generation, greaterThan(0));
   });
 
   // ==================================================================

@@ -28,6 +28,7 @@ class NativeSecureStore {
   static const _iosInstallMarker = 'vaultai_ios_install_marker_v1';
   static const _iosReinstallSensitiveKeys = <String>[
     'session_token',
+    'session_signed_out_code',
     'last_vault_name',
     'last_display_name',
     'last_vault_handle',

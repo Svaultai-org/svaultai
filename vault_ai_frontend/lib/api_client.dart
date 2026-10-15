@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -333,12 +334,162 @@ class AuthExpiredException implements Exception {
 class SessionTerminatedException implements Exception {
   final st.SessionTerminationCode code;
   final String message;
+  final st.SessionRequestScope? requestScope;
+  final bool handledBySessionCore;
   const SessionTerminatedException({
     required this.code,
     required this.message,
+    this.requestScope,
+    this.handledBySessionCore = false,
   });
   @override
   String toString() => 'SessionTerminatedException(code: $code)';
+}
+
+/// A previous request is obsolete, not evidence that the current login died.
+class StaleSessionResponseException implements Exception {
+  const StaleSessionResponseException();
+  @override
+  String toString() => 'StaleSessionResponseException([redacted])';
+}
+
+enum SessionValidity { valid, terminated, indeterminate }
+
+/// A local header snapshot keeps its request epoch out of the wire format.
+class _SessionHeaders extends MapBase<String, String> {
+  _SessionHeaders(this._values, this.scope);
+  final Map<String, String> _values;
+  final st.SessionRequestScope scope;
+  @override
+  String? operator [](Object? key) => _values[key];
+  @override
+  void operator []=(String key, String value) => _values[key] = value;
+  @override
+  Iterable<String> get keys => _values.keys;
+  @override
+  void clear() => _values.clear();
+  @override
+  String? remove(Object? key) => _values.remove(key);
+}
+
+st.SessionRequestScope? _requestScopeFor(Map<String, String>? headers) {
+  if (headers is _SessionHeaders) return headers.scope;
+  final authorization = headers?['Authorization'];
+  if (authorization == null || !authorization.startsWith('Bearer ')) {
+    return null;
+  }
+  return st.SessionTermination.instance
+      .captureRequest(authorization.substring(7));
+}
+
+void _assertCurrentRequest(st.SessionRequestScope? scope) {
+  if (scope != null && !st.SessionTermination.instance.canUseRequest(scope)) {
+    throw const StaleSessionResponseException();
+  }
+}
+
+void _checkSessionResponse(
+    int statusCode, String body, st.SessionRequestScope? scope) {
+  _assertCurrentRequest(scope);
+  if (scope == null) return;
+  if (statusCode == 403) {
+    try {
+      final decoded = jsonDecode(body);
+      final detail = decoded is Map ? decoded['detail'] : null;
+      final code = detail is Map ? detail['code'] : null;
+      if (code == 'device_not_trusted' ||
+          code == 'missing_device_id' ||
+          code == 'device_revoked') {
+        throw DeviceNotTrustedException.fromResponseBody(body,
+            requestScope: scope);
+      }
+    } on DeviceNotTrustedException {
+      rethrow;
+    } on FormatException {
+      // An unclassified 403 cannot prove session termination.
+    }
+    return;
+  }
+  if (statusCode != 401) return;
+  final code = VaultAIClient._extractSessionTerminationCode(body);
+  if (code == null) return;
+  final service = st.SessionTermination.instance;
+  final handled = service.isCurrentRequest(scope);
+  if (handled) {
+    // The service starts its guarded cleanup synchronously. Never initiate a
+    // second cleanup from a delayed UI error boundary after a newer login.
+    unawaited(service
+        .handle(code, request: scope)
+        .then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+  }
+  throw SessionTerminatedException(
+    code: code,
+    message: st.userMessageFor(code),
+    requestScope: scope,
+    handledBySessionCore: handled,
+  );
+}
+
+/// Stateless request boundary: no concurrent request state on VaultAIClient.
+/// Each invocation captures its own token/epoch and rejects stale responses,
+/// including successes, before existing endpoint-specific decoding runs.
+class _SessionBoundHttp {
+  const _SessionBoundHttp({http.Client? client}) : _client = client;
+
+  final http.Client? _client;
+
+  Future<http.Response> _send(Map<String, String>? headers,
+      Future<http.Response> Function() send) async {
+    final scope = _requestScopeFor(headers);
+    _assertCurrentRequest(scope);
+    final response = await send();
+    _checkSessionResponse(response.statusCode, response.body, scope);
+    return response;
+  }
+
+  Future<http.Response> get(Uri url, {Map<String, String>? headers}) => _send(
+      headers,
+      () =>
+          _client?.get(url, headers: headers) ??
+          http.get(url, headers: headers));
+
+  Future<http.Response> post(Uri url,
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          headers,
+          () =>
+              _client?.post(url,
+                  headers: headers, body: body, encoding: encoding) ??
+              http.post(url, headers: headers, body: body, encoding: encoding));
+
+  Future<http.Response> put(Uri url,
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          headers,
+          () =>
+              _client?.put(url,
+                  headers: headers, body: body, encoding: encoding) ??
+              http.put(url, headers: headers, body: body, encoding: encoding));
+
+  Future<http.Response> patch(Uri url,
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          headers,
+          () =>
+              _client?.patch(url,
+                  headers: headers, body: body, encoding: encoding) ??
+              http.patch(url,
+                  headers: headers, body: body, encoding: encoding));
+
+  Future<http.Response> delete(Uri url,
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          headers,
+          () =>
+              _client?.delete(url,
+                  headers: headers, body: body, encoding: encoding) ??
+              http.delete(url,
+                  headers: headers, body: body, encoding: encoding));
 }
 
 class InvalidVaultUnlockException implements Exception {
@@ -524,20 +675,24 @@ class DeviceNotTrustedException implements Exception {
   final String? deviceId;
 
   final String status;
+  final st.SessionRequestScope? requestScope;
 
   const DeviceNotTrustedException({
     required this.message,
     this.deviceId,
     this.status = 'unknown',
+    this.requestScope,
   });
 
-  factory DeviceNotTrustedException.fromResponseBody(String body) {
+  factory DeviceNotTrustedException.fromResponseBody(String body,
+      {st.SessionRequestScope? requestScope}) {
     try {
       final decoded = jsonDecode(body);
       if (decoded is Map<String, dynamic>) {
         final detail = decoded['detail'];
         if (detail is Map) {
           return DeviceNotTrustedException(
+            requestScope: requestScope,
             message:
                 (detail['message'] ?? 'This device is not trusted.').toString(),
             deviceId: detail['device_id']?.toString(),
@@ -546,14 +701,14 @@ class DeviceNotTrustedException implements Exception {
         }
       }
     } catch (_) {}
-    return const DeviceNotTrustedException(
+    return DeviceNotTrustedException(
+      requestScope: requestScope,
       message: 'This device is not trusted.',
     );
   }
 
   @override
-  String toString() =>
-      'DeviceNotTrustedException(status: $status, message: $message)';
+  String toString() => 'DeviceNotTrustedException([redacted])';
 }
 
 String? _apiClientDeviceId;
@@ -568,6 +723,8 @@ String? apiClientDeviceId() => _apiClientDeviceId;
 
 class VaultAIClient {
   final String baseUrl;
+  final http.Client? _httpClient;
+
   /// Captured key/session lease used only by the new registered-asset client.
   /// Existing clients omit this and retain their normal request behavior.
   final bool Function()? walletResponseIsCurrent;
@@ -579,7 +736,10 @@ class VaultAIClient {
     required this.baseUrl,
     this.walletResponseIsCurrent,
     this.authMeTimeout = const Duration(seconds: 12),
-  });
+    http.Client? httpClient,
+  }) : _httpClient = httpClient;
+
+  _SessionBoundHttp get _sessionHttp => _SessionBoundHttp(client: _httpClient);
 
   void _assertWalletResponseCurrent() {
     if (walletResponseIsCurrent != null && !walletResponseIsCurrent!()) {
@@ -602,6 +762,7 @@ class VaultAIClient {
       throw const SessionTerminatedException(
         code: st.SessionTerminationCode.invalid,
         message: 'Your session is no longer valid. Sign in again.',
+        handledBySessionCore: true,
       );
     }
     final headers = <String, String>{};
@@ -636,7 +797,10 @@ class VaultAIClient {
       headers['X-App-Release'] = _appRelease;
     }
 
-    return headers;
+    return authToken == null || authToken.isEmpty
+        ? headers
+        : _SessionHeaders(
+            headers, st.SessionTermination.instance.captureRequest(authToken));
   }
 
   Future<Map<String, dynamic>> authSignup({
@@ -679,7 +843,7 @@ class VaultAIClient {
       response = await _runWithNetLog(
         'auth.signup',
         uri,
-        () => http.post(uri, headers: headers, body: body),
+        () => _sessionHttp.post(uri, headers: headers, body: body),
       );
     } catch (e, st) {
       _vlog('auth.signup.network_failure', {
@@ -752,7 +916,7 @@ class VaultAIClient {
       response = await _runWithNetLog(
         'auth.login',
         uri,
-        () => http.post(uri, headers: headers, body: body),
+        () => _sessionHttp.post(uri, headers: headers, body: body),
       );
     } catch (e, st) {
       _vlog('auth.login.network_failure', {
@@ -816,13 +980,11 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'auth.me',
       uri,
-      () => http
+      () => _sessionHttp
           .get(uri, headers: _defaultHeaders(authToken: authToken))
           .timeout(authMeTimeout),
     );
-    if (response.statusCode == 401) {
-      throw const AuthExpiredException();
-    }
+    _throwIfAuthExpired(response.statusCode, response.body);
     if (response.statusCode != 200) {
       throw Exception(_formatBackendError(
         prefix: 'auth/me failed',
@@ -835,6 +997,30 @@ class VaultAIClient {
       throw Exception('Invalid /auth/me response format');
     }
     return decoded;
+  }
+
+  /// Read-only probe of the existing /auth/me contract. No accounts or data
+  /// are created. Offline/uncoded authorization failures remain indeterminate.
+  Future<SessionValidity> checkSessionValidity(
+      {required String authToken}) async {
+    final service = st.SessionTermination.instance;
+    final scope = service.captureRequest(authToken);
+    try {
+      await authMe(authToken: authToken);
+      return service.isCurrentRequest(scope)
+          ? SessionValidity.valid
+          : SessionValidity.indeterminate;
+    } on SessionTerminatedException catch (error) {
+      // A replacement login already won this race; do not label it terminated.
+      if (!service.wasTerminatedRequest(scope)) {
+        return SessionValidity.indeterminate;
+      }
+      return error.handledBySessionCore
+          ? SessionValidity.terminated
+          : SessionValidity.indeterminate;
+    } catch (_) {
+      return SessionValidity.indeterminate;
+    }
   }
 
   /// Set (or clear, when [vaultName] is null) the caller's
@@ -869,7 +1055,8 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'auth.logout',
       uri,
-      () => http.post(uri, headers: _defaultHeaders(authToken: authToken)),
+      () => _sessionHttp.post(uri,
+          headers: _defaultHeaders(authToken: authToken)),
     );
     if (response.statusCode != 204 && response.statusCode != 200) {
       if (response.statusCode != 401) {
@@ -889,7 +1076,8 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'vault.delete.status',
       uri,
-      () => http.get(uri, headers: _defaultHeaders(authToken: authToken)),
+      () =>
+          _sessionHttp.get(uri, headers: _defaultHeaders(authToken: authToken)),
     );
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -914,7 +1102,8 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'vault.delete.request',
       uri,
-      () => http.post(uri, headers: _defaultHeaders(authToken: authToken)),
+      () => _sessionHttp.post(uri,
+          headers: _defaultHeaders(authToken: authToken)),
     );
     _throwIfAuthExpired(response.statusCode, response.body);
     _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -947,7 +1136,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'vault.delete.confirm',
       uri,
-      () => http.post(
+      () => _sessionHttp.post(
         uri,
         headers: _defaultHeaders(authToken: authToken, json: true),
         body: body,
@@ -972,7 +1161,7 @@ class VaultAIClient {
     String? userAgentBrand,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/register');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -1010,7 +1199,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'devices.diagnose_trust',
       uri,
-      () => http.get(uri, headers: headers),
+      () => _sessionHttp.get(uri, headers: headers),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1031,7 +1220,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/me');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -1062,7 +1251,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'billing.me',
       uri,
-      () => http.get(uri, headers: headers),
+      () => _sessionHttp.get(uri, headers: headers),
     );
 
     if (response.statusCode != 200) {
@@ -1091,7 +1280,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'billing.providers',
       uri,
-      () => http.get(uri, headers: headers),
+      () => _sessionHttp.get(uri, headers: headers),
     );
 
     if (response.statusCode != 200) {
@@ -1126,7 +1315,7 @@ class VaultAIClient {
       response = await _runWithNetLog(
         'billing.apple.verify',
         uri,
-        () => http
+        () => _sessionHttp
             .post(
               uri,
               headers: headers,
@@ -1437,9 +1626,15 @@ class VaultAIClient {
     final http.Response response;
     try {
       response = await (body == null
-              ? http.get(uri, headers: headers)
-              : http.post(uri, headers: headers, body: jsonEncode(body)))
+              ? _sessionHttp.get(uri, headers: headers)
+              : _sessionHttp.post(uri, headers: headers, body: jsonEncode(body)))
           .timeout(const Duration(seconds: 15));
+    } on StaleSessionResponseException {
+      rethrow;
+    } on SessionTerminatedException {
+      rethrow;
+    } on DeviceNotTrustedException {
+      rethrow;
     } on http.ClientException {
       _assertGooglePlayResponseCurrent(responseIsCurrent);
       _vlog('http.network_error',
@@ -1535,7 +1730,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'security_center.summary',
       uri,
-      () => http.get(uri, headers: headers),
+      () => _sessionHttp.get(uri, headers: headers),
     );
 
     if (response.statusCode != 200) {
@@ -1574,7 +1769,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'expiry.active',
       uri,
-      () => http.post(uri, headers: headers, body: jsonEncode(body)),
+      () => _sessionHttp.post(uri, headers: headers, body: jsonEncode(body)),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1611,7 +1806,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'memory.timeline',
       uri,
-      () => http.post(uri, headers: headers, body: jsonEncode(body)),
+      () => _sessionHttp.post(uri, headers: headers, body: jsonEncode(body)),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1651,7 +1846,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       'memory.list',
       uri,
-      () => http.post(uri, headers: headers, body: jsonEncode(body)),
+      () => _sessionHttp.post(uri, headers: headers, body: jsonEncode(body)),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1741,7 +1936,7 @@ class VaultAIClient {
     final response = await _runWithNetLog(
       label,
       uri,
-      () => http.post(uri, headers: headers, body: jsonEncode(body)),
+      () => _sessionHttp.post(uri, headers: headers, body: jsonEncode(body)),
     );
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -1773,7 +1968,7 @@ class VaultAIClient {
       if (cursor != null) 'cursor': cursor,
       if (limit != null) 'limit': limit,
     });
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: body,
@@ -1801,7 +1996,7 @@ class VaultAIClient {
     required String deviceId,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/approve');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'device_id': deviceId}),
@@ -1827,7 +2022,7 @@ class VaultAIClient {
     required String deviceId,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/revoke');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'device_id': deviceId}),
@@ -1854,7 +2049,7 @@ class VaultAIClient {
     required String pin,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/request-self-approval');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'vault_name': '', 'pin': pin}),
@@ -1882,7 +2077,7 @@ class VaultAIClient {
     required String pin,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/finalize-self-approval');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'vault_name': '', 'pin': pin}),
@@ -1909,7 +2104,7 @@ class VaultAIClient {
     String? deviceId,
   }) async {
     final uri = Uri.parse('$baseUrl/devices/cancel-self-approval');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -1954,6 +2149,8 @@ class VaultAIClient {
   }) async* {
     final uri = Uri.parse('$baseUrl/chat');
 
+    final requestScope =
+        st.SessionTermination.instance.captureRequest(authToken);
     final request = http.Request('POST', uri);
     final headers = _defaultHeaders(
       authToken: authToken,
@@ -1992,7 +2189,9 @@ class VaultAIClient {
       kdfIterationsUsed: kdfIterationsUsed,
     ));
 
-    final response = await request.send();
+    _assertCurrentRequest(requestScope);
+    final response = await (_httpClient?.send(request) ?? request.send());
+    _assertCurrentRequest(requestScope);
     _vlog('chat.response', {
       'status': response.statusCode,
       'content_type': response.headers['content-type'] ?? '-',
@@ -2000,6 +2199,7 @@ class VaultAIClient {
 
     if (response.statusCode != 200) {
       final errorBody = await response.stream.bytesToString();
+      _checkSessionResponse(response.statusCode, errorBody, requestScope);
 
       _vlog('chat.error', {
         'status': response.statusCode,
@@ -2026,6 +2226,7 @@ class VaultAIClient {
         response.stream.transform(utf8.decoder).transform(const LineSplitter());
 
     await for (final line in lineStream) {
+      _assertCurrentRequest(requestScope);
       final cleaned = _cleanSseLine(line);
       if (cleaned != null && cleaned.isNotEmpty) {
         yield cleaned;
@@ -2039,7 +2240,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/vault-name-available');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2073,7 +2274,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/my-vault');
 
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2126,7 +2327,7 @@ class VaultAIClient {
 
     final http.Response response;
     try {
-      response = await http.post(
+      response = await _sessionHttp.post(
         uri,
         headers: headers,
         body: jsonEncode({
@@ -2191,7 +2392,7 @@ class VaultAIClient {
       'query': query,
       if (resumeJobId != null && resumeJobId.isNotEmpty) 'job_id': resumeJobId,
     });
-    final response = await http.post(uri, headers: headers, body: body);
+    final response = await _sessionHttp.post(uri, headers: headers, body: body);
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -2219,7 +2420,7 @@ class VaultAIClient {
     );
     final headers = _defaultHeaders(authToken: authToken, json: true);
     final body = jsonEncode({'pin': pin});
-    final response = await http.post(uri, headers: headers, body: body);
+    final response = await _sessionHttp.post(uri, headers: headers, body: body);
     if (response.statusCode == 404) {
       throw Exception('deep_answer_job_not_found');
     }
@@ -2264,7 +2465,7 @@ class VaultAIClient {
       '?vault_name=',
     );
 
-    final response = await http.get(uri, headers: headers);
+    final response = await _sessionHttp.get(uri, headers: headers);
 
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -2293,7 +2494,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/get-or-create-vault-meta');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2332,7 +2533,7 @@ class VaultAIClient {
     required String label,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/create'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2360,7 +2561,7 @@ class VaultAIClient {
     required String pairingCode,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/link'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2400,7 +2601,7 @@ class VaultAIClient {
           : clientRequestId;
       headers['X-Client-Request-Id'] = cri;
     }
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/list-mine'),
       headers: headers,
       body: jsonEncode({'vault_name': '', 'pin': pin}),
@@ -2435,7 +2636,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     try {
-      await http.post(
+      await _sessionHttp.post(
         Uri.parse('$baseUrl/inheritance/client-diagnostic'),
         headers: _defaultHeaders(authToken: authToken, json: true),
         body: jsonEncode(body),
@@ -2451,7 +2652,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/list-inheritances'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'vault_name': '', 'pin': pin}),
@@ -2476,7 +2677,7 @@ class VaultAIClient {
     String? inheritedVaultName,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/claim-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2508,7 +2709,7 @@ class VaultAIClient {
   Future<Map<String, dynamic>> listMyVaults({
     required String authToken,
   }) async {
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       Uri.parse('$baseUrl/list-my-vaults'),
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2531,7 +2732,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/request-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2559,7 +2760,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/cancel-transfer'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2587,7 +2788,7 @@ class VaultAIClient {
     required String pin,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/beneficiary/delete'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2612,7 +2813,7 @@ class VaultAIClient {
   Future<Map<String, dynamic>> listNotifications({
     required String authToken,
   }) async {
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       Uri.parse('$baseUrl/notifications'),
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2640,7 +2841,7 @@ class VaultAIClient {
     required int linkId,
     required String authToken,
   }) async {
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       Uri.parse('$baseUrl/inheritance/beneficiary/$linkId/pubkey'),
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2661,7 +2862,7 @@ class VaultAIClient {
     required Map<String, dynamic> body,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/inheritance/credentials/save'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -2684,7 +2885,7 @@ class VaultAIClient {
     required Map<String, dynamic> body,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/inheritance/credentials/replace'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -2732,7 +2933,7 @@ class VaultAIClient {
     required int linkId,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/inheritance/credentials/delete'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'beneficiary_link_id': linkId}),
@@ -2772,7 +2973,7 @@ class VaultAIClient {
     required int linkId,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl$path'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'beneficiary_link_id': linkId}),
@@ -2839,7 +3040,7 @@ class VaultAIClient {
     required int linkId,
     required String authToken,
   }) async {
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       Uri.parse('$baseUrl/inheritance/access/status?link_id=$linkId'),
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2860,7 +3061,7 @@ class VaultAIClient {
     required int linkId,
     required String authToken,
   }) async {
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       Uri.parse('$baseUrl/inheritance/credentials/retrieve?link_id=$linkId'),
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -2890,7 +3091,7 @@ class VaultAIClient {
     required String token,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/inheritance/device/consume'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'token': token}),
@@ -2912,7 +3113,7 @@ class VaultAIClient {
     int? notificationId,
     required String authToken,
   }) async {
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       Uri.parse('$baseUrl/notifications/mark-read'),
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2939,7 +3140,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/rotate-vault-kdf');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -2973,7 +3174,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/wipe-orphan-data');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'confirm': confirm}),
@@ -3209,7 +3410,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/list-login-names');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -3291,7 +3492,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/list-secure-items');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -3325,7 +3526,7 @@ class VaultAIClient {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -3411,7 +3612,7 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/get-secure-item');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -3518,7 +3719,7 @@ class VaultAIClient {
     if (note != null && note.isNotEmpty) body['note'] = note;
     if (title != null && title.isNotEmpty) body['title'] = title;
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -3586,7 +3787,7 @@ class VaultAIClient {
     if (note != null && note.isNotEmpty) body['note'] = note;
     if (title != null && title.isNotEmpty) body['title'] = title;
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -3661,7 +3862,7 @@ class VaultAIClient {
       body['amountText'] = amountText;
     if (dateText != null && dateText.isNotEmpty) body['dateText'] = dateText;
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -3694,7 +3895,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/reveal-sensitive-backup',
     );
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -3739,6 +3940,8 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/upload-file');
 
+    final requestScope =
+        st.SessionTermination.instance.captureRequest(authToken);
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(
       _defaultHeaders(authToken: authToken),
@@ -3802,8 +4005,11 @@ class VaultAIClient {
       ),
     );
 
-    final response = await request.send();
+    _assertCurrentRequest(requestScope);
+    final response = await (_httpClient?.send(request) ?? request.send());
+    _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
+    _checkSessionResponse(response.statusCode, responseBody, requestScope);
 
     if (response.statusCode == 413) {
       throw _parseStorageLimitException(responseBody);
@@ -3859,7 +4065,7 @@ class VaultAIClient {
         ? '?path=${Uri.encodeQueryComponent(path)}'
         : '';
     final uri = Uri.parse('$baseUrl/folders$qs');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -3900,7 +4106,7 @@ class VaultAIClient {
         'root_folder_name': rootFolderName,
     };
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -3932,7 +4138,7 @@ class VaultAIClient {
     required String importId,
   }) async {
     final uri = Uri.parse('$baseUrl/imports/$importId');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -3967,7 +4173,7 @@ class VaultAIClient {
       'pin': pin,
     };
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -4007,7 +4213,7 @@ class VaultAIClient {
       'skipped_duplicate_count_delta': skippedDuplicateCountDelta,
     };
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -4078,6 +4284,7 @@ class VaultAIClient {
         throw StateError('File rename access changed. Unlock and try again.');
       }
     }
+
     checkAccess();
     if (mvk != null) {
       final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
@@ -4089,7 +4296,7 @@ class VaultAIClient {
       );
       checkAccess();
       final zkUri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
-      final zkResp = await http.post(
+      final zkResp = await _sessionHttp.post(
         zkUri,
         headers: <String, String>{
           'Content-Type': 'application/json',
@@ -4128,6 +4335,8 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/name-file');
 
+    final requestScope =
+        st.SessionTermination.instance.captureRequest(authToken);
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(
       _defaultHeaders(authToken: authToken),
@@ -4138,8 +4347,11 @@ class VaultAIClient {
     request.fields['saved_name'] = savedName;
     request.fields['pin'] = pin;
 
-    final response = await request.send();
+    _assertCurrentRequest(requestScope);
+    final response = await (_httpClient?.send(request) ?? request.send());
+    _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
+    _checkSessionResponse(response.statusCode, responseBody, requestScope);
 
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, responseBody);
@@ -4167,7 +4379,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/list-files');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4254,7 +4466,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/vault-stats');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4290,7 +4502,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/download-file');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4371,7 +4583,7 @@ class VaultAIClient {
       }
     }
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -4407,6 +4619,8 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/upload-file/chunk');
 
+    final requestScope =
+        st.SessionTermination.instance.captureRequest(authToken);
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_defaultHeaders(authToken: authToken));
     request.fields['file_id'] = fileId;
@@ -4418,8 +4632,11 @@ class VaultAIClient {
       filename: 'chunk_$chunkIndex.bin',
     ));
 
-    final response = await request.send();
+    _assertCurrentRequest(requestScope);
+    final response = await (_httpClient?.send(request) ?? request.send());
+    _assertCurrentRequest(requestScope);
     final responseBody = await response.stream.bytesToString();
+    _checkSessionResponse(response.statusCode, responseBody, requestScope);
 
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, responseBody);
@@ -4447,7 +4664,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/upload-file/finalize');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4483,7 +4700,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/upload-file/abort');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4519,7 +4736,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/download-file/manifest');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4555,7 +4772,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/download-file/chunk');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4587,7 +4804,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/manage/logins-full');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4624,7 +4841,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/manage/login');
 
-    final response = await http.patch(
+    final response = await _sessionHttp.patch(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4662,7 +4879,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/manage/login/delete');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -4758,7 +4975,7 @@ class VaultAIClient {
       body['fields'] = fields;
     }
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -4848,7 +5065,7 @@ class VaultAIClient {
 
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
-    final resp = await http.post(
+    final resp = await _sessionHttp.post(
       uri,
       headers: <String, String>{
         'Content-Type': 'application/json',
@@ -4875,10 +5092,12 @@ class VaultAIClient {
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
     final memoryGeneration = st.SessionTermination.instance.generation;
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
-    final response = await http.get(
-      uri,
-      headers: _defaultHeaders(authToken: authToken),
-    ).timeout(const Duration(seconds: 12));
+    final response = await _sessionHttp
+        .get(
+          uri,
+          headers: _defaultHeaders(authToken: authToken),
+        )
+        .timeout(const Duration(seconds: 12));
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
@@ -4977,7 +5196,7 @@ class VaultAIClient {
       '$baseUrl/vault/ciphertext/vault-ai-memory/'
       '${Uri.encodeComponent(memoryId)}',
     );
-    final response = await http.delete(
+    final response = await _sessionHttp.delete(
       uri,
       headers: _defaultHeaders(authToken: authToken),
     );
@@ -5031,7 +5250,7 @@ class VaultAIClient {
         memoryId ?? 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(<String, dynamic>{
@@ -5102,7 +5321,7 @@ class VaultAIClient {
     if (atCt != null) body['asset_type_ciphertext'] = atCt;
     if (body.length == 1) return; // nothing to encrypt
     final uri = Uri.parse('$baseUrl/vault/ciphertext/uploaded-files');
-    final resp = await http.post(
+    final resp = await _sessionHttp.post(
       uri,
       headers: <String, String>{
         'Content-Type': 'application/json',
@@ -5154,7 +5373,7 @@ class VaultAIClient {
       'payload_ciphertext': vault_key_hierarchy.b64urlEncode(pyCt),
     };
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-items');
-    final resp = await http.post(
+    final resp = await _sessionHttp.post(
       uri,
       headers: <String, String>{
         'Content-Type': 'application/json',
@@ -5250,7 +5469,7 @@ class VaultAIClient {
       '$baseUrl/vault/ciphertext/vault-items/generated-drafts/finalize',
     );
     _requireSavedItemKey(mvk);
-    final finalized = await http.post(
+    final finalized = await _sessionHttp.post(
       finalizeUri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(<String, dynamic>{
@@ -5294,7 +5513,7 @@ class VaultAIClient {
         final uri = Uri.parse(
           '$baseUrl/vault/ciphertext/vault-items/$itemId',
         );
-        final response = await http.delete(
+        final response = await _sessionHttp.delete(
           uri,
           headers: _defaultHeaders(authToken: authToken),
         );
@@ -5313,7 +5532,7 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/delete-secure-item');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5349,7 +5568,7 @@ class VaultAIClient {
   }) async {
     final uri = Uri.parse('$baseUrl/manage/file');
 
-    final response = await http.patch(
+    final response = await _sessionHttp.patch(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5386,7 +5605,7 @@ class VaultAIClient {
     }
     final uri = Uri.parse('$baseUrl/manage/file/delete');
 
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5472,7 +5691,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/files/$fileId/related');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({'pin': pin}),
@@ -5503,7 +5722,7 @@ class VaultAIClient {
     required String encryptedWalletSecret,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset/create');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5534,7 +5753,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5559,7 +5778,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset/receive');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5587,7 +5806,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/$asset/balance?address=$address',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5612,7 +5831,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset/encrypted-secret');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5680,7 +5899,7 @@ class VaultAIClient {
   }) async {
     if (scopedPaxg) _assertWalletResponseCurrent();
     final uri = Uri.parse('$baseUrl/vault/ciphertext/crypto-history');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5731,7 +5950,7 @@ class VaultAIClient {
     if (senderAddressLookupHash != null) {
       body['senderAddressLookupHash'] = senderAddressLookupHash;
     }
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -5758,7 +5977,7 @@ class VaultAIClient {
     required String signedTransaction,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/$asset/send/broadcast');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -5789,7 +6008,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/$asset/transaction/$txHash',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5818,7 +6037,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/receive',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5865,7 +6084,7 @@ class VaultAIClient {
     if (scannerMode != null) {
       body['scannerMode'] = scannerMode;
     }
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -5897,7 +6116,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/balance?address=$address',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5928,7 +6147,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/transactions?limit=$limit',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5957,7 +6176,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/$asset/transactions?limit=$limit',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -5981,7 +6200,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/wallet/accounts');
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6032,7 +6251,7 @@ class VaultAIClient {
     if (senderAddressLookupHash != null) {
       body['senderAddressLookupHash'] = senderAddressLookupHash;
     }
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -6075,7 +6294,7 @@ class VaultAIClient {
     if (draftId != null && draftId.isNotEmpty) {
       body['draftId'] = draftId;
     }
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(body),
@@ -6106,7 +6325,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/encrypted-secret',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6136,7 +6355,7 @@ class VaultAIClient {
     );
     final headers = _defaultHeaders(authToken: authToken, json: false);
     headers['Cache-Control'] = 'no-cache, no-store';
-    final response = await http.get(uri, headers: headers);
+    final response = await _sessionHttp.get(uri, headers: headers);
     if (responseIsCurrent != null && !responseIsCurrent()) {
       throw StateError('Asset catalog access changed');
     }
@@ -6164,7 +6383,7 @@ class VaultAIClient {
     final headers = _defaultHeaders(authToken: authToken, json: false);
     headers['Cache-Control'] = 'no-cache, no-store';
     headers['Pragma'] = 'no-cache';
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: headers,
     );
@@ -6199,7 +6418,7 @@ class VaultAIClient {
     if (adminToken != null && adminToken.isNotEmpty) {
       headers['X-Crypto-Health-Admin-Token'] = adminToken;
     }
-    final response = await http.get(uri, headers: headers);
+    final response = await _sessionHttp.get(uri, headers: headers);
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -6221,7 +6440,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/vault/chat/classify');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken),
       body: jsonEncode({'message': message}),
@@ -6247,7 +6466,7 @@ class VaultAIClient {
     required String authToken,
   }) async {
     final uri = Uri.parse('$baseUrl/crypto/vault/chat/classify');
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken),
       body: jsonEncode({'message': message}),
@@ -6276,7 +6495,7 @@ class VaultAIClient {
     final uri = clientPlatform != null && clientPlatform.isNotEmpty
         ? base.replace(queryParameters: {'platform': clientPlatform})
         : base;
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6305,7 +6524,7 @@ class VaultAIClient {
     if (adminToken != null && adminToken.isNotEmpty) {
       headers['X-Crypto-Health-Admin-Token'] = adminToken;
     }
-    final response = await http.get(uri, headers: headers);
+    final response = await _sessionHttp.get(uri, headers: headers);
     if (response.statusCode != 200) {
       _throwIfAuthExpired(response.statusCode, response.body);
       _throwIfDeviceNotTrusted(response.statusCode, response.body);
@@ -6332,7 +6551,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/$asset/transaction/$txHash',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6366,7 +6585,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/outgoing/history',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );
@@ -6499,7 +6718,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/send/fee_estimate',
     );
-    final response = await http.post(
+    final response = await _sessionHttp.post(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode({
@@ -6535,7 +6754,7 @@ class VaultAIClient {
     final uri = Uri.parse(
       '$baseUrl/crypto/wallet/network/$network/draft/$draftId/expiry',
     );
-    final response = await http.get(
+    final response = await _sessionHttp.get(
       uri,
       headers: _defaultHeaders(authToken: authToken, json: false),
     );

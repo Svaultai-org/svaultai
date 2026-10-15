@@ -5,14 +5,12 @@ library;
 /// Every tab of the app in the same origin subscribes to a shared
 /// `vaultai:session_terminated` broadcast channel. When any tab
 /// terminates locally due to a coded 401 (or a manual logout that
-/// wants to fan out), it publishes `{generation, code}`; every other
-/// tab picks up the message and runs its own local termination
-/// exactly once per generation.
+/// wants to fan out), it publishes `{v: 2, s: fingerprint, c: code}`. Only a tab
+/// bound to exactly that session fingerprint accepts the event.
 ///
-/// Messages are plain JSON-encoded strings — no auth material, no
-/// token identifiers, no vault ids. The generation is a monotonic
-/// int local to the sender's process; the receiver compares against
-/// its own generation to reject self-echoes and stale broadcasts.
+/// Messages contain no raw bearer, username, or vault id. The domain-separated
+/// SHA-256 token fingerprint is non-authorizing and never used for API access.
+/// Retired unscoped v1 messages cannot terminate a different/newer login.
 
 // ignore_for_file: deprecated_member_use
 // dart:html — same rationale as file_downloader_web.dart et al.
@@ -23,9 +21,10 @@ import 'dart:html' as html;
 import 'session_termination.dart' show SessionTerminationCode;
 
 typedef PeerTabListener = void Function(
-    int generation, SessionTerminationCode code);
+    String sessionFingerprint, SessionTerminationCode code);
 
-const String _channelName = 'vaultai:session_terminated:v1';
+// Do not consume the retired, unscoped v1 channel.
+const String _channelName = 'vaultai:session_terminated:v2';
 
 class SessionTerminationChannel {
   html.BroadcastChannel? _bc;
@@ -44,12 +43,13 @@ class SessionTerminationChannel {
     }
   }
 
-  void broadcast(int generation, SessionTerminationCode code) {
+  void broadcast(String sessionFingerprint, SessionTerminationCode code) {
     final bc = _bc;
     if (bc == null) return;
     try {
       bc.postMessage(jsonEncode(<String, dynamic>{
-        'g': generation,
+        'v': 2,
+        's': sessionFingerprint,
         'c': _codeToWire(code),
       }));
     } catch (_) {
@@ -78,12 +78,14 @@ class SessionTerminationChannel {
       if (data is! String) return;
       final decoded = jsonDecode(data);
       if (decoded is! Map) return;
-      final g = decoded['g'];
+      final version = decoded['v'];
+      final fingerprint = decoded['s'];
       final c = decoded['c'];
-      if (g is! int || c is! String) return;
+      if (version != 2 || fingerprint is! String || c is! String) return;
+      if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(fingerprint)) return;
       final code = _codeFromWire(c);
       if (code == null) return;
-      listener(g, code);
+      listener(fingerprint, code);
     } catch (_) {
       // Malformed peer message. Ignore.
     }

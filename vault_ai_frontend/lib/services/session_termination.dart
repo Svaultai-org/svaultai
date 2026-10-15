@@ -20,21 +20,25 @@ library;
 ///   * broadcasts a matching event to other open tabs (web only, via
 ///     conditional import), so a second tab already displaying the
 ///     vault also drops to the login screen;
-///   * ignores duplicate peer-tab events for the same generation to
-///     avoid logout loops.
+///   * ignores peer-tab events for other session fingerprints, and deduplicates
+///     termination within the current binding (local generations are not
+///     cross-process identities).
 ///
-/// A successful re-login calls [reset] which clears the "terminated"
-/// flag so new authenticated requests are allowed again. The
+/// A successful re-login calls [bindSession] before issuing authenticated
+/// requests. Binding, reset, and clear all invalidate prior request epochs. The
 /// generation counter never decreases — it only advances — so
 /// generation-comparing callers can tell "still the same session" vs
 /// "session was ended and possibly restarted" without a live handle
 /// to the service.
 
 import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart' show sha256;
 
 import 'session_termination_channel.dart'
-    if (dart.library.html) 'session_termination_channel_web.dart'
-    as channel;
+    if (dart.library.html) 'session_termination_channel_web.dart' as channel;
 
 /// The four backend codes the API layer recognises. Kept as an enum
 /// (rather than raw strings inside call-sites) so the compiler helps
@@ -99,13 +103,42 @@ class SessionTerminationEvent {
   final int generation;
   final SessionTerminationReason reason;
 
+  /// Epoch captured before termination, never a raw bearer token.
+  final int sessionEpoch;
+  final String? sessionFingerprint;
+
   const SessionTerminationEvent({
     required this.code,
     required this.userMessage,
     required this.generation,
     required this.reason,
+    this.sessionEpoch = 0,
+    this.sessionFingerprint,
   });
+
+  @override
+  String toString() => 'SessionTerminationEvent(code: $code, [redacted])';
 }
+
+/// Sensitive, in-memory request fence. Never serialize or log this handle.
+/// Only the one-way, non-authorizing fingerprint may reach the peer channel.
+final class SessionRequestScope {
+  const SessionRequestScope._(this._token, this.sessionEpoch, this._wasBound);
+
+  final String _token;
+  final int sessionEpoch;
+  final bool _wasBound;
+  String get sessionFingerprint => _fingerprint(_token);
+
+  @override
+  String toString() => 'SessionRequestScope([redacted])';
+}
+
+String _fingerprint(String token) => base64Url
+    .encode(sha256
+        .convert(utf8.encode('svaultai.session-termination.v2|$token'))
+        .bytes)
+    .replaceAll('=', '');
 
 enum SessionTerminationReason {
   /// A backend response carried a coded 401.
@@ -128,6 +161,10 @@ class SessionTermination {
   int _generation = 0;
   bool _terminated = false;
   bool _handling = false;
+  String? _sessionToken;
+  int? _terminatedRequestEpoch;
+  String? _terminatedSessionFingerprint;
+  final LinkedHashSet<String> _retiredFingerprints = LinkedHashSet<String>();
   SessionTerminationHandler? _handler;
   channel.SessionTerminationChannel? _channel;
 
@@ -136,6 +173,54 @@ class SessionTermination {
   /// .generation == captured` before applying results, discarding
   /// late responses that belong to a session that has since ended.
   int get generation => _generation;
+  int get sessionEpoch => _generation;
+  bool get hasBoundSession => _sessionToken != null;
+
+  /// Bind synchronously before hydration validation or persisting a new login.
+  /// Even rebinding the same token invalidates previously captured work.
+  void bindSession(String token) {
+    if (token.isEmpty) throw ArgumentError('A session token is required.');
+    _retireCurrentToken();
+    _retiredFingerprints.remove(_fingerprint(token));
+    _generation += 1;
+    _sessionToken = token;
+    _terminated = false;
+    _handling = false;
+    _terminatedRequestEpoch = null;
+    _terminatedSessionFingerprint = null;
+  }
+
+  SessionRequestScope captureRequest(String token) =>
+      SessionRequestScope._(token, _generation, _sessionToken != null);
+
+  bool isCurrentRequest(SessionRequestScope scope) =>
+      !_terminated &&
+      scope.sessionEpoch == _generation &&
+      _sessionToken != null &&
+      scope._token == _sessionToken;
+
+  /// Standalone clients may work before app binding, but their responses cannot
+  /// terminate an unbound process. Binding/reset always invalidates them.
+  bool canUseRequest(SessionRequestScope scope) =>
+      !_terminated &&
+      scope.sessionEpoch == _generation &&
+      (_sessionToken == null
+          ? !scope._wasBound &&
+              !_retiredFingerprints.contains(scope.sessionFingerprint)
+          : scope._token == _sessionToken);
+
+  bool isCurrentTermination(SessionTerminationEvent event) =>
+      _terminated &&
+      event.generation == _generation &&
+      event.sessionFingerprint ==
+          (_sessionToken == null ? null : _fingerprint(_sessionToken!));
+
+  /// A probe may finish after its cleanup cleared the binding. The captured
+  /// epoch must still identify that exact termination, not a subsequent login.
+  bool wasTerminatedRequest(SessionRequestScope scope) =>
+      _terminated &&
+      scope.sessionEpoch == _terminatedRequestEpoch &&
+      scope.sessionFingerprint == _terminatedSessionFingerprint;
 
   /// `true` between a termination and the next [reset]. While true,
   /// [assertNotTerminated] throws so authenticated requests do not
@@ -170,36 +255,41 @@ class SessionTermination {
   /// invokes the handler; subsequent concurrent calls short-circuit
   /// as no-ops. Reset is required before a new login can start
   /// fresh.
-  Future<void> handle(
+  Future<bool> handle(
     SessionTerminationCode code, {
     SessionTerminationReason reason = SessionTerminationReason.server,
+    SessionRequestScope? request,
   }) async {
-    if (_handling) {
+    if (request != null && !isCurrentRequest(request)) return false;
+    if (_handling || _terminated) {
       // A prior 401 already started termination; the redundant one
       // is safe to drop — the handler will run exactly once.
-      return;
+      return false;
     }
-    if (_terminated && reason == SessionTerminationReason.peerTab) {
-      // Peer broadcast arrived after we already terminated locally.
-      // Nothing to do; ignore to avoid logout loops.
-      return;
-    }
+    final capturedEpoch = _generation;
+    final fingerprint =
+        _sessionToken == null ? null : _fingerprint(_sessionToken!);
     _handling = true;
     _terminated = true;
+    _terminatedRequestEpoch = capturedEpoch;
+    _terminatedSessionFingerprint = fingerprint;
     _generation += 1;
     final event = SessionTerminationEvent(
       code: code,
       userMessage: userMessageFor(code),
       generation: _generation,
       reason: reason,
+      sessionEpoch: capturedEpoch,
+      sessionFingerprint: fingerprint,
     );
+    final handlingGeneration = _generation;
     try {
       // Broadcast BEFORE calling the app handler so peer tabs can
       // start their own cleanup in parallel with ours. Peer-tab
       // triggered terminations do not re-broadcast (avoid loops).
       if (reason == SessionTerminationReason.server) {
         try {
-          _channel?.broadcast(_generation, code);
+          if (fingerprint != null) _channel?.broadcast(fingerprint, code);
         } catch (_) {
           // Broadcast failures are best-effort; local cleanup still
           // proceeds.
@@ -210,17 +300,40 @@ class SessionTermination {
         await handler(event);
       }
     } finally {
-      _handling = false;
+      // A completed old handler must not unlock another session's termination.
+      if (_generation == handlingGeneration) _handling = false;
     }
+    return true;
   }
 
-  /// Called by successful login/re-login flows before persisting the
-  /// new session. Clears the terminated flag; generation is NOT
-  /// rewound so late responses from the prior generation continue to
-  /// be recognised as stale.
+  /// Clear/reset invalidates all prior request work. A successful login must
+  /// subsequently [bindSession] with the actual token, not merely reset a flag.
   void reset() {
+    _retireCurrentToken();
+    _generation += 1;
+    _sessionToken = null;
     _terminated = false;
     _handling = false;
+    _terminatedRequestEpoch = null;
+    _terminatedSessionFingerprint = null;
+  }
+
+  /// Clear binding after cleanup without reopening a terminated session.
+  /// Anonymous sign-in remains possible; [bindSession] releases the latch.
+  void clearSession() {
+    _retireCurrentToken();
+    _generation += 1;
+    _sessionToken = null;
+    _handling = false;
+  }
+
+  void _retireCurrentToken() {
+    final token = _sessionToken;
+    if (token == null) return;
+    _retiredFingerprints.add(_fingerprint(token));
+    if (_retiredFingerprints.length > 100) {
+      _retiredFingerprints.remove(_retiredFingerprints.first);
+    }
   }
 
   /// Convenience for the api-client header path. Throws a
@@ -239,18 +352,29 @@ class SessionTermination {
     _handling = false;
     _terminated = false;
     _generation = 0;
+    _sessionToken = null;
+    _terminatedRequestEpoch = null;
+    _terminatedSessionFingerprint = null;
+    _retiredFingerprints.clear();
     _handler = null;
     _channel?.close();
     _channel = null;
   }
 
-  void _onPeerBroadcast(int peerGeneration, SessionTerminationCode code) {
-    // Ignore self-broadcasts (we already advanced our own generation
-    // to `peerGeneration - N` for some small N when we broadcast).
-    if (peerGeneration <= _generation) return;
-    // Only run once per peer generation.
+  Future<bool> handlePeerTermination(
+      String sessionFingerprint, SessionTerminationCode code) async {
+    final token = _sessionToken;
+    if (token == null || sessionFingerprint != _fingerprint(token)) {
+      return false;
+    }
+    return handle(code,
+        reason: SessionTerminationReason.peerTab,
+        request: captureRequest(token));
+  }
+
+  void _onPeerBroadcast(String fingerprint, SessionTerminationCode code) {
     // ignore: discarded_futures
-    handle(code, reason: SessionTerminationReason.peerTab);
+    handlePeerTermination(fingerprint, code);
   }
 }
 
