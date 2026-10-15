@@ -3301,7 +3301,7 @@ class SessionStatusGate extends StatelessWidget {
               child: Center(
                   child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
-        child: Padding(
+        child: SingleChildScrollView(child: Padding(
             padding: const EdgeInsets.all(28),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -3334,7 +3334,7 @@ class SessionStatusGate extends StatelessWidget {
                 else
                   const CircularProgressIndicator(),
               ],
-            )),
+            ))),
       )))),
     ]);
   }

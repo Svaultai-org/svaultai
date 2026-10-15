@@ -109,6 +109,9 @@ Future<_App> _fixture() async {
       mvk: SecretKey(List.filled(32, 5)),
       vaultId: app.vaultId!,
       vaultHandle: app.vaultHandle!);
+  // Match production AppState.setSession: authenticated requests carry a
+  // bound session, rather than an unbound standalone transport fixture.
+  st.SessionTermination.instance.bindSession(app.sessionToken!);
   app.unlocked = true;
   return app;
 }

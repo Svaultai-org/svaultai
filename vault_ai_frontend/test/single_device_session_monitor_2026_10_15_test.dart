@@ -382,6 +382,50 @@ void main() {
     expect((await SharedPreferences.getInstance()).getString('session_signed_out_code'), isNull);
   });
 
+  for (final keyboard in [0.0, 120.0]) {
+    for (final signedOut in [false, true]) {
+      testWidgets('session gate action remains reachable at568x320 keyboard$keyboard signedOut$signedOut', (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(568, 320);
+        tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetViewInsets);
+        var validations = 0;
+        var signIns = 0;
+        final app = appWith((_) async {
+          validations++;
+          throw http.ClientException('Offline fixture');
+        });
+        if (signedOut) {
+          await app.clearSession(signedOutCode: st.SessionTerminationCode.superseded);
+        } else {
+          await signIn(app);
+          app.sessionLifecycleChanged(AppLifecycleState.paused);
+          app.sessionLifecycleChanged(AppLifecycleState.resumed);
+          await tester.pump();
+        }
+        await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(value: app,
+          child: MaterialApp(home: SessionStatusGate(
+            onSignIn: () { signIns++; }, child: const SizedBox.expand()))));
+        expect(tester.takeException(), isNull, reason: 'Status message must not overflow a short viewport.');
+        final action = find.widgetWithText(FilledButton, signedOut ? 'Sign in' : 'Retry');
+        await tester.ensureVisible(action);
+        await tester.pump();
+        await tester.tap(action);
+        await tester.pump();
+        if (signedOut) {
+          expect(signIns, 1);
+        } else {
+          expect(validations, 2);
+          expect(app.sessionToken, tokenA);
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+  }
+
   test('already-running old disk cleanup finishes before replacement token writes', () async {
     final store = DelayedRemovalStore();
     SharedPreferencesStorePlatform.instance = store;
