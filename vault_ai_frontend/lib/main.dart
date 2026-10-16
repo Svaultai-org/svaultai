@@ -3202,10 +3202,9 @@ class SvaultaiApp extends StatelessWidget {
         '/storage': (_) => privateRoute(const StoragePage()),
         kVaultAiPrivacyRoute: (_) => const PrivacyPolicyPage(),
       },
-      // Native users should arrive at authentication immediately. Keep `/`
-      // available for explicit public/marketing navigation, but do not make
-      // the promotional landing page the app's startup screen.
-      initialRoute: '/login',
+      // Web starts at the browser URL (including `/` and explicit deep links).
+      // Native apps retain their authentication-first startup.
+      initialRoute: resolveInitialAppRoute(isWeb: kIsWeb),
     );
   }
 }
@@ -3496,7 +3495,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
             const SizedBox(width: 12),
             const Flexible(
               child: Text(
-                'Svaultai',
+                'SVaultAI',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
