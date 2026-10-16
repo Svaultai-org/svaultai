@@ -145,4 +145,19 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('footer Help Center invokes the supported public-help callback',
+      (tester) async {
+    var opened = false;
+    await tester.pumpWidget(_wrap(
+      PublicLandingFooter(onHelpCenter: () => opened = true),
+      width: 390,
+    ));
+    await tester.tap(find.byKey(const Key('public_footer_help_center')));
+    await tester.pump();
+    expect(opened, isTrue);
+    expect(tester.takeException(), isNull);
+    final main = File('lib/main.dart').readAsStringSync();
+    expect(main, contains('onHelpCenter: () => openHelpCenter('));
+  });
 }

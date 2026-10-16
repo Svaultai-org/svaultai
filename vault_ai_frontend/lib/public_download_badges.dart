@@ -170,7 +170,9 @@ class PublicMobileAppsSection extends StatelessWidget {
 }
 
 class PublicLandingFooter extends StatelessWidget {
-  const PublicLandingFooter({super.key});
+  const PublicLandingFooter({super.key, this.onHelpCenter});
+
+  final VoidCallback? onHelpCenter;
 
   @override
   Widget build(BuildContext context) {
@@ -197,8 +199,8 @@ class PublicLandingFooter extends StatelessWidget {
               child: const Text('Privacy'),
             ),
             TextButton(
-              onPressed: () =>
-                  Navigator.pushNamed(context, '/help-and-faq-public'),
+              key: const Key('public_footer_help_center'),
+              onPressed: onHelpCenter,
               child: const Text('Help Center'),
             ),
           ]),

@@ -4307,6 +4307,10 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
   void _scheduleGuard(String source) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // An initial deep link may keep `/` underneath its requested screen.
+      // Only the current marketing route may redirect the Navigator.
+      final currentRoute = ModalRoute.of(context);
+      if (currentRoute?.isCurrent != true) return;
       final app = context.read<AppState>();
 
       if (!app.hydrated) {
@@ -4424,7 +4428,12 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
                   horizontal: isMobile ? 18 : 28,
                   vertical: 24,
                 ),
-                child: const PublicLandingFooter(),
+                child: PublicLandingFooter(
+                  onHelpCenter: () => openHelpCenter(
+                    context,
+                    mode: hc.HelpCenterMode.public,
+                  ),
+                ),
               ),
             ),
           ),

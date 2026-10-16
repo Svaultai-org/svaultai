@@ -2,9 +2,21 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vault_ai_frontend/main.dart';
+import 'package:vault_ai_frontend/services/native_secure_store.dart';
 import 'package:vault_ai_frontend/route_guard.dart';
 
 void main() {
+  setUp(() {
+    NativeSecureStore.useSharedPreferencesForTesting = true;
+    SharedPreferences.setMockInitialValues({});
+  });
+  tearDown(() {
+    NativeSecureStore.useSharedPreferencesForTesting = false;
+  });
+
   test('web defers to the URL and native keeps its login startup', () {
     expect(resolveInitialAppRoute(isWeb: true), isNull);
     expect(resolveInitialAppRoute(isWeb: false), '/login');
@@ -57,4 +69,45 @@ void main() {
     expect(find.text('Public homepage'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  for (final route in ['/devices', '/login']) {
+    testWidgets(
+        'covered real LandingPage cannot replace $route for a hydrated session',
+        (tester) async {
+      final app = AppState();
+      addTearDown(app.dispose);
+      await app.hydrate();
+      app.authed = true;
+      final nav = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
+        value: app,
+        child: MaterialApp(
+          navigatorKey: nav,
+          navigatorObservers: [appRouteObserver],
+          initialRoute: route,
+          routes: {
+            '/': (_) => const LandingPage(),
+            route: (_) =>
+                const Scaffold(body: Text('Requested account screen')),
+            '/pin': (_) =>
+                const Scaffold(body: Text('Current root session gate')),
+            '/unlock': (_) =>
+                const Scaffold(body: Text('Current root session gate')),
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Requested account screen'), findsOneWidget);
+      expect(find.text('Current root session gate'), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      // When the deep link is popped, the real current landing guard still
+      // protects the hydrated session and routes it to the existing PIN gate.
+      nav.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('Current root session gate'), findsOneWidget);
+      expect(find.text('Requested account screen'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
