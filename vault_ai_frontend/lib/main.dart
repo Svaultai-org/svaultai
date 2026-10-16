@@ -4385,11 +4385,14 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
                           _HeroCard(),
                         ],
                       )
-                    : const Row(children: [
-                        Expanded(child: _HeroText()),
-                        SizedBox(width: 40),
-                        Expanded(child: _HeroCard()),
-                      ]),
+                    : const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: _HeroText()),
+                          SizedBox(width: 40),
+                          Expanded(child: _HeroCard()),
+                        ],
+                      ),
               ),
             ),
           ),
@@ -4401,7 +4404,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
                   horizontal: isMobile ? 18 : 28,
                   vertical: 24,
                 ),
-                child: const PublicMobileAppsSection(),
+                child: const PublicHomepageDetails(),
               ),
             ),
           ),
@@ -4410,7 +4413,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
               constraints: const BoxConstraints(maxWidth: 1100),
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: isMobile ? 18 : 28),
-                child: const PublicLandingFooter(),
+                child: const PublicHomepageFinalCta(),
               ),
             ),
           ),
@@ -4422,7 +4425,7 @@ class _LandingPageState extends State<LandingPage> with RouteAware {
                   horizontal: isMobile ? 18 : 28,
                   vertical: 24,
                 ),
-                child: const PublicHomepageFinalCta(),
+                child: const PublicLandingFooter(),
               ),
             ),
           ),
@@ -4436,76 +4439,14 @@ class _HeroText extends StatelessWidget {
   const _HeroText();
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          kPublicHomepageHeadline,
-          style: Theme.of(context)
-              .textTheme
-              .headlineMedium
-              ?.copyWith(fontWeight: FontWeight.w800, height: 1.1),
-        ),
-        const SizedBox(height: 14),
-        const Text(
-          kPublicHomepageOpening,
-          style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 16, height: 1.6),
-        ),
-        const PublicHomepageInheritance(),
-        const SizedBox(height: 22),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            FilledButton(
-              onPressed: () => Navigator.pushNamed(context, '/signup'),
-              child: Text(AppLocalizations.of(context).commonSignUp),
-            ),
-            OutlinedButton(
-              onPressed: () => Navigator.pushNamed(context, '/login'),
-              child: Text(AppLocalizations.of(context).commonSignIn),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        const PlatformDownloadBadges(compact: true),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => const PublicHomepageHero();
 }
 
 class _HeroCard extends StatelessWidget {
   const _HeroCard();
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2F2F2F),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.lock_outline, size: 42, color: Color(0xFF10A37F)),
-          const SizedBox(height: 12),
-          Text(
-            AppLocalizations.of(context).landingHowItWorks,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            '1. Pick a vault name and a PIN — that is your account\n2. Returning users: enter your PIN to unlock\n3. Save secrets or upload files\n4. Ask your vault anything',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFFB4B4B4), height: 1.6),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const PublicHomepageDemo();
 }
 
 Future<void> _registerDeviceBestEffort(String authToken) async {
