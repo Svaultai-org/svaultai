@@ -3180,7 +3180,7 @@ class SvaultaiApp extends StatelessWidget {
         );
       },
       debugShowCheckedModeBanner: false,
-      title: 'Svaultai',
+      title: 'SVaultAI — Encrypted Digital Vault',
       locale: app.shellLocale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
