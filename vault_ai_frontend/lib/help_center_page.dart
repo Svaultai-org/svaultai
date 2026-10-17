@@ -1,5 +1,6 @@
 
 import 'package:flutter/material.dart';
+import 'ui/tokens.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -200,7 +201,7 @@ class _HelpHeader extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFF2F2F2F),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white10),
       ),
@@ -225,7 +226,7 @@ class _HelpHeader extends StatelessWidget {
                   l.helpCenterSubtitle,
                   key: const Key('help_center_subtitle'),
                   style: const TextStyle(
-                    color: Color(0xFFB4B4B4), fontSize: 15,
+                    color: VaultColors.textSecondary, fontSize: 15,
                     height: 1.5,
                   ),
                 ),
@@ -258,17 +259,17 @@ class _PublicModeBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF10A37F).withValues(alpha: 0.10),
+        color: VaultColors.accent.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: const Color(0xFF10A37F).withValues(alpha: 0.30),
+          color: VaultColors.accent.withValues(alpha: 0.30),
         ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.info_outline,
-              size: 16, color: Color(0xFF10A37F)),
+              size: 16, color: VaultColors.accent),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -307,7 +308,7 @@ class _HelpSearchBar extends StatelessWidget {
     return Container(
       key: const Key('help_center_search_bar'),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white12),
       ),
@@ -315,7 +316,7 @@ class _HelpSearchBar extends StatelessWidget {
       child: Row(
         children: [
           const Icon(Icons.search,
-              color: Color(0xFF8E8E8E), size: 18),
+              color: VaultColors.textTertiary, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -329,7 +330,7 @@ class _HelpSearchBar extends StatelessWidget {
                 contentPadding: const EdgeInsets.symmetric(vertical: 14),
                 hintText: l.helpCenterSearchHint,
                 hintStyle: const TextStyle(
-                    color: Color(0xFF8E8E8E), fontSize: 13),
+                    color: VaultColors.textTertiary, fontSize: 13),
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
@@ -341,7 +342,7 @@ class _HelpSearchBar extends StatelessWidget {
               key: const Key('help_center_search_clear'),
               tooltip: l.helpCenterClearSearch,
               icon: const Icon(Icons.close,
-                  size: 16, color: Color(0xFF8E8E8E)),
+                  size: 16, color: VaultColors.textTertiary),
               onPressed: () {
                 controller.clear();
                 onChanged('');
@@ -376,17 +377,17 @@ class _HelpCategoryStrip extends StatelessWidget {
           label: Text(localisedFaqCategoryLabel(l, c.id)),
           labelStyle: TextStyle(
             color: selected
-                ? const Color(0xFF10A37F)
-                : const Color(0xFFB4B4B4),
+                ? VaultColors.accent
+                : VaultColors.textSecondary,
             fontSize: 12, fontWeight: FontWeight.w600,
           ),
           selected: selected,
-          backgroundColor: const Color(0xFF1F1F1F),
+          backgroundColor: VaultColors.canvas,
           selectedColor:
-              const Color(0xFF10A37F).withValues(alpha: 0.18),
+              VaultColors.accent.withValues(alpha: 0.18),
           side: BorderSide(
             color: selected
-                ? const Color(0xFF10A37F).withValues(alpha: 0.45)
+                ? VaultColors.accent.withValues(alpha: 0.45)
                 : Colors.white12,
           ),
           onSelected: (_) => onSelect(c),
@@ -437,7 +438,7 @@ class _HelpEntryCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white10),
       ),
@@ -452,14 +453,14 @@ class _HelpEntryCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF10A37F)
+                  color: VaultColors.accent
                       .withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   localisedFaqCategoryLabel(l, entry.category),
                   style: const TextStyle(
-                    color: Color(0xFF10A37F),
+                    color: VaultColors.accent,
                     fontSize: 11, fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -506,7 +507,7 @@ class _HelpEmptyState extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white10),
       ),
@@ -524,7 +525,7 @@ class _HelpEmptyState extends StatelessWidget {
           Text(
             l.helpCenterEmptyBody,
             style: const TextStyle(
-              color: Color(0xFFB4B4B4),
+              color: VaultColors.textSecondary,
               fontSize: 13, height: 1.5,
             ),
           ),
@@ -596,7 +597,7 @@ class _HelpContactSupport extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white10),
       ),
@@ -617,7 +618,7 @@ class _HelpContactSupport extends StatelessWidget {
             l.helpContactSupportBody,
             key: const Key('help_contact_support_body'),
             style: const TextStyle(
-              color: Color(0xFFB4B4B4),
+              color: VaultColors.textSecondary,
               fontSize: 13,
               height: 1.5,
             ),
@@ -640,7 +641,7 @@ class _HelpContactSupport extends StatelessWidget {
                     const Icon(
                       Icons.mail_outline,
                       size: 18,
-                      color: Color(0xFF10A37F),
+                      color: VaultColors.accent,
                     ),
                     const SizedBox(width: 8),
                     Flexible(
@@ -650,11 +651,11 @@ class _HelpContactSupport extends StatelessWidget {
                           'help_contact_support_email_text',
                         ),
                         style: const TextStyle(
-                          color: Color(0xFF10A37F),
+                          color: VaultColors.accent,
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           decoration: TextDecoration.underline,
-                          decorationColor: Color(0xFF10A37F),
+                          decorationColor: VaultColors.accent,
                         ),
                       ),
                     ),
@@ -681,7 +682,7 @@ class _HelpContactSupport extends StatelessWidget {
                     const Icon(
                       Icons.copy_rounded,
                       size: 16,
-                      color: Color(0xFFB4B4B4),
+                      color: VaultColors.textSecondary,
                     ),
                     const SizedBox(width: 8),
                     Flexible(
@@ -691,7 +692,7 @@ class _HelpContactSupport extends StatelessWidget {
                           'help_contact_support_copy_email_text',
                         ),
                         style: const TextStyle(
-                          color: Color(0xFFB4B4B4),
+                          color: VaultColors.textSecondary,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
@@ -720,7 +721,7 @@ class _HelpSupportNote extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white10),
       ),
@@ -728,13 +729,13 @@ class _HelpSupportNote extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.info_outline,
-              size: 16, color: Color(0xFF8E8E8E)),
+              size: 16, color: VaultColors.textTertiary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               l.helpCenterSupportNote,
               style: const TextStyle(
-                color: Color(0xFFB4B4B4),
+                color: VaultColors.textSecondary,
                 fontSize: 12, height: 1.5,
               ),
             ),

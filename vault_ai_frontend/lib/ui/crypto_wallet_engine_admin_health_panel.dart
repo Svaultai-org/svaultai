@@ -1,6 +1,7 @@
 
 
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 
 import '../api_client.dart';
 
@@ -102,7 +103,7 @@ class _CryptoWalletEngineAdminHealthPanelState
   Color _overallColor(String? raw) {
     switch (raw) {
       case 'ready':
-        return const Color(0xFF2E6B2E);
+        return VaultColors.severityOkSoft;
       case 'degraded':
         return const Color(0xFF995500);
       case 'not_ready':

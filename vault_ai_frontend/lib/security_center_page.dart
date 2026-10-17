@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'ui/tokens.dart';
 import 'package:provider/provider.dart';
 
 import 'api_client.dart';
@@ -68,7 +69,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   Color _scoreColor(String band) {
     switch (band) {
       case 'strong':
-        return const Color(0xFF66BB6A);
+        return VaultColors.severityOk;
       case 'moderate':
         return const Color(0xFFFFA726);
       default:
@@ -83,7 +84,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       case 'moderate':
         return const Color(0xFFFFA726);
       default:
-        return const Color(0xFF66BB6A);
+        return VaultColors.severityOk;
     }
   }
 
@@ -105,7 +106,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white10),
       ),
@@ -121,7 +122,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 1.2,
-                    color: Color(0xFFB4B4B4),
+                    color: VaultColors.textSecondary,
                   ),
                 ),
               ),
@@ -144,7 +145,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white10),
       ),
@@ -177,7 +178,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                   style: TextStyle(
                     fontSize: 12,
                     letterSpacing: 1.4,
-                    color: Color(0xFFB4B4B4),
+                    color: VaultColors.textSecondary,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -218,7 +219,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
             spacing: 12,
             runSpacing: 6,
             children: [
-              _dot('$trusted trusted', const Color(0xFF66BB6A)),
+              _dot('$trusted trusted', VaultColors.severityOk),
               _dot('$pending pending', const Color(0xFFFFA726)),
               _dot('$revoked revoked', const Color(0xFFE57373)),
             ],
@@ -228,7 +229,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
             inactive == 0
                 ? 'No inactive trusted devices.'
                 : '$inactive inactive trusted device${inactive == 1 ? '' : 's'} (>90 days).',
-            style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+            style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
           ),
           if (pendingSelf > 0) ...[
             const SizedBox(height: 4),
@@ -257,7 +258,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF262626),
+        backgroundColor: VaultColors.surface,
         title: Text(
           AppLocalizations.of(context).securityAnalyzePasswordsTitle,
         ),
@@ -290,7 +291,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     final result = await showDialog<({String vaultName, String pin})>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF262626),
+        backgroundColor: VaultColors.surface,
         title: Text(AppLocalizations.of(context).securityEnterVaultPin),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -348,7 +349,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     final cont = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF262626),
+        backgroundColor: VaultColors.surface,
         title: const Text('Done'),
         content: Text(lines.join('\n'), style: const TextStyle(height: 1.4)),
         actions: [
@@ -434,7 +435,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       if (total == 0) {
         return const Text(
           'No passwords analyzed yet.',
-          style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+          style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
         );
       }
       return ClipRRect(
@@ -445,7 +446,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
             children: [
               Expanded(
                 flex: strong,
-                child: Container(color: const Color(0xFF66BB6A)),
+                child: Container(color: VaultColors.severityOk),
               ),
               Expanded(
                 flex: moderate,
@@ -470,12 +471,12 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
           const SizedBox(height: 10),
           Text(
             '$strong strong   ·   $moderate moderate   ·   $weak weak',
-            style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+            style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
           ),
           const SizedBox(height: 6),
           Text(
             '$generated generated by Svaultai   ·   $reused reused group${reused == 1 ? '' : 's'}',
-            style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+            style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
           ),
           if (unanalyzed > 0) ...[
             const SizedBox(height: 6),
@@ -527,7 +528,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
         children: [
           Text(
             '$items items   ·   $files files',
-            style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+            style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
           ),
           const SizedBox(height: 10),
           if (shown.isEmpty)
@@ -566,7 +567,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                         '${e.value}',
                         textAlign: TextAlign.right,
                         style: const TextStyle(
-                            fontSize: 12, color: Color(0xFFB4B4B4)),
+                            fontSize: 12, color: VaultColors.textSecondary),
                       ),
                     ),
                   ],
@@ -587,7 +588,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
     final kdfIter = (enc['kdf_iterations'] ?? 0) as int;
     final kdfStrength = (enc['kdf_strength'] ?? 'legacy') as String;
     final kdfBadgeColor = kdfStrength == 'modern'
-        ? const Color(0xFF66BB6A)
+        ? VaultColors.severityOk
         : const Color(0xFFFFA726);
     final chunked = (enc['chunked_upload_enabled'] ?? false) as bool;
     final semantic = (enc['semantic_search_enabled'] ?? false) as bool;
@@ -613,7 +614,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
               Text(
                 '${_formatBytes(used)} / ${_formatBytes(limit)}',
                 style:
-                    const TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                    const TextStyle(color: VaultColors.textSecondary, fontSize: 12),
               ),
             ],
           ),
@@ -684,8 +685,8 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
                 : 'Inheritance not configured.',
             style: TextStyle(
               color: configured
-                  ? const Color(0xFF66BB6A)
-                  : const Color(0xFFB4B4B4),
+                  ? VaultColors.severityOk
+                  : VaultColors.textSecondary,
               fontSize: 13,
             ),
           ),
@@ -708,7 +709,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
         'RECOMMENDATIONS',
         const Text(
           'No recommendations - you are looking solid.',
-          style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+          style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
         ),
       );
     }
@@ -779,7 +780,7 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
             child: Text(
               k,
               style:
-                  const TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                  const TextStyle(color: VaultColors.textSecondary, fontSize: 12),
             ),
           ),
           Expanded(child: Text(v, style: const TextStyle(fontSize: 13))),
@@ -808,9 +809,9 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: VaultColors.canvas,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1A1A1A),
+        backgroundColor: VaultColors.canvas,
         title: Text(AppLocalizations.of(context).securityCenterTitle),
         actions: [
           IconButton(
@@ -865,13 +866,13 @@ class _SecurityCenterPageState extends State<SecurityCenterPage> {
       child: Row(
         children: [
           const Icon(Icons.info_outline, size: 16,
-              color: Color(0xFF888888)),
+              color: VaultColors.textTertiary),
           const SizedBox(width: 8),
           Text(
             release.kAppReleaseDisplayLabel,
             key: const Key('vaultai_running_release_label'),
             style: const TextStyle(
-              color: Color(0xFF888888),
+              color: VaultColors.textTertiary,
               fontSize: 12,
               fontFamily: 'monospace',
             ),

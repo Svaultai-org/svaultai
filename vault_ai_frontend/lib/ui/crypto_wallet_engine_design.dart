@@ -1,40 +1,41 @@
 
 
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 
 
-const Color kWalletBgBase = Color(0xFF0B0E14);
+const Color kWalletBgBase = VaultColors.canvas;
 
 
-const Color kWalletBgTint = Color(0xFF111726);
+const Color kWalletBgTint = VaultColors.surface;
 
 
-const Color kWalletSurface = Color(0xFF161B26);
+const Color kWalletSurface = VaultColors.surface;
 
 
-const Color kWalletSurfaceElevated = Color(0xFF1B2030);
+const Color kWalletSurfaceElevated = VaultColors.surfaceElevated;
 
 
-const Color kWalletBorder = Color(0xFF2A3142);
+const Color kWalletBorder = VaultColors.borderStrong;
 
 
-const Color kWalletBorderStrong = Color(0xFF3C4660);
+const Color kWalletBorderStrong = VaultColors.borderAccent;
 
 
-const Color kWalletTextPrimary = Color(0xFFE7ECF5);
+const Color kWalletTextPrimary = VaultColors.textPrimary;
 
 
-const Color kWalletTextSecondary = Color(0xFFAAB4C8);
+const Color kWalletTextSecondary = VaultColors.textSecondary;
 
 
-const Color kWalletTextMuted = Color(0xFF7E8AA3);
+const Color kWalletTextMuted = VaultColors.textTertiary;
 
 
-const Color kWalletAccentPrimary = Color(0xFF6979FF);
-const Color kWalletAccentPrimarySoft = Color(0xFF8E9CFF);
+const Color kWalletAccentPrimary = VaultColors.accent;
+const Color kWalletAccentPrimarySoft = VaultColors.accentBright;
 
 
-const Color kWalletAccentSuccess = Color(0xFF4ADE80);
+const Color kWalletAccentSuccess = VaultColors.severityOk;
 
 
 const Color kWalletAccentWarning = Color(0xFFFFB763);
@@ -170,7 +171,7 @@ BoxDecoration walletDangerPanel() {
 
 BoxDecoration walletSuccessPanel() {
   return BoxDecoration(
-    color: const Color(0xFF0F2519),
+    color: VaultColors.severityOkSoft,
     borderRadius: BorderRadius.circular(10),
     border: Border.all(
       color: kWalletAccentSuccess.withOpacity(0.45),
@@ -197,7 +198,7 @@ Color walletBadgeTint(WalletBadgeTone tone) {
     case WalletBadgeTone.comingNext:
       return kWalletAccentPrimarySoft;
     case WalletBadgeTone.planned:
-      return kWalletAssetAccent['USDT_TRC20'] ?? kWalletAccentSuccess;
+      return kWalletAccentPrimarySoft;
     case WalletBadgeTone.privacy:
       return kWalletAccentPrivacy;
     case WalletBadgeTone.testnet:
@@ -239,7 +240,7 @@ Widget walletStatusBadge(
 ButtonStyle walletPrimaryButtonStyle() {
   return ElevatedButton.styleFrom(
     backgroundColor: kWalletAccentPrimary,
-    foregroundColor: Colors.white,
+    foregroundColor: VaultColors.textOnAccent,
     disabledBackgroundColor: kWalletSurfaceElevated,
     disabledForegroundColor: kWalletTextMuted,
     elevation: 0,
@@ -376,7 +377,7 @@ ThemeData walletDarkPanelTheme(BuildContext context) {
     colorScheme: base.colorScheme.copyWith(
       brightness: Brightness.dark,
       primary: kWalletAccentPrimary,
-      onPrimary: Colors.white,
+      onPrimary: VaultColors.textOnAccent,
       surface: kWalletSurface,
       onSurface: kWalletTextPrimary,
     ),

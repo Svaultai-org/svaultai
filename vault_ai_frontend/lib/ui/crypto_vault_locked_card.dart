@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 
 const String kCryptoVaultLockedType = 'crypto_vault_locked';
 
@@ -124,7 +125,7 @@ class CryptoVaultLockedCard extends StatelessWidget {
               : 'crypto_vault_locked_card')),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white10),
       ),
@@ -141,14 +142,14 @@ class CryptoVaultLockedCard extends StatelessWidget {
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      Color(0xFFB4B4B4),
+                      VaultColors.textSecondary,
                     ),
                   ),
                 )
               else
                 Icon(
                   upgraded ? Icons.check_circle_outline : Icons.lock_outline,
-                  color: const Color(0xFFB4B4B4),
+                  color: VaultColors.textSecondary,
                   key: Key(upgraded
                       ? 'crypto_vault_active_icon'
                       : 'crypto_vault_lock_icon'),
@@ -171,7 +172,7 @@ class CryptoVaultLockedCard extends StatelessWidget {
                       status,
                       key: const Key('crypto_vault_status'),
                       style: const TextStyle(
-                        color: Color(0xFF10A37F),
+                        color: VaultColors.accent,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -186,7 +187,7 @@ class CryptoVaultLockedCard extends StatelessWidget {
             body,
             key: const Key('crypto_vault_body'),
             style: const TextStyle(
-              color: Color(0xFFB4B4B4),
+              color: VaultColors.textSecondary,
               fontSize: 13,
               height: 1.45,
             ),
@@ -213,8 +214,8 @@ class CryptoVaultLockedCard extends StatelessWidget {
                   key: const Key('crypto_vault_loading_button'),
                   onPressed: null,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10A37F),
-                    foregroundColor: Colors.white,
+                    backgroundColor: VaultColors.accent,
+                    foregroundColor: VaultColors.textOnAccent,
                   ),
                   child: const Text('Checking…'),
                 )
@@ -230,8 +231,8 @@ class CryptoVaultLockedCard extends StatelessWidget {
                     Navigator.pushNamed(context, '/crypto-vault');
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10A37F),
-                    foregroundColor: Colors.white,
+                    backgroundColor: VaultColors.accent,
+                    foregroundColor: VaultColors.textOnAccent,
                   ),
                   child: const Text(kCryptoVaultOpenCryptoVaultLabel),
                 )
@@ -250,8 +251,8 @@ class CryptoVaultLockedCard extends StatelessWidget {
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10A37F),
-                    foregroundColor: Colors.white,
+                    backgroundColor: VaultColors.accent,
+                    foregroundColor: VaultColors.textOnAccent,
                   ),
                   child: const Text(kCryptoVaultUpgradeRequiredLabel),
                 ),
@@ -268,7 +269,7 @@ Future<void> showCryptoVaultLearnMoreDialog(BuildContext context) {
     context: context,
     builder: (ctx) => AlertDialog(
       key: const Key('crypto_vault_learn_more_dialog'),
-      backgroundColor: const Color(0xFF1F1F1F),
+      backgroundColor: VaultColors.canvas,
       title: const Text(
         kCryptoVaultDefaultTitle,
         key: Key('crypto_vault_learn_more_dialog_title'),

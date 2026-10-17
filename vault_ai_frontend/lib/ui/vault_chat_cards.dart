@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/app_localizations.dart';
@@ -1627,7 +1628,7 @@ class _MemoryProposalCardState extends State<_MemoryProposalCard> {
               'Memory saved.',
               key: Key('vault_chat_card_memory_saved'),
               style: TextStyle(
-                color: Color(0xFF6AD97F),
+                color: VaultColors.severityOk,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -2836,7 +2837,7 @@ class _FaqCard extends StatelessWidget {
           Row(
             children: [
               const Icon(Icons.help_outline,
-                  size: 18, color: Color(0xFF10A37F)),
+                  size: 18, color: VaultColors.accent),
               const SizedBox(width: 8),
               Text(
                 'Help  •  $category',

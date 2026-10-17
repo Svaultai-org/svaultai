@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'ui/tokens.dart';
 import 'package:provider/provider.dart';
 
 import 'api_client.dart';
@@ -175,17 +176,17 @@ class _DevicesPageState extends State<DevicesPage> {
 
     Color statusColor;
     switch (status) {
-      case 'trusted': statusColor = const Color(0xFF66BB6A); break;
+      case 'trusted': statusColor = VaultColors.severityOk; break;
       case 'pending': statusColor = const Color(0xFFFFA726); break;
       case 'revoked': statusColor = const Color(0xFFE57373); break;
-      default:        statusColor = const Color(0xFFB4B4B4);
+      default:        statusColor = VaultColors.textSecondary;
     }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isCurrent ? Colors.white24 : Colors.white10,
@@ -221,7 +222,7 @@ class _DevicesPageState extends State<DevicesPage> {
                         ),
                         child: const Text(
                           'this device',
-                          style: TextStyle(fontSize: 11, color: Color(0xFFB4B4B4)),
+                          style: TextStyle(fontSize: 11, color: VaultColors.textSecondary),
                         ),
                       ),
                     ],
@@ -231,7 +232,7 @@ class _DevicesPageState extends State<DevicesPage> {
                 Text(
                   '$status${lastSeen != null ? '  ·  last seen $lastSeen' : ''}'
                   '${cooldown != null ? '  ·  cooldown until $cooldown' : ''}',
-                  style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                  style: const TextStyle(color: VaultColors.textSecondary, fontSize: 12),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -276,7 +277,7 @@ class _DevicesPageState extends State<DevicesPage> {
               style: const TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w700,
                 letterSpacing: 1.2,
-                color: Color(0xFFB4B4B4),
+                color: VaultColors.textSecondary,
               ),
             ),
           ),
@@ -293,9 +294,9 @@ class _DevicesPageState extends State<DevicesPage> {
     final revoked = _devices.where((d) => d['status'] == 'revoked').toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: VaultColors.canvas,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1A1A1A),
+        backgroundColor: VaultColors.canvas,
         title: Text(AppLocalizations.of(context).devicesTitle),
         actions: [
           IconButton(
@@ -326,7 +327,7 @@ class _DevicesPageState extends State<DevicesPage> {
                               'already trust; revoke any device that should '
                               'no longer have access.',
                               style: TextStyle(
-                                color: Color(0xFFB4B4B4),
+                                color: VaultColors.textSecondary,
                                 height: 1.5,
                               ),
                             ),
@@ -338,7 +339,7 @@ class _DevicesPageState extends State<DevicesPage> {
                                 padding: EdgeInsets.only(top: 24),
                                 child: Text(
                                   'No devices yet.',
-                                  style: TextStyle(color: Color(0xFFB4B4B4)),
+                                  style: TextStyle(color: VaultColors.textSecondary),
                                 ),
                               ),
                           ],
