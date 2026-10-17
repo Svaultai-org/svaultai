@@ -14,11 +14,13 @@ const String kPublicHomepageOpening =
 const String kPublicHomepageInheritanceHeading =
     'Prepare access for someone you trust.';
 const String kPublicHomepageInheritance =
-    'A beneficiary’s request starts the waiting period, normally 30 days. '
-    'Check the countdown in the app for that request’s deadline. Approve to '
-    'release the prepared credentials, or decline to stop that request. If you '
-    'do not respond before the period expires, the beneficiary can claim the '
-    'credentials; expiry does not automatically transfer assets.';
+    'A paired beneficiary can request access if they believe the vault owner '
+    'has died. The owner signs in to approve or decline. Approval releases the '
+    'prepared credentials immediately, with no 30-day wait. Declining clears '
+    'the request and returns the arrangement to normal. An unanswered request '
+    'has a countdown, normally 30 days; after it expires, the beneficiary can '
+    'claim the credentials. The app shows the actual deadline. SVaultAI does '
+    'not verify death or automatically transfer assets.';
 const String kPublicHomepageCtaHeading = 'Start with your free 1 GB vault.';
 const String kPublicHomepageCtaButton = 'Create your free vault';
 const String kPublicHomepageCtaCaption =

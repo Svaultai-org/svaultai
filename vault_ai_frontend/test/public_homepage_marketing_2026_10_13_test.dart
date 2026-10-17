@@ -39,11 +39,11 @@ void main() {
       expect(source, contains('on servers and with service providers'));
       expect(
         kPublicHomepageInheritance,
-        contains('request starts the waiting period'),
+        contains('Approval releases the prepared credentials immediately'),
       );
       expect(
         kPublicHomepageInheritance,
-        contains('decline to stop that request'),
+        contains('Declining clears the request and returns the arrangement to normal'),
       );
       expect(
         source,
