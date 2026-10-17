@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'ui/tokens.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String kGooglePlayListingUrl =
@@ -125,7 +126,7 @@ class PublicMobileAppsSection extends StatelessWidget {
             'Use SVaultAI across supported Android and Apple devices with '
             'the same zero-knowledge, user-controlled account.',
             style: TextStyle(
-              color: Color(0xFFB4B4B4),
+              color: VaultColors.textSecondary,
               fontSize: 16,
               height: 1.55,
             ),
@@ -137,7 +138,7 @@ class PublicMobileAppsSection extends StatelessWidget {
       final art = Container(
         height: 190,
         decoration: BoxDecoration(
-          color: const Color(0xFF181B20),
+          color: VaultColors.surface,
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: Colors.white10),
         ),
@@ -145,7 +146,7 @@ class PublicMobileAppsSection extends StatelessWidget {
           child: Icon(
             Icons.phonelink_lock_outlined,
             size: 78,
-            color: Color(0xFF10A37F),
+            color: VaultColors.accent,
           ),
         ),
       );
@@ -153,7 +154,7 @@ class PublicMobileAppsSection extends StatelessWidget {
         key: const Key('public_mobile_apps_section'),
         padding: EdgeInsets.all(narrow ? 22 : 34),
         decoration: BoxDecoration(
-          color: const Color(0xFF111318),
+          color: VaultColors.canvas,
           borderRadius: BorderRadius.circular(26),
           border: Border.all(color: Colors.white10),
         ),
@@ -189,7 +190,7 @@ class PublicLandingFooter extends StatelessWidget {
         children: [
           const Text(
             'SVaultAI — Private AI-Powered Digital Vault',
-            style: TextStyle(color: Color(0xFFB4B4B4)),
+            style: TextStyle(color: VaultColors.textSecondary),
           ),
           Wrap(spacing: 6, children: [
             TextButton(

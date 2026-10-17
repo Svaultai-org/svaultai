@@ -19,6 +19,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 
 import '../services/app_release_controller.dart';
 import '../services/app_release_controller_scope.dart';
@@ -86,16 +87,16 @@ class _BannerBody extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       key: const Key(kAppReleaseUpdateBannerKey),
-      color: const Color(0xFF10A37F),
+      color: VaultColors.accent,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          const Icon(Icons.system_update_alt, color: Colors.white),
+          const Icon(Icons.system_update_alt, color: VaultColors.textOnAccent),
           const SizedBox(width: 12),
           const Expanded(
             child: Text(
               kAppReleaseUpdateBannerCopy,
-              style: TextStyle(color: Colors.white, fontSize: 14),
+              style: TextStyle(color: VaultColors.textOnAccent, fontSize: 14),
             ),
           ),
           TextButton(
@@ -104,7 +105,7 @@ class _BannerBody extends StatelessWidget {
               reloadAllowed: reloadAllowed,
             ),
             style: TextButton.styleFrom(
-              foregroundColor: Colors.white,
+              foregroundColor: VaultColors.textOnAccent,
             ),
             child: const Text(kAppReleaseUpdateBannerActionLabel),
           ),

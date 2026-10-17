@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../tokens.dart';
 
 class FolderNode {
   final String name;
@@ -246,7 +247,7 @@ class _Crumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = isCurrent ? Colors.white : const Color(0xFF10A37F);
+    final fg = isCurrent ? Colors.white : VaultColors.accent;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -318,12 +319,12 @@ class _SearchFieldState extends State<_SearchField> {
         style: const TextStyle(color: Colors.white, fontSize: 13),
         decoration: InputDecoration(
           hintText: 'Search files and folders',
-          hintStyle: const TextStyle(color: Color(0xFF8E8E8E)),
+          hintStyle: const TextStyle(color: VaultColors.textTertiary),
           isDense: true,
           prefixIcon: Icon(
             Icons.search,
             size: widget.isMobile ? 18 : 20,
-            color: const Color(0xFF8E8E8E),
+            color: VaultColors.textTertiary,
           ),
           suffixIcon: _controller.text.isEmpty
               ? null
@@ -336,7 +337,7 @@ class _SearchFieldState extends State<_SearchField> {
                   },
                 ),
           filled: true,
-          fillColor: const Color(0xFF2F2F2F),
+          fillColor: VaultColors.surfaceElevated,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
@@ -410,7 +411,7 @@ class _FolderRow extends StatelessWidget {
                         ? '1 file'
                         : '${folder.fileCount} files',
                     style: const TextStyle(
-                      color: Color(0xFFB4B4B4),
+                      color: VaultColors.textSecondary,
                       fontSize: 12,
                     ),
                   ),
@@ -442,7 +443,7 @@ class _EmptyState extends StatelessWidget {
         child: Text(
           isSearching ? 'No matches.' : 'This folder is empty.',
           style: const TextStyle(
-            color: Color(0xFF8E8E8E),
+            color: VaultColors.textTertiary,
             fontSize: 13,
           ),
         ),

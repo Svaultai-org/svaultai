@@ -51,31 +51,38 @@ class _AppStartupGateState extends State<AppStartupGate> {
           builder: (context, child) => Scaffold(
             body: SafeArea(
               child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Image.asset(
-                        'assets/branding/vaultai-icon-1024.png',
-                        width: 192,
-                        height: 192,
-                        fit: BoxFit.contain,
-                        semanticLabel: 'SVaultAI logo',
-                      ),
-                      if (failed) ...[
-                        const SizedBox(height: 20),
-                        const Text(
-                          'SVaultAI could not start. Please try again.',
-                          textAlign: TextAlign.center,
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          'assets/branding/vaultai-icon-1024.png',
+                          width: 192,
+                          height: 192,
+                          fit: BoxFit.contain,
+                          semanticLabel: 'SVaultAI logo',
                         ),
                         const SizedBox(height: 20),
-                        FilledButton(
-                          onPressed: _retry,
-                          child: const Text('Try again'),
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            failed
+                                ? 'SVaultAI could not start. Please try again.'
+                                : 'Opening SVaultAI securely…',
+                            textAlign: TextAlign.center,
+                          ),
                         ),
+                        if (failed) ...[
+                          const SizedBox(height: 20),
+                          FilledButton(
+                            onPressed: _retry,
+                            child: const Text('Try again'),
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),

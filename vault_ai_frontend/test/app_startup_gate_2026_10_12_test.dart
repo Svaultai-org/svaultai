@@ -30,7 +30,8 @@ void main() {
     st.SessionTermination.instance.reset();
   });
 
-  testWidgets('pending initialization paints the original logo without copy',
+  testWidgets(
+      'pending initialization explains startup without revealing private state',
       (tester) async {
     final pending = Completer<Widget>();
     var calls = 0;
@@ -43,17 +44,22 @@ void main() {
     expect((logo.image as AssetImage).assetName,
         'assets/branding/vaultai-icon-1024.png');
     expect(logo.semanticLabel, 'SVaultAI logo');
-    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.text('Opening SVaultAI securely…'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('Try again'), findsNothing);
     expect(find.byType(Navigator), findsNothing);
+    expect(
+        tester.widgetList<Semantics>(find.byType(Semantics)).any(
+              (node) => node.properties.liveRegion == true,
+            ),
+        isTrue);
     expect(find.text('Initialized app'), findsNothing);
     expect(calls, 1);
 
     pending.complete(_readyApp);
     await tester.pumpAndSettle();
     expect(find.text('Initialized app'), findsOneWidget);
-    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.text('Opening SVaultAI securely…'), findsNothing);
     expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -68,12 +74,13 @@ void main() {
     );
   });
 
-  testWidgets('pending logo is unchanged on iOS and Android', (tester) async {
+  testWidgets('startup status and logo are available on iOS and Android',
+      (tester) async {
     final pending = Completer<Widget>();
     await tester.pumpWidget(AppStartupGate(initialize: () => pending.future));
     await tester.pump();
     expect(find.byType(Image), findsOneWidget);
-    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.text('Opening SVaultAI securely…'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(Navigator), findsNothing);
     expect(tester.takeException(), isNull);
@@ -83,7 +90,7 @@ void main() {
       variant:
           TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android}));
 
-  testWidgets('manual error retry returns to the same logo-only pending state',
+  testWidgets('manual error retry returns to an explained pending state',
       (tester) async {
     final pending = Completer<Widget>();
     var calls = 0;
@@ -99,7 +106,7 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(
         find.text('SVaultAI could not start. Please try again.'), findsNothing);
-    expect(find.text('Opening SVaultAI…'), findsNothing);
+    expect(find.text('Opening SVaultAI securely…'), findsOneWidget);
     expect(find.text('Try again'), findsNothing);
     expect(calls, 2);
     pending.complete(_readyApp);
@@ -130,6 +137,22 @@ void main() {
     expect(find.text('Initialized app'), findsOneWidget);
     expect(find.text('Try again'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('startup and error recovery remain usable in a short viewport',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 240);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(AppStartupGate(initialize: () {
+      throw StateError('synthetic-local-error');
+    }));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('Try again'));
+    expect(find.text('Try again').hitTestable(), findsOneWidget);
+    expect(find.textContaining('synthetic-local-error'), findsNothing);
   });
 
   testWidgets('synchronous initialization failures are also visible and safe',

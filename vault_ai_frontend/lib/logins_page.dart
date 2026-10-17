@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'ui/tokens.dart';
 import 'l10n/app_localizations.dart';
 import 'ui/responsive.dart';
 
@@ -378,7 +379,7 @@ class _LoginsPageState extends State<LoginsPage> {
               kLoginsPageSubtitle,
               key: Key('logins_page_subtitle'),
               style: TextStyle(
-                color: Color(0xFFB4B4B4),
+                color: VaultColors.textSecondary,
                 fontSize: 15,
                 height: 1.6,
               ),
@@ -397,7 +398,7 @@ class _LoginsPageState extends State<LoginsPage> {
               kLoginsEmptyBody,
               key: Key('logins_page_empty_body'),
               style: TextStyle(
-                color: Color(0xFFB4B4B4),
+                color: VaultColors.textSecondary,
                 fontSize: 14,
                 height: 1.5,
               ),
@@ -542,10 +543,10 @@ class _SecureItemCard extends StatelessWidget {
           width: 54,
           height: 54,
           decoration: BoxDecoration(
-            color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+            color: VaultColors.accent.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(16),
           ),
-          child: Icon(icon, color: const Color(0xFF10A37F)),
+          child: Icon(icon, color: VaultColors.accent),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -578,13 +579,13 @@ class _SecureItemCard extends StatelessWidget {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10A37F).withValues(alpha: 0.18),
+                        color: VaultColors.accent.withValues(alpha: 0.18),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         label,
                         style: const TextStyle(
-                          color: Color(0xFF10A37F),
+                          color: VaultColors.accent,
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                         ),
@@ -599,7 +600,7 @@ class _SecureItemCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Color(0xFF8E8E8E),
+                          color: VaultColors.textTertiary,
                           fontSize: 12,
                         ),
                       ),
@@ -617,7 +618,7 @@ class _SecureItemCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.white10),
       ),
@@ -676,7 +677,7 @@ class _SearchBar extends StatelessWidget {
     return Container(
       key: const Key('logins_page_search_bar'),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white12),
       ),
@@ -685,7 +686,7 @@ class _SearchBar extends StatelessWidget {
         children: [
           const Icon(
             Icons.search,
-            color: Color(0xFF8E8E8E),
+            color: VaultColors.textTertiary,
             size: 18,
           ),
           const SizedBox(width: 8),
@@ -703,7 +704,7 @@ class _SearchBar extends StatelessWidget {
                 contentPadding: EdgeInsets.symmetric(vertical: 14),
                 hintText: kLoginsSearchHint,
                 hintStyle: TextStyle(
-                  color: Color(0xFF8E8E8E),
+                  color: VaultColors.textTertiary,
                   fontSize: 13,
                 ),
                 border: InputBorder.none,
@@ -719,7 +720,7 @@ class _SearchBar extends StatelessWidget {
               icon: const Icon(
                 Icons.close,
                 size: 16,
-                color: Color(0xFF8E8E8E),
+                color: VaultColors.textTertiary,
               ),
               onPressed: () {
                 controller.clear();
@@ -755,20 +756,20 @@ class _CategoryChipStrip extends StatelessWidget {
           avatar: Icon(
             c.icon,
             size: 16,
-            color: selected ? const Color(0xFF10A37F) : const Color(0xFFB4B4B4),
+            color: selected ? VaultColors.accent : VaultColors.textSecondary,
           ),
           label: Text(c.label),
           labelStyle: TextStyle(
-            color: selected ? const Color(0xFF10A37F) : const Color(0xFFB4B4B4),
+            color: selected ? VaultColors.accent : VaultColors.textSecondary,
             fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
           selected: selected,
-          backgroundColor: const Color(0xFF1F1F1F),
-          selectedColor: const Color(0xFF10A37F).withValues(alpha: 0.18),
+          backgroundColor: VaultColors.canvas,
+          selectedColor: VaultColors.accent.withValues(alpha: 0.18),
           side: BorderSide(
             color: selected
-                ? const Color(0xFF10A37F).withValues(alpha: 0.45)
+                ? VaultColors.accent.withValues(alpha: 0.45)
                 : Colors.white12,
           ),
           onSelected: (v) {
@@ -806,7 +807,7 @@ class _FilterEmptyState extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.only(top: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white10),
       ),
@@ -826,7 +827,7 @@ class _FilterEmptyState extends StatelessWidget {
             'Nothing matches $scope. Adjust the search or pick a '
             'different category chip.',
             style: const TextStyle(
-              color: Color(0xFFB4B4B4),
+              color: VaultColors.textSecondary,
               fontSize: 13,
               height: 1.5,
             ),
@@ -849,7 +850,7 @@ class _Header extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFF2F2F2F),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white10),
       ),
@@ -872,7 +873,7 @@ class _Header extends StatelessWidget {
                   kLoginsPageSubtitle,
                   key: Key('logins_page_subtitle'),
                   style: TextStyle(
-                    color: Color(0xFFB4B4B4),
+                    color: VaultColors.textSecondary,
                     fontSize: 15,
                   ),
                 ),
@@ -911,7 +912,7 @@ class _LoadingState extends StatelessWidget {
           kLoginsPageSubtitle,
           key: Key('logins_page_subtitle'),
           style: TextStyle(
-            color: Color(0xFFB4B4B4),
+            color: VaultColors.textSecondary,
             fontSize: 15,
             height: 1.6,
           ),
@@ -942,7 +943,7 @@ class _LoadingState extends StatelessWidget {
                     kLoginsLoadingBody,
                     key: Key('logins_page_loading_body'),
                     style: TextStyle(
-                      color: Color(0xFFB4B4B4),
+                      color: VaultColors.textSecondary,
                       fontSize: 14,
                       height: 1.5,
                     ),
@@ -987,7 +988,7 @@ class _LoadingErrorEmptyState extends StatelessWidget {
           kLoginsPageSubtitle,
           key: Key('logins_page_subtitle'),
           style: TextStyle(
-            color: Color(0xFFB4B4B4),
+            color: VaultColors.textSecondary,
             fontSize: 15,
             height: 1.6,
           ),
@@ -1006,7 +1007,7 @@ class _LoadingErrorEmptyState extends StatelessWidget {
           body,
           key: const Key('logins_page_error_body'),
           style: const TextStyle(
-            color: Color(0xFFB4B4B4),
+            color: VaultColors.textSecondary,
             fontSize: 14,
             height: 1.5,
           ),
@@ -1039,7 +1040,7 @@ class _Shell extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: Colors.white10),
             ),

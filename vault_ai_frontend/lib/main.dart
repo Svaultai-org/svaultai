@@ -19,6 +19,7 @@ import 'package:flutter/foundation.dart'
         debugPrint,
         immutable;
 import 'package:flutter/material.dart';
+import 'ui/tokens.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/url_strategy.dart' as web_plugins;
 
@@ -303,9 +304,9 @@ Future<void> openHelpCenter(
           key: Key(mode == hc.HelpCenterMode.public
               ? 'help_center_route_public'
               : 'help_center_route_signed_in'),
-          backgroundColor: const Color(0xFF181818),
+          backgroundColor: VaultColors.canvas,
           appBar: AppBar(
-            backgroundColor: const Color(0xFF181818),
+            backgroundColor: VaultColors.canvas,
             title: const Text(hc.kHelpCenterTitle),
             leading: IconButton(
               key: const Key('help_center_route_back'),
@@ -389,14 +390,14 @@ class _BillingLoadingCard extends StatelessWidget {
           height: 18,
           child: CircularProgressIndicator(
             strokeWidth: 2,
-            color: Color(0xFFB4B4B4),
+            color: VaultColors.textSecondary,
           ),
         ),
         const SizedBox(width: 12),
         Text(
           label,
           style: const TextStyle(
-            color: Color(0xFFB4B4B4),
+            color: VaultColors.textSecondary,
             fontSize: 15,
           ),
         ),
@@ -502,7 +503,7 @@ class ChatAttachmentPanel extends StatelessWidget {
       margin: EdgeInsets.fromLTRB(isMobile ? 10 : 16, 0, isMobile ? 10 : 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF2F2F2F),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white10),
       ),
@@ -526,7 +527,7 @@ class ChatAttachmentPanel extends StatelessWidget {
                 child: Text(
                   '$count attachment(s) ready',
                   style:
-                      const TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                      const TextStyle(fontSize: 12, color: VaultColors.textSecondary),
                 ),
               ),
               IconButton(
@@ -3432,7 +3433,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
       toolbarHeight: 72,
       automaticallyImplyLeading: false,
       elevation: 0,
-      backgroundColor: const Color(0xFF171717),
+      backgroundColor: VaultColors.canvas,
       titleSpacing: 14,
       title: Row(
         children: [
@@ -3460,10 +3461,10 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: const Color(0xFF10A37F).withValues(alpha: 0.14),
+              color: VaultColors.accent.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                  color: const Color(0xFF10A37F).withValues(alpha: 0.18)),
+                  color: VaultColors.accent.withValues(alpha: 0.18)),
             ),
             clipBehavior: Clip.antiAlias,
             child: Image.asset(
@@ -3625,7 +3626,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF262626),
+                        color: VaultColors.surface,
                         borderRadius: BorderRadius.circular(28),
                         border: Border.all(color: Colors.white10),
                       ),
@@ -3633,7 +3634,7 @@ class TopNavBar extends StatelessWidget implements PreferredSizeWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(Icons.account_circle_outlined,
-                              size: 22, color: Color(0xFFB4B4B4)),
+                              size: 22, color: VaultColors.textSecondary),
                           if (!compactAccountChip) ...[
                             const SizedBox(width: 8),
                             Flexible(
@@ -4065,7 +4066,7 @@ class _NotificationBell extends StatelessWidget {
         final listMaxHeight = (screenSize.height - 220).clamp(200.0, 480.0);
         final compact = screenSize.width < 400;
         return AlertDialog(
-          backgroundColor: const Color(0xFF2F2F2F),
+          backgroundColor: VaultColors.surfaceElevated,
           insetPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           contentPadding:
@@ -4102,7 +4103,7 @@ class _NotificationBell extends StatelessWidget {
                     padding: EdgeInsets.symmetric(vertical: 24),
                     child: Text(
                       'No notifications yet.',
-                      style: TextStyle(color: Color(0xFFB4B4B4)),
+                      style: TextStyle(color: VaultColors.textSecondary),
                     ),
                   );
                 }
@@ -4147,7 +4148,7 @@ class _NotificationBell extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               vertical: 12, horizontal: 4),
                           color: isUnread
-                              ? const Color(0xFF10A37F).withValues(alpha: 0.05)
+                              ? VaultColors.accent.withValues(alpha: 0.05)
                               : null,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -4160,7 +4161,7 @@ class _NotificationBell extends StatelessWidget {
                                       height: 8,
                                       margin: const EdgeInsets.only(right: 8),
                                       decoration: const BoxDecoration(
-                                        color: Color(0xFF10A37F),
+                                        color: VaultColors.accent,
                                         shape: BoxShape.circle,
                                       ),
                                     ),
@@ -4178,7 +4179,7 @@ class _NotificationBell extends StatelessWidget {
                                   Text(
                                     _ago(n['created_at']?.toString()),
                                     style: const TextStyle(
-                                        color: Color(0xFF8E8E8E), fontSize: 11),
+                                        color: VaultColors.textTertiary, fontSize: 11),
                                   ),
                                 ],
                               ),
@@ -4186,7 +4187,7 @@ class _NotificationBell extends StatelessWidget {
                               Text(
                                 displayBody,
                                 style: const TextStyle(
-                                    color: Color(0xFFB4B4B4),
+                                    color: VaultColors.textSecondary,
                                     fontSize: 12,
                                     height: 1.4),
                               ),
@@ -5597,7 +5598,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           child: Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: Colors.white10),
             ),
@@ -5614,7 +5615,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
                 const Text(
                   'Enter your vault name and PIN. Vault names are unique across Svaultai.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFB4B4B4)),
+                  style: TextStyle(color: VaultColors.textSecondary),
                 ),
                 const SizedBox(height: 14),
                 Semantics(
@@ -5965,7 +5966,7 @@ class _SignupPageState extends State<SignupPage> {
             child: Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: const Color(0xFF2F2F2F),
+                color: VaultColors.surfaceElevated,
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: Colors.white10),
               ),
@@ -5982,7 +5983,7 @@ class _SignupPageState extends State<SignupPage> {
                   const Text(
                     'Pick a unique vault name and a PIN. Together they are your account.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFFB4B4B4)),
+                    style: TextStyle(color: VaultColors.textSecondary),
                   ),
                   const SizedBox(height: 16),
                   Container(
@@ -6551,7 +6552,7 @@ class _UnlockPageState extends State<UnlockPage> {
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: Colors.white10),
             ),
@@ -6571,7 +6572,7 @@ class _UnlockPageState extends State<UnlockPage> {
                 const Text(
                   'Enter your 6–64 digit PIN.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFB4B4B4)),
+                  style: TextStyle(color: VaultColors.textSecondary),
                 ),
                 const SizedBox(height: 14),
                 Semantics(
@@ -6829,7 +6830,7 @@ class _PinGatePageState extends State<PinGatePage> {
             child: Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: const Color(0xFF2F2F2F),
+                color: VaultColors.surfaceElevated,
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: Colors.white10),
               ),
@@ -6863,7 +6864,7 @@ class _PinGatePageState extends State<PinGatePage> {
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: Colors.white10),
             ),
@@ -6879,7 +6880,7 @@ class _PinGatePageState extends State<PinGatePage> {
                       ? 'Create a 6–64 digit PIN.'
                       : 'Enter your 6–64 digit PIN.',
                   style:
-                      const TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                      const TextStyle(color: VaultColors.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
                 if (mode) ...[
@@ -6964,7 +6965,7 @@ class _PinGatePageState extends State<PinGatePage> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF262626),
+                      color: VaultColors.surface,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Row(
@@ -6972,7 +6973,7 @@ class _PinGatePageState extends State<PinGatePage> {
                       children: [
                         Icon(
                           Icons.info_outline,
-                          color: Color(0xFFB4B4B4),
+                          color: VaultColors.textSecondary,
                           size: 18,
                         ),
                         SizedBox(width: 8),
@@ -6980,7 +6981,7 @@ class _PinGatePageState extends State<PinGatePage> {
                           child: Text(
                             'Remember: Svaultai cannot recover forgotten PINs.',
                             style: TextStyle(
-                              color: Color(0xFFB4B4B4),
+                              color: VaultColors.textSecondary,
                               fontSize: 12,
                               height: 1.4,
                             ),
@@ -7044,7 +7045,7 @@ class _PinGatePageState extends State<PinGatePage> {
                     child: Text(
                       'Returning users only need their PIN to get back into their vault.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                      style: TextStyle(color: VaultColors.textSecondary, fontSize: 12),
                     ),
                   ),
                 if (!mode)
@@ -7086,7 +7087,7 @@ class VaultFrozenPage extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: Colors.white10),
             ),
@@ -7154,7 +7155,7 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
       context: context,
       builder: (dialogCtx) {
         return AlertDialog(
-          backgroundColor: const Color(0xFF2F2F2F),
+          backgroundColor: VaultColors.surfaceElevated,
           title: Text(
             AppLocalizations.of(dialogCtx).confirmEraseTitle,
           ),
@@ -7225,7 +7226,7 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: Colors.white10),
             ),
@@ -7265,7 +7266,7 @@ class _VaultRecoveryPageState extends State<VaultRecoveryPage> {
                   'new vault be created on top of it. You must erase the unrecoverable '
                   'data before starting fresh.',
                   style: TextStyle(
-                      color: Color(0xFFB4B4B4), fontSize: 13, height: 1.5),
+                      color: VaultColors.textSecondary, fontSize: 13, height: 1.5),
                 ),
                 const SizedBox(height: 14),
                 Container(
@@ -8652,7 +8653,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             return AlertDialog(
-              backgroundColor: const Color(0xFF2F2F2F),
+              backgroundColor: VaultColors.surfaceElevated,
               title: Text(
                 pairingCode == null
                     ? AppLocalizations.of(dialogCtx).inheritanceAddBeneficiary
@@ -8670,7 +8671,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             'like "Son - John". You\'ll get a one-time code to '
                             'share with them out-of-band.',
                             style: TextStyle(
-                                color: Color(0xFFB4B4B4), fontSize: 13),
+                                color: VaultColors.textSecondary, fontSize: 13),
                           ),
                           const SizedBox(height: 12),
                           TextFormField(
@@ -8702,7 +8703,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           '(Signal, in person, paper). It works once and '
                           'expires in 60 minutes.',
                           style:
-                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                              TextStyle(color: VaultColors.textSecondary, fontSize: 13),
                         ),
                         const SizedBox(height: 14),
                         Container(
@@ -8710,7 +8711,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               vertical: 14, horizontal: 12),
                           decoration: BoxDecoration(
                             color:
-                                const Color(0xFF10A37F).withValues(alpha: 0.10),
+                                VaultColors.accent.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: SelectableText(
@@ -8720,7 +8721,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               fontSize: 22,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 2,
-                              color: Color(0xFF10A37F),
+                              color: VaultColors.accent,
                             ),
                           ),
                         ),
@@ -8885,7 +8886,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             return AlertDialog(
-              backgroundColor: const Color(0xFF2F2F2F),
+              backgroundColor: VaultColors.surfaceElevated,
               title: Text(
                   linkedLabel == null ? 'Enter inheritance code' : 'Linked!'),
               content: linkedLabel == null
@@ -8898,7 +8899,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           'Once linked, you\'ll be able to request transfer '
                           'whenever you need to.',
                           style:
-                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                              TextStyle(color: VaultColors.textSecondary, fontSize: 13),
                         ),
                         const SizedBox(height: 12),
                         TextField(
@@ -9005,7 +9006,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text(
           AppLocalizations.of(dialogCtx)
               .inheritanceCancelPendingTransferTitle(label),
@@ -9063,7 +9064,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             return AlertDialog(
-              backgroundColor: const Color(0xFF2F2F2F),
+              backgroundColor: VaultColors.surfaceElevated,
               title: Text(
                 AppLocalizations.of(dialogCtx).inheritanceClaimTitle(label),
               ),
@@ -9075,7 +9076,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     'A new vault will be created on your account containing '
                     'all of the inherited data, encrypted under your PIN. '
                     'The original vault is then frozen for 90 days.',
-                    style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                    style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -9169,7 +9170,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text(
           AppLocalizations.of(dialogCtx).inheritanceRequestTransferTitle(label),
         ),
@@ -9245,7 +9246,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text(
           AppLocalizations.of(dialogCtx).inheritanceRemoveTitle(label),
         ),
@@ -9355,7 +9356,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       barrierDismissible: false,
       builder: (dialogCtx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
-          backgroundColor: const Color(0xFF2F2F2F),
+          backgroundColor: VaultColors.surfaceElevated,
           title: Text(
             isUpdate
                 ? 'Update credentials for $beneficiaryLabel'
@@ -9374,12 +9375,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     'them — they are encrypted on this device and '
                     'released only after your approval or the 30-day '
                     'cooldown.',
-                    style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+                    style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
                   ),
                   const SizedBox(height: 12),
                   const Text(
                     'Svaultai username',
-                    style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                    style: TextStyle(fontSize: 12, color: VaultColors.textSecondary),
                   ),
                   TextFormField(
                     key: const Key('inheritance_cred_username_field'),
@@ -9396,7 +9397,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   const SizedBox(height: 12),
                   const Text(
                     'Svaultai PIN',
-                    style: TextStyle(fontSize: 12, color: Color(0xFFB4B4B4)),
+                    style: TextStyle(fontSize: 12, color: VaultColors.textSecondary),
                   ),
                   TextFormField(
                     key: const Key('inheritance_cred_pin_field'),
@@ -9636,7 +9637,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text(
           'Delete credentials for $beneficiaryLabel?',
         ),
@@ -9729,7 +9730,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       case 'released':
       case 'approved':
       case 'claimable':
-        return const Color(0xFF10A37F);
+        return VaultColors.accent;
       case 'cooldown_active':
       case 'needs_reencryption':
         return Colors.orange;
@@ -9737,7 +9738,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       case 'rejected':
         return Colors.redAccent;
       default:
-        return const Color(0xFFB4B4B4);
+        return VaultColors.textSecondary;
     }
   }
 
@@ -9770,7 +9771,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text('Approve $beneficiaryLabel?'),
         content: const Text(
           'Approving will permanently release the saved Svaultai '
@@ -9814,7 +9815,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text('Reject request from $beneficiaryLabel?'),
         content: const Text(
           'The saved credentials remain safe. The beneficiary can '
@@ -9858,7 +9859,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text('Request access to $passerLabel?'),
         content: const Text(
           'The owner will be notified and can approve or reject. '
@@ -10451,7 +10452,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       context: context,
       barrierDismissible: false,
       builder: (dCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text(title),
         content: Form(
           key: formKey,
@@ -10499,7 +10500,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       barrierDismissible: false,
       builder: (dCtx) => AlertDialog(
         key: const Key('inheritance_revealed_dialog'),
-        backgroundColor: const Color(0xFF2F2F2F),
+        backgroundColor: VaultColors.surfaceElevated,
         title: Text('Inherited Svaultai login: $passerLabel'),
         content: SingleChildScrollView(
           child: Column(
@@ -10518,7 +10519,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               const SizedBox(height: 14),
               const Text(
                 'Username',
-                style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                style: TextStyle(color: VaultColors.textSecondary, fontSize: 12),
               ),
               SelectableText(
                 username,
@@ -10528,7 +10529,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               const SizedBox(height: 12),
               const Text(
                 'PIN',
-                style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 12),
+                style: TextStyle(color: VaultColors.textSecondary, fontSize: 12),
               ),
               SelectableText(
                 pin,
@@ -10541,7 +10542,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               const Text(
                 'Clipboard contents may be accessible to other apps. '
                 'Copy carefully.',
-                style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 11),
+                style: TextStyle(color: VaultColors.textSecondary, fontSize: 11),
               ),
             ],
           ),
@@ -10653,13 +10654,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         case 'pairing_pending':
           return Colors.amber;
         case 'linked':
-          return const Color(0xFF10A37F);
+          return VaultColors.accent;
         case 'transfer_pending':
           return Colors.orange;
         case 'transferred':
           return Colors.blueAccent;
         default:
-          return const Color(0xFFB4B4B4);
+          return VaultColors.textSecondary;
       }
     }
 
@@ -10675,7 +10676,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               Container(
                 padding: EdgeInsets.all(_vrInh.isMobile ? 16 : 24),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2F2F2F),
+                  color: VaultColors.surfaceElevated,
                   borderRadius:
                       BorderRadius.circular(_vrInh.isMobile ? 18 : 24),
                   border: Border.all(color: Colors.white10),
@@ -10693,7 +10694,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       'Designate who can inherit this vault if you can no longer access '
                       'it, and view vaults you\'re set up to inherit.',
                       style: TextStyle(
-                        color: const Color(0xFFB4B4B4),
+                        color: VaultColors.textSecondary,
                         fontSize: _vrInh.isMobile ? 13 : 15,
                         height: 1.5,
                       ),
@@ -10710,7 +10711,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               Container(
                 padding: EdgeInsets.all(_vrInh.cardInsetPadding),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2A2A2A),
+                  color: VaultColors.surfaceElevated,
                   borderRadius:
                       BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
                   border: Border.all(color: Colors.white10),
@@ -10757,7 +10758,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         child: Text(
                           'No beneficiaries yet. Click "Add beneficiary" to generate a pairing code.',
                           style:
-                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+                              TextStyle(color: VaultColors.textSecondary, fontSize: 14),
                         ),
                       )
                     else
@@ -10804,7 +10805,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           decoration: BoxDecoration(
                             color: isTransferPending
                                 ? Colors.orange.withValues(alpha: 0.08)
-                                : const Color(0xFF222222),
+                                : VaultColors.surface,
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
                                 color: isTransferPending
@@ -10873,7 +10874,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                   key: Key('inheritance_credentials_row_$id'),
                                   padding: const EdgeInsets.all(10),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF1E1E1E),
+                                    color: VaultColors.surfaceElevated,
                                     borderRadius: BorderRadius.circular(10),
                                     border: Border.all(color: Colors.white10),
                                   ),
@@ -10896,8 +10897,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             color: needsReencryption
                                                 ? Colors.orange
                                                 : credentialsSaved
-                                                    ? const Color(0xFF66BB6A)
-                                                    : const Color(0xFFB4B4B4),
+                                                    ? VaultColors.severityOk
+                                                    : VaultColors.textSecondary,
                                           ),
                                           const SizedBox(width: 6),
                                           Text(
@@ -10910,8 +10911,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                               color: needsReencryption
                                                   ? Colors.orange
                                                   : credentialsSaved
-                                                      ? const Color(0xFF66BB6A)
-                                                      : const Color(0xFFB4B4B4),
+                                                      ? VaultColors.severityOk
+                                                      : VaultColors.textSecondary,
                                               fontSize: 12,
                                             ),
                                           ),
@@ -10923,7 +10924,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             Text(
                                               '• Updated ${_shortDateFromIso(credentialUpdatedAt)}',
                                               style: const TextStyle(
-                                                color: Color(0xFF8A8A8A),
+                                                color: VaultColors.textTertiary,
                                                 fontSize: 11,
                                               ),
                                             ),
@@ -11015,7 +11016,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             'Available automatically in '
                                             '${_formatCountdown(cooldownEndsAt)}',
                                             style: const TextStyle(
-                                              color: Color(0xFFB4B4B4),
+                                              color: VaultColors.textSecondary,
                                               fontSize: 12,
                                             ),
                                           ),
@@ -11068,7 +11069,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                     key: Key(
                                         'inheritance_owner_release_state_$id'),
                                     style: const TextStyle(
-                                      color: Color(0xFF66BB6A),
+                                      color: VaultColors.severityOk,
                                       fontSize: 12,
                                     ),
                                   ),
@@ -11085,7 +11086,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               Container(
                 padding: EdgeInsets.all(_vrInh.cardInsetPadding),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2A2A2A),
+                  color: VaultColors.surfaceElevated,
                   borderRadius:
                       BorderRadius.circular(_vrInh.isMobile ? 16 : 20),
                   border: Border.all(color: Colors.white10),
@@ -11137,7 +11138,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         child: Text(
                           'No inheritances. Use "Enter code" if someone shared a pairing code with you.',
                           style:
-                              TextStyle(color: Color(0xFFB4B4B4), fontSize: 14),
+                              TextStyle(color: VaultColors.textSecondary, fontSize: 14),
                         ),
                       )
                     else
@@ -11197,20 +11198,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
                             color: showReveal
-                                ? const Color(0xFF10A37F)
+                                ? VaultColors.accent
                                     .withValues(alpha: 0.08)
                                 : (showClaim || readyToClaim)
-                                    ? const Color(0xFF10A37F)
+                                    ? VaultColors.accent
                                         .withValues(alpha: 0.08)
                                     : (showCancel || isPending)
                                         ? Colors.orange.withValues(alpha: 0.06)
-                                        : const Color(0xFF222222),
+                                        : VaultColors.surface,
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
                                 color: showReveal
-                                    ? const Color(0xFF10A37F)
+                                    ? VaultColors.accent
                                     : (showClaim || readyToClaim)
-                                        ? const Color(0xFF10A37F)
+                                        ? VaultColors.accent
                                         : (showCancel || isPending)
                                             ? Colors.orange
                                             : Colors.white10),
@@ -11247,7 +11248,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           Text(
                                             'Available in ${_formatCountdown(cooldownEndsAt)}',
                                             style: const TextStyle(
-                                                color: Color(0xFFB4B4B4),
+                                                color: VaultColors.textSecondary,
                                                 fontSize: 11),
                                           ),
                                         ] else if (needsReencryption) ...[
@@ -11255,7 +11256,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                           const Text(
                                             'The owner needs to update these credentials for your repaired vault key.',
                                             style: TextStyle(
-                                                color: Color(0xFFB4B4B4),
+                                                color: VaultColors.textSecondary,
                                                 fontSize: 11),
                                           ),
                                         ] else if (isPending &&
@@ -11266,7 +11267,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             _formatCountdown(executesAt),
                                             style: TextStyle(
                                                 color: readyToClaim
-                                                    ? const Color(0xFF10A37F)
+                                                    ? VaultColors.accent
                                                     : Colors.orange,
                                                 fontSize: 11),
                                           ),
@@ -11380,7 +11381,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             padding: EdgeInsets.all(
                 MediaQuery.of(context).size.width < 600 ? 16 : 24),
             decoration: BoxDecoration(
-              color: const Color(0xFF2F2F2F),
+              color: VaultColors.surfaceElevated,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: Colors.white10),
             ),
@@ -11397,7 +11398,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 Text(
                   l.settingsSubtitle,
                   style: const TextStyle(
-                    color: Color(0xFFB4B4B4),
+                    color: VaultColors.textSecondary,
                     fontSize: 15,
                     height: 1.6,
                   ),
@@ -11414,7 +11415,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 Container(
                   padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
+                    color: VaultColors.surface,
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(color: Colors.white10),
                   ),
@@ -11438,7 +11439,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         const SizedBox(height: 8),
                         Text(
                           '${formatBytes(used)} used of ${formatBytes(limit)}',
-                          style: const TextStyle(color: Color(0xFFB4B4B4)),
+                          style: const TextStyle(color: VaultColors.textSecondary),
                         ),
                         if (app.storagePendingBytes > 0) ...[
                           const SizedBox(height: 4),
@@ -11446,7 +11447,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             '${_formatBytes(app.storagePendingBytes)} pending '
                             '(in-flight uploads)',
                             style: const TextStyle(
-                              color: Color(0xFF888888),
+                              color: VaultColors.textTertiary,
                               fontSize: 13,
                             ),
                           ),
@@ -11472,14 +11473,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF262626),
+                      color: VaultColors.surface,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: Colors.white10),
                     ),
                     child: Row(
                       children: [
                         const Icon(Icons.shield_outlined,
-                            color: Color(0xFFB4B4B4)),
+                            color: VaultColors.textSecondary),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -11497,13 +11498,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               const Text(
                                 'Overall vault health and recommendations',
                                 style: TextStyle(
-                                    fontSize: 13, color: Color(0xFFB4B4B4)),
+                                    fontSize: 13, color: VaultColors.textSecondary),
                               ),
                             ],
                           ),
                         ),
                         const Icon(Icons.chevron_right,
-                            color: Color(0xFFB4B4B4)),
+                            color: VaultColors.textSecondary),
                       ],
                     ),
                   ),
@@ -11516,14 +11517,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF262626),
+                      color: VaultColors.surface,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: Colors.white10),
                     ),
                     child: Row(
                       children: [
                         const Icon(Icons.cloud_outlined,
-                            color: Color(0xFFB4B4B4)),
+                            color: VaultColors.textSecondary),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -11540,13 +11541,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                               const Text(
                                 'Usage, free tier, and additional pricing',
                                 style: TextStyle(
-                                    fontSize: 13, color: Color(0xFFB4B4B4)),
+                                    fontSize: 13, color: VaultColors.textSecondary),
                               ),
                             ],
                           ),
                         ),
                         const Icon(Icons.chevron_right,
-                            color: Color(0xFFB4B4B4)),
+                            color: VaultColors.textSecondary),
                       ],
                     ),
                   ),
@@ -11559,13 +11560,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF262626),
+                      color: VaultColors.surface,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: Colors.white10),
                     ),
                     child: Row(
                       children: const [
-                        Icon(Icons.devices_other, color: Color(0xFFB4B4B4)),
+                        Icon(Icons.devices_other, color: VaultColors.textSecondary),
                         SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -11583,12 +11584,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 'Approve new devices, revoke devices you '
                                 'no longer use.',
                                 style: TextStyle(
-                                    color: Color(0xFFB4B4B4), fontSize: 13),
+                                    color: VaultColors.textSecondary, fontSize: 13),
                               ),
                             ],
                           ),
                         ),
-                        Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                        Icon(Icons.chevron_right, color: VaultColors.textSecondary),
                       ],
                     ),
                   ),
@@ -11605,13 +11606,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF262626),
+                      color: VaultColors.surface,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: Colors.white10),
                     ),
                     child: Row(
                       children: const [
-                        Icon(Icons.help_outline, color: Color(0xFFB4B4B4)),
+                        Icon(Icons.help_outline, color: VaultColors.textSecondary),
                         SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -11629,14 +11630,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 'Answers about Svaultai, Assets, '
                                 'Monero, billing, and support.',
                                 style: TextStyle(
-                                  color: Color(0xFFB4B4B4),
+                                  color: VaultColors.textSecondary,
                                   fontSize: 13,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                        Icon(Icons.chevron_right, color: VaultColors.textSecondary),
                       ],
                     ),
                   ),
@@ -11654,14 +11655,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF262626),
+                      color: VaultColors.surface,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: Colors.white10),
                     ),
                     child: Row(
                       children: const [
                         Icon(Icons.privacy_tip_outlined,
-                            color: Color(0xFFB4B4B4)),
+                            color: VaultColors.textSecondary),
                         SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -11679,14 +11680,14 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 'How Svaultai handles account, '
                                 'vault, inheritance, wallet, and device data.',
                                 style: TextStyle(
-                                  color: Color(0xFFB4B4B4),
+                                  color: VaultColors.textSecondary,
                                   fontSize: 13,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Icon(Icons.chevron_right, color: Color(0xFFB4B4B4)),
+                        Icon(Icons.chevron_right, color: VaultColors.textSecondary),
                       ],
                     ),
                   ),
@@ -11712,11 +11713,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     child: Container(
                       padding: const EdgeInsets.all(18),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10A37F).withValues(alpha: 0.10),
+                        color: VaultColors.accent.withValues(alpha: 0.10),
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
                           color:
-                              const Color(0xFF10A37F).withValues(alpha: 0.30),
+                              VaultColors.accent.withValues(alpha: 0.30),
                         ),
                       ),
                       child: Column(
@@ -11725,7 +11726,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                           Row(
                             children: const [
                               Icon(Icons.cloud_upload_outlined,
-                                  color: Color(0xFF10A37F)),
+                                  color: VaultColors.accent),
                               SizedBox(width: 12),
                               Expanded(
                                 child: Column(
@@ -11744,7 +11745,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                       'limit updates automatically after '
                                       'payment.',
                                       style: TextStyle(
-                                        color: Color(0xFFB4B4B4),
+                                        color: VaultColors.textSecondary,
                                         height: 1.45,
                                         fontSize: 13,
                                       ),
@@ -11768,8 +11769,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                 AppLocalizations.of(context).filesChooseStorage,
                               ),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF10A37F),
-                                foregroundColor: Colors.white,
+                                backgroundColor: VaultColors.accent,
+                                foregroundColor: VaultColors.textOnAccent,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 18,
                                   vertical: 12,
@@ -12263,7 +12264,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: Colors.redAccent.withValues(alpha: 0.35),
@@ -12338,7 +12339,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white24),
       ),
@@ -12457,13 +12458,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         break;
       case UploadJobStatus.uploading:
         icon = Icons.upload;
-        color = const Color(0xFF10A37F);
+        color = VaultColors.accent;
         final pct = (j.progress * 100).clamp(0, 100).toStringAsFixed(0);
         label = 'uploading $pct%';
         break;
       case UploadJobStatus.uploaded:
         icon = Icons.check_circle;
-        color = const Color(0xFF10A37F);
+        color = VaultColors.accent;
         label = 'uploaded';
         break;
       case UploadJobStatus.failed:
@@ -15306,7 +15307,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             horizontal: 24,
             vertical: 32,
           ),
-          backgroundColor: const Color(0xFF1A1A1A),
+          backgroundColor: VaultColors.surface,
           child: SizedBox(
             width: size.width * 0.9,
             height: size.height * 0.9,
@@ -15315,7 +15316,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               children: [
                 AppBar(
                   automaticallyImplyLeading: false,
-                  backgroundColor: const Color(0xFF1A1A1A),
+                  backgroundColor: VaultColors.surface,
                   title: Text(fileName),
                   actions: [
                     IconButton(
@@ -17318,7 +17319,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+                color: VaultColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(icon),
@@ -17341,7 +17342,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   Text(
                     '${a.kind} • ${_formatBytes(a.size)}',
                     style:
-                        const TextStyle(fontSize: 11, color: Color(0xFFB4B4B4)),
+                        const TextStyle(fontSize: 11, color: VaultColors.textSecondary),
                   ),
                 ],
               ),
@@ -17377,7 +17378,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             padding: EdgeInsets.zero,
             iconSize: vr.isMobile ? 20 : 22,
             icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-            color: _isListening ? const Color(0xFF10A37F) : null,
+            color: _isListening ? VaultColors.accent : null,
             tooltip: _isListening ? 'Stop listening' : 'Speak',
             onPressed: composerBusy ? null : _toggleListening,
           ),
@@ -17403,7 +17404,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     Widget _sendButton() {
       final size = vr.composerSendButtonSize;
-      final iconColor = canSend ? Colors.white : Colors.white54;
+      final iconColor = canSend ? VaultColors.textOnAccent : Colors.white54;
       return Semantics(
         button: true,
         identifier: 'composer_send_button',
@@ -17412,7 +17413,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             : AppLocalizations.of(context).chatSendButton,
         child: Material(
           key: const Key('composer_send_button'),
-          color: canSend ? const Color(0xFF10A37F) : const Color(0xFF3A3F47),
+          color: canSend ? VaultColors.accent : VaultColors.surfaceMuted,
           shape: const CircleBorder(),
           child: InkWell(
             customBorder: const CircleBorder(),
@@ -17492,7 +17493,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             vertical: vr.composerVerticalPadding,
           ),
           decoration: BoxDecoration(
-            color: const Color(0xFF2F2F2F),
+            color: VaultColors.surfaceElevated,
             borderRadius: BorderRadius.circular(isMobile ? 22 : 20),
             border: Border.all(color: Colors.white10),
           ),
@@ -17715,7 +17716,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               padding: EdgeInsets.all(
                   MediaQuery.of(context).size.width < 600 ? 16 : 24),
               decoration: BoxDecoration(
-                color: const Color(0xFF2F2F2F),
+                color: VaultColors.surfaceElevated,
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(color: Colors.white10),
               ),
@@ -17732,7 +17733,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   const Text(
                     'No files uploaded yet. Upload images, PDFs, spreadsheets, and documents from chat.',
                     style: TextStyle(
-                      color: Color(0xFFB4B4B4),
+                      color: VaultColors.textSecondary,
                       fontSize: 15,
                       height: 1.6,
                     ),
@@ -17771,7 +17772,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   padding: EdgeInsets.all(
                       MediaQuery.of(context).size.width < 600 ? 16 : 24),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2F2F2F),
+                    color: VaultColors.surfaceElevated,
                     borderRadius: BorderRadius.circular(24),
                     border: Border.all(color: Colors.white10),
                   ),
@@ -17791,7 +17792,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                             const Text(
                               'Open and manage files saved in your vault.',
                               style: TextStyle(
-                                color: Color(0xFFB4B4B4),
+                                color: VaultColors.textSecondary,
                                 fontSize: 15,
                               ),
                             ),
@@ -17857,7 +17858,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFF2A2A2A),
+          color: VaultColors.surfaceElevated,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Colors.white10),
         ),
@@ -17867,7 +17868,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               width: 54,
               height: 54,
               decoration: BoxDecoration(
-                color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+                color: VaultColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Icon(
@@ -17886,7 +17887,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   }
                   return Icons.insert_drive_file_outlined;
                 }(),
-                color: const Color(0xFF10A37F),
+                color: VaultColors.accent,
               ),
             ),
             const SizedBox(width: 14),
@@ -17913,7 +17914,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Color(0xFFB4B4B4),
+                      color: VaultColors.textSecondary,
                       fontSize: 13,
                     ),
                   ),
@@ -17921,7 +17922,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   Text(
                     subtitleParts.join(' • '),
                     style: const TextStyle(
-                      color: Color(0xFF8E8E8E),
+                      color: VaultColors.textTertiary,
                       fontSize: 12,
                     ),
                   ),
@@ -17941,7 +17942,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                         _fileRenamesInFlight.contains(file.id)
                     ? null : () => _openSavedFileRename(file),
                 icon: const Icon(Icons.edit_outlined),
-                color: const Color(0xFF10A37F),
+                color: VaultColors.accent,
               ),
             ),
             Semantics(
@@ -17973,7 +17974,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   key: ValueKey('files_file_ask_${file.id}'),
                   onPressed: () => _askBrainAboutFile(file),
                   icon: const Icon(Icons.smart_toy_outlined),
-                  color: const Color(0xFF10A37F),
+                  color: VaultColors.accent,
                 ),
               ),
             ),
@@ -17995,8 +17996,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         title: 'Logins',
         value: app.loginCount.toString(),
         icon: Icons.lock_outline,
-        iconColor: const Color(0xFF10A37F),
-        bgColor: const Color(0xFF10A37F).withValues(alpha: 0.12),
+        iconColor: VaultColors.accent,
+        bgColor: VaultColors.accent.withValues(alpha: 0.12),
       ),
       _OverviewCardData(
         title: 'Files',
@@ -18021,8 +18022,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [
-                      Color(0xFF2A2A2A),
-                      Color(0xFF232323),
+                      VaultColors.surfaceElevated,
+                      VaultColors.canvas,
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -18037,13 +18038,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10A37F).withValues(alpha: 0.12),
+                        color: VaultColors.accent.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: const Text(
                         'Vault overview',
                         style: TextStyle(
-                          color: Color(0xFF10A37F),
+                          color: VaultColors.accent,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -18072,7 +18073,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                     const Text(
                       'Ask naturally, upload documents, and retrieve private information from one secure workspace.',
                       style: TextStyle(
-                        color: Color(0xFFB4B4B4),
+                        color: VaultColors.textSecondary,
                         fontSize: 15,
                         height: 1.5,
                       ),
@@ -18230,12 +18231,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             ),
             decoration: BoxDecoration(
               color: selected
-                  ? const Color(0xFF10A37F).withValues(alpha: 0.14)
+                  ? VaultColors.accent.withValues(alpha: 0.14)
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(radius),
               border: Border.all(
                 color: selected
-                    ? const Color(0xFF10A37F).withValues(alpha: 0.35)
+                    ? VaultColors.accent.withValues(alpha: 0.35)
                     : Colors.white10,
               ),
             ),
@@ -18245,7 +18246,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   icon,
                   size: iconSize,
                   color: selected
-                      ? const Color(0xFF10A37F)
+                      ? VaultColors.accent
                       : const Color(0xFF9CA3AF),
                 ),
                 SizedBox(width: compact ? 10 : 12),
@@ -18274,7 +18275,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final _drawerBodyPadding = _vr.drawerBodyPadding;
     final _drawerTileVpad = _vr.isMobile ? 6.0 : 8.0;
     return Drawer(
-      backgroundColor: const Color(0xFF212121),
+      backgroundColor: VaultColors.canvas,
       width: _vr.drawerWidth,
       child: SafeArea(
         bottom: true,
@@ -18292,7 +18293,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                 width: double.infinity,
                 padding: EdgeInsets.all(_drawerHeaderPadding),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2F2F2F),
+                  color: VaultColors.surfaceElevated,
                   borderRadius: BorderRadius.circular(_vr.isMobile ? 14 : 18),
                   border: Border.all(color: Colors.white10),
                 ),
@@ -18907,7 +18908,7 @@ class _DeleteVaultSettingsTile extends StatelessWidget {
                     'cannot be undone. Trusted device + PIN + exact '
                     'phrase required.',
                     style: TextStyle(
-                      color: Color(0xFFB4B4B4),
+                      color: VaultColors.textSecondary,
                       fontSize: 13,
                     ),
                   ),
@@ -18992,7 +18993,7 @@ class _LanguageCardState extends State<LanguageCard> {
       key: const Key('settings_language_card'),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white10),
       ),
@@ -19001,7 +19002,7 @@ class _LanguageCardState extends State<LanguageCard> {
         children: [
           Row(
             children: [
-              const Icon(Icons.language, size: 18, color: Color(0xFFB4B4B4)),
+              const Icon(Icons.language, size: 18, color: VaultColors.textSecondary),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -19018,7 +19019,7 @@ class _LanguageCardState extends State<LanguageCard> {
           Text(
             l.settingsLanguageHint,
             style: const TextStyle(
-              color: Color(0xFFB4B4B4),
+              color: VaultColors.textSecondary,
               fontSize: 13,
               height: 1.5,
             ),
@@ -19034,19 +19035,19 @@ class _LanguageCardState extends State<LanguageCard> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: current == null
-                    ? const Color(0xFF10A37F).withValues(alpha: 0.18)
-                    : const Color(0xFF2A2A2A),
+                    ? VaultColors.accent.withValues(alpha: 0.18)
+                    : VaultColors.surfaceElevated,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: current == null
-                      ? const Color(0xFF10A37F).withValues(alpha: 0.45)
+                      ? VaultColors.accent.withValues(alpha: 0.45)
                       : Colors.white12,
                 ),
               ),
               child: Row(
                 children: [
                   const Icon(Icons.autorenew,
-                      size: 16, color: Color(0xFF10A37F)),
+                      size: 16, color: VaultColors.accent),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Column(
@@ -19067,7 +19068,7 @@ class _LanguageCardState extends State<LanguageCard> {
                         Text(
                           l.settingsLanguageAutoResolvedTo(systemResolvedLabel),
                           style: const TextStyle(
-                            color: Color(0xFF8E8E8E),
+                            color: VaultColors.textTertiary,
                             fontSize: 11,
                           ),
                         ),
@@ -19075,7 +19076,7 @@ class _LanguageCardState extends State<LanguageCard> {
                     ),
                   ),
                   if (current == null)
-                    const Icon(Icons.check, size: 16, color: Color(0xFF10A37F)),
+                    const Icon(Icons.check, size: 16, color: VaultColors.accent),
                 ],
               ),
             ),
@@ -19085,13 +19086,13 @@ class _LanguageCardState extends State<LanguageCard> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFF1F1F1F),
+              color: VaultColors.canvas,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.white12),
             ),
             child: Row(
               children: [
-                const Icon(Icons.search, size: 16, color: Color(0xFF8E8E8E)),
+                const Icon(Icons.search, size: 16, color: VaultColors.textTertiary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: TextField(
@@ -19107,7 +19108,7 @@ class _LanguageCardState extends State<LanguageCard> {
                       contentPadding: const EdgeInsets.symmetric(vertical: 10),
                       hintText: l.settingsLanguageSearchHint,
                       hintStyle: const TextStyle(
-                          color: Color(0xFF8E8E8E), fontSize: 12),
+                          color: VaultColors.textTertiary, fontSize: 12),
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
@@ -19118,7 +19119,7 @@ class _LanguageCardState extends State<LanguageCard> {
                   IconButton(
                     key: const Key('settings_language_search_clear'),
                     icon: const Icon(Icons.close,
-                        size: 14, color: Color(0xFF8E8E8E)),
+                        size: 14, color: VaultColors.textTertiary),
                     onPressed: () {
                       _searchCtrl.clear();
                       setState(() => _query = '');
@@ -19144,7 +19145,7 @@ class _LanguageCardState extends State<LanguageCard> {
                   child: Text(
                     l.settingsLanguageNoMatches(_query.trim()),
                     style: const TextStyle(
-                      color: Color(0xFF8E8E8E),
+                      color: VaultColors.textTertiary,
                       fontSize: 13,
                     ),
                   ),
@@ -19304,7 +19305,7 @@ class _LanguageSectionHeader extends StatelessWidget {
       child: Text(
         label,
         style: const TextStyle(
-          color: Color(0xFF8E8E8E),
+          color: VaultColors.textTertiary,
           fontSize: 11,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.7,
@@ -19354,12 +19355,12 @@ class _LanguageListRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: selected
-                    ? const Color(0xFF10A37F).withValues(alpha: 0.16)
+                    ? VaultColors.accent.withValues(alpha: 0.16)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: selected
-                      ? const Color(0xFF10A37F).withValues(alpha: 0.45)
+                      ? VaultColors.accent.withValues(alpha: 0.45)
                       : Colors.white10,
                 ),
               ),
@@ -19387,7 +19388,7 @@ class _LanguageListRow extends StatelessWidget {
                           Text(
                             info.englishName,
                             style: const TextStyle(
-                              color: Color(0xFF8E8E8E),
+                              color: VaultColors.textTertiary,
                               fontSize: 11,
                               height: 1.2,
                             ),
@@ -19402,7 +19403,7 @@ class _LanguageListRow extends StatelessWidget {
                       child: Icon(
                         Icons.check,
                         size: 18,
-                        color: Color(0xFF10A37F),
+                        color: VaultColors.accent,
                       ),
                     ),
                 ],
@@ -19425,7 +19426,7 @@ class _OverviewCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF262626),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.white10),
       ),
@@ -19488,17 +19489,17 @@ class _VaultSwitcher extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white10),
       ),
       child: Row(
         children: [
-          const Icon(Icons.swap_horiz, size: 18, color: Color(0xFFB4B4B4)),
+          const Icon(Icons.swap_horiz, size: 18, color: VaultColors.textSecondary),
           const SizedBox(width: 8),
           Text(
             AppLocalizations.of(context).dashboardActiveVault,
-            style: const TextStyle(color: Color(0xFFB4B4B4), fontSize: 13),
+            style: const TextStyle(color: VaultColors.textSecondary, fontSize: 13),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -19506,7 +19507,7 @@ class _VaultSwitcher extends StatelessWidget {
               value: current,
               isExpanded: true,
               underline: const SizedBox.shrink(),
-              dropdownColor: const Color(0xFF2F2F2F),
+              dropdownColor: VaultColors.surfaceElevated,
               items: vaults.map((v) {
                 final name = (v['vault_name'] ?? '').toString();
                 final inheritedFrom = v['inherited_from_label']?.toString();
@@ -20082,7 +20083,7 @@ class _CryptoVaultBillingStatusBanner extends StatelessWidget {
         key: const Key('crypto_vault_billing_status_banner'),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1E1E).withOpacity(0.96),
+          color: VaultColors.surfaceElevated.withOpacity(0.96),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0x33FFFFFF)),
           boxShadow: const [
@@ -20153,7 +20154,7 @@ class _CryptoVaultBillingStatusBanner extends StatelessWidget {
                 ),
                 icon: const Icon(
                   Icons.close_rounded,
-                  color: Color(0xFFB4B4B4),
+                  color: VaultColors.textSecondary,
                 ),
               ),
             ],

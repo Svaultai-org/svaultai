@@ -6451,7 +6451,7 @@ class SecureItemResultsCard extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 6),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFF2A2A2A),
+          color: VaultColors.surfaceElevated,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.white10),
         ),
@@ -6466,7 +6466,7 @@ class SecureItemResultsCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 6),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
+        color: VaultColors.surfaceElevated,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: Colors.white10),
       ),
@@ -6546,7 +6546,7 @@ class _SecureItemRow extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 6),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F1F1F),
+        color: VaultColors.canvas,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white12),
       ),
@@ -6559,12 +6559,12 @@ class _SecureItemRow extends StatelessWidget {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF10A37F).withValues(alpha: 0.14),
+                  color: VaultColors.accent.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   icon,
-                  color: const Color(0xFF10A37F),
+                  color: VaultColors.accent,
                   size: 18,
                 ),
               ),
@@ -6590,13 +6590,13 @@ class _SecureItemRow extends StatelessWidget {
                         vertical: 1,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10A37F).withValues(alpha: 0.16),
+                        color: VaultColors.accent.withValues(alpha: 0.16),
                         borderRadius: BorderRadius.circular(7),
                       ),
                       child: Text(
                         chip,
                         style: const TextStyle(
-                          color: Color(0xFF10A37F),
+                          color: VaultColors.accent,
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                         ),
@@ -6854,7 +6854,7 @@ class _DetailRow extends StatelessWidget {
         Text(
           label,
           style: const TextStyle(
-            color: Color(0xFF8E8E8E),
+            color: VaultColors.textTertiary,
             fontSize: 11,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.4,

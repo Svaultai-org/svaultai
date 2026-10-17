@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 import 'package:flutter/services.dart';
 
 import '../api_client.dart'
@@ -275,7 +276,7 @@ class SecureItemDetailSheet extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         decoration: const BoxDecoration(
-          color: Color(0xFF2A2A2A),
+          color: VaultColors.surfaceElevated,
           borderRadius: BorderRadius.only(
             topLeft: Radius.circular(20),
             topRight: Radius.circular(20),
@@ -320,13 +321,13 @@ class SecureItemDetailSheet extends StatelessWidget {
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF10A37F).withValues(alpha: 0.18),
+                    color: VaultColors.accent.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     chip,
                     style: const TextStyle(
-                      color: Color(0xFF10A37F),
+                      color: VaultColors.accent,
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                     ),
@@ -346,7 +347,7 @@ class SecureItemDetailSheet extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1F1F1F),
+                      color: VaultColors.canvas,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.white12),
                     ),
@@ -583,7 +584,7 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
     final chip =
         kSecureItemTypeLabelsForDetail[widget.itemType] ?? 'Saved item';
     return AlertDialog(
-      backgroundColor: const Color(0xFF2A2A2A),
+      backgroundColor: VaultColors.surfaceElevated,
       title: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -616,7 +617,7 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
                 labelText: 'Title',
-                labelStyle: TextStyle(color: Color(0xFFB4B4B4)),
+                labelStyle: TextStyle(color: VaultColors.textSecondary),
               ),
             ),
             const SizedBox(height: 8),
@@ -630,7 +631,7 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       labelText: f.label,
-                      labelStyle: const TextStyle(color: Color(0xFFB4B4B4)),
+                      labelStyle: const TextStyle(color: VaultColors.textSecondary),
                     ),
                   ),
                 )),
@@ -657,7 +658,7 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
                           style: const TextStyle(color: Colors.white),
                           decoration: const InputDecoration(
                             labelText: 'Field label',
-                            labelStyle: TextStyle(color: Color(0xFFB4B4B4)),
+                            labelStyle: TextStyle(color: VaultColors.textSecondary),
                           ),
                         ),
                       ),
@@ -670,7 +671,7 @@ class _SecureItemEditDialogState extends State<SecureItemEditDialog> {
                           style: const TextStyle(color: Colors.white),
                           decoration: const InputDecoration(
                             labelText: 'Value',
-                            labelStyle: TextStyle(color: Color(0xFFB4B4B4)),
+                            labelStyle: TextStyle(color: VaultColors.textSecondary),
                           ),
                         ),
                       ),

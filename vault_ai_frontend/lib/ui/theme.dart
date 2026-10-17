@@ -1,55 +1,106 @@
-
-
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoThemeData;
 import 'tokens.dart';
 
 class VaultTheme {
   VaultTheme._();
 
-  
   static ThemeData dark() {
     final base = ThemeData.dark(useMaterial3: true);
 
     final colorScheme = const ColorScheme.dark(
-      brightness:    Brightness.dark,
-      surface:       VaultColors.canvas,
-      onSurface:     VaultColors.textPrimary,
-      primary:       VaultColors.accent,
-      onPrimary:     VaultColors.textOnAccent,
-      secondary:     VaultColors.accentBright,
-      onSecondary:   VaultColors.textOnAccent,
-      error:         VaultColors.severityCrit,
-      onError:       VaultColors.textOnAccent,
+      brightness: Brightness.dark,
+      surface: VaultColors.canvas,
+      onSurface: VaultColors.textPrimary,
+      primary: VaultColors.accent,
+      onPrimary: VaultColors.textOnAccent,
+      primaryContainer: VaultColors.accentContainer,
+      onPrimaryContainer: VaultColors.textOnAccentContainer,
+      secondary: VaultColors.accentBright,
+      onSecondary: VaultColors.textOnAccent,
+      secondaryContainer: VaultColors.accentContainer,
+      onSecondaryContainer: VaultColors.textOnAccentContainer,
+      tertiary: VaultColors.accent,
+      onTertiary: VaultColors.textOnAccent,
+      tertiaryContainer: VaultColors.accentContainer,
+      onTertiaryContainer: VaultColors.textOnAccentContainer,
+      error: VaultColors.severityCrit,
+      onError: VaultColors.textOnAccent,
+      errorContainer: Color(0xFF411E26),
+      onErrorContainer: Color(0xFFFFDAD9),
+      onSurfaceVariant: VaultColors.textSecondary,
+      surfaceDim: VaultColors.canvas,
+      surfaceBright: VaultColors.surfaceHover,
+      surfaceContainerLowest: VaultColors.canvas,
+      surfaceContainerLow: VaultColors.surface,
+      surfaceContainer: VaultColors.surface,
+      surfaceContainerHigh: VaultColors.surfaceElevated,
+      surfaceContainerHighest: VaultColors.surfaceMuted,
+      outline: Color(0xFF536A84),
+      outlineVariant: VaultColors.borderStrong,
+      inverseSurface: Color(0xFFD6E8FF),
+      onInverseSurface: VaultColors.textOnAccent,
+      inversePrimary: Color(0xFF185D9D),
+      surfaceTint: VaultColors.accent,
+    );
+
+    final solidActionStyle = FilledButton.styleFrom(
+      backgroundColor: VaultColors.accent,
+      foregroundColor: VaultColors.textOnAccent,
+      disabledBackgroundColor: VaultColors.surfaceMuted,
+      disabledForegroundColor: VaultColors.textSecondary,
+      textStyle: VaultText.subtitle,
+      padding: const EdgeInsets.symmetric(
+        horizontal: VaultSpacing.xl,
+        vertical: VaultSpacing.md + 2,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(VaultRadius.md),
+      ),
+      elevation: 0,
     );
 
     return base.copyWith(
       colorScheme: colorScheme,
+      primaryColor: VaultColors.accent,
+      primaryColorLight: VaultColors.accentBright,
+      primaryColorDark: VaultColors.accentContainer,
+      cupertinoOverrideTheme: const CupertinoThemeData(
+        brightness: Brightness.dark,
+        primaryColor: VaultColors.accent,
+        primaryContrastingColor: VaultColors.textOnAccent,
+        barBackgroundColor: VaultColors.canvas,
+        scaffoldBackgroundColor: VaultColors.canvas,
+      ),
       scaffoldBackgroundColor: VaultColors.canvas,
-      canvasColor:             VaultColors.canvas,
-      cardColor:               VaultColors.surface,
-      dividerColor:            VaultColors.borderSubtle,
-      hoverColor:              VaultColors.surfaceHover,
-      splashFactory:           InkSparkle.splashFactory,
-
+      canvasColor: VaultColors.canvas,
+      cardColor: VaultColors.surface,
+      dividerColor: VaultColors.borderSubtle,
+      hoverColor: VaultColors.surfaceHover,
+      splashFactory: InkSparkle.splashFactory,
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: VaultColors.accent,
+        selectionColor: VaultColors.accentGlow,
+        selectionHandleColor: VaultColors.accent,
+      ),
       textTheme: base.textTheme
           .apply(
-            bodyColor:    VaultColors.textPrimary,
+            bodyColor: VaultColors.textPrimary,
             displayColor: VaultColors.textPrimary,
           )
           .copyWith(
-            displayLarge:  VaultText.display,
+            displayLarge: VaultText.display,
             headlineLarge: VaultText.headline,
-            titleLarge:    VaultText.titleLg,
-            titleMedium:   VaultText.title,
-            titleSmall:    VaultText.subtitle,
-            bodyLarge:     VaultText.bodyLg,
-            bodyMedium:    VaultText.body,
-            bodySmall:     VaultText.bodySm,
-            labelLarge:    VaultText.subtitle,
-            labelMedium:   VaultText.caption,
-            labelSmall:    VaultText.caption,
+            titleLarge: VaultText.titleLg,
+            titleMedium: VaultText.title,
+            titleSmall: VaultText.subtitle,
+            bodyLarge: VaultText.bodyLg,
+            bodyMedium: VaultText.body,
+            bodySmall: VaultText.bodySm,
+            labelLarge: VaultText.subtitle,
+            labelMedium: VaultText.caption,
+            labelSmall: VaultText.caption,
           ),
-
       appBarTheme: const AppBarTheme(
         elevation: 0,
         backgroundColor: VaultColors.canvas,
@@ -57,7 +108,6 @@ class VaultTheme {
         surfaceTintColor: Colors.transparent,
         centerTitle: false,
       ),
-
       dialogTheme: DialogThemeData(
         backgroundColor: VaultColors.surface,
         surfaceTintColor: Colors.transparent,
@@ -68,7 +118,6 @@ class VaultTheme {
         titleTextStyle: VaultText.titleLg,
         contentTextStyle: VaultText.body,
       ),
-
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: VaultColors.surface,
         surfaceTintColor: Colors.transparent,
@@ -78,12 +127,10 @@ class VaultTheme {
           ),
         ),
       ),
-
       drawerTheme: const DrawerThemeData(
         backgroundColor: VaultColors.canvas,
         surfaceTintColor: Colors.transparent,
       ),
-
       cardTheme: CardThemeData(
         color: VaultColors.surface,
         elevation: 0,
@@ -94,7 +141,6 @@ class VaultTheme {
         ),
         margin: EdgeInsets.zero,
       ),
-
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: VaultColors.surface,
@@ -127,23 +173,12 @@ class VaultTheme {
           vertical: VaultSpacing.md + 2,
         ),
       ),
-
       filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: VaultColors.accent,
-          foregroundColor: VaultColors.textOnAccent,
-          textStyle: VaultText.subtitle,
-          padding: const EdgeInsets.symmetric(
-            horizontal: VaultSpacing.xl,
-            vertical: VaultSpacing.md + 2,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(VaultRadius.md),
-          ),
-          elevation: 0,
-        ),
+        style: solidActionStyle,
       ),
-
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: solidActionStyle,
+      ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: VaultColors.textPrimary,
@@ -158,7 +193,6 @@ class VaultTheme {
           ),
         ),
       ),
-
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: VaultColors.accentBright,
@@ -172,12 +206,10 @@ class VaultTheme {
           ),
         ),
       ),
-
       iconTheme: const IconThemeData(
         color: VaultColors.textSecondary,
         size: 20,
       ),
-
       snackBarTheme: SnackBarThemeData(
         backgroundColor: VaultColors.surfaceElevated,
         contentTextStyle: VaultText.body,
@@ -189,7 +221,6 @@ class VaultTheme {
           side: const BorderSide(color: VaultColors.borderSubtle),
         ),
       ),
-
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
           color: VaultColors.surfaceElevated,
@@ -203,19 +234,16 @@ class VaultTheme {
         ),
         waitDuration: const Duration(milliseconds: 400),
       ),
-
       dividerTheme: const DividerThemeData(
         color: VaultColors.borderSubtle,
         thickness: 1,
         space: 1,
       ),
-
       progressIndicatorTheme: const ProgressIndicatorThemeData(
         color: VaultColors.accent,
         linearTrackColor: VaultColors.surfaceMuted,
         circularTrackColor: VaultColors.surfaceMuted,
       ),
-
       chipTheme: ChipThemeData(
         backgroundColor: VaultColors.surfaceMuted,
         labelStyle: VaultText.caption,

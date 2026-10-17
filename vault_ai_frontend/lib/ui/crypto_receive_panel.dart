@@ -1,6 +1,7 @@
 
 
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -111,7 +112,7 @@ class ReceivePanel extends StatelessWidget {
                         masked,
                         key: const Key('crypto_receive_masked'),
                         style: const TextStyle(
-                          color: Color(0xFFB4B4B4),
+                          color: VaultColors.textSecondary,
                           fontSize: 12,
                           fontFamily: 'monospace',
                         ),
@@ -165,7 +166,7 @@ class ReceivePanel extends StatelessWidget {
           
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFF1F1F1F),
+              color: VaultColors.canvas,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.white12),
             ),
@@ -196,8 +197,8 @@ class ReceivePanel extends StatelessWidget {
                 icon: const Icon(Icons.copy, size: 16),
                 label: Text(AppLocalizations.of(context).cryptoCopyAddress),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF10A37F),
-                  foregroundColor: Colors.white,
+                  backgroundColor: VaultColors.accent,
+                  foregroundColor: VaultColors.textOnAccent,
                 ),
               ),
             ],
@@ -241,7 +242,7 @@ class ReceivePanel extends StatelessWidget {
             kReceiveReceiveOnlyHint,
             key: const Key('crypto_receive_only_hint'),
             style: const TextStyle(
-              color: Color(0xFF888888),
+              color: VaultColors.textTertiary,
               fontSize: 11,
               height: 1.45,
             ),
@@ -262,14 +263,14 @@ class _NetworkChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF10A37F).withValues(alpha: 0.16),
+        color: VaultColors.accent.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         network,
         key: const Key('crypto_receive_network_chip'),
         style: const TextStyle(
-          color: Color(0xFF10A37F),
+          color: VaultColors.accent,
           fontSize: 11,
           fontWeight: FontWeight.w700,
         ),
@@ -290,7 +291,7 @@ Future<void> showReceivePanelDialog(
     context: context,
     builder: (ctx) => Dialog(
       key: const Key('crypto_receive_dialog'),
-      backgroundColor: const Color(0xFF1F1F1F),
+      backgroundColor: VaultColors.canvas,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
       ),

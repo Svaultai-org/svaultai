@@ -1,6 +1,7 @@
 
 
 import 'package:flutter/material.dart';
+import 'tokens.dart';
 
 import 'crypto_wallet_engine_design.dart';
 
@@ -146,14 +147,14 @@ class CryptoWalletEngineSecurityPage extends StatelessWidget {
                     end: Alignment.bottomRight,
                     colors: [
                       kWalletAccentSuccess,
-                      Color(0xFF1F4E2F),
+                      VaultColors.accentBright,
                     ],
                   ),
                 ),
                 alignment: Alignment.center,
                 child: const Icon(
                   Icons.shield_rounded,
-                  size: 18, color: Colors.white,
+                  size: 18, color: VaultColors.textOnAccent,
                 ),
               ),
               const SizedBox(width: 12),
