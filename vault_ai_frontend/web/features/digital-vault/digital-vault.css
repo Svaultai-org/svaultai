@@ -1,6 +1,4 @@
 /* Public digital-vault overview; scoped to this page. */
-:root { --accent: #0865ee; --accent-soft: rgba(38, 125, 255, .11); }
-a, .breadcrumbs a, .hero .eyebrow { color: #76d9ff; }
 .vault-hero { display: grid; grid-template-columns: 1.15fr 1fr; gap: 32px; align-items: center; }
 .vault-hero h1 { font-size: clamp(36px, 5vw, 60px); }
 .vault-hero figure, .vault-shot { margin: 0; }
@@ -11,5 +9,5 @@ figcaption { margin-top: 10px; }
 .vault-points { padding-left: 22px; color: var(--muted); }
 .vault-points li + li { margin-top: 12px; }
 .vault-note { margin-top: 20px; color: var(--muted); }
-.vault-page .callout { border-color: rgba(38, 125, 255, .45); }
+.vault-page .callout { border-color: rgba(119, 184, 255, .45); }
 @media (max-width: 850px) { .vault-hero, .vault-columns { grid-template-columns: 1fr; } }
