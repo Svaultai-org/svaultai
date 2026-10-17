@@ -185,66 +185,183 @@
         .forEach(function (node) { node.remove(); });
     })();
   </script>
+  <style id="svaultai-public-landing-style">
+    body { margin: 0; background: #0F1115; }
+    #svaultai-boot-status {
+      position: fixed; inset: 0; z-index: 2; display: grid; place-items: center;
+      padding: 24px; box-sizing: border-box; background: #0F1115; color: #F6F8FC;
+      font: 16px/1.5 system-ui, sans-serif; text-align: center;
+    }
+    #svaultai-boot-logo { display: block; margin: 0 auto; }
+    #svaultai-boot-name { margin: 14px 0 0; font-size: 24px; font-weight: 800; letter-spacing: -.4px; }
+    #svaultai-boot-recovery {
+      position: fixed; z-index: 3; right: 24px; bottom: 24px; max-width: 340px;
+      padding: 20px; border: 1px solid #51647D; border-radius: 16px;
+      background: #141C29; color: #F6F8FC; font: 15px/1.5 system-ui, sans-serif;
+    }
+    #svaultai-boot-recovery[hidden], #svaultai-boot-message[hidden],
+    #svaultai-boot-retry[hidden] { display: none; }
+    #svaultai-boot-message { margin: 0 0 12px; }
+    #svaultai-boot-retry {
+      padding: 10px 18px; border: 0; border-radius: 10px; background: #77B8FF;
+      color: #091B30; font: inherit; font-weight: 700; cursor: pointer;
+    }
+    #seo-content { display: none; }
+    .svaultai-public-startup #svaultai-boot-status { display: none; }
+    .svaultai-public-startup #seo-content {
+      display: block; position: fixed; inset: 0; z-index: 2; overflow-y: auto;
+      background: #0F1115; color: #F6F8FC; font: 16px/1.55 system-ui, sans-serif;
+    }
+    #seo-content *, #seo-content *::before, #seo-content *::after { box-sizing: border-box; }
+    #seo-content .page-width { max-width: 1156px; margin: 0 auto; padding: 0 28px; }
+    #seo-content a { color: #77B8FF; text-underline-offset: 4px; }
+    #seo-content a:focus-visible, #svaultai-boot-retry:focus-visible {
+      outline: 3px solid #A4D0FF; outline-offset: 4px;
+    }
+    #seo-content .landing-nav {
+      display: flex; min-height: 88px; align-items: center; justify-content: space-between;
+      gap: 20px; border-bottom: 1px solid #24364F;
+    }
+    #seo-content .brand { display: inline-flex; align-items: center; gap: 12px; color: #F6F8FC; text-decoration: none; font-size: 20px; font-weight: 800; }
+    #seo-content .brand img { width: 46px; height: 46px; border-radius: 14px; }
+    #seo-content .nav-links, #seo-content .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+    #seo-content .nav-links > a:not(.button) { padding: 8px; color: #B9C6D8; text-decoration: none; }
+    #seo-content .button { display: inline-flex; justify-content: center; align-items: center; min-height: 48px; padding: 12px 20px; border: 1px solid #51647D; border-radius: 12px; color: #F6F8FC; font-weight: 700; text-decoration: none; }
+    #seo-content .button.primary { background: #77B8FF; border-color: #77B8FF; color: #091B30; }
+    #seo-content .hero { display: grid; grid-template-columns: 1.15fr 1fr; gap: 56px; align-items: center; padding-top: 48px; padding-bottom: 44px; }
+    #seo-content .eyebrow { margin: 0 0 18px; color: #77B8FF; font-size: 13px; font-weight: 750; letter-spacing: 1.1px; }
+    #seo-content h1 { margin: 0 0 22px; font-size: clamp(40px, 4.8vw, 64px); line-height: 1.06; font-weight: 800; letter-spacing: -1.8px; }
+    #seo-content .lead { color: #B9C6D8; font-size: 18px; line-height: 1.65; margin: 0 0 26px; max-width: 600px; }
+    #seo-content .caption { color: #B9C6D8; font-size: 14px; line-height: 1.6; margin: 16px 0; }
+    #seo-content .store-links { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 12px; }
+    #seo-content .store-links a { border: 1px solid #3B4F6D; border-radius: 10px; padding: 9px 14px; color: #F6F8FC; text-decoration: none; font-size: 14px; }
+    #seo-content .preview { margin: 0; padding: 20px; border: 1px solid #304A6B; border-radius: 24px; background: #141C29; }
+    #seo-content .preview img { display: block; width: 100%; height: 420px; object-fit: contain; border-radius: 14px; background: #0F1115; }
+    #seo-content .preview figcaption { margin: 18px 0 0; color: #B9C6D8; font-size: 14px; }
+    #seo-content .preview strong { display: block; margin-bottom: 6px; color: #F6F8FC; font-size: 18px; }
+    #seo-content .section { padding-top: 32px; padding-bottom: 36px; }
+    #seo-content h2 { margin: 0 0 24px; font-size: clamp(25px, 3vw, 34px); line-height: 1.2; letter-spacing: -.5px; }
+    #seo-content h3 { margin: 12px 0 10px; font-size: 19px; line-height: 1.3; }
+    #seo-content .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    #seo-content .panel { padding: 24px; border: 1px solid #2A3C55; border-radius: 20px; background: #141C29; }
+    #seo-content .panel p { color: #B9C6D8; margin: 0; }
+    #seo-content .feature-mark { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 11px; color: #A4D0FF; background: #183B60; font-weight: 750; font-size: 19px; }
+    #seo-content .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; padding: 0; margin: 0 0 20px; list-style: none; }
+    #seo-content .steps li { padding: 20px; border: 1px solid #2A3C55; border-radius: 18px; background: #141C29; }
+    #seo-content .steps strong { display: block; margin-bottom: 10px; }
+    #seo-content .steps p { margin: 0; color: #B9C6D8; font-size: 14px; }
+    #seo-content .pricing { display: grid; grid-template-columns: .9fr 1.1fr; gap: 16px; }
+    #seo-content .free-price { color: #77B8FF; font-size: 42px; font-weight: 800; margin: 14px 0; }
+    #seo-content .free-price span { color: #B9C6D8; font-size: 16px; font-weight: 500; }
+    #seo-content table { width: 100%; border-collapse: collapse; color: #F6F8FC; }
+    #seo-content td { padding: 9px 0; border-bottom: 1px solid #2A3C55; }
+    #seo-content td:last-child { text-align: right; }
+    #seo-content .final-cta { margin-top: 24px; margin-bottom: 32px; padding: 36px; border: 1px solid #304A6B; border-radius: 24px; background: #141C29; }
+    #seo-content .final-cta h2 { margin-bottom: 14px; }
+    #seo-content .footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px 28px; padding-top: 24px; padding-bottom: 32px; border-top: 1px solid #24364F; color: #B9C6D8; font-size: 14px; }
+    #seo-content .footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+    @media (max-width: 850px) {
+      #seo-content .hero { grid-template-columns: 1fr; gap: 30px; padding-top: 32px; }
+      #seo-content .hero .preview { max-width: 560px; width: 100%; }
+      #seo-content .preview img { height: 360px; }
+      #seo-content .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      #seo-content .nav-links .nav-information { display: none; }
+    }
+    @media (max-width: 540px) {
+      #seo-content .page-width { padding-left: 20px; padding-right: 20px; }
+      #seo-content .landing-nav { min-height: 76px; gap: 10px; }
+      #seo-content .brand { font-size: 18px; gap: 8px; }
+      #seo-content .brand img { width: 40px; height: 40px; }
+      #seo-content .nav-links { gap: 0; }
+      #seo-content .nav-links .button { min-height: 42px; padding: 9px 12px; font-size: 13px; }
+      #seo-content h1 { font-size: clamp(38px, 11vw, 55px); letter-spacing: -1.2px; }
+      #seo-content .lead { font-size: 16px; }
+      #seo-content .grid, #seo-content .pricing, #seo-content .steps { grid-template-columns: 1fr; }
+      #seo-content .panel { padding: 20px; }
+      #seo-content .preview { padding: 14px; }
+      #seo-content .preview img { height: 330px; }
+      #seo-content .final-cta { padding: 24px; }
+      #svaultai-boot-recovery { right: 16px; bottom: 16px; left: 16px; max-width: none; }
+    }
+  </style>
 </head>
 <body>
-  <!-- Paint before Flutter/Wasm downloads; no vault data or credentials. -->
+  <!-- Private routes paint only the brand. The public root is a usable landing
+       page immediately, independent of Flutter download/session initialization. -->
   <div id="svaultai-boot-status">
     <div id="svaultai-boot-brand">
       <img id="svaultai-boot-logo" src="icons/Icon-512.png"
         width="192" height="192" alt="SVaultAI" fetchpriority="high">
-      <p id="svaultai-boot-message" role="status" aria-live="polite" aria-atomic="true">Opening SVaultAI securely…</p>
-      <button id="svaultai-boot-retry" type="button" hidden>Try again</button>
+      <p id="svaultai-boot-name">SVaultAI</p>
     </div>
-  <style>
-    #svaultai-boot-status {
-      position: fixed; inset: 0; z-index: 2; display: grid;
-      place-items: center; padding: 24px; box-sizing: border-box;
-      background: #0F1115; color: #f6f8fc;
-      font: 16px/1.5 system-ui, sans-serif; text-align: center;
-    }
-    #svaultai-boot-brand { max-width: 340px; }
-    #svaultai-boot-logo { display: block; margin: 0 auto; }
-    #svaultai-boot-message[hidden] { display: none; }
-    #svaultai-boot-retry {
-      padding: 10px 18px; border: 1px solid #5f7488;
-      border-radius: 10px; background: #182633; color: #f6f8fc;
-      font: inherit; cursor: pointer;
-    }
-    #svaultai-boot-retry[hidden] { display: none; }
-    #seo-content { display: none; }
-    .svaultai-public-startup #svaultai-boot-status {
-      display: block; overflow-y: auto; text-align: left;
-      padding: 28px max(24px, calc((100vw - 1100px) / 2));
-    }
-    .svaultai-public-startup #svaultai-boot-brand {
-      display: flex; align-items: center; flex-wrap: wrap; gap: 16px;
-      max-width: none; padding-bottom: 20px; border-bottom: 1px solid #283747;
-    }
-    .svaultai-public-startup #svaultai-boot-logo {
-      margin: 0; width: 64px; height: 64px;
-    }
-    .svaultai-public-startup #svaultai-boot-message {
-      flex: 1; min-width: 180px; color: #bbcada;
-    }
-    .svaultai-public-startup #seo-content { display: block; max-width: 850px; }
-    #seo-content h1 { font-size: clamp(30px, 5vw, 54px); line-height: 1.1; }
-    #seo-content h2 { margin-top: 32px; font-size: 24px; }
-    #seo-content p { color: #cfdae6; }
-    #seo-content a { color: #83c1ff; text-underline-offset: 3px; }
-    #seo-content nav { display: flex; flex-wrap: wrap; gap: 12px 24px; }
-    #seo-content .startup-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-    #seo-content .startup-actions a {
-      display: inline-block; border: 1px solid #5f8cb9; border-radius: 10px;
-      padding: 10px 18px; color: #f6f8fc; text-decoration: none;
-    }
-    #seo-content .startup-actions a:first-child { background: #77b8ff; color: #091b30; }
-    #seo-content a:focus-visible, #svaultai-boot-retry:focus-visible {
-      outline: 3px solid #a8d5ff; outline-offset: 4px;
-    }
-  </style>
+  </div>
+  <aside id="svaultai-boot-recovery" hidden aria-label="Open vault app recovery">
+    <p id="svaultai-boot-message" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+    <button id="svaultai-boot-retry" type="button" hidden>Try again</button>
+  </aside>
+  <main id="seo-content" aria-label="SVaultAI product overview">
+    <div class="page-width">
+      <header class="landing-nav">
+        <a class="brand" href="/" aria-label="SVaultAI home"><img src="icons/Icon-512.png" width="46" height="46" alt=""><span>SVaultAI</span></a>
+        <nav class="nav-links" aria-label="Main navigation">
+          <a class="nav-information" href="/features/">Features</a>
+          <a class="nav-information" href="/pricing/">Pricing</a>
+          <a class="button" href="/login">Open your vault</a>
+        </nav>
+      </header>
+      <section class="hero" aria-labelledby="landing-headline">
+        <div>
+          <p class="eyebrow">SVAULTAI · ENCRYPTED DIGITAL VAULT</p>
+          <h1 id="landing-headline">Your digital life.<br>One encrypted vault.</h1>
+          <p class="lead">Keep files, photos, logins and memories together. Find what you need with AI, manage supported digital assets and crypto, and prepare access for someone you trust.</p>
+          <div class="actions"><a class="button primary" href="/signup">Create your free vault</a><a class="button" href="/login">Open your vault</a></div>
+          <p class="caption">1 GB included · No email or phone number required · Optional paid storage</p>
+          <p class="caption">Start on the web, or use the iPhone, iPad and Android apps.</p>
+          <div class="store-links"><a href="https://apps.apple.com/us/app/svaultai/id6800601455">Download on the App Store</a><a href="https://play.google.com/store/apps/details?id=com.svaultai.app">Get it on Google Play</a></div>
+          <a href="/pricing/">See storage and pricing</a>
+        </div>
+        <figure class="preview">
+          <img src="assets/assets/branding/public-vault-blue.png" width="1084" height="1518" alt="The real blue SVaultAI interface with a fictional Demo Vault and AI chat." fetchpriority="high">
+          <figcaption><strong>A look inside your vault.</strong>Genuine SVaultAI interface with fictional demo information. No personal vault content is shown.</figcaption>
+        </figure>
+      </section>
+      <section class="section" id="features" aria-labelledby="features-heading">
+        <h2 id="features-heading">More of your digital life, in one place.</h2>
+        <div class="grid">
+          <article class="panel"><span class="feature-mark" aria-hidden="true">▤</span><h3>Files, photos and memories</h3><p>Keep important documents, private photos, videos, saved logins and personal memories organized in your vault.</p></article>
+          <article class="panel"><span class="feature-mark" aria-hidden="true">✦</span><h3>Find it with AI</h3><p>Ask “where is my passport scan?” in everyday language. AI and document features may process content you authorize on servers and with service providers.</p></article>
+          <article class="panel"><span class="feature-mark" aria-hidden="true">◇</span><h3>Digital Assets &amp; Crypto</h3><p>Supported non-custodial cryptocurrency, PAXG Digital Gold and Ethereum KAG Digital Silver, with balances, receive, send and history on supported networks. Wallet features require an eligible paid storage plan.</p></article>
+          <article class="panel"><span class="feature-mark" aria-hidden="true">◎</span><h3>Beneficiary access</h3><p>Prepare encrypted vault credentials for a trusted person. Stay in control with requests, approval and decline, with a countdown for an unanswered request.</p></article>
+        </div>
+      </section>
+      <section class="section" aria-labelledby="inheritance-heading">
+        <h2 id="inheritance-heading">Prepare access for someone you trust.</h2>
+        <ol class="steps">
+          <li><strong>1. Pair and prepare</strong><p>Connect by code and prepare encrypted vault credentials for your beneficiary.</p></li>
+          <li><strong>2. Request access</strong><p>The beneficiary can request access if they believe the connected vault owner has died.</p></li>
+          <li><strong>3. Approve or decline</strong><p>The owner signs in. Approval releases credentials immediately; declining clears the request and countdown.</p></li>
+          <li><strong>4. An unanswered request</strong><p>After the countdown, normally 30 days, the beneficiary can claim and reveal the prepared credentials.</p></li>
+        </ol>
+        <p class="caption">The owner signs in to check requests in the app. SVaultAI does not verify death. Prepared credentials can open the associated vault; this is not selective-file access, a legal will or an automatic transfer of assets.</p>
+        <a href="/features/digital-inheritance/">Read the full beneficiary access guide</a>
+      </section>
+      <section class="section" aria-labelledby="pricing-heading">
+        <h2 id="pricing-heading">Start free. Add storage when you need it.</h2>
+        <div class="pricing">
+          <article class="panel"><h3>Free base vault · 1 GB</h3><div class="free-price">$0 <span>No subscription required</span></div><p>Start with files, photos, logins and memories. Register with a vault name and PIN; no email address or phone number is required.</p></article>
+          <article class="panel"><h3>Optional paid storage</h3><p class="caption">USD monthly examples</p><table aria-label="Storage plan monthly examples in US dollars"><tbody><tr><td>50 GB</td><td>$14.99/month</td></tr><tr><td>100 GB</td><td>$19.99/month</td></tr><tr><td>150 GB</td><td>$24.99/month</td></tr><tr><td>500 GB</td><td>$49.99/month</td></tr></tbody></table><p class="caption">Your store checkout shows the actual localized price and current availability. Wallet features require an eligible paid storage plan.</p><a href="/pricing/">View pricing and plan details</a></article>
+        </div>
+      </section>
+      <section class="section" aria-labelledby="security-heading"><div class="panel"><h2 id="security-heading">Understand how your information is used.</h2><p>Protected files and records are encrypted while stored. Keep your vault name and PIN safe; support cannot recover them. AI and document features may process content you authorize on servers and with service providers.</p><p class="caption"><a href="/features/zero-knowledge-security/">How encryption and AI work</a> · <a href="/privacy/">Privacy policy</a></p></div></section>
+      <section class="final-cta"><h2>Start with your free 1 GB vault.</h2><p class="caption">A vault name and PIN are all you need to begin.</p><a class="button primary" href="/signup">Create your free vault</a></section>
+      <footer class="footer"><span>SVaultAI · Your digital life, organized.</span><nav aria-label="Public information"><a href="/features/">Features</a><a href="/pricing/">Pricing</a><a href="/privacy/">Privacy</a><a href="/help-and-faq-public">Help &amp; FAQ</a><a href="/guides/">Guides</a></nav></footer>
+    </div>
+  </main>
   <script id="svaultai-boot-script">
     (function () {
       var status = document.getElementById('svaultai-boot-status');
+      var preview = document.getElementById('seo-content');
+      var recovery = document.getElementById('svaultai-boot-recovery');
       var message = document.getElementById('svaultai-boot-message');
       var retry = document.getElementById('svaultai-boot-retry');
       var ready = false;
@@ -256,30 +373,29 @@
           ? 'SVaultAI could not open. Check your connection and try again.'
           : 'SVaultAI is taking longer than usual to open. Check your connection and try again.';
         message.hidden = false;
+        recovery.hidden = false;
         retry.hidden = false;
       }
       function recordFailure(event) {
         if (ready) return;
-        // A missing image is not evidence that Flutter failed to start.
         if (event && event.target && event.target.tagName === 'IMG') return;
         failed = true;
         if (waitElapsed) showRetry(true);
       }
-      // Explain the normal wait immediately. Offer recovery if the app has
-      // not rendered after a bounded wait; do not navigate or skip auth.
       var timeout = window.setTimeout(function () {
         waitElapsed = true;
         showRetry(failed);
       }, 15000);
-      // Glass-pane creation precedes a rendered app. Only the engine's actual
-      // first-frame event may retire this shell; Dart then owns its boot gate.
-      window.addEventListener('flutter-first-frame', function () {
+      // Flutter's first frame can still be the pending initialization screen.
+      // The initialized app calls this only after its guarded routes render.
+      window.svaultaiAppRendered = function () {
         if (ready) return;
         ready = true;
         window.clearTimeout(timeout);
-        document.getElementById('seo-content')?.remove();
+        preview.remove();
         status.remove();
-      }, { once: true });
+        recovery.remove();
+      };
       window.addEventListener('error', recordFailure, true);
       window.addEventListener('unhandledrejection', recordFailure);
       retry.addEventListener('click', function () {
@@ -287,28 +403,6 @@
       });
     })();
   </script>
-  <main id="seo-content" aria-label="SVaultAI product overview">
-    <h1>SVaultAI — Your Digital Life. One Encrypted Vault.</h1>
-    <p>Save and find files, photos, documents, logins and memories in one place.</p>
-    <p class="startup-actions"><a href="/signup">Create your free vault</a><a href="/login">Sign in</a></p>
-    <p>Start with 1 GB free. No email address or phone number needed. Optional paid storage plans are available.</p>
-    <p>An encrypted digital vault for files, photos, logins, memories, digital assets and crypto. AI chat and optional beneficiary access. Free base vault. Pair a beneficiary with a code and prepare the vault credentials you want them to receive. Owner approval gives immediate access; declining clears the request. Only an unanswered request needs to reach its countdown deadline before the beneficiary can claim the prepared credentials.</p>
-    <h2>Inheritance: digital access planning</h2>
-    <p>Pair a beneficiary with a code, then prepare an encrypted package containing the vault name and PIN you choose to share. A beneficiary can request access if they believe the connected vault owner has died. The owner signs in to approve or decline: approval releases the credentials immediately with no 30-day wait; declining clears the countdown and returns the arrangement to normal. If the owner does not respond, the beneficiary can claim and reveal the prepared credentials after the countdown, normally 30 days. SVaultAI does not verify death. This is a digital access feature, not a legal will or a substitute for estate advice.</p>
-    <p>Ask the AI chat to find, save, retrieve and manage content you authorize inside your vault — "where's my passport scan?" — in everyday language. Client-side encryption keeps protected vault content under your control.</p>
-    <p>Assets brings supported non-custodial cryptocurrency, PAXG Digital Gold and Ethereum KAG Digital Silver together. Inheritance access planning can help a paired beneficiary access the vault using the credentials you prepare; it does not transfer legal ownership of assets. Concierge offers optional free checks for known password exposure, weakness and reuse. Other tokenized categories are coming soon; email and background exposure monitoring are not enabled, and private-file or comprehensive dark-web scanning is not supported.</p>
-    <p>Cryptocurrency wallet features require an eligible paid storage plan.</p>
-    <nav aria-label="Public information">
-      <a href="/features/digital-vault/">SVaultAI digital vault</a>
-      <a href="/privacy/">Privacy Policy</a>
-      <a href="/help-and-faq-public">Help Center</a>
-      <a href="/features/">Explore SVaultAI features</a>
-      <a href="/guides/">Read SVaultAI privacy guides</a>
-      <a href="https://apps.apple.com/us/app/svaultai/id6800601455">Download SVaultAI on the App Store</a>
-      <a href="https://play.google.com/store/apps/details?id=com.svaultai.app">Get SVaultAI on Google Play</a>
-    </nav>
-  </main>
-  </div>
   <!-- 2026-07-14 (Round 12 — explicit SW retirement bootstrap):
        Flutter's `--pwa-strategy=none` build does NOT register a
        service worker. Existing users still controlled by the

@@ -16,6 +16,30 @@ import 'package:vault_ai_frontend/ui/app_startup_gate.dart';
 
 const _readyApp = MaterialApp(home: Text('Initialized app'));
 
+class _GuardedFirstFrame extends StatefulWidget {
+  const _GuardedFirstFrame();
+
+  @override
+  State<_GuardedFirstFrame> createState() => _GuardedFirstFrameState();
+}
+
+class _GuardedFirstFrameState extends State<_GuardedFirstFrame> {
+  bool _guardFinished = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _guardFinished = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Text(_guardFinished ? 'Guarded app rendered' : 'Guard pending'),
+      );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -28,6 +52,59 @@ void main() {
   tearDown(() {
     NativeSecureStore.useSharedPreferencesForTesting = false;
     st.SessionTermination.instance.reset();
+  });
+
+  testWidgets('HTML handoff waits for initialization and rendered route guards',
+      (tester) async {
+    final pending = Completer<Widget>();
+    var signals = 0;
+    var guardedScreenWasPainted = false;
+    await tester.pumpWidget(AppStartupGate(
+      initialize: () => pending.future,
+      onAppRendered: () {
+        signals++;
+        guardedScreenWasPainted =
+            find.text('Guarded app rendered').evaluate().isNotEmpty;
+      },
+    ));
+    await tester.pump(const Duration(seconds: 20));
+    expect(signals, 0);
+    expect(find.text('Guarded app rendered'), findsNothing);
+
+    pending.complete(const MaterialApp(home: _GuardedFirstFrame()));
+    await tester.pump();
+    expect(signals, 0);
+    await tester.pumpAndSettle();
+    expect(signals, 1);
+    expect(guardedScreenWasPainted, isTrue);
+    await tester.pump();
+    expect(signals, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed or disposed initialization never signals a ready app',
+      (tester) async {
+    var signals = 0;
+    await tester.pumpWidget(AppStartupGate(
+      initialize: () async => throw StateError('synthetic-private-error'),
+      onAppRendered: () => signals++,
+    ));
+    await tester.pumpAndSettle();
+    expect(signals, 0);
+    expect(find.textContaining('synthetic-private-error'), findsNothing);
+
+    final pending = Completer<Widget>();
+    await tester.pumpWidget(AppStartupGate(
+      key: const Key('replacement-startup'),
+      initialize: () => pending.future,
+      onAppRendered: () => signals++,
+    ));
+    pending.complete(_readyApp);
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(signals, 0);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

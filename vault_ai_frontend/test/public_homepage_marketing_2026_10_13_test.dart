@@ -57,7 +57,7 @@ void main() {
 
   test('real demo image is bundled and existing auth entry points remain', () {
     expect(
-      File('assets/branding/public-vault-demo.jpg').lengthSync(),
+      File('assets/branding/public-vault-blue.png').lengthSync(),
       greaterThan(10000),
     );
     final main = File('lib/main.dart').readAsStringSync();

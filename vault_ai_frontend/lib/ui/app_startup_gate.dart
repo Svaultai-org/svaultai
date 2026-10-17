@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../services/web_boot_handoff.dart';
 import 'theme.dart';
 
 /// Paints before reading local credentials or checking a remembered session.
@@ -7,8 +9,13 @@ import 'theme.dart';
 /// cached identity can never bypass the existing authentication/route guards.
 class AppStartupGate extends StatefulWidget {
   final Future<Widget> Function() initialize;
+  final VoidCallback? onAppRendered;
 
-  const AppStartupGate({super.key, required this.initialize});
+  const AppStartupGate({
+    super.key,
+    required this.initialize,
+    this.onAppRendered,
+  });
 
   @override
   State<AppStartupGate> createState() => _AppStartupGateState();
@@ -36,7 +43,10 @@ class _AppStartupGateState extends State<AppStartupGate> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done &&
             snapshot.hasData) {
-          return snapshot.requireData;
+          return _InitializedAppHandoff(
+            onRendered: widget.onAppRendered ?? notifyWebAppRendered,
+            child: snapshot.requireData,
+          );
         }
         // Do not render exception text: local-storage/platform failures may
         // contain implementation details that do not belong on an auth page.
@@ -70,7 +80,9 @@ class _AppStartupGateState extends State<AppStartupGate> {
                           child: Text(
                             failed
                                 ? 'SVaultAI could not start. Please try again.'
-                                : 'Opening SVaultAI securely…',
+                                : kIsWeb
+                                    ? 'SVaultAI'
+                                    : 'Opening SVaultAI securely…',
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -92,4 +104,36 @@ class _AppStartupGateState extends State<AppStartupGate> {
       },
     );
   }
+}
+
+/// The engine's first frame may still be the pending initialization screen.
+/// Keep the HTML landing/brand until initialization succeeded and the real
+/// app rendered. Its root/deep-link guards use the first app post-frame pass;
+/// the next rendered frame contains their selected screen. No timed wait or
+/// authentication decision is added here.
+class _InitializedAppHandoff extends StatefulWidget {
+  const _InitializedAppHandoff({required this.child, required this.onRendered});
+
+  final Widget child;
+  final VoidCallback onRendered;
+
+  @override
+  State<_InitializedAppHandoff> createState() => _InitializedAppHandoffState();
+}
+
+class _InitializedAppHandoffState extends State<_InitializedAppHandoff> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onRendered();
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

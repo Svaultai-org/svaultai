@@ -148,11 +148,12 @@ class PublicHomepageDemo extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Image.asset(
-            'assets/branding/public-vault-demo.jpg',
+            'assets/branding/public-vault-blue.png',
             width: double.infinity,
-            fit: BoxFit.fitWidth,
+            height: 420,
+            fit: BoxFit.contain,
             semanticLabel:
-                'SVaultAI product preview showing vault registration and the dashboard with demo information.',
+                'The real blue SVaultAI interface with a fictional Demo Vault and AI chat.',
           ),
           const Padding(
             padding: EdgeInsets.all(20),
@@ -160,7 +161,7 @@ class PublicHomepageDemo extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Your vault, from the first screen.',
+                  'A look inside your vault.',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -169,8 +170,8 @@ class PublicHomepageDemo extends StatelessWidget {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'Choose a vault name and PIN, then start organizing. '
-                  'Product screenshots use demo information.',
+                  'Genuine SVaultAI interface with fictional demo information. '
+                  'No personal vault content is shown.',
                   style: TextStyle(color: _muted, height: 1.5, fontSize: 14),
                 ),
               ],

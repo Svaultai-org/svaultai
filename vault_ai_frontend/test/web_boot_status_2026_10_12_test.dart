@@ -17,10 +17,11 @@ Map<String, dynamic> _run(String scenario) {
 const vm = require('node:vm');
 const events = Object.create(null);
 const buttonEvents = Object.create(null);
-let timer = null, delay = null, cleared = 0, removed = 0, previewRemoved = 0, reloads = 0;
+let timer = null, delay = null, cleared = 0, removed = 0, previewRemoved = 0, recoveryRemoved = 0, reloads = 0;
 const status = { remove() { removed++; } };
 const preview = { remove() { previewRemoved++; } };
-const message = { textContent: 'Opening SVaultAI securely…', hidden: false };
+const message = { textContent: '', hidden: true };
+const recovery = { hidden: true, remove() { recoveryRemoved++; } };
 const retry = { hidden: true, addEventListener(k, fn) { buttonEvents[k] = fn; } };
 const window = {
   setTimeout(fn, ms) { timer = fn; delay = ms; return 1; },
@@ -29,11 +30,11 @@ const window = {
   location: { reload() { reloads++; } }
 };
 const document = { getElementById(id) {
-  return { 'svaultai-boot-status': status, 'svaultai-boot-message': message, 'svaultai-boot-retry': retry, 'seo-content': preview }[id];
+  return { 'svaultai-boot-status': status, 'svaultai-boot-message': message, 'svaultai-boot-retry': retry, 'seo-content': preview, 'svaultai-boot-recovery': recovery }[id];
 } };
 vm.runInNewContext(${jsonEncode(_script())}, { window, document });
 $scenario
-console.log(JSON.stringify({text: message.textContent, messageHidden: message.hidden, hidden: retry.hidden, delay, cleared, removed, previewRemoved, reloads}));
+console.log(JSON.stringify({text: message.textContent, messageHidden: message.hidden, hidden: retry.hidden, delay, cleared, removed, previewRemoved, recoveryRemoved, recoveryHidden: recovery.hidden, reloads}));
 ''';
   final result = Process.runSync('node', ['-e', code]);
   expect(result.exitCode, 0, reason: 'Synthetic boot-script fixture must run');
@@ -155,21 +156,22 @@ void main() {
         lessThan(html.indexOf('src="assets/opaque/vaultai-opaque-init.js"')));
     expect(
         html, contains('role="status" aria-live="polite" aria-atomic="true"'));
-    expect(html, contains('Opening SVaultAI securely…</p>'));
+    expect(html, isNot(contains('Opening SVaultAI securely')));
+    expect(html, contains('id="svaultai-boot-name">SVaultAI</p>'));
     expect(html, contains('id="svaultai-boot-retry" type="button" hidden'));
     expect(html, contains('#seo-content { display: none; }'));
-    expect(html,
-        contains('.svaultai-public-startup #seo-content { display: block;'));
+    expect(html, contains('.svaultai-public-startup #seo-content {'));
   });
 
-  test('first paint reuses the unchanged updated shield with startup status',
+  test('first paint reuses the unchanged shield with only the SVaultAI name',
       () {
     final html = _html();
     expect(html, contains('id="svaultai-boot-logo" src="icons/Icon-512.png"'));
     expect(html, contains('width="192" height="192" alt="SVaultAI"'));
     expect(
         html, contains('rel="preload" as="image" href="icons/Icon-512.png"'));
-    expect(html, contains('Opening SVaultAI securely…'));
+    expect(html, contains('id="svaultai-boot-name">SVaultAI</p>'));
+    expect(html, isNot(contains('Opening SVaultAI securely')));
     expect(
       sha256
           .convert(File('web/icons/Icon-512.png').readAsBytesSync())
@@ -179,10 +181,10 @@ void main() {
     );
   });
 
-  test('initial boot explains its wait without reloading', () {
+  test('initial boot has no interim message or automatic reload', () {
     final result = _run('');
-    expect(result['text'], 'Opening SVaultAI securely…');
-    expect(result['messageHidden'], isFalse);
+    expect(result['text'], isEmpty);
+    expect(result['messageHidden'], isTrue);
     expect(result['hidden'], isTrue);
     expect(result['removed'], 0);
     expect(result['previewRemoved'], 0);
@@ -200,21 +202,60 @@ void main() {
     expect(result['reloads'], 0);
   });
 
-  test('actual first frame retires shell and cancels its timer', () {
-    final result = _run("events['flutter-first-frame']();");
+  test('the engine first frame never retires the shell before initialization',
+      () {
+    final result = _run(
+        "if (events['flutter-first-frame']) events['flutter-first-frame']();");
+    expect(result['removed'], 0);
+    expect(result['previewRemoved'], 0);
+    expect(result['recoveryRemoved'], 0);
+    expect(result['cleared'], 0);
+  });
+
+  test('the designed public landing is complete before any app scripts load',
+      () {
+    final html = _html();
+    final start = html.indexOf('<main id="seo-content"');
+    final end = html.indexOf('</main>', start);
+    final landing = html.substring(start, end);
+    expect(html.indexOf('<style id="svaultai-public-landing-style">'),
+        lessThan(start));
+    expect(end, lessThan(html.indexOf('src="flutter_bootstrap.js"')));
+    expect(landing, contains('Your digital life.<br>One encrypted vault.'));
+    expect(landing, contains('class="hero"'));
+    expect(landing, contains('href="/signup">Create your free vault</a>'));
+    expect(landing, contains('href="/login">Open your vault</a>'));
+    expect(landing, contains('href="/pricing/"'));
+    expect(landing, contains('href="/features/digital-inheritance/"'));
+    expect(landing, contains('href="/privacy/"'));
+    expect(landing, contains('1 GB included'));
+    expect(
+        landing, contains('actual localized price and current availability'));
+    expect(landing,
+        contains('Wallet features require an eligible paid storage plan'));
+    expect(landing, contains('Approval releases credentials immediately'));
+    expect(landing, contains('declining clears the request and countdown'));
+    expect(landing, contains('on servers and with service providers'));
+    expect(landing, contains('public-vault-blue.png'));
+    expect(landing, isNot(contains('public-vault-demo.jpg')));
+    expect(landing, isNot(contains('onclick=')));
+    expect(_script(), isNot(contains('1000')));
+  });
+
+  test('initialized app render signal retires shell and cancels its timer', () {
+    final result = _run("window.svaultaiAppRendered();");
     expect(result['removed'], 1);
     expect(result['previewRemoved'], 1);
     expect(result['cleared'], 1);
     expect(result['reloads'], 0);
   });
 
-  test('late first frame recovers normally after timeout or bootstrap error',
-      () {
+  test('late initialized render recovers after timeout or bootstrap error', () {
     for (final preceding in [
       "timer();",
       "events.error({message:'synthetic-private-marker'});"
     ]) {
-      final result = _run("$preceding events['flutter-first-frame']();");
+      final result = _run("$preceding window.svaultaiAppRendered();");
       expect(result['removed'], 1);
       expect(result['cleared'], 1);
       expect(result['reloads'], 0);
@@ -226,8 +267,8 @@ void main() {
     for (final event in ['error', 'unhandledrejection']) {
       final result = _run(
           "events['$event']({message:'synthetic-private-marker', reason:'synthetic-private-marker'});");
-      expect(result['text'], 'Opening SVaultAI securely…');
-      expect(result['messageHidden'], isFalse);
+      expect(result['text'], isEmpty);
+      expect(result['messageHidden'], isTrue);
       expect(result['hidden'], isTrue);
       expect(result['reloads'], 0);
     }
@@ -260,20 +301,20 @@ void main() {
     expect(result['reloads'], 0);
   });
 
-  test('post-first-frame errors or old timer do not cover a running app', () {
+  test('post-handoff errors or old timer do not cover a running app', () {
     final result = _run(
-        "events['flutter-first-frame'](); events.error({}); events.unhandledrejection({}); timer(); events['flutter-first-frame']();");
+        "window.svaultaiAppRendered(); events.error({}); events.unhandledrejection({}); timer(); window.svaultaiAppRendered();");
     expect(result['removed'], 1);
     expect(result['cleared'], 1);
     expect(result['hidden'], isTrue);
-    expect(result['messageHidden'], isFalse);
-    expect(result['text'], 'Opening SVaultAI securely…');
+    expect(result['messageHidden'], isTrue);
+    expect(result['text'], isEmpty);
   });
 
   test('a hidden or stale retry cannot reload a healthy startup', () {
     for (final scenario in [
       'buttonEvents.click();',
-      "timer(); events['flutter-first-frame'](); buttonEvents.click();",
+      "timer(); window.svaultaiAppRendered(); buttonEvents.click();",
     ]) {
       expect(_run(scenario)['reloads'], 0);
     }
