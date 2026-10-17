@@ -36,6 +36,7 @@ class _Fixture {
   final mvk = SecretKey(List<int>.filled(32, 9));
   late AppState app;
   int chatCalls = 0;
+  int memoryReads = 0;
   int nextId = 100;
   bool failInventory = false;
   Completer<void>? pendingSave;
@@ -116,6 +117,10 @@ class _Fixture {
       case 'GET /vault/ciphertext/vault-items':
         if (failInventory) return http.Response('{}', 503);
         result = rows;
+        break;
+      case 'GET /vault/ciphertext/vault-ai-memory':
+        memoryReads++;
+        result = [];
         break;
       case 'POST /vault/ciphertext/vault-items':
         await pendingSave?.future;
@@ -215,6 +220,41 @@ Future<void> _section(WidgetTester tester, String section) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _selectDuplicateLoginForDelete(WidgetTester tester) async {
+  await _section(tester, 'logins');
+  final card = find.byKey(const Key('secure_item_card_id_12'));
+  final delete = find.descendant(of: card, matching: find.text('Delete'));
+  await tester.ensureVisible(delete);
+  await tester.tap(delete);
+  await tester.pumpAndSettle();
+  expect(find.text('Are you sure you want to delete Duplicate login from your vault?'),
+      findsWidgets);
+}
+
+Future<void> _withDeleteFixture(WidgetTester tester,
+    Future<void> Function(_Fixture) action) async {
+  await tester.binding.setSurfaceSize(const Size(430, 932));
+  final f = _Fixture();
+  await tester.runAsync(() async {
+    await f.unlock();
+    await f.row(11, 'Duplicate', 'login');
+    await f.row(12, 'Duplicate', 'login');
+  });
+  try {
+    await f.run(() async {
+      await tester.pumpWidget(_dashboard(f.app));
+      await tester.pumpAndSettle();
+      await action(f);
+      expect(tester.takeException(), isNull);
+    });
+  } finally {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    f.dispose();
+    await tester.binding.setSurfaceSize(null);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() {
@@ -231,6 +271,80 @@ void main() {
         .setMockMethodCallHandler(
             const MethodChannel('com.llfbandit.record/messages'), null);
   });
+
+  final platforms =
+      TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android});
+  for (final reply in ['yes', 'yep', 'Yes, delete it.', 'Yep, delete it!!!']) {
+    testWidgets('selected Login delete accepts: $reply', (tester) async {
+      await _withDeleteFixture(tester, (f) async {
+        await _selectDuplicateLoginForDelete(tester);
+        expect(f.requests.where((r) => r.method == 'DELETE'), isEmpty);
+        await _send(tester, reply);
+        final deletes = f.requests.where((r) => r.method == 'DELETE').toList();
+        final chat = tester.widget<ChatMessageList>(find.byType(ChatMessageList));
+        expect(deletes, hasLength(1),
+            reason: 'Confirm the selected Login, not a Memory command. '
+                'Actual reply: ${chat.messages.last.text}');
+        expect(deletes.single.url.path, '/vault/ciphertext/vault-items/12');
+        expect(f.rows.map((r) => r['item_id']), [11]);
+        expect(f.memoryReads, 0);
+        expect(f.chatCalls, 0);
+        // Consumed selection cannot be reused to delete the surviving title.
+        await _send(tester, 'Yes, delete it.');
+        expect(f.requests.where((r) => r.method == 'DELETE'), hasLength(1));
+        expect(f.rows.map((r) => r['item_id']), [11]);
+        expect(f.memoryReads, 0);
+        expect(f.chatCalls, 0);
+      });
+    }, variant: platforms);
+  }
+  for (final reply in ['no', 'Cancel.', 'No, keep it.']) {
+    testWidgets('selected Login delete cancellation: $reply', (tester) async {
+      await _withDeleteFixture(tester, (f) async {
+        await _selectDuplicateLoginForDelete(tester);
+        await _send(tester, reply);
+        await _send(tester, 'Yes, delete it.');
+        expect(f.requests.where((r) => r.method == 'DELETE'), isEmpty);
+        expect(f.rows.map((r) => r['item_id']), [11, 12]);
+        expect(f.memoryReads, 0);
+        expect(f.chatCalls, 0);
+      });
+    }, variant: platforms);
+  }
+  testWidgets('delete reply without a pending selection changes nothing',
+      (tester) async {
+    await _withDeleteFixture(tester, (f) async {
+      await _send(tester, 'Yes, delete it.');
+      expect(f.requests.where((r) => r.method == 'DELETE'), isEmpty);
+      expect(f.rows.map((r) => r['item_id']), [11, 12]);
+      expect(f.memoryReads, 0);
+      expect(f.chatCalls, 0);
+    });
+  }, variant: platforms);
+  testWidgets('pending Login cannot be redirected to another deletion',
+      (tester) async {
+    await _withDeleteFixture(tester, (f) async {
+      await _selectDuplicateLoginForDelete(tester);
+      await _send(tester, 'Yes, delete another login.');
+      expect(f.requests.where((r) => r.method == 'DELETE'), isEmpty);
+      expect(f.rows.map((r) => r['item_id']), [11, 12]);
+      expect(f.memoryReads, 0);
+      expect(f.chatCalls, 0);
+      await _send(tester, 'no');
+    });
+  }, variant: platforms);
+  testWidgets('changed session cannot confirm the selected Login deletion',
+      (tester) async {
+    await _withDeleteFixture(tester, (f) async {
+      await _selectDuplicateLoginForDelete(tester);
+      f.app.sessionToken = 'synthetic-replacement-token';
+      await _send(tester, 'Yes, delete it.');
+      expect(f.requests.where((r) => r.method == 'DELETE'), isEmpty);
+      expect(f.rows.map((r) => r['item_id']), [11, 12]);
+      expect(f.memoryReads, 0);
+      expect(f.chatCalls, 0);
+    });
+  }, variant: platforms);
 
   test(
       'decrypted count excludes notes/wallets and survives legacy stats refresh',

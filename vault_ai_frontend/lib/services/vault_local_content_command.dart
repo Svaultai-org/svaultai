@@ -298,6 +298,12 @@ VaultLocalContentCommand? parseVaultLocalContentCommand(String message) {
       explicitKind: true,
     );
   }
+  // Confirmation/cancellation replies need an already selected target. Never
+  // reinterpret "Yes, delete it." or "don't delete it" as a memory title.
+  if (isVaultLocalDeleteConfirmation(text) ||
+      isVaultLocalDeleteCancellation(text)) {
+    return null;
+  }
   final deleting = _deleteVerb.hasMatch(text);
   final retrieving = _retrieveOpening.hasMatch(text);
   if (!deleting && !retrieving) return null;
@@ -355,14 +361,14 @@ VaultLocalContentCommand? parseVaultLocalContentCommand(String message) {
 
 bool isVaultLocalDeleteConfirmation(String message) {
   return RegExp(
-    r'^\s*(?:yes|confirm|delete|do\s+it|yes,?\s+delete(?:\s+it)?)\s*[.!]?\s*$',
+    r'^\s*(?:(?:yes|yep|yup|yeah)(?:(?:\s*,\s*|\s+)(?:please\s+)?delete(?:\s+(?:it|that))?)?|confirm(?:\s+delete)?|delete(?:\s+(?:it|that|now))?|go\s+ahead(?:\s+and\s+delete\s+it)?|proceed|do\s+it)\s*[.!?]*\s*$',
     caseSensitive: false,
   ).hasMatch(message);
 }
 
 bool isVaultLocalDeleteCancellation(String message) {
   return RegExp(
-    r'^\s*(?:no|cancel|stop|keep\s+it|never\s+mind)\s*[.!]?\s*$',
+    r"^\s*(?:no|nope|cancel(?:\s+(?:it|that|delete))?|stop|keep\s+it|never\s*mind|don['’]?t\s+delete(?:\s+(?:it|that))?|no(?:\s*,\s*|\s+)keep\s+it)\s*[.!?]*\s*$",
     caseSensitive: false,
   ).hasMatch(message);
 }

@@ -7432,17 +7432,11 @@ MemoryProposalStripResult extractAndStripMemoryProposal({
 }
 
 bool isClientSecureItemDeleteConfirmationPhrase(String message) {
-  return RegExp(
-    r'^\s*(?:yes|confirm(?:\s+delete)?|delete\s+(?:it|that|now)|go\s+ahead(?:\s+and\s+delete\s+it)?|proceed|do\s+it)\s*[.!?]*\s*$',
-    caseSensitive: false,
-  ).hasMatch(message);
+  return isVaultLocalDeleteConfirmation(message);
 }
 
 bool isClientSecureItemDeleteCancellationPhrase(String message) {
-  return RegExp(
-    r"^\s*(?:no|nope|cancel(?:\s+(?:it|that|delete))?|keep\s+it|never\s*mind|don'?t\s+delete(?:\s+(?:it|that))?)\s*[.!?]*\s*$",
-    caseSensitive: false,
-  ).hasMatch(message);
+  return isVaultLocalDeleteCancellation(message);
 }
 
 class _ChatDashboardPageState extends State<ChatDashboardPage> {
@@ -8303,11 +8297,29 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final itemType = _pendingClientSecureItemDeleteType;
     final itemId = _pendingClientSecureItemDeleteId;
     final requestToken = _pendingClientSecureItemDeleteToken;
-    if (service == null || itemType == null) return false;
+    if (service == null || itemType == null) {
+      // A confirmation names no new target. Do not infer a Memory or ask
+      // remote chat to choose an item after a selection was consumed/cancelled.
+      // Bare yes/yep remains available to ordinary non-delete conversations.
+      if (_pendingLocalDelete == null &&
+          isVaultLocalDeleteConfirmation(text) &&
+          RegExp(r'\bdelete\b', caseSensitive: false).hasMatch(text)) {
+        _appendLocalVaultReply(text,
+            'Select the saved item you want to delete first. Nothing was deleted.');
+        return true;
+      }
+      return false;
+    }
 
     final isConfirm = isClientSecureItemDeleteConfirmationPhrase(text);
     final isCancel = isClientSecureItemDeleteCancellationPhrase(text);
-    if (!isConfirm && !isCancel) return false;
+    if (!isConfirm && !isCancel) {
+      // The selected-item confirmation owns this reply until resolved. An
+      // unrecognized response must not start a different delete/create flow.
+      _appendLocalVaultReply(text,
+          'Please reply yes to delete the selected saved item, or no to keep it. Nothing was deleted.');
+      return true;
+    }
 
     input.clear();
     if (isCancel) {
