@@ -73,7 +73,8 @@ final RegExp _deleteVerb = RegExp(
 
 final RegExp _retrieveOpening = RegExp(
   r"^\s*(?:please\s+)?(?:show(?:\s+me)?|find|view|open|retrieve|get|"
-  r"tell\s+me|remind\s+me|do\s+you\s+remember|what(?:\s+is|'s)|"
+  r"tell\s+me|remind\s+me|do\s+you\s+remember|"
+  r"what(?:\s+(?:date|day|time))?(?:\s+is|'s)|"
   r"when(?:\s+is|'s)|where(?:\s+is|'s)|who(?:\s+is|'s))\b",
   caseSensitive: false,
 );
@@ -462,7 +463,8 @@ String _extractQuery(String text, RegExp noun) {
     RegExp(
       r"^\s*(?:please\s+)?(?:delete|remove|erase|forget|show(?:\s+me)?|"
       r"find|view|open|retrieve|get|tell\s+me|remind\s+me|"
-      r"do\s+you\s+remember|what(?:\s+is|'s)|when(?:\s+is|'s)|"
+      r"do\s+you\s+remember|what(?:\s+(?:date|day|time))?(?:\s+is|'s)|"
+      r"when(?:\s+is|'s)|"
       r"where(?:\s+is|'s)|who(?:\s+is|'s))\s+",
       caseSensitive: false,
     ),
