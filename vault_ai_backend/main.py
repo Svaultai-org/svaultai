@@ -100,6 +100,7 @@ from cryptography.exceptions import InvalidTag
 from device_gate import verify_trusted_device
 from tools import SYSTEM_PROMPT, VAULT_FUNCTIONS
 from extractor import redact_message, extract_credentials, extract_multiple_credentials
+from bank_document_detection import has_substantive_bank_data
 from secure_document_extractor import (
     MAX_SECURE_DOCUMENT_RECORDS,
     extract_pdf_text_with_layout,
@@ -6959,7 +6960,7 @@ def _classify_secret_from_text(text: Optional[str], file_name: str) -> dict:
             "payloads": [payload] if _is_valid_secret_payload(payload) else [],
         }
 
-    if any(word in lower for word in ["bank account", "routing", "account number", "swift", "iban"]):
+    if has_substantive_bank_data(text):
         payload = {
             "secret_type": "bank",
             "service": "bank account",
