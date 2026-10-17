@@ -108,7 +108,7 @@ void main() {
   });
 
   testWidgets(
-    'real Send saves an encrypted named memory once, recalls it and warns on duplicate',
+    'real Send saves encrypted memories, recalls literal and natural questions, and warns on duplicate',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(430, 932));
       final app = (await tester.runAsync(_fixture))!;
@@ -171,6 +171,24 @@ void main() {
               findsOneWidget);
           expect(records, hasLength(1));
           expect(requests.where((r) => r.contains('/chat')), isEmpty);
+
+          await _send(tester,
+              'Save a memory titled Demo library renewal with content: The demo library card renewal is September 14, 2027.');
+          expect(records, hasLength(2));
+          final recallStart = requests.length;
+          await _send(tester, 'What date is the demo library card renewal?');
+          expect(
+              find.textContaining(
+                  'I remember "Demo library renewal": The demo library card renewal is September 14, 2027.'),
+              findsOneWidget);
+          expect(requests.skip(recallStart),
+              contains('GET /vault/ciphertext/vault-ai-memory'));
+          expect(requests.where((r) => r.contains('/chat')), isEmpty);
+          expect(records, hasLength(2));
+          expect(records.first['payload_ciphertext'], ciphertext);
+          expect(
+              jsonEncode(records.last), isNot(contains('September 14, 2027')),
+              reason: 'Only the encrypted memory envelope leaves the device.');
           expect(tester.takeException(), isNull);
         },
             () => MockClient((request) async {

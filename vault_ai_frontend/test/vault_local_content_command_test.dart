@@ -130,6 +130,64 @@ void main() {
     expect(birthday?.query, 'mom birthday');
   });
 
+  test('date questions recall a strong local memory without a special prompt',
+      () {
+    for (final opening in const [
+      'What date is',
+      'What day is',
+      'What time is',
+      'Please WHAT DATE IS',
+    ]) {
+      final command = parseVaultLocalContentCommand(
+        '$opening the demo library card renewal?',
+      );
+      expect(command?.kind, VaultLocalContentKind.memory, reason: opening);
+      expect(command?.action, VaultLocalContentAction.retrieve,
+          reason: opening);
+      expect(command?.explicitKind, isFalse, reason: opening);
+      expect(command?.query, 'demo library card renewal', reason: opening);
+      expect(
+        resolveVaultLocalContentMatch(
+          query: command!.query,
+          entries: const [
+            VaultLocalContentEntry(id: 'other', label: 'Garden visit'),
+            VaultLocalContentEntry(
+                id: 'library', label: 'Demo library renewal'),
+          ],
+        )?.entry.id,
+        'library',
+        reason: opening,
+      );
+    }
+  });
+
+  test('date questions do not invent missing or ambiguous saved memories', () {
+    final command = parseVaultLocalContentCommand(
+      'What date is the demo library card renewal?',
+    )!;
+    expect(
+      resolveVaultLocalContentMatch(
+        query: command.query,
+        entries: const [
+          VaultLocalContentEntry(id: 'other', label: 'Garden visit')
+        ],
+      ),
+      isNull,
+    );
+    expect(
+      resolveVaultLocalContentMatch(
+        query: command.query,
+        entries: const [
+          VaultLocalContentEntry(id: 'first', label: 'Demo library renewal'),
+          VaultLocalContentEntry(id: 'second', label: 'Demo library renewal'),
+        ],
+      ),
+      isNull,
+    );
+    expect(parseVaultLocalContentCommand('What date format should I use?'),
+        isNull);
+  });
+
   test('parses named file deletion', () {
     final command =
         parseVaultLocalContentCommand('Delete my file Atlas brief.pdf');
@@ -239,7 +297,6 @@ void main() {
     );
     expect(noMatch, isNull);
   });
-
 
   test('missing specific login never falls back to a shorter title', () {
     final command = parseVaultLocalContentCommand(
