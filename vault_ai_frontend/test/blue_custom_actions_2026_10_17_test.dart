@@ -5,6 +5,7 @@ import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/ui/crypto_receive_panel.dart';
 import 'package:vault_ai_frontend/ui/crypto_vault_locked_card.dart';
 import 'package:vault_ai_frontend/ui/crypto_wallet_engine_design.dart';
+import 'package:vault_ai_frontend/ui/crypto_wallet_engine_security_page.dart';
 import 'package:vault_ai_frontend/ui/theme.dart';
 import 'package:vault_ai_frontend/ui/tokens.dart';
 
@@ -35,6 +36,31 @@ void _expectReadableBlue(ButtonStyle style) {
 }
 
 void main() {
+  testWidgets('wallet security shield stays visible across its blue gradient',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: VaultTheme.dark(),
+      home: const CryptoWalletEngineSecurityPage(),
+    ));
+    expect(tester.takeException(), isNull);
+    final hero = find.byKey(const Key('crypto_wallet_engine_security_hero'));
+    final badge = tester
+        .widgetList<Container>(
+            find.descendant(of: hero, matching: find.byType(Container)))
+        .singleWhere((container) =>
+            container.decoration is BoxDecoration &&
+            (container.decoration! as BoxDecoration).shape == BoxShape.circle);
+    final gradient =
+        (badge.decoration! as BoxDecoration).gradient! as LinearGradient;
+    final shield = tester.widget<Icon>(
+        find.descendant(of: hero, matching: find.byIcon(Icons.shield_rounded)));
+    for (var step = 0; step <= 10; step++) {
+      final background =
+          Color.lerp(gradient.colors.first, gradient.colors.last, step / 10)!;
+      expect(_contrast(shield.color!, background), greaterThanOrEqualTo(3));
+    }
+  });
+
   test('wallet primary action uses readable ink on the shared blue', () {
     _expectReadableBlue(walletPrimaryButtonStyle());
   });
@@ -58,7 +84,8 @@ void main() {
   });
 
   for (final upgraded in [false, true]) {
-    testWidgets('Assets ${upgraded ? 'open' : 'upgrade'} action retains its flow',
+    testWidgets(
+        'Assets ${upgraded ? 'open' : 'upgrade'} action retains its flow',
         (tester) async {
       var activated = false;
       await tester.pumpWidget(_app(CryptoVaultLockedCard(

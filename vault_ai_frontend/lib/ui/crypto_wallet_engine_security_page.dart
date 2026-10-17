@@ -147,7 +147,7 @@ class CryptoWalletEngineSecurityPage extends StatelessWidget {
                     end: Alignment.bottomRight,
                     colors: [
                       kWalletAccentSuccess,
-                      VaultColors.surfaceElevated,
+                      VaultColors.accentBright,
                     ],
                   ),
                 ),
