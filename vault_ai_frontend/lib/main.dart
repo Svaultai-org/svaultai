@@ -9372,9 +9372,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                   const Text(
                     'These are the Svaultai login credentials this '
                     'beneficiary will inherit. Svaultai can never read '
-                    'them — they are encrypted on this device and '
-                    'released only after your approval or the 30-day '
-                    'cooldown.',
+                    'them — they are encrypted on this device. '
+                    'Approval releases them immediately, with no 30-day '
+                    'wait. Without your response to a request, the '
+                    'beneficiary can claim them after the 30-day '
+                    'no-response countdown.',
                     style: TextStyle(color: VaultColors.textSecondary, fontSize: 13),
                   ),
                   const SizedBox(height: 12),
@@ -9774,9 +9776,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         backgroundColor: VaultColors.surfaceElevated,
         title: Text('Approve $beneficiaryLabel?'),
         content: const Text(
-          'Approving will permanently release the saved Svaultai '
-          'username and PIN to this beneficiary. This cannot be '
-          'undone.',
+          'Approving immediately releases the saved Svaultai username '
+          'and PIN to this beneficiary, with no 30-day wait. This '
+          'cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -9818,8 +9820,9 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         backgroundColor: VaultColors.surfaceElevated,
         title: Text('Reject request from $beneficiaryLabel?'),
         content: const Text(
-          'The saved credentials remain safe. The beneficiary can '
-          'request access again.',
+          'Rejecting clears this request and its countdown and returns '
+          'the connection to normal. The saved credentials remain '
+          'private. The beneficiary can request access again.',
         ),
         actions: [
           TextButton(
@@ -9862,9 +9865,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         backgroundColor: VaultColors.surfaceElevated,
         title: Text('Request access to $passerLabel?'),
         content: const Text(
-          'The owner will be notified and can approve or reject. '
-          'Without a response, access becomes available after 30 '
-          'days.',
+          'Request access if you believe the connected vault owner '
+          'has died. The owner can sign in and approve immediately, '
+          'with no 30-day wait, or reject to clear the request and '
+          'return the connection to normal. If they do not respond, '
+          'you can claim the prepared credentials after the 30-day '
+          'no-response countdown.',
         ),
         actions: [
           TextButton(
@@ -9933,7 +9939,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       vlog('inheritance.access.claim.failed', {'error': e.toString()});
       if (app.handleApiException(e)) return;
       _showSnack(
-        'Could not claim yet — check the countdown.'
+        'Could not claim access — check the request status.'
         '\nReference: INH-CLAIM-001',
       );
     }
@@ -11013,7 +11019,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                         if (cooldownEndsAt != null) ...[
                                           const SizedBox(height: 2),
                                           Text(
-                                            'Available automatically in '
+                                            'No-response countdown: '
                                             '${_formatCountdown(cooldownEndsAt)}',
                                             style: const TextStyle(
                                               color: VaultColors.textSecondary,
@@ -11246,7 +11252,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
                                             cooldownEndsAt != null) ...[
                                           const SizedBox(height: 2),
                                           Text(
-                                            'Available in ${_formatCountdown(cooldownEndsAt)}',
+                                            'No-response countdown: ${_formatCountdown(cooldownEndsAt)}',
                                             style: const TextStyle(
                                                 color: VaultColors.textSecondary,
                                                 fontSize: 11),

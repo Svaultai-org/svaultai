@@ -391,9 +391,14 @@ const List<FaqEntry> kFaqEntries = <FaqEntry>[
     question: 'How does Inheritance work?',
     answer: 'Inheritance lets you pair a chosen beneficiary with your vault '
         'and save the encrypted access credentials needed for that arrangement. '
-        'The beneficiary can request access; you can approve or reject the '
-        'request. The app shows the applicable countdown before access can '
-        'be claimed without your response. Review pairing and credentials '
+        'The beneficiary can request access if they believe the connected '
+        'vault owner has died. The owner can sign in to that vault and '
+        'approve or reject the request. Approval makes the credentials '
+        'available immediately, with no 30-day wait. Rejection clears the '
+        'request and countdown and returns the connection to normal. '
+        'If the owner does not respond, the beneficiary can claim the '
+        'prepared credentials after the 30-day no-response countdown. '
+        'Review pairing and credentials '
         'in Inheritance before relying on it. It does not make a legal will '
         'or automatically send cryptocurrency to a beneficiary.',
   ),
