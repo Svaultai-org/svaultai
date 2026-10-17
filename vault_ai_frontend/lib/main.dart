@@ -4424,7 +4424,7 @@ class _HeroText extends StatelessWidget {
         const SizedBox(height: 14),
         const Text(
           'Svaultai helps you save logins, IDs, cards, files, photos, and notes, then retrieve them naturally in chat.',
-          style: TextStyle(color: Color(0xFFB4B4B4), fontSize: 16, height: 1.6),
+          style: TextStyle(color: VaultColors.textSecondary, fontSize: 16, height: 1.6),
         ),
         const SizedBox(height: 22),
         Wrap(
@@ -4456,14 +4456,14 @@ class _HeroCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: const Color(0xFF2F2F2F),
+        color: VaultColors.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: VaultColors.borderSubtle),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.lock_outline, size: 42, color: Color(0xFF10A37F)),
+          const Icon(Icons.lock_outline, size: 42, color: VaultColors.accent),
           const SizedBox(height: 12),
           Text(
             AppLocalizations.of(context).landingHowItWorks,
@@ -4473,7 +4473,7 @@ class _HeroCard extends StatelessWidget {
           const Text(
             '1. Pick a vault name and a PIN — that is your account\n2. Returning users: enter your PIN to unlock\n3. Save secrets or upload files\n4. Ask your vault anything',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFFB4B4B4), height: 1.6),
+            style: TextStyle(color: VaultColors.textSecondary, height: 1.6),
           ),
         ],
       ),
