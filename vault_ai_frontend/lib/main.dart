@@ -4738,6 +4738,24 @@ Widget _authAutofillScaffold({
       child: Scaffold(appBar: appBar, body: body),
     );
 
+// Auth cards keep their portrait centering while their contents can scroll
+// inside the height left by the app bar, safe area and on-screen keyboard.
+Widget _authScrollableCardBody({
+  required double width,
+  required Widget child,
+}) =>
+    SafeArea(
+      child: Center(
+        child: SizedBox(
+          width: width,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            child: child,
+          ),
+        ),
+      ),
+    );
+
 Widget _authGuardProgress() => const Scaffold(
       body: Center(
         child: Column(
@@ -5564,9 +5582,8 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
     final isMobile = w < 760;
     return _authAutofillScaffold(
       appBar: TopNavBar(isMobile: isMobile),
-      body: Center(
-        child: SizedBox(
-          width: w < 420 ? w - 24 : 390,
+      body: _authScrollableCardBody(
+        width: w < 420 ? w - 24 : 390,
           child: Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -5665,7 +5682,6 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
               ],
             ),
           ),
-        ),
       ),
     );
   }
@@ -6508,9 +6524,8 @@ class _UnlockPageState extends State<UnlockPage> {
     final isMobile = w < 760;
     return _authAutofillScaffold(
       appBar: TopNavBar(isMobile: isMobile),
-      body: Center(
-        child: SizedBox(
-          width: w < 420 ? w - 24 : 390,
+      body: _authScrollableCardBody(
+        width: w < 420 ? w - 24 : 390,
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
@@ -6585,7 +6600,6 @@ class _UnlockPageState extends State<UnlockPage> {
               ],
             ),
           ),
-        ),
       ),
     );
   }
@@ -6820,9 +6834,8 @@ class _PinGatePageState extends State<PinGatePage> {
 
     return _authAutofillScaffold(
       appBar: TopNavBar(showActions: false, isMobile: isMobile),
-      body: Center(
-        child: SizedBox(
-          width: w < 420 ? w - 24 : 390,
+      body: _authScrollableCardBody(
+        width: w < 420 ? w - 24 : 390,
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
@@ -7020,7 +7033,6 @@ class _PinGatePageState extends State<PinGatePage> {
               ],
             ),
           ),
-        ),
       ),
     );
   }
