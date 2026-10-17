@@ -70,7 +70,7 @@ class _AppStartupGateState extends State<AppStartupGate> {
                           child: Text(
                             failed
                                 ? 'SVaultAI could not start. Please try again.'
-                                : 'Opening SVaultAI securely…',
+                                : 'SVaultAI',
                             textAlign: TextAlign.center,
                           ),
                         ),

@@ -44,7 +44,7 @@ void main() {
     expect((logo.image as AssetImage).assetName,
         'assets/branding/vaultai-icon-1024.png');
     expect(logo.semanticLabel, 'SVaultAI logo');
-    expect(find.text('Opening SVaultAI securely…'), findsOneWidget);
+    expect(find.text('SVaultAI'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('Try again'), findsNothing);
     expect(find.byType(Navigator), findsNothing);
@@ -59,7 +59,7 @@ void main() {
     pending.complete(_readyApp);
     await tester.pumpAndSettle();
     expect(find.text('Initialized app'), findsOneWidget);
-    expect(find.text('Opening SVaultAI securely…'), findsNothing);
+    expect(find.text('SVaultAI'), findsNothing);
     expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -80,7 +80,7 @@ void main() {
     await tester.pumpWidget(AppStartupGate(initialize: () => pending.future));
     await tester.pump();
     expect(find.byType(Image), findsOneWidget);
-    expect(find.text('Opening SVaultAI securely…'), findsOneWidget);
+    expect(find.text('SVaultAI'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.byType(Navigator), findsNothing);
     expect(tester.takeException(), isNull);
@@ -106,7 +106,7 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(
         find.text('SVaultAI could not start. Please try again.'), findsNothing);
-    expect(find.text('Opening SVaultAI securely…'), findsOneWidget);
+    expect(find.text('SVaultAI'), findsOneWidget);
     expect(find.text('Try again'), findsNothing);
     expect(calls, 2);
     pending.complete(_readyApp);
