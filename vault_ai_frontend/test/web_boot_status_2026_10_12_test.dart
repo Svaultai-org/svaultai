@@ -17,9 +17,10 @@ Map<String, dynamic> _run(String scenario) {
 const vm = require('node:vm');
 const events = Object.create(null);
 const buttonEvents = Object.create(null);
-let timer = null, delay = null, cleared = 0, removed = 0, reloads = 0;
+let timer = null, delay = null, cleared = 0, removed = 0, previewRemoved = 0, reloads = 0;
 const status = { remove() { removed++; } };
-const message = { textContent: '', hidden: true };
+const preview = { remove() { previewRemoved++; } };
+const message = { textContent: 'Opening SVaultAI securely…', hidden: false };
 const retry = { hidden: true, addEventListener(k, fn) { buttonEvents[k] = fn; } };
 const window = {
   setTimeout(fn, ms) { timer = fn; delay = ms; return 1; },
@@ -28,11 +29,11 @@ const window = {
   location: { reload() { reloads++; } }
 };
 const document = { getElementById(id) {
-  return { 'svaultai-boot-status': status, 'svaultai-boot-message': message, 'svaultai-boot-retry': retry }[id];
+  return { 'svaultai-boot-status': status, 'svaultai-boot-message': message, 'svaultai-boot-retry': retry, 'seo-content': preview }[id];
 } };
 vm.runInNewContext(${jsonEncode(_script())}, { window, document });
 $scenario
-console.log(JSON.stringify({text: message.textContent, messageHidden: message.hidden, hidden: retry.hidden, delay, cleared, removed, reloads}));
+console.log(JSON.stringify({text: message.textContent, messageHidden: message.hidden, hidden: retry.hidden, delay, cleared, removed, previewRemoved, reloads}));
 ''';
   final result = Process.runSync('node', ['-e', code]);
   expect(result.exitCode, 0, reason: 'Synthetic boot-script fixture must run');
@@ -40,7 +41,111 @@ console.log(JSON.stringify({text: message.textContent, messageHidden: message.hi
   return Map<String, dynamic>.from(jsonDecode(result.stdout as String) as Map);
 }
 
+Map<String, dynamic> _runRoute(String path) {
+  final script = RegExp(
+    r'<script id="svaultai-route-visibility">([\s\S]*?)</script>',
+  ).firstMatch(_html())!.group(1)!;
+  final code = '''
+const vm = require('node:vm');
+const classes = [], metadata = [], removed = [];
+const location = { pathname: ${jsonEncode(path)}, search: '?keep=example', hash: '#keep' };
+const document = {
+  documentElement: { classList: { add(value) { classes.push(value); } } },
+  querySelector(selector) {
+    if (selector === 'meta[name="robots"]') return { setAttribute(name, value) { metadata.push([name, value]); } };
+    return { remove() { removed.push('canonical'); } };
+  },
+  querySelectorAll() { return [{ remove() { removed.push('schema'); } }]; }
+};
+vm.runInNewContext(${jsonEncode(script)}, { window: { location }, document });
+console.log(JSON.stringify({classes, metadata, removed, location}));
+''';
+  final result = Process.runSync('node', ['-e', code]);
+  expect(result.exitCode, 0);
+  expect(result.stderr, isEmpty);
+  return Map<String, dynamic>.from(jsonDecode(result.stdout as String) as Map);
+}
+
+Map<String, dynamic> _cleanReleaseMarker(String url) {
+  final script = RegExp(
+    r'<script id="svaultai-release-marker-cleanup">([\s\S]*?)</script>',
+  ).firstMatch(_html())!.group(1)!;
+  final code = '''
+const vm = require('node:vm');
+const calls = [], state = { route: 'synthetic-history-state' };
+const window = {
+  location: { href: ${jsonEncode(url)} },
+  history: { state, replaceState(nextState, title, url) {
+    calls.push({ sameState: nextState === state, title, url });
+  } }
+};
+vm.runInNewContext(${jsonEncode(script)}, { URL, window, document: { title: 'SVaultAI' } });
+console.log(JSON.stringify({calls}));
+''';
+  final result = Process.runSync('node', ['-e', code]);
+  expect(result.exitCode, 0);
+  expect(result.stderr, isEmpty);
+  return Map<String, dynamic>.from(jsonDecode(result.stdout as String) as Map);
+}
+
 void main() {
+  test('early cleanup removes only the migration marker and keeps deep links',
+      () {
+    for (final path in ['/', '/login', '/signup', '/chat', '/unlock']) {
+      final input = Uri.parse('https://app.svaultai.com$path'
+          '?keep=first&_vaultai_release=synthetic-release&keep=second&next=%2Fstorage'
+          '#keep-fragment');
+      final result = _cleanReleaseMarker(input.toString());
+      final calls = result['calls'] as List;
+      expect(calls, hasLength(1));
+      final call = calls.single as Map;
+      expect(call['sameState'], isTrue);
+      expect(call['title'], 'SVaultAI');
+      final actual = Uri.parse(call['url'] as String);
+      expect(actual.path, input.path);
+      expect(actual.fragment, input.fragment);
+      expect(actual.queryParametersAll, {
+        'keep': ['first', 'second'],
+        'next': ['/storage'],
+      });
+    }
+    expect(
+        _cleanReleaseMarker(
+            'https://app.svaultai.com/login?keep=value#same')['calls'],
+        isEmpty);
+  });
+
+  test('only the public root gets readable content during engine startup', () {
+    for (final path in ['/', '////']) {
+      final result = _runRoute(path);
+      expect(result['classes'], ['svaultai-public-startup']);
+      expect(result['removed'], isEmpty);
+      expect(result['metadata'], isEmpty);
+    }
+    for (final path in [
+      '/login',
+      '/login/',
+      '/signup',
+      '/unlock',
+      '/chat',
+      '/pin',
+      '/recover',
+      '/device-pending',
+      '/unknown',
+      '/help-and-faq-public',
+    ]) {
+      final result = _runRoute(path);
+      expect(result['classes'], isEmpty, reason: path);
+      expect(result['metadata'],
+          path == '/help-and-faq-public' ? isEmpty : isNotEmpty);
+      expect(result['location'], {
+        'pathname': path,
+        'search': '?keep=example',
+        'hash': '#keep',
+      });
+    }
+  });
+
   test('a private-data-free shell paints before Flutter and opaque bootstrap',
       () {
     final html = _html();
@@ -48,19 +153,23 @@ void main() {
         lessThan(html.indexOf('src="flutter_bootstrap.js"')));
     expect(html.indexOf('id="svaultai-boot-script"'),
         lessThan(html.indexOf('src="assets/opaque/vaultai-opaque-init.js"')));
-    expect(html, contains('role="status" aria-live="polite"'));
-    expect(html, contains('id="svaultai-boot-message" hidden></p>'));
+    expect(
+        html, contains('role="status" aria-live="polite" aria-atomic="true"'));
+    expect(html, contains('Opening SVaultAI securely…</p>'));
     expect(html, contains('id="svaultai-boot-retry" type="button" hidden'));
-    expect(html, contains('#seo-content { display: none !important; }'));
+    expect(html, contains('#seo-content { display: none; }'));
+    expect(html,
+        contains('.svaultai-public-startup #seo-content { display: block;'));
   });
 
-  test('first paint reuses the unchanged updated shield, not opening copy', () {
+  test('first paint reuses the unchanged updated shield with startup status',
+      () {
     final html = _html();
     expect(html, contains('id="svaultai-boot-logo" src="icons/Icon-512.png"'));
     expect(html, contains('width="192" height="192" alt="SVaultAI"'));
     expect(
         html, contains('rel="preload" as="image" href="icons/Icon-512.png"'));
-    expect(html, isNot(contains('Opening SVaultAI')));
+    expect(html, contains('Opening SVaultAI securely…'));
     expect(
       sha256
           .convert(File('web/icons/Icon-512.png').readAsBytesSync())
@@ -70,12 +179,13 @@ void main() {
     );
   });
 
-  test('initial logo-only boot neither reloads nor reveals status copy', () {
+  test('initial boot explains its wait without reloading', () {
     final result = _run('');
-    expect(result['text'], isEmpty);
-    expect(result['messageHidden'], isTrue);
+    expect(result['text'], 'Opening SVaultAI securely…');
+    expect(result['messageHidden'], isFalse);
     expect(result['hidden'], isTrue);
     expect(result['removed'], 0);
+    expect(result['previewRemoved'], 0);
     expect(result['reloads'], 0);
     expect(result['delay'], 15000);
   });
@@ -93,6 +203,7 @@ void main() {
   test('actual first frame retires shell and cancels its timer', () {
     final result = _run("events['flutter-first-frame']();");
     expect(result['removed'], 1);
+    expect(result['previewRemoved'], 1);
     expect(result['cleared'], 1);
     expect(result['reloads'], 0);
   });
@@ -111,12 +222,12 @@ void main() {
     }
   });
 
-  test('errors before the bounded wait preserve normal logo-only startup', () {
+  test('errors before the bounded wait preserve the safe startup status', () {
     for (final event in ['error', 'unhandledrejection']) {
       final result = _run(
           "events['$event']({message:'synthetic-private-marker', reason:'synthetic-private-marker'});");
-      expect(result['text'], isEmpty);
-      expect(result['messageHidden'], isTrue);
+      expect(result['text'], 'Opening SVaultAI securely…');
+      expect(result['messageHidden'], isFalse);
       expect(result['hidden'], isTrue);
       expect(result['reloads'], 0);
     }
@@ -155,8 +266,8 @@ void main() {
     expect(result['removed'], 1);
     expect(result['cleared'], 1);
     expect(result['hidden'], isTrue);
-    expect(result['messageHidden'], isTrue);
-    expect(result['text'], isEmpty);
+    expect(result['messageHidden'], isFalse);
+    expect(result['text'], 'Opening SVaultAI securely…');
   });
 
   test('a hidden or stale retry cannot reload a healthy startup', () {

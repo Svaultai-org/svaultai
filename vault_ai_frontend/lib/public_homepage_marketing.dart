@@ -14,9 +14,11 @@ const String kPublicHomepageOpening =
 const String kPublicHomepageInheritanceHeading =
     'Prepare access for someone you trust.';
 const String kPublicHomepageInheritance =
-    'A beneficiary’s request starts the waiting period. Approve to release the '
-    'prepared credentials, or decline to stop that request. If you do not respond '
-    'before the period expires, the beneficiary can claim the credentials.';
+    'A beneficiary’s request starts the waiting period, normally 30 days. '
+    'Check the countdown in the app for that request’s deadline. Approve to '
+    'release the prepared credentials, or decline to stop that request. If you '
+    'do not respond before the period expires, the beneficiary can claim the '
+    'credentials; expiry does not automatically transfer assets.';
 const String kPublicHomepageCtaHeading = 'Start with your free 1 GB vault.';
 const String kPublicHomepageCtaButton = 'Create your free vault';
 const String kPublicHomepageCtaCaption =
@@ -119,8 +121,8 @@ class PublicHomepageHero extends StatelessWidget {
         const SizedBox(height: 8),
         TextButton(
           style: TextButton.styleFrom(foregroundColor: _blue),
-          onPressed: () => _openPublicPage('/features/digital-vault/#plans'),
-          child: const Text('Compare free and paid storage'),
+          onPressed: () => _openPublicPage('/pricing/'),
+          child: const Text('See storage and pricing'),
         ),
       ],
     );
@@ -314,29 +316,7 @@ class PublicHomepageDetails extends StatelessWidget {
       const SizedBox(height: 40),
       const PublicHomepageInheritance(),
       const SizedBox(height: 40),
-      _heading(context, 'Start free. Add storage when you need it.'),
-      const SizedBox(height: 18),
-      const _PublicGrid(
-        children: [
-          _PublicFeature(
-            icon: Icons.cloud_outlined,
-            title: 'Free base vault · 1 GB',
-            copy:
-                'No subscription required. Start with files, photos, '
-                'logins and memories. Web registration asks for a vault '
-                'name and PIN, without an email address or phone number.',
-          ),
-          _PublicFeature(
-            icon: Icons.add_to_drive_outlined,
-            title: 'Optional paid storage',
-            copy:
-                'Choose an available monthly plan in the mobile app. '
-                'Eligible paid storage unlocks cryptocurrency wallet features. '
-                'Prices, taxes and available tiers vary by store and region; '
-                'review the local price before confirming.',
-          ),
-        ],
-      ),
+      const PublicHomepagePricing(),
       const SizedBox(height: 12),
       Wrap(
         spacing: 10,
@@ -344,9 +324,9 @@ class PublicHomepageDetails extends StatelessWidget {
         children: [
           TextButton(
             key: const Key('public_homepage_plan_details'),
-            onPressed: () => _openPublicPage('/features/digital-vault/#plans'),
+            onPressed: () => _openPublicPage('/pricing/'),
             style: TextButton.styleFrom(foregroundColor: _blue),
-            child: const Text('Compare plans and signup steps'),
+            child: const Text('View storage pricing and plan details'),
           ),
           TextButton(
             onPressed: () => _openPublicPage('/features/digital-vault/'),
@@ -396,6 +376,85 @@ class PublicHomepageDetails extends StatelessWidget {
   );
 }
 
+// USD examples match the app’s storage examples. Store checkout supplies the
+// actual localized price and current availability; this page starts no purchase.
+const _publicStorageExamples = [
+  ('50 GB', r'$14.99'),
+  ('100 GB', r'$19.99'),
+  ('150 GB', r'$24.99'),
+  ('500 GB', r'$49.99'),
+];
+
+class PublicHomepagePricing extends StatelessWidget {
+  const PublicHomepagePricing({super.key});
+
+  @override
+  Widget build(BuildContext context) => Column(
+        key: const Key('public_homepage_pricing'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _heading(context, 'Start free. Add storage when you need it.'),
+          const SizedBox(height: 18),
+          const _PublicFeature(
+            icon: Icons.cloud_outlined,
+            title: r'Free base vault · 1 GB · $0',
+            copy:
+                'No subscription required. Start with files, photos, logins and '
+                'memories. Create a vault with a vault name and PIN; no email '
+                'address or phone number is required.',
+          ),
+          const SizedBox(height: 16),
+          _PublicPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Optional paid storage · USD monthly examples',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                for (final plan in _publicStorageExamples)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text(plan.$1, style: _body)),
+                        Flexible(
+                          child: Text(
+                            '${plan.$2}/month',
+                            textAlign: TextAlign.end,
+                            style: _body.copyWith(color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Examples are for comparison. Current plans, prices, taxes and '
+                  'availability vary by store and region. Choose a plan in the '
+                  'mobile app and review its localized checkout price before '
+                  'confirming. No purchase is required to start free.',
+                  style: _body,
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Cryptocurrency wallet features require an eligible paid '
+                  'storage plan. Supported networks, issuer terms and country '
+                  'restrictions also apply.',
+                  style: _body,
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+}
+
 class PublicHomepageInheritance extends StatelessWidget {
   const PublicHomepageInheritance({super.key});
 
@@ -427,13 +486,23 @@ class PublicHomepageInheritance extends StatelessWidget {
             icon: Icons.fact_check_outlined,
             title: '3. Review a request',
             copy:
-                'Approve, decline or let the request’s waiting period '
-                'run before prepared access becomes claimable.',
+                'An in-app notification tells the owner about a request. '
+                'Approve to release access or decline to stop the request.',
           ),
         ],
       ),
       const SizedBox(height: 18),
       const Text(kPublicHomepageInheritance, style: _body),
+      const SizedBox(height: 10),
+      const Text(
+        'Open Notifications and Inheritance in the app to review requests. '
+        'The owner can choose Approve now or Reject request. The beneficiary '
+        'can use Cancel request while a request is pending. Rejection or '
+        'cancellation stops that request’s '
+        'countdown, and the beneficiary may request again later. '
+        'Check in the app rather than relying on email or SMS alerts.',
+        style: _body,
+      ),
       const SizedBox(height: 10),
       const Text(
         'For example, a paired family member can reveal the prepared '

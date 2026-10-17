@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta charset="UTF-8">
   <!--
     If you are serving your web app in a path other than the root, change the
     href value below to reflect the base path you are serving from.
@@ -27,8 +28,24 @@
       }
     })();
   </script>
+  <script id="svaultai-release-marker-cleanup">
+    // The migration worker may add this marker to escape an old cached app.
+    // Clean the visible URL as soon as this current shell loads. The external
+    // bootstrap still owns migration registration and its reload guard.
+    (function () {
+      try {
+        var visibleUrl = new URL(window.location.href);
+        if (!visibleUrl.searchParams.has('_vaultai_release')) return;
+        visibleUrl.searchParams.delete('_vaultai_release');
+        window.history.replaceState(
+          window.history.state,
+          document.title,
+          visibleUrl.toString()
+        );
+      } catch (_) {}
+    })();
+  </script>
 
-  <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 
@@ -147,12 +164,17 @@
     ]
   }
   </script>
-  <script>
+  <script id="svaultai-route-visibility">
     // The same Flutter shell serves public and private routes. Keep only the
     // marketing root and public Help page indexable; Nginx also emits an
     // X-Robots-Tag header for private paths as the authoritative control.
     (function () {
       var path = window.location.pathname.replace(/\/+$/, '') || '/';
+      // Public visitors can read about the product while the app downloads.
+      // This uses only the URL, never a remembered identity or vault state.
+      if (path === '/') {
+        document.documentElement.classList.add('svaultai-public-startup');
+      }
       var isPublic = path === '/' || path === '/help-and-faq-public';
       if (isPublic) return;
       document.querySelector('meta[name="robots"]').setAttribute(
@@ -166,14 +188,13 @@
 </head>
 <body>
   <!-- Paint before Flutter/Wasm downloads; no vault data or credentials. -->
-  <div id="svaultai-boot-status" role="status" aria-live="polite">
-    <div>
+  <div id="svaultai-boot-status">
+    <div id="svaultai-boot-brand">
       <img id="svaultai-boot-logo" src="icons/Icon-512.png"
         width="192" height="192" alt="SVaultAI" fetchpriority="high">
-      <p id="svaultai-boot-message" hidden></p>
+      <p id="svaultai-boot-message" role="status" aria-live="polite" aria-atomic="true">Opening SVaultAI securely…</p>
       <button id="svaultai-boot-retry" type="button" hidden>Try again</button>
     </div>
-  </div>
   <style>
     #svaultai-boot-status {
       position: fixed; inset: 0; z-index: 2; display: grid;
@@ -181,7 +202,7 @@
       background: #0F1115; color: #f6f8fc;
       font: 16px/1.5 system-ui, sans-serif; text-align: center;
     }
-    #svaultai-boot-status > div { max-width: 340px; }
+    #svaultai-boot-brand { max-width: 340px; }
     #svaultai-boot-logo { display: block; margin: 0 auto; }
     #svaultai-boot-message[hidden] { display: none; }
     #svaultai-boot-retry {
@@ -190,6 +211,36 @@
       font: inherit; cursor: pointer;
     }
     #svaultai-boot-retry[hidden] { display: none; }
+    #seo-content { display: none; }
+    .svaultai-public-startup #svaultai-boot-status {
+      display: block; overflow-y: auto; text-align: left;
+      padding: 28px max(24px, calc((100vw - 1100px) / 2));
+    }
+    .svaultai-public-startup #svaultai-boot-brand {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 16px;
+      max-width: none; padding-bottom: 20px; border-bottom: 1px solid #283747;
+    }
+    .svaultai-public-startup #svaultai-boot-logo {
+      margin: 0; width: 64px; height: 64px;
+    }
+    .svaultai-public-startup #svaultai-boot-message {
+      flex: 1; min-width: 180px; color: #bbcada;
+    }
+    .svaultai-public-startup #seo-content { display: block; max-width: 850px; }
+    #seo-content h1 { font-size: clamp(30px, 5vw, 54px); line-height: 1.1; }
+    #seo-content h2 { margin-top: 32px; font-size: 24px; }
+    #seo-content p { color: #cfdae6; }
+    #seo-content a { color: #83c1ff; text-underline-offset: 3px; }
+    #seo-content nav { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+    #seo-content .startup-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    #seo-content .startup-actions a {
+      display: inline-block; border: 1px solid #5f8cb9; border-radius: 10px;
+      padding: 10px 18px; color: #f6f8fc; text-decoration: none;
+    }
+    #seo-content .startup-actions a:first-child { background: #185d9d; }
+    #seo-content a:focus-visible, #svaultai-boot-retry:focus-visible {
+      outline: 3px solid #a8d5ff; outline-offset: 4px;
+    }
   </style>
   <script id="svaultai-boot-script">
     (function () {
@@ -214,8 +265,8 @@
         failed = true;
         if (waitElapsed) showRetry(true);
       }
-      // Normal startup keeps the original shield logo without extra copy.
-      // Offer recovery only if the app has not rendered after a bounded wait.
+      // Explain the normal wait immediately. Offer recovery if the app has
+      // not rendered after a bounded wait; do not navigate or skip auth.
       var timeout = window.setTimeout(function () {
         waitElapsed = true;
         showRetry(failed);
@@ -226,6 +277,7 @@
         if (ready) return;
         ready = true;
         window.clearTimeout(timeout);
+        document.getElementById('seo-content')?.remove();
         status.remove();
       }, { once: true });
       window.addEventListener('error', recordFailure, true);
@@ -237,6 +289,9 @@
   </script>
   <main id="seo-content" aria-label="SVaultAI product overview">
     <h1>SVaultAI — Your Digital Life. One Encrypted Vault.</h1>
+    <p>Save and find files, photos, documents, logins and memories in one place.</p>
+    <p class="startup-actions"><a href="/signup">Create your free vault</a><a href="/login">Sign in</a></p>
+    <p>Start with 1 GB free. No email address or phone number needed. Optional paid storage plans are available.</p>
     <p>An encrypted digital vault for files, photos, logins, memories, digital assets and crypto. AI chat and optional beneficiary access. Free base vault. Pair a beneficiary with a code and prepare the vault credentials you want them to receive. A beneficiary can request access; you can approve or decline, or the prepared credentials can become available after the request's waiting period if you do not respond.</p>
     <h2>Inheritance: digital access planning</h2>
     <p>Pair a beneficiary with a code, then prepare an encrypted package containing the vault name and PIN you choose to share. A beneficiary must request access before the waiting period starts. Approve to make that package available; decline to stop that pending release. If you do not respond before the request's waiting period expires, your beneficiary can claim and reveal the prepared credentials. This is a digital access feature, not a legal will or a substitute for estate advice.</p>
@@ -252,33 +307,8 @@
       <a href="https://apps.apple.com/us/app/svaultai/id6800601455">Download SVaultAI on the App Store</a>
       <a href="https://play.google.com/store/apps/details?id=com.svaultai.app">Get SVaultAI on Google Play</a>
     </nav>
-    <h2>Create your free vault. Help your family find what matters.</h2>
-    <a href="/signup">Create your free vault</a>
-    <p>Free base vault · No email address or phone number required · Optional paid storage plans</p>
   </main>
-  <style>
-    /* Crawlable metadata may remain in the DOM, but app visitors must never
-       see it while Flutter starts or updates its service worker. */
-    #seo-content { display: none !important; }
-    flt-glass-pane { position: relative; z-index: 1; }
-  </style>
-  <script>
-    // The SEO fallback must disappear as soon as Flutter mounts. Leaving it in
-    // normal flow pushes the canvas below the fold and can distort its viewport
-    // after refresh, making an otherwise healthy app look blank or cropped.
-    (function () {
-      function removeSeoFallback() {
-        if (!document.querySelector('flt-glass-pane')) return false;
-        document.getElementById('seo-content')?.remove();
-        return true;
-      }
-      if (!removeSeoFallback()) {
-        new MutationObserver(function (_, observer) {
-          if (removeSeoFallback()) observer.disconnect();
-        }).observe(document.documentElement, { childList: true, subtree: true });
-      }
-    })();
-  </script>
+  </div>
   <!-- 2026-07-14 (Round 12 — explicit SW retirement bootstrap):
        Flutter's `--pwa-strategy=none` build does NOT register a
        service worker. Existing users still controlled by the
