@@ -42,6 +42,13 @@ void main() {
         ),
         'osun road marking',
       );
+      expect(
+        attachmentTitleFromComposerText(
+          'Save this synthetic blue test image as QA Blue Square.',
+          attachmentCount: 1,
+        ),
+        'QA Blue Square',
+      );
     });
 
     test('does not capture questions, instructions, or multi-file text', () {

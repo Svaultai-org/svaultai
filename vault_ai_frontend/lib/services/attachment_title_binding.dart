@@ -38,6 +38,9 @@ String? _stripExplicitNamingCommand(String text) {
         r'^(?:save|saved|upload|store)\s+(?:it|this|this file|this image|this photo|this document|the file|the image|the photo|the document)\s+as\s+(.+)$',
         caseSensitive: false),
     RegExp(
+        r'^(?:save|saved|upload|store)\s+(?:this|the)\s+(?:[\w-]+\s+){1,5}(?:file|image|photo|document|video|audio)\s+as\s+(.+)$',
+        caseSensitive: false),
+    RegExp(
         r'^(?:name|rename|call|label)\s+(?:it|this|this file|this image|this photo|this document|the file|the image|the photo|the document)\s+as\s+(.+)$',
         caseSensitive: false),
     RegExp(

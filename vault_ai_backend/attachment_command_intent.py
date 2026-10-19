@@ -60,6 +60,11 @@ _MISSING_ATTACHMENT_REFERENT_RE = re.compile(
     r"\b(?:attached|attachment|newly\s+uploaded|just\s+uploaded|"
     r"current\s+(?:file|document|attachment))\b",
 )
+_VAULT_CONTEXT_RE = re.compile(
+    r"\b(?:this|that)(?:\s+(?:test|demo|private|digital|secure|personal|"
+    r"svaultai)){0,3}\s+vault\b"
+    r"(?!\s+(?:file|document|pdf|image|photo|attachment)\b)",
+)
 _QUESTION_RE = re.compile(
     r"^\s*(?:what|which|who|where|when|why|how|is|are|does|do|can)\b",
 )
@@ -167,12 +172,13 @@ def classify_attachment_command(text: str) -> Optional[str]:
 
 def references_attachment_object(text: str) -> bool:
     """Return whether language deictically requires a current attachment."""
-    return bool(
-        isinstance(text, str)
-        and _MISSING_ATTACHMENT_REFERENT_RE.search(
-            normalize_attachment_command_language(text)
-        )
-    )
+    if not isinstance(text, str):
+        return False
+    command_view = normalize_attachment_command_language(text)
+    # "In this test vault" points to the account, not a current-message file.
+    # Remove only that referent so a separate "this file" remains protected.
+    command_view = _VAULT_CONTEXT_RE.sub("", command_view)
+    return bool(_MISSING_ATTACHMENT_REFERENT_RE.search(command_view))
 
 
 __all__ = [

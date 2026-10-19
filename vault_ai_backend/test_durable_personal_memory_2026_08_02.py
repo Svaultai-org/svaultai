@@ -791,6 +791,25 @@ def test_forget_birthday_accepts_normal_punctuation(memory_store):
     _assert_no_plaintext_birthday_storage(memory_store)
 
 
+def test_natural_question_recalls_manually_saved_encrypted_memory(memory_store):
+    saved = dpm.save_memory_payload(
+        vault_id="vault-a",
+        key=_KEY,
+        payload=dpm.build_payload_from_request({
+            "title": "QA test memory",
+            "value": "The release test color is cobalt blue. This is synthetic QA data.",
+            "memory_type": "note",
+        }),
+        source_message_id="manual-release-memory",
+    )
+    assert saved["ok"] is True
+    assert "cobalt blue" in _handle(
+        memory_store,
+        "What is the release test color I asked you to remember?",
+    )
+    assert dpm.parse_personal_memory_intent("What is the price of Bitcoin?") is None
+
+
 def test_generic_encrypted_memory_recall_and_custom_fields(memory_store):
     saved = dpm.save_memory_payload(
         vault_id="vault-a",

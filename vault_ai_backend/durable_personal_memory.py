@@ -333,6 +333,12 @@ _GENERIC_WHAT_RECALL_RE = re.compile(
     + _END_PUNCT_RE,
     re.IGNORECASE,
 )
+_GENERIC_REQUESTED_RECALL_RE = re.compile(
+    r"^\s*what\s+(?:is|was|are|were)\s+(?:the\s+|my\s+)?"
+    r"(?P<query>.+?)\s+i\s+(?:asked|told)\s+you\s+to\s+"
+    r"(?:remember|save)" + _END_PUNCT_RE,
+    re.IGNORECASE,
+)
 _GENERIC_DIRECT_RECALL_RE = re.compile(
     r"^\s*(?:what\s+(?:is|was|are|were)\s+)?(?:the\s+)?(?:my\s+)?"
     r"(?P<query>(?:openai\s+)?api\s+key|wi-?fi\s+password(?:\s+for\s+.+?)?|"
@@ -1351,6 +1357,7 @@ def _generic_query_from_text(text: str) -> Optional[PersonalMemoryIntent]:
         )
 
     for regex in (
+        _GENERIC_REQUESTED_RECALL_RE,
         _GENERIC_NOTE_ABOUT_RECALL_RE,
         _GENERIC_HAVE_ABOUT_RECALL_RE,
         _GENERIC_ABOUT_RECALL_RE,
