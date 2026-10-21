@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import 'services/asset_catalog.dart' show parseAssetBaseUnits;
+import 'services/auth_retry.dart';
 import 'services/memory_title_identity.dart';
 import 'services/saved_file_rename.dart';
 import 'services/session_termination.dart' as st;
@@ -943,6 +944,10 @@ class VaultAIClient {
     }
     if (response.statusCode == 429) {
       throw _rateLimitedFromBody(response.body);
+    }
+    if (response.statusCode == 503 &&
+        isAuthServiceUnavailableResponse(response.body)) {
+      throw const AuthServiceUnavailableException();
     }
     if (response.statusCode == 423) {
       String code = '';

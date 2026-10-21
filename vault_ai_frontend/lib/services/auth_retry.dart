@@ -31,6 +31,30 @@ class AuthRetryException implements Exception {
   String toString() => message;
 }
 
+/// The server deliberately withheld authentication because its security
+/// dependency was unavailable. This is distinct from an exhausted retry
+/// budget, and never implies that the entered credentials were wrong.
+class AuthServiceUnavailableException implements Exception {
+  const AuthServiceUnavailableException();
+
+  static const String message =
+      'Sign-in is temporarily unavailable. Please try again shortly.';
+
+  @override
+  String toString() => message;
+}
+
+bool isAuthServiceUnavailableResponse(String responseBody) {
+  try {
+    final body = jsonDecode(responseBody);
+    if (body is! Map) return false;
+    final detail = body['detail'];
+    return detail is Map && detail['code'] == 'auth_temporarily_unavailable';
+  } catch (_) {
+    return false;
+  }
+}
+
 String authRetryMessage(int? seconds) =>
     'Too many attempts. Try again in ${(seconds ?? 60).clamp(1, 86400)} seconds.';
 

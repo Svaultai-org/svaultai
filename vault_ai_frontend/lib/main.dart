@@ -2578,6 +2578,10 @@ class AppState extends ChangeNotifier {
       lockMessage = authRetryMessage(e.resetInSeconds);
       notifyListeners();
       return false;
+    } on AuthServiceUnavailableException {
+      lockMessage = AuthServiceUnavailableException.message;
+      notifyListeners();
+      return false;
     } on VaultLockedException catch (e) {
       // Preserve an existing authenticated-sensitive-PIN lock. A retryable
       // server lock is not another wrong PIN and must never be silent.
@@ -4821,6 +4825,10 @@ Future<Map<String, dynamic>> _zkHttpPost(
       retryAfter: response.headers['retry-after'],
     );
   }
+  if (response.statusCode == 503 &&
+      isAuthServiceUnavailableResponse(response.body)) {
+    throw const AuthServiceUnavailableException();
+  }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw Exception(
       'ZK POST $path failed ${response.statusCode}: ${response.body}',
@@ -5122,6 +5130,7 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
   }
 
   Future<void> _submit() async {
+    if (loading) return;
     final vaultName = vaultNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
     if (vaultName.isEmpty) {
@@ -5412,6 +5421,13 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
           loading = false;
         });
         return;
+      } on AuthServiceUnavailableException {
+        if (!mounted) return;
+        setState(() {
+          err = AuthServiceUnavailableException.message;
+          loading = false;
+        });
+        return;
       } on RateLimitedException catch (e) {
         if (!mounted) return;
         setState(() {
@@ -5543,6 +5559,12 @@ class _LoginPageState extends State<LoginPage> with RouteAware {
       if (!mounted) return;
       setState(() {
         err = authRetryMessage(e.resetInSeconds);
+        loading = false;
+      });
+    } on AuthServiceUnavailableException {
+      if (!mounted) return;
+      setState(() {
+        err = AuthServiceUnavailableException.message;
         loading = false;
       });
     } on VaultFrozenException {
@@ -6137,6 +6159,7 @@ class _UnlockPageState extends State<UnlockPage> {
   bool _leavingForLogin = false;
 
   Future<void> _submit() async {
+    if (loading) return;
     final app = context.read<AppState>();
     final name = app.lastVaultName;
     // Cache invariants: to run the ZK unlock path we need either the
@@ -6356,6 +6379,13 @@ class _UnlockPageState extends State<UnlockPage> {
           loading = false;
         });
         return;
+      } on AuthServiceUnavailableException {
+        if (!mounted) return;
+        setState(() {
+          err = AuthServiceUnavailableException.message;
+          loading = false;
+        });
+        return;
       } catch (e, stack) {
         if (app.handleApiException(e)) return;
         final typeName = e.runtimeType.toString();
@@ -6462,6 +6492,12 @@ class _UnlockPageState extends State<UnlockPage> {
       if (!mounted) return;
       setState(() {
         err = authRetryMessage(e.resetInSeconds);
+        loading = false;
+      });
+    } on AuthServiceUnavailableException {
+      if (!mounted) return;
+      setState(() {
+        err = AuthServiceUnavailableException.message;
         loading = false;
       });
     } on VaultFrozenException {

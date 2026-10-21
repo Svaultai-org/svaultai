@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/services/auth_retry.dart';
@@ -118,6 +119,34 @@ void main() {
   tearDown(() => NativeSecureStore.useSharedPreferencesForTesting = false);
 
   group('Explicit authentication retry errors', () {
+    test('service failure code is separate from an exhausted retry budget',
+        () {
+      expect(
+          isAuthServiceUnavailableResponse(
+              '{"detail":{"code":"auth_temporarily_unavailable"}}'),
+          isTrue);
+      expect(
+          isAuthServiceUnavailableResponse(
+              '{"detail":{"code":"rate_limited"}}'),
+          isFalse);
+      expect(isAuthServiceUnavailableResponse('invalid'), isFalse);
+      expect(AuthServiceUnavailableException.message,
+          isNot(contains('attempt')));
+    });
+    test('legacy sign-in surfaces a typed service failure on 503', () async {
+      final client = VaultAIClient(
+        baseUrl: 'https://example.invalid',
+        httpClient: MockClient((request) async {
+          expect(request.url.path, '/auth/login');
+          return http.Response(
+              '{"detail":{"code":"auth_temporarily_unavailable"}}', 503);
+        }),
+      );
+      await expectLater(
+        client.authLogin(vaultName: 'QA-only', pin: '000123'),
+        throwsA(isA<AuthServiceUnavailableException>()),
+      );
+    });
     test('header takes precedence and message contains the exact retry', () {
       final error = AuthRetryException.fromResponse(
           responseBody: '{"detail":{"reset_in_seconds":90}}', retryAfter: '42');
@@ -170,6 +199,21 @@ void main() {
                     429);
               }));
       expect(app.lockMessage, 'Too many attempts. Try again in 42 seconds.');
+      expect(app.pinAttempts, 0);
+      expect(app.unlocked, isFalse);
+    });
+    test('auth service outage does not count as a wrong PIN', () async {
+      final app = AppState()..lastVaultName = 'QA-only';
+      await http.runWithClient(() async {
+        expect(await app.verifyPin('000123'), isFalse);
+      },
+          () => MockClient((request) async {
+                expect(request.url.path, '/auth/login');
+                return http.Response(
+                    '{"detail":{"code":"auth_temporarily_unavailable"}}',
+                    503);
+              }));
+      expect(app.lockMessage, AuthServiceUnavailableException.message);
       expect(app.pinAttempts, 0);
       expect(app.unlocked, isFalse);
     });
