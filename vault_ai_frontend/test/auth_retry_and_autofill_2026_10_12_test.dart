@@ -132,6 +132,8 @@ void main() {
       expect(isAuthServiceUnavailableResponse('invalid'), isFalse);
       expect(AuthServiceUnavailableException.message,
           isNot(contains('attempt')));
+      expect(AuthServiceUnavailableException.signupMessage,
+          contains('Vault creation is temporarily unavailable'));
     });
     test('legacy sign-in surfaces a typed service failure on 503', () async {
       final client = VaultAIClient(
@@ -445,6 +447,7 @@ void main() {
       final end = source.indexOf('\nclass ', start + 1);
       final body = source.substring(start, end);
       expect(body, contains('on AuthRetryException catch'));
+      expect(body, contains('on AuthServiceUnavailableException'));
       expect(
           body, contains('TextInput.finishAutofillContext(shouldSave: true)'));
     }

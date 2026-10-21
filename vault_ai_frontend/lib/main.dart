@@ -5730,6 +5730,7 @@ class _SignupPageState extends State<SignupPage> {
   static const int _maxPinLength = 64;
 
   Future<void> _submit() async {
+    if (loading) return;
     final vaultName = vaultNameCtrl.text.trim();
     final displayName = displayNameCtrl.text.trim();
     final pin = pinCtrl.text.trim();
@@ -5910,6 +5911,13 @@ class _SignupPageState extends State<SignupPage> {
       if (!mounted) return;
       setState(() {
         err = e.message;
+        loading = false;
+      });
+      return;
+    } on AuthServiceUnavailableException {
+      if (!mounted) return;
+      setState(() {
+        err = AuthServiceUnavailableException.signupMessage;
         loading = false;
       });
       return;

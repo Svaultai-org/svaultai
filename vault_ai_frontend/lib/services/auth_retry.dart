@@ -39,6 +39,8 @@ class AuthServiceUnavailableException implements Exception {
 
   static const String message =
       'Sign-in is temporarily unavailable. Please try again shortly.';
+  static const String signupMessage =
+      'Vault creation is temporarily unavailable. Please try again shortly.';
 
   @override
   String toString() => message;
