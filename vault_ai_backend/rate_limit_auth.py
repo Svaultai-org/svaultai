@@ -107,6 +107,17 @@ def _check(
 def _deny_login(decision: RateLimitDecision) -> None:
     if decision.allowed:
         return
+    if decision.backend_unavailable:
+        # A Redis connection failure is not evidence of excess attempts or a
+        # wrong PIN. Keep authentication closed while describing it honestly.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "auth_temporarily_unavailable",
+                "message": "Sign-in is temporarily unavailable. Please try again shortly.",
+            },
+            headers={"Retry-After": "2"},
+        )
     retry = max(1, int(decision.reset_in_seconds))
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -230,6 +241,15 @@ def enforce_signup_rate_limit(request: Request) -> None:
         window_seconds=WINDOW_SECONDS,
     )
     if not decision.allowed:
+        if decision.backend_unavailable:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "auth_temporarily_unavailable",
+                    "message": "Signup is temporarily unavailable. Please try again shortly.",
+                },
+                headers={"Retry-After": "2"},
+            )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={

@@ -30,9 +30,10 @@ Risk classification:
 
     High-risk buckets (auth, PIN, delete vault, crypto reveal,
     burst guards, export) fail CLOSED when Redis is unreachable —
-    an unreachable Redis returns a denied decision that mimics a
-    rate-limit hit. That way an outage cannot let a distributed
-    brute-force attacker walk past the limits.
+    an unreachable Redis returns a denied decision marked as a backend
+    failure. Auth maps that marker to HTTP 503 instead of falsely
+    claiming too many attempts. An outage still cannot let a
+    distributed brute-force attacker walk past the limits.
 
     Low-risk buckets (chat) fail OPEN — the request goes through
     so a Redis blip does not brick user chat. The slowapi IP
@@ -65,7 +66,8 @@ _KEY_NAMESPACE: str = "rl:v1"
 
 # Redis client defaults vary by version. Explicit socket bounds and zero
 # network retries keep auth waits predictable without abandoning workers.
-_REDIS_SOCKET_TIMEOUT_SECONDS: float = 0.2
+_REDIS_SOCKET_TIMEOUT_SECONDS: float = 0.5
+_REDIS_IDLE_HEALTH_CHECK_SECONDS: int = 30
 
 
 BUCKET_RISK_HIGH: frozenset[str] = frozenset({
@@ -115,7 +117,7 @@ def _compose_key(bucket: str, user_id: str) -> str:
 
 class RateLimitDecision:
 
-    __slots__ = ("allowed", "remaining", "reset_in_seconds")
+    __slots__ = ("allowed", "remaining", "reset_in_seconds", "backend_unavailable")
 
     def __init__(
         self,
@@ -123,10 +125,12 @@ class RateLimitDecision:
         allowed: bool,
         remaining: int,
         reset_in_seconds: int,
+        backend_unavailable: bool = False,
     ) -> None:
         self.allowed = allowed
         self.remaining = remaining
         self.reset_in_seconds = reset_in_seconds
+        self.backend_unavailable = backend_unavailable
 
     def __bool__(self) -> bool:
         return self.allowed
@@ -135,7 +139,8 @@ class RateLimitDecision:
         return (
             f"RateLimitDecision(allowed={self.allowed}, "
             f"remaining={self.remaining}, "
-            f"reset_in={self.reset_in_seconds}s)"
+            f"reset_in={self.reset_in_seconds}s, "
+            f"backend_unavailable={self.backend_unavailable})"
         )
 
 
@@ -333,7 +338,7 @@ class RedisRateLimitBackend(RateLimitBackend):
                     "retry": Retry(NoBackoff(), 0),
                     "retry_on_timeout": False,
                     "retry_on_error": [],
-                    "health_check_interval": 0,
+                    "health_check_interval": _REDIS_IDLE_HEALTH_CHECK_SECONDS,
                 }
                 self._client = redis.Redis.from_url(
                     url, decode_responses=False,
@@ -360,19 +365,82 @@ class RedisRateLimitBackend(RateLimitBackend):
             return self._script_sha
         if self._client is None:
             return None
-        try:
-            self._script_sha = self._client.script_load(
-                _REDIS_SLIDING_WINDOW_LUA,
-            )
-            if isinstance(self._script_sha, bytes):
-                self._script_sha = self._script_sha.decode("ascii")
-        except Exception as e:
-            logger.warning(
-                "Redis SCRIPT LOAD failed (%s)",
-                type(e).__name__,
-            )
-            self._script_sha = None
+        for attempt in range(2):
+            try:
+                # Repeating SCRIPT LOAD is safe: it caches the same script
+                # hash and never touches a rate-limit counter.
+                self._script_sha = self._execute_checked(
+                    "SCRIPT LOAD", _REDIS_SLIDING_WINDOW_LUA,
+                )
+                if isinstance(self._script_sha, bytes):
+                    self._script_sha = self._script_sha.decode("ascii")
+                break
+            except Exception as e:
+                if attempt == 0 and type(e).__name__ in {
+                    "ConnectionError", "TimeoutError",
+                }:
+                    continue
+                logger.warning("Redis SCRIPT LOAD failed (%s)", type(e).__name__)
+                self._script_sha = None
+                break
         return self._script_sha
+
+    def _execute_checked(self, command: str, *args):
+        """Use one pooled socket from idle check through the rate-limit write.
+
+        A stale socket may be reconnected once while the only command sent is
+        read-only PING. After EVAL/EVALSHA is sent, a lost reply is ambiguous:
+        the script may have incremented a counter, so never retry the write.
+        Each concurrent caller borrows its own connection from redis-py's pool.
+        """
+        client = self._client
+        try:
+            import redis
+            from redis.exceptions import ConnectionError as RedisConnectionError
+            from redis.exceptions import TimeoutError as RedisTimeoutError
+        except ImportError:
+            redis = None
+        if redis is None or not isinstance(client, redis.Redis):
+            if command == "EVAL":
+                return client.eval(*args)
+            if command == "EVALSHA":
+                return client.evalsha(*args)
+            if command == "SCRIPT LOAD":
+                return client.script_load(*args)
+            raise ValueError("unsupported rate-limit command")
+
+        pool = client.connection_pool
+        connection = None
+        for attempt in range(2):
+            connection = None
+            ready = False
+            try:
+                connection = pool.get_connection()
+                if time.monotonic() >= connection.next_health_check:
+                    connection.send_command("PING", check_health=False)
+                    if connection.read_response() not in (b"PONG", "PONG"):
+                        raise RedisConnectionError("Unexpected Redis health response")
+                ready = True
+                break
+            except Exception as exc:
+                if connection is not None:
+                    connection.disconnect()
+                if attempt or not isinstance(
+                    exc, (RedisConnectionError, RedisTimeoutError, OSError)
+                ):
+                    raise
+            finally:
+                if not ready and connection is not None:
+                    pool.release(connection)
+
+        try:
+            connection.send_command(command, *args, check_health=False)
+            return client.parse_response(connection, command)
+        except Exception:
+            connection.disconnect()
+            raise
+        finally:
+            pool.release(connection)
 
     def _run_script(
         self, key: str, now_ms: int, window_ms: int, limit: int,
@@ -382,8 +450,8 @@ class RedisRateLimitBackend(RateLimitBackend):
             raise RuntimeError("script not loaded")
         member = f"{now_ms}:{uuid.uuid4().hex}"
         try:
-            raw = self._client.evalsha(
-                sha, 1, key,
+            raw = self._execute_checked(
+                "EVALSHA", sha, 1, key,
                 str(now_ms), str(window_ms), str(limit), member,
             )
         except Exception as e:
@@ -393,8 +461,8 @@ class RedisRateLimitBackend(RateLimitBackend):
                 sha = self._load_script()
                 if sha is None:
                     raise
-                raw = self._client.evalsha(
-                    sha, 1, key,
+                raw = self._execute_checked(
+                    "EVALSHA", sha, 1, key,
                     str(now_ms), str(window_ms), str(limit), member,
                 )
             else:
@@ -468,8 +536,8 @@ class RedisRateLimitBackend(RateLimitBackend):
             # Direct EVAL is one round trip on both cold and warm clients.
             # Never retry an uncertain write: the script may already have
             # incremented earlier budgets before a transport failure.
-            raw = self._client.eval(
-                _REDIS_ORDERED_WINDOWS_LUA, len(keys), *keys, *argv,
+            raw = self._execute_checked(
+                "EVAL", _REDIS_ORDERED_WINDOWS_LUA, len(keys), *keys, *argv,
             )
             if not isinstance(raw, (list, tuple)) or not raw or len(raw) % 3:
                 raise ValueError("invalid Redis batch result")
@@ -525,9 +593,10 @@ def _failure_decision(
 ) -> RateLimitDecision:
     """Backend-failure policy per bucket risk.
 
-    High-risk buckets fail CLOSED: return a denied decision with
-    reset_in = window_seconds. That way an attacker cannot use a
-    Redis outage to bypass the limit.
+    High-risk buckets fail CLOSED: return a denied decision marked
+    backend_unavailable. Auth reports this as HTTP 503, distinct from
+    a real exhausted budget's HTTP 429. The decision still blocks
+    requests while Redis is unavailable.
 
     Low-risk buckets fail OPEN: allow with remaining = 1 so we
     do not brick the UX during a Redis blip.
@@ -537,11 +606,13 @@ def _failure_decision(
             allowed=False,
             remaining=0,
             reset_in_seconds=int(window_seconds),
+            backend_unavailable=True,
         )
     return RateLimitDecision(
         allowed=True,
         remaining=1,
         reset_in_seconds=int(window_seconds),
+        backend_unavailable=True,
     )
 
 
