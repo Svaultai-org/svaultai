@@ -2137,10 +2137,15 @@ def decide_pending_file_intent_override(
     return llm_intent or "", False, "message_not_bare_name"
 
 
-_PENDING_NAME_CANCEL_REPLIES = frozenset({
+_PENDING_NAME_CANCEL_COMMANDS = frozenset({
     "cancel", "skip", "stop", "never mind", "nevermind",
-    "no", "no thanks", "not now", "yes", "sure", "okay", "ok",
-    "forget it", "leave it", "later", "thanks", "thank you",
+    "no", "no thanks", "not now", "forget it", "leave it", "later",
+    "skip naming", "don't name it", "do not name it", "leave unnamed",
+    "cancel naming", "cancel this", "skip it", "skip this",
+    "skip this step", "stop naming",
+})
+_PENDING_NAME_CANCEL_REPLIES = _PENDING_NAME_CANCEL_COMMANDS | frozenset({
+    "yes", "sure", "okay", "ok", "thanks", "thank you",
     "hello", "hi", "hey", "good morning", "good night",
 })
 _PENDING_NAME_NEW_REQUEST_PREFIX = re.compile(
@@ -2152,6 +2157,13 @@ _PENDING_NAME_NEW_REQUEST_PREFIX = re.compile(
     r"read|edit|rename|change|update|review|scan|check)\b",
     re.IGNORECASE,
 )
+
+
+def _pending_name_control_text(message: Optional[str]) -> str:
+    text = re.sub(
+        r"^please\s+", "", (message or "").strip(), flags=re.IGNORECASE,
+    )
+    return " ".join(re.sub(r"[,.!?]+", " ", text.casefold()).split())
 
 
 def pending_file_name_candidate(message: Optional[str]) -> Optional[str]:
@@ -2166,7 +2178,7 @@ def pending_file_name_candidate(message: Optional[str]) -> Optional[str]:
     if not text or len(text) > 80 or "?" in text or "\n" in text:
         return None
     command_text = re.sub(r"^please\s+", "", text, flags=re.IGNORECASE)
-    if command_text.casefold().strip(".! ") in _PENDING_NAME_CANCEL_REPLIES:
+    if _pending_name_control_text(text) in _PENDING_NAME_CANCEL_REPLIES:
         return None
     explicit_naming = any(
         pat.match(command_text) for pat in _NAMING_COMMAND_PATTERNS
@@ -2180,6 +2192,11 @@ def pending_file_name_candidate(message: Optional[str]) -> Optional[str]:
         _strip_naming_command(command_text if explicit_naming else text)
     )
     return candidate if candidate and candidate != "general" else None
+
+
+def pending_file_name_cancel_requested(message: Optional[str]) -> bool:
+    """Recognize a refusal of the current upload naming prompt."""
+    return _pending_name_control_text(message) in _PENDING_NAME_CANCEL_COMMANDS
 
 
 _ACCOMPANYING_TEXT_NAMING_PATTERNS = [
@@ -7559,7 +7576,7 @@ def get_pending_named_file_for_session(
         )
         return None
     if binding is None:
-        logger.info(
+        logger.debug(
             "[PENDING-ATT] refused_no_binding vault=%s",
             (vault_id or "")[:8] + "…",
         )
@@ -13873,68 +13890,90 @@ async def chat_endpoint(
         # short naming reply here, before any model or planner sees it. The
         # DB row alone is not authority: the upload binding must still be
         # live for this authenticated session and point to that exact row.
-        if not req.uploaded_file_ids and not req.selection_hint:
-            _pending_name = pending_file_name_candidate(decrypted_message)
+        # The prompt owns only the next text-only chat turn. If that turn is
+        # not a name, clear the binding before normal routing so a later
+        # short message cannot unexpectedly rename the upload. A request with
+        # uploaded_file_ids may have just created a different binding.
+        _pending_upload = (
+            get_pending_named_file_for_session(vault_id, _chat_session_id)
+            if not req.uploaded_file_ids else None
+        )
+        if _pending_upload is not None:
+            from vault_chat_upload_binding import clear_binding
+            _pending_name = (
+                pending_file_name_candidate(decrypted_message)
+                if not req.uploaded_file_ids and not req.selection_hint
+                else None
+            )
             if _pending_name is not None:
-                _pending_upload = get_pending_named_file_for_session(
-                    vault_id, _chat_session_id,
-                )
-                if _pending_upload is not None:
-                    try:
-                        _named_upload = save_named_uploaded_asset(
-                            vault_id=vault_id,
-                            file_id=_pending_upload["id"],
-                            saved_name=_pending_name,
-                            key=key,
-                            require_pending_name=True,
-                        )
-                    except ValueError:
-                        # A concurrent turn may have named the same file
-                        # between our pending read and conditional UPDATE.
-                        from vault_chat_upload_binding import clear_binding
-                        clear_binding(
-                            vault_id=vault_id,
-                            uploaded_file_id=_pending_upload["id"],
-                        )
-                        request.state.chat_path = "pending_file_name_stale"
-                        return encrypted_reply(
-                            "I couldn't confirm which recent file to name. "
-                            "Open Files to review it."
-                        )
-                    except Exception:
-                        logger.exception(
-                            "[CHAT-TRACE] pending_file_name_save_failed"
-                        )
-                        request.state.chat_path = "pending_file_name_failed"
-                        return encrypted_reply(
-                            "I couldn't name that file right now. "
-                            "Please try again."
-                        )
-                    from vault_chat_upload_binding import clear_binding
+                try:
+                    _named_upload = save_named_uploaded_asset(
+                        vault_id=vault_id,
+                        file_id=_pending_upload["id"],
+                        saved_name=_pending_name,
+                        key=key,
+                        require_pending_name=True,
+                    )
+                except ValueError:
+                    # A concurrent turn may have named the same file
+                    # between our pending read and conditional UPDATE.
                     clear_binding(
                         vault_id=vault_id,
                         uploaded_file_id=_pending_upload["id"],
                     )
-                    content_type = str(
-                        _pending_upload.get("content_type") or ""
-                    ).lower()
-                    if content_type.startswith("audio/"):
-                        noun = "recording"
-                    elif content_type.startswith("video/"):
-                        noun = "video"
-                    elif content_type.startswith("image/"):
-                        noun = "image"
-                    else:
-                        noun = "file"
-                    logger.info(
-                        "[CHAT-TRACE] pending_file_name_followup "
-                        "handled=true asset_kind=%s", noun,
-                    )
-                    request.state.chat_path = "pending_file_named"
+                    request.state.chat_path = "pending_file_name_stale"
                     return encrypted_reply(
-                        f"Saved this {noun} as "
-                        f"{_title_case_asset(_named_upload['saved_name'])}."
+                        "I couldn't confirm which recent file to name. "
+                        "Open Files to review it."
                     )
+                except Exception:
+                    logger.exception(
+                        "[CHAT-TRACE] pending_file_name_save_failed"
+                    )
+                    request.state.chat_path = "pending_file_name_failed"
+                    return encrypted_reply(
+                        "I couldn't name that file right now. "
+                        "Please try again."
+                    )
+                clear_binding(
+                    vault_id=vault_id,
+                    uploaded_file_id=_pending_upload["id"],
+                )
+                content_type = str(
+                    _pending_upload.get("content_type") or ""
+                ).lower()
+                if content_type.startswith("audio/"):
+                    noun = "recording"
+                elif content_type.startswith("video/"):
+                    noun = "video"
+                elif content_type.startswith("image/"):
+                    noun = "image"
+                else:
+                    noun = "file"
+                logger.info(
+                    "[CHAT-TRACE] pending_file_name_followup "
+                    "handled=true asset_kind=%s", noun,
+                )
+                request.state.chat_path = "pending_file_named"
+                return encrypted_reply(
+                    f"Saved this {noun} as "
+                    f"{_title_case_asset(_named_upload['saved_name'])}."
+                )
+            if not clear_binding(
+                vault_id=vault_id,
+                uploaded_file_id=_pending_upload["id"],
+            ):
+                request.state.chat_path = "pending_file_name_clear_failed"
+                return encrypted_reply(
+                    "I couldn't move past the file-naming prompt right now. "
+                    "Please try your request again."
+                )
+            if pending_file_name_cancel_requested(decrypted_message):
+                request.state.chat_path = "pending_file_name_cancelled"
+                return encrypted_reply(
+                    "Okay, I won't name that file. It's still in Files "
+                    "under its original filename."
+                )
 
         # Current-attachment credential extraction is a strict privacy and
         # routing boundary. Handle it before pending generated-login state,

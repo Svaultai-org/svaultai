@@ -11,9 +11,14 @@ from unittest import mock
 
 from test_chat_endpoint_deterministic_2026_08_01 import (
     _ChatEndpointHarness,
+    _TEST_KEY,
+    _TEST_PIN,
+    _TEST_PIN_SALT_B64,
+    _TEST_KDF_ITERATIONS,
     _TEST_SESSION_ID,
     _TEST_VAULT_ID,
 )
+from vault_core import encrypt_message
 from vault_chat_state_store import (
     InMemoryChatStateBackend,
     install_backend_for_tests,
@@ -110,6 +115,122 @@ class PendingFileNameEndpointTests(unittest.TestCase):
         self.assertEqual(reply.http_status, 200, reply.summary())
         self.assertEqual(self.save_calls, [])
         self.assertTrue(self.pending)
+        self.assertIsNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
+        later = self.h.post_message("holiday memories")
+        self.assertEqual(later.http_status, 200, later.summary())
+        self.assertNotEqual(later.x_chat_path, "pending_file_named")
+        self.assertEqual(self.save_calls, [])
+
+    def _assert_cancel_next_turn(self, message):
+        self._bind()
+        self.h.arm_planner_sentinel()
+
+        reply = self.h.post_message(message)
+
+        self.assertEqual(reply.http_status, 200, reply.summary())
+        self.assertEqual(
+            reply.x_chat_path, "pending_file_name_cancelled", reply.summary(),
+        )
+        self.assertIn("still in Files", reply.envelope_json or "")
+        self.assertFalse(reply.planner_invoked, reply.summary())
+        self.assertTrue(self.pending)
+        self.assertEqual(self.save_calls, [])
+        self.assertIsNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
+
+        self.h.disarm_planner_sentinel()
+        later = self.h.post_message("holiday memories")
+        self.assertEqual(later.http_status, 200, later.summary())
+        self.assertNotEqual(later.x_chat_path, "pending_file_named")
+        self.assertEqual(self.save_calls, [])
+
+    def test_cancel_ends_naming_prompt_without_naming_file(self):
+        self._assert_cancel_next_turn("cancel")
+
+    def test_skip_ends_naming_prompt_without_naming_file(self):
+        self._assert_cancel_next_turn("skip")
+
+    def test_acknowledgement_consumes_prompt_before_later_short_chat(self):
+        self._bind()
+        self.h.disarm_planner_sentinel()
+
+        reply = self.h.post_message("thanks")
+
+        self.assertEqual(reply.http_status, 200, reply.summary())
+        self.assertNotEqual(reply.x_chat_path, "pending_file_named")
+        self.assertIsNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
+        later = self.h.post_message("holiday memories")
+        self.assertEqual(later.http_status, 200, later.summary())
+        self.assertEqual(self.save_calls, [])
+
+    def test_cancel_without_matching_session_binding_does_not_claim_success(self):
+        self._bind(session_id="a-different-session")
+        self.h.disarm_planner_sentinel()
+
+        reply = self.h.post_message("cancel")
+
+        self.assertEqual(reply.http_status, 200, reply.summary())
+        self.assertNotEqual(reply.x_chat_path, "pending_file_name_cancelled")
+        self.assertEqual(self.save_calls, [])
+        self.assertEqual(self.db_lookup.call_count, 0)
+        self.assertIsNotNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id="a-different-session",
+        ))
+
+    def test_selection_hint_turn_ends_old_naming_prompt(self):
+        self._bind()
+        self.h.disarm_planner_sentinel()
+
+        reply = self.h.post_message(
+            "open that file",
+            selection_hint={"kind": "file", "id": "synthetic-other-file"},
+        )
+
+        self.assertEqual(reply.http_status, 200, reply.summary())
+        self.assertEqual(self.save_calls, [])
+        self.assertIsNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
+
+    def test_attachment_bearing_turn_keeps_fresh_upload_binding(self):
+        self._bind()
+        self.h.disarm_planner_sentinel()
+
+        response = self.h._client.post("/chat", json={
+            "encrypted_message": encrypt_message("show my logins", _TEST_KEY),
+            "vault_name": "test-vault",
+            "pin": _TEST_PIN,
+            "crypto_protocol_version": 2,
+            "kdf_salt_used": _TEST_PIN_SALT_B64,
+            "kdf_iterations_used": _TEST_KDF_ITERATIONS,
+            "uploaded_file_ids": [_FILE_ID],
+        }, headers={"X-Device-Id": "test-device-001"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.save_calls, [])
+        self.assertIsNotNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
+        self.assertEqual(self.db_lookup.call_count, 0)
+
+    def test_explicit_naming_on_next_turn_still_names_file(self):
+        self._bind()
+        self.h.arm_planner_sentinel()
+
+        reply = self.h.post_message("please call it archive notes")
+
+        self.assertEqual(reply.http_status, 200, reply.summary())
+        self.assertEqual(reply.x_chat_path, "pending_file_named", reply.summary())
+        self.assertFalse(reply.planner_invoked, reply.summary())
+        self.assertEqual(self.save_calls, ["archive notes"])
+        self.assertIsNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
 
     def test_missing_binding_does_not_query_pending_row_or_rename(self):
         self.h.disarm_planner_sentinel()
@@ -183,12 +304,25 @@ class PendingFileNameCandidateTests(unittest.TestCase):
         import main
         for message in (
             "reset password", "recover account", "sign in", "log in",
-            "please stop", "cancel", "thanks", "hello",
+            "please stop", "cancel", "skip", "no, thanks",
+            "cancel naming", "thanks", "hello",
             "show my saved logins",
             "tell me how to recover my account", "what is this?",
         ):
             with self.subTest(message=message):
                 self.assertIsNone(main.pending_file_name_candidate(message))
+
+    def test_cancellation_recognizer_ignores_acknowledgements(self):
+        import main
+        for message in (
+            "cancel", "skip", "please stop", "no thanks", "no, thanks",
+            "cancel naming", "please skip it",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(main.pending_file_name_cancel_requested(message))
+        for message in ("thanks", "hello", "archive notes"):
+            with self.subTest(message=message):
+                self.assertFalse(main.pending_file_name_cancel_requested(message))
 
 
 class PendingFileAtomicSaveTests(unittest.TestCase):
