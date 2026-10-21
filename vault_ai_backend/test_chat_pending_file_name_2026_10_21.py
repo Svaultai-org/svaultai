@@ -19,7 +19,7 @@ from vault_chat_state_store import (
     install_backend_for_tests,
     reset_chat_state_backend_for_tests,
 )
-from vault_chat_upload_binding import bind_upload
+from vault_chat_upload_binding import bind_upload, resolve_active_upload
 from vault_chat_general_router import route_general_chat
 
 import unittest
@@ -97,6 +97,9 @@ class PendingFileNameEndpointTests(unittest.TestCase):
         self.assertFalse(reply.planner_invoked, reply.summary())
         self.assertEqual(self.save_calls, [label])
         self.assertFalse(self.pending)
+        self.assertIsNone(resolve_active_upload(
+            vault_id=_TEST_VAULT_ID, session_id=_TEST_SESSION_ID,
+        ))
 
     def test_explicit_unrelated_request_does_not_consume_pending_file(self):
         self._bind()
@@ -142,13 +145,25 @@ class PendingFileNameEndpointTests(unittest.TestCase):
         self.h.arm_planner_sentinel()
         first = self.h.post_message("project github recovery")
         self.assertEqual(first.http_status, 200, first.summary())
+        self.h.disarm_planner_sentinel()
 
         second = self.h.post_message("project github recovery")
 
         self.assertEqual(second.http_status, 200, second.summary())
-        self.assertEqual(second.x_chat_path, "pending_file_name_stale")
-        self.assertIn("Open Files", second.envelope_json or "")
-        self.assertFalse(second.planner_invoked, second.summary())
+        self.assertNotEqual(second.x_chat_path, "pending_file_named")
+        self.assertEqual(self.save_calls, ["project github recovery"])
+
+    def test_short_chat_after_naming_is_not_trapped_by_old_binding(self):
+        self._bind()
+        self.h.arm_planner_sentinel()
+        first = self.h.post_message("project github recovery")
+        self.assertEqual(first.http_status, 200, first.summary())
+        self.h.disarm_planner_sentinel()
+
+        followup = self.h.post_message("thanks")
+
+        self.assertEqual(followup.http_status, 200, followup.summary())
+        self.assertNotEqual(followup.x_chat_path, "pending_file_name_stale")
         self.assertEqual(self.save_calls, ["project github recovery"])
 
 
@@ -168,7 +183,8 @@ class PendingFileNameCandidateTests(unittest.TestCase):
         import main
         for message in (
             "reset password", "recover account", "sign in", "log in",
-            "please stop", "cancel", "show my saved logins",
+            "please stop", "cancel", "thanks", "hello",
+            "show my saved logins",
             "tell me how to recover my account", "what is this?",
         ):
             with self.subTest(message=message):

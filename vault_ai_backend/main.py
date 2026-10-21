@@ -2140,7 +2140,8 @@ def decide_pending_file_intent_override(
 _PENDING_NAME_CANCEL_REPLIES = frozenset({
     "cancel", "skip", "stop", "never mind", "nevermind",
     "no", "no thanks", "not now", "yes", "sure", "okay", "ok",
-    "forget it", "leave it", "later",
+    "forget it", "leave it", "later", "thanks", "thank you",
+    "hello", "hi", "hey", "good morning", "good night",
 })
 _PENDING_NAME_NEW_REQUEST_PREFIX = re.compile(
     r"^(?:please\s+)?(?:tell\s+me|explain|help\s+me|how|why|when|"
@@ -13875,24 +13876,9 @@ async def chat_endpoint(
         if not req.uploaded_file_ids and not req.selection_hint:
             _pending_name = pending_file_name_candidate(decrypted_message)
             if _pending_name is not None:
-                from vault_chat_upload_binding import resolve_active_upload
-                _active_upload_binding = resolve_active_upload(
-                    vault_id=vault_id, session_id=_chat_session_id,
+                _pending_upload = get_pending_named_file_for_session(
+                    vault_id, _chat_session_id,
                 )
-                _pending_upload = (
-                    get_pending_named_file_for_session(
-                        vault_id, _chat_session_id,
-                    ) if _active_upload_binding is not None else None
-                )
-                if _active_upload_binding is not None and _pending_upload is None:
-                    # This session did upload a file recently, but it is no
-                    # longer pending naming (or the DB check failed). A
-                    # duplicate turn must not become an unrelated AI answer.
-                    request.state.chat_path = "pending_file_name_stale"
-                    return encrypted_reply(
-                        "I couldn't confirm which recent file to name. "
-                        "Open Files to review it."
-                    )
                 if _pending_upload is not None:
                     try:
                         _named_upload = save_named_uploaded_asset(
@@ -13903,9 +13889,13 @@ async def chat_endpoint(
                             require_pending_name=True,
                         )
                     except ValueError:
-                        # A duplicate or concurrent turn must not rename the
-                        # same file twice, or fall through to a generic AI
-                        # answer that pretends the naming request was new.
+                        # A concurrent turn may have named the same file
+                        # between our pending read and conditional UPDATE.
+                        from vault_chat_upload_binding import clear_binding
+                        clear_binding(
+                            vault_id=vault_id,
+                            uploaded_file_id=_pending_upload["id"],
+                        )
                         request.state.chat_path = "pending_file_name_stale"
                         return encrypted_reply(
                             "I couldn't confirm which recent file to name. "
@@ -13920,6 +13910,11 @@ async def chat_endpoint(
                             "I couldn't name that file right now. "
                             "Please try again."
                         )
+                    from vault_chat_upload_binding import clear_binding
+                    clear_binding(
+                        vault_id=vault_id,
+                        uploaded_file_id=_pending_upload["id"],
+                    )
                     content_type = str(
                         _pending_upload.get("content_type") or ""
                     ).lower()
