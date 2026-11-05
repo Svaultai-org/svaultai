@@ -58,7 +58,6 @@ import 'package:vault_ai_frontend/main.dart'
     show
         VaultCryptoContext,
         VaultCryptoRegistry,
-        cryptoFingerprintForKey,
         cryptoFingerprintForSaltBase64,
         deriveAndInstallCryptoContext,
         encryptWithContext;
@@ -352,7 +351,8 @@ void main() {
       // present (log correlation is useful even after enforcement
       // moved to the body).
       final defIdx = src.indexOf('Map<String, String> _defaultHeaders(');
-      final defEnd = src.indexOf('Future<Map<String, dynamic>> authSignup', defIdx);
+      final defEnd = src.indexOf('Future<Map<String, dynamic>> authLogin', defIdx);
+      expect(defEnd, greaterThan(defIdx));
       final defFn = src.substring(defIdx, defEnd);
       expect(defFn.contains("'X-App-Release'"), isTrue,
           reason: 'header is retained for diagnostic correlation '
@@ -407,17 +407,18 @@ void main() {
           reason: 'CryptoContextMismatch must NOT drop the unlock');
     });
 
-    test('_send() 400 handler preserves input, drops the failed '
+    test('_sendOnce() 400 handler preserves input, drops the failed '
          'user bubble, and does NOT navigate', () {
       final src = _mainDart();
-      final sendIdx = src.indexOf('Future<void> _send()');
+      final sendIdx = src.indexOf('Future<void> _sendOnce()');
+      expect(sendIdx, greaterThan(-1));
       final windowEnd = (sendIdx + 20000).clamp(0, src.length);
       final fn = src.substring(sendIdx, windowEnd);
       // Slice the branch body via brace-depth so nested
       // `if (!mounted) return;` bail-outs don't cut it short.
       final ifIdx = fn.indexOf('if (err is CryptoContextMismatchException)');
       expect(ifIdx, greaterThan(-1),
-          reason: '_send() must catch the typed 400');
+          reason: '_sendOnce() must catch the typed 400');
       final openBrace = fn.indexOf('{', ifIdx);
       var depth = 0;
       var i = openBrace;
@@ -493,12 +494,8 @@ void main() {
   // Fingerprint helpers safety
   // -------------------------------------------------------------
   group('Fingerprint helpers', () {
-    testWidgets('key fingerprint is 12 hex chars', (tester) async {
-      final key = SecretKey(Uint8List(32));
-      final fp = await cryptoFingerprintForKey(key);
-      expect(fp.length, 12);
-      expect(RegExp(r'^[0-9a-f]{12}$').hasMatch(fp), isTrue,
-          reason: 'must be lowercase hex');
+    test('PIN-derived key fingerprint is unavailable', () {
+      expect(_mainDart(), isNot(contains('cryptoFingerprintForKey')));
     });
 
     test('salt fingerprint is 12 hex chars', () {
