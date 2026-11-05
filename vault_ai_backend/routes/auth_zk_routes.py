@@ -54,6 +54,7 @@ import hmac
 import logging
 import os
 from file_v2_client_capability import request_has_file_v2_reader
+from zk_raw_pin_content_gate import raw_pin_content_disabled
 import secrets
 import time
 import uuid
@@ -460,6 +461,16 @@ def _zk_register_finalize_sync(
     enforce_signup_rate_limit(request)
 
     verifier_free = _verifier_free_registration_enabled()
+    if raw_pin_content_disabled() and not verifier_free:
+        # An incomplete server rollout must not create a new ZK row with a
+        # reusable offline PIN verifier. Require the deliberate paired flag.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "private_signup_not_ready",
+                "message": "Private vault creation is temporarily unavailable.",
+            },
+        )
     if verifier_free and payload.pin_verifier is not None:
         raise HTTPException(
             status_code=409,
@@ -1991,7 +2002,7 @@ async def zk_adopt(
 def _zk_adopt_sync(
     payload: ZkAdoptRequest, principal: SessionPrincipal,
 ) -> ZkAdoptResponse:
-    if _verifier_free_registration_enabled():
+    if _verifier_free_registration_enabled() or raw_pin_content_disabled():
         # Legacy content can itself act as an offline PIN oracle until it is
         # re-encrypted under a random vault key. Do not label a legacy row ZK
         # while preserving its verifier during the private-PIN cutover.

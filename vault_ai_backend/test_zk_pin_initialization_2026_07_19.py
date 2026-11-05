@@ -172,7 +172,8 @@ def _issued_session() -> Dict[str, Any]:
     }
 
 
-def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False):
+def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False,
+                  raw_pin_disabled: bool = False):
     """Drive POST /auth/zk-register-finalize and return the response."""
     from fastapi.testclient import TestClient
     get_db, conn = _make_get_db([
@@ -183,6 +184,8 @@ def _run_register(payload: Dict[str, Any], *, verifier_free: bool = False):
         mock.patch.dict(os.environ, {
             "VAULTAI_ZK_VERIFIER_FREE_REGISTRATION_ENABLED":
                 "true" if verifier_free else "false",
+            "VAULTAI_ZK_RAW_PIN_CONTENT_DISABLED":
+                "true" if raw_pin_disabled else "false",
         }),
         mock.patch(
             "routes.auth_zk_routes.get_db",
