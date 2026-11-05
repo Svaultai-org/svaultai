@@ -11,7 +11,6 @@ import secrets
 import string
 import pathlib
 import time
-import traceback
 from contextlib import asynccontextmanager
 from typing import Optional
 from auth_local import verify_session_token
@@ -9992,12 +9991,10 @@ async def get_or_create_vault_meta_endpoint(
                                                                        
         logger.info(
             "[PIN-DEBUG] /get-or-create-vault-meta vault=...%s "
-            "pin_salt_len=%d kdf_iterations=%d pin_verifier_present_before=%s "
-            "pin_len=%d",
+            "pin_salt_len=%d kdf_iterations=%d pin_verifier_present_before=%s",
             (vault_id or "")[-8:],
             len(pin_salt or ""), kdf_iterations,
             bool(row.get("pin_verifier")),
-            len(payload.pin or ""),
         )
 
         # A ZK vault authenticates with OPAQUE. Never recreate the legacy
@@ -13554,7 +13551,6 @@ async def chat_endpoint(
         client_requires_kdf_fields,
         missing_kdf_fields_error,
         salt_fingerprint,
-        key_fingerprint,
     )
     # X-App-Release stays as a diagnostic-only log field. It is
     # NEVER used to decide whether the crypto gate runs.
@@ -13662,21 +13658,19 @@ async def chat_endpoint(
             key = get_verified_vault_key(vault_id, req.pin)
         except HTTPException as e:
             print(
-                f"[CHAT-DEBUG] verify_pin_failed status={e.status_code} detail={e.detail!r}",
+                f"[CHAT-DEBUG] verify_pin_failed status={e.status_code}",
                 flush=True,
             )
             raise
         except Exception as e:
             print(
-                f"[CHAT-DEBUG] verify_pin_failed error_type={type(e).__name__} repr={e!r}",
+                f"[CHAT-DEBUG] verify_pin_failed error_type={type(e).__name__}",
                 flush=True,
             )
             raise
-        _server_key_fp = key_fingerprint(key)
         print(
             "[CHAT-DEBUG] verify_pin_ok "
-            f"chat_request_id={_chat_request_id} "
-            f"server_key_fp12={_server_key_fp}",
+            f"chat_request_id={_chat_request_id}",
             flush=True,
         )
 
@@ -13689,15 +13683,10 @@ async def chat_endpoint(
         try:
             decrypted_message = decrypt_message(req.encrypted_message, key)
         except HTTPException as e:
-            # Correlate with the client's [chat.body.diag] entry so
-            # an incident triage can prove which key-vs-metadata
-            # pairing the request carried without exposing any
-            # secret material.
             print(
                 "[CHAT-DEBUG] decrypt_failed "
                 f"chat_request_id={_chat_request_id} "
-                f"status={e.status_code} detail={e.detail!r} "
-                f"server_key_fp12={_server_key_fp} "
+                f"status={e.status_code} "
                 f"received_salt_fp12={_received_salt_fp} "
                 f"gate_result={_gate_result}",
                 flush=True,
@@ -13707,7 +13696,7 @@ async def chat_endpoint(
             print(
                 f"[CHAT-DEBUG] decrypt_failed "
                 f"chat_request_id={_chat_request_id} "
-                f"error_type={type(e).__name__} repr={e!r}",
+                f"error_type={type(e).__name__}",
                 flush=True,
             )
             raise
@@ -14475,7 +14464,7 @@ async def chat_endpoint(
                     )
                 except Exception as e:
                     print(
-                        f"[CHAT-DEBUG] openai_stream_failed error_type={type(e).__name__} repr={e!r}",
+                        f"[CHAT-DEBUG] openai_stream_failed error_type={type(e).__name__}",
                         flush=True,
                     )
                     raise
@@ -15682,7 +15671,7 @@ async def chat_endpoint(
             memory = get_memory(vault_id)
         except Exception as e:
             print(
-                f"[CHAT-DEBUG] memory_failed error_type={type(e).__name__} repr={e!r}",
+                f"[CHAT-DEBUG] memory_failed error_type={type(e).__name__}",
                 flush=True,
             )
             raise
@@ -17472,7 +17461,7 @@ async def chat_endpoint(
             )
         except Exception as e:
             print(
-                f"[CHAT-DEBUG] intent_failed error_type={type(e).__name__} repr={e!r}",
+                f"[CHAT-DEBUG] intent_failed error_type={type(e).__name__}",
                 flush=True,
             )
             raise
@@ -19236,7 +19225,7 @@ async def chat_endpoint(
                 )
             except Exception as e:
                 print(
-                    f"[CHAT-DEBUG] semantic_failed error_type={type(e).__name__} repr={e!r}",
+                    f"[CHAT-DEBUG] semantic_failed error_type={type(e).__name__}",
                     flush=True,
                 )
                 raise
@@ -19267,21 +19256,13 @@ async def chat_endpoint(
     except HTTPException:
         raise
     except Exception as _post_decrypt_exc:
-                                                                 
-                                                               
-        tb_str = traceback.format_exc()
+        # Exception messages and tracebacks may contain decrypted vault text
+        # or third-party request bodies. Log only a bounded exception type.
         print(
-            f"[CHAT-DEBUG] post_decrypt_caught error_type={type(_post_decrypt_exc).__name__} "
-            f"repr={_post_decrypt_exc!r}",
+            f"[CHAT-DEBUG] post_decrypt_caught error_type={type(_post_decrypt_exc).__name__}",
             flush=True,
         )
-        print("[CHAT-DEBUG] post_decrypt_traceback BEGIN", flush=True)
-        print(tb_str, flush=True)
-        print("[CHAT-DEBUG] post_decrypt_traceback END", flush=True)
-        logger.error(
-            "Chat endpoint failed (post-decrypt)",
-            exc_info=_post_decrypt_exc,
-        )
+        logger.error("Chat endpoint failed (post-decrypt): %s", type(_post_decrypt_exc).__name__)
         raise HTTPException(
             status_code=500,
             detail="Chat processing error",

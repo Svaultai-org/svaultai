@@ -127,10 +127,12 @@ def salt_fingerprint(salt_base64: Optional[str]) -> str:
 
 
 def key_fingerprint(key_bytes: bytes) -> str:
-    """First 12 hex chars of SHA-256(key_bytes). Non-secret —
-    a 12-hex prefix of SHA-256(K) is a random 48-bit value and
-    reveals no key material. Used only for diagnostic log
-    correlation across the client + server logs."""
+    """Legacy test helper; never emit this value to logs or telemetry.
+
+    For a key derived from a short PIN, even a truncated digest is an
+    offline PIN-guessing oracle. Runtime diagnostics must use public salt
+    metadata and generation counters instead.
+    """
     if not key_bytes:
         return "-"
     return hashlib.sha256(key_bytes).hexdigest()[:12]

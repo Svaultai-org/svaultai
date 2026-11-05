@@ -17081,7 +17081,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       }
       final chatRequestId =
           '${DateTime.now().microsecondsSinceEpoch}_${ctxSnapshot.generation}';
-      final keyFp = await cryptoFingerprintForKey(ctxSnapshot.key);
       final saltFp = cryptoFingerprintForSaltBase64(ctxSnapshot.saltBase64);
       final encryptedMessage = await encryptWithContext(
         plaintext: text,
@@ -17091,7 +17090,6 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'chat_request_id': chatRequestId,
         'vault_id': ctxSnapshot.vaultId,
         'context_generation': ctxSnapshot.generation,
-        'key_fp12': keyFp,
         'salt_fp12_sent': saltFp,
         'iterations_sent': ctxSnapshot.iterations,
         'kdf_fields_present': true,
@@ -19699,18 +19697,8 @@ class VaultCryptoContext {
   });
 }
 
-/// Non-secret fingerprints for the diagnostic log. First 12 hex
-/// chars of SHA-256(bytes) — enough to distinguish keys / salts in
-/// production logs without exposing any secret material.
-Future<String> cryptoFingerprintForKey(SecretKey key) async {
-  try {
-    final bytes = await key.extractBytes();
-    return _fp12(Uint8List.fromList(bytes));
-  } catch (_) {
-    return 'unavailable';
-  }
-}
-
+/// Salt is public metadata; a digest of a PIN-derived key is not safe to log
+/// because it lets an attacker check offline guesses for a short PIN.
 String cryptoFingerprintForSaltBase64(String saltBase64) {
   try {
     final raw = base64Decode(saltBase64);
@@ -19800,22 +19788,15 @@ class VaultCryptoRegistry {
       return false;
     }
     _current = context;
-    // Diagnostic log — fingerprints only, never key bytes / salt bytes
-    // / pin. Fingerprint call is fire-and-forget so it never blocks
-    // the install path.
-    unawaited(cryptoFingerprintForKey(context.key).then((keyFp) {
-      vlog('crypto.context.installed', {
-        'vault_id': context.vaultId,
-        'vault_name': context.vaultName,
-        'generation': context.generation,
-        'prev_generation': current?.generation,
-        'op_id': operationId,
-        'source': context.source,
-        'iterations': context.iterations,
-        'key_fp12': keyFp,
-        'salt_fp12': cryptoFingerprintForSaltBase64(context.saltBase64),
-      });
-    }));
+    vlog('crypto.context.installed', {
+      'vault_id': context.vaultId,
+      'generation': context.generation,
+      'prev_generation': current?.generation,
+      'op_id': operationId,
+      'source': context.source,
+      'iterations': context.iterations,
+      'salt_fp12': cryptoFingerprintForSaltBase64(context.saltBase64),
+    });
     return true;
   }
 
