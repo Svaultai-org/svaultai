@@ -1243,6 +1243,17 @@ class ZkVerifyInitResponse(BaseModel):
     ke2: str
 
 
+async def _reject_raw_pin_in_opaque_recheck(request: Request) -> None:
+    # Pydantic ignores unknown fields in these transitional request models.
+    # Reject an accidentally attached legacy PIN or verifier before OPAQUE
+    # work, without echoing either value in a validation error response.
+    body = await request.json()
+    if isinstance(body, dict) and (
+        "pin" in body or "pin_verifier" in body
+    ):
+        raise HTTPException(status_code=409, detail="zk_client_update_required")
+
+
 @router.post("/auth/zk-verify-init", response_model=ZkVerifyInitResponse)
 async def zk_verify_init(
     payload: ZkVerifyInitRequest,
@@ -1250,6 +1261,7 @@ async def zk_verify_init(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> ZkVerifyInitResponse:
     """Start an OPAQUE recheck for the currently trusted ZK session."""
+    await _reject_raw_pin_in_opaque_recheck(request)
     return await run_in_threadpool(
         _zk_verify_init_sync, payload, request, principal,
     )
@@ -1530,6 +1542,7 @@ async def zk_verify_finalize(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> ZkVerifyFinalizeResponse:
     """Consume a session-bound OPAQUE slot without issuing a new session."""
+    await _reject_raw_pin_in_opaque_recheck(request)
     return await run_in_threadpool(
         _zk_verify_finalize_sync, payload, request, principal,
     )
@@ -1611,6 +1624,7 @@ async def zk_pending_verify_init(
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> ZkVerifyInitResponse:
     """OPAQUE recheck for the session's own pending device only."""
+    await _reject_raw_pin_in_opaque_recheck(request)
     device_id = await run_in_threadpool(
         _require_pending_session_device, request, principal,
     )
@@ -1628,6 +1642,7 @@ async def zk_pending_verify_finalize(
     request: Request,
     principal: SessionPrincipal = Depends(verify_session_token),
 ) -> ZkVerifyFinalizeResponse:
+    await _reject_raw_pin_in_opaque_recheck(request)
     device_id = await run_in_threadpool(
         _require_pending_session_device, request, principal,
     )
