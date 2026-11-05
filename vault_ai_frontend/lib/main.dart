@@ -41,6 +41,7 @@ import 'services/legacy_ciphertext_export_client.dart' as legacy_export;
 import 'services/legacy_ciphertext_migration_codec.dart' as legacy_codec;
 import 'services/legacy_content_migration_stager.dart' as legacy_stage;
 import 'services/legacy_stage_pin_lease.dart';
+import 'services/zk_pin_gate_migration_handoff.dart';
 import 'services/file_v2_writer.dart';
 import 'services/native_secure_store.dart';
 import 'services/session_persistence_lock.dart'
@@ -844,6 +845,8 @@ const bool kEnableLegacyStageDiagnostics = bool.fromEnvironment(
 ) && kEnableLegacyContentStage && kIsWeb;
 
 enum LegacyStageDiagnosticCode {
+  pinGateMetadataScheduleFailed,
+  pinGateContentScheduleFailed,
   schedulerEnter,
   schedulerMissingContext,
   schedulerQueued,
@@ -2648,6 +2651,7 @@ class AppState extends ChangeNotifier {
   Future<bool> verifyPin(
     String pin, {
     bool restoreZkSessionKeys = false,
+    bool scheduleZkMigrationAfterUnlock = false,
   }) async {
     final knownVaultName = vaultName ?? lastVaultName;
     if (knownVaultName == null) return false;
@@ -2950,6 +2954,20 @@ class AppState extends ChangeNotifier {
 
       _refreshSessionListsBestEffort(this);
       vlog('pin.timing.refresh_fan_queued', {'elapsed_ms': tick()});
+
+      if (!kPrivateOnlyUnlockEnabled) {
+        runZkPinGateMigrationBestEffort(
+          pinGateRequested: scheduleZkMigrationAfterUnlock,
+          opaqueRestored: zkRestore != null,
+          scheduleMetadata: () => _scheduleMetadataMigration(app: this),
+          scheduleContent: () => _scheduleLegacyContentStage(app: this, pin: pin),
+          onScheduleFailure: (failure) => _legacyStageDiagnostic(
+            failure == ZkPinGateMigrationScheduleFailure.metadata
+                ? LegacyStageDiagnosticCode.pinGateMetadataScheduleFailed
+                : LegacyStageDiagnosticCode.pinGateContentScheduleFailed,
+          ),
+        );
+      }
 
       vlog('pin.timing.verify_pin_total', {
         'elapsed_ms': DateTime.now().difference(tTotal0).inMilliseconds,
@@ -7582,6 +7600,7 @@ class _PinGatePageState extends State<PinGatePage> {
       final ok = await app.verifyPin(
         pin,
         restoreZkSessionKeys: true,
+        scheduleZkMigrationAfterUnlock: true,
       );
       if (!ok) {
         setState(() {

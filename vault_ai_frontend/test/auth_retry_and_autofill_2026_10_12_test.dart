@@ -108,7 +108,8 @@ class PinResultApp extends ReadyApp {
   String? submittedPin;
   @override
   Future<bool> verifyPin(String pin,
-      {bool restoreZkSessionKeys = false}) async {
+      {bool restoreZkSessionKeys = false,
+      bool scheduleZkMigrationAfterUnlock = false}) async {
     submittedPin = pin;
     if (!accepted) lockMessage = 'Wrong username or PIN.';
     return accepted;
