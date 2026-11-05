@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from device_gate import verify_trusted_device
+from pin_only_action_gate import authorize_pin_only_action
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,11 @@ class _DeepAnswerStartRequest(BaseModel):
 
 class _DeepAnswerPollRequest(BaseModel):
     pin: str
+
+
+class _DeepAnswerDebugRequest(BaseModel):
+    pin: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    zk_proof_token: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 def _coverage_loader(vault_id: str):
@@ -261,7 +267,7 @@ async def deep_answer_poll(
 @router.post("/vault-analysis/deep-answer/{job_id}/debug")
 async def deep_answer_debug(
     job_id: str,
-    payload: _DeepAnswerPollRequest,
+    payload: _DeepAnswerDebugRequest,
     principal=Depends(verify_trusted_device),
 ):
 
@@ -270,12 +276,14 @@ async def deep_answer_debug(
         get_job,
         debug_job_snapshot,
     )
-    from main import get_verified_vault_key
+    from vault_core import verify_vault_pin
 
     vault_id = principal["vault_id"]
-                                                               
-                                                        
-    get_verified_vault_key(vault_id, payload.pin)
+    authorize_pin_only_action(
+        principal, pin=payload.pin, zk_proof_token=payload.zk_proof_token,
+        flag_name="VAULTAI_ZK_DEEP_ANSWER_DEBUG_PROOF_ENABLED",
+        verify_pin=verify_vault_pin,
+    )
     job = get_job(vault_id, job_id)
     if job is None:
         raise HTTPException(
