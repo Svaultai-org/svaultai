@@ -22,6 +22,7 @@ import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/file_v2_reader.dart';
 import 'services/file_v2_renamer.dart';
 import 'services/file_v2_writer.dart';
+import 'services/private_content_pin_guard.dart' as private_content_guard;
 
 // Only builds with the MVK V2 file reader advertise this capability. The
 // server uses it to avoid handing V2 file owners to an incompatible client.
@@ -1914,10 +1915,17 @@ class VaultAIClient {
   Future<Map<String, dynamic>> startDeepAnswer({
     required String pin,
     required String authToken,
+    String? vaultHandle,
     String intent = 'search_files_for_credentials',
     String query = '',
     String? resumeJobId,
   }) async {
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: vaultHandle)) {
+      throw const private_content_guard.PrivateContentSearchUnavailable(
+        private_content_guard.deepScanPrivateMessage,
+      );
+    }
     final uri = Uri.parse('$baseUrl/vault-analysis/deep-answer');
     final headers = _defaultHeaders(authToken: authToken, json: true);
     final body = jsonEncode({
@@ -1948,7 +1956,14 @@ class VaultAIClient {
     required String pin,
     required String authToken,
     required String jobId,
+    String? vaultHandle,
   }) async {
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: vaultHandle)) {
+      throw const private_content_guard.PrivateContentSearchUnavailable(
+        private_content_guard.deepScanPrivateMessage,
+      );
+    }
     final uri = Uri.parse(
       '$baseUrl/vault-analysis/deep-answer/$jobId/poll',
     );
@@ -5754,7 +5769,14 @@ class VaultAIClient {
     required String fileId,
     required String pin,
     required String authToken,
+    String? vaultHandle,
   }) async {
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: vaultHandle)) {
+      throw const private_content_guard.PrivateContentSearchUnavailable(
+        private_content_guard.relatedFilesPrivateMessage,
+      );
+    }
     final uri = Uri.parse('$baseUrl/files/$fileId/related');
     final response = await _sessionHttp.post(
       uri,

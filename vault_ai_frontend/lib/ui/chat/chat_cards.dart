@@ -8,6 +8,7 @@ import '../../l10n/app_localizations.dart';
 import '../primitives.dart';
 import '../tokens.dart';
 import 'chat_models.dart';
+import '../../services/private_content_pin_guard.dart';
 
 bool _vaultAiDeepScanDebugUiEnabled = false;
 bool isDeepScanDebugUiEnabled() => _vaultAiDeepScanDebugUiEnabled;
@@ -4970,6 +4971,12 @@ class _InlineRelatedSectionState extends State<_InlineRelatedSection> {
       setState(() {
         _envelope = env;
         _loading = false;
+      });
+    } on PrivateContentSearchUnavailable catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.message;
       });
     } catch (_) {
       if (!mounted) return;

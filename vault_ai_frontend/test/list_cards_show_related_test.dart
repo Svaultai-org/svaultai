@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_cards.dart';
 import 'package:vault_ai_frontend/ui/chat/chat_models.dart';
+import 'package:vault_ai_frontend/services/private_content_pin_guard.dart';
 
 Future<void> _pump(
   WidgetTester tester,
@@ -153,6 +154,22 @@ void main() {
   
   
   group('VaultFileListCard — inline Show related', () {
+    testWidgets('private mode gives a clear local message', (tester) async {
+      await _pump(
+        tester,
+        VaultFileListCard(
+          msg: _vaultFileList([_rowFile(fileId: 'private-file')]),
+          onLoadRelated: (_) async =>
+              throw const PrivateContentSearchUnavailable(
+                relatedFilesPrivateMessage,
+              ),
+        ),
+      );
+      await tester.tap(find.byTooltip('Show related'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining(relatedFilesPrivateMessage), findsOneWidget);
+    });
+
     testWidgets('renders button per row when fetcher + file_id present',
         (tester) async {
       await _pump(

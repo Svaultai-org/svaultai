@@ -50,6 +50,7 @@ import 'services/opaque_client.dart'
     if (dart.library.io) 'services/opaque_client_native.dart';
 import 'services/vault_handle.dart' as vh;
 import 'services/zk_active_mvk.dart' as zk_mvk_store;
+import 'services/private_content_pin_guard.dart' as private_content_guard;
 import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/zk_private_chat_flow.dart' as zk_chat_flow;
 import 'services/zk_private_chat_index.dart' as zk_chat_index;
@@ -15474,12 +15475,19 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (token == null || app.vaultId == null) {
       throw Exception('Session expired.');
     }
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: app.vaultHandle)) {
+      throw const private_content_guard.PrivateContentSearchUnavailable(
+        private_content_guard.relatedFilesPrivateMessage,
+      );
+    }
     final pin = await _VaultCrypto.currentPinOrThrow();
     final client = VaultAIClient(baseUrl: backendBaseUrl);
     return await client.fetchRelatedFiles(
       fileId: fileId,
       pin: pin,
       authToken: token,
+      vaultHandle: app.vaultHandle,
     );
   }
 
@@ -15500,6 +15508,12 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     });
     _scrollToBottom();
 
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: app.vaultHandle)) {
+      _appendAssistantMessage(private_content_guard.relatedFilesPrivateMessage);
+      return;
+    }
+
     try {
       final pin = await _VaultCrypto.currentPinOrThrow();
       final client = VaultAIClient(baseUrl: backendBaseUrl);
@@ -15507,6 +15521,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         fileId: fileId,
         pin: pin,
         authToken: token,
+        vaultHandle: app.vaultHandle,
       );
 
       if (!mounted) return;
@@ -15554,6 +15569,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _showSnack('Session expired. Sign in again to run a deep scan.');
       return;
     }
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: app.vaultHandle)) {
+      _appendAssistantMessage(private_content_guard.deepScanPrivateMessage);
+      return;
+    }
     final String pin;
     try {
       pin = await _VaultCrypto.currentPinOrThrow();
@@ -15581,6 +15601,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       snapshot = await client.startDeepAnswer(
         pin: pin,
         authToken: token,
+        vaultHandle: app.vaultHandle,
         intent: intent,
         query: '',
       );
@@ -15658,6 +15679,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final app = context.read<AppState>();
     final token = app.sessionToken;
     if (token == null || app.vaultId == null) return null;
+    if (private_content_guard.blocksZkLegacyContentRoute(
+        vaultHandle: app.vaultHandle)) {
+      return null;
+    }
     final String pin;
     try {
       pin = await _VaultCrypto.currentPinOrThrow();
@@ -15671,6 +15696,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         pin: pin,
         authToken: token,
         jobId: jobId,
+        vaultHandle: app.vaultHandle,
       );
     } catch (_) {
       return null;
