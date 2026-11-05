@@ -160,7 +160,7 @@ void main() {
       expect(src, contains('memoryProposalFinalizeFailed = true'));
       expect(
         src,
-        contains('I could not save that memory. Please try again.'),
+        contains('I could not confirm that memory was saved.'),
       );
     });
 

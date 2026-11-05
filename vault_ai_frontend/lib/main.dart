@@ -8390,7 +8390,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       return;
     }
     try {
-      await _VaultCrypto.currentPinOrThrow();
+      await _requireMemoryWriteAccess(app, token);
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final inventory = await client.listZkMemories(authToken: token, limit: 0);
       if (!mounted || app.sessionToken != token) return;
@@ -8412,12 +8412,36 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         _memoryRefreshGeneration++;
       });
       unawaited(app.refreshVaultStats());
+    } on InvalidVaultUnlockException {
+      _showSnack(kPrivateOnlyUnlockEnabled
+          ? 'Unlock your vault again to save memory.'
+          : 'Your vault is locked. Please enter your PIN again.');
     } catch (e) {
       if (app.handleApiException(e)) return;
       _showSnack(e is MemoryTitleConflictException
           ? kMemoryTitleConflictMessage
-          : 'Could not save memory: $e');
+          : e is MemorySaveReadbackException
+              ? e.toString()
+              : 'Could not save memory: $e');
     }
+  }
+
+  Future<void> _requireMemoryWriteAccess(AppState app, String token) async {
+    if (!app.unlocked || app.sessionToken != token) {
+      throw const InvalidVaultUnlockException();
+    }
+    if (kPrivateOnlyUnlockEnabled &&
+        (app.vaultHandle?.isNotEmpty == true ||
+            PrivateZkPinTransportSession.active)) {
+      if (!PrivateZkPinTransportSession.active ||
+          zk_mvk_store.ZkActiveMvk.current() == null ||
+          zk_mvk_store.ZkActiveMvk.currentVaultId() != app.vaultId ||
+          zk_mvk_store.ZkActiveMvk.currentVaultHandle() != app.vaultHandle) {
+        throw const InvalidVaultUnlockException();
+      }
+      return;
+    }
+    await _VaultCrypto.currentPinOrThrow();
   }
 
   Future<void> _openSecureItemEditDialog(String service, String itemType,
@@ -8808,7 +8832,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!mounted) return;
             buffer += decryptedChunk;
             if (memoryProposalFinalizeFailed) {
-              buffer = 'I could not save that memory. Please try again.';
+              buffer = 'I could not confirm that memory was saved. '
+                  'Check Memory before retrying.';
             }
 
             // ZK memory-proposal sentinel: strip it BEFORE any
@@ -8827,7 +8852,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               );
               if (!saved) {
                 memoryProposalFinalizeFailed = true;
-                buffer = 'I could not save that memory. Please try again.';
+                buffer = 'I could not confirm that memory was saved. '
+                    'Check Memory before retrying.';
               }
             }
 
@@ -16971,7 +16997,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       throw StateError('memory_save_session_unavailable');
     }
     try {
-      await _VaultCrypto.currentPinOrThrow();
+      await _requireMemoryWriteAccess(app, token);
       await VaultAIClient(baseUrl: backendBaseUrl).upsertZkMemory(
         authToken: token,
         data: payload,
@@ -16982,8 +17008,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       _appendAssistantMessage('Memory saved.');
       _showSnack('Memory saved');
     } on InvalidVaultUnlockException {
-      _showSnack('Your vault is locked. Please enter your PIN again.');
+      _showSnack(kPrivateOnlyUnlockEnabled
+          ? 'Your vault is locked. Unlock it and try again.'
+          : 'Your vault is locked. Please enter your PIN again.');
       throw StateError('memory_save_vault_locked');
+    } on MemorySaveReadbackException catch (e) {
+      _showSnack(e.toString());
+      rethrow;
     } catch (e) {
       _showSnack('Could not save memory.');
       throw StateError('memory_save_failed');
@@ -17270,7 +17301,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     final client = VaultAIClient(baseUrl: backendBaseUrl);
 
     try {
-      await _VaultCrypto.currentPinOrThrow();
+      await _requireMemoryWriteAccess(app, token);
 
       // A Save command is a create request, not permission to overwrite a
       // title-matched record. Only the selected memory's Edit flow has its ID.
@@ -17300,8 +17331,13 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     } on MemoryTitleConflictException {
       _appendLocalVaultReply(text, kMemoryTitleConflictMessage);
       return true;
+    } on MemorySaveReadbackException catch (e) {
+      _appendLocalVaultReply(text, e.toString());
+      return true;
     } on InvalidVaultUnlockException {
-      _showSnack('Your vault is locked. Please enter your PIN again.');
+      _showSnack(kPrivateOnlyUnlockEnabled
+          ? 'Your vault is locked. Unlock it and try again.'
+          : 'Your vault is locked. Please enter your PIN again.');
       return true;
     } catch (e) {
       if (app.handleApiException(e)) return true;
@@ -18263,7 +18299,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!mounted) return;
             buffer += decryptedChunk;
             if (memoryProposalFinalizeFailed) {
-              buffer = 'I could not save that memory. Please try again.';
+              buffer = 'I could not confirm that memory was saved. '
+                  'Check Memory before retrying.';
             }
 
             // ZK memory-proposal sentinel: the backend emits
@@ -18289,7 +18326,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               );
               if (!saved) {
                 memoryProposalFinalizeFailed = true;
-                buffer = 'I could not save that memory. Please try again.';
+                buffer = 'I could not confirm that memory was saved. '
+                    'Check Memory before retrying.';
               }
             }
 

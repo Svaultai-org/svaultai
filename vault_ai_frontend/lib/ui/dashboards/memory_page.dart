@@ -729,7 +729,9 @@ class _MemoryPageState extends State<MemoryPage> {
       if (!mounted) return;
       _showSnack(e is MemoryTitleConflictException
           ? kMemoryTitleConflictMessage
-          : 'Could not save memory');
+          : e is MemorySaveReadbackException
+              ? e.toString()
+              : 'Could not save memory');
     }
   }
 

@@ -642,6 +642,14 @@ class InvalidVaultUnlockException implements Exception {
   String toString() => 'InvalidVaultUnlockException(message: $message)';
 }
 
+class MemorySaveReadbackException implements Exception {
+  const MemorySaveReadbackException();
+
+  @override
+  String toString() =>
+      'Memory may have been saved. Open Memory to check before retrying.';
+}
+
 /// Client-declared protocol version for encrypted-request endpoints.
 ///
 /// Sent inside the request body (never a header). The backend uses
@@ -5179,8 +5187,8 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) return false;
+    final privateReadback = PrivateZkPinTransportSession.active;
     final memoryGeneration = st.SessionTermination.instance.generation;
-    await _checkMemoryTitleAvailable(authToken: authToken, title: memoryKey);
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
     final memoryK = await hierarchy.memoryKey();
@@ -5209,18 +5217,22 @@ class VaultAIClient {
       memoryLookup,
       utf8.encode(recordCanonical),
     );
+    final resolvedMemoryId =
+        'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
+    await _checkMemoryTitleAvailable(
+      authToken: authToken,
+      title: memoryKey,
+      editingMemoryId: privateReadback ? resolvedMemoryId : null,
+    );
 
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final resp = await _sessionHttpWithGuard(
         () => _assertMemoryAccessCurrent(mvk, memoryGeneration)).post(
       uri,
-      headers: <String, String>{
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $authToken',
-      },
+      headers: _defaultHeaders(authToken: authToken, json: true),
       body: jsonEncode(<String, dynamic>{
-        'memory_id': 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}',
+        'memory_id': resolvedMemoryId,
         'memory_type': memoryType,
         'memory_lookup_hash': vault_key_hierarchy.b64urlEncode(lookupHash),
         'payload_ciphertext': vault_key_hierarchy.b64urlEncode(payloadCt),
@@ -5228,7 +5240,29 @@ class VaultAIClient {
     );
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     if (resp.statusCode == 409) throw const MemoryTitleConflictException();
-    return resp.statusCode == 200;
+    if (resp.statusCode != 200) return false;
+    if (privateReadback) {
+      try {
+        await _verifyZkMemoryReadback(
+          authToken: authToken,
+          mvk: mvk,
+          memoryGeneration: memoryGeneration,
+          memoryId: resolvedMemoryId,
+          memoryType: memoryType,
+          lookupHash: vault_key_hierarchy.b64urlEncode(lookupHash),
+          expectedPayloadJson: payloadJson,
+        );
+      } on AuthExpiredException {
+        rethrow;
+      } on SessionTerminatedException {
+        rethrow;
+      } on DeviceNotTrustedException {
+        rethrow;
+      } catch (_) {
+        throw const MemorySaveReadbackException();
+      }
+    }
+    return true;
   }
 
   /// Fetches opaque ZK memory envelopes and decrypts them only on the client.
@@ -5368,12 +5402,8 @@ class VaultAIClient {
   }) async {
     final mvk = zk_mvk_store.ZkActiveMvk.current();
     if (mvk == null) throw StateError('Vault encryption key is unavailable');
+    final privateReadback = PrivateZkPinTransportSession.active;
     final memoryGeneration = st.SessionTermination.instance.generation;
-    await _checkMemoryTitleAvailable(
-      authToken: authToken,
-      title: '${data['title'] ?? data['memory_key'] ?? 'memory'}',
-      editingMemoryId: memoryId,
-    );
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final hierarchy = vault_key_hierarchy.VaultKeyHierarchy(mvk);
     final memoryKey = await hierarchy.memoryKey();
@@ -5398,6 +5428,11 @@ class VaultAIClient {
     );
     final resolvedMemoryId =
         memoryId ?? 'memory-${vault_key_hierarchy.b64urlEncode(recordHash)}';
+    await _checkMemoryTitleAvailable(
+      authToken: authToken,
+      title: lookupText,
+      editingMemoryId: memoryId ?? (privateReadback ? resolvedMemoryId : null),
+    );
     final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory');
     _assertMemoryAccessCurrent(mvk, memoryGeneration);
     final response = await _sessionHttpWithGuard(
@@ -5424,6 +5459,77 @@ class VaultAIClient {
         statusCode: response.statusCode,
         responseBody: response.body,
       ));
+    }
+    if (privateReadback) {
+      try {
+        await _verifyZkMemoryReadback(
+          authToken: authToken,
+          mvk: mvk,
+          memoryGeneration: memoryGeneration,
+          memoryId: resolvedMemoryId,
+          memoryType: '${data['memory_type'] ?? 'note'}',
+          lookupHash: vault_key_hierarchy.b64urlEncode(lookupHash),
+          expectedPayloadJson: jsonEncode(data),
+        );
+      } on AuthExpiredException {
+        rethrow;
+      } on SessionTerminatedException {
+        rethrow;
+      } on DeviceNotTrustedException {
+        rethrow;
+      } catch (_) {
+        throw const MemorySaveReadbackException();
+      }
+    }
+  }
+
+  Future<void> _verifyZkMemoryReadback({
+    required String authToken,
+    required SecretKey mvk,
+    required int memoryGeneration,
+    required String memoryId,
+    required String memoryType,
+    required String lookupHash,
+    required String expectedPayloadJson,
+  }) async {
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
+    final uri = Uri.parse('$baseUrl/vault/ciphertext/vault-ai-memory')
+        .replace(queryParameters: {'memory_lookup_hash': lookupHash});
+    final response = await _sessionHttpWithGuard(
+      () => _assertMemoryAccessCurrent(mvk, memoryGeneration),
+    ).get(
+      uri,
+      headers: _defaultHeaders(authToken: authToken),
+    ).timeout(const Duration(seconds: 12));
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
+    if (response.statusCode != 200) {
+      _throwIfAuthExpired(response.statusCode, response.body);
+      _throwIfDeviceNotTrusted(response.statusCode, response.body);
+      throw StateError('Memory save could not be verified. Refresh Memory.');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) {
+      throw StateError('Memory save could not be verified. Refresh Memory.');
+    }
+    final matches = decoded.whereType<Map>().where((row) =>
+        row['memory_id'] == memoryId &&
+        row['memory_type'] == memoryType &&
+        row['memory_lookup_hash'] == lookupHash).toList();
+    if (matches.length != 1 ||
+        matches.single['payload_ciphertext'] is! String) {
+      throw StateError('Memory save could not be verified. Refresh Memory.');
+    }
+    final memoryKey = await vault_key_hierarchy.VaultKeyHierarchy(mvk)
+        .memoryKey();
+    final plaintext = await vault_key_hierarchy.aesGcmUnwrap(
+      memoryKey,
+      vault_key_hierarchy.b64urlDecode(
+        matches.single['payload_ciphertext'] as String,
+      ),
+    );
+    _assertMemoryAccessCurrent(mvk, memoryGeneration);
+    if (utf8.decode(plaintext) != expectedPayloadJson) {
+      throw StateError('Memory save could not be verified. Refresh Memory.');
     }
   }
 
