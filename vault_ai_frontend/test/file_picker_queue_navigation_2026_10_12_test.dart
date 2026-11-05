@@ -15,6 +15,8 @@ import 'package:vault_ai_frontend/api_client.dart';
 import 'package:vault_ai_frontend/l10n/app_localizations.dart';
 import 'package:vault_ai_frontend/main.dart';
 import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
+import 'package:vault_ai_frontend/services/zk_active_sk_vault.dart';
+import 'package:vault_ai_frontend/services/session_termination.dart' as st;
 import 'package:vault_ai_frontend/ui/chat/storage_limit_dialog.dart';
 
 // All identities and file bytes are synthetic. HTTP is allowlisted in-process;
@@ -82,28 +84,46 @@ Future<AppState> _fixture() async {
     ..billingLoadState = BillingLoadState.loaded
     ..billingIncludedBytes = kVaultStorageLimitBytes
     ..billingEffectiveLimitBytes = kVaultStorageLimitBytes;
-  // This VM fixture runs on macOS, not on an Android device with the native
-  // library. Seed the same synthetic context with the software KDF, then
-  // restore the requested platform BEFORE rendering the actual UI.
-  final fixturePlatform = debugDefaultTargetPlatformOverride;
-  debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-  try {
-    await deriveAndInstallCryptoContext(
+  if (kPrivateOnlyUnlockEnabled) {
+    st.SessionTermination.instance.bindSession(app.sessionToken!);
+    installZkPrivateOnlyUnlockKeys(
+      app: app,
+      origin: ZkPrivateUnlockOrigin.login,
+      sessionToken: app.sessionToken!,
       vaultId: app.vaultId!,
       vaultName: app.vaultName!,
-      pin: '123456',
-      pinSaltBase64: base64Encode(List.filled(16, 4)),
-      iterations: 1,
-      source: 'file-picker-regression-fixture',
+      vaultHandle: app.vaultHandle!,
+      mvk: SecretKey(List.filled(32, 4)),
+      skVault: SecretKey(List.filled(32, 5)),
     );
-  } finally {
-    debugDefaultTargetPlatformOverride = fixturePlatform;
+    expect(PrivateZkPinTransportSession.active, isTrue);
+    expect(zkPrivateUnlockCredentialStateForTesting(), {
+      'pin_cache_entries': 0,
+      'legacy_key_entries': 0,
+      'has_pbkdf2_context': false,
+    });
+  } else {
+    // Ordinary-build fixture uses a synthetic PIN only for legacy regressions.
+    final fixturePlatform = debugDefaultTargetPlatformOverride;
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      await deriveAndInstallCryptoContext(
+        vaultId: app.vaultId!,
+        vaultName: app.vaultName!,
+        pin: '123456',
+        pinSaltBase64: base64Encode(List.filled(16, 4)),
+        iterations: 1,
+        source: 'file-picker-regression-fixture',
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = fixturePlatform;
+    }
+    ZkActiveMvk.set(
+      mvk: SecretKey(List.filled(32, 4)),
+      vaultId: app.vaultId!,
+      vaultHandle: app.vaultHandle!,
+    );
   }
-  ZkActiveMvk.set(
-    mvk: SecretKey(List.filled(32, 4)),
-    vaultId: app.vaultId!,
-    vaultHandle: app.vaultHandle!,
-  );
   app.unlocked = true;
   expect(app.unlocked, isTrue);
   return app;
@@ -199,6 +219,9 @@ Future<void> _withDashboard(WidgetTester tester,
     app.unlocked = false;
     app.dispose();
     ZkActiveMvk.clear();
+    ZkActiveSkVault.clear();
+    PrivateZkPinTransportSession.clear();
+    st.SessionTermination.instance.reset();
     VaultCryptoRegistry.clear(reason: 'picker-regression-cleanup');
     setApiClientDeviceId('');
     await tester.binding.setSurfaceSize(null);
