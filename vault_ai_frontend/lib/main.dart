@@ -2615,21 +2615,30 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> signOut() async {
+  Future<void> signOut({
+    Future<void> Function(String token)? remoteLogout,
+  }) async {
     final token = sessionToken;
-    final epoch = _sessionEpoch;
-    if (token != null) {
-      try {
-        await VaultAIClient(baseUrl: backendBaseUrl)
-            .authLogout(authToken: token);
-      } catch (_) {}
-    }
-    if (_disposed || _sessionEpoch != epoch || sessionToken != token) return;
     final currentVaultId = vaultId;
     if (currentVaultId != null) {
       _VaultCrypto.clearCache(currentVaultId);
     }
-    await clearSession(keepLastVaultName: true);
+    // Clear the UI, PIN, keys, and bearer token before an unreliable network
+    // request can hold them in memory after the user chooses Sign out.
+    try {
+      await clearSession(keepLastVaultName: true);
+    } finally {
+      if (token != null) {
+        try {
+          if (remoteLogout != null) {
+            await remoteLogout(token);
+          } else {
+            await VaultAIClient(baseUrl: backendBaseUrl)
+                .authLogout(authToken: token);
+          }
+        } catch (_) {}
+      }
+    }
   }
 
   Future<bool> verifyPin(
