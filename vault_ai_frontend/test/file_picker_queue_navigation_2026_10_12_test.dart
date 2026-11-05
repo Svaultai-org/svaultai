@@ -19,8 +19,12 @@ import 'package:vault_ai_frontend/services/zk_active_mvk.dart';
 // All identities and file bytes are synthetic. HTTP is allowlisted in-process;
 // selecting a file must not upload it or dispatch chat before Send is pressed.
 class _FixtureApp extends AppState {
+  int statsRefreshCalls = 0;
+
   @override
-  Future<void> refreshVaultStats() async {}
+  Future<void> refreshVaultStats() async {
+    statsRefreshCalls++;
+  }
 }
 
 class _Picker extends FilePicker {
@@ -135,7 +139,8 @@ Future<void> _chatFile(WidgetTester tester) async {
 
 Future<void> _withDashboard(WidgetTester tester,
     Future<void> Function(AppState, _Picker, List<String>) action,
-    {Size size = const Size(430, 932)}) async {
+    {Size size = const Size(430, 932),
+    Future<http.Response> Function(http.Request)? respond}) async {
   await tester.binding.setSurfaceSize(size);
   final app = (await tester.runAsync(_fixture))!;
   final picker = _Picker();
@@ -158,6 +163,7 @@ Future<void> _withDashboard(WidgetTester tester,
     },
         () => MockClient((request) async {
               requests.add('${request.method} ${request.url.path}');
+              if (respond != null) return respond(request);
               final Object body;
               switch ('${request.method} ${request.url.path}') {
                 case 'POST /list-files':
@@ -258,6 +264,137 @@ void main() {
       expect(requests, before);
     });
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('private V2 Send never follows upload with PIN routes or chat',
+      (tester) async {
+    Map<String, dynamic>? manifest;
+    final chunks = <int, String>{};
+    var published = false;
+    var publishCalls = 0;
+    await _withDashboard(tester, (app, picker, requests) async {
+      picker.action = () async => _selected();
+      await _createFile(tester);
+      // The live MVK is sufficient to choose V2 even if a transient UI state
+      // no longer has the handle string. It must never choose PIN follow-ups.
+      app.vaultHandle = null;
+      final statsBeforeSend = (app as _FixtureApp).statsRefreshCalls;
+      await tester.enterText(
+        find.byKey(const Key('chat_composer_field')),
+        'Please explain this attached file',
+      );
+      // The fixture's transient attachment banner covers the composer hit
+      // target. Invoke the actual enabled InkWell callback after rendering.
+      final send = tester.widget<InkWell>(find.descendant(
+        of: find.byKey(const Key('composer_send_button')),
+        matching: find.byType(InkWell),
+      ));
+      expect(send.onTap, isNotNull);
+      send.onTap!();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('File saved privately.'), findsWidgets);
+      expect(publishCalls, 1);
+      expect(app.statsRefreshCalls, statsBeforeSend);
+      expect(requests, contains('POST /vault/file-v2/manifest'));
+      expect(requests, contains('PUT /vault/file-v2/chunk'));
+      expect(requests, contains('GET /vault/files/metadata'));
+      expect(requests, contains('GET /vault/file-v2'));
+      expect(requests, isNot(contains('POST /vault/stats')));
+      expect(requests, isNot(contains('POST /list-secure-items')));
+      expect(requests, isNot(contains('POST /chat')));
+      expect(requests, isNot(contains('POST /list-files')));
+      expect(requests, isNot(contains('POST /upload-file')));
+      expect(requests, isNot(contains('POST /start-import')));
+    }, respond: (request) async {
+      final path = request.url.path;
+      final body = request.body;
+      expectSync(request.headers['x-svaultai-file-v2-reader'], '1');
+      expectSync(body, isNot(contains('123456')));
+      expectSync(body, isNot(contains('synthetic-file.txt')));
+      expectSync(body, isNot(contains('Please explain this attached file')));
+      expectSync(body, isNot(contains('"pin"')));
+      if (request.method == 'GET' && path.endsWith('/manifest')) {
+        if (manifest == null) {
+          return http.Response('{"detail":"file_v2_not_found"}', 404);
+        }
+        return http.Response(
+            jsonEncode(<String, dynamic>{
+              ...manifest!,
+              'lifecycle_state':
+                  published ? 'client_v2_ready' : 'file_v2_written',
+              'verification_state':
+                  published ? 'client_verified' : 'unverified',
+            }),
+            200);
+      }
+      if (request.method == 'POST' && path == '/vault/file-v2/manifest') {
+        manifest = Map<String, dynamic>.from(jsonDecode(body) as Map);
+        return http.Response('{"created":true}', 200);
+      }
+      if (path.contains('/chunk/') && request.method == 'GET') {
+        final index = int.parse(path.split('/').last);
+        return chunks.containsKey(index)
+            ? http.Response(
+                jsonEncode(<String, dynamic>{
+                  'file_id': manifest!['file_id'],
+                  'chunk_index': index,
+                  'ciphertext': chunks[index],
+                }),
+                200)
+            : http.Response('{"detail":"file_v2_chunk_not_found"}', 404);
+      }
+      if (request.method == 'PUT' && path == '/vault/file-v2/chunk') {
+        final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
+        chunks[decoded['chunk_index'] as int] = decoded['ciphertext'] as String;
+        return http.Response('{"stored":true}', 200);
+      }
+      if (request.method == 'POST' && path.endsWith('/publish-new')) {
+        expectSync(jsonDecode(body), <String, dynamic>{'confirm': true});
+        published = true;
+        publishCalls++;
+        return http.Response(
+            jsonEncode(<String, dynamic>{
+              'file_id': manifest!['file_id'],
+              'status': 'published',
+            }),
+            200);
+      }
+      if (request.method == 'GET' && path == '/vault/files/metadata') {
+        return http.Response(
+            jsonEncode(<String, dynamic>{
+              'records': <Map<String, dynamic>>[
+                {
+                  'file_id': manifest!['file_id'],
+                  'file_size': 4,
+                  'lifecycle_state': 'client_v2_ready',
+                  'verification_state': 'client_verified',
+                }
+              ],
+              'has_more': false,
+              'next_after_file_id': manifest!['file_id'],
+            }),
+            200);
+      }
+      if (request.method == 'GET' && path == '/vault/file-v2') {
+        return http.Response(
+            jsonEncode(<String, dynamic>{
+              'files': <Map<String, dynamic>>[
+                {
+                  'file_id': manifest!['file_id'],
+                  'lifecycle_state': 'client_v2_ready',
+                  'verification_state': 'client_verified',
+                }
+              ],
+            }),
+            200);
+      }
+      if (request.method == 'GET' && path == '/folders') {
+        return http.Response('{"path":"","folders":[],"files":[]}', 200);
+      }
+      fail('Unexpected request ${request.method} $path');
+    });
+  },
+      skip: !(kEnableFileV2UiRead && kEnableNewFileV2Upload),
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('cancel and unreadable selection leave the Files section intact',
       (tester) async {

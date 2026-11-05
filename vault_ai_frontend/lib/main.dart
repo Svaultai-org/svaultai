@@ -4955,6 +4955,9 @@ Future<Map<String, dynamic>> _zkHttpPost(
     pageUri: Uri.base,
   );
   final headers = <String, String>{'Content-Type': 'application/json'};
+  if (kEnableFileV2UiRead) {
+    headers['X-SVaultAI-File-V2-Reader'] = '1';
+  }
   final deviceId = apiClientDeviceId();
   if (deviceId != null && deviceId.isNotEmpty) {
     headers['X-Device-Id'] = deviceId;
@@ -17639,10 +17642,15 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     var uploadedFileIds = <String>[];
     final hadAttachments = pendingAttachments.isNotEmpty;
+    final privateV2Upload = hadAttachments && kEnableNewFileV2Upload &&
+        (zk_mvk_store.ZkActiveMvk.current() != null ||
+            app.vaultHandle?.isNotEmpty == true);
     var uploadCommitted = false;
 
     try {
-      final pin = await _VaultCrypto.currentPinOrThrow();
+      // The V2 writer uses only the active MVK. A missing MVK fails closed in
+      // _uploadAttachments; never read or forward the cached PIN on this path.
+      final pin = privateV2Upload ? '' : await _VaultCrypto.currentPinOrThrow();
 
       final uploadOutcome = await _uploadAttachments(
         client: client,
@@ -17656,9 +17664,22 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       uploadCommitted = uploadedFileIds.isNotEmpty;
 
       if (hadAttachments) {
-        await app.refreshVaultStats();
+        if (!privateV2Upload) await app.refreshVaultStats();
         await _loadVaultFiles();
-        await _reloadVaultLoginsAfterMutation();
+        if (!privateV2Upload) {
+          await _reloadVaultLoginsAfterMutation();
+        }
+      }
+
+      if (privateV2Upload) {
+        if (!mounted) return;
+        setState(() => sending = false);
+        _appendAssistantMessage(uploadedFileIds.isNotEmpty
+            ? 'File saved privately. Open Files to view it. Chat analysis '
+              'for new private files is not available yet.'
+            : 'The private file was not saved. Check the upload status and '
+              'retry.');
+        return;
       }
 
       if (text.isEmpty && uploadedFileIds.isNotEmpty) {

@@ -22,6 +22,13 @@ import 'services/zk_private_chat.dart' as zk_private_chat;
 import 'services/file_v2_reader.dart';
 import 'services/file_v2_writer.dart';
 
+// Only builds with the MVK V2 file reader advertise this capability. The
+// server uses it to avoid handing V2 file owners to an incompatible client.
+const bool kFileV2ReaderCapability = bool.fromEnvironment(
+  'VAULTAI_ENABLE_FILE_V2_UI_READ',
+  defaultValue: false,
+);
+
 // Coordinated rollout with VAULTAI_ZK_METADATA_INVENTORY_ENABLED on the API.
 // A missing keyless route must fail closed instead of sending a ZK PIN.
 const bool kEnableKeylessSavedItemRead = bool.fromEnvironment(
@@ -790,6 +797,10 @@ class VaultAIClient {
       );
     }
     final headers = <String, String>{};
+
+    if (kFileV2ReaderCapability) {
+      headers['X-SVaultAI-File-V2-Reader'] = '1';
+    }
 
     if (json) {
       headers['Content-Type'] = 'application/json';

@@ -76,6 +76,8 @@ void main() {
     final mock = MockClient((request) async {
       expect(request.headers['authorization'], 'Bearer synthetic-session');
       expect(request.headers['x-device-id'], 'synthetic-device');
+      expect(request.headers['x-svaultai-file-v2-reader'],
+          kFileV2ReaderCapability ? '1' : isNull);
       expect(request.body, isNot(contains('synthetic-private.txt')));
       expect(request.body, isNot(contains('synthetic-title.txt')));
       expect(request.body, isNot(contains('synthetic-private-bytes')));
