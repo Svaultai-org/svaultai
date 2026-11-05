@@ -72,6 +72,7 @@ from routes.vault_ciphertext_write_routes import (
     router as vault_ciphertext_write_router,
 )
 from routes.file_v2_routes import router as file_v2_router
+from routes.file_v2_new_upload_routes import router as file_v2_new_upload_router
 from routes.credential_v2_routes import router as credential_v2_router
 from routes.wallet_backup_v2_routes import router as wallet_backup_v2_router
 from routes.wallet_v2_routes import router as wallet_v2_router
@@ -504,6 +505,7 @@ app.include_router(billing_router)
 from routes.provider_billing_routes import router as provider_billing_router
 app.include_router(provider_billing_router)
 app.include_router(file_v2_router)
+app.include_router(file_v2_new_upload_router)
 
                                                                       
                                                                        
