@@ -25,7 +25,10 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, _get_secret
 from device_gate import verify_trusted_device
-from legacy_source_snapshot import source_snapshot as legacy_source_snapshot
+from legacy_source_snapshot import (
+    FILE_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
+    source_snapshot as legacy_source_snapshot,
+)
 from routes.auth_zk_routes import consume_recent_zk_proof
 from subscription_entitlement import require_content_write
 from vault_core import get_db
@@ -172,6 +175,20 @@ class FileRetireRequest(BaseModel):
     source_snapshot: str = Field(..., min_length=43, max_length=43)
 
 
+class ItemStageResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_id: int = Field(..., gt=0)
+    source_snapshot: str = Field(..., min_length=43, max_length=43)
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+
+
+class FileStageResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    file_id: str = Field(..., min_length=1, max_length=128)
+    source_snapshot: str = Field(..., min_length=43, max_length=43)
+    zk_proof_token: str = Field(..., min_length=1, max_length=128)
+
+
 _ITEM_COLUMNS = (
     "encrypted_data, item_type, service, item_type_ciphertext, "
     "service_ciphertext, payload_ciphertext"
@@ -298,6 +315,49 @@ def readback_staged_item(
             "readback_receipt": receipt,
             "receipt_expires_at": expires_at,
         }
+    finally:
+        conn.close()
+
+
+@router.post("/vault/legacy-ciphertext/migrate/item-reset-stage")
+def reset_legacy_item_stage(
+    payload: ItemStageResetRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Discard only an unfinished item copy after a legacy client changed it.
+
+    The old PIN-derived ciphertext stays in place. A fresh source snapshot and
+    one-time OPAQUE proof are required before the owner can export and restage.
+    """
+    _require_flag("VAULTAI_ZK_LEGACY_MIGRATION_STAGE_ENABLED")
+    _require_flag("VAULTAI_ZK_LEGACY_STAGE_RECOVERY_ENABLED")
+    require_content_write(principal)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        row = _load_item_locked(cur, principal["vault_id"], payload.item_id)
+        if row.get("encrypted_data") is None or not _item_v2_complete(row):
+            raise HTTPException(409, detail="item_stage_not_resettable")
+        if legacy_source_snapshot(
+            "item", row, vault_id=principal["vault_id"],
+            record_id=payload.item_id,
+        ) != payload.source_snapshot:
+            raise HTTPException(409, detail="legacy_source_changed")
+        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        cur.execute(
+            """UPDATE vault_items SET payload_ciphertext=NULL
+                 WHERE id=%s AND vault_id=%s AND encrypted_data IS NOT NULL
+                   AND payload_ciphertext IS NOT NULL
+                   RETURNING id""",
+            (payload.item_id, principal["vault_id"]),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(409, detail="item_stage_changed")
+        conn.commit()
+        return {"item_id": payload.item_id, "stage_reset": True}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -502,6 +562,79 @@ def readback_staged_file(
             "readback_receipt": receipt,
             "receipt_expires_at": expires_at,
         }
+    finally:
+        conn.close()
+
+
+@router.post("/vault/legacy-ciphertext/migrate/file-reset-stage")
+def reset_legacy_file_stage(
+    payload: FileStageResetRequest,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+) -> dict:
+    """Discard only an unfinished, marked V2 sidecar under the file lock."""
+    _require_flag("VAULTAI_ZK_LEGACY_MIGRATION_STAGE_ENABLED")
+    _require_flag("VAULTAI_ZK_LEGACY_STAGE_RECOVERY_ENABLED")
+    require_content_write(principal)
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (principal["vault_id"], payload.file_id),
+        )
+        cur.execute(
+            "SELECT LENGTH(encrypted_file_data) AS legacy_chars "
+            "FROM uploaded_files WHERE id=%s AND vault_id=%s "
+            "AND storage_mode='inline' AND upload_status='complete' "
+            "FOR UPDATE",
+            (payload.file_id, principal["vault_id"]),
+        )
+        length_row = cur.fetchone()
+        if length_row is None or length_row["legacy_chars"] is None:
+            raise HTTPException(409, detail="legacy_file_not_resettable")
+        if int(length_row["legacy_chars"]) > MAX_SOURCE_CIPHERTEXT_CHARS:
+            raise HTTPException(413, detail="file_migration_streaming_required")
+        cur.execute(
+            f"SELECT {', '.join(FILE_SOURCE_FIELDS)} FROM uploaded_files "
+            "WHERE id=%s AND vault_id=%s AND storage_mode='inline' "
+            "AND upload_status='complete' FOR UPDATE",
+            (payload.file_id, principal["vault_id"]),
+        )
+        source = cur.fetchone()
+        if source is None or source.get("encrypted_file_data") is None:
+            raise HTTPException(409, detail="legacy_file_not_resettable")
+        if legacy_source_snapshot(
+            "file", source, vault_id=principal["vault_id"],
+            record_id=payload.file_id,
+        ) != payload.source_snapshot:
+            raise HTTPException(409, detail="legacy_source_changed")
+        cur.execute(
+            "SELECT migrating_legacy,lifecycle_state,verification_state,"
+            "saved_name_override_ciphertext,name_version "
+            "FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE",
+            (payload.file_id, principal["vault_id"]),
+        )
+        stage = cur.fetchone()
+        if (stage is None or stage["migrating_legacy"] is not True or
+                stage["lifecycle_state"] != "file_v2_written" or
+                stage["verification_state"] != "not_verified" or
+                stage["saved_name_override_ciphertext"] is not None or
+                int(stage["name_version"]) != 0):
+            raise HTTPException(409, detail="file_stage_not_resettable")
+        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        cur.execute(
+            "DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s "
+            "AND migrating_legacy=TRUE AND lifecycle_state='file_v2_written' "
+            "AND verification_state='not_verified' RETURNING file_id",
+            (payload.file_id, principal["vault_id"]),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(409, detail="file_stage_changed")
+        conn.commit()
+        return {"file_id": payload.file_id, "stage_reset": True}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
