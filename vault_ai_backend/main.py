@@ -2511,6 +2511,16 @@ def _persist_naming_text_classification(
             try:
                 with conn.cursor() as cur:
                     cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                        (vault_id, file_id),
+                    )
+                    from routes.file_v2_routes import (
+                        invalidate_unverified_legacy_stage_for_file_mutation,
+                    )
+                    invalidate_unverified_legacy_stage_for_file_mutation(
+                        cur, vault_id, file_id,
+                    )
+                    cur.execute(
                         """
                         UPDATE uploaded_files
                            SET asset_type = %s
@@ -7155,6 +7165,16 @@ def save_named_uploaded_asset(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (vault_id, file_id),
+        )
+        from routes.file_v2_routes import (
+            invalidate_unverified_legacy_stage_for_file_mutation,
+        )
+        invalidate_unverified_legacy_stage_for_file_mutation(
+            cursor, vault_id, file_id,
+        )
                                                                           
                                                                         
         cursor.execute(
@@ -8109,11 +8129,15 @@ def save_secret_tool(vault_id: str, args: dict, key: bytes,
                 """
                 UPDATE vault_items
                 SET encrypted_data = %s,
+                    payload_ciphertext = NULL,
                     created_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                WHERE id = %s AND vault_id = %s
+                  AND encrypted_data IS NOT NULL
                 """,
-                (encrypted_data, existing["id"]),
+                (encrypted_data, existing["id"], vault_id),
             )
+            if cursor.rowcount != 1:
+                raise ValueError("Legacy item changed during save")
         else:
             cursor.execute(
                 """

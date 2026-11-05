@@ -46,15 +46,40 @@ class _Cursor:
             self.many = [row for row in self.db.files
                          if row["id"] > after_id][:limit]
         elif "select length(encrypted_data)" in normalized:
-            start, length, vault_id, record_id = params
+            vault_id, record_id = params
             text = self.db.item_ciphertext[record_id]
-            self.one = {"total_chars": len(text),
-                        "ciphertext_chunk": text[start - 1:start - 1 + length]}
+            self.one = {"total_chars": len(text)}
+        elif normalized.startswith("select encrypted_data, item_type, service,"):
+            vault_id, record_id = params
+            self.one = {
+                "encrypted_data": self.db.item_ciphertext[record_id],
+                "item_type": "login", "service": "synthetic",
+                "item_type_ciphertext": None,
+                "service_ciphertext": None,
+            }
         elif "select length(encrypted_file_data)" in normalized:
-            start, length, vault_id, record_id = params
+            vault_id, record_id = params
             text = self.db.file_ciphertext[record_id]
-            self.one = {"total_chars": len(text),
-                        "ciphertext_chunk": text[start - 1:start - 1 + length]}
+            self.one = {"total_chars": len(text)}
+        elif normalized.startswith("select encrypted_file_data, file_size,"):
+            vault_id, record_id = params
+            self.one = {
+                "encrypted_file_data": self.db.file_ciphertext[record_id],
+                "file_size": 42,
+                "file_name": "synthetic-file.txt",
+                "saved_name": None,
+                "content_type": "text/plain",
+                "detected_type": None,
+                "detected_service": None,
+                "asset_type": "file",
+                "relative_path": None,
+                "extracted_text": None,
+                **{name: None for name in (
+                    "file_name_ciphertext", "saved_name_ciphertext",
+                    "content_type_ciphertext", "detected_type_ciphertext",
+                    "detected_service_ciphertext", "asset_type_ciphertext",
+                )},
+            }
         elif "update vault_zk_login_slots set server_state" in normalized:
             state, token, vault_id = params
             existing = self.db.slots[token]
@@ -199,6 +224,7 @@ def test_list_and_read_return_ciphertext_only(export_harness):
     item = _page(client, token, sequence=1, mode="read_item", item_id=7)
     assert item.status_code == 200, item.text
     assert item.json()["ciphertext_chunk"] == db.item_ciphertext[7]
+    assert len(item.json()["source_snapshot"]) == 43
     assert "plaintext" not in item.text
     files = _page(client, token, sequence=2, mode="list_files")
     assert files.status_code == 200, files.text
@@ -207,6 +233,7 @@ def test_list_and_read_return_ciphertext_only(export_harness):
                       file_id="synthetic-file-1")
     assert file_read.status_code == 200, file_read.text
     assert file_read.json()["ciphertext_chunk"] == db.file_ciphertext["synthetic-file-1"]
+    assert file_read.json()["source_metadata"]["file_name"] == "synthetic-file.txt"
     assert "plaintext" not in file_read.text
 
 

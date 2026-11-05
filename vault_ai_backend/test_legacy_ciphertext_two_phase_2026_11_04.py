@@ -66,7 +66,9 @@ class FakeCursor:
     def execute(self, sql, params=()):
         normalized = " ".join(sql.split())
         self.rowcount = 0
-        if normalized.startswith("SELECT encrypted_data, item_type"):
+        if normalized.startswith("SELECT pg_advisory_xact_lock"):
+            self.result = []
+        elif normalized.startswith("SELECT encrypted_data, item_type"):
             vault_id, item_id = params
             self.result = [deepcopy(self.db.item)] if vault_id == VAULT and item_id == 7 else []
         elif normalized.startswith("UPDATE vault_items SET item_type_ciphertext"):
@@ -185,29 +187,58 @@ def runtime(monkeypatch):
     reset_secret_for_tests()
 
 
-def _stage_item():
+def _stage_item(source=None):
     return migration.ItemStageRequest(
         item_id=7,
         item_type_ciphertext=migration._b64(b"type-v2"),
         service_ciphertext=migration._b64(b"service-v2"),
         payload_ciphertext=migration._b64(b"payload-v2"),
+        source_snapshot=migration.legacy_source_snapshot(
+            "item", source or _item(), vault_id=VAULT, record_id=7,
+        ),
     )
 
 
 def test_item_stage_retains_legacy_and_exact_retry_is_idempotent(runtime):
     db, _ = runtime
     first = migration.stage_legacy_item(_stage_item(), PRINCIPAL)
-    assert first == {"item_id": 7, "staged": True, "created": True}
+    assert first == {
+        "item_id": 7, "staged": True, "created": True,
+        "source_snapshot": migration.legacy_source_snapshot(
+            "item", db.item, vault_id=VAULT, record_id=7,
+        ),
+    }
     assert db.item["encrypted_data"] == "SYNTHETIC_LEGACY_CT"
-    second = migration.stage_legacy_item(_stage_item(), PRINCIPAL)
+    second = migration.stage_legacy_item(_stage_item(db.item), PRINCIPAL)
     assert second["created"] is False
     with pytest.raises(HTTPException) as exc:
         migration.stage_legacy_item(
-            _stage_item().model_copy(update={
+            _stage_item(db.item).model_copy(update={
                 "payload_ciphertext": migration._b64(b"different-v2"),
             }), PRINCIPAL,
         )
     assert exc.value.status_code == 409
+    assert db.item["payload_ciphertext"] == b"payload-v2"
+
+
+def test_item_stage_rejects_source_edit_after_export(runtime):
+    db, _ = runtime
+    exported = _stage_item()
+    db.item["encrypted_data"] = "new-synthetic-legacy-ciphertext"
+    with pytest.raises(HTTPException) as exc:
+        migration.stage_legacy_item(exported, PRINCIPAL)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "legacy_source_changed"
+    assert db.item["payload_ciphertext"] is None
+
+
+def test_item_stage_accepts_metadata_only_partial_row(runtime):
+    db, _ = runtime
+    db.item["item_type_ciphertext"] = b"earlier-type-metadata"
+    db.item["service_ciphertext"] = b"earlier-service-metadata"
+    response = migration.stage_legacy_item(_stage_item(db.item), PRINCIPAL)
+    assert response["created"] is True
+    assert db.item["encrypted_data"] == "SYNTHETIC_LEGACY_CT"
     assert db.item["payload_ciphertext"] == b"payload-v2"
 
 
@@ -221,6 +252,7 @@ def test_item_retire_requires_same_session_readback_and_opaque_proof(runtime):
     request = migration.ItemRetireRequest(
         item_id=7, readback_receipt=readback["readback_receipt"],
         zk_proof_token="synthetic-one-time-proof",
+        source_snapshot=readback["source_snapshot"],
     )
     with pytest.raises(HTTPException) as exc:
         migration.retire_legacy_item(
@@ -238,13 +270,36 @@ def test_item_retire_requires_same_session_readback_and_opaque_proof(runtime):
 def test_item_source_change_blocks_retirement_without_consuming_proof(runtime):
     db, proof = runtime
     migration.stage_legacy_item(_stage_item(), PRINCIPAL)
-    receipt = migration.readback_staged_item(7, PRINCIPAL)["readback_receipt"]
+    readback = migration.readback_staged_item(7, PRINCIPAL)
+    receipt = readback["readback_receipt"]
     db.item["encrypted_data"] = "CHANGED_SYNTHETIC_CT"
     with pytest.raises(HTTPException) as exc:
         migration.retire_legacy_item(migration.ItemRetireRequest(
             item_id=7, readback_receipt=receipt, zk_proof_token="synthetic-proof",
+            source_snapshot=readback["source_snapshot"],
         ), PRINCIPAL)
     assert exc.value.status_code == 409
+    proof.assert_not_called()
+    assert db.item["encrypted_data"] is not None
+
+
+def test_new_item_readback_receipt_cannot_certify_earlier_export(runtime):
+    db, proof = runtime
+    migration.stage_legacy_item(_stage_item(), PRINCIPAL)
+    earlier = migration.readback_staged_item(7, PRINCIPAL)
+    db.item["encrypted_data"] = "new-synthetic-legacy-ciphertext"
+    later = migration.readback_staged_item(7, PRINCIPAL)
+    assert later["source_snapshot"] != earlier["source_snapshot"]
+    # The new receipt describes the edited row, but the client only verified
+    # the earlier export. That earlier snapshot cannot authorize retirement.
+    with pytest.raises(HTTPException) as exc:
+        migration.retire_legacy_item(migration.ItemRetireRequest(
+            item_id=7, readback_receipt=later["readback_receipt"],
+            source_snapshot=earlier["source_snapshot"],
+            zk_proof_token="synthetic-proof",
+        ), PRINCIPAL)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "legacy_source_changed"
     proof.assert_not_called()
     assert db.item["encrypted_data"] is not None
 
@@ -265,6 +320,7 @@ def test_file_readback_requires_complete_chunks_and_retirement_is_separate(runti
         readback_receipt=readback["readback_receipt"],
         zk_proof_token="synthetic-file-proof",
         client_verified_exact_bytes=True,
+        source_snapshot=readback["source_snapshot"],
     )
     result = migration.retire_legacy_file(request, PRINCIPAL)
     assert result["retired"] is True
@@ -282,10 +338,30 @@ def test_file_retire_rejects_missing_client_verification(runtime):
             readback_receipt=receipt["readback_receipt"],
             zk_proof_token="synthetic-proof",
             client_verified_exact_bytes=False,
+            source_snapshot=receipt["source_snapshot"],
         ), PRINCIPAL)
     assert exc.value.status_code == 400
     proof.assert_not_called()
     assert db.file["encrypted_file_data"] is not None
+
+
+def test_file_rename_after_export_cannot_use_new_receipt_for_old_copy(runtime):
+    db, proof = runtime
+    earlier = migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    db.file["saved_name"] = "new-synthetic-name"
+    later = migration.readback_staged_file(db.file["id"], PRINCIPAL)
+    assert later["source_snapshot"] != earlier["source_snapshot"]
+    with pytest.raises(HTTPException) as exc:
+        migration.retire_legacy_file(migration.FileRetireRequest(
+            file_id=db.file["id"],
+            readback_receipt=later["readback_receipt"],
+            source_snapshot=earlier["source_snapshot"],
+            zk_proof_token="synthetic-proof",
+            client_verified_exact_bytes=True,
+        ), PRINCIPAL)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "legacy_source_changed"
+    proof.assert_not_called()
 
 
 def test_cross_vault_migration_cannot_read_records(runtime):

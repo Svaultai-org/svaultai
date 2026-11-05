@@ -252,11 +252,16 @@ async def update_login(
                 UPDATE vault_items
                 SET service = %s,
                     encrypted_data = %s,
+                    service_ciphertext = NULL,
+                    payload_ciphertext = NULL,
                     created_at = CURRENT_TIMESTAMP
-                WHERE id = %s
+                WHERE id = %s AND vault_id = %s
+                  AND encrypted_data IS NOT NULL
                 """,
-                (new_service, encrypted, row["id"]),
+                (new_service, encrypted, row["id"], vault_id),
             )
+            if cur.rowcount != 1:
+                raise HTTPException(status_code=409, detail="legacy_item_migration_required")
             _login_item_id = row["id"]
         else:
             cur.execute(
@@ -405,6 +410,16 @@ async def rename_file(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (vault_id, payload.file_id),
+        )
+        from routes.file_v2_routes import (
+            invalidate_unverified_legacy_stage_for_file_mutation,
+        )
+        invalidate_unverified_legacy_stage_for_file_mutation(
+            cur, vault_id, payload.file_id,
+        )
         cur.execute(
             """
             UPDATE uploaded_files

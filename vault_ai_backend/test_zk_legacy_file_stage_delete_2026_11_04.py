@@ -259,8 +259,13 @@ def test_manifest_persists_stage_marker_and_retry_cannot_change_it(monkeypatch):
             self.queries.append(query)
             if query.startswith("select pg_advisory"):
                 self.result = None
-            elif query.startswith("select 1 from uploaded_files"):
-                self.result = (1,)
+            elif query.startswith("select length(encrypted_file_data)"):
+                self.result = (37,)
+            elif query.startswith("select encrypted_file_data,"):
+                self.result = tuple(
+                    "synthetic-ciphertext" if field == "encrypted_file_data"
+                    else None for field in file_v2_routes.FILE_SOURCE_FIELDS
+                )
             elif query.startswith("insert into file_v2_records"):
                 assert "migrating_legacy" in query
                 marker = params[-1]
@@ -300,10 +305,13 @@ def test_manifest_persists_stage_marker_and_retry_cannot_change_it(monkeypatch):
     monkeypatch.setattr(file_v2_routes, "require_content_write", mock.Mock())
     monkeypatch.setattr(file_v2_routes, "_enabled", lambda *_args: None)
     monkeypatch.setattr(file_v2_routes, "_new_files_enabled", lambda: True)
+    monkeypatch.setattr(file_v2_routes, "legacy_source_snapshot",
+                        lambda _kind, _row, **_scope: "S" * 43)
     marked = file_v2_routes.Manifest(
         file_id=FILE_ID, crypto_version="client_mvk_v2",
         manifest_ciphertext="AQID", total_bytes=37,
         chunk_size=1024, chunk_count=1, migrating_legacy=True,
+        source_snapshot="S" * 43,
     )
     principal = {"vault_id": VAULT_ID}
     file_v2_routes.create_manifest(marked, principal)
@@ -312,7 +320,9 @@ def test_manifest_persists_stage_marker_and_retry_cannot_change_it(monkeypatch):
     assert db.commits == 2
     with pytest.raises(HTTPException) as raised:
         file_v2_routes.create_manifest(
-            marked.model_copy(update={"migrating_legacy": False}), principal,
+            marked.model_copy(update={
+                "migrating_legacy": False, "source_snapshot": None,
+            }), principal,
         )
     assert raised.value.status_code == 409
     assert raised.value.detail == "file_v2_manifest_conflict"

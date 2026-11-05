@@ -25,6 +25,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, _get_secret
 from device_gate import verify_trusted_device
+from legacy_source_snapshot import source_snapshot as legacy_source_snapshot
 from routes.auth_zk_routes import consume_recent_zk_proof
 from subscription_entitlement import require_content_write
 from vault_core import get_db
@@ -151,6 +152,7 @@ class ItemStageRequest(BaseModel):
     item_type_ciphertext: str = Field(..., min_length=1)
     service_ciphertext: str = Field(..., min_length=1)
     payload_ciphertext: str = Field(..., min_length=1)
+    source_snapshot: str = Field(..., min_length=43, max_length=43)
 
 
 class ItemRetireRequest(BaseModel):
@@ -158,6 +160,7 @@ class ItemRetireRequest(BaseModel):
     item_id: int = Field(..., gt=0)
     readback_receipt: str = Field(..., min_length=1, max_length=256)
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
+    source_snapshot: str = Field(..., min_length=43, max_length=43)
 
 
 class FileRetireRequest(BaseModel):
@@ -166,6 +169,7 @@ class FileRetireRequest(BaseModel):
     readback_receipt: str = Field(..., min_length=1, max_length=256)
     zk_proof_token: str = Field(..., min_length=1, max_length=128)
     client_verified_exact_bytes: bool
+    source_snapshot: str = Field(..., min_length=43, max_length=43)
 
 
 _ITEM_COLUMNS = (
@@ -213,16 +217,23 @@ def stage_legacy_item(
         row = _load_item_locked(cur, principal["vault_id"], payload.item_id)
         if row.get("encrypted_data") is None:
             raise HTTPException(status_code=409, detail="item_not_legacy")
+        if legacy_source_snapshot(
+            "item", row, vault_id=principal["vault_id"],
+            record_id=payload.item_id,
+        ) != payload.source_snapshot:
+            raise HTTPException(status_code=409, detail="legacy_source_changed")
         existing = tuple(row.get(field) for field in (
             "item_type_ciphertext", "service_ciphertext", "payload_ciphertext",
         ))
-        if any(value is not None for value in existing):
+        if row.get("payload_ciphertext") is not None:
             if not _item_v2_complete(row) or tuple(
                 bytes(value) for value in existing
             ) != ciphertexts:
                 raise HTTPException(status_code=409, detail="staged_item_conflict")
             conn.commit()
-            return {"item_id": payload.item_id, "staged": True, "created": False}
+            return {"item_id": payload.item_id, "staged": True,
+                    "created": False,
+                    "source_snapshot": payload.source_snapshot}
         cur.execute(
             """
             UPDATE vault_items
@@ -235,8 +246,15 @@ def stage_legacy_item(
         )
         if cur.rowcount != 1:
             raise HTTPException(status_code=409, detail="item_changed_during_stage")
+        row.update(zip(("item_type_ciphertext", "service_ciphertext",
+                        "payload_ciphertext"), ciphertexts))
+        post_stage_snapshot = legacy_source_snapshot(
+            "item", row, vault_id=principal["vault_id"],
+            record_id=payload.item_id,
+        )
         conn.commit()
-        return {"item_id": payload.item_id, "staged": True, "created": True}
+        return {"item_id": payload.item_id, "staged": True, "created": True,
+                "source_snapshot": post_stage_snapshot}
     except Exception:
         conn.rollback()
         raise
@@ -270,6 +288,10 @@ def readback_staged_item(
         )
         return {
             "item_id": item_id,
+            "source_snapshot": legacy_source_snapshot(
+                "item", row, vault_id=principal["vault_id"],
+                record_id=item_id,
+            ),
             "item_type_ciphertext": _b64(bytes(row["item_type_ciphertext"])),
             "service_ciphertext": _b64(bytes(row["service_ciphertext"])),
             "payload_ciphertext": _b64(bytes(row["payload_ciphertext"])),
@@ -298,6 +320,11 @@ def retire_legacy_item(
         if row.get("encrypted_data") is None or not _item_v2_complete(row):
             raise HTTPException(status_code=409, detail="item_not_ready")
         digest = _item_digest(row)
+        if legacy_source_snapshot(
+            "item", row, vault_id=principal["vault_id"],
+            record_id=payload.item_id,
+        ) != payload.source_snapshot:
+            raise HTTPException(status_code=409, detail="legacy_source_changed")
         if not _receipt_valid(
             payload.readback_receipt, "i", principal, str(payload.item_id), digest,
         ):
@@ -464,6 +491,10 @@ def readback_staged_file(
         )
         return {
             "file_id": file_id,
+            "source_snapshot": legacy_source_snapshot(
+                "file", row, vault_id=principal["vault_id"],
+                record_id=file_id,
+            ),
             "manifest_ciphertext": _b64(bytes(row["manifest_ciphertext"])),
             "chunk_count": int(row["chunk_count"]),
             "total_bytes": int(row["total_bytes"]),
@@ -487,6 +518,10 @@ def retire_legacy_file(
     conn = get_db()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (principal["vault_id"], payload.file_id),
+        )
         row = _load_file_pair(cur, principal["vault_id"], payload.file_id,
                               locked=True)
         if row.get("encrypted_file_data") is None:
@@ -498,6 +533,11 @@ def retire_legacy_file(
         digest, _ = _file_digest_and_v2_hash(
             cur, payload.file_id, row, locked=True,
         )
+        if legacy_source_snapshot(
+            "file", row, vault_id=principal["vault_id"],
+            record_id=payload.file_id,
+        ) != payload.source_snapshot:
+            raise HTTPException(status_code=409, detail="legacy_source_changed")
         if not _receipt_valid(
             payload.readback_receipt, "f", principal, payload.file_id, digest,
         ):

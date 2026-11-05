@@ -656,6 +656,16 @@ def uploaded_file_metadata_ciphertext(
     try:
         cur = conn.cursor()
         cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (principal["vault_id"], payload.file_id),
+        )
+        from routes.file_v2_routes import (
+            invalidate_unverified_legacy_stage_for_file_mutation,
+        )
+        invalidate_unverified_legacy_stage_for_file_mutation(
+            cur, principal["vault_id"], payload.file_id,
+        )
+        cur.execute(
             f"""
             UPDATE uploaded_files
                SET {", ".join(set_clauses)}

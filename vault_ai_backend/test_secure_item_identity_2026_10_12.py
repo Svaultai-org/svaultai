@@ -38,9 +38,11 @@ class Cursor:
     def __init__(self, store):
         self.store = store
         self.result = []
+        self.rowcount = 0
 
     def execute(self, sql, params=()):
         text = " ".join(sql.lower().split())
+        self.rowcount = 0
         if text.startswith("select"):
             rows = [r for r in self.store.rows if r["vault_id"] == params[0]]
             if "item_type not in" in text:
@@ -62,6 +64,7 @@ class Cursor:
             self.store.mutations.append((text, params))
             row = next(r for r in self.store.rows if r["id"] == params[2])
             row.update(service=params[0], encrypted_data=params[1])
+            self.rowcount = 1
         elif text.startswith("insert"):
             self.store.mutations.append((text, params))
             row = self.store.row(99, params[0], "", params[2])

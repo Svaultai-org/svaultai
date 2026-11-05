@@ -315,7 +315,11 @@ def apply_batch(
     conn = get_db()
     try:
         cur = conn.cursor()
-        for row in payload.rows:
+        # Each file may take an advisory lock; use one order for batched
+        # backfills so concurrent clients cannot lock A/B in reverse order.
+        rows = (sorted(payload.rows, key=lambda row: str(row.row_id))
+                if spec.table == "uploaded_files" else payload.rows)
+        for row in rows:
             ct_map: dict[str, bytes] = {}
             for ct_col in spec.ciphertext_columns:
                 raw_val = row.ciphertext.get(ct_col)
@@ -330,6 +334,14 @@ def apply_batch(
             set_ciphertext_parts = [
                 f"{col} = %s" for col in ct_map
             ]
+            if spec.table == "vault_items":
+                # A metadata backfill changes the source labels of any
+                # unfinished legacy stage. Keep the old PIN ciphertext and
+                # make the V2 payload eligible for a fresh snapshot stage.
+                set_ciphertext_parts.append(
+                    "payload_ciphertext = CASE WHEN encrypted_data IS NOT NULL "
+                    "THEN NULL ELSE payload_ciphertext END"
+                )
             set_plaintext_parts = [
                 f"{col} = NULL" for col in spec.plaintext_columns
             ]
@@ -341,6 +353,17 @@ def apply_batch(
                 *ct_map.values(),
                 row.row_id, principal["vault_id"],
             ]
+            if spec.table == "uploaded_files":
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                    (principal["vault_id"], row.row_id),
+                )
+                from routes.file_v2_routes import (
+                    invalidate_unverified_legacy_stage_for_file_mutation,
+                )
+                invalidate_unverified_legacy_stage_for_file_mutation(
+                    cur, principal["vault_id"], row.row_id,
+                )
             cur.execute(
                 f"""
                 UPDATE {spec.table}

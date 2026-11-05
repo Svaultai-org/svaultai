@@ -58,15 +58,21 @@ class FakeCursor:
                 "ciphertext_chars": 16,
             }]
         elif normalized.startswith("SELECT LENGTH(encrypted_data)"):
-            offset, length, vault_id, item_id = params
+            vault_id, item_id = params
             if vault_id != VAULT or item_id != 7:
                 self.rows = []
             else:
                 ct = "SYNTHETIC_B64_CT"
-                self.rows = [{
-                    "total_chars": len(ct),
-                    "ciphertext_chunk": ct[offset - 1:offset - 1 + length],
-                }]
+                self.rows = [{"total_chars": len(ct)}]
+        elif normalized.startswith("SELECT encrypted_data, item_type, service,"):
+            vault_id, item_id = params
+            self.rows = [{
+                "encrypted_data": "SYNTHETIC_B64_CT",
+                "item_type": "login",
+                "service": "example",
+                "item_type_ciphertext": None,
+                "service_ciphertext": None,
+            }] if vault_id == VAULT and item_id == 7 else []
         else:
             raise AssertionError(f"Unexpected SQL shape: {normalized[:80]}")
 
@@ -200,6 +206,8 @@ def test_item_chunk_returns_only_ciphertext_and_enforces_budget(runtime):
     assert "encrypted_data" not in result
     assert result["next_offset"] == 8
     assert result["done"] is False
+    assert len(result["source_snapshot"]) == 43
+    assert result["source_metadata"]["service"] == "example"
 
     state = json.loads(db.grants[token]["state"].decode())
     state["bytes_left"] = 1

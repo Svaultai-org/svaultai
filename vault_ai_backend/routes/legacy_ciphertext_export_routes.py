@@ -32,6 +32,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 
 from auth_local import SessionPrincipal, _get_secret
+from legacy_source_snapshot import (
+    FILE_SOURCE_FIELDS, ITEM_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
+    source_snapshot as legacy_source_snapshot,
+)
 from device_gate import verify_trusted_device
 from routes.auth_zk_routes import consume_recent_zk_proof
 from vault_core import get_db
@@ -294,6 +298,8 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         )
         id_key = "item_id"
         storage_clause = ""
+        source_fields = ITEM_SOURCE_FIELDS
+        kind = "item"
     else:
         if payload.file_id is None:
             raise HTTPException(status_code=400, detail="file_id_required")
@@ -302,22 +308,68 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         )
         id_key = "file_id"
         storage_clause = "AND storage_mode = 'inline' AND upload_status = 'complete'"
+        source_fields = FILE_SOURCE_FIELDS
+        kind = "file"
     # Table/column names are fixed code constants, never request parameters.
     cur.execute(
-        f"SELECT LENGTH({data_column}) AS total_chars, "
-        f"SUBSTRING({data_column} FROM %s FOR %s) AS ciphertext_chunk "
+        f"SELECT LENGTH({data_column}) AS total_chars "
         f"FROM {table} WHERE vault_id = %s AND {id_column} = %s "
-        f"AND {data_column} IS NOT NULL {storage_clause}",
-        (payload.offset + 1, payload.max_chars, vault_id, record_id),
+        f"AND {data_column} IS NOT NULL {storage_clause} FOR SHARE",
+        (vault_id, record_id),
+    )
+    length_row = cur.fetchone()
+    if length_row is None:
+        raise HTTPException(status_code=404, detail="legacy_record_not_found")
+    total = int(length_row["total_chars"])
+    if total > MAX_SOURCE_CIPHERTEXT_CHARS:
+        raise HTTPException(status_code=413, detail="legacy_streaming_required")
+    if payload.offset > total:
+        raise HTTPException(status_code=416, detail="offset_out_of_range")
+    cur.execute(
+        f"SELECT {', '.join(source_fields)} FROM {table} "
+        f"WHERE vault_id = %s AND {id_column} = %s",
+        (vault_id, record_id),
     )
     row = cur.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="legacy_record_not_found")
-    total = int(row["total_chars"])
-    if payload.offset > total:
-        raise HTTPException(status_code=416, detail="offset_out_of_range")
-    chunk = row["ciphertext_chunk"] or ""
+    ciphertext = row[data_column]
+    if len(ciphertext) != total:
+        raise HTTPException(status_code=409, detail="legacy_source_changed")
+    chunk = ciphertext[payload.offset:payload.offset + payload.max_chars]
     next_offset = payload.offset + len(chunk)
+    if kind == "item":
+        metadata = {
+            "item_type": row["item_type"],
+            "service": row["service"],
+            "item_type_ciphertext": _metadata_b64(row["item_type_ciphertext"]),
+            "service_ciphertext": _metadata_b64(row["service_ciphertext"]),
+        }
+    else:
+        # Older clients can rename using plaintext columns. The owner needs
+        # those latest labels to re-encrypt them before retiring the old row.
+        metadata = {
+            "file_size": int(row["file_size"]),
+            **{field: row[field] for field in (
+                "file_name", "saved_name", "content_type",
+                "detected_type", "detected_service", "asset_type",
+            )},
+            **{field: _metadata_b64(row[field]) for field in (
+                "file_name_ciphertext", "saved_name_ciphertext",
+                "content_type_ciphertext", "detected_type_ciphertext",
+                "detected_service_ciphertext", "asset_type_ciphertext",
+            )},
+        }
+    plain_fields = (
+        ("item_type", "service") if kind == "item" else
+        ("file_name", "saved_name", "content_type", "detected_type",
+         "detected_service", "asset_type")
+    )
+    if any(len(metadata[field]) > 256 for field in plain_fields
+           if isinstance(metadata[field], str)):
+        # Source labels are structural metadata, not file content. Keep the
+        # export response bounded even for malformed old rows.
+        raise HTTPException(status_code=413, detail="legacy_metadata_too_large")
     return {
         id_key: record_id,
         "offset": payload.offset,
@@ -325,6 +377,10 @@ def _read_chunk(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         "total_chars": total,
         "next_offset": next_offset,
         "done": next_offset >= total,
+        "source_snapshot": legacy_source_snapshot(
+            kind, row, vault_id=vault_id, record_id=record_id,
+        ),
+        "source_metadata": metadata,
     }
 
 

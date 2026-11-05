@@ -7,6 +7,10 @@ from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
 from routes.auth_zk_routes import consume_recent_zk_proof
 from vault_core import get_db, is_vault_zk_adopted
+from legacy_source_snapshot import (
+    FILE_SOURCE_FIELDS, MAX_SOURCE_CIPHERTEXT_CHARS,
+    source_snapshot as legacy_source_snapshot,
+)
 from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write, require_file_read
 
@@ -83,6 +87,43 @@ def remove_unverified_legacy_stage_for_file_delete(
         raise HTTPException(status_code=409, detail="file_v2_stage_changed")
     return True
 
+
+def invalidate_unverified_legacy_stage_for_file_mutation(
+    cur, vault_id: str, file_id: str,
+) -> bool:
+    """Discard an unfinished sidecar before changing its legacy source.
+
+    The caller must take the per-file advisory lock first and commit this
+    invalidation with the legacy metadata update. A ready or unmarked V2 file
+    cannot be silently changed through an old route.
+    """
+    cur.execute(
+        "SELECT migrating_legacy, lifecycle_state, verification_state "
+        "FROM file_v2_records WHERE file_id = %s AND vault_id = %s FOR UPDATE",
+        (file_id, vault_id),
+    )
+    state = cur.fetchone()
+    if state is None:
+        return False
+    if isinstance(state, dict):
+        migrating = state["migrating_legacy"]
+        lifecycle = state["lifecycle_state"]
+        verification = state["verification_state"]
+    else:
+        migrating, lifecycle, verification = state
+    if not (migrating is True and lifecycle == "file_v2_written" and
+            verification == "not_verified"):
+        raise HTTPException(409, detail="file_v2_rename_requires_ready_path")
+    cur.execute(
+        "DELETE FROM file_v2_records WHERE file_id = %s AND vault_id = %s "
+        "AND migrating_legacy = TRUE AND lifecycle_state = 'file_v2_written' "
+        "AND verification_state = 'not_verified' RETURNING file_id",
+        (file_id, vault_id),
+    )
+    if cur.fetchone() is None:
+        raise HTTPException(409, detail="file_v2_stage_changed")
+    return True
+
 def _decode(v: str) -> bytes:
     try: return base64.b64decode(v + '=' * (-len(v) % 4), altchars=b'-_', validate=True)
     except (binascii.Error, ValueError) as e: raise HTTPException(400, detail='invalid_base64url') from e
@@ -96,6 +137,7 @@ class Manifest(BaseModel):
     chunk_size: int = Field(gt=0, le=MAX_CHUNK_BYTES)
     chunk_count: int = Field(ge=0, le=MAX_CHUNKS)
     migrating_legacy: bool = False
+    source_snapshot: str | None = Field(default=None, min_length=43, max_length=43)
 
     @model_validator(mode='after')
     def validate_framing(self):
@@ -131,6 +173,10 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
     _enabled(True); _reject(payload.model_dump())
     if not payload.migrating_legacy and not _new_files_enabled():
         raise HTTPException(404, detail='new_file_v2_disabled')
+    if payload.migrating_legacy and payload.source_snapshot is None:
+        raise HTTPException(400, detail='legacy_source_snapshot_required')
+    if not payload.migrating_legacy and payload.source_snapshot is not None:
+        raise HTTPException(400, detail='unexpected_source_snapshot')
     ct = _decode(payload.manifest_ciphertext)
     if len(ct) > MAX_MANIFEST_CIPHERTEXT_BYTES:
         raise HTTPException(413, detail='file_v2_manifest_too_large')
@@ -145,13 +191,35 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
         )
         if payload.migrating_legacy:
             cur.execute(
-                'SELECT 1 FROM uploaded_files WHERE id=%s AND vault_id=%s '
+                'SELECT LENGTH(encrypted_file_data) FROM uploaded_files '
+                'WHERE id=%s AND vault_id=%s '
+                "AND storage_mode='inline' AND encrypted_file_data IS NOT NULL "
+                'FOR UPDATE',
+                (payload.file_id, principal['vault_id']),
+            )
+            length_row = cur.fetchone()
+            if length_row is None:
+                conn.rollback()
+                raise HTTPException(409, detail='legacy_file_source_missing')
+            if int(length_row[0]) > MAX_SOURCE_CIPHERTEXT_CHARS:
+                conn.rollback()
+                raise HTTPException(413, detail='file_migration_streaming_required')
+            cur.execute(
+                f'SELECT {", ".join(FILE_SOURCE_FIELDS)} FROM uploaded_files '
+                'WHERE id=%s AND vault_id=%s '
                 "AND storage_mode='inline' AND encrypted_file_data IS NOT NULL FOR UPDATE",
                 (payload.file_id, principal['vault_id']),
             )
-            if cur.fetchone() is None:
+            source = cur.fetchone()
+            if source is None:
                 conn.rollback()
                 raise HTTPException(409, detail='legacy_file_source_missing')
+            if legacy_source_snapshot(
+                'file', dict(zip(FILE_SOURCE_FIELDS, source)),
+                vault_id=principal['vault_id'], record_id=payload.file_id,
+            ) != payload.source_snapshot:
+                conn.rollback()
+                raise HTTPException(409, detail='legacy_source_changed')
         cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count,migrating_legacy)
                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (file_id) DO NOTHING

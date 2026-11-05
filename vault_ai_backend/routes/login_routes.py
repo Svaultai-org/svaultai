@@ -385,11 +385,16 @@ def update_secure_item(
                 UPDATE vault_items
                 SET service        = %s,
                     encrypted_data = %s,
+                    service_ciphertext = NULL,
+                    payload_ciphertext = NULL,
                     created_at     = CURRENT_TIMESTAMP
-                WHERE id = %s
+                WHERE id = %s AND vault_id = %s
+                  AND encrypted_data IS NOT NULL
                 """,
-                (new_service, encrypted, row["id"]),
+                (new_service, encrypted, row["id"], vault_id),
             )
+            if cur.rowcount != 1:
+                raise HTTPException(status_code=409, detail="legacy_item_migration_required")
             item_id = row["id"]
 
             conn.commit()
