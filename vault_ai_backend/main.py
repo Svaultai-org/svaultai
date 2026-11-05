@@ -60,6 +60,9 @@ from routes.zk_general_chat_routes import router as zk_general_chat_router
 from routes.legacy_ciphertext_migration_routes import (
     router as legacy_ciphertext_migration_router,
 )
+from routes.zk_metadata_inventory_routes import (
+    router as zk_metadata_inventory_router,
+)
 from routes.login_routes import router as login_router
 from routes.vault_manage_routes import router as vault_manage_router
 from routes.vault_metadata_migration_routes import (
@@ -448,6 +451,7 @@ app.include_router(auth_zk_router)
 app.include_router(legacy_ciphertext_export_router)
 app.include_router(zk_general_chat_router)
 app.include_router(legacy_ciphertext_migration_router)
+app.include_router(zk_metadata_inventory_router)
 app.include_router(vault_metadata_migration_router)
 app.include_router(vault_ciphertext_write_router)
 app.include_router(credential_v2_router)
