@@ -67,6 +67,7 @@ import 'services/recording_storage.dart';
 import 'services/content_hash.dart';
 import 'services/vault_local_file_lookup.dart';
 import 'services/saved_file_rename.dart';
+import 'services/zk_action_proof_prompt.dart';
 import 'services/vault_local_content_command.dart';
 import 'services/memory_title_identity.dart';
 import 'services/monero_scanner.dart';
@@ -937,22 +938,27 @@ Future<String> _zkActionProof(
   return proof.token;
 }
 
-Future<({String? pin, String? zkProofToken})> _beneficiaryCredential(
+class _ZkActionPromptCancelled implements Exception {
+  const _ZkActionPromptCancelled();
+}
+
+Future<({String? pin, String? zkProofToken})?> _beneficiaryCredential(
+  BuildContext context,
   AppState app,
   String token,
 ) async {
   final handle = app.vaultHandle;
   if (kEnableZkBeneficiaryProof && handle != null && handle.isNotEmpty) {
-    final pin = await _VaultCrypto.currentPinOrThrow();
-    final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
-      vaultHandle: handle,
-      pin: pin,
-      sessionToken: token,
+    final proofToken = await resolveZkActionProof(
+      promptForPrivateSession: kPrivateOnlyUnlockEnabled,
+      promptPin: () => _promptForActionPin(
+        context, 'Verify inheritance access',
+      ),
+      cachedPin: _VaultCrypto.currentPinOrThrow,
+      verifyPin: (pin) => _zkActionProof(app, token, pin),
     );
-    if (app.sessionToken != token || app.vaultHandle != handle) {
-      throw StateError('Vault access changed.');
-    }
-    return (pin: null, zkProofToken: proof.token);
+    if (proofToken == null) return null;
+    return (pin: null, zkProofToken: proofToken);
   }
   if (kEnableZkBeneficiaryProof && !kEnableLegacyAuthFallback) {
     throw StateError('Sign in again to verify beneficiary access.');
@@ -9166,7 +9172,10 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         'lm-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
         '${myGen.toRadixString(36)}';
     try {
-      final credential = await _beneficiaryCredential(app, token);
+      final credential = await _beneficiaryCredential(context, app, token);
+      if (credential == null || !mounted || myGen != _loadBeneficiariesGen) {
+        return;
+      }
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.listBeneficiaries(
         vaultName: app.vaultName!,
@@ -9279,7 +9288,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
 
     setState(() => loadingInheritances = true);
     try {
-      final credential = await _beneficiaryCredential(app, token);
+      final credential = await _beneficiaryCredential(context, app, token);
+      if (credential == null || !mounted) return;
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       final result = await client.listInheritances(
         vaultName: app.vaultName!,
@@ -9703,10 +9713,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (confirmed != true) return;
 
     final token = app.sessionToken;
-    if (token == null || app.vaultName == null) return;
+    if (token == null || app.vaultName == null || !mounted) return;
 
     try {
-      final credential = await _beneficiaryCredential(app, token);
+      final credential = await _beneficiaryCredential(context, app, token);
+      if (credential == null || !mounted) return;
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.cancelTransfer(
         linkId: linkId,
@@ -9878,10 +9889,11 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
     if (confirmed != true) return;
 
     final token = app.sessionToken;
-    if (token == null || app.vaultName == null) return;
+    if (token == null || app.vaultName == null || !mounted) return;
 
     try {
-      final credential = await _beneficiaryCredential(app, token);
+      final credential = await _beneficiaryCredential(context, app, token);
+      if (credential == null || !mounted) return;
       final client = VaultAIClient(baseUrl: backendBaseUrl);
       await client.requestTransfer(
         linkId: linkId,
@@ -14430,16 +14442,20 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
             if (!kEnableZkFileV2Rename || !kEnableFileV2UiRead) {
               throw StateError('Private file rename is unavailable.');
             }
-            final handle = app.vaultHandle;
-            if (handle == null || handle.isEmpty) {
-              throw StateError('Vault verification is unavailable.');
-            }
-            final pin = await _VaultCrypto.currentPinOrThrow();
-            final proof = await ZkAuthService(_zkHttpPost).verifyPinProof(
-              vaultHandle: handle,
-              pin: pin,
-              sessionToken: token,
+            final proofToken = await resolveZkActionProof(
+              promptForPrivateSession: kPrivateOnlyUnlockEnabled,
+              promptPin: () => _promptForActionPin(
+                context, 'Verify file rename',
+              ),
+              cachedPin: _VaultCrypto.currentPinOrThrow,
+              verifyPin: (pin) {
+                if (!controller.accessIsCurrent()) {
+                  throw StateError('File rename session changed.');
+                }
+                return _zkActionProof(app, token, pin);
+              },
             );
+            if (proofToken == null) throw const _ZkActionPromptCancelled();
             if (!controller.accessIsCurrent()) {
               throw StateError('File rename session changed.');
             }
@@ -14447,7 +14463,7 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
               authToken: token,
               fileId: controller.fileId,
               savedName: normalizedName,
-              zkProofToken: proof.token,
+              zkProofToken: proofToken,
               responseIsCurrent: controller.accessIsCurrent,
             );
           } else {
@@ -14463,6 +14479,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
         onCommitted: (normalizedName) =>
             _applyCommittedFileRename(controller.fileId, normalizedName),
       );
+    } on _ZkActionPromptCancelled {
+      return SavedFileRenameOutcome.cancelled;
     } finally {
       _fileRenamesInFlight.remove(controller.fileId);
       if (mounted) setState(() {});
@@ -14555,6 +14573,8 @@ class _ChatDashboardPageState extends State<ChatDashboardPage> {
       if (!controller.accessIsCurrent()) return true;
       _appendLocalVaultReply(text, outcome == SavedFileRenameOutcome.saved
           ? 'Renamed the file to "${normalizeSavedFileName(command.name)}".'
+          : outcome == SavedFileRenameOutcome.cancelled
+              ? 'File rename cancelled. Nothing was changed.'
           : 'This file is already being renamed. Nothing else was changed.');
     } catch (_) {
       if (controller.accessIsCurrent()) {

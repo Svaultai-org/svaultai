@@ -58,6 +58,8 @@ class _SavedFileRenameDialogState extends State<SavedFileRenameDialog> {
       } else {
         setState(() => _error = outcome == SavedFileRenameOutcome.stale
             ? 'Your vault session changed. Nothing was applied to this screen.'
+            : outcome == SavedFileRenameOutcome.cancelled
+                ? 'Verification cancelled. Nothing was changed.'
             : 'This file is already being renamed. Please try again.');
       }
     } catch (_) {
