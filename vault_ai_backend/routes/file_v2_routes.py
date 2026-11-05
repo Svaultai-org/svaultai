@@ -1,7 +1,7 @@
 from __future__ import annotations
 import base64, binascii, os
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal
 from device_gate import verify_trusted_device
@@ -11,6 +11,11 @@ from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write, require_file_read
 
 router = APIRouter()
+MAX_FILE_BYTES = 64 * 1024 * 1024
+MAX_CHUNK_BYTES = 1024 * 1024
+MAX_CHUNKS = 4096
+MAX_MANIFEST_CIPHERTEXT_BYTES = 64 * 1024
+GCM_FRAMING_BYTES = 12 + 16
 FORBIDDEN = ('filename','filename_plaintext','file_content','file_content_plaintext',
  'content_type_plaintext','mime_plaintext','relative_path_plaintext','extracted_text',
  'ocr_text','document_text','thumbnail_plaintext','PIN','MVK','file_key','decryption_key')
@@ -21,25 +26,35 @@ def _enabled(write=False):
     if not (f.file_write_enabled if write else f.file_read_enabled):
         raise HTTPException(404, detail='file_v2_disabled')
 
+def _new_files_enabled():
+    return os.getenv('VAULTAI_ZK_NEW_FILE_V2_ENABLED', '').strip().lower() == 'true'
+
 def _decode(v: str) -> bytes:
-    try: return base64.urlsafe_b64decode(v + '=' * (-len(v) % 4))
+    try: return base64.b64decode(v + '=' * (-len(v) % 4), altchars=b'-_', validate=True)
     except (binascii.Error, ValueError) as e: raise HTTPException(400, detail='invalid_base64url') from e
 
 class Manifest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     file_id: str = Field(min_length=1, max_length=128)
     crypto_version: str = Field(pattern='^client_mvk_v2$')
-    manifest_ciphertext: str = Field(min_length=1)
-    total_bytes: int = Field(ge=0)
-    chunk_size: int = Field(gt=0)
-    chunk_count: int = Field(ge=0)
+    manifest_ciphertext: str = Field(min_length=1, max_length=90_000)
+    total_bytes: int = Field(ge=0, le=MAX_FILE_BYTES)
+    chunk_size: int = Field(gt=0, le=MAX_CHUNK_BYTES)
+    chunk_count: int = Field(ge=0, le=MAX_CHUNKS)
     migrating_legacy: bool = False
+
+    @model_validator(mode='after')
+    def validate_framing(self):
+        expected = (self.total_bytes + self.chunk_size - 1) // self.chunk_size
+        if self.chunk_count != expected:
+            raise ValueError('file_v2_chunk_count_mismatch')
+        return self
 
 class Chunk(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    file_id: str
-    chunk_index: int = Field(ge=0)
-    ciphertext: str = Field(min_length=1)
+    file_id: str = Field(min_length=1, max_length=128)
+    chunk_index: int = Field(ge=0, lt=MAX_CHUNKS)
+    ciphertext: str = Field(min_length=1, max_length=1_400_000)
 
 class ConfirmedFileDelete(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -54,7 +69,11 @@ def _reject(data: dict):
 def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_content_write(principal)
     _enabled(True); _reject(payload.model_dump())
+    if not payload.migrating_legacy and not _new_files_enabled():
+        raise HTTPException(404, detail='new_file_v2_disabled')
     ct = _decode(payload.manifest_ciphertext)
+    if len(ct) > MAX_MANIFEST_CIPHERTEXT_BYTES:
+        raise HTTPException(413, detail='file_v2_manifest_too_large')
     conn = get_db(); cur = conn.cursor()
     try:
         # Coordinate with the legacy deletion paths. Without this lock, a
@@ -101,16 +120,31 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
 def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_content_write(principal)
     _enabled(True); _reject(payload.model_dump()); ct = _decode(payload.ciphertext)
+    if len(ct) > MAX_CHUNK_BYTES + GCM_FRAMING_BYTES:
+        raise HTTPException(413, detail='file_v2_chunk_too_large')
     conn = get_db(); cur = conn.cursor()
     try:
-        cur.execute('SELECT verification_state, lifecycle_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE', (payload.file_id, principal['vault_id']))
+        cur.execute('SELECT verification_state, lifecycle_state, chunk_size, chunk_count, total_bytes FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE', (payload.file_id, principal['vault_id']))
         record = cur.fetchone()
         if not record: conn.rollback(); raise HTTPException(404, detail='file_v2_not_found')
-        if record[0] == 'client_verified' or record[1] == 'legacy_migration_retired':
+        if record[0] == 'client_verified' or record[1] in ('legacy_migration_retired', 'client_v2_ready'):
             conn.rollback()
             raise HTTPException(409, detail='file_v2_verified_immutable')
+        chunk_size, chunk_count, total_bytes = map(int, record[2:5])
+        if payload.chunk_index >= chunk_count:
+            conn.rollback(); raise HTTPException(400, detail='file_v2_chunk_index_out_of_range')
+        plain_bytes = min(chunk_size, total_bytes - payload.chunk_index * chunk_size)
+        if len(ct) != plain_bytes + GCM_FRAMING_BYTES:
+            conn.rollback(); raise HTTPException(400, detail='file_v2_chunk_length_mismatch')
         cur.execute('''INSERT INTO file_v2_chunks(file_id,chunk_index,ciphertext) VALUES(%s,%s,%s)
-                       ON CONFLICT(file_id,chunk_index) DO UPDATE SET ciphertext=EXCLUDED.ciphertext''', (payload.file_id, payload.chunk_index, ct)); conn.commit()
+                       ON CONFLICT(file_id,chunk_index) DO NOTHING
+                       RETURNING chunk_index''', (payload.file_id, payload.chunk_index, ct))
+        if cur.fetchone() is None:
+            cur.execute('SELECT 1 FROM file_v2_chunks WHERE file_id=%s AND chunk_index=%s AND ciphertext=%s',
+                        (payload.file_id, payload.chunk_index, ct))
+            if cur.fetchone() is None:
+                conn.rollback(); raise HTTPException(409, detail='file_v2_chunk_conflict')
+        conn.commit()
     finally: conn.close()
     return {'file_id': payload.file_id, 'chunk_index': payload.chunk_index}
 
@@ -118,15 +152,17 @@ def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_trust
 def list_files(principal: SessionPrincipal = Depends(verify_trusted_device)):
     _enabled(False); conn = get_db(); cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        # A tab/process can disappear without running the client's abort path.
-        # Reap only stale, incomplete manifests; never touch a recent upload or
-        # a record whose declared chunks are all present.
+        # A tab can disappear before publish, with or without all chunks.
+        # Keep uploads resumable for 24 hours. Migration rows already have an
+        # uploaded_files marker and are never reaped through this path.
         cur.execute('''DELETE FROM file_v2_records r
                        WHERE r.vault_id=%s
-                         AND r.created_at < NOW() - INTERVAL '30 minutes'
-                         AND (SELECT COUNT(*) FROM file_v2_chunks c
-                              WHERE c.file_id=r.file_id) < r.chunk_count''',
-                    (principal['vault_id'],))
+                         AND r.lifecycle_state='file_v2_written'
+                         AND r.created_at < NOW() - INTERVAL '24 hours'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM uploaded_files u
+                            WHERE u.id=r.file_id AND u.vault_id=r.vault_id
+                         )''', (principal['vault_id'],))
         conn.commit()
         cur.execute('''SELECT file_id,crypto_version,total_bytes,chunk_size,chunk_count,lifecycle_state,verification_state,created_at FROM file_v2_records WHERE vault_id=%s ORDER BY created_at DESC''', (principal['vault_id'],)); return {'files':[dict(r) for r in cur.fetchall()]}
     finally: conn.close()
@@ -158,7 +194,7 @@ def delete_file(file_id: str, principal: SessionPrincipal = Depends(verify_trust
         cur.execute('SELECT verification_state, lifecycle_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE',(file_id,principal['vault_id']))
         record = cur.fetchone()
         if not record: conn.rollback(); raise HTTPException(404, detail='file_v2_not_found')
-        if record[0] == 'client_verified' or record[1] == 'legacy_migration_retired':
+        if record[0] == 'client_verified' or record[1] in ('legacy_migration_retired', 'client_v2_ready'):
             conn.rollback(); raise HTTPException(409, detail='file_v2_verified_delete_requires_confirmed_path')
         cur.execute('DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s',(file_id,principal['vault_id']));
         if cur.rowcount != 1: conn.rollback(); raise HTTPException(404, detail='file_v2_not_found')

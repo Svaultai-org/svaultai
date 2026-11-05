@@ -10,6 +10,11 @@ import pytest
 from routes import file_v2_routes as routes
 
 
+@pytest.fixture(autouse=True)
+def _enable_new_file_path(monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_NEW_FILE_V2_ENABLED", "true")
+
+
 class _Cursor:
     def __init__(self, store):
         self.store = store
