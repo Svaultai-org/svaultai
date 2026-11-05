@@ -17,7 +17,9 @@ It has not been deployed or run against a real vault.
    64 KiB of text and 4096 bytes of path, and is bound to the same source
    snapshot as the file ciphertext. Larger records stay untouched and require
    a streaming design. The V2 manifest limit is 512 KiB for this version;
-   existing V1 manifests keep their 64 KiB limit.
+   existing V1 manifests keep their 64 KiB limit. The plaintext extra export
+   and new version-2 manifest writes require the dedicated default-off backend
+   flag `VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED`.
 2. The unlocked owner client wraps those fields inside an AES-GCM encrypted
    MVK file manifest with schema `vaultai.file.migrated.v2`. The public V2
    request body carries only ciphertext and a structural
@@ -50,9 +52,11 @@ It has not been deployed or run against a real vault.
 - Update and validate native large-file streaming migration, V2 readers, and
   all supported mobile releases before enabling retirement. An old native
   reader accepts only V1 manifests and cannot read a retired V2 extra file.
-- Enable `VAULTAI_ENABLE_LEGACY_FILE_EXTRA_STAGE` only with the matching
-  backend and 0056 schema. This flag also requires the existing stage and
-  recovery flags. Keep both retirement flags off until owner readback and
-  mobile compatibility are proven.
+- Enable backend `VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED` and client
+  `VAULTAI_ENABLE_LEGACY_FILE_EXTRA_STAGE` together only after 0056 and the
+  matching backend are live. The client flag also requires the existing stage
+  and recovery flags. Keep both retirement flags off until owner readback and
+  mobile compatibility are proven. Turning the stage flag off later does not
+  block ordinary V1 or already-written V2 manifest reads.
 - Do not equate an eligible stage pass with full PIN secrecy. Other legacy
   records, raw-PIN content calls, and offline-testable verifiers remain.

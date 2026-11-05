@@ -67,6 +67,13 @@ def _require_enabled() -> None:
         raise HTTPException(status_code=404, detail="not_found")
 
 
+def _require_file_extra_stage_enabled() -> None:
+    if os.getenv(
+        "VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "false",
+    ).strip().lower() != "true":
+        raise HTTPException(status_code=404, detail="not_found")
+
+
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -449,6 +456,8 @@ def legacy_export_page(
     principal: SessionPrincipal = Depends(verify_trusted_device),
 ) -> dict:
     _require_enabled()
+    if payload.mode == "read_file_extra":
+        _require_file_extra_stage_enabled()
     if not _grant_belongs_to_session(payload.export_token, principal):
         raise HTTPException(status_code=401, detail="invalid_export_grant")
 

@@ -38,6 +38,9 @@ def _new_files_enabled():
 def _v2_rename_enabled():
     return os.getenv('VAULTAI_ZK_FILE_V2_RENAME_ENABLED', '').strip().lower() == 'true'
 
+def _extra_file_stage_enabled():
+    return os.getenv('VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED', '').strip().lower() == 'true'
+
 def reject_legacy_zk_file_rename(principal: SessionPrincipal) -> None:
     """Prevent plaintext/PIN rename paths from bypassing an enabled V2 path."""
     if _v2_rename_enabled() and is_vault_zk_adopted(principal['vault_id']):
@@ -175,6 +178,8 @@ def _reject(data: dict):
 def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(verify_trusted_device)):
     require_content_write(principal)
     _enabled(True); _reject(payload.model_dump())
+    if payload.migration_metadata_version == 2 and not _extra_file_stage_enabled():
+        raise HTTPException(404, detail='file_v2_extra_stage_disabled')
     if not payload.migrating_legacy and not _new_files_enabled():
         raise HTTPException(404, detail='new_file_v2_disabled')
     if payload.migrating_legacy and payload.source_snapshot is None:

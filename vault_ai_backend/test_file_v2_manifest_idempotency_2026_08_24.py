@@ -124,3 +124,25 @@ def test_same_logical_manifest_with_different_ciphertext_is_conflict(monkeypatch
     with pytest.raises(HTTPException) as raised:
         routes.create_manifest(changed, {"vault_id": "vault-a"})
     assert raised.value.status_code == 409
+
+
+def test_extra_manifest_write_is_default_off_before_database(monkeypatch):
+    monkeypatch.delenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", raising=False)
+    monkeypatch.setattr(routes, "_enabled", lambda write=False: None)
+    monkeypatch.setattr(routes, "require_content_write", lambda _: None)
+    monkeypatch.setattr(routes, "get_db", lambda: pytest.fail("database reached"))
+    candidate = routes.Manifest(
+        file_id="synthetic-legacy-extra",
+        crypto_version="client_mvk_v2",
+        manifest_ciphertext="AQID",
+        total_bytes=3,
+        chunk_size=1024,
+        chunk_count=1,
+        migrating_legacy=True,
+        source_snapshot="A" * 43,
+        migration_metadata_version=2,
+    )
+    with pytest.raises(HTTPException) as blocked:
+        routes.create_manifest(candidate, {"vault_id": "vault-a"})
+    assert blocked.value.status_code == 404
+    assert blocked.value.detail == "file_v2_extra_stage_disabled"

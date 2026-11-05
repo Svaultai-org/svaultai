@@ -259,7 +259,21 @@ def test_item_chunk_returns_only_ciphertext_and_enforces_budget(runtime):
     assert json.loads(db.grants[token]["state"].decode())["sequence"] == 1
 
 
-def test_file_extras_are_one_proof_bound_page_with_source_snapshot(runtime):
+def test_file_extra_export_is_default_off_before_grant_or_database(runtime, monkeypatch):
+    db, _ = runtime
+    monkeypatch.delenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", raising=False)
+    before = len(db.connections)
+    with pytest.raises(HTTPException) as blocked:
+        export.legacy_export_page(export.LegacyExportPageRequest(
+            export_token="synthetic-grant", sequence=0,
+            mode="read_file_extra", file_id=db.file["id"],
+        ), PRINCIPAL)
+    assert blocked.value.status_code == 404
+    assert len(db.connections) == before
+
+
+def test_file_extras_are_one_proof_bound_page_with_source_snapshot(runtime, monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
     db, consumed = runtime
     token = _start(db, consumed)["export_token"]
     result = export.legacy_export_page(export.LegacyExportPageRequest(
@@ -294,7 +308,8 @@ def test_normal_file_page_discloses_only_extra_presence(runtime):
     assert result["ciphertext_chunk"] == db.file["encrypted_file_data"]
 
 
-def test_oversized_extra_text_is_rejected_before_full_row_read(runtime):
+def test_oversized_extra_text_is_rejected_before_full_row_read(runtime, monkeypatch):
+    monkeypatch.setenv("VAULTAI_ZK_LEGACY_FILE_EXTRA_STAGE_ENABLED", "true")
     db, consumed = runtime
     db.file["extracted_text"] = "x" * (export.MAX_FILE_EXTRA_BYTES + 1)
     token = _start(db, consumed)["export_token"]
