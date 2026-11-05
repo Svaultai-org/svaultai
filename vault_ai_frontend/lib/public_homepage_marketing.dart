@@ -152,8 +152,7 @@ class PublicHomepageDemo extends StatelessWidget {
             width: double.infinity,
             height: 420,
             fit: BoxFit.contain,
-            semanticLabel:
-                'The real blue SVaultAI interface with a fictional Demo Vault and AI chat.',
+            semanticLabel: 'SVaultAI chat interface and vault controls.',
           ),
           const Padding(
             padding: EdgeInsets.all(20),
@@ -170,8 +169,7 @@ class PublicHomepageDemo extends StatelessWidget {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'Genuine SVaultAI interface with fictional demo information. '
-                  'No personal vault content is shown.',
+                  'See the SVaultAI chat interface.',
                   style: TextStyle(color: _muted, height: 1.5, fontSize: 14),
                 ),
               ],
