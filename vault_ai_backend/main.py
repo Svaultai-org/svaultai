@@ -57,6 +57,9 @@ from routes.legacy_ciphertext_export_routes import (
     router as legacy_ciphertext_export_router,
 )
 from routes.zk_general_chat_routes import router as zk_general_chat_router
+from routes.legacy_ciphertext_migration_routes import (
+    router as legacy_ciphertext_migration_router,
+)
 from routes.login_routes import router as login_router
 from routes.vault_manage_routes import router as vault_manage_router
 from routes.vault_metadata_migration_routes import (
@@ -444,6 +447,7 @@ app.include_router(auth_router)
 app.include_router(auth_zk_router)
 app.include_router(legacy_ciphertext_export_router)
 app.include_router(zk_general_chat_router)
+app.include_router(legacy_ciphertext_migration_router)
 app.include_router(vault_metadata_migration_router)
 app.include_router(vault_ciphertext_write_router)
 app.include_router(credential_v2_router)
@@ -10922,6 +10926,7 @@ async def beneficiary_claim_transfer_endpoint(
             (username_lookup,),
         )
         if cursor.fetchone() is not None:
+            conn.rollback()
             raise HTTPException(
                 status_code=409,
                 detail="That inherited vault name is already in use. Pick another.",
@@ -11873,6 +11878,25 @@ async def delete_file_endpoint(
     conn = get_db()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (vault_id, payload.file_id),
+        )
+
+        # Legacy deletion removes only uploaded_files. A matching V2 record
+        # must be handled by the explicit verified-file delete flow so its
+        # manifest/chunks are not orphaned or lost without confirmation.
+        cursor.execute(
+            "SELECT 1 FROM file_v2_records "
+            "WHERE file_id = %s AND vault_id = %s FOR UPDATE",
+            (payload.file_id, vault_id),
+        )
+        if cursor.fetchone() is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="file_v2_migration_requires_confirmed_delete",
+            )
 
         cursor.execute(
             """

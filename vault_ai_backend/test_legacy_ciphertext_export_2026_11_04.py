@@ -159,6 +159,7 @@ def test_page_is_bounded_and_sequence_replay_fails(runtime):
     result = export.legacy_export_page(request, PRINCIPAL)
     assert result["records"] == [{
         "item_id": 7, "item_type": "login", "service": "example",
+        "item_type_ciphertext": None, "service_ciphertext": None,
         "ciphertext_chars": 16,
     }]
     assert result["next_sequence"] == 1

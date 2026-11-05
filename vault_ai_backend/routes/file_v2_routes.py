@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from psycopg2.extras import RealDictCursor
 from auth_local import SessionPrincipal, verify_session_token
+from device_gate import verify_trusted_device
+from routes.auth_zk_routes import consume_recent_zk_proof
 from vault_core import get_db
 from zk_migration_flags import ZkMigrationFlags
 from subscription_entitlement import require_content_write, require_file_read
@@ -31,12 +33,18 @@ class Manifest(BaseModel):
     total_bytes: int = Field(ge=0)
     chunk_size: int = Field(gt=0)
     chunk_count: int = Field(ge=0)
+    migrating_legacy: bool = False
 
 class Chunk(BaseModel):
     model_config = ConfigDict(extra='forbid')
     file_id: str
     chunk_index: int = Field(ge=0)
     ciphertext: str = Field(min_length=1)
+
+class ConfirmedFileDelete(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    zk_proof_token: str = Field(min_length=1, max_length=128)
+    confirm: bool
 
 def _reject(data: dict):
     leaked = [k for k in FORBIDDEN if k in data]
@@ -49,6 +57,22 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
     ct = _decode(payload.manifest_ciphertext)
     conn = get_db(); cur = conn.cursor()
     try:
+        # Coordinate with the legacy deletion paths. Without this lock, a
+        # manifest could be inserted after their empty V2 precheck but before
+        # they delete the legacy row, leaving an unverified orphan.
+        cur.execute(
+            'SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))',
+            (principal['vault_id'], payload.file_id),
+        )
+        if payload.migrating_legacy:
+            cur.execute(
+                'SELECT 1 FROM uploaded_files WHERE id=%s AND vault_id=%s '
+                "AND storage_mode='inline' AND encrypted_file_data IS NOT NULL FOR UPDATE",
+                (payload.file_id, principal['vault_id']),
+            )
+            if cur.fetchone() is None:
+                conn.rollback()
+                raise HTTPException(409, detail='legacy_file_source_missing')
         cur.execute('''INSERT INTO file_v2_records(file_id,vault_id,crypto_version,manifest_ciphertext,total_bytes,chunk_size,chunk_count)
                        VALUES(%s,%s,%s,%s,%s,%s,%s)
                        ON CONFLICT (file_id) DO NOTHING
@@ -61,10 +85,11 @@ def create_manifest(payload: Manifest, principal: SessionPrincipal = Depends(ver
             cur.execute('''SELECT 1 FROM file_v2_records
                            WHERE file_id=%s AND vault_id=%s
                              AND crypto_version=%s AND total_bytes=%s
-                             AND chunk_size=%s AND chunk_count=%s''',
+                             AND chunk_size=%s AND chunk_count=%s
+                             AND manifest_ciphertext=%s''',
                         (payload.file_id, principal['vault_id'],
                          payload.crypto_version, payload.total_bytes,
-                         payload.chunk_size, payload.chunk_count))
+                         payload.chunk_size, payload.chunk_count, ct))
             if cur.fetchone() is None:
                 conn.rollback()
                 raise HTTPException(409, detail='file_v2_manifest_conflict')
@@ -78,8 +103,12 @@ def put_chunk(payload: Chunk, principal: SessionPrincipal = Depends(verify_sessi
     _enabled(True); _reject(payload.model_dump()); ct = _decode(payload.ciphertext)
     conn = get_db(); cur = conn.cursor()
     try:
-        cur.execute('SELECT 1 FROM file_v2_records WHERE file_id=%s AND vault_id=%s', (payload.file_id, principal['vault_id']))
-        if not cur.fetchone(): raise HTTPException(404, detail='file_v2_not_found')
+        cur.execute('SELECT verification_state, lifecycle_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE', (payload.file_id, principal['vault_id']))
+        record = cur.fetchone()
+        if not record: conn.rollback(); raise HTTPException(404, detail='file_v2_not_found')
+        if record[0] == 'client_verified' or record[1] == 'legacy_migration_retired':
+            conn.rollback()
+            raise HTTPException(409, detail='file_v2_verified_immutable')
         cur.execute('''INSERT INTO file_v2_chunks(file_id,chunk_index,ciphertext) VALUES(%s,%s,%s)
                        ON CONFLICT(file_id,chunk_index) DO UPDATE SET ciphertext=EXCLUDED.ciphertext''', (payload.file_id, payload.chunk_index, ct)); conn.commit()
     finally: conn.close()
@@ -126,7 +155,106 @@ def get_chunk(file_id: str, chunk_index: int, principal: SessionPrincipal = Depe
 def delete_file(file_id: str, principal: SessionPrincipal = Depends(verify_session_token)):
     _enabled(True); conn=get_db(); cur=conn.cursor()
     try:
+        cur.execute('SELECT verification_state, lifecycle_state FROM file_v2_records WHERE file_id=%s AND vault_id=%s FOR UPDATE',(file_id,principal['vault_id']))
+        record = cur.fetchone()
+        if not record: conn.rollback(); raise HTTPException(404, detail='file_v2_not_found')
+        if record[0] == 'client_verified' or record[1] == 'legacy_migration_retired':
+            conn.rollback(); raise HTTPException(409, detail='file_v2_verified_delete_requires_confirmed_path')
         cur.execute('DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s',(file_id,principal['vault_id']));
         if cur.rowcount != 1: conn.rollback(); raise HTTPException(404, detail='file_v2_not_found')
         conn.commit(); return {'file_id':file_id,'deleted':True}
     finally: conn.close()
+
+
+@router.post('/vault/file-v2/{file_id}/delete-confirm')
+def delete_verified_file(
+    file_id: str,
+    payload: ConfirmedFileDelete,
+    principal: SessionPrincipal = Depends(verify_trusted_device),
+):
+    """Delete a migrated V2 file only after explicit OPAQUE re-verification."""
+    _enabled(True)
+    require_content_write(principal)
+    if not file_id or len(file_id) > 128:
+        raise HTTPException(400, detail='invalid_file_id')
+    if not payload.confirm:
+        raise HTTPException(400, detail='file_delete_confirmation_required')
+    conn = get_db(); cur = conn.cursor()
+    try:
+        cur.execute(
+            'SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))',
+            (principal['vault_id'], file_id),
+        )
+        cur.execute(
+            'SELECT verification_state, lifecycle_state FROM file_v2_records '
+            'WHERE file_id=%s AND vault_id=%s FOR UPDATE',
+            (file_id, principal['vault_id']),
+        )
+        state = cur.fetchone()
+        if not state:
+            raise HTTPException(404, detail='file_v2_not_found')
+        if state[0] != 'client_verified' or state[1] != 'legacy_migration_retired':
+            raise HTTPException(409, detail='file_v2_not_retired')
+        cur.execute(
+            'SELECT file_size, encrypted_file_data IS NOT NULL FROM uploaded_files '
+            'WHERE id=%s AND vault_id=%s FOR UPDATE',
+            (file_id, principal['vault_id']),
+        )
+        legacy = cur.fetchone()
+        if legacy is None:
+            raise HTTPException(409, detail='legacy_file_marker_missing')
+        if legacy[1]:
+            raise HTTPException(409, detail='legacy_file_still_present')
+        consume_recent_zk_proof(payload.zk_proof_token, principal)
+        cur.execute(
+            'DELETE FROM file_v2_records WHERE file_id=%s AND vault_id=%s',
+            (file_id, principal['vault_id']),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(409, detail='file_v2_delete_conflict')
+        cur.execute(
+            'DELETE FROM uploaded_files WHERE id=%s AND vault_id=%s '
+            'AND encrypted_file_data IS NULL',
+            (file_id, principal['vault_id']),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(409, detail='legacy_file_marker_changed')
+        cur.execute(
+            'UPDATE vaults SET total_bytes = GREATEST(total_bytes - %s, 0) '
+            'WHERE vault_id = %s',
+            (int(legacy[0] or 0), principal['vault_id']),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(409, detail='vault_quota_update_conflict')
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    try:
+        from billing import bump_account_total_bytes, get_account_id_for_vault
+        account_id = get_account_id_for_vault(principal['vault_id'])
+        if account_id is not None:
+            bump_account_total_bytes(account_id, -int(legacy[0] or 0))
+    except Exception:
+        # Vault quota was updated transactionally; account totals have their
+        # existing periodic reconciliation path if this auxiliary update fails.
+        pass
+    # Preserve the same derived-state cleanup as the legacy delete paths.
+    try:
+        from vault_relationship_graph import cleanup_relationships_for_file
+        cleanup_relationships_for_file(principal['vault_id'], file_id)
+    except Exception:
+        pass
+    try:
+        from vault_chat_active_entity import clear_active_entity_if_matches_file
+        clear_active_entity_if_matches_file(principal['vault_id'], file_id)
+    except Exception:
+        pass
+    try:
+        from vault_tool_result_cache import invalidate_for_event
+        invalidate_for_event(vault_id=principal['vault_id'], event='file_deleted')
+    except Exception:
+        pass
+    return {'file_id': file_id, 'deleted': True}

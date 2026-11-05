@@ -205,6 +205,7 @@ def _list_items(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
         """
         SELECT id, LEFT(item_type, 257) AS item_type,
                LEFT(service, 257) AS service,
+               item_type_ciphertext, service_ciphertext,
                LENGTH(encrypted_data) AS ciphertext_chars
           FROM vault_items
          WHERE vault_id = %s AND encrypted_data IS NOT NULL AND id > %s
@@ -216,14 +217,20 @@ def _list_items(cur, vault_id: str, payload: LegacyExportPageRequest) -> dict:
     selected = rows[:payload.limit]
     records = []
     for row in selected:
-        item_type = row["item_type"] or ""
-        service = row["service"] or ""
-        if len(item_type) > 256 or len(service) > 256:
+        item_type = row["item_type"]
+        service = row["service"]
+        if len(item_type or "") > 256 or len(service or "") > 256:
             raise HTTPException(status_code=413, detail="legacy_metadata_too_large")
         records.append({
             "item_id": int(row["id"]),
             "item_type": item_type,
             "service": service,
+            "item_type_ciphertext": _metadata_b64(
+                row.get("item_type_ciphertext"),
+            ),
+            "service_ciphertext": _metadata_b64(
+                row.get("service_ciphertext"),
+            ),
             "ciphertext_chars": int(row["ciphertext_chars"]),
         })
     return {

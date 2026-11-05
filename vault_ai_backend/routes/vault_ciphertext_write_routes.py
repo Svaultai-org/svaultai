@@ -241,6 +241,7 @@ def vault_item_upsert_ciphertext(
                    encrypted_data       = NULL
              WHERE id = %s
                AND vault_id = %s
+               AND encrypted_data IS NULL
             """,
             (
                 item_type_ct, service_ct, payload_ct,
@@ -248,7 +249,20 @@ def vault_item_upsert_ciphertext(
             ),
         )
         if cur.rowcount != 1:
+            # A legacy row may have staged V2 ciphertext while retaining its
+            # only PIN-encrypted copy. The generic edit path must not clear
+            # that copy without verified readback and recent OPAQUE proof.
+            cur.execute(
+                "SELECT encrypted_data IS NOT NULL AS has_legacy "
+                "FROM vault_items WHERE id = %s AND vault_id = %s",
+                (payload.item_id, principal["vault_id"]),
+            )
+            existing = cur.fetchone()
             conn.rollback()
+            if existing and existing["has_legacy"]:
+                raise HTTPException(
+                    status_code=409, detail="legacy_item_migration_required",
+                )
             raise HTTPException(status_code=404, detail="item not found")
         conn.commit()
         return VaultItemUpsertResponse(item_id=payload.item_id, created=False)
@@ -331,6 +345,7 @@ def list_vault_item_ciphertexts(
                    payload_ciphertext, created_at
               FROM vault_items
              WHERE vault_id = %s
+               AND encrypted_data IS NULL
                AND item_type_ciphertext IS NOT NULL
                AND service_ciphertext IS NOT NULL
                AND payload_ciphertext IS NOT NULL

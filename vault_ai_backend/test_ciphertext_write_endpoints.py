@@ -55,7 +55,10 @@ def test_vault_item_ciphertext_inventory_is_vault_scoped_and_opaque() -> None:
     assert "item_type_ciphertext IS NOT NULL" in src
     assert "service_ciphertext IS NOT NULL" in src
     assert "payload_ciphertext IS NOT NULL" in src
-    assert "encrypted_data" not in src
+    # Legacy rows may be staged with both ciphertext generations. They must
+    # stay out of this V2 inventory until the proof-gated retirement commits.
+    assert "AND encrypted_data IS NULL" in src
+    assert "SELECT id, item_type_ciphertext, service_ciphertext" in src
 
 
 def test_memory_ciphertext_inventory_and_delete_routes_are_registered() -> None:

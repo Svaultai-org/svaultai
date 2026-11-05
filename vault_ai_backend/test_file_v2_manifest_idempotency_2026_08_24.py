@@ -17,6 +17,9 @@ class _Cursor:
 
     def execute(self, sql, params):
         normalized = " ".join(sql.split()).lower()
+        if normalized.startswith("select pg_advisory_xact_lock("):
+            self.result = None
+            return
         if normalized.startswith("insert into file_v2_records"):
             file_id, vault_id, crypto, ciphertext, total, chunk, count = params
             if file_id in self.store:
@@ -28,10 +31,10 @@ class _Cursor:
                 self.result = (file_id,)
             return
         if normalized.startswith("select 1 from file_v2_records"):
-            file_id, vault_id, crypto, total, chunk, count = params
+            file_id, vault_id, crypto, total, chunk, count, ciphertext = params
             row = self.store.get(file_id)
-            self.result = (1,) if row and row[:5] == (
-                str(vault_id), crypto, total, chunk, count
+            self.result = (1,) if row and row == (
+                str(vault_id), crypto, total, chunk, count, ciphertext
             ) else None
             return
         raise AssertionError(f"unexpected SQL: {normalized}")
@@ -100,3 +103,15 @@ def test_collision_cannot_rebind_or_change_manifest(
         routes.create_manifest(_manifest(total=total), principal)
     assert raised.value.status_code == 409
     assert len(connection.store) == 1
+
+
+def test_same_logical_manifest_with_different_ciphertext_is_conflict(monkeypatch):
+    connection = _Connection()
+    monkeypatch.setattr(routes, "get_db", lambda: connection)
+    monkeypatch.setattr(routes, "_enabled", lambda write=False: None)
+    routes.create_manifest(_manifest(), {"vault_id": "vault-a"})
+
+    changed = _manifest().model_copy(update={"manifest_ciphertext": "BAUG"})
+    with pytest.raises(HTTPException) as raised:
+        routes.create_manifest(changed, {"vault_id": "vault-a"})
+    assert raised.value.status_code == 409
